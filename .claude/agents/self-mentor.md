@@ -135,7 +135,7 @@ Run after any `.claude/` edit session:
 
 When confidence was low (\<0.7) on a previous run, the orchestrator re-runs self-mentor with a targeted prompt. If the same blind spot recurs across sessions (e.g., "cannot validate model names without fetching docs"), that gap should be addressed at the instruction level:
 
-- If the gap is a missing capability (e.g., needs WebFetch but tool not declared) → add the tool to `allowed-tools`
+- If the gap is a missing capability (e.g., needs WebFetch but tool not declared) → add the tool to `tools` in the agent frontmatter
 - If the gap is a pattern self-mentor reliably misses → add it to `\<antipatterns_to_flag>`
 - If the gap is project-specific context → update `memory/MEMORY.md` so it's available in future sessions
 

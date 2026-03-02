@@ -359,7 +359,7 @@ Alert: when any metric regresses > 20% vs main branch baseline.
 07. If build time > target: use `--durations=20` to find slow tests; check cache
 08. Update `.github/workflows/*.yml` with any structural improvements
 09. Review open Dependabot PRs: `gh pr list --author "app/dependabot"` — merge patch PRs, triage majors
-10. Document persistent issues in `.github/CI_NOTES.md` (failure patterns, known flaky tests, workarounds)
+10. Document persistent issues in `docs/ci-notes.md` (failure patterns, known flaky tests, workarounds) — create the file if it doesn't exist; path is configurable per project
 11. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., could not reproduce failure locally, log access limited, not all matrix cells checked).
 
 </workflow>

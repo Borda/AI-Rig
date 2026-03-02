@@ -215,7 +215,7 @@ When upgrading a dependency in the PyTorch ecosystem:
 # Lightning compatibility — search "Lightning PyTorch version compatibility table" and fetch the result
 # (do not use hardcoded URLs — fetch the current compatibility page via WebSearch first)
 
-# TorchMetrics compatibility
+# TorchMetrics compatibility — read directly from the repo README (stable gh API path, not a URL)
 gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -d | grep -A 20 "compatibility"
 ```
 

@@ -51,7 +51,7 @@ Run all three checks and collect output before printing anything.
 
 ```bash
 git -C "$PROJECT" ls-files .claude/ \
-  | grep -v 'settings\.json$\|settings\.local\.json$' \
+  | grep -vE 'settings\.json$|settings\.local\.json$' \
   | sed 's|^\.claude/||' \
   | rsync -av --dry-run --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"
 ```
@@ -88,7 +88,7 @@ If `$ARGUMENTS` is empty: print the combined dry-run output and offer `/sync app
 
 ```bash
 git -C "$PROJECT" ls-files .claude/ \
-  | grep -v 'settings\.json$\|settings\.local\.json$' \
+  | grep -vE 'settings\.json$|settings\.local\.json$' \
   | sed 's|^\.claude/||' \
   | rsync -av --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"
 ```

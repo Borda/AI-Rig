@@ -15,7 +15,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Task|Skill",
+        "matcher": "Agent|Skill",
         "hooks": [{ "type": "command", "command": "node .claude/hooks/task-log.js" }]
       }
     ],

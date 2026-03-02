@@ -137,7 +137,7 @@ pre-commit run --all-files      # run on all files
 pre-commit autoupdate           # bump all hook revs to latest — run this regularly
 ```
 
-> **Tip**: Enable [pre-commit.ci](https://pre-commit.ci) to auto-run and auto-fix hooks on every PR without any local setup burden.
+> **Tip**: Enable [pre-commit.ci](https://pre-commit.ci) <!-- verify at use time --> to auto-run and auto-fix hooks on every PR without any local setup burden.
 
 ## PyTorch API Migration
 

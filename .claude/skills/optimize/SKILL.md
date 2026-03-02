@@ -57,7 +57,7 @@ python -m cProfile -s cumtime "$ARGUMENTS" 2>&1 | head -30
 time python "$ARGUMENTS"
 ```
 
-**Accept** if improvement > 10%. **Revert** if not measurable or < noise floor.
+**Accept** if improvement > 10% (adjust threshold for your workload — GPU benchmarks may need 20%+ to clear noise; hot-path latency may justify 2%). **Revert** if not measurable or < noise floor.
 
 ## Step 4: Report
 

@@ -130,7 +130,7 @@ def render(item: Drawable) -> None:
 ## TypeAlias and TypeGuard
 
 ```python
-# Python 3.12+: PEP 695 type statement (preferred)
+# Python 3.12+: PEP 695 type statement (preferred when project targets 3.12+)
 type Matrix = list[list[float]]
 
 # Python 3.10–3.11: explicit TypeAlias
@@ -266,7 +266,7 @@ OldName = NewName  # deprecated alias
 6. Run `ruff check . --fix && mypy src/` — fix all issues before proceeding
 7. Review for SOLID violations, naming clarity, and completeness
 8. Verify: does the change break any existing tests? Does it introduce new debt?
-9. When performing analysis (code audit, debt review, architecture assessment): end with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., not all edge cases traced, type coverage incomplete, integration tests not available).
+9. End with a `##(#) Confidence` block — always when called for analysis, diagnostics, code review, or debt assessment: **Score** (0–1) and **Gaps** (e.g., not all edge cases traced, type coverage incomplete, integration tests not available).
 
 </workflow>
 

@@ -174,7 +174,7 @@ Read the module and ask:
 # What is exported publicly?
 grep -n "__all__" src/mypackage/__init__.py
 
-# What is importable but not in __all__?
+# What is importable but not in __all__? (requires package installed: uv run python -c ... if needed)
 python -c "import mypackage; print([x for x in dir(mypackage) if not x.startswith('_')])"
 ```
 

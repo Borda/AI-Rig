@@ -89,7 +89,7 @@ Now apply the refactoring changes. For each change:
    ```bash
    python -m pytest <test_files> -v --tb=short
    ```
-3. If tests pass: commit mentally, move to the next change
+3. If tests pass: proceed to the next change
 4. If tests fail: the refactoring broke behavior — revert and try a different approach
 
 **Refactoring categories** (apply what matches the goal):

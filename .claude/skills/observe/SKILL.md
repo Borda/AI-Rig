@@ -155,7 +155,7 @@ For each candidate agent/skill:
 - This skill is introspective: it looks at the tooling itself, not just the code
 - Run periodically (e.g., monthly) or after noticing repetitive manual work
 - Suggestions are proposals — always review before creating new files
-- After creating a new agent/skill based on a suggestion, re-run this skill to verify coverage improved
+- After creating a new agent/skill based on a suggestion, re-run this skill once to confirm the gap is resolved, then stop
 - Follow-up chains:
   - Suggestion accepted for new agent/skill → `/manage create` to scaffold and register it
   - Suggestion to enhance existing → edit the agent/skill directly, then `/sync`

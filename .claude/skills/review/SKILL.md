@@ -56,7 +56,7 @@ Launch agents simultaneously with the Task tool (agents 6 and 7 are conditional)
 
 **Agent 5 — linting-expert**: Static analysis audit. Check ruff and mypy would pass. Identify type annotation gaps on public APIs, suppressed violations without explanation, and any missing pre-commit hooks. Flag mismatched target Python version.
 
-**Agent 6 — `/security` skill (optional, for PRs touching auth/input/deps)**: If the diff touches authentication, user input handling, dependency updates, or serialization — invoke the `/security` skill (via a Task subagent running that skill prompt) to run a Python-specific vulnerability scan and OWASP checks. Skip if the PR is purely internal refactoring.
+**Agent 6 — `/security` skill (optional, for PRs touching auth/input/deps)**: If the diff touches authentication, user input handling, dependency updates, or serialization — invoke the `/security` skill using the same pattern as the Codex delegation in Step 6: `Task(subagent_type="general-purpose", prompt="Read .claude/skills/security/SKILL.md and follow its workflow exactly. Scope: <files from Step 1>.")`. Skip if the PR is purely internal refactoring.
 
 **Agent 7 — solution-architect (optional, for PRs touching public API boundaries)**: If the diff touches `__init__.py` exports, adds/modifies Protocols or ABCs, changes module structure, or introduces new public classes — evaluate API design quality, coupling impact, and backward compatibility. Skip if changes are internal implementation only.
 
