@@ -3,7 +3,7 @@ name: resolve
 description: Implement applicable PR review suggestions via Codex — fetch GitHub PR review comments, classify each as implement/skip/flag, dispatch actionable ones straight to Codex, then validate with lint, types, and tests.
 argument-hint: <PR number | GitHub PR URL | omit to use /review output>
 disable-model-invocation: true
-allowed-tools: Read, Bash, Grep, Glob, Task
+allowed-tools: Read, Bash, Grep, Glob, Agent
 ---
 
 <objective>
@@ -41,13 +41,7 @@ ______________________________________________________________________
 
 ### Mode B: From /review output
 
-**Pre-flight:**
-
-```bash
-which codex
-```
-
-If codex is not on PATH: stop with `Pre-flight failed: codex not found on PATH. Install with: npm install -g @openai/codex`
+**Pre-flight:** Run the same codex pre-flight check as Step 1 (verify `which codex`; if missing, stop and show the install hint).
 
 **Find review output:**
 
@@ -111,7 +105,7 @@ gh pr checkout $PR_NUM
 
 ## Step 3: Fetch PR data
 
-Run all three fetches (issue them in parallel — single response, no waiting between calls):
+Run all four fetches (issue them in parallel — single response, no waiting between calls):
 
 ```bash
 # 1. PR metadata + top-level review bodies
@@ -122,7 +116,26 @@ gh api "repos/$OWNER_REPO/pulls/$PR_NUM/comments"
 
 # 3. Review-level state (APPROVED, CHANGES_REQUESTED, COMMENTED)
 gh api "repos/$OWNER_REPO/pulls/$PR_NUM/reviews"
+
+# 4. Thread resolution state via GraphQL
+gh api graphql -f query='
+{
+  repository(owner: "'"$OWNER"'", name: "'"$REPO"'") {
+    pullRequest(number: '"$PR_NUM"') {
+      reviewThreads(first: 100) {
+        nodes {
+          isResolved
+          comments(first: 1) {
+            nodes { databaseId }
+          }
+        }
+      }
+    }
+  }
+}'
 ```
+
+Build a `resolved_ids` set from the GraphQL response: collect the `databaseId` of the first comment in every thread where `isResolved` is `true`.
 
 Consolidate into a unified comment list. Each entry tracks:
 
@@ -135,16 +148,17 @@ Consolidate into a unified comment list. Each entry tracks:
 | `body`         | full comment text                                                                         |
 | `suggestion`   | verbatim suggestion block if present (```` ```suggestion ... ``` ```` fence), else `null` |
 | `review_state` | `CHANGES_REQUESTED` \| `COMMENTED` \| `APPROVED`                                          |
+| `resolved`     | `true` if the comment's thread appears in `resolved_ids`, else `false`                    |
 
 ## Step 4: Classify comments
 
 Read all consolidated comments and assign each a decision:
 
-| Decision      | Criteria                                                                                                                                            |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **implement** | Actionable code change; clearly correct and unambiguous; maps to a specific file + location or has a suggestion block; not purely a matter of taste |
-| **skip**      | Compliment, question, "please explain", already addressed, purely aesthetic with no clear right answer                                              |
-| **flag**      | Architectural decision, contradicts another reviewer, high-risk or large blast radius, requires domain context not visible in the diff              |
+| Decision      | Criteria                                                                                                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **implement** | Actionable code change; clearly correct and unambiguous; maps to a specific file + location or has a suggestion block; not purely a matter of taste; `resolved` must be `false` |
+| **skip**      | Compliment, question, "please explain", already addressed, purely aesthetic with no clear right answer; **or `resolved` is `true`** (thread already resolved on GitHub)         |
+| **flag**      | Architectural decision, contradicts another reviewer, high-risk or large blast radius, requires domain context not visible in the diff                                          |
 
 Print the full classification table immediately — then proceed straight to Codex dispatch without pausing:
 
@@ -152,11 +166,12 @@ Print the full classification table immediately — then proceed straight to Cod
 ## PR #<N> — <title>
 
 ### Classification
-| # | Reviewer      | Location         | Preview (first 80 chars)                | Decision    |
-|---|---------------|------------------|-----------------------------------------|-------------|
-| 1 | @alice        | src/foo.py:42    | "rename `x` to `scale_factor`"          | implement   |
-| 2 | @bob          | —                | "Great work overall!"                   | skip        |
-| 3 | @charlie      | src/bar.py       | "Consider splitting this class into..." | flag        |
+| # | Reviewer      | Location         | Preview (first 80 chars)                | Resolved | Decision    |
+|---|---------------|------------------|-----------------------------------------|----------|-------------|
+| 1 | @alice        | src/foo.py:42    | "rename `x` to `scale_factor`"          | no       | implement   |
+| 2 | @bob          | —                | "Great work overall!"                   | no       | skip        |
+| 3 | @charlie      | src/bar.py       | "Consider splitting this class into..." | no       | flag        |
+| 4 | @alice        | src/foo.py:10    | "Add return type annotation"            | yes      | skip        |
 
 implement: N  |  skip: N  |  flag: N
 ```
@@ -265,7 +280,7 @@ Print a structured summary:
 - [ ] Run `/review` for a full quality pass if changes are non-trivial
 
 ## Confidence
-**Score**: [computed: N implemented / N dispatched — e.g. 0.8 if 4/5 succeeded; deduct 0.1 per failed Codex dispatch]
+**Score**: [coverage of the review: how thoroughly all comments were classified and dispatched — deduct for skipped categories, ambiguous items left unresolved, or incomplete codex runs]
 **Gaps**: comment classification is heuristic — ambiguous comments may be miscategorised; Codex application accuracy depends on specificity of reviewer comment; tests may not cover all changed paths
 ```
 
@@ -279,6 +294,7 @@ Print a structured summary:
 - **Parallel dispatch**: one subagent per `implement` item, all spawned in a single response for maximum speed; suggestions on different files are safely independent; suggestions targeting the same file may conflict — review `git diff HEAD` before committing
 - **No auto-revert on failure**: failed Codex attempts leave the working tree intact; the user decides what to keep or discard with `git restore`
 - **Suggestion blocks**: GitHub-flavoured suggestion fences (```` ```suggestion ... ``` ````) are extracted verbatim and passed to Codex — the most faithful way to implement them
+- **Resolved thread filtering**: a fourth GraphQL fetch collects threads where `isResolved: true`; their comments are automatically classified `skip` and shown with `Resolved: yes` in the table — they are never dispatched to Codex
 - **REST endpoints**: `gh api "repos/{owner}/{repo}/pulls/{N}/comments"` returns all inline review comments; filter by `position != null` if you want only comments on current diff lines (not on outdated diffs)
 - **`Bash(gh api:*)`** permission covers both REST and GraphQL `gh api` calls — no separate graphql permission needed
 - **`flag` category**: surfaces architectural concerns explicitly so the user never misses them — they are not silently skipped

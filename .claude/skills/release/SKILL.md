@@ -2,7 +2,7 @@
 name: release
 description: Prepare release communication from git history, PRs, or a diff. Adapts output to context — user-facing release notes, CHANGELOG entry, internal release summary, or migration guide. Groups changes by type, filters noise, writes in plain language for the audience.
 argument-hint: '[range] [release-notes|changelog|summary|migration] | prep <version>'
-allowed-tools: Read, Write, Bash, Grep, Glob, Task
+allowed-tools: Read, Write, Bash, Grep, Glob, Agent
 ---
 
 <objective>

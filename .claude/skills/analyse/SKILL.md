@@ -2,7 +2,7 @@
 name: analyse
 description: Analyze GitHub issues, PRs, and repo health for an OSS project. Summarizes long threads, assesses PR readiness, detects duplicates, extracts reproduction steps, and generates repo health stats. Uses gh CLI for GitHub API access. Complements oss-maintainer agent.
 argument-hint: <number|health|dupes [keyword]|contributors|ecosystem>
-allowed-tools: Read, Write, Bash, Grep, Glob, Task
+allowed-tools: Read, Write, Bash, Grep, Glob, Agent
 context: fork
 ---
 
@@ -295,7 +295,7 @@ Produce:
 
 After printing the output above, write the full content to `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md`
 
-End each mode's output with a `## Confidence` block per CLAUDE.md output standards.
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

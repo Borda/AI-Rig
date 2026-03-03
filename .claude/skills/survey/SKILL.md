@@ -2,7 +2,7 @@
 name: survey
 description: Survey SOTA literature for an AI/ML topic, method, or architecture. Finds relevant papers, builds a comparison table, and recommends the best implementation strategy for the current codebase. Delegates deep analysis to the ai-researcher agent.
 argument-hint: <topic, method, or problem>
-allowed-tools: Read, Write, Grep, Glob, Task, WebSearch, WebFetch
+allowed-tools: Read, Write, Grep, Glob, Agent, WebSearch, WebFetch
 context: fork
 ---
 
@@ -34,7 +34,7 @@ Before searching, read the current project to extract constraints:
 
 Issue both 2a and 2b in the same response — they are independent and must run simultaneously, not sequentially.
 
-### 2a: Spawn ai-researcher agent (background subagent)
+### 2a: Spawn ai-researcher agent (parallel subagent via Task tool)
 
 Task the ai-researcher with a single objective: find the top 5 papers for `$ARGUMENTS`, produce a comparison table (method, key idea, benchmark results, compute, code availability), and recommend the single best method given the codebase constraints in Step 1 — with a brief implementation plan. The agent's own workflow handles the research and experiment design details.
 
@@ -91,9 +91,16 @@ Use the Grep tool to search the codebase for any existing related code:
 
 ### References
 - [Paper title] ([year]) — [link]
+
+### Agent Confidence
+| Agent | Score | Gaps |
+|---|---|---|
+| ai-researcher | [score] | [gaps] |
 ```
 
 After printing the report above, write the full content to `tasks/output-survey-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-survey-$(date +%Y-%m-%d).md`
+
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

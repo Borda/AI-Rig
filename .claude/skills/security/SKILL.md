@@ -2,7 +2,7 @@
 name: security
 description: Security audit of code or a feature. Checks OWASP Top 10, Python-specific vulnerabilities, ML security concerns, authentication/authorization, secrets handling, and dependency vulnerabilities. Flags issues by severity with specific remediation steps.
 argument-hint: <file, endpoint, or directory>
-allowed-tools: Read, Write, Bash, Grep, Glob, Task
+allowed-tools: Read, Write, Bash, Grep, Glob, Agent
 context: fork
 ---
 
@@ -113,7 +113,7 @@ Target: <file>."
 )
 ```
 
-Example prompt (split by role): first `"use the sw-engineer to replace yaml.load(f) with yaml.safe_load(f) in src/loader.py:42"`, then `"use the qa-specialist to add a test confirming that a crafted YAML with !!python/object tag raises SafeError instead of executing code"`
+Example prompt (split by role): first `"use the sw-engineer to replace yaml.load(f) with yaml.safe_load(f) in src/loader.py:42"`, then `"use the qa-specialist to add a test confirming that a crafted YAML with !!python/object tag raises yaml.constructor.ConstructorError instead of executing code"`
 
 The subagent handles pre-flight, dispatch, validation, and patch capture. If Codex is unavailable it reports gracefully.
 

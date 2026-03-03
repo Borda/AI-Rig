@@ -3,7 +3,7 @@ name: manage
 description: Create, update, or delete agents and skills with full cross-reference propagation. Also manages settings.json permissions atomically with permissions-guide.md via add/remove perm operations.
 argument-hint: <create|update|delete> <agent|skill> <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 disable-model-invocation: true
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Task
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent
 ---
 
 <objective>
@@ -96,7 +96,7 @@ Before creating anything, check if existing agents/skills already cover the requ
    - **Partial overlap**: name the overlapping agent/skill, explain what it covers vs what the new one would add, and ask the user whether to proceed, extend the existing one instead, or abort
    - **Strong overlap**: recommend against creation — suggest using or extending the existing agent/skill instead
 
-Skip this step for `update` and `delete` operations.
+Skip this step for `update`, `delete`, and perm operations.
 
 ## Step 3: Inventory current state
 
@@ -212,10 +212,9 @@ name / description / argument-hint / disable-model-invocation: true / allowed-to
 
 Atomic update — write new file before deleting old:
 
-```bash
-# 1. Read the old file
-cat .claude/agents/<old-name>.md
+1. Read `.claude/agents/<old-name>.md` using the Read tool.
 
+```bash
 # 2. Write new file with updated name in frontmatter
 # (Edit the `name:` line in frontmatter to use new-name)
 

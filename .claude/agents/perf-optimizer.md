@@ -253,7 +253,7 @@ model = torch.compile(model, mode="max-autotune")  # max speed, slower compile
 5. **Measure**: compare against baseline under identical conditions
 6. **Accept/reject**: keep if improvement > 10%, revert and try next hypothesis if not
 7. **Repeat**: continue until hitting diminishing returns or hitting target
-8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., profiling done on a single run, GPU utilization not measured, benchmark not run under realistic data load).
+8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., "profiling done on a single run", "GPU utilization not measured", "actual speedup unconfirmed without profiling"). Distinguish static-detectable issues (score ≥0.9 when all issues are visible in source) from runtime-only issues (lower score when profiling data is absent) — absence of profiling data is a valid gap for speedup estimates but should not depress the score for statically unambiguous issues.
 
 Never report optimization results without before/after numbers.
 

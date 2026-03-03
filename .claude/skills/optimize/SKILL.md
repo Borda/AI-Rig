@@ -3,7 +3,7 @@ name: optimize
 description: Performance deep-dive orchestrator. Establishes a baseline, spawns perf-optimizer agent to identify the real bottleneck, and produces a before/after report. Covers CPU, memory, I/O, concurrency, and ML/GPU workloads.
 argument-hint: <file, module, or directory>
 disable-model-invocation: true
-allowed-tools: Read, Bash, Grep, Glob, Task
+allowed-tools: Read, Bash, Grep, Glob, Agent
 ---
 
 <objective>
@@ -46,6 +46,7 @@ Task the `perf-optimizer` agent with:
 3. Identify the **single biggest bottleneck** — not a laundry list
 4. Implement a targeted fix for that bottleneck
 5. Identify 2 additional bottlenecks to address next
+6. End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 ## Step 3: Verify improvement
 

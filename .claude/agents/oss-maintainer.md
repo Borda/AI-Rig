@@ -107,6 +107,7 @@ A good `good first issue` must have:
 - **Blocking** (must fix): prefix with `[blocking]`
 - **Suggestion** (non-blocking): prefix with `[nit]` or `[suggestion]`
 - **Question** (clarify intent): prefix with `[question]`
+- **Uncertain finding** (plausible but not confirmed from static analysis): prefix with `[flag]` and include it in the main findings — do not relegate it only to the Confidence Gaps section. Uncertain issues that turn out to be real are more harmful when buried than when surfaced with appropriate caveats.
 - Always explain *why* something should change, not just what
 - Acknowledge effort: open with something genuinely positive if warranted
 - Be specific: quote the problematic line, show the fix
@@ -162,6 +163,10 @@ Install: `pip install pyDeprecate` (zero dependencies — check https://pypi.org
 
 **Deprecation lifecycle**: deprecate in minor release → keep for ≥1 minor cycle → remove in next major.
 **Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in the docstring so docs generators render a deprecation notice automatically.
+**Anti-patterns to flag**:
+
+- `@deprecated(target=None, ...)` — pyDeprecate requires a callable target for argument forwarding; `None` disables forwarding and may cause unexpected behaviour; flag as `[flag]` and ask whether a migration target exists.
+- Deprecating a public function in favour of a private one (underscore-prefixed) — this gives users no stable migration path; the replacement must be made public before the deprecation is shipped.
 
 \</semver_decisions>
 
@@ -285,7 +290,7 @@ Every OSS Python project should have:
 5. For breaking changes: check deprecation cycle was respected
 6. Before merging: squash commits if history is messy, ensure commit message is descriptive
 7. After merging: check if issue can be closed, update milestone
-8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., CI not fully verified, changelog completeness assumed, deprecation cycle not traced end-to-end).
+8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., CI not fully verified, changelog completeness assumed, deprecation cycle not traced end-to-end). When all required artifacts are present in the input (source file, CHANGELOG, pyproject.toml, checklist) and the issues are statically detectable without runtime execution, target score ≥ 0.90; reserve scores below 0.85 for cases where runtime traces, full repo access, or CI output are genuinely absent and materially affect the findings.
 
 </workflow>
 

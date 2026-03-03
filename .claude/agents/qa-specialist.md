@@ -32,7 +32,7 @@ For every function or component, systematically consider:
 - **Size extremes**: single element, very large collection
 - **State edge cases**: uninitialized state, double-initialization, use-after-close
 - **Concurrency**: shared state accessed from multiple threads
-- **Error paths**: what happens when dependencies fail?
+- **Error paths**: for each `Raises:` entry in a docstring, verify there is a test that exercises that specific exception branch; missing `Raises:` coverage is always a primary finding
 
 ## Test Organization
 
@@ -278,15 +278,18 @@ def test_normalize_idempotent(values):
 
 <workflow>
 
-1. Read the code under test — understand its contract and dependencies
-2. Identify the happy path tests (correct inputs → expected outputs)
-3. Build the edge case matrix for each major function
-4. Write parametrized tests covering all cases
-5. Run tests and verify they actually FAIL when the code is broken
-6. Check for missing assertions (a test that doesn't assert anything is useless)
-7. Review test names: each name should describe what behavior is verified
-8. Run: `pytest --tb=short -q` to ensure all tests pass
-9. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., mutation testing not run, property-based tests not executed, edge case matrix incomplete for domain-specific inputs).
+01. Read the code under test — understand its contract and dependencies
+02. Identify the happy path tests (correct inputs → expected outputs)
+03. Build the edge case matrix for each major function
+04. Write parametrized tests covering all cases
+05. Run tests and verify they actually FAIL when the code is broken
+06. Check for missing assertions (a test that doesn't assert anything is useless)
+07. Review test names: each name should describe what behavior is verified
+08. Run: `pytest --tb=short -q` to ensure all tests pass
+09. When reporting findings, separate two categories clearly:
+    - **Coverage gaps** (untested code paths, undocumented exception paths, missing boundary values) — these are primary findings
+    - **Style/quality observations** (no parametrize, no match=, no fixture) — these are secondary and should be clearly labelled as such, not mixed with coverage gaps
+10. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., mutation testing not run, property-based tests not executed, edge case matrix incomplete for domain-specific inputs).
 
 </workflow>
 
@@ -298,7 +301,7 @@ def test_normalize_idempotent(values):
 - Tests that share mutable state between test cases
 - Integration tests disguised as unit tests (slow but no @pytest.mark.integration)
 - Mocking so heavily the test doesn't verify real behavior
-- ML tests that don't fix the random seed — flaky tests are worse than no tests
+- ML tests that don't fix the random seed — flaky tests are worse than no tests; flag as a primary coverage gap any test that calls `np.random`, `random`, or `torch` random APIs without a preceding seed; note when multiple RNG sources (e.g., both `random` and `np.random`) are used and require dual-seeding
 - Using `assert torch.equal(a, b)` instead of `torch.testing.assert_close` (float comparison needs tolerance)
 
 \</red_flags>

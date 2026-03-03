@@ -163,6 +163,8 @@ Read the module and ask:
 - Could you describe what this module does in one sentence without using "and"?
 - If not — it likely needs to be split.
 
+When reporting issues, prioritise findings that directly answer the stated design question. Secondary concerns (e.g., testability seams, infrastructure coupling) should be noted only after all primary issues are listed, and should be clearly labelled as secondary observations so they are not mistaken for domain violations.
+
 ## API Surface Audit
 
 Use the Grep tool (pattern `__all__`, file `src/mypackage/__init__.py`, output mode `content`) to see what is exported publicly.
@@ -293,6 +295,13 @@ Explicitly call out any decision that would be hard or impossible to reverse. Th
 ## Step 9: Confidence
 
 End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., runtime behavior not observed, downstream consumer impact not traced, migration cost estimated not measured).
+
+When estimating the score, distinguish between gap types:
+
+- **Static-analysis gaps** (e.g., "no runtime traces", "no downstream caller audit") do not reduce recall for structural issues detectable from source alone — do not penalise the score for them.
+- **True coverage gaps** (e.g., "only read 2 of 5 modules", "changelog comments not authoritative source for v1 signatures") do limit recall and should reduce the score proportionally.
+
+Set the score to reflect how much of the *in-scope static surface* was examined, not whether runtime information was unavailable.
 
 </workflow>
 

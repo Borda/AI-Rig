@@ -157,21 +157,6 @@ Build & serve: `mkdocs serve` / `mkdocs build`
 
 \</sphinx_mkdocs>
 
-\<oss_readme>
-
-## OSS README Structure
-
-1. Badges (PyPI version, CI status, coverage, license, Python versions)
-2. One-sentence description + who it's for
-3. Quick Start — minimal working example (< 10 lines)
-4. Installation (`pip install mypackage` + extras)
-5. Usage, Configuration, Contributing, License
-
-Badge URL patterns (templates — verify format against shields.io docs before use):
-`https://img.shields.io/pypi/v/<pkg>`, `https://img.shields.io/pypi/pyversions/<pkg>`, `https://img.shields.io/github/license/<org>/<repo>`
-
-\</oss_readme>
-
 \<changelog_automation>
 
 ## Automated Changelog Tools
@@ -270,6 +255,8 @@ When documenting image/tensor functions, always specify:
 - Raises are documented if the function raises user-visible exceptions
 - Deprecated APIs have `.. deprecated::` directive with version and replacement
 
+When auditing, prioritise findings by scope: (1) public functions and classes, (2) class constructors, (3) module level, (4) dunder/private methods. Report dunder and module-level gaps as low-severity addenda only after covering the primary public API surface — do not let them dominate the findings list.
+
 ## README Audit
 
 - Quick start works in a fresh environment
@@ -290,6 +277,7 @@ When documenting image/tensor functions, always specify:
 - Docstrings that repeat the function name without adding information
   (`def get_user(): """Gets the user."""` — says nothing)
 - Examples that don't actually run or produce different output
+- Examples that demonstrate only the trivial/no-op case and fail to exercise the advertised behaviour of the function (e.g. an NMS example where no suppression occurs, a filter example where nothing is filtered) — flag these as misleading even if numerically consistent with the code
 - TODO/FIXME comments in public documentation
 - Docs that describe what the code did before the last refactor
 - Jargon without explanation for the target audience

@@ -1,8 +1,8 @@
 ---
 name: calibrate
 description: Calibration testing for agents and skills. Generates synthetic problems with known outcomes (quasi-ground-truth), runs targets against them, and measures recall, precision, and confidence calibration — revealing whether self-reported confidence scores track actual quality.
-argument-hint: '[agent-name|all|/audit|/review|/security] [fast|full] [report|apply]'
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Task
+argument-hint: '[agent-name|all|/audit|/review|/security] [fast|full] [apply]'
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent
 ---
 
 <objective>
@@ -16,12 +16,11 @@ Calibration data drives the improvement loop: systematic gaps become instruction
 <inputs>
 
 - **$ARGUMENTS**: optional
-  - Omitted / `all` → fast benchmark across all agents
-  - `<agent-name>` → fast benchmark for one agent (e.g., `sw-engineer`)
+  - Omitted / `all` → benchmark all agents + generate self-mentor proposals
+  - `<agent-name>` → benchmark one agent + generate proposals (e.g., `sw-engineer`)
   - `/audit`, `/review`, or `/security` → benchmark a skill (only these three skill domains have calibration support)
   - Append `full` for 10 problems instead of 3 (e.g., `sw-engineer full`, `all full`)
-  - Append `report` to also generate instruction-improvement proposals for flagged targets — runs benchmark + writes `proposal.md` per target + prints proposals to terminal; no agent files are mutated (e.g., `sw-engineer report`, `all report`)
-  - Append `apply` to apply the proposals from the most recent `report` run to the agent/skill files (e.g., `sw-engineer apply`)
+  - Append `apply` to apply the proposals from the most recent run to the agent/skill files — skips benchmark (e.g., `sw-engineer apply`)
 
 </inputs>
 
@@ -65,7 +64,7 @@ From `$ARGUMENTS`, determine:
 
 - Target list: one agent, one skill, or all (expand "all" to the full agent list above)
 - Mode: `fast` (N=3) or `full` (N=10) — default `fast`
-- Fix flag: `report` present → run benchmark + generate proposals; `apply` present → apply proposals only
+- Fix flag: `apply` present → apply proposals only; otherwise always run benchmark + generate self-mentor proposals
 
 **If `apply` is in `$ARGUMENTS`**: skip Steps 2–5 entirely, go directly to Step 6.
 
@@ -113,6 +112,8 @@ The prompt for each subagent is exactly:
 > `<task_prompt from that problem>`
 >
 > `<input from that problem>`
+>
+> End your response with a `## Confidence` block: **Score**: 0.N (high >=0.9 / moderate 0.7-0.9 / low \<0.7) and **Gaps**: what limited thoroughness.
 
 Write each subagent's full response to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/response-<problem_id>.md`.
 
@@ -177,9 +178,7 @@ Write a single-line JSONL result to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>
 
 `{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"problems":<N>,"verdict":"...","gaps":["..."]}`
 
-### Phase 5 — Propose instruction edits (report mode only)
-
-Skip this phase entirely if `<MODE>` does not contain `report`.
+### Phase 5 — Propose instruction edits
 
 Read the current agent/skill file:
 
@@ -219,7 +218,7 @@ Write the self-mentor response verbatim to `.claude/calibrate/runs/<TIMESTAMP>/<
 
 ### Return value
 
-Return **only** this compact JSON (no prose before or after). For `report` mode, include `"proposed_changes"` with the count of changes; for benchmark-only mode omit it:
+Return **only** this compact JSON (no prose before or after):
 
 `{"target":"<TARGET>","mean_recall":0.N,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N}`
 
@@ -242,7 +241,7 @@ Print the combined benchmark report:
 
 Flag any target where recall < 0.70 or |bias| > 0.15 with ⚠.
 
-**For `report` mode**: after the table, print the full content of each `proposal.md` for flagged targets (targets where `proposed_changes > 0`). Then print:
+After the table, print the full content of each `proposal.md` for targets where `proposed_changes > 0`. Then print:
 
 ```
 → Review proposals above, then run `/calibrate <targets> apply` to apply them.
@@ -268,7 +267,7 @@ For each flagged target (recall < 0.70 or |bias| > 0.15):
 - **Bias > 0.15**: `→ Raise effective re-run threshold for <target> in MEMORY.md (default 0.70 → ~<mean_confidence>)`
 - **Bias < −0.15**: `→ <target> is conservative; threshold can stay at default`
 
-**For `report` mode**: skip Steps 4 and 5 signal text — proposals shown in Step 3 already surface the actionable signals. Reminder at the end:
+Proposals shown in Step 3 already surface the actionable signals. End with:
 
 `→ Run /calibrate <target> apply to apply the proposals above.`
 
@@ -277,32 +276,43 @@ For each flagged target (recall < 0.70 or |bias| > 0.15):
 Find the most recent run that contains `proposal.md` files:
 
 ```bash
-# Most recent run directory
 LATEST=$(ls -td .claude/calibrate/runs/*/ 2>/dev/null | head -1)
 ```
 
-For each target specified in `$ARGUMENTS` (or all targets if `all`), check for `$LATEST/<target>/proposal.md`. If missing, print `⚠ No proposal found for <target> — run /calibrate <target> report first`.
+For each target in the target list, check whether `$LATEST/<target>/proposal.md` exists. Collect the set of targets that have a proposal (`found`) and those that don't (`missing`).
 
-For each proposal found, read it and apply each "Change N" block:
+Print `⚠ No proposal found for <target> — run /calibrate <target> first` for each missing target.
 
-1. Print the change header before applying: `Applying Change N to <file> [<section>]`
-2. Use the Edit tool — `old_string` = **Current** text (verbatim from proposal), `new_string` = **Proposed** text
-3. If **Current** is `"none"` (new insertion): use Edit to insert the **Proposed** text at the correct location in the section (find the section header and append after the last item in that block)
-4. After all changes for a target: print `✓ Applied N changes to .claude/agents/<target>.md`
+**Spawn one `general-purpose` subagent per found target. Issue ALL spawns in a single response — no waiting between spawns.**
 
-**Skip any change** where:
+Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<PROPOSAL_PATH>`, `<AGENT_FILE>`):
 
-- The **Current** text cannot be found verbatim in the file (print `⚠ Skipped — current text not found (file may have changed since proposal was generated)`)
-- The **Proposed** text is already present (print `✓ Already applied — skipped`)
+______________________________________________________________________
 
-Print final summary:
+Read the proposal file at `<PROPOSAL_PATH>` and apply each "Change N" block to `<AGENT_FILE>` (or the skill file if the target is a skill).
+
+For each change:
+
+1. Print: `Applying Change N to <file> [<section>]`
+2. Use the Edit tool — `old_string` = **Current** text verbatim, `new_string` = **Proposed** text
+3. If **Current** is `"none"` (new insertion): find the section header and insert the **Proposed** text after the last item in that block
+4. Skip if **Current** text is not found verbatim → print `⚠ Skipped — current text not found`
+5. Skip if **Proposed** text is already present → print `✓ Already applied — skipped`
+
+After processing all changes return **only** this compact JSON:
+
+`{"target":"<TARGET>","applied":N,"skipped":N}`
+
+______________________________________________________________________
+
+After all subagents complete, collect their JSON results and print the final summary:
 
 ```
 ## Fix Apply — <date>
 
-| Target      | File                         | Changes Applied | Skipped |
-|-------------|------------------------------|-----------------|---------|
-| sw-engineer | .claude/agents/sw-engineer.md| 2               | 0       |
+| Target      | File                          | Applied | Skipped |
+|-------------|-------------------------------|---------|---------|
+| sw-engineer | .claude/agents/sw-engineer.md | 2       | 0       |
 
 → Run /calibrate <targets> to verify improvement.
 ```
@@ -319,10 +329,10 @@ Print final summary:
 - **Do NOT use real project files**: benchmark only against synthetic inputs — no sensitive data and real files have no ground truth.
 - **Skill benchmarks** run the skill as a subagent against synthetic config or code; scored identically to agent benchmarks.
 - **Improvement loop**: systematic gaps → `<antipatterns_to_flag>` | consistent low recall → consider model tier upgrade (sonnet → opus) | large calibration bias → document adjusted threshold in MEMORY.md | re-calibrate after instruction changes to quantify improvement.
-- **`report` / `apply` pattern**: `report` is measurement + proposal only — it never mutates agent files. `apply` reads the proposal written by the previous `report` run and applies it. The two-step design keeps a human review gate between diagnosis and mutation: you see exactly what will change before any file is touched.
-- **Stale proposals**: `apply` uses verbatim text matching (`old_string` = **Current** from proposal). If the agent file was edited between `report` and `apply`, any change whose **Current** text no longer matches is skipped with a warning — no silent clobbering of intermediate edits.
+- **benchmark + propose by default**: every run (except `apply`) benchmarks and generates self-mentor proposals. `apply` reads the proposals from the most recent run and applies them. The two-step design keeps a human review gate between diagnosis and mutation: you see exactly what will change before any file is touched.
+- **Stale proposals**: `apply` uses verbatim text matching (`old_string` = **Current** from proposal). If the agent file was edited between the benchmark run and `apply`, any change whose **Current** text no longer matches is skipped with a warning — no silent clobbering of intermediate edits.
 - Follow-up chains:
-  - Recall < 0.70 → `/calibrate <agent> report` → review proposals → `/calibrate <agent> apply` → `/calibrate <agent>` to verify improvement
+  - Recall < 0.70 or borderline → `/calibrate <agent>` → review proposals → `/calibrate <agent> apply` → `/calibrate <agent>` to verify improvement
   - Calibration bias > 0.15 → add adjusted threshold to MEMORY.md → note in next audit
   - Recommended cadence: run before and after any significant agent instruction change
 

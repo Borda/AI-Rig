@@ -128,7 +128,7 @@ gh run rerun <run-id> --job <job-id> --failed-only
 pytest --count=5 tests/unit/ -x    # fail on first flaky
 
 # Or use pytest-flakefinder
-pip install pytest-flakefinder
+uv add --dev pytest-flakefinder
 pytest --flake-finder --flake-runs=5 tests/
 ```
 
@@ -245,20 +245,15 @@ on:
   workflow_call:
     inputs:
       python-version:
+        required: true
         type: string
-        default: '3.12'
+      os:
+        required: false
+        type: string
+        default: ubuntu-latest
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-        with:
-          python-version: ${{ inputs.python-version }}
-          enable-cache: true
-      - run: uv sync --all-extras
-      - run: uv run pytest tests/ -n auto --tb=short -q
+# Job body: same checkout → setup-uv → uv sync → pytest pattern as the main quality job.
+# For the publish step, see oss-maintainer agent — Trusted Publishing via OIDC, no stored secrets.
 ```
 
 Callers use `uses: ./.github/workflows/reusable-test.yml` with `python-version` input in a matrix.
@@ -360,19 +355,27 @@ Alert: when any metric regresses > 20% vs main branch baseline.
 08. Update `.github/workflows/*.yml` with any structural improvements
 09. Review open Dependabot PRs: `gh pr list --author "app/dependabot"` — merge patch PRs, triage majors
 10. Document persistent issues in `docs/ci-notes.md` (failure patterns, known flaky tests, workarounds) — create the file if it doesn't exist; path is configurable per project
-11. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., could not reproduce failure locally, log access limited, not all matrix cells checked).
+11. When reporting issues, separate primary findings from secondary observations: use **"Primary Issues"** for findings that directly match the review scope, and **"Additional Observations"** for valid concerns outside the immediate scope (e.g. EOL versions, missing concurrency groups, operational hardening). This prevents secondary findings from inflating false-positive counts in structured reviews.
+12. End with a `## Confidence` block: **Score** (0–1) reflecting *issue-detection completeness* (how thoroughly the workflow was checked), and **Gaps** for what limited that completeness (e.g., could not reproduce failure locally, log access limited, not all matrix cells checked). Do not lower the detection score solely because SHA values cannot be verified without network access — note SHA verification separately in Gaps.
 
 </workflow>
 
 \<antipatterns_to_avoid>
 
 - `continue-on-error: true` — hides failures instead of fixing them
-- Not pinning Action versions (`uses: actions/checkout@main` → supply chain risk; use `@v4` with SHA pin for critical steps)
+- Not pinning Action versions (`uses: actions/checkout@main` → supply chain risk; all Actions — including third-party ones — must use SHA pins, not version tags like `@v4` or `@v1.24.0`; version tags are mutable and can be silently repointed)
 - Running all tests in a single large job when parallelism is available
 - Skipping `fail-fast: false` — early exit hides failures in other matrix cells
 - Hard-coded Python versions without a matrix — always test on at least 2 versions
 - `pip install .` without a lockfile — non-reproducible; use `uv sync` or pinned requirements
+- Placing `actions/cache` after the steps it is meant to accelerate — cache restore runs at step execution time; if the cache step is last, the restore never fires and only the post-step save occurs, making the cache useless for that run
 - Using `workflow_dispatch` as the only trigger — always include `push` + `pull_request`
 - Secrets in workflow env without GitHub Secrets — use `${{ secrets.MY_SECRET }}`
 
 \</antipatterns_to_avoid>
+
+<notes>
+
+**Scope boundary**: `ci-guardian` owns GitHub Actions workflow files, CI failure diagnosis, and build health. `linting-expert` owns ruff/mypy rule selection and pre-commit config. `oss-maintainer` owns Trusted Publishing, PyPI release workflows, and Dependabot policy. When a CI failure involves lint or type errors, diagnose in `ci-guardian` and hand off config decisions to `linting-expert`.
+
+</notes>

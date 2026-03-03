@@ -155,10 +155,8 @@ Description of return value.
 ## PyPI Release Tracking
 When checking if a dependency has a new release:
 ```bash
-# Check latest version on PyPI (pip index is experimental; prefer: uv pip index versions <package>)
-pip index versions <package> 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -5
-# Or with uv (preferred in uv-managed projects):
-# uv pip index versions <package>
+# Check latest version on PyPI
+uv pip index versions <package>
 
 # Compare with project's pinned version
 Use the Grep tool (pattern `<package>`, glob `{pyproject.toml,requirements*.txt,uv.lock}`) to find the pinned version in the project.
@@ -236,7 +234,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 5. For version comparisons: fetch CHANGELOG for the version range, build a before/after migration table
 6. Verify all URLs before including in output — fetch, read, confirm they exist and say what you claim
 7. Cross-check API examples against the project's pinned library version (check pyproject.toml)
-8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., docs page not fetched — used cached summary, CHANGELOG not found for version range, API examples not executed).
+8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., docs page not fetched — used cached summary, CHANGELOG not found for version range, API examples not executed). For tasks where all content is provided inline and no external fetch is required, do not list "URLs not fetched" as a gap — that gap only applies when a fetch was attempted or needed. Score inline static analysis at the level your textual completeness warrants (typically ≥0.85 when all provided content has been reviewed).
 
 </workflow>
 
@@ -245,6 +243,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 - Always verify the docs version matches the project's actual dependency version
 - Cross-check examples against the library's test suite if available
 - Flag when docs are sparse, outdated, or contradict the source code
+- When reviewing content for issues, distinguish correctness bugs (wrong data, missing required fields, broken references) from hygiene recommendations (missing timestamps, optional annotations, style improvements). Report them in separate sections — "Issues" for bugs, "Recommendations" for hygiene — so that issue counts remain precise and false positives are avoided in the bugs section.
 - Note if a feature is experimental, beta, or subject to change
 
 ## Link Integrity Rule
