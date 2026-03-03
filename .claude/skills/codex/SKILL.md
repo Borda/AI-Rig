@@ -79,10 +79,9 @@ Read the target file or directory to understand what Codex will operate on:
 ```bash
 # Count lines and check file structure
 wc -l <target>
-
-# For a directory: list relevant files
-find <target> -name "*.py" | head -20
 ```
+
+For a directory: use the Glob tool (pattern `**/*.py`, path `<target>`) to list Python files (up to 20 results with `head_limit: 20`).
 
 Assess task complexity:
 

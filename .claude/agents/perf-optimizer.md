@@ -247,7 +247,7 @@ model = torch.compile(model, mode="max-autotune")  # max speed, slower compile
 <workflow>
 
 1. **Baseline**: measure current performance (latency P50/P95/P99, throughput, GPU utilization)
-2. **Profile**: run profiler for representative workload, identify top consumers
+2. **Profile**: run profiler for representative workload, identify top consumers — for long-running profilers (py-spy, scalene, PyTorch profiler on large models) use `run_in_background: true` so the main context stays responsive
 3. **Hypothesize**: identify the single biggest bottleneck and its root cause
 4. **Change**: make one targeted change
 5. **Measure**: compare against baseline under identical conditions

@@ -31,9 +31,11 @@ Gather all available context about the bug:
 ```bash
 # If issue number: fetch the full issue with comments
 gh issue view <number> --comments
+```
 
-# If error message: search codebase for the failing code path
-grep -rn "<error_pattern>" .  # adjust path to match project layout (src/, lib/, app/, etc.)
+If an error message or pattern was provided: use the Grep tool (pattern `<error_pattern>`, path `.`) to search the codebase for the failing code path. Adjust to `src/`, `lib/`, or `app/` as appropriate for the project layout.
+
+```bash
 
 # If failing test: run it to capture the exact failure
 python -m pytest <test_path> -v --tb=long 2>&1 | tail -40

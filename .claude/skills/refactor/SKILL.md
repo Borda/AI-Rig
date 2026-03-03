@@ -27,10 +27,9 @@ Safely refactor code by enforcing a test-first discipline. Before any logic chan
 
 Read the target code and build a mental model before touching anything:
 
-```bash
-# If directory: find all Python files
-find <target> -name "*.py" -not -path "*/__pycache__/*" | head -50
+If `<target>` is a directory: use the Glob tool (pattern `**/*.py`, path `<target>`) to enumerate Python files (excludes `__pycache__` automatically).
 
+```bash
 # Measure current state
 wc -l <target>/**/*.py 2>/dev/null || wc -l <target>
 ```
@@ -46,16 +45,17 @@ Spawn a **sw-engineer** agent to analyze the code and identify:
 
 Find existing tests for the target code:
 
-```bash
-# Locate test files — common patterns
-find . -name "test_*.py" -o -name "*_test.py" | xargs grep -l "<module_name>" 2>/dev/null
+Locate test files: use the Glob tool (pattern `**/test_*.py` or `**/*_test.py`) to find candidates, then use the Grep tool (pattern `<module_name>`, output mode `files_with_matches`) to narrow to those that reference the target module.
 
 # Check if pytest is available and run coverage on the target
-python -m pytest --co -q 2>/dev/null | grep -i "<module_name>" || echo "No tests found"
+
+python -m pytest --co -q 2>/dev/null | grep -i "\<module_name>" || echo "No tests found"
 
 # If coverage tool available
-python -m pytest --cov=<target_module> --cov-report=term-missing -q 2>/dev/null
-```
+
+python -m pytest --cov=\<target_module> --cov-report=term-missing -q 2>/dev/null
+
+````
 
 Classify each public function/method as:
 
@@ -76,7 +76,7 @@ For every **uncovered** or **partially covered** public API, spawn a **qa-specia
 ```bash
 # Run the new tests to confirm they pass against current code
 python -m pytest <test_file> -v
-```
+````
 
 **Gate**: all characterization tests must pass before proceeding. If any fail, the test is wrong — fix the test, not the code.
 

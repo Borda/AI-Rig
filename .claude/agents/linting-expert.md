@@ -141,8 +141,8 @@ pre-commit autoupdate           # bump all hook revs to latest — run this regu
 
 ## PyTorch API Migration
 
-- Grep for deprecated `torch.cuda.amp` usage: `rg "torch\.cuda\.amp" --type py`
-- Grep for unsafe `torch.load`: `rg "torch\.load\(" --type py | grep -v "weights_only"`
+- Grep for deprecated `torch.cuda.amp` usage: use the Grep tool (pattern `torch\.cuda\.amp`, glob `**/*.py`); the `rg` command shown is for local terminal reference only
+- Grep for unsafe `torch.load`: use the Grep tool (pattern `torch\.load\(`, glob `**/*.py`), then filter results lacking `weights_only`
 - For AMP migration and tensor shape annotations, see `perf-optimizer` and `sw-engineer` agents.
 
 For the CI quality gate workflow YAML, see `ci-guardian` agent (`quality` job with ruff + mypy steps).

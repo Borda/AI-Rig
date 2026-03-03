@@ -32,7 +32,7 @@ Before searching, read the current project to extract constraints:
 
 ## Step 2: Research & codebase check (run in parallel)
 
-Launch both tasks simultaneously — they are independent.
+Issue both 2a and 2b in the same response — they are independent and must run simultaneously, not sequentially.
 
 ### 2a: Spawn ai-researcher agent (background subagent)
 

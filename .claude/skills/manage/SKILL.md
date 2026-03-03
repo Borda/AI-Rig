@@ -50,8 +50,8 @@ Manage the lifecycle of agents and skills in the `.claude/` directory. Handles c
 
 - AGENTS_DIR: `.claude/agents`
 - SKILLS_DIR: `.claude/skills`
-- USED_COLORS: blue, green, purple, lime, orange, yellow, cyan, red, teal, indigo, magenta, pink
-- AVAILABLE_COLORS: coral, gold, olive, navy, salmon, violet, maroon, aqua, brown
+- USED_COLORS: blue, green, purple, lime, orange, yellow, cyan, violet, teal, indigo, magenta, pink
+- AVAILABLE_COLORS: coral, gold, olive, navy, salmon, red, maroon, aqua, brown
 
 </constants>
 
@@ -71,11 +71,12 @@ Extract operation, type, name, and optional arguments from `$ARGUMENTS`.
 - For `add perm`: rule must NOT already exist in settings.json allow list; description and use case are required
 - For `remove perm`: rule MUST already exist in settings.json allow list
 
-```bash
-# Check agent/skill existence
-ls .claude/agents/<name>.md 2>/dev/null
-ls .claude/skills/<name>/SKILL.md 2>/dev/null
+Use the Glob tool to check existence:
 
+- Agent: pattern `agents/<name>.md`, path `.claude/` — non-empty result means it exists
+- Skill: pattern `skills/<name>/SKILL.md`, path `.claude/` — non-empty result means it exists
+
+```bash
 # Check permission existence (for add perm / remove perm)
 python3 -c "import json,sys; d=json.load(open('.claude/settings.json')); sys.exit(0 if '<rule>' in d['permissions']['allow'] else 1)" 2>/dev/null
 ```
@@ -99,17 +100,18 @@ Skip this step for `update` and `delete` operations.
 
 ## Step 3: Inventory current state
 
-Snapshot the current roster for later comparison:
+Snapshot the current roster for later comparison. Steps 2 and 3 are independent reads — issue Glob calls for both in the same response.
+
+Use Glob (pattern `agents/*.md`, path `.claude/`) for agents and Glob (pattern `skills/*/`, path `.claude/`) for skills to build the name lists. Use Grep (pattern `^color:`, glob `agents/*.md`, path `.claude/`, output mode `content`) to collect colors currently in use.
+
+For name extraction that requires `basename`/`sort` string processing, feed the Glob results into Bash:
 
 ```bash
-# Current agents
+# Current agents (Glob provides paths; Bash extracts sorted names)
 ls .claude/agents/*.md | xargs -n1 basename | sed 's/\.md$//' | sort
 
-# Current skills
+# Current skills (Glob provides paths; Bash extracts sorted names)
 ls -d .claude/skills/*/ | xargs -n1 basename | sort
-
-# Colors in use
-grep '^color:' .claude/agents/*.md
 ```
 
 ## Step 4: Execute operation
@@ -163,6 +165,15 @@ name / description / tools / model / color (frontmatter)
 
 **Content rules:** `<role>` and `<workflow>` use normal tags; all other sections use `\<escaped>` tags. Generate real domain content (80-120 lines total).
 
+**Tool selection**: match tools precisely to the domain — do not pad the list. Guidelines by role type:
+
+- Analysis / read-only agents (e.g., `solution-architect`, `doc-scribe`): start with `Read, Grep, Glob`; add `WebFetch`/`WebSearch` only if the domain involves fetching external docs or URLs; add `Write` only if the agent creates output files
+- Code execution agents (e.g., `linting-expert`, `perf-optimizer`, `ci-guardian`): include `Bash`; add `Write`/`Edit` only if the agent modifies code
+- Orchestrators that spawn subagents (e.g., `qa-specialist`, `sw-engineer`): include `Task`
+- Web-research agents (e.g., `web-explorer`, `ai-researcher`): include `WebFetch` and/or `WebSearch`
+
+Remove any tool that serves no purpose for the declared domain. A minimal, precise list is safer and clearer than a maximal one.
+
 ### Mode: Create Skill
 
 1. Fetch the latest Claude Code skill frontmatter schema to ensure the template is current:
@@ -195,7 +206,7 @@ name / description / argument-hint / disable-model-invocation: true / allowed-to
 <notes> — operational caveats
 ```
 
-**Content rules:** No backslash escaping in skills (all normal XML tags). Generate real steps (40-60 lines total). Default `allowed-tools` to `Read, Bash, Grep, Glob, Task` unless writing files is needed.
+**Content rules:** No backslash escaping in skills (all normal XML tags). Generate real steps (40-60 lines total). Default `allowed-tools` to `Read, Bash, Grep, Glob, Task` unless writing files is needed. Only add `Write`/`Edit` if the skill creates or modifies files; only add `WebFetch`/`WebSearch` if the skill fetches external docs. Do not list tools the workflow never uses — unused declared tools inflate the permission surface needlessly.
 
 ### Mode: Update Agent
 
@@ -324,13 +335,12 @@ grep -cF '`<rule>`' .claude/permissions-guide.md && echo "STILL IN GUIDE" || ech
 
 Search all `.claude/` markdown files for the changed name and update references:
 
-```bash
-# Find all references to the name across agents, skills, and top-level config
-grep -rn "<name>" .claude/agents/*.md
-grep -rn "<name>" .claude/skills/*/SKILL.md
-grep -n "<name>" .claude/CLAUDE.md
-grep -n "<name>" README.md
-```
+Use the Grep tool to find all references to the name across the config:
+
+- Pattern `<name>`, glob `agents/*.md`, path `.claude/`, output mode `content`
+- Pattern `<name>`, glob `skills/*/SKILL.md`, path `.claude/`, output mode `content`
+- Pattern `<name>`, file `.claude/CLAUDE.md`, output mode `content`
+- Pattern `<name>`, file `README.md`, output mode `content`
 
 **For update:** Use the Edit tool to replace every occurrence of `<old-name>` with `<new-name>` in each file that references it.
 
@@ -346,11 +356,13 @@ grep -n "<name>" README.md
 
 Regenerate the inventory lines from what actually exists on disk:
 
+Use Glob (`agents/*.md`, path `.claude/`) for agents and Glob (`skills/*/`, path `.claude/`) for skills to get file paths, then feed into Bash for name extraction and comma-joining (no dedicated tool for aggregate string joining):
+
 ```bash
-# Get current agent list
+# Get current agent list (Glob provides paths; Bash joins names)
 ls .claude/agents/*.md | xargs -n1 basename | sed 's/\.md$//' | paste -sd', ' -
 
-# Get current skill list
+# Get current skill list (Glob provides paths; Bash joins names)
 ls -d .claude/skills/*/ | xargs -n1 basename | paste -sd', ' -
 ```
 
@@ -374,13 +386,14 @@ The README tables are self-documenting — keep descriptions concise (one line) 
 
 Confirm no broken references remain:
 
-```bash
-# Extract all backtick-quoted agent/skill name references in .claude/ files
-grep -rohE '`[a-z]+(-[a-z]+)+`' .claude/agents/*.md \
-  .claude/skills/*/SKILL.md | sort -u
+Use the Grep tool to extract all backtick-quoted agent/skill name references (pattern `` `[a-z]+(-[a-z]+)+` ``, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`).
 
-# Compare against actual files on disk
+Use Glob (`agents/*.md`, path `.claude/`) and Glob (`skills/*/`, path `.claude/`) for the on-disk inventory; extract names via Bash if needed for comparison:
+
+```bash
+# On-disk agent names (Glob provides paths; Bash extracts names)
 ls .claude/agents/*.md | xargs -n1 basename | sed 's/\.md$//'
+# On-disk skill names (Glob provides paths; Bash extracts names)
 ls -d .claude/skills/*/ | xargs -n1 basename
 ```
 
@@ -389,6 +402,8 @@ Use Grep to search for the specific changed name and confirm:
 - **Update**: zero hits for old name, appropriate hits for new name
 - **Delete**: zero hits for deleted name (or flagged references noted)
 - **Create**: new file exists with valid structure
+
+For **create** and **update** operations, also verify tool efficiency: cross-check the agent/skill's declared tools (`tools:` or `allowed-tools:`) against the tool names that actually appear in the workflow body. Any declared tool not referenced anywhere in the content should be flagged as a cleanup candidate (unnecessary permission surface).
 
 ## Step 9: Audit
 
@@ -417,10 +432,7 @@ Output a structured report containing:
 - **Audit Result**: audit findings (pass / issues found) (n/a for perm operations)
 - **Follow-up**: run `/sync apply` to propagate to `~/.claude/`; for `create` review generated content; for perm operations confirm both `settings.json` and `permissions-guide.md` are updated
 
-## Confidence
-
-**Score**: [0.N]
-**Gaps**: [e.g., cross-refs not fully verified, README row format uncertain, settings.json validation skipped]
+End the summary report with a `## Confidence` block per CLAUDE.md Output Standards: `**Score**: 0.N — [high ≥0.9 / moderate 0.7–0.9 / low <0.7]` and `**Gaps**: what limited thoroughness.`
 
 </workflow>
 
@@ -437,7 +449,7 @@ Output a structured report containing:
 - Follow-up chains:
   - After any create/update/delete → `/audit` to verify config integrity, then `/sync apply` to propagate
   - After creating a new agent/skill → `/review` to validate generated content quality
-  - After updating agent instructions (especially `\<antipatterns_to_flag>` or `\<evaluation_criteria>`) → `/calibrate <agent>` to measure whether recall and confidence calibration improved
+  - After updating agent instructions (especially `\<antipatterns_to_flag>`) → `/calibrate <agent>` to measure whether recall and confidence calibration improved
   - After `add perm`/`remove perm` → `/sync apply` to propagate updated settings.json and permissions-guide.md to `~/.claude/`
   - Recommended sequence: `/manage <op>` → `/audit` → `/sync apply`
 

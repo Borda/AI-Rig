@@ -25,10 +25,7 @@ Analyze how Claude Code is being used in this project and suggest new agents or 
 
 ## Step 1: Inventory existing agents and skills
 
-```bash
-ls .claude/agents/*.md
-ls .claude/skills/*/SKILL.md
-```
+Use the Glob tool to enumerate agents (pattern `agents/*.md`, path `.claude/`) and skills (pattern `skills/*/SKILL.md`, path `.claude/`).
 
 For each agent/skill found, extract: name, description, tools, purpose.
 
@@ -51,10 +48,7 @@ git log --name-only --pretty="" -30 | sort | uniq -c | sort -rn | head -20
 git log --oneline -100 | awk '{print $2}' | sort | uniq -c | sort -rn | head -15
 ```
 
-```bash
-# Then read task history and conversation hints
-cat tasks/todo.md tasks/lessons.md 2>/dev/null
-```
+Then use the Read tool on `tasks/todo.md` and `tasks/lessons.md` (if they exist) for task history and conversation hints.
 
 If `$ARGUMENTS` was provided, use it as additional context for the pattern analysis.
 

@@ -149,13 +149,8 @@ Dependencies flow downward. No upward arrows.
 
 Measure fan-in (how many modules import this one) and fan-out (how many this module imports):
 
-```bash
-# Fan-in: who depends on target module
-grep -r "from mypackage.target import\|import mypackage.target" src/ --include="*.py" -l | wc -l
-
-# Fan-out: what target module depends on
-grep "^from \|^import " src/mypackage/target.py | sort -u
-```
+- **Fan-in**: use the Grep tool (pattern `from mypackage.target import|import mypackage.target`, glob `**/*.py`, path `src/`, output mode `files_with_matches`) — count of results is the fan-in
+- **Fan-out**: use the Grep tool (pattern `^from |^import `, file `src/mypackage/target.py`, output mode `content`) to list direct imports
 
 High fan-in = stability required; changes here break many things.
 High fan-out = fragile; this module breaks when its dependencies change.
@@ -170,11 +165,10 @@ Read the module and ask:
 
 ## API Surface Audit
 
-```bash
-# What is exported publicly?
-grep -n "__all__" src/mypackage/__init__.py
+Use the Grep tool (pattern `__all__`, file `src/mypackage/__init__.py`, output mode `content`) to see what is exported publicly.
 
-# What is importable but not in __all__? (requires package installed: uv run python -c ... if needed)
+```bash
+# What is importable but not in __all__? (requires package installed)
 uv run python -c "import mypackage; print([x for x in dir(mypackage) if not x.startswith('_')])"
 ```
 
@@ -273,6 +267,8 @@ Choose the right template from `<design_artifacts>`:
 - New public API → API Design Proposal
 - Structural change → Component Diagram
 - Existing API migration → Migration Plan (Phased)
+
+Write the artifact to a file using the Write tool (e.g., `docs/adr/ADR-NNN.md` for ADRs, or the path requested by the user). Use Edit to revise existing artifacts.
 
 ## Step 6: Cross-reference sw-engineer
 

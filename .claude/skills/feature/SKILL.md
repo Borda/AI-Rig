@@ -30,10 +30,9 @@ Gather full context before writing any code:
 ```bash
 # If issue number: fetch the full issue with comments
 gh issue view <number> --comments
-
-# If free-text description: search for related code
-grep -rn "<keyword>" src/ --include="*.py" | head -30
 ```
+
+If a free-text description was provided: use the Grep tool (pattern `<keyword>`, glob `**/*.py`, path `src/`) to search for related code before spawning the analysis agent.
 
 Spawn a **sw-engineer** agent to analyse the codebase and produce:
 

@@ -11,6 +11,9 @@ tasks/
 .claude/state/
 .claude/logs/
 
+# Calibration run artifacts (ephemeral benchmarks)
+.claude/calibrate/runs/
+
 # JetBrains IDEs
 .idea/
 *.iml

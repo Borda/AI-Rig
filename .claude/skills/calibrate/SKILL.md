@@ -1,8 +1,8 @@
 ---
 name: calibrate
 description: Calibration testing for agents and skills. Generates synthetic problems with known outcomes (quasi-ground-truth), runs targets against them, and measures recall, precision, and confidence calibration — revealing whether self-reported confidence scores track actual quality.
-argument-hint: '[agent-name|all|/skill-name] [fast|full]'
-allowed-tools: Read, Write, Bash, Grep, Glob, Task
+argument-hint: '[agent-name|all|/audit|/review|/security] [fast|full] [report|apply]'
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Task
 ---
 
 <objective>
@@ -18,8 +18,10 @@ Calibration data drives the improvement loop: systematic gaps become instruction
 - **$ARGUMENTS**: optional
   - Omitted / `all` → fast benchmark across all agents
   - `<agent-name>` → fast benchmark for one agent (e.g., `sw-engineer`)
-  - `/<skill-name>` → benchmark a skill (e.g., `/audit`, `/review`, `/security`)
+  - `/audit`, `/review`, or `/security` → benchmark a skill (only these three skill domains have calibration support)
   - Append `full` for 10 problems instead of 3 (e.g., `sw-engineer full`, `all full`)
+  - Append `report` to also generate instruction-improvement proposals for flagged targets — runs benchmark + writes `proposal.md` per target + prints proposals to terminal; no agent files are mutated (e.g., `sw-engineer report`, `all report`)
+  - Append `apply` to apply the proposals from the most recent `report` run to the agent/skill files (e.g., `sw-engineer apply`)
 
 </inputs>
 
@@ -28,6 +30,7 @@ Calibration data drives the improvement loop: systematic gaps become instruction
 - FAST_N: 3 problems per target
 - FULL_N: 10 problems per target
 - RECALL_THRESHOLD: 0.70 (below → agent needs instruction improvement)
+- CALIBRATION_BORDERLINE: ±0.10 (|bias| within this → calibrated; between 0.10 and 0.15 → borderline)
 - CALIBRATION_WARN: ±0.15 (bias beyond this → confidence decoupled from quality)
 - CALIBRATE_LOG: `.claude/logs/calibrations.jsonl`
 
@@ -56,167 +59,270 @@ Skill domains:
 
 <workflow>
 
-## Step 1: Parse and select targets
+## Step 1: Parse targets and create run directory
 
 From `$ARGUMENTS`, determine:
 
 - Target list: one agent, one skill, or all (expand "all" to the full agent list above)
-- Mode: fast (N=3) or full (N=10)
+- Mode: `fast` (N=3) or `full` (N=10) — default `fast`
+- Fix flag: `report` present → run benchmark + generate proposals; `apply` present → apply proposals only
 
-## Step 2: Generate synthetic problems
+**If `apply` is in `$ARGUMENTS`**: skip Steps 2–5 entirely, go directly to Step 6.
 
-For each target, spawn a **general-purpose** problem-generator agent (built-in Claude Code subagent type, not a named project agent):
+Otherwise, generate timestamp: `YYYYMMDDTHHMMSSZ` (UTC, e.g. `20260303T134448Z`). All run dirs use this timestamp.
 
-```
-Generate N synthetic calibration problems for <target> targeting <domain>.
+## Step 2: Spawn per-target pipeline subagents (parallel)
 
-For each problem return a JSON object:
-{
-  "problem_id": "kebab-slug",
-  "difficulty": "easy|medium|hard",
-  "task_prompt": "instruction to give the target (what to analyse)",
-  "input": "the code / config / content inline — no file path",
-  "ground_truth": [
-    {"issue": "concise description", "location": "function:line or section", "severity": "critical|high|medium|low"}
-  ]
-}
+Issue ALL `general-purpose` subagent spawns in a **single response** — one per target. Do not wait for one to finish before spawning the next.
+
+Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<DOMAIN>`, `<N>`, `<TIMESTAMP>`, `<MODE>` before spawning):
+
+______________________________________________________________________
+
+You are a calibration pipeline runner for `<TARGET>`. Complete all four phases in sequence.
+
+Run dir: `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/`
+
+### Phase 1 — Generate problems
+
+Generate `<N>` synthetic calibration problems for `<TARGET>` targeting domain: `<DOMAIN>`.
+
+For each problem produce a JSON object with these fields:
+
+- `problem_id`: kebab-slug string
+- `difficulty`: `"easy"`, `"medium"`, or `"hard"`
+- `task_prompt`: the instruction to give the target — what to analyse (do NOT reveal the issues)
+- `input`: the code / config / content inline (no file paths)
+- `ground_truth`: array of objects, each with `issue` (concise description), `location` (function:line or section), and `severity` (`critical`, `high`, `medium`, or `low`)
 
 Rules:
+
 - Issues must be unambiguous — a domain expert would confirm them
 - Cover ≥1 easy and ≥1 medium problem; hard is optional
 - Each problem has 2–5 known issues; no runtime-only-detectable issues
-- Do NOT reveal the issues in the task_prompt — the agent must discover them independently
-- Return a valid JSON array only, no prose
-```
+- Return a valid JSON array only (no prose)
 
-Write problems to `.claude/calibrate/runs/<timestamp>/<target>/problems.json` (create dirs as needed).
+Write the JSON array to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/problems.json` (use Bash `mkdir -p` to create dirs).
 
-## Step 3: Run target agent / skill on each problem (parallel)
+### Phase 2 — Run target on each problem (parallel)
 
-Spawn the target agent (or run the skill) via Task for each problem simultaneously. Agent prompt template:
+Spawn one `<TARGET>` named subagent per problem. Issue ALL spawns in a **single response** — no waiting between spawns.
 
-```
-<task_prompt from problem>
+The prompt for each subagent is exactly:
 
-<input from problem>
-```
+> `<task_prompt from that problem>`
+>
+> `<input from that problem>`
 
-The `## Confidence` block is now part of every agent's standard output (per CLAUDE.md output standards) — no need to request it explicitly. If it is absent from the response, treat confidence as 0.5 and note the gap.
+Write each subagent's full response to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/response-<problem_id>.md`.
 
-For **skill targets**: create a temporary synthetic config or file, point the skill at it, capture findings from the skill's consolidated output.
+For **skill targets** (target starts with `/`): spawn a `general-purpose` subagent with the skill's SKILL.md content prepended as context, running against the synthetic input from the problem.
 
-## Step 4: Score each response
+### Phase 3 — Score responses in-context
 
-For each (problem, agent_response) pair, spawn a **general-purpose** scorer agent (built-in Claude Code subagent type):
+Score each (problem, response) pair directly in this context — no separate scorer subagents.
 
-```
-Ground truth issues:
-<ground_truth JSON from problem>
+For each ground truth issue: mark `true` if the target identified the same issue type at the same location (exact match or semantically equivalent description), `false` otherwise.
 
-Agent response:
-<full agent response text>
+Extract confidence from the target's `## Confidence` block. If absent, use `0.5` and note the gap.
 
-For each ground truth issue: determine whether the agent found it.
-A finding counts as "found" if the agent identified the same issue type at the same location
-(exact match or semantically equivalent description).
+Count false positives: target-reported issues that have no corresponding ground truth item.
 
-Extract the confidence score from the agent's ## Confidence block.
+Compute per-problem:
 
-Return JSON (no prose):
-{
-  "problem_id": "...",
-  "found": [true|false per ground truth issue in order],
-  "false_positives": N,
-  "confidence": 0.N,
-  "recall": found_count / total_issues,
-  "precision": found_count / (found_count + false_positives + 1e-9)
-}
-```
+- `recall = found_count / total_issues`
+- `precision = found_count / (found_count + false_positives + 1e-9)`
+- `f1 = 2·recall·precision / (recall + precision + 1e-9)`
 
-## Step 5: Aggregate and compute calibration
+Write all per-problem scores to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/scores.json` as a JSON array with fields: `problem_id`, `found` (array of booleans), `false_positives`, `confidence`, `recall`, `precision`, `f1`.
 
-Collect all per-problem scores and compute:
+### Phase 4 — Aggregate, write report and result
 
-- `mean_recall` = mean of all recall scores
-- `mean_confidence` = mean of all confidence scores
+Compute aggregates:
+
+- `mean_recall` = mean of all `recall` values
+- `mean_confidence` = mean of all `confidence` values
 - `calibration_bias` = `mean_confidence − mean_recall`
-  - `+bias` → overconfident (confidence inflated vs quality)
-  - `−bias` → underconfident (conservative; actual quality better than reported)
-  - `~0` → calibrated ✓
-- `mean_f1` = mean of 2·recall·precision / (recall + precision) per problem
+- `mean_f1` = mean of all `f1` values
 
-Classify calibration:
+Verdict:
 
-- `|bias| < 0.10` → **calibrated ✓**
-- `0.10 ≤ |bias| ≤ 0.15` → **borderline** — monitor; no immediate action unless persistent across runs
-- `bias > 0.15` → **⚠ overconfident** — adjust effective re-run threshold upward
-- `bias < −0.15` → **underconfident** — no action needed; confidence is conservative
+- `|bias| < 0.10` → `calibrated`
+- `0.10 ≤ |bias| ≤ 0.15` → `borderline`
+- `bias > 0.15` → `overconfident`
+- `bias < −0.15` → `underconfident`
 
-## Step 6: Report
+Write full report to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/report.md` using this structure:
 
 ```
-## Benchmark Report — <target> — <date>
-Mode: fast | Problems: N | Total known issues: M
+## Benchmark Report — <TARGET> — <date>
+Mode: <MODE> | Problems: <N> | Total known issues: M
 
 ### Per-Problem Results
 | Problem ID | Difficulty | Recall | Precision | Confidence | Cal. Δ |
-|------------|-----------|--------|-----------|-----------|--------|
-| bug-001    | easy       | 1.00   | 0.80      | 0.92      | −0.08 ✓ |
-| bug-002    | medium     | 0.67   | 1.00      | 0.88      | +0.21 ⚠ |
-| bug-003    | hard       | 0.33   | 0.50      | 0.75      | +0.42 ⚠ |
+| ...
 
 ### Aggregate
-| Metric           | Value | Status                    |
-|------------------|-------|---------------------------|
-| Mean recall      | 0.67  | ⚠ below threshold (0.70)  |
-| Mean confidence  | 0.85  |                           |
-| Calibration bias | +0.18 | ⚠ overconfident           |
-| Mean F1          | 0.71  |                           |
-
-### Calibration Verdict
-Confidence decoupled from quality (bias +0.18 > ±0.15 threshold).
-→ Treat confidence < 0.85 as the reliable re-run trigger for this agent (not the default 0.70).
-→ Document adjusted threshold in MEMORY.md.
+| Metric | Value | Status |
+| ...
 
 ### Systematic Gaps (missed in ≥2 problems)
-- async error paths: missed in 2/3 problems
-- false positive rate: 0.3 per problem (spurious findings reduce trust)
+...
 
 ### Improvement Signals
-1. [specific gap → add to agent's `<antipatterns_to_flag>`]
-2. [domain weakness → candidate for instruction update or model tier upgrade]
+...
 ```
 
-## Step 7: Log result
+Write a single-line JSONL result to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/result.jsonl`:
 
-Append to `.claude/logs/calibrations.jsonl` (create dir if needed):
+`{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"problems":<N>,"verdict":"...","gaps":["..."]}`
 
-```json
-{
-  "ts": "...",
-  "target": "sw-engineer",
-  "mode": "fast",
-  "mean_recall": 0.67,
-  "mean_confidence": 0.85,
-  "calibration_bias": 0.18,
-  "mean_f1": 0.71,
-  "problems": 3
-}
+### Phase 5 — Propose instruction edits (report mode only)
+
+Skip this phase entirely if `<MODE>` does not contain `report`.
+
+Read the current agent/skill file:
+
+- Agent: `.claude/agents/<TARGET>.md`
+- Skill: `.claude/skills/<TARGET>/SKILL.md` (strip the leading `/` from target name)
+
+Read `report.md` from Phase 4 — specifically the **Systematic Gaps** and **Improvement Signals** sections.
+
+Spawn a **self-mentor** subagent with this prompt:
+
+> You are reviewing the agent/skill file below in the context of a calibration benchmark.
+>
+> **Benchmark findings (from report.md):**
+> [paste Systematic Gaps and Improvement Signals sections verbatim]
+>
+> **Current file content:**
+> [paste full file content]
+>
+> Propose specific, minimal instruction edits that directly address each systematic gap (issues missed in ≥2/N problems) and each false-positive pattern. Be conservative: one targeted change per gap. Do not refactor sections unrelated to the findings.
+>
+> Format your response as:
+>
+> ```
+> ## Proposed Changes — <TARGET>
+>
+> ### Change 1: <gap name>
+> **File**: `.claude/agents/<TARGET>.md`
+> **Section**: `<antipatterns_to_flag>` / `<workflow>` / `<notes>` / etc.
+> **Current**: [exact verbatim text to replace; or "none" if inserting new content]
+> **Proposed**: [exact replacement text]
+> **Rationale**: one sentence — why this closes the gap
+>
+> [repeat for each gap — omit changes for calibrated targets with no actionable gaps]
+> ```
+
+Write the self-mentor response verbatim to `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/proposal.md`.
+
+### Return value
+
+Return **only** this compact JSON (no prose before or after). For `report` mode, include `"proposed_changes"` with the count of changes; for benchmark-only mode omit it:
+
+`{"target":"<TARGET>","mean_recall":0.N,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"verdict":"calibrated|borderline|overconfident|underconfident","gaps":["..."],"proposed_changes":N}`
+
+______________________________________________________________________
+
+## Step 3: Collect results and print combined report
+
+After all pipeline subagents complete, parse the compact JSON summary from each.
+
+Print the combined benchmark report:
+
+```
+## Calibrate — <date> — <MODE>
+
+| Target           | Recall | Confidence | Bias   | F1   | Verdict    | Top Gap              |
+|------------------|--------|-----------|--------|------|------------|----------------------|
+| sw-engineer      | 0.83   | 0.85      | +0.02 ✓| 0.81 | calibrated | async error paths    |
+| ...              |        |           |        |      |            |                      |
 ```
 
-This log enables tracking calibration improvement over time as agent instructions evolve. Compare runs before and after instruction changes to quantify impact.
+Flag any target where recall < 0.70 or |bias| > 0.15 with ⚠.
+
+**For `report` mode**: after the table, print the full content of each `proposal.md` for flagged targets (targets where `proposed_changes > 0`). Then print:
+
+```
+→ Review proposals above, then run `/calibrate <targets> apply` to apply them.
+→ Proposals saved to: .claude/calibrate/runs/<TIMESTAMP>/<TARGET>/proposal.md
+```
+
+Targets with verdict `calibrated` and no proposed changes get a single line: `✓ <target> — no instruction changes needed`.
+
+## Step 4: Concatenate JSONL logs
+
+Append each target's result line to `.claude/logs/calibrations.jsonl` (create dir if needed):
+
+```bash
+mkdir -p .claude/logs
+cat .claude/calibrate/runs/<TIMESTAMP>/*/result.jsonl >> .claude/logs/calibrations.jsonl
+```
+
+## Step 5: Surface improvement signals
+
+For each flagged target (recall < 0.70 or |bias| > 0.15):
+
+- **Recall < 0.70**: `→ Update <target> <antipatterns_to_flag> for: <gaps from result>`
+- **Bias > 0.15**: `→ Raise effective re-run threshold for <target> in MEMORY.md (default 0.70 → ~<mean_confidence>)`
+- **Bias < −0.15**: `→ <target> is conservative; threshold can stay at default`
+
+**For `report` mode**: skip Steps 4 and 5 signal text — proposals shown in Step 3 already surface the actionable signals. Reminder at the end:
+
+`→ Run /calibrate <target> apply to apply the proposals above.`
+
+## Step 6: Apply proposals (apply mode only)
+
+Find the most recent run that contains `proposal.md` files:
+
+```bash
+# Most recent run directory
+LATEST=$(ls -td .claude/calibrate/runs/*/ 2>/dev/null | head -1)
+```
+
+For each target specified in `$ARGUMENTS` (or all targets if `all`), check for `$LATEST/<target>/proposal.md`. If missing, print `⚠ No proposal found for <target> — run /calibrate <target> report first`.
+
+For each proposal found, read it and apply each "Change N" block:
+
+1. Print the change header before applying: `Applying Change N to <file> [<section>]`
+2. Use the Edit tool — `old_string` = **Current** text (verbatim from proposal), `new_string` = **Proposed** text
+3. If **Current** is `"none"` (new insertion): use Edit to insert the **Proposed** text at the correct location in the section (find the section header and append after the last item in that block)
+4. After all changes for a target: print `✓ Applied N changes to .claude/agents/<target>.md`
+
+**Skip any change** where:
+
+- The **Current** text cannot be found verbatim in the file (print `⚠ Skipped — current text not found (file may have changed since proposal was generated)`)
+- The **Proposed** text is already present (print `✓ Already applied — skipped`)
+
+Print final summary:
+
+```
+## Fix Apply — <date>
+
+| Target      | File                         | Changes Applied | Skipped |
+|-------------|------------------------------|-----------------|---------|
+| sw-engineer | .claude/agents/sw-engineer.md| 2               | 0       |
+
+→ Run /calibrate <targets> to verify improvement.
+```
 
 </workflow>
 
 <notes>
 
+- **Context safety**: each target runs in its own pipeline subagent — only a compact JSON (~200 bytes) returns to the main context. `all` mode with 12 targets returns ~2.4KB total, well within context limits.
+- **In-context scoring**: Phase 3 scores responses directly inside the pipeline subagent (3 responses × ~2KB = ~6KB for fast mode). No separate scorer agents needed. `full` mode (10 responses × ~2KB = ~20KB) still fits comfortably in one context.
+- **Nesting depth**: main → pipeline subagent → target agent (2 levels). The pipeline subagent spawns target agents but does not nest further.
 - **Quasi-ground-truth limitation**: problems are generated by Claude — the same model family as the agents under test. A truly adversarial benchmark requires expert-authored problems. This benchmark reliably catches systematic blind spots and calibration drift even with this limitation.
 - **Calibration bias is the key signal**: positive bias (overconfident) → raise the agent's effective re-run threshold in MEMORY.md. Negative bias (underconfident) → confidence is conservative, no action needed. Near-zero → confidence is trustworthy.
 - **Do NOT use real project files**: benchmark only against synthetic inputs — no sensitive data and real files have no ground truth.
-- **Skill benchmarks** run the skill as a Task subagent against synthetic config or code; scored identically to agent benchmarks.
+- **Skill benchmarks** run the skill as a subagent against synthetic config or code; scored identically to agent benchmarks.
 - **Improvement loop**: systematic gaps → `<antipatterns_to_flag>` | consistent low recall → consider model tier upgrade (sonnet → opus) | large calibration bias → document adjusted threshold in MEMORY.md | re-calibrate after instruction changes to quantify improvement.
+- **`report` / `apply` pattern**: `report` is measurement + proposal only — it never mutates agent files. `apply` reads the proposal written by the previous `report` run and applies it. The two-step design keeps a human review gate between diagnosis and mutation: you see exactly what will change before any file is touched.
+- **Stale proposals**: `apply` uses verbatim text matching (`old_string` = **Current** from proposal). If the agent file was edited between `report` and `apply`, any change whose **Current** text no longer matches is skipped with a warning — no silent clobbering of intermediate edits.
 - Follow-up chains:
-  - Recall < 0.70 → update agent instructions → `/calibrate <agent>` to confirm improvement
+  - Recall < 0.70 → `/calibrate <agent> report` → review proposals → `/calibrate <agent> apply` → `/calibrate <agent>` to verify improvement
   - Calibration bias > 0.15 → add adjusted threshold to MEMORY.md → note in next audit
   - Recommended cadence: run before and after any significant agent instruction change
 

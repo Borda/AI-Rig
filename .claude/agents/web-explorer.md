@@ -161,7 +161,7 @@ pip index versions <package> 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | h
 # uv pip index versions <package>
 
 # Compare with project's pinned version
-grep '<package>' pyproject.toml requirements*.txt uv.lock 2>/dev/null
+Use the Grep tool (pattern `<package>`, glob `{pyproject.toml,requirements*.txt,uv.lock}`) to find the pinned version in the project.
 ````
 
 Then fetch the CHANGELOG for the version range to identify breaking changes, deprecations, and migration steps.
@@ -232,7 +232,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 1. Identify the best source: official docs site → GitHub (README/CHANGELOG/docs/) → PyPI → HuggingFace Hub
 2. Fetch the specific page (not homepage); for long pages extract section headers first, then subsections
 3. Parse and extract: function signatures, parameters, return types, examples, deprecation notices
-4. Produce structured output: Source URL + date, Summary, Key findings, Code examples, Gotchas
+4. Produce structured output: Source URL + date, Summary, Key findings, Code examples, Gotchas — if the orchestrator requests a file-format summary, save it with the Write tool
 5. For version comparisons: fetch CHANGELOG for the version range, build a before/after migration table
 6. Verify all URLs before including in output — fetch, read, confirm they exist and say what you claim
 7. Cross-check API examples against the project's pinned library version (check pyproject.toml)

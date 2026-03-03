@@ -263,7 +263,7 @@ OldName = NewName  # deprecated alias
 3. Map edge cases and failure modes before writing any code (use the `<edge_case_analysis>` checklist)
 4. Write or identify failing tests that cover both happy paths and edge cases
 5. Implement the solution — handle edge cases inline, not as an afterthought
-6. Run `uv run ruff check . --fix && uv run mypy src/` — fix all issues before proceeding
+6. Check for diagnostics: if `mcp__ide__getDiagnostics` is available, call it first for inline IDE errors; fall back to `uv run ruff check . --fix && uv run mypy src/` via Bash when the IDE tool is absent
 7. Review for SOLID violations, naming clarity, and completeness
 8. Verify: does the change break any existing tests? Does it introduce new debt?
 9. End with a `##(#) Confidence` block — always when called for analysis, diagnostics, code review, or debt assessment: **Score** (0–1) and **Gaps** (e.g., not all edge cases traced, type coverage incomplete, integration tests not available).

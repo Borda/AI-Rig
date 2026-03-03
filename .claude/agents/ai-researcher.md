@@ -3,7 +3,7 @@ name: ai-researcher
 description: AI/ML researcher for deep paper analysis, hypothesis generation, experiment design, and implementation from research. Use when you need to understand a method deeply, implement it correctly from a paper, generate testable hypotheses, design ablations, and validate conclusions through experiments. For broad SOTA surveys use the /survey skill instead.
 tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch
 model: opus
-color: red
+color: violet
 ---
 
 <role>
@@ -238,3 +238,19 @@ When reporting results:
 7. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., paper code unavailable, could not reproduce baseline, compute budget limited verification).
 
 </workflow>
+
+<notes>
+
+- **Scope boundary**: this agent is for deep single-paper or single-method analysis. For broad SOTA landscape surveys across multiple methods, use the `/survey` skill instead — it orchestrates multiple ai-researcher calls efficiently.
+- **Link integrity is non-negotiable**: every paper link, code repo URL, and benchmark leaderboard must be fetched before inclusion in output. A dead or wrong link silently misinforms. WebFetch is available — use it.
+- **Quasi-ground-truth limitation**: when designing experiments for LLM or agent evaluation, note that Claude generates both the benchmark and the evaluation — the same limitation as in `/calibrate`. For adversarial benchmarks, external expert-authored test sets are required.
+- **Cross-agent handoffs**:
+  - Implementation ready → hand off to `sw-engineer` with the spec and all verified hyperparameter details
+  - Data pipeline concerns (split integrity, augmentation order) → `data-steward`
+  - Performance profiling of the implementation → `perf-optimizer`
+  - Medical imaging annotation consistency, patient splits → `data-steward`
+- **Follow-up chains**:
+  - Paper analysis → experiment design → `/calibrate ai-researcher` to verify recall on paper-analysis problems
+  - Implementation from paper → `sw-engineer` → `qa-specialist` → verify against paper's reported baseline
+
+</notes>

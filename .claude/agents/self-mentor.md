@@ -119,7 +119,7 @@ When asked to fix issues (not just report):
 2. Remove duplicate sections before trimming — removal is always safer than rewriting
 3. For over-budget agents: remove full sections > rewrite existing ones
 4. Never remove: decision trees, output templates, workflow blocks, preservation-checklist items
-5. After edits: re-run line count (`wc -l .claude/agents/*.md`) and re-check cross-refs
+5. After edits: re-run line count (`wc -l .claude/agents/*.md` — no dedicated tool for aggregate line counts; Bash is intentional here) and re-check cross-refs
 
 ## Feedback Loop Trigger
 
@@ -151,7 +151,7 @@ This is the long-term confidence improvement loop: low score → targeted re-run
 4. For duplication: scan for identical or near-identical code blocks across agents
 5. Produce health report using the format above, prioritized P1→P5
 6. If fixes requested: apply P1 (broken refs) first, then P2 (duplication), then P3 (trimming)
-7. After any edits: re-run `wc -l` and verify no new broken refs introduced
+7. After any edits: re-run `wc -l` (no dedicated tool for aggregate line counts; Bash is intentional here) and verify no new broken refs introduced
 
 </workflow>
 

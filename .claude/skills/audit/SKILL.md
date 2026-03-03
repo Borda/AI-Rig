@@ -40,19 +40,12 @@ If pre-commit is not configured, skip this step silently.
 
 ## Step 2: Collect all config files
 
-Enumerate everything in scope:
+Enumerate everything in scope using built-in tools:
 
-```bash
-# Agents
-ls .claude/agents/*.md
-
-# Skills
-ls .claude/skills/*/SKILL.md
-
-# Settings and hooks
-ls .claude/settings.json
-ls .claude/hooks/
-```
+- **Agents**: Glob tool, pattern `agents/*.md`, path `.claude/`
+- **Skills**: Glob tool, pattern `skills/*/SKILL.md`, path `.claude/`
+- **Settings**: Read tool on `.claude/settings.json`
+- **Hooks**: Glob tool, pattern `hooks/*`, path `.claude/`
 
 Record the full file list — this becomes the audit scope for Steps 3–4.
 
@@ -78,51 +71,56 @@ Collect all findings from each self-mentor response into a structured list keyed
 
 Beyond per-file analysis, run cross-file checks that self-mentor cannot do alone:
 
+Run the following checks. For file-listing steps use Glob; for content-search steps use Grep. Bash is only needed for the pipeline comparisons and the `printf`/`jq` blocks below.
+
 ```bash
 # Color helpers — makes severity levels and source agents scannable in terminal output
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
 # RED → breaking / critical  |  YELLOW → warning / medium  |  GREEN → pass  |  CYAN → agent name / source
+```
 
-# 1. Inventory drift — MEMORY.md vs disk
-# Agents on disk
+**Check 1 — Inventory drift (MEMORY.md vs disk)**
+Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames and sort, then write to `/tmp/agents_disk.txt` via Bash:
+
+```bash
 ls .claude/agents/*.md | xargs -n1 basename | sed 's/\.md$//' | sort > /tmp/agents_disk.txt
-# Agents in MEMORY.md
-grep '^\- Agents:' .claude/memory/MEMORY.md 2>/dev/null | head -1
+```
 
-# Skills on disk
-ls .claude/skills/ | sort > /tmp/skills_disk.txt
-# Skills in MEMORY.md
-grep '^\- Skills:' .claude/memory/MEMORY.md 2>/dev/null | head -1
+Use Grep tool (pattern `^\- Agents:`, file `.claude/memory/MEMORY.md`) to read the roster line. Repeat with Glob (`skills/*/`, path `.claude/`) for skills — write to `/tmp/skills_disk.txt` — and Grep (`^\- Skills:`) for the MEMORY.md line.
 
-# 2. README vs disk — skill/agent table rows should match disk
-grep '^\| \*\*' README.md | head -30
+**Check 2 — README vs disk**
+Use Grep tool (pattern `^\| \*\*`, file `README.md`, output mode `content`) to extract agent/skill table rows.
 
-# 3. settings.json permissions — collect all bash commands used in skills
-grep -rh 'gh \|python -m\|ruff\|mypy\|pytest' .claude/skills/*/SKILL.md | sort -u
+**Check 3 — settings.json permissions**
+Use Grep tool (pattern `gh |python -m|ruff|mypy|pytest`, glob `skills/*/SKILL.md`, path `.claude/`, output mode `content`) to collect bash commands used in skills.
 
-# 4. Orphaned follow-up references — skill names mentioned in notes but not on disk
-grep -roh '`/[a-z-]*`' .claude/skills/*/SKILL.md | sort -u
+**Check 4 — Orphaned follow-up references**
+Use Grep tool (pattern `` `/[a-z-]*` ``, glob `skills/*/SKILL.md`, path `.claude/`, output mode `content`) to find skill-name references; compare against disk inventory.
 
-# 5. Hardcoded user paths — flag any /Users/<name>/ or /home/<name>/ in config files
-grep -rn '/Users/\|/home/' .claude/agents/*.md .claude/skills/*/SKILL.md 2>/dev/null
+**Check 5 — Hardcoded user paths**
+Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`) to flag non-portable paths.
 
-# 6. permissions-guide.md drift — every allow entry must appear in the guide, and vice versa
+**Check 6 — permissions-guide.md drift** — every allow entry must appear in the guide, and vice versa
+
+```bash
 # Allow entries missing from guide
 jq -r '.permissions.allow[]' .claude/settings.json | \
-  while IFS= read -r perm; do
-    grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
-      || printf "${YEL}⚠ MISSING from guide${NC}: %s\n" "$perm"
-  done
-# Guide entries orphaned (not in allow list)
-grep '^\| `' .claude/permissions-guide.md | awk -F'`' '{print $2}' | \
-  while IFS= read -r perm; do
-    jq -e --arg p "$perm" '.permissions.allow | contains([$p])' .claude/settings.json > /dev/null 2>&1 \
-      || printf "${YEL}⚠ ORPHANED in guide${NC}: %s\n" "$perm"
-  done
+while IFS= read -r perm; do
+  grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
+    || printf "${YEL}⚠ MISSING from guide${NC}: %s\n" "$perm"
+done
 
-# 7. Skill frontmatter conflicts — context:fork + disable-model-invocation:true is broken
-# A forked skill runs in an isolated context; without model invocation it cannot coordinate
-# or synthesize Task agent results. The combination silently prevents the skill from working.
+# Guide entries orphaned (not in allow list)
+grep '^| `' .claude/permissions-guide.md | awk -F'`' '{print $2}' | \
+while IFS= read -r perm; do
+  jq -e --arg p "$perm" '.permissions.allow | contains([$p])' .claude/settings.json > /dev/null 2>&1 \
+    || printf "${YEL}⚠ ORPHANED in guide${NC}: %s\n" "$perm"
+done
+```
+
+**Check 7 — Skill frontmatter conflicts** — `context:fork + disable-model-invocation:true` is a broken combination: a forked skill has no model to coordinate agents or synthesize results.
+
+```bash
 for f in .claude/skills/*/SKILL.md; do
   name=$(basename "$(dirname "$f")")
   if awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' && \
@@ -135,6 +133,40 @@ done
 ```
 
 Flag any drift between MEMORY.md, README.md, settings.json, and actual disk state. Flag any hardcoded `/Users/` or `/home/` paths — these should be `.claude/`, `~/`, or `$(git rev-parse --show-toplevel)/` style. Flag any permissions-guide.md entries not in the allow list (orphaned docs) or allow entries without a guide row (undocumented permissions).
+
+### Tool efficiency
+
+For each agent and skill, validate that declared tools match actual usage — no unnecessary permissions, no missing tools.
+
+**Mechanical check** — for each skill, cross-reference `allowed-tools:` frontmatter against tool names referenced in the workflow body:
+
+```bash
+for f in .claude/skills/*/SKILL.md; do
+  name=$(basename "$(dirname "$f")")
+  declared=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^allowed-tools:/{sub(/^allowed-tools: /,""); print}' "$f")
+  body=$(awk '/^---$/{c++} c>=2{print}' "$f")
+  for tool in Read Write Edit Bash Grep Glob Task WebFetch WebSearch; do
+    in_body=$(echo "$body" | grep -cw "$tool" || true)
+    in_decl=$(echo "$declared" | grep -cw "$tool" || true)
+    if [ "$in_body" -gt 0 ] && [ "$in_decl" -eq 0 ]; then
+      printf "${YEL}⚠ MISSING tool${NC}: skills/%s references %s but not in allowed-tools\n" "$name" "$tool"
+    fi
+    if [ "$in_body" -eq 0 ] && [ "$in_decl" -gt 0 ]; then
+      printf "${YEL}⚠ UNUSED tool${NC}:  skills/%s declares %s but workflow never references it\n" "$name" "$tool"
+    fi
+  done
+done
+```
+
+**Semantic check** (model reasoning) — review each agent's `tools:` frontmatter against its declared domain and workflow:
+
+- `WebFetch`/`WebSearch` declared for an agent whose domain has no web-research component → **medium** (unnecessary permission surface)
+- `Write`/`Edit` declared for a read-only agent (e.g., `solution-architect`) but not used in practice → **medium**
+- `Bash` absent for an agent whose domain involves running code (linting, CI validation, performance profiling) → **high** (silent failure when workflow invokes shell commands)
+- `Task` absent for an orchestrating agent that needs to spawn subagents → **high**
+- `tools:` is `*` (wildcard) for a focused domain agent — prefer an explicit list → **low**
+
+Report missing necessary tools as **high**; declared-but-unused tools as **medium**.
 
 ### Purpose overlap review
 
@@ -206,12 +238,12 @@ Findings classification:
 
 Group all findings from Steps 1–4 into a severity table:
 
-| Severity     | Examples                                                                                                                                                                                                                                                                                                                                                               |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **critical** | Broken cross-reference (agent/skill does not exist on disk), MEMORY.md inventory wrong, relative path that silently falls back to wrong directory                                                                                                                                                                                                                      |
-| **high**     | Dead loop in follow-up chain, missing settings.json permission for a tool in use, broken code example (undefined variable, wrong command syntax), agent/skill instruction directly contradicts a `.claude/CLAUDE.md` directive, deprecated/invalid hook event name or type in use, `context:fork + disable-model-invocation:true` on the same skill (skill cannot run) |
-| **medium**   | Duplication across files, stale model name, README row missing for existing skill, hardcoded `/Users/<name>/` path, undocumented modes in inputs, deprecated frontmatter field or settings key, permissions-guide.md missing row for an allow entry or containing an orphaned row                                                                                      |
-| **low**      | Verbosity, minor formatting, incomplete follow-up chain, outdated version pin with "autoupdate" note, agent/skill omits a CLAUDE.md principle but doesn't contradict it, 💡 new documented CC feature not yet used                                                                                                                                                     |
+| Severity     | Examples                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **critical** | Broken cross-reference (agent/skill does not exist on disk), MEMORY.md inventory wrong, relative path that silently falls back to wrong directory                                                                                                                                                                                                                                                                                                                    |
+| **high**     | Dead loop in follow-up chain, missing settings.json permission for a tool in use, broken code example (undefined variable, wrong command syntax), agent/skill instruction directly contradicts a `.claude/CLAUDE.md` directive, deprecated/invalid hook event name or type in use, `context:fork + disable-model-invocation:true` on the same skill (skill cannot run), tool declared in `tools:`/`allowed-tools:` that is needed but absent causing silent failures |
+| **medium**   | Duplication across files, stale model name, README row missing for existing skill, hardcoded `/Users/<name>/` path, undocumented modes in inputs, deprecated frontmatter field or settings key, permissions-guide.md missing row for an allow entry or containing an orphaned row, declared tool not referenced anywhere in the workflow (unnecessary permission surface)                                                                                            |
+| **low**      | Verbosity, minor formatting, incomplete follow-up chain, outdated version pin with "autoupdate" note, agent/skill omits a CLAUDE.md principle but doesn't contradict it, 💡 new documented CC feature not yet used                                                                                                                                                                                                                                                   |
 
 ## Step 6: Cross-validate critical findings
 
