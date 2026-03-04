@@ -20,6 +20,8 @@ Orchestrate a performance investigation using the perf-optimizer agent. This ski
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Establish baseline
 
 Before touching any code, measure current performance:
@@ -59,6 +61,8 @@ time python "$ARGUMENTS"
 ```
 
 **Accept** if improvement > 10% (adjust threshold for your workload — GPU benchmarks may need 20%+ to clear noise; hot-path latency may justify 2%). **Revert** if not measurable or < noise floor.
+
+**Safety break**: max 3 optimization-verification cycles. After 3 perf-optimizer changes, proceed to Step 4 (report). Ask the user whether to run another round.
 
 ## Step 4: Report
 

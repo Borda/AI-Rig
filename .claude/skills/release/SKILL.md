@@ -23,6 +23,8 @@ Prepare release communication based on what changed. The output format adapts to
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Mode Detection
 
 If `$ARGUMENTS` starts with `prep`, skip to **Mode: prep** (at the bottom of this workflow).

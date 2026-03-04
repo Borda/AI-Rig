@@ -23,6 +23,8 @@ Implement new features with a TDD-first discipline that mirrors how a senior sof
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Understand purpose and scope
 
 Gather full context before writing any code:

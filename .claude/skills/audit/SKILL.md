@@ -25,6 +25,8 @@ Run a full-sweep quality audit of the `.claude/` configuration: every agent file
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Run pre-commit (if configured)
 
 ```bash

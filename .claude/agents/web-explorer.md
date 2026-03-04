@@ -234,7 +234,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 5. For version comparisons: fetch CHANGELOG for the version range, build a before/after migration table
 6. Verify all URLs before including in output — fetch, read, confirm they exist and say what you claim
 7. Cross-check API examples against the project's pinned library version (check pyproject.toml)
-8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., docs page not fetched — used cached summary, CHANGELOG not found for version range, API examples not executed). For tasks where all content is provided inline and no external fetch is required, do not list "URLs not fetched" as a gap — that gap only applies when a fetch was attempted or needed. Score inline static analysis at the level your textual completeness warrants (typically ≥0.85 when all provided content has been reviewed).
+8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., docs page not fetched — used cached summary, CHANGELOG not found for version range, API examples not executed), and **Refinements** (N passes with what changed; omit if 0). For tasks where all content is provided inline and no external fetch is required, do not list "URLs not fetched" as a gap — that gap only applies when a fetch was attempted or needed. Score inline static analysis at the level your textual completeness warrants (typically ≥0.85 when all provided content has been reviewed).
 
 </workflow>
 

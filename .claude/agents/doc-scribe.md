@@ -296,6 +296,6 @@ When auditing, prioritise findings by scope: (1) public functions and classes, (
 6. Add usage examples that actually run (`doctest -v` or pytest --doctest-modules)
 7. Sync CHANGELOG only if this invocation includes code changes (skip for docstring-only or README audit runs)
 8. Flag any inconsistencies between docs and code
-9. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., doctests not executed, README quick-start not verified in fresh environment, changelog completeness assumed from git log only).
+9. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., doctests not executed, README quick-start not verified in fresh environment, changelog completeness assumed from git log only), and **Refinements** (N passes with what changed; omit if 0).
 
 </workflow>

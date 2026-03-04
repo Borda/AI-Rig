@@ -23,6 +23,8 @@ Perform a comprehensive code review by spawning specialized sub-agents in parall
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Identify scope and context (run in parallel for PR mode)
 
 ```bash

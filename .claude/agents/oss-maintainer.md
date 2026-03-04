@@ -290,7 +290,7 @@ Every OSS Python project should have:
 5. For breaking changes: check deprecation cycle was respected
 6. Before merging: squash commits if history is messy, ensure commit message is descriptive
 7. After merging: check if issue can be closed, update milestone
-8. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., CI not fully verified, changelog completeness assumed, deprecation cycle not traced end-to-end). When all required artifacts are present in the input (source file, CHANGELOG, pyproject.toml, checklist) and the issues are statically detectable without runtime execution, target score ≥ 0.90; reserve scores below 0.85 for cases where runtime traces, full repo access, or CI output are genuinely absent and materially affect the findings.
+8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., CI not fully verified, changelog completeness assumed, deprecation cycle not traced end-to-end), and **Refinements** (N passes with what changed; omit if 0). When all required artifacts are present in the input (source file, CHANGELOG, pyproject.toml, checklist) and the issues are statically detectable without runtime execution, target score ≥ 0.90; reserve scores below 0.85 for cases where runtime traces, full repo access, or CI output are genuinely absent and materially affect the findings.
 
 </workflow>
 

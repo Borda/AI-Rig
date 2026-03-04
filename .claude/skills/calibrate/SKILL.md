@@ -58,6 +58,8 @@ Skill domains:
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Parse targets and create run directory
 
 From `$ARGUMENTS`, determine:
@@ -335,5 +337,6 @@ After all subagents complete, collect their JSON results and print the final sum
   - Recall < 0.70 or borderline → `/calibrate <agent>` → review proposals → `/calibrate <agent> apply` → `/calibrate <agent>` to verify improvement
   - Calibration bias > 0.15 → add adjusted threshold to MEMORY.md → note in next audit
   - Recommended cadence: run before and after any significant agent instruction change
+- **Internal Quality Loop interaction**: agents with the Internal Quality Loop self-refine before reporting, so baseline confidence will be higher than before. Persistent overconfidence after the loop (high positive bias despite non-zero Refinements) is a stronger miscalibration signal than pre-loop overconfidence — it indicates score inflation without genuine improvement, not just optimism about first-draft recall.
 
 </notes>

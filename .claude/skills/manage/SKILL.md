@@ -57,6 +57,8 @@ Manage the lifecycle of agents and skills in the `.claude/` directory. Handles c
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Parse and validate
 
 Extract operation, type, name, and optional arguments from `$ARGUMENTS`.

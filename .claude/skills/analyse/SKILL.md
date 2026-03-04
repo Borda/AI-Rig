@@ -25,6 +25,8 @@ Analyze GitHub issues and PRs to help maintainers triage, respond, and decide qu
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Auto-Detection (for numeric arguments)
 
 When `$ARGUMENTS` is a number, determine whether it is an issue or a PR before routing.

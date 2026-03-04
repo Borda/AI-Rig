@@ -23,6 +23,8 @@ Safely refactor code by enforcing a test-first discipline. Before any logic chan
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Scope and understand
 
 Read the target code and build a mental model before touching anything:
@@ -93,6 +95,8 @@ Now apply the refactoring changes. For each change:
    ```
 3. If tests pass: proceed to the next change
 4. If tests fail: the refactoring broke behavior — revert and try a different approach
+
+**Safety break**: max 5 change-test cycles per session. After 5, stop and report which changes succeeded, which broke tests, and what remains. Ask the user to continue or re-scope.
 
 **Refactoring categories** (apply what matches the goal):
 

@@ -294,7 +294,7 @@ Explicitly call out any decision that would be hard or impossible to reverse. Th
 
 ## Step 9: Confidence
 
-End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., runtime behavior not observed, downstream consumer impact not traced, migration cost estimated not measured).
+Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., runtime behavior not observed, downstream consumer impact not traced, migration cost estimated not measured), and **Refinements** (N passes with what changed; omit if 0).
 
 When estimating the score, distinguish between gap types:
 

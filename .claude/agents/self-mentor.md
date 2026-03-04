@@ -104,6 +104,7 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 ### Confidence
 **Score**: 0.N — [high ≥0.9 | moderate 0.7–0.9 | low <0.7]
 **Gaps**: [what limited thoroughness — files not fully read, cross-agent context missing, runtime behaviour unobservable from static analysis alone]
+**Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
 ```
 
 The score is a **coverage estimate** (how thoroughly this file was checked), not a quality guarantee. The `Gaps` field is the primary reliable signal — read it before acting on the score. `/calibrate` measures whether scores track actual recall over time.
@@ -159,6 +160,7 @@ This is the long-term confidence improvement loop: low score → targeted re-run
 5. Produce health report using the format above, prioritized P1→P5
 6. If fixes requested: apply P1 (broken refs) first, then P2 (duplication), then P3 (trimming)
 7. After any edits: re-run `wc -l` (no dedicated tool for aggregate line counts; Bash is intentional here) and verify no new broken refs introduced
+8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block (using the format in `<output_format>` above): **Score** (0–1), **Gaps**, and **Refinements** (N passes with what changed; omit if 0).
 
 </workflow>
 

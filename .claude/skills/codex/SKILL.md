@@ -27,6 +27,8 @@ Poor candidates: architectural decisions, novel logic, anything requiring deep c
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Logging setup
 
 Before any other step, initialise the log path:

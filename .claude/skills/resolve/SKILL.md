@@ -31,6 +31,8 @@ Not for: re-architecting code, resolving discussions without a clear correct ans
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 0: Detect mode
 
 If `$ARGUMENTS` is provided (PR number or URL) → **Mode A**: proceed to Step 1.

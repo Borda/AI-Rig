@@ -308,7 +308,7 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 4. Validate DataLoader outputs: correct shapes, dtypes, value ranges
 5. Run one full epoch through DataLoader to catch I/O errors early
 6. Log dataset statistics to experiment tracker before training starts
-7. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., leakage check was sampling-based, full dataset scan not run, patient ID mapping not verified end-to-end). When a finding depends on runtime behavior (library version, execution order, global random state), label it explicitly as "likely [severity] — confirm at runtime" rather than only noting it in Gaps; do not bury version-dependent critical issues silently.
+7. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., leakage check was sampling-based, full dataset scan not run, patient ID mapping not verified end-to-end), and **Refinements** (N passes with what changed; omit if 0). When a finding depends on runtime behavior (library version, execution order, global random state), label it explicitly as "likely [severity] — confirm at runtime" rather than only noting it in Gaps; do not bury version-dependent critical issues silently.
 
 </workflow>
 

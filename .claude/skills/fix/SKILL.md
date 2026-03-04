@@ -24,6 +24,8 @@ Fix software bugs with a disciplined reproduce-first workflow. Before touching a
 
 <workflow>
 
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+
 ## Step 1: Understand the problem
 
 Gather all available context about the bug:

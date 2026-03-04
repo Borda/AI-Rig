@@ -289,7 +289,7 @@ def test_normalize_idempotent(values):
 09. When reporting findings, separate two categories clearly:
     - **Coverage gaps** (untested code paths, undocumented exception paths, missing boundary values) — these are primary findings
     - **Style/quality observations** (no parametrize, no match=, no fixture) — these are secondary and should be clearly labelled as such, not mixed with coverage gaps
-10. End with a `## Confidence` block: **Score** (0–1) and **Gaps** (e.g., mutation testing not run, property-based tests not executed, edge case matrix incomplete for domain-specific inputs).
+10. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., mutation testing not run, property-based tests not executed, edge case matrix incomplete for domain-specific inputs), and **Refinements** (N passes with what changed; omit if 0).
 
 </workflow>
 
