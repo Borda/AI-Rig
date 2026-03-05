@@ -32,9 +32,18 @@ repos:
     rev: v3.8.1 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
-        files: \.(html|yml|yaml|toml)
+        files: \.(html|yml|yaml|toml|js)
         # https://prettier.io/docs/en/options.html#print-width
         args: ["--print-width=120"]
+
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.21.0
+    hooks:
+      - id: eslint
+        additional_dependencies:
+          - eslint@9.21.0
+          - globals@16.0.0
+          - "@eslint/js@9.21.0"
 
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.1

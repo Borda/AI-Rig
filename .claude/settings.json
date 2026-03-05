@@ -11,7 +11,13 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "mkdir -p ~/.claude/state && claude auth status > ~/.claude/state/subscription.json 2>/dev/null", "async": true }]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "mkdir -p ~/.claude/state && claude auth status > ~/.claude/state/subscription.json 2>/dev/null",
+            "async": true
+          }
+        ]
       }
     ],
     "PreToolUse": [
