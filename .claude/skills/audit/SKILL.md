@@ -1,14 +1,14 @@
 ---
 name: audit
-description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Reports by severity; auto-fixes critical/high/medium when 'fix' is passed.
-argument-hint: '[agents|skills] [fix]'
+description: Full-sweep quality audit of .claude/ config — cross-references, permissions, inventory drift, model tiers, docs freshness. Reports by severity; auto-fixes at the requested level — 'fix high' (critical+high), 'fix medium' (critical+high+medium), 'fix all' (all findings including low).
+argument-hint: '[agents|skills] [fix [high|medium|all]]'
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent
 ---
 
 <objective>
 
-Run a full-sweep quality audit of the `.claude/` configuration: every agent file, every skill file, settings.json, and hooks. Spawns `self-mentor` for per-file analysis, then aggregates findings system-wide to catch issues that only surface across files — infinite loops, inventory drift, missing permissions, and cross-file interoperability breaks. Reports all findings and auto-fixes critical, high, and medium issues (low/nit findings are reported only).
+Run a full-sweep quality audit of the `.claude/` configuration: every agent file, every skill file, settings.json, and hooks. Spawns `self-mentor` for per-file analysis, then aggregates findings system-wide to catch issues that only surface across files — infinite loops, inventory drift, missing permissions, and cross-file interoperability breaks. Reports all findings and auto-fixes at the requested level: `fix high` (critical+high only), `fix medium` (critical+high+medium, default fix level), or `fix all` (all findings including low).
 
 </objective>
 
@@ -16,10 +16,13 @@ Run a full-sweep quality audit of the `.claude/` configuration: every agent file
 
 - **$ARGUMENTS**: optional
   - No argument: full sweep, report only — lists all findings, no changes made (default)
-  - `fix` — full sweep + auto-fix `critical`, `high`, and `medium` findings; `low` findings reported only
+  - `fix high` — fix `critical` and `high` findings; `medium` and `low` reported only
+  - `fix medium` — fix `critical`, `high`, and `medium` findings; `low` reported only
+  - `fix all` — fix all findings including `low`
+  - `fix` (no level) — alias for `fix medium` (backward compatible)
   - `agents` — restrict sweep to agent files only, report only
   - `skills` — restrict sweep to skill files only, report only
-  - `agents fix` / `skills fix` — restricted scope + auto-fix (scope always precedes `fix`)
+  - Scope and fix level can be combined: `agents fix medium`, `skills fix all` — scope always precedes `fix`
 
 </inputs>
 
@@ -397,15 +400,15 @@ Output a structured audit report before fixing anything:
 #### Medium (N)
 ...
 
-#### Low (N) — reported only, not auto-fixed
+#### Low (N) — auto-fixed only with 'fix all'; otherwise reported only
 ...
 
 ### Summary
 - Total findings: N (C critical, H high, M medium, L low)
-- Auto-fix eligible: N (critical + high + medium)
+- Auto-fix eligible: N per fix level — `fix high`: C+H | `fix medium`: C+H+M | `fix all`: C+H+M+L
 ```
 
-If `fix` was not passed, stop here and present the report.
+If no fix level was passed, stop here and present the report.
 
 ## Step 8: Delegate fixes to subagents
 
@@ -424,7 +427,7 @@ Fix type reference:
 - Broken cross-reference "foo" → replace with the correct name (verify it exists on disk)
 - Inventory drift → update the relevant line to match disk state exactly
 - Hardcoded path → replace `/Users/<name>/path` with `.claude/path` or `~/path`
-- Missing Confidence block → add `End your response with a ## Confidence block per CLAUDE.md output standards.` before the closing </workflow> tag
+- Missing Confidence block → add `End your response with a ## Confidence block per CLAUDE.md output standards.` before the closing `</workflow>` tag
 - Broken bash block → fix syntax per the description (add missing opening fence, fix 4-backtick closer, unescape angle brackets)
 - Missing variable declaration → prepend `VAR="$(command)"` as the first line of the affected bash block
 - Stale cross-reference → replace `<old-name>` with `<correct-name>`
@@ -442,7 +445,7 @@ Do not add comments, docstrings, or any other improvements beyond the listed fix
 
 After all subagents complete, collect their results and proceed to Step 9.
 
-**Low findings** (nits): collect them in the final report but do not fix — present them for optional manual cleanup.
+**Low findings** (nits): fix only when `fix all` was passed — otherwise collect in the final report for optional manual cleanup.
 
 ## Step 9: Re-audit modified files + confidence check
 
@@ -486,14 +489,14 @@ Output the complete audit summary:
 | critical | N | N | 0 |
 | high | N | N | 0 |
 | medium | N | N | 0 |
-| low | N | — | N |
+| low | N | N (fix all only) | N |
 
 ### Fixes Applied
 | File | Change |
 |---|---|
 | agents/foo.md | Replaced broken ref `old-agent` → `correct-agent` |
 
-### Remaining (low/nits — manual review optional)
+### Remaining (low/nits — auto-fixed only with 'fix all'; otherwise manual review optional)
 - [low findings that were not auto-fixed]
 - [any infinite loops flagged for user decision]
 
@@ -526,14 +529,14 @@ Run `/sync apply` to propagate clean config to ~/.claude/
 - **Relationship to self-mentor**: `self-mentor` is a single-file reactive audit; `/audit` is the system-wide sweep that runs self-mentor at scale and adds cross-file checks
 - **Paths must be portable**: `.claude/` for project-relative paths, `~/` for home paths — never `/Users/<name>/` or `/home/<name>/`; this rule applies to ALL skill and agent files
 - This skill is the correct pre-flight before `/sync` — run `/audit` to confirm config is clean, then `/sync apply` to propagate
-- **Bash error logging**: if a bash block in Steps 0 or 4 fails unexpectedly, append a JSONL line to `.claude/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — do not swallow errors silently.
+- **Bash error logging**: if a bash block in Pre-flight checks or Step 4 fails unexpectedly, append a JSONL line to `.claude/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — do not swallow errors silently.
 - **Execution order tip**: Steps 1–2 and Step 4 bash checks are fast (seconds); Step 3 (self-mentor spawns) is expensive (seconds per file). For early signal on system-wide issues, run Steps 1–2 + Step 4 first, then spawn Step 3 agents in parallel with any Step 4 analysis that doesn't depend on per-file results.
 - **Token cost**: Step 3 (self-mentor spawns) is the most expensive part of the audit. For a quick structural scan where you mainly need cross-reference and inventory validation, the system-wide checks in Step 4 are often sufficient on their own. Consider running `/audit agents` or `/audit skills` to scope the sweep, or skip Step 3 entirely for a fast pass when you already trust per-file quality.
 - **Skill-creator complement**: for testing whether skill trigger descriptions fire correctly (trigger accuracy, A/B description testing), see the official `skill-creator` from `github.com/anthropics/skills`. `/audit` checks structural quality; `skill-creator` validates that the right skill is selected by Claude Code's dispatcher when the user types a command.
 - Follow-up chains:
   - Audit clean → `/sync apply` to propagate verified config to `~/.claude/`
   - Audit found structural issues → review flagged files manually before syncing
-  - Audit found many low items → schedule a dedicated `/refactor`-style cleanup pass
+  - Audit found many low items → run `/audit fix all` to auto-fix them, or schedule a dedicated `/refactor`-style cleanup pass
   - After fixing agent instructions (from audit findings) → `/calibrate <agent>` to verify the fix improved recall and confidence calibration
 
 </notes>

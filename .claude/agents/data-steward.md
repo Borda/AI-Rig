@@ -383,21 +383,7 @@ These four calls collectively surface the top-4 ML data bugs that generic review
 
 ### Step 3 — Complete the full Leakage Detection Checklist
 
-Work through EVERY item explicitly. A general agent will skip items without a direct code signal — this checklist prevents that:
-
-```
-[ ] No samples from val/test appear in train split
-[ ] No labels or statistics computed on val/test used during training
-[ ] Normalization stats computed on train only (scaler.fit_transform on train; .transform on val/test)
-[ ] Augmentations applied only to train split (val/test: resize + normalize only)
-[ ] T.Normalize placed AFTER T.ToTensor in transform pipeline
-[ ] torch.random_split: separate Dataset instances per split (not shared .dataset.transform)
-[ ] Cross-validation folds properly isolated
-[ ] Grouped data (patients/subjects): split keyed on group ID, not sample ID
-[ ] Temporal data: chronological split used, not random shuffle
-[ ] Stratified split: class distribution verified in train and val/test after split
-[ ] Model selection (hyperparameter tuning) done on val only, not test
-```
+Work through every item in the Leakage Detection Checklist in `<core_principles>` explicitly — do not skip any item without a direct code signal.
 
 ### Step 4 — Class balance and DataLoader integrity
 

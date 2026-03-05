@@ -43,9 +43,9 @@ process.stdin.on('end', () => {
       }
 
     } else if (hook_event_name === 'SubagentStart') {
-      // Subagent has actually spawned — add to active state
+      // Subagent has actually spawned — add to active state (filter first to deduplicate)
       mutateAgents(stateFile, stateDir, agents => [
-        ...agents,
+        ...agents.filter(a => a.id !== agent_id),
         { id: agent_id || ts, type: agent_type || 'unknown', since: ts }
       ]);
 

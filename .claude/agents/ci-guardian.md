@@ -2,7 +2,7 @@
 name: ci-guardian
 description: CI/CD health specialist for monitoring, diagnosing, and improving GitHub Actions pipelines. Use for diagnosing failing CI, reducing build times, enforcing quality gates, and adopting current best practices. Covers test parallelism, caching, matrix strategies, and OSS-specific GitHub Actions patterns.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch
-model: sonnet
+model: haiku
 color: indigo
 ---
 
@@ -61,8 +61,8 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5  # verify current version at github.com/astral-sh/setup-uv/releases
+      - uses: actions/checkout@v4  # ← replace with SHA in production
+      - uses: astral-sh/setup-uv@v5  # ← replace with SHA in production
         with:
           enable-cache: true     # uv.lock-based caching
       - run: uv sync --dev
@@ -78,8 +78,8 @@ jobs:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v4  # ← replace with SHA in production
+      - uses: astral-sh/setup-uv@v5  # ← replace with SHA in production
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -87,7 +87,7 @@ jobs:
       - run: |
           uv run pytest tests/ -n auto --tb=short -q \
             --cov=src --cov-report=xml
-      - uses: codecov/codecov-action@v4  # verify current version at github.com/codecov/codecov-action/releases
+      - uses: codecov/codecov-action@v4  # ← replace with SHA in production
         if: matrix.python-version == '3.12'
         with:
           files: ./coverage.xml
@@ -169,7 +169,7 @@ uv run pytest --durations=20 tests/ -q  # find slow tests
 
 ```yaml
 # Security scanning
-  - uses: pypa/gh-action-pip-audit@v1  # verify current version at github.com/pypa/gh-action-pip-audit/releases
+  - uses: pypa/gh-action-pip-audit@v1  # ← replace with SHA in production
     with:
       inputs: requirements.txt
 
@@ -286,8 +286,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v4  # ← replace with SHA in production
+      - uses: astral-sh/setup-uv@v5  # ← replace with SHA in production
         with: {enable-cache: true, python-version: '3.12'}
       - run: uv sync --all-extras
       - run: |
@@ -332,10 +332,10 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v5  # ← replace with SHA in production
       - run: uv sync --all-extras
       - run: uv run pytest tests/benchmarks/ --benchmark-json output.json
-      - uses: benchmark-action/github-action-benchmark@v1  # verify current version; prefer SHA pin per antipatterns below
+      - uses: benchmark-action/github-action-benchmark@v1  # ← replace with SHA in production
         with:
           tool: pytest
           output-file-path: output.json

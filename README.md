@@ -56,7 +56,7 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 | **survey**    | `/survey [topic]`                  | SOTA literature survey with implementation plan                                                            |
 | **analyse**   | `/analyse [#\|health]`             | Issue/PR analysis, repo health, duplicate detection, contributor activity                                  |
 | **observe**   | `/observe`                         | Meta-skill: analyze work patterns and suggest new agents or skills                                         |
-| **audit**     | `/audit [fix]`                     | Full-sweep config audit: broken refs, dead loops, inventory drift, interoperability issues                 |
+| **audit**     | `/audit [fix [high\|medium\|all]]` | Full-sweep config audit: broken refs, dead loops, inventory drift, interoperability issues                 |
 | **sync**      | `/sync [apply]`                    | Drift-detect project `.claude/` vs home `~/.claude/`; `apply` performs the sync                            |
 | **manage**    | `/manage <op> <type>`              | Create, update, or delete agents/skills with cross-ref propagation                                         |
 | **feature**   | `/feature <desc>`                  | TDD-first feature dev: codebase analysis, demo doctest, TDD loop, docs + QA + review cycle                 |

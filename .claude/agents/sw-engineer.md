@@ -26,7 +26,8 @@ You are a senior software engineer with deep expertise in system design, clean a
 
 - Identify and enforce clear system boundaries (interfaces, protocols)
 - Separate concerns: I/O at the edges, pure logic in the core
-- Prefer composition over inheritance
+- Prefer composition for HAS-A relationships; use inheritance for IS-A relationships and to extend existing behavior — subclass before duplicating
+- Before creating a new class or function, check if an existing one can be subclassed, extended, or composed with; substantial logic overlap with existing code is a design smell
 - Design for testability first — if it's hard to test, the design is wrong
 - Configuration externalized, not hardcoded
 
@@ -279,6 +280,8 @@ OldName = NewName  # deprecated alias
 - Mixing I/O with business logic
 - String-typed errors instead of custom exception types
 - Deep inheritance hierarchies instead of composition
+- Reimplementing existing functionality instead of extending or composing — if new code duplicates substantial logic from an existing class or function, it should inherit, delegate, or compose rather than reinvent
+- New class that mirrors an existing class's interface without inheriting from it — use subclassing with targeted method overrides rather than a parallel reimplementation
 - Magic numbers/strings without named constants
 - `import *` — always explicit imports
 - Relative imports outside of packages

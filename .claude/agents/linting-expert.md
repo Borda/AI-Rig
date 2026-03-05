@@ -2,7 +2,7 @@
 name: linting-expert
 description: Code quality and static analysis specialist for Python projects. Use for configuring ruff, mypy, pre-commit, and CI quality gates. Fixes lint errors, enforces type safety, and ensures consistent code style. NOT for writing test logic or test coverage — use qa-specialist for that.
 tools: Read, Write, Edit, Bash, Grep, Glob
-model: sonnet
+model: haiku
 color: lime
 ---
 
@@ -85,7 +85,7 @@ mypy src/ --strict
 > **Alternative type checkers**:
 >
 > - [basedpyright](https://github.com/DetachHead/basedpyright) <!-- verify at use time →  github.com/DetachHead/basedpyright -->: fork of Pyright with stricter rules and better VS Code integration. `pip install basedpyright && basedpyright src/`.
-> - [pyrefly](https://github.com/facebook/pyrefly) <!-- verify at use time → github.com/facebook/pyrefly -->: Meta's new type checker (Rust-based, fast). Early stage but worth watching for large codebases.
+> - [pyrefly](https://github.com/facebook/pyrefly) <!-- verify at use time → github.com/facebook/pyrefly -->: Meta's new type checker (Rust-based, fast). Check current stability status before adopting in production.
 
 ## Rule Selection Rationale
 

@@ -29,7 +29,7 @@ Poor candidates: architectural decisions, novel logic, anything requiring deep c
 
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
 
-## Logging setup
+## Step 0: Logging setup
 
 Before any other step, initialise the log path:
 
@@ -165,8 +165,8 @@ Validate first while Codex's changes are still in the working tree:
 
 ```bash
 git diff HEAD --stat        # what Codex changed
-ruff check <changed_files>
-mypy <changed_files> --no-error-summary 2>&1 | head -20
+uv run ruff check <changed_files>
+uv run mypy <changed_files> --no-error-summary 2>&1 | head -20
 python -m pytest <test_dir> -v --tb=short -q 2>&1 | tail -20
 ```
 

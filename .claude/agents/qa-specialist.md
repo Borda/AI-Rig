@@ -306,8 +306,6 @@ def test_normalize_idempotent(values):
 
 </workflow>
 
-\<notes>
-
 \<antipatterns_to_flag>
 
 - Tests with no assertions (just "check it doesn't crash")
@@ -320,7 +318,7 @@ def test_normalize_idempotent(values):
 - Using `assert torch.equal(a, b)` instead of `torch.testing.assert_close` (float comparison needs tolerance)
 - **Testing implementation details instead of observable behavior**: asserting on private methods (e.g., `mock.assert_called_with('_execute_query', ...)`), checking call order or invocation count as the primary assertion rather than verifying what was returned or how system state changed — tests coupled to internals break every time code is refactored, even when behavior is correct; flag these and rewrite to assert on return values, side effects, or observable state changes
 - **N nearly-identical test functions that should be parametrized**: 3+ test functions with the same structure differing only in input/expected values — flag as a compression opportunity and collapse to a single `@pytest.mark.parametrize` test; the before/after LOC ratio is the justification, not style preference
+- **Private functions with no call sites**: `_`-prefixed functions or methods that are never called anywhere in the package (implementation or test code) and carry no `# subclass hook` or `# keep: <reason>` annotation — flag as dead code candidates; the annotation is the contract, not the name
+- **Public methods not exported or documented**: public methods/classes absent from `__init__.py` / `__all__` and unreferenced in any docstring, README, or API docs — raise as a question: intentionally public, accidental exposure, or dead code? Unexplained public surface is a maintenance liability
 
 \</antipatterns_to_flag>
-
-\</notes>

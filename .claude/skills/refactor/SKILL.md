@@ -104,7 +104,7 @@ Now apply the refactoring changes. For each change:
 - **API cleanup**: rename for clarity, consolidate overloaded parameters, add type annotations
 - **Structural**: extract classes/modules, reduce coupling, apply design patterns
 - **Performance**: replace loops with vectorized ops, reduce allocations, batch I/O
-- **Dead code removal**: remove unused imports, unreachable branches, commented-out code
+- **Dead code removal**: remove unused imports, unreachable branches, commented-out code; scan for private functions/methods (`_` prefix) with no call sites anywhere in the package — flag for removal unless annotated `# subclass hook` or `# keep: <reason>`; flag public methods/classes absent from `__init__.py` exports and unreferenced in any docstring or documentation — either expose them properly, convert to private, or remove
 
 ## Step 5: Delegate implementation follow-up (optional)
 

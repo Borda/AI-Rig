@@ -155,7 +155,7 @@ name / description / tools / model / color (frontmatter)
 
 \</core_knowledge>
 
-<workflow> — 5 numbered steps appropriate to the domain
+`<workflow>` — 5 numbered steps appropriate to the domain
 
 </workflow>
 
@@ -171,7 +171,7 @@ name / description / tools / model / color (frontmatter)
 
 - Analysis / read-only agents (e.g., `solution-architect`, `doc-scribe`): start with `Read, Grep, Glob`; add `WebFetch`/`WebSearch` only if the domain involves fetching external docs or URLs; add `Write` only if the agent creates output files
 - Code execution agents (e.g., `linting-expert`, `perf-optimizer`, `ci-guardian`): include `Bash`; add `Write`/`Edit` only if the agent modifies code
-- Orchestrators that spawn subagents (e.g., `qa-specialist`, `sw-engineer`): include `Task`
+- Skills that orchestrate agent subagents (e.g., `review`, `feature`, `audit`): include `Agent` in `allowed-tools`
 - Web-research agents (e.g., `web-explorer`, `ai-researcher`): include `WebFetch` and/or `WebSearch`
 
 Remove any tool that serves no purpose for the declared domain. A minimal, precise list is safer and clearer than a maximal one.
@@ -204,7 +204,7 @@ name / description / argument-hint / disable-model-invocation: true / allowed-to
 ---
 <objective> — 2-3 sentences from description
 <inputs> — $ARGUMENTS documentation
-<workflow> — 3+ numbered steps with bash examples
+`<workflow>` — 3+ numbered steps with bash examples
 <notes> — operational caveats
 ```
 
@@ -449,7 +449,7 @@ End the summary report with a `## Confidence` block per CLAUDE.md Output Standar
 - **MEMORY.md inventory**: always regenerated from disk (`ls`), never manually calculated — this prevents drift
 - Follow-up chains:
   - After any create/update/delete → `/audit` to verify config integrity, then `/sync apply` to propagate
-  - After creating a new agent/skill → `/review` to validate generated content quality; for skill trigger accuracy use `skill-creator` from `github.com/anthropics/skills` for A/B description testing
+  - After creating a new agent/skill → `/review` to validate generated content quality; for testing whether skill trigger descriptions fire correctly (trigger accuracy, A/B description testing), see the official `skill-creator` tool from the anthropics/skills repository
   - After updating agent instructions (especially `\<antipatterns_to_flag>`) → `/calibrate <agent>` to measure whether recall and confidence calibration improved
   - After `add perm`/`remove perm` → `/sync apply` to propagate updated settings.json and permissions-guide.md to `~/.claude/`
   - Recommended sequence: `/manage <op>` → `/audit` → `/sync apply`

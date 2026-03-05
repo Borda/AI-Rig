@@ -119,7 +119,7 @@ Start from the Step 2 demo — it is already failing and becomes the first targe
    python examples/demo_<feature>.py 2>&1 | tail -5
    ```
 4. **Implement the minimal code** to make it pass (spawn **sw-engineer** agent for non-trivial logic):
-   - Reuse or extend existing code identified in Step 1 — avoid reinventing
+   - Reuse or extend existing code identified in Step 1 — prefer subclassing or composing over parallel reimplementation; if new code would share substantial logic (>~30%) with existing code, the design likely needs inheritance or delegation rather than duplication
    - Match the project's existing patterns (naming, error handling, type annotations)
    - Keep each change small and focused
 5. **Run the demo/test — confirm it passes** (same command as sub-step 3 above)

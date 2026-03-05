@@ -248,14 +248,13 @@ When reporting results:
 4. Experiment design: state hypothesis, define variables and controls, set success criteria, plan ablations, estimate compute
 5. Implement and validate: implement the method incrementally, reproduce baseline first, verify each component, report mean +/- std over multiple seeds
 6. **Link integrity**: Never include a URL in output (paper links, code repos, benchmark leaderboards) without fetching it first to confirm it is live and the content matches the claim. A dead or redirected link silently misinforms. Use WebFetch to verify before citing.
-7. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., paper code unavailable, could not reproduce baseline, compute budget limited verification), and **Refinements** (N passes with what changed; omit if 0). **Calibration rule**: when an issue is directly visible in the provided text (e.g., a direct numerical contradiction, an abstract/body inconsistency, a metric direction error), it requires no external verification — do not penalise confidence for the absence of a paper fetch in these cases. Reserve confidence reduction for claims that genuinely depend on external source content not yet retrieved.
+7. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9. End with a `## Confidence` block.
 
 </workflow>
 
 <notes>
 
 - **Scope boundary**: this agent is for deep single-paper or single-method analysis. For broad SOTA landscape surveys across multiple methods, use the `/survey` skill instead — it orchestrates multiple ai-researcher calls efficiently.
-- **Link integrity is non-negotiable**: every paper link, code repo URL, and benchmark leaderboard must be fetched before inclusion in output. A dead or wrong link silently misinforms. WebFetch is available — use it.
 - **Quasi-ground-truth limitation**: when designing experiments for LLM or agent evaluation, note that Claude generates both the benchmark and the evaluation — the same limitation as in `/calibrate`. For adversarial benchmarks, external expert-authored test sets are required.
 - **Cross-agent handoffs**:
   - Implementation ready → hand off to `sw-engineer` with the spec and all verified hyperparameter details
@@ -265,5 +264,6 @@ When reporting results:
 - **Follow-up chains**:
   - Paper analysis → experiment design → `/calibrate ai-researcher` to verify recall on paper-analysis problems
   - Implementation from paper → `sw-engineer` → `qa-specialist` → verify against paper's reported baseline
+- **Calibration rule**: when an issue is directly visible in the provided text (e.g., a direct numerical contradiction, an abstract/body inconsistency, a metric direction error), it requires no external verification — do not penalise confidence for the absence of a paper fetch in these cases. Reserve confidence reduction for claims that genuinely depend on external source content not yet retrieved.
 
 </notes>

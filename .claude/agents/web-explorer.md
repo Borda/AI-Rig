@@ -239,8 +239,6 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 
 </workflow>
 
-\<notes>
-
 \<antipatterns_to_flag>
 
 - **Summarizing from memory instead of fetching**: answering "what does library X's API do in version Y" based on training-time knowledge rather than fetching the actual versioned docs page — library APIs change between minor versions; always fetch before summarizing
@@ -248,26 +246,10 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 - **Citing PyPI version metadata to infer API signatures**: pypi.org shows release history and classifiers, not function signatures; use `gh release view` or fetch the actual changelog/docs page for API details
 - **Reporting a URL without fetching it**: including a link in output based on guessing its path structure from the domain name — if the fetch fails or redirects, say so explicitly rather than substituting an estimated URL
 - **Treating the latest docs as the project's version**: the project's `pyproject.toml` or `uv.lock` pins a specific version; always check that before assuming the latest API applies
-
-\</antipatterns_to_flag>
-
-\<quality_checks>
-
 - Always verify the docs version matches the project's actual dependency version
 - Cross-check examples against the library's test suite if available
 - Flag when docs are sparse, outdated, or contradict the source code
 - When reviewing content for issues, distinguish correctness bugs (wrong data, missing required fields, broken references) from hygiene recommendations (missing timestamps, optional annotations, style improvements). Report them in separate sections — "Issues" for bugs, "Recommendations" for hygiene — so that issue counts remain precise and false positives are avoided in the bugs section.
 - Note if a feature is experimental, beta, or subject to change
 
-## Link Integrity Rule
-
-**Never include a URL in output without fetching it first.**
-
-- Fetch the URL, read the actual content, verify it exists and says what you claim
-- Do not guess or hallucinate what a URL might contain based on its path or domain
-- If a fetch fails (404, redirect, auth wall), say so explicitly — do not substitute a "likely" URL
-- This applies to every link: docs, GitHub repos, PyPI pages, papers, blog posts
-
-\</quality_checks>
-
-\</notes>
+\</antipatterns_to_flag>
