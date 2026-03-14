@@ -81,7 +81,6 @@ Make the minimal change to fix the root cause:
    ```
 3. Run the full test suite for the affected module to check for regressions:
    ```bash
-   # Step 3: regression gate — confirms fix does not break existing tests
    python -m pytest <test_dir> -v --tb=short
    ```
 4. If any existing tests break: the fix has side effects — reconsider the approach
@@ -98,7 +97,6 @@ uv run ruff format <changed_files>
 # Run mypy for type checking if configured
 uv run mypy <changed_files> --no-error-summary 2>&1 | head -20
 
-# Step 4: final full-suite clean run before commit
 python -m pytest <test_dir> -v --tb=short
 ```
 

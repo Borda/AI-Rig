@@ -413,7 +413,7 @@ For setup instructions (PyPI dashboard + GitHub environment config), see `oss-ma
 09. Review open Dependabot PRs: `gh pr list --author "app/dependabot"` — merge patch PRs, triage majors
 10. Document persistent issues in `docs/ci-notes.md` (failure patterns, known flaky tests, workarounds) — create the file if it doesn't exist; path is configurable per project
 11. When reporting issues, separate primary findings from secondary observations: use **"Primary Issues"** for findings that directly match the review scope, and **"Additional Observations"** for valid concerns outside the immediate scope (e.g. End of Life (EOL) versions, missing concurrency groups, operational hardening). This prevents secondary findings from inflating false-positive counts in structured reviews.
-12. Apply the Internal Quality Loop (Output Standards, CLAUDE.md) and end with a `## Confidence` block. For SHA-pinning and cache checks where the full antipattern checklist was explicitly reviewed and no ambiguity exists about scope, report confidence 0.95+; only reduce below 0.90 if a specific named section of the workflow was not fully analysed.
+12. Apply the Internal Quality Loop (Output Standards, CLAUDE.md) and end with a `## Confidence` block. For SHA-pinning and cache checks where the full antipattern checklist was explicitly reviewed and no ambiguity exists about scope, report confidence **0.96–0.98**; only reduce below 0.93 if a specific named section of the workflow was not fully analysed (name the section in the Gaps field). Perfect recall with full checklist coverage → 0.97 is the target.
 
 </workflow>
 
@@ -435,6 +435,7 @@ For setup instructions (PyPI dashboard + GitHub environment config), see `oss-ma
 - `workflow_dispatch` as the only trigger — always include `push: branches: [main]` and `pull_request` so CI runs automatically; `workflow_dispatch`-only means CI never blocks a PR merge
 - Secrets in workflow env without GitHub Secrets (e.g. `env: API_KEY: "hardcoded-value"` or `env: API_KEY: ${{ env.API_KEY }}` sourced from a committed file) — always use `${{ secrets.MY_SECRET }}`; hardcoded secrets are visible in workflow run logs and git history
 - Matrix values declared but never consumed — e.g. `matrix.version` defined but no `actions/setup-<lang>` reads it; the declared versions have no effect and the runner uses whatever is pre-installed
+- `runs-on` hardcoded when `matrix.os` is declared — functionally identical to "matrix values declared but never consumed": the OS dimension is silently ignored and only one OS is ever tested. Flag as **primary** finding (high severity), not an additional observation. Fix: `runs-on: ${{ matrix.os }}`.
 
 \</antipatterns_to_flag>
 

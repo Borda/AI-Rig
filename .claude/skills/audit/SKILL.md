@@ -94,22 +94,9 @@ Record the full file list — this becomes the audit scope for Steps 3–4. Cros
 
 Spawn one **self-mentor** agent per file (or batch into groups of up to 10 for efficiency). Each invocation prompt must end with:
 
-> "Include a `### Confidence` block at the end of your report: **Score**: 0.N (high ≥0.9 / moderate 0.7–0.9 / low \<0.7) and **Gaps**: what limited thoroughness."
->
-> Confidence scores should reflect actual uncertainty. A confidence score < 0.8 typically indicates either: (a) the inventory was not available for cross-reference checks, (b) the severity table was not consulted for a finding, or (c) a finding was made conditionally without confirmation. If the confidence score would be < 0.8 on a finding, either confirm it (using the inventory or severity table) or flag it explicitly in Gaps — do not report unconfirmed findings as if confirmed.
+> "End your response with a `## Confidence` block per CLAUDE.md output standards."
 
-Each invocation should ask self-mentor to check:
-
-- **Purpose and logical coherence**: is the agent's/skill's role clearly defined? Does its scope make sense — not too broad, not too narrow? Would a new user understand when to reach for it vs a similar one?
-- **Structural completeness**: required sections present, tags balanced, step numbering sequential
-- **Cross-reference validity**: every agent/skill name mentioned must exist on disk. When auditing a file, cross-reference names against the disk inventory established in Step 2. Any agent or skill name that is not in the Step 2 inventory is a **broken cross-reference** (critical). Do not use conditional language ("if X doesn't exist") — by Step 3, the inventory is known. If the inventory was not collected (e.g., running in isolation), flag with: "unverified reference — requires disk inventory check." **Antipattern to flag**: writing "potentially missing" or "likely doesn't exist" or "if this agent doesn't exist" or "pending verification" or "should be checked against inventory" when the inventory was collected in Step 2. These phrases indicate the agent is not using the inventory. If a name appears in the workflow and is absent from the Step 2 inventory list, it is a confirmed broken cross-reference — report it as critical, not conditional. Conditional language is only acceptable when Step 2 was genuinely not run (e.g., auditing a single file in isolation without a disk inventory).
-- **Verbosity and duplication**: bloated steps, repeated instructions, copy-paste between files
-- **Content freshness**: outdated model names, stale version pins, deprecated Application Programming Interface (API) references
-- **Hardcoded user paths**: any `/Users/<name>/` or `/home/<name>/` absolute path — must be `.claude/`, `~/`, or derived from `git rev-parse --show-toplevel`. Flag every occurrence regardless of context — paths in "negative example" notes, "do not do this" callouts, or instructional text are not exempt. The rule is: if the literal path string appears in the file, it must be flagged at medium severity.
-- **Infinite loops**: does file A's follow-up chain reference file B which references A creating a cycle? (flag, don't auto-fix)
-- **Example value vs. token cost**: for each inline example (code block or `## Example` section), judge whether it earns its tokens — does it demonstrate a non-obvious pattern or nuanced judgment call that prose alone cannot convey? Flag examples that merely restate the surrounding prose in code, illustrate obvious/trivial cases, or would be better served by a project-local `AGENTS.md`. Note: if the project has its own `AGENTS.md` or `CONTRIBUTING.md`, generic examples in agent files are less justified.
-
-**Scope constraint**: report only findings within the above check list. Do not add out-of-scope findings (e.g., "no error handling described," "missing inputs section for a skill") unless that specific check is in the list above. Extra findings not corresponding to a listed check are noise — they dilute precision and distract from confirmed issues.
+Read the self-mentor prompt template from ${CLAUDE_SKILL_DIR}/templates/self-mentor-prompt.md and include its content in each self-mentor invocation prompt.
 
 Collect all findings from each self-mentor response into a structured list keyed by file path.
 
@@ -368,33 +355,13 @@ Report per-file: `N examples total, K high-value, M low-value (est. ~X tokens wa
 - Classifying a `deep-reasoning` agent on `sonnet` as "possibly underpowered" (medium) rather than **high** — the tier classification table provides the authority for this judgment; use it
 - Classifying a direct CLAUDE.md contradiction as a "best practice concern" (medium) rather than **high** — any instruction that explicitly overrides a CLAUDE.md directive is high severity per the governance hierarchy
 
-Group all findings from Steps 1–4 into a severity table:
-
-| Severity     | Examples                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **critical** | Broken cross-reference (agent/skill does not exist on disk), MEMORY.md inventory wrong, relative path that silently falls back to wrong directory                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **high**     | Dead loop in follow-up chain, missing settings.json permission for a tool in use, broken code example (undefined variable, wrong command syntax), agent/skill instruction directly contradicts a `.claude/CLAUDE.md` directive, deprecated/invalid hook event name or type in use, `context:fork + disable-model-invocation:true` on the same skill (skill cannot run), tool declared in `tools:`/`allowed-tools:` that is needed but absent causing silent failures, `deep-reasoning` or `plan-gated` agent declared on `sonnet` (underpowered for its classified tier) |
-| **medium**   | Duplication across files, stale model name, README row missing for existing skill, hardcoded `/Users/<name>/` path, undocumented modes in inputs, deprecated frontmatter field or settings key, permissions-guide.md missing row for an allow entry or containing an orphaned row, declared tool not referenced anywhere in the workflow (unnecessary permission surface), `focused-execution` agent declared on `opus`/`opusplan` (potential overkill for its classified tier)                                                                                          |
-| **low**      | Verbosity, minor formatting, incomplete follow-up chain, outdated version pin with "autoupdate" note, agent/skill omits a CLAUDE.md principle but doesn't contradict it, 💡 new documented Claude Code (CC) feature not yet used, inline example that restates prose or is superseded by project-local `AGENTS.md`/`CONTRIBUTING.md`                                                                                                                                                                                                                                     |
+Group all findings from Steps 1–4 into a severity table. Read the severity classification table from ${CLAUDE_SKILL_DIR}/severity-table.md.
 
 ## Step 6: Cross-validate critical findings
 
-Before surfacing any `critical` finding in the report, spawn a second **self-mentor** agent targeting only that file with a prompt that names the specific finding:
+Read and follow the cross-validation protocol from `.claude/skills/_shared/cross-validation-protocol.md`.
 
-```
-Independently review <file> for the following specific issue: "<finding description>".
-Do NOT read any prior self-mentor report on this file.
-Confirm: is this a real critical issue, a false positive, or something lower severity?
-Explain your reasoning. Include your ## Confidence block.
-```
-
-Classify the outcome:
-
-- **Both agree it is critical** → include as critical in the report ✓
-- **Second pass disagrees or downgrades** → downgrade to `high` with a note: "unconfirmed critical — one of two independent passes flagged this"
-- **Both agree it is NOT critical** → remove from critical list; re-classify at the lower severity both agree on
-
-This cross-validation adds one extra spawn per critical finding — it is worth it to avoid false-positive blocking issues reaching the user.
+**Skill-specific**: the verifier agent is always **self-mentor**.
 
 ## Step 7: Report findings
 
@@ -435,27 +402,7 @@ If no fix level was passed, stop here and present the report.
 
 Spawn one **sw-engineer** subagent per affected file, batching all findings for that file into a single subagent prompt. Issue **all spawns in a single response** for parallelism.
 
-Each subagent prompt template:
-
-```
-Fix the following issues in `<file path>`. Apply only the listed fixes — do not change anything else.
-
-<for each finding in this file, one bullet per fix>
-- [SEVERITY] <specific fix description>
-  Fix: <exactly what to change, with enough context to locate it>
-
-Fix type reference:
-- Broken cross-reference "foo" → replace with the correct name (verify it exists on disk)
-- Inventory drift → update the relevant line to match disk state exactly
-- Hardcoded path → replace `/Users/<name>/path` with `.claude/path` or `~/path`
-- Missing Confidence block → add `End your response with a ## Confidence block per CLAUDE.md output standards.` before the closing `</workflow>` tag
-- Broken bash block → fix syntax per the description (add missing opening fence, fix 4-backtick closer, unescape angle brackets)
-- Missing variable declaration → prepend `VAR="$(command)"` as the first line of the affected bash block
-- Stale cross-reference → replace `<old-name>` with `<correct-name>`
-- Duplicate section → remove the listed lines verbatim
-
-Do not add comments, docstrings, or any other improvements beyond the listed fixes.
-```
+Each subagent prompt template: Read the fix prompt template from ${CLAUDE_SKILL_DIR}/templates/fix-prompt.md and use it, filling in `<file path>` and the list of findings.
 
 **Exceptions — handle inline without subagents (note in report):**
 

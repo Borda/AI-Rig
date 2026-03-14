@@ -68,7 +68,7 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$(eval echo ~)"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 SETTINGS_TMP="$(mktemp /tmp/settings_sync_XXXXXX.json)"
-sed "s|node .claude/hooks/|node $HOME_EXPANDED/.claude/hooks/|g" \
+sed "s|node \\.claude/hooks/|node $HOME_EXPANDED/.claude/hooks/|g" \
   "$PROJECT/.claude/settings.json" > "$SETTINGS_TMP"
 CHANGED=$(rsync --checksum --itemize-changes --dry-run \
   "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1)
@@ -133,7 +133,7 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$(eval echo ~)"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 SETTINGS_TMP="$(mktemp /tmp/settings_sync_XXXXXX.json)"
-sed "s|node .claude/hooks/|node $HOME_EXPANDED/.claude/hooks/|g" \
+sed "s|node \\.claude/hooks/|node $HOME_EXPANDED/.claude/hooks/|g" \
   "$PROJECT/.claude/settings.json" > "$SETTINGS_TMP"
 CHANGED=$(rsync --checksum --itemize-changes \
   "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1)

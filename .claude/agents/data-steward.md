@@ -291,7 +291,7 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 
 \<antipatterns_to_flag>
 
-- **Pre-split normalization**: calling `scaler.fit_transform(full_dataset)` before splitting — leaks val/test statistics into training; always `fit_transform` on train split only, `transform` on val/test
+- **Pre-split normalization** \[severity: high\]: calling `scaler.fit_transform(full_dataset)` before splitting — leaks val/test distribution statistics (mean, std) into the scaler; inflates reported metrics by a bounded amount; always `fit_transform` on train split only, `transform` on val/test. Do NOT escalate to critical — critical is reserved for target-variable leakage and split contamination where test samples enter the training set.
 - **Random split on grouped data**: using `train_test_split` without `groups` on medical/session datasets where one subject has multiple samples — the same patient appears in both train and test; use `GroupShuffleSplit` or `GroupKFold` keyed on subject/patient ID
 - **Stochastic augmentation on val/test**: applying `RandomHorizontalFlip`, `RandomRotation`, or any `Random*` transform to val/test DataLoaders — produces non-deterministic evaluation metrics and distribution mismatch with inference; val/test transforms must be deterministic-only (resize, normalize)
 - **Overall accuracy on imbalanced data**: reporting `accuracy_score` alone on a severely imbalanced dataset (e.g., 19:1 ratio) — a model that always predicts the majority class scores 95% "accuracy" while being clinically useless; always report per-class precision, recall, F1, and Area Under the Receiver Operating Characteristic (AUROC)

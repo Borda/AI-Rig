@@ -46,7 +46,7 @@ If Continuous Integration (CI) is red, report that without full review.
 
 Launch agents simultaneously with the Agent tool (security augmentation is folded into Agent 1 — not a separate spawn; Agent 6 is optional). Every agent prompt must end with:
 
-> "End your response with: `## Confidence` / `**Score**: 0.N` (high ≥0.9 / moderate 0.7–0.9 / low \<0.7) / `**Gaps**: what limited your analysis (e.g., no runtime traces, no test execution, partial file read)`."
+> "End your response with a `## Confidence` block per CLAUDE.md output standards."
 
 **Agent 1 — sw-engineer**: Review architecture, SOLID adherence, type safety, error handling, and code structure. Check for Python anti-patterns (bare `except:`, `import *`, mutable defaults). Flag blocking issues vs suggestions.
 
@@ -121,28 +121,15 @@ git diff HEAD~1 HEAD -- CHANGELOG.md CHANGES.md
 
 ## Step 4: Cross-validate critical/blocking findings
 
-Before consolidating, for any finding classified as `CRITICAL` or `[blocking]` from Step 2, spawn a second independent agent to verify. Use the **same agent type** that raised the finding (e.g., sw-engineer verifies sw-engineer's critical finding):
+Read and follow the cross-validation protocol from `.claude/skills/_shared/cross-validation-protocol.md`.
 
-```
-Independently review <file or diff section> for the following specific issue: "<finding description>".
-Do NOT read the previous agent's output.
-Is this a real critical/blocking issue? Confirm or refute with reasoning.
-Include your ## Confidence block.
-```
-
-Classify:
-
-- **Confirmed by both** → include as critical/blocking ✓
-- **Second pass disagrees** → downgrade to `high` with note "unconfirmed — one of two passes flagged this"
-- **Both agree lower severity** → re-classify accordingly
-
-Only apply cross-validation to `CRITICAL`/`[blocking]` findings — high and lower go directly to Step 5.
+**Skill-specific**: use the **same agent type** that raised the finding as the verifier (e.g., sw-engineer verifies sw-engineer's critical finding).
 
 ## Step 5: Consolidate findings
 
 Before writing the report, rank findings within each section by impact (blocking > critical > high > medium > low).
 
-**Signal-to-noise filter**: Before writing the report, classify each finding as either (a) a genuine defect or architectural issue or (b) a style/completeness observation (unused import, print-vs-logging, missing class-level docstring on a class that has method-level docstrings). For well-scoped modules with ≤5 public APIs, limit (b) items to at most 1 per section. **Target: report no more than GT+2 findings total per module** — a review with 10 nits obscures the 2 critical fixes. Prefer depth (why it matters, how to fix) over breadth (finding volume). **Annotation completeness rule**: If ≥2 HIGH or CRITICAL findings are present, omit LOW-severity type annotation nits entirely — they will be handled by `linting-expert` or pre-commit hooks. Never report annotation completeness findings when doing so pushes total count above GT+2.
+**Signal-to-noise filter**: Before writing the report, classify each finding as either (a) a genuine defect or architectural issue or (b) a style/completeness observation (unused import, print-vs-logging, missing class-level docstring on a class that has method-level docstrings). For well-scoped modules with ≤5 public APIs, limit (b) items to at most 1 per section. **Target: report no more than GT+2 findings total per module** — a review with 10 nits obscures the 2 critical fixes. **Pre-flight check**: Before writing any section, count your total findings. If the count exceeds the number of clearly CRITICAL/HIGH issues plus 2, drop the lowest-severity items first until you are at or below that cap. Only then begin writing sections. Prefer depth (why it matters, how to fix) over breadth (finding volume). **Annotation completeness rule**: If ≥1 HIGH or CRITICAL finding is present, omit ALL LOW-severity type annotation and docstring-completeness nits — they will be handled by `linting-expert` or pre-commit hooks. This applies unconditionally; do not list annotation gaps as a fallback when the section would otherwise be empty.
 
 Cap each non-critical section at 5 items; if more are found, note "N additional lower-priority findings omitted" at the end of that section. This keeps the report actionable and prevents blocking issues from being buried in volume.
 
@@ -219,20 +206,9 @@ After consolidating findings, identify tasks from the review that Codex can impl
 - Architectural issues, logic errors, security vulnerabilities, or behavioural changes
 - Any task where you cannot write a precise description without guessing
 
-For each task, read the relevant code, form an accurate brief, then spawn:
-
-```
-Task(
-  subagent_type="general-purpose",
-  prompt="Read .claude/skills/codex/SKILL.md and follow its workflow exactly.
-Task: use the <agent> to <specific task with accurate description of what the code does>.
-Target: <file>."
-)
-```
+!`cat .claude/skills/_shared/codex-delegation.md`
 
 Example prompt: `"use the qa-specialist to add a test for StreamReader.read_chunk() in tests/test_reader.py — the method should raise ValueError when called after close(), currently there is no test for this path"`
-
-The subagent handles pre-flight, dispatch, validation, and patch capture. If Codex is unavailable it reports gracefully — do not block on this step.
 
 Print a `### Codex Delegation` section to the terminal summarizing what was auto-implemented (do not re-write the output file).
 

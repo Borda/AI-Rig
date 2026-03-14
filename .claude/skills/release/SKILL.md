@@ -108,123 +108,23 @@ If the existing releases deviate significantly from the templates below (e.g., n
 
 Omit any section that has no content.
 
-````markdown
-## 🚀 Added
-
-- **Feature Name.** One-sentence description of what it does and why it matters. (#PR)
-
-# Minimal real-usage example showing the new surface
-
-```python
-# example usage here
-```
-
-| Option | Best for |
-| ------ | -------- |
-| `NAME` | ...      |
-
-- `new_param` added to `SomeConfig`, allowing X. (#PR)
-
-## ⚠️ Breaking Changes
-
-- **[Area]**: [what changed and what callers must do to migrate]. (#PR)
-
-## 🌱 Changed
-
-- [Behaviour change]: old behaviour → new behaviour. (#PR)
-
-## 🗑️ Deprecated
-
-- `OLD_NAME` deprecated in favour of `NEW_NAME`. (#PR)
-
-## ❌ Removed
-
-- `OLD_API` removed (deprecated since vX.Y). Migrate to `NEW_API`. (#PR)
-
-## 🔧 Fixed
-
-- Fixed [what was broken] when [condition]. (#PR)
-
----
-
-## 🏆 Contributors
-
-A special welcome to our new contributors and a big thank you to everyone who helped with this release:
-
-* **Full Name** (@handle) ([LinkedIn](url)) – *What they built or fixed*
-* @handle – *What they built or fixed* (use this form when real name is not confirmed)
-
----
-
-**Full changelog**: https://github.com/[org]/[repo]/compare/vPREV...vNEXT
-````
+Read the PUBLIC-NOTES template from ${CLAUDE_SKILL_DIR}/templates/PUBLIC-NOTES.tmpl.md and use it as the format for the notes output.
 
 ### CHANGELOG Entry (`changelog`)
 
-```markdown
-## [version] — [date]
-### Added
-### Changed
-### Deprecated
-### Removed
-### Fixed
-### Security
-```
+Read the CHANGELOG entry template from ${CLAUDE_SKILL_DIR}/templates/CHANGELOG.tmpl.md and use it as the format.
 
 ### Internal Release Summary (`summary`)
 
-```markdown
-## Release [version]
-**What shipped**: [2-3 sentence summary of the most important changes]
-**Impact**: [who is affected and how]
-**Action required**: [anything ops/support/consumers need to do]
-**Rollback**: [safe to roll back? any caveats?]
-```
+Read the internal release summary template from ${CLAUDE_SKILL_DIR}/templates/SUMMARY.tmpl.md and use it as the format.
 
 ### Migration Guide (`migration`)
 
-```markdown
-## Migrating from [old] to [new]
-### [Breaking change name]
-**Before**: [snippet]
-**After**: [snippet]
-**Why**: [reason]
-```
+Read the migration guide template from ${CLAUDE_SKILL_DIR}/templates/MIGRATION.tmpl.md and use it as the format.
 
 ## Step 4: Writing guidelines
 
-Write for the reader, not the commit author.
-
-| Element          | Rule                                                              |
-| ---------------- | ----------------------------------------------------------------- |
-| Feature heading  | Bold title, period, then plain-English description — no jargon    |
-| PR numbers       | Always at line end: `(#N)` or `(#N, #M)` — never omit             |
-| Code examples    | Real usage showing the new surface; not pseudocode                |
-| Tables           | Use for option/preset comparisons; skip for single-item features  |
-| Breaking changes | State exactly what breaks and the migration path                  |
-| Fix items        | Say what was broken and under what condition — not just "fixed X" |
-| Changed items    | Behaviour changes only — old behaviour → new behaviour            |
-| Deprecated items | Name old API and its replacement; omit removal version if unknown |
-| Removed items    | State deprecated-since version and migration target               |
-
-Bad/good examples:
-
-- Bad: `"refactor: extract UserService from monolith"` → Good: `"User management is now ~40% faster"`
-- Bad: `"Fix auth bug"` → Good: `"Fixed login failure for email addresses containing special characters"`
-
-**Contributors rules:**
-
-- List every external contributor, even for a one-liner fix
-- **NEVER guess or hallucinate a real name.** A wrong name in public release notes is a serious error. When in doubt, omit the name entirely.
-- **Name lookup protocol** — run for every contributor @handle before writing their entry:
-  1. `gh api /users/<handle> --jq '.name'` — if non-null and non-empty, use as the real name (high confidence)
-  2. If empty: spawn `web-explorer` to search `site:linkedin.com "<handle>" developer` — use the name only if the profile clearly matches (same avatar, repos, or employer). Note the LinkedIn URL for inclusion.
-  3. If still uncertain: use `@handle` only — no name field at all
-- Format when name is confirmed: `* **Full Name** (@handle) ([LinkedIn](url)) – *noun phrase*`
-- Format when name is not confirmed: `* @handle – *noun phrase*`
-- LinkedIn is optional — include only if found via lookup; never construct a URL by guessing
-- New contributors get a welcome sentence above the list
-- Maintainer always listed last with infra / CI / docs scope
+Read the writing guidelines from ${CLAUDE_SKILL_DIR}/guidelines/writing-rules.md and follow them.
 
 After applying the guidelines above to polish the output, write to disk per mode:
 
@@ -243,7 +143,7 @@ gh release create v<version> --title "v<version>" \
   --notes "$(cat releases/v<version>/PUBLIC-NOTES.md)"
 ```
 
-End your response with a `## Confidence` block per CLAUDE.md output standards: **Score**: 0.N (high ≥0.9 / moderate 0.7–0.9 / low \<0.7), **Gaps**: what limited thoroughness, **Refinements**: N passes.
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 ## Mode: prepare
 
@@ -320,112 +220,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 **Purpose**: Pre-release readiness check — surfaces outstanding work, alignment gaps, and blocking issues before cutting a release.
 
-```bash
-TARGET=$(echo "$ARGUMENTS" | awk '{print $2}')   # optional target version
-LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
-RANGE="$LAST_TAG..HEAD"
-```
-
-### Pre-flight: gh authentication
-
-```bash
-# Fail fast with a clear message if gh is not authenticated
-gh auth status 2>&1 || { echo "gh not authenticated — run 'gh auth login' first"; exit 1; }
-```
-
-### Check 1: Repository state
-
-```bash
-# Uncommitted changes
-git status --short
-
-# Unreleased commits
-git log $RANGE --oneline --no-merges
-```
-
-### Check 2: CI health
-
-```bash
-gh run list --branch "$(git rev-parse --abbrev-ref HEAD)" --limit 5 \
-  --json status,conclusion,name 2>/dev/null || true
-```
-
-### Check 3: Open issues and PRs
-
-```bash
-# Issues with blocker or bug labels (high-severity candidates)
-gh issue list --state open --limit 30 \
-  --json number,title,labels 2>/dev/null || echo "[]"
-
-# Open PRs targeting main — anything that should land before the release?
-gh pr list --state open --base main --limit 20 \
-  --json number,title,draft,reviewDecision 2>/dev/null || echo "[]"
-```
-
-### Check 4: Documentation alignment
-
-```bash
-# What files changed since last tag?
-git diff $RANGE --name-only
-
-# Did README or any docs change? If not, flag for manual review.
-git diff $RANGE --name-only | grep -iE 'readme|\.md$|docs/' || echo "no docs changed"
-```
-
-Read `README.md` and verify: install/usage examples match current API, version references are not pinned to old releases, any deprecated APIs mentioned are still present (or have deprecation notes). If `docs/` exists, spot-check recently changed public API sections against the docs.
-
-Check `CHANGELOG.md`: does it have an `[Unreleased]` entry or a section for `$TARGET` covering commits in `$RANGE`?
-
-### Check 5: Version consistency
-
-```bash
-grep -rn '__version__\|^version\s*=' --include="*.py" --include="*.toml" \
-  --include="*.cfg" --include="*.json" . 2>/dev/null | grep -v ".git" | head -15
-```
-
-All declarations must agree. If `$TARGET` was given, verify it matches (or flag it needs bumping).
-
-### Check 6: Critical code signals
-
-```bash
-# Release-blocking TODOs outside test files
-grep -rn "TODO.*release\|FIXME\|HACK\|XXX" --include="*.py" \
-  --exclude-dir=".git" --exclude-dir="tests" . 2>/dev/null | head -10
-
-# Dependency CVE scan (if available)
-command -v pip-audit &>/dev/null && pip-audit --format=json 2>/dev/null | \
-  python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"dependencies\"])} deps, {sum(len(x[\"vulns\"]) for x in d[\"dependencies\"])} vulns')" 2>/dev/null || true
-```
-
-### Output
-
-Print a readiness report:
-
-```
-## Release Readiness — [repo] [version or "next release"]
-Date: [date] | Range: [last-tag]..HEAD ([N] commits)
-
-| Check                 | Status | Detail |
-|-----------------------|--------|--------|
-| Working tree          | ✅ Clean / ⚠️ N files | [filenames if dirty] |
-| CI (last 5 runs)      | ✅ Passing / ❌ N failing | [failing job names] |
-| Blocking issues       | ✅ None / ❌ N open | [#N title] |
-| Open PRs (main)       | ✅ None / ⚠️ N open | [PR titles] |
-| README aligned        | ✅ / ⚠️ Review needed | [reason if flagged] |
-| CHANGELOG entry       | ✅ Present / ❌ Missing | [section name or "add [Unreleased]"] |
-| Version consistent    | ✅ / ⚠️ Mismatch | [files and values] |
-| Dependency CVEs       | ✅ Clean / ⚠️ N vulns | [package names] |
-
-### Verdict
-**READY** — no blockers. Run `/release prepare <version>` to write artifacts.
-— or —
-**NEEDS ATTENTION** — N items before release:
-- ❌ [blocking item]
-- ⚠️ [recommended item]
-
-### Next steps
-[e.g., "resolve open PRs → re-run `/release audit v1.3.0` to verify → `/release prepare v1.3.0`"]
-```
+Read and execute all checks from `.claude/skills/release/templates/audit-checks.md`.
 
 End your response with a `## Confidence` block per CLAUDE.md output standards.
 

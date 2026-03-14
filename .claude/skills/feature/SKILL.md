@@ -202,21 +202,9 @@ Inspect what was built (`git diff HEAD --stat`) and identify real implementation
 - Style or lint violations — run pre-commit hooks instead
 - Any task where you cannot write a precise description without guessing
 
-For each task, read the target code, form an accurate brief, then spawn:
-
-```
-Task(
-  subagent_type="general-purpose",
-  prompt="Read .claude/skills/codex/SKILL.md and follow its workflow exactly.
-Task: use the <agent> to <specific task with accurate description of what the code does>.
-Target: <file>."
-  # Path is project-relative; if the codex skill moves, update this path.
-)
-```
+!`cat .claude/skills/_shared/codex-delegation.md`
 
 Example prompt: `"use the doc-scribe to add a 6-section NumPy-style docstring to BatchTransform.apply() in src/transforms.py — the method applies per-sample normalization using a precomputed mean/std tensor and returns a tensor of the same shape as input"`
-
-The subagent handles pre-flight, dispatch, validation, and patch capture. If Codex is unavailable it reports gracefully — do not block on this step.
 
 Include a `### Codex Delegation` line in the Step 8 report only if this step ran.
 
@@ -286,6 +274,8 @@ Your task: [specific responsibility].
 [If QA]: include security checks for any auth/payment/data-handling code.
 Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
 ```
+
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

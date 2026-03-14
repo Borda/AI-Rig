@@ -211,6 +211,14 @@ When documenting image/tensor functions — identified by parameter names such a
 
 \<quality_checks>
 
+## Prompt-Scope Gate
+
+When the task prompt explicitly restricts the audit category (e.g. "identify missing docstrings", "find incomplete NumPy sections", "check example correctness"), treat that restriction as a filter:
+
+- **Primary findings**: only issues that match the stated category
+- **Additional Observations section**: include only if the supplementary issue is directly blocking (e.g., an example cannot be verified because the function it calls is undocumented) — otherwise omit it entirely
+- Do not include out-of-category style observations, missing sections of a different type, or quality gaps for functions not covered by the prompt scope
+
 ## Docstring Audit
 
 - Every public function/class/module has a docstring
@@ -223,11 +231,7 @@ When auditing, prioritise findings by scope: (1) public functions and classes, (
 
 When listing findings, order by severity within each item: (1) missing docstring entirely, (2) missing Parameters/Returns for public API, (3) missing Examples, (4) incomplete section descriptions (empty parameter description lines), (5) minor style observations (value range annotation, ordering of Returns tuple description). Report all high/medium findings first; append low-severity style observations only after the primary gaps are covered. This prevents minor annotations from diluting the signal of structural gaps.
 
-When auditing from a specific task prompt (e.g. "identify missing docstrings"), scope
-your primary findings to issues matching the prompt's explicit category. List supplementary
-quality observations (e.g. incomplete but present docstrings, adjacent style issues) in a
-separate "## Additional Observations" section clearly marked as out-of-scope for the task.
-This prevents supplementary findings from diluting the primary signal.
+See the **Prompt-Scope Gate** above for scope-filtering rules when the task prompt restricts the audit category.
 
 ## README Audit
 
@@ -260,6 +264,7 @@ This prevents supplementary findings from diluting the primary signal.
 - Functions with no explicit `raise` that still have implicit shape/type contracts (e.g. arrays must have matching first dim, tuple must be length 2) should document those constraints in `Raises` (if the downstream exception is user-visible) or in a `Notes` paragraph — do not skip the Raises section just because the function body has no `raise` keyword
 - Documenting only the "happy path" in Examples while omitting edge-case behavior that callers need to know about (e.g., what happens on empty input, None, or out-of-range values)
 - Copy-pasting the function signature verbatim as the one-line summary — the summary should explain *why* and *when* to use the function, not restate its name and arguments
+- Reporting out-of-scope supplementary findings when the task prompt explicitly names a documentation category to audit — if the prompt says "missing docstrings", do not include "missing Examples section" or "incomplete Returns" as additional observations; those belong in a separate audit pass. Surface only if a finding directly blocks the in-scope task.
 
 ## False Positive Traps (do NOT flag these)
 
@@ -286,7 +291,11 @@ This prevents supplementary findings from diluting the primary signal.
 7. Flag any inconsistencies between docs and code
 8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., doctests not executed, README quick-start not verified in fresh environment, changelog completeness assumed from git log only), and **Refinements** (N passes with what changed; omit if 0).
 
-When reporting confidence for structural-absence detection tasks (missing docstrings, missing sections), cap score at 0.90 unless you have verified examples by execution or cross-checked the full file tree — static reading alone does not warrant >0.90.
+When reporting confidence:
+
+- For structural-absence tasks (missing docstrings, missing Parameters/Returns sections): score 0.88–0.92 is appropriate for static reading of a self-contained module. The "doctests not executed" caveat applies only when the finding depends on example output correctness — do not cite it for structural gaps (missing section headers, empty description lines, absent docstrings).
+- For example-correctness tasks: cap at 0.90 unless examples were executed in a live environment.
+- For tasks involving cross-file or cross-module dependencies (e.g. "check all public APIs in the package"): cap at 0.85 unless the full file tree was enumerated.
 
 </workflow>
 

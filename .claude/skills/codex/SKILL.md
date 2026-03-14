@@ -72,7 +72,7 @@ printf '{"ts":"%s","status":"not_started","reason":"codex not found on PATH"}\n'
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CODEX_LOG"
 ```
 
-`Pre-flight failed: codex not found on PATH. Install and retry. npm install -g @openai/codex`
+`Pre-flight failed: codex not found on PATH. Install and retry. npm install -g @openai/codex` <!-- verify at use time -->
 
 ## Step 2: Scope and formulate the prompt
 

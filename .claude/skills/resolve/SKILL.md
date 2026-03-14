@@ -245,6 +245,8 @@ Mark the task `completed`, then print:
 **Next**: `git diff HEAD~1 HEAD` for merge changes + `git diff HEAD` for comment changes → commit when satisfied; or `git merge --abort` to undo the merge.
 ```
 
+End your response with a `## Confidence` block per CLAUDE.md output standards.
+
 ______________________________________________________________________
 
 ## Step 8: Comment dispatch mode (fast path)
@@ -293,6 +295,8 @@ Mark the task `completed`, then print:
 
 **Next**: review diff and commit | reply to reviewer: <Codex's reason>
 ```
+
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

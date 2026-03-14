@@ -119,20 +119,9 @@ Inspect the refactoring changes (`git diff HEAD --stat`) and identify real imple
 - Style or lint violations — run pre-commit hooks instead
 - Any task where you cannot write a precise description without guessing
 
-For each task, read the target code, form an accurate brief, then spawn:
-
-```
-Task(
-  subagent_type="general-purpose",
-  prompt="Read .claude/skills/codex/SKILL.md and follow its workflow exactly.
-Task: use the <agent> to <specific task with accurate description of what the code does>.
-Target: <file>."
-)
-```
+!`cat .claude/skills/_shared/codex-delegation.md`
 
 Example prompt: `"use the doc-scribe to rewrite the docstring for DataPipeline.transform() in src/pipeline.py — the method was refactored to accept a list of transforms instead of a single callable; it now applies them sequentially and returns early on the first None result"`
-
-The subagent handles pre-flight, dispatch, validation, and patch capture. If Codex is unavailable it reports gracefully — do not block on this step.
 
 Include a `### Codex Delegation` section in the Step 6 report only if this step ran.
 
@@ -173,10 +162,12 @@ Output a structured report:
 - [any remaining items that need manual review]
 
 ## Confidence
-**Score**: [0.N]
+**Score**: 0.N — [high ≥0.9 | moderate 0.7–0.9 | low <0.7]
 **Gaps**: [e.g., characterization tests incomplete, edge cases not covered, coverage tool unavailable]
 **Refinements**: [N passes]
 ```
+
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

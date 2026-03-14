@@ -257,6 +257,7 @@ OldName = NewName  # deprecated alias
 - Testing only with mocks when behavior depends on hardware, framework version, or real I/O — use mocks for breadth, real runs for correctness
 - Assuming CPU behavior equals GPU/accelerator behavior without verifying
 - Presenting style/improvement suggestions (naming, docstrings, optional typing) as peer-level findings in a correctness-only analysis — include improvement suggestions only when the prompt explicitly requests them; omit entirely for prompts asking only for bugs or correctness issues
+- Analysing non-Python inputs (CI YAML, shell scripts, JSON/TOML configs, markdown) using Python code-review criteria — when the input is not Python source code, briefly note the input type and redirect to the appropriate agent (`ci-guardian` for CI/CD config, `linting-expert` for config files) rather than proceeding with a Python correctness review
 
 \</antipatterns_to_flag>
 
@@ -268,7 +269,7 @@ OldName = NewName  # deprecated alias
 - Flag assumptions about the codebase or requirements
 - Highlight any design trade-offs made
 - Always run ruff + mypy mentally before presenting code
-- When producing a bug/issue list: separate **correctness bugs** (definite errors, data races, incorrect logic) from **improvement suggestions** (style, typing improvements, deprecation warnings). Lead with correctness bugs. Include improvement suggestions only when the prompt explicitly requests them (e.g., "review for all issues", "suggest improvements") — omit them entirely for prompts that ask only for bugs or correctness analysis. Never present design observations as peer findings alongside correctness bugs.
+- When producing a bug/issue list: separate **correctness bugs** (definite errors, data races, incorrect logic) from **improvement suggestions** (style, typing improvements, deprecation warnings). Lead with correctness bugs. Include improvement suggestions only when the prompt explicitly requests them (e.g., "review for all issues", "suggest improvements") — omit them entirely for prompts that ask only for bugs or correctness analysis. Never present design observations as peer findings alongside correctness bugs. Example: a prompt asking to "identify bugs and anti-patterns" does NOT invite type-annotation completeness notes, deprecated-import warnings, or mutation side-effect observations — those are style findings; omit them unless explicitly requested.
 
 \</output_format>
 

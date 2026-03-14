@@ -140,41 +140,12 @@ Branch into one of six modes:
 
    - `opusplan` — plan-gated roles (solution-architect, oss-maintainer, self-mentor): long-horizon reasoning + plan mode
    - `opus` — complex implementation roles (sw-engineer, qa-specialist, ai-researcher, perf-optimizer): deep reasoning without plan mode
-   - `sonnet` — focused execution roles (linting-expert, data-steward, ci-guardian, web-explorer, doc-scribe): pattern-matching, structured output
+   - `sonnet` — focused execution roles (data-steward, web-explorer, doc-scribe): pattern-matching, structured output
+   - `haiku` — high-frequency diagnostics roles (linting-expert, ci-guardian): rule-application, structured lint output
 
 4. Write the agent file with real domain content derived from the description:
 
-**Agent template** — write to `AGENTS_DIR/<name>.md`:
-
-```
----
-name / description / tools / model / color (frontmatter)
----
-<role> — 2-3 sentences establishing expertise from description
-\<core_knowledge> — 2 subsections, 3-5 bullets each (domain-specific, not generic)
-
-\</core_knowledge>
-
-`<workflow>` — 5 numbered steps appropriate to the domain
-
-</workflow>
-
-\<notes> — 1-2 operational notes + cross-refs to related agents
-
-\</notes>
-
-```
-
-**Content rules:** `<role>` and `<workflow>` use normal tags; all other sections use `\<escaped>` tags. Generate real domain content (80-120 lines total).
-
-**Tool selection**: match tools precisely to the domain — do not pad the list. Guidelines by role type:
-
-- Analysis / read-only agents (e.g., `solution-architect`, `doc-scribe`): start with `Read, Grep, Glob`; add `WebFetch`/`WebSearch` only if the domain involves fetching external docs or URLs; add `Write` only if the agent creates output files
-- Code execution agents (e.g., `linting-expert`, `perf-optimizer`, `ci-guardian`): include `Bash`; add `Write`/`Edit` only if the agent modifies code
-- Skills that orchestrate agent subagents (e.g., `review`, `feature`, `audit`): include `Agent` in `allowed-tools`
-- Web-research agents (e.g., `web-explorer`, `ai-researcher`): include `WebFetch` and/or `WebSearch`
-
-Remove any tool that serves no purpose for the declared domain. A minimal, precise list is safer and clearer than a maximal one.
+Read the agent scaffold template from ${CLAUDE_SKILL_DIR}/templates/agent-scaffold.md and follow the content rules and tool selection guidelines it defines.
 
 ### Mode: Create Skill
 
@@ -196,19 +167,7 @@ Remove any tool that serves no purpose for the declared domain. A minimal, preci
 mkdir -p .claude/skills/<name>
 ```
 
-**Skill template** — write to `SKILLS_DIR/<name>/SKILL.md`:
-
-```
----
-name / description / argument-hint / disable-model-invocation: true / allowed-tools (frontmatter)
----
-<objective> — 2-3 sentences from description
-<inputs> — $ARGUMENTS documentation
-`<workflow>` — 3+ numbered steps with bash examples
-<notes> — operational caveats
-```
-
-**Content rules:** No backslash escaping in skills (all normal XML tags). Generate real steps (40-60 lines total). Default `allowed-tools` to `Read, Bash, Grep, Glob, TaskCreate, TaskUpdate` unless writing files is needed; add `Agent` only if the skill spawns subagents. Only add `Write`/`Edit` if the skill creates or modifies files; only add `WebFetch`/`WebSearch` if the skill fetches external docs. Do not list tools the workflow never uses — unused declared tools inflate the permission surface needlessly.
+Read the skill scaffold template from ${CLAUDE_SKILL_DIR}/templates/skill-scaffold.md and follow the content rules it defines.
 
 ### Mode: Update Agent
 
@@ -435,7 +394,7 @@ Output a structured report containing:
 - **Audit Result**: audit findings (pass / issues found) (n/a for perm operations)
 - **Follow-up**: run `/sync apply` to propagate to `~/.claude/`; for `create` review generated content; for perm operations confirm both `settings.json` and `permissions-guide.md` are updated
 
-End the summary report with a `## Confidence` block per CLAUDE.md Output Standards: `**Score**: 0.N — [high ≥0.9 / moderate 0.7–0.9 / low <0.7]` and `**Gaps**: what limited thoroughness.`
+End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 

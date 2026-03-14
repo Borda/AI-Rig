@@ -170,6 +170,22 @@ def __init__(self) -> None:
 
 `__init__` must be annotated `-> None` explicitly under `strict = true`. It is a separate `no-untyped-def` finding, not implied by annotating other methods. Also annotate `self.<attr>` assignments in `__init__` to avoid `var-annotated` errors on the empty container.
 
+## `typing` module modernization (UP006 / UP007)
+
+```python
+# Before (UP006: use `list` instead of `List`, UP007: use `X | Y` instead of `Optional[X]`)
+from typing import List, Dict, Optional, Tuple
+
+
+def process(items: List[str]) -> Optional[str]: ...
+
+
+# After (Python 3.10+)
+def process(items: list[str]) -> str | None: ...
+```
+
+Auto-fixable with `ruff check . --fix` when `UP` rules are enabled. Remove the `from typing import ...` line if all uses are migrated.
+
 \</common_fixes>
 
 \<antipatterns_to_flag>
@@ -229,7 +245,7 @@ Secondary annotation findings: var-annotated on instance variables, no-untyped-d
    - ❌ Never: real type errors, ruff-bandit S-rule security findings, or whole-file suppressions in production code
 6. Configure per-file ignores for test files and generated code
 7. Install pre-commit hooks so issues don't creep back in
-8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., mypy stubs not checked for third-party libs, suppressed violations not individually justified, pre-commit not run in clean env, findings may include violations outside the requested scope if a broad scan was performed). If rule IDs were identified from static reading without running ruff, add: "rule IDs from static recall — verify with `ruff check` if exact codes are needed for suppression annotations." Only list a Gap when it represents a genuine limitation for this specific analysis — do not add generic hedges (e.g. "ruff not run locally") when the analysis is based on static code reading alone and the violations are unambiguous. Tier confidence by finding type — unambiguous violations (F401 unused import, missing return type annotation, incompatible return): score ≥0.90; rule-ID sub-precision (e.g. S602 vs S603 shell injection variants): 0.80; inferred type proposals (\_cache type, IO[str] precision): 0.70–0.75. Do not apply a uniform hedge — it produces systematic calibration bias. **Refinements** (N passes with what changed; omit if 0).
+8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block: **Score** (0–1), **Gaps** (e.g., mypy stubs not checked for third-party libs, suppressed violations not individually justified, pre-commit not run in clean env, findings may include violations outside the requested scope if a broad scan was performed). If rule IDs were identified from static reading without running ruff, add: "rule IDs from static recall — verify with `ruff check` if exact codes are needed for suppression annotations." Only list a Gap when it represents a genuine limitation for this specific analysis — do not add generic hedges — in particular, do not add "Rule IDs from static recall" as a Gap when the violations are unambiguous (F401, E711, E722, ANN001): these are deterministic and do not require running the tool to confirm. (e.g. "ruff not run locally") when the analysis is based on static code reading alone and the violations are unambiguous. Tier confidence by finding type — unambiguous violations (F401 unused import, missing return type annotation, incompatible return): score ≥0.90; rule-ID sub-precision (e.g. S602 vs S603 shell injection variants): 0.80; inferred type proposals (\_cache type, IO[str] precision): 0.70–0.75. Do not apply a uniform hedge — it produces systematic calibration bias. **Refinements** (N passes with what changed; omit if 0).
 
 </workflow>
 

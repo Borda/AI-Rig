@@ -99,20 +99,9 @@ After confirming improvements, inspect the applied changes (`git diff HEAD --sta
 - Generic "add comments" requests — only delegate when you can describe the specific technique and its rationale
 - Any task where you cannot write a precise description without guessing
 
-For each task, read the optimized code, form an accurate brief, then spawn:
-
-```
-Task(
-  subagent_type="general-purpose",
-  prompt="Read .claude/skills/codex/SKILL.md and follow its workflow exactly.
-Task: use the <agent> to <documentation task with accurate description of what the optimization does>.
-Target: <file>."
-)
-```
+!`cat .claude/skills/_shared/codex-delegation.md`
 
 Example prompt: `"use the doc-scribe to add an inline comment to the inner loop in src/batch_processor.py:87 explaining that the result tensor is pre-allocated before the loop to avoid repeated GPU memory allocation — the old version called torch.zeros() inside the loop"`
-
-The subagent handles pre-flight, dispatch, validation, and patch capture. If Codex is unavailable it reports gracefully.
 
 Print a `### Codex Delegation` section after the Step 4 terminal output only if this step ran.
 
