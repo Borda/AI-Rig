@@ -54,7 +54,7 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 | **optimize**  | `/optimize [target]`                        | Measure-change-measure performance loop                                                                                                                                                                   |
 | **release**   | `/release <mode> [range]`                   | Notes, changelog, summary, migration, or full prepare pipeline; `audit` checks release readiness                                                                                                          |
 | **survey**    | `/survey [topic]`                           | SOTA literature survey with implementation plan                                                                                                                                                           |
-| **analyse**   | `/analyse [#\|health]`                      | Issue/PR analysis, repo health, duplicate detection, contributor activity                                                                                                                                 |
+| **analyse**   | `/analyse [#\|health\|discussion #]`        | Issue/PR/Discussion analysis, repo health, duplicate detection, contributor activity                                                                                                                      |
 | **observe**   | `/observe`                                  | Meta-skill: analyze work patterns and suggest new agents or skills                                                                                                                                        |
 | **audit**     | `/audit [fix [high\|medium\|all]\|upgrade]` | Full-sweep config audit: broken refs, dead loops, inventory drift, docs freshness + upgrade proposals; `upgrade` applies docs-sourced improvements (config: correctness check, capability: calibrate A/B) |
 | **sync**      | `/sync [apply]`                             | Drift-detect project `.claude/` vs home `~/.claude/`; `apply` performs the sync                                                                                                                           |
@@ -98,6 +98,8 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
   /analyse health
   # Find duplicate issues
   /analyse dupes memory leak
+  # Analyze a GitHub Discussion
+  /analyse discussion 15
   ```
 
 - **`/survey` — SOTA literature search**

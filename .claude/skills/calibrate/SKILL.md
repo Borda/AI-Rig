@@ -87,7 +87,7 @@ From `$ARGUMENTS`, determine:
 
 - **Target list** — parse the first token:
   - `all` or omitted → all agents + `/audit` + `/review`
-  - `agents` → all agents only (the full agent list in `<constants>`)
+  - `agents` → all agents only (the full agent list in the constants block)
   - `skills` → `/audit` and `/review` only
   - Any other token → single agent or skill name
 - **Mode**: look for `fast` or `full` in remaining tokens — default `fast`
@@ -265,7 +265,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 
 <notes>
 
-- **Timeout handling**: phase and pipeline budgets (see `<constants>`) prevent nested subagent hangs from cascading. Extension is granted once if the pipeline explains the delay in its output file — a second unexplained stall still triggers the cutoff. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> fast` after the session.
+- **Timeout handling**: phase and pipeline budgets (see the constants block) prevent nested subagent hangs from cascading. Extension is granted once if the pipeline explains the delay in its output file — a second unexplained stall still triggers the cutoff. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> fast` after the session.
 - **Context safety**: each target runs in its own pipeline subagent — only a compact JSON (~200 bytes) returns to the main context. `all full ab` with 14 targets returns ~2.8KB total, well within limits.
 - **Scorer delegation**: Phase 3 delegates scoring to per-problem `general-purpose` subagents. Each scorer reads response files from disk, returns ~200 bytes. The pipeline subagent holds only compact JSONs regardless of N or A/B mode — no context budget concern.
 - **Nesting depth**: main → pipeline subagent → target/scorer agents (2 levels). Pipeline spawns both target agents (Phase 2) and scorer agents (Phase 3) at the same depth — no additional nesting.

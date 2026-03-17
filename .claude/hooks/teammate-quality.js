@@ -21,6 +21,9 @@ process.stdin.on("end", () => {
     if (hook_event_name === "TeammateIdle" && team_name) {
       // Look for pending tasks in the shared task list — redirect if any exist
       try {
+        // Task files live at ~/.claude/tasks/<team>/ when teams use file-based tracking.
+        // If the directory is absent (e.g., in-memory teams), readdirSync throws and the
+        // catch block silently lets the teammate go idle — no redirect occurs.
         const tasksDir = path.join(process.cwd(), ".claude", "tasks", team_name);
         const taskFiles = fs.readdirSync(tasksDir).filter((f) => f.endsWith(".json"));
         const pendingTasks = taskFiles

@@ -44,7 +44,7 @@ Examples:
 
 <workflow>
 
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+**Task tracking**: immediately after Step 0 (mode is known), create TaskCreate entries for **all steps of the chosen mode's workflow** before doing any other work. This gives the user an instant view of the full plan. Mark each step in_progress when starting it, completed when done. On loop retry or scope change, create a new task or rename the existing one with TaskUpdate.
 
 ## Step 0: Parse mode
 
@@ -139,7 +139,7 @@ Maximum 3 cycles. Applied after the quality stack.
 
 Read `.claude/skills/_shared/codex-delegation.md` and apply the delegation criteria. Delegate mechanical follow-up to Codex when an accurate, specific brief can be written.
 
-Include a `### Codex Delegation` line in the final report only if this step ran.
+Only include a `### Codex Delegation` section in the final report when tasks were actually delegated — omit entirely if nothing was delegated.
 
 ## Shared Step: Final report
 

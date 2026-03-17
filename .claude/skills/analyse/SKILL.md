@@ -1,7 +1,7 @@
 ---
 name: analyse
-description: Analyze GitHub issues, Pull Requests (PRs), and repo health for an Open Source Software (OSS) project. Summarizes long threads, assesses PR readiness, detects duplicates, extracts reproduction steps, and generates repo health stats. Uses gh Command Line Interface (CLI) for GitHub Application Programming Interface (API) access. Complements oss-maintainer agent.
-argument-hint: <number|health|dupes [keyword]|contributors|ecosystem>
+description: Analyze GitHub issues, Pull Requests (PRs), Discussions, and repo health for an Open Source Software (OSS) project. Summarizes long threads, assesses PR readiness, detects duplicates, extracts reproduction steps, and generates repo health stats. Uses gh Command Line Interface (CLI) for GitHub Application Programming Interface (API) access. Complements oss-maintainer agent.
+argument-hint: <number|discussion <number>|health|dupes [keyword]|contributors|ecosystem>
 allowed-tools: Read, Bash, Write
 context: fork
 ---
@@ -16,6 +16,7 @@ Analyze GitHub issues and PRs to help maintainers triage, respond, and decide qu
 
 - **$ARGUMENTS**: one of:
   - Number (e.g. `42`) — auto-detects issue vs PR
+  - `discussion <number>` (e.g. `discussion 15`) — analyze a GitHub Discussion thread
   - `health` — generate repo issue/PR health overview
   - `dupes [keyword]` — find potential duplicate issues
   - `contributors` — top contributor activity and release cadence
@@ -26,6 +27,8 @@ Analyze GitHub issues and PRs to help maintainers triage, respond, and decide qu
 <workflow>
 
 ## Auto-Detection (for numeric arguments)
+
+When `$ARGUMENTS` starts with `discussion`, skip auto-detection and route directly to **Discussion Analysis** mode.
 
 When `$ARGUMENTS` is a number, determine whether it is an issue or a PR before routing.
 **Default assumption: issue** — this skill is primarily for issue analysis.
@@ -102,7 +105,9 @@ For the top hypothesis, trace through relevant code:
 
 ````
 
-After printing the output above, write the full content to `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Issue Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md`.
 
 ## Mode: PR Analysis
 
@@ -146,7 +151,7 @@ _Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
 - Testing: n/5 [emoji] — [reason]
 - Documentation: n/5 [emoji] — [reason]
 
-### Risk: n/5 [emoji] — [brief description]
+### Risk: n/5 [low / medium / high] [emoji] — [brief description]
 - Breaking changes: [none / detail]
 - Performance: [none / detail]
 - Security: [none / detail]
@@ -159,10 +164,83 @@ _Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
 1. [improvement]
 
 ### Next Steps
-1. [clear action for the author]
+1. [most important action for the author]
+2. [second action]
 ```
 
-After printing the output above, write the full content to `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template. Replace `[entity-line]` with `PR #$ARGUMENTS — [title]` and replace `[skill-specific path]` with `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md`.
+
+## Mode: Discussion Analysis
+
+When `$ARGUMENTS` starts with `discussion` (e.g., `discussion 15`), route directly here.
+
+```bash
+DISC_NUM=${ARGUMENTS#discussion }
+
+gh api graphql -f query='
+  query($owner: String!, $repo: String!, $number: Int!) {
+    repository(owner: $owner, name: $repo) {
+      discussion(number: $number) {
+        title
+        body
+        author { login }
+        category { name }
+        answer { body author { login } createdAt }
+        comments(first: 50) {
+          nodes { body author { login } createdAt }
+        }
+        labels(first: 10) { nodes { name } }
+        closed
+        closedAt
+        createdAt
+      }
+    }
+  }' -f owner='{owner}' -f repo='{repo}' -F number=$DISC_NUM
+```
+
+If the query returns null for `discussion`, output:
+
+```
+⚠ Discussions not enabled or discussion #[number] not found on this repository.
+```
+
+and stop.
+
+Produce:
+
+```
+## Discussion #[number]: [title]
+
+**State**: [open/closed] | **Author**: @[author] | **Age**: [X days]
+**Category**: [category name]
+**Labels**: [current labels, or "none"]
+
+### Summary
+[2-3 sentence plain-language summary of the discussion topic and current state]
+
+### Thread Verdict
+[If discussion has a marked answer: extract it here with attribution]
+[If no marked answer: "No accepted answer." — note the most useful response if one is clear]
+
+### Key Viewpoints
+
+| # | Position | Author | Support Level |
+|---|----------|--------|---------------|
+| 1 | [main viewpoint or request] | @[author] | [high/medium/low engagement] |
+| 2 | [alternative viewpoint] | @[author] | [medium/low] |
+
+### Actionable Outcome
+[concrete recommendation — e.g. "convert to issue", "mark as answered", "add to docs", "close as resolved"]
+
+### Suggested Labels
+[labels to add/remove based on discussion content]
+```
+
+Write the full report to `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Discussion Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md`.
 
 ## Mode: Repo Health Overview
 
@@ -205,7 +283,9 @@ Produce:
 3. [third]
 ```
 
-After printing the output above, write the full content to `tasks/output-analyse-health-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-health-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-health-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Repo Health Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-health-$(date +%Y-%m-%d).md`.
 
 ## Mode: Duplicate Detection
 
@@ -233,7 +313,9 @@ Canonical: #[oldest open issue] — suggest closing others as duplicates
 3. [Any label additions or reassignments]
 ```
 
-After printing the output above, write the full content to `tasks/output-analyse-dupes-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-dupes-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-dupes-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Duplicate Detection Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-dupes-$(date +%Y-%m-%d).md`.
 
 ## Mode: Contributor Activity
 
@@ -268,7 +350,9 @@ Produce:
 3. [Cadence suggestion if overdue]
 ```
 
-After printing the output above, write the full content to `tasks/output-analyse-contributors-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-contributors-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-contributors-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Contributor Activity Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-contributors-$(date +%Y-%m-%d).md`.
 
 ## Mode: Ecosystem Impact (for library maintainers)
 
@@ -306,7 +390,9 @@ Produce:
 - [create migration guide / add deprecation warning / notify maintainers directly]
 ```
 
-After printing the output above, write the full content to `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md`.
 
 End your response with a `## Confidence` block per CLAUDE.md output standards.
 

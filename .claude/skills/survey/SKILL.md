@@ -99,7 +99,21 @@ Use the Grep tool to search the codebase for any existing related code:
 | ai-researcher | [score] | [gaps] |
 ```
 
-After printing the report above, write the full content to `tasks/output-survey-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-survey-$(date +%Y-%m-%d).md`
+Write the full report to `tasks/output-survey-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full report to terminal**.
+
+Then print a compact terminal summary:
+
+```
+---
+Survey — [topic]
+SOTA:        [1–2 sentence summary of current landscape]
+Best method: [recommended approach / architecture]
+Key papers:  [top 2–3 papers with year]
+Gaps:        [what the survey couldn't cover or needs runtime validation]
+Confidence:  [aggregate score] — [key gaps]
+→ saved to tasks/output-survey-[date].md
+---
+```
 
 End your response with a `## Confidence` block per CLAUDE.md output standards.
 

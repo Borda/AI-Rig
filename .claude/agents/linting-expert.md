@@ -107,7 +107,7 @@ Do NOT enable all rules at once on an existing codebase — add progressively, f
 # ALWAYS run `pre-commit autoupdate` before committing or check PyPI for current versions:
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit  # verify at use time
-    rev: v0.15.2   # pin to ruff PyPI version — run `pre-commit autoupdate` to bump
+    rev: v0.15.6   # pin to ruff PyPI version — run `pre-commit autoupdate` to bump
     hooks:
       - id: ruff
         args: [--fix]

@@ -112,8 +112,10 @@ process.stdin.on("end", () => {
           const blocks = transcriptTail.split(/"type"\s*:\s*"tool_use"/);
           for (const block of blocks) {
             if (toolPattern.test(block)) {
-              const m = filePattern.exec(block);
-              if (m) files.add(m[1]);
+              let m;
+              while ((m = filePattern.exec(block)) !== null) {
+                files.add(m[1]);
+              }
             }
             // Reset regex state
             toolPattern.lastIndex = 0;

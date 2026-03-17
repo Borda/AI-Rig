@@ -104,7 +104,7 @@ Read `.claude/skills/_shared/codex-delegation.md` and apply the delegation crite
 
 Example prompt: `"use the doc-scribe to add an inline comment to the inner loop in src/batch_processor.py:87 explaining that the result tensor is pre-allocated before the loop to avoid repeated GPU memory allocation — the old version called torch.zeros() inside the loop"`
 
-Print a `### Codex Delegation` section after the Step 4 terminal output only if this step ran.
+Only print a `### Codex Delegation` section after the Step 4 terminal output when tasks were actually delegated — omit entirely if nothing was delegated.
 
 End your complete response with a `## Confidence` block per CLAUDE.md output standards.
 

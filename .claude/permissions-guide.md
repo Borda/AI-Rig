@@ -86,6 +86,7 @@ ______________________________________________________________________
 | `Bash(gh issue list:*)`   | List issues                                    | `/analyse dupes` and health overview                                      |
 | `Bash(gh release view:*)` | Inspect an existing release's notes and assets | `/release` uses this to read the previous release as a baseline           |
 | `Bash(gh release list:*)` | List releases                                  | Find the most recent tag to set a changelog range                         |
+| `Bash(gh api graphql:*)`  | Execute GitHub GraphQL API queries             | `/analyse discussion` mode fetches Discussion threads via the GraphQL API |
 
 ______________________________________________________________________
 

@@ -426,6 +426,7 @@ For setup instructions (PyPI dashboard + GitHub environment config), see `oss-ma
   - **critical** — branch/named refs (`@main`, `@master`, `@latest`) — tracks live branch, changes on every push
   - **high** — mutable version tags (`@v4`, `@v5`) — can be repointed, but requires explicit action by maintainer
   - (pinned SHA = compliant, no finding)
+  - When reporting severity in structured reviews: use **high** for mutable version tags, **critical** for branch refs. Do not downgrade to medium even for first-party GitHub Actions — the risk tier is explicit.
     To find the current full SHA for an action: `gh api repos/<owner>/<action-repo>/git/ref/tags/<tag> --jq '.object.sha'`. Alternatively, Dependabot github-actions updates automatically upgrade tags to full SHAs.
 - Short SHAs (fewer than 40 hex characters, e.g. `@abc1234`) — treat as unpinned; short SHAs can collide and are not cryptographically safe; always use the full 40-character commit SHA
 - Running all tests in a single large job when parallelism is available

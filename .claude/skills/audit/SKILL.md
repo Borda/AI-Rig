@@ -205,7 +205,7 @@ for f in .claude/agents/*.md; do
 done
 ```
 
-Using model reasoning, classify each agent into a tier based on its `<role>`, `description`, and `<workflow>` content. Cross-reference the classified tier against the declared model:
+Using model reasoning, classify each agent into a tier based on its `<role>`, `description`, and workflow body content. Cross-reference the classified tier against the declared model:
 
 - `focused-execution` agent using `opus` or `opusplan` → **medium** (potential overkill — may increase latency and cost without quality gain)
 - `deep-reasoning` agent using `sonnet` → **high** (likely underpowered for multi-file code gen or complex judgment)
@@ -420,6 +420,8 @@ All three sub-checks produce only **low** findings — auto-fixed under `/audit 
 **Antipatterns that indicate severity under-classification**: see antipatterns section in `.claude/skills/audit/severity-table.md`.
 
 Group all findings from Steps 1–4 into a severity table. Read the severity classification table from `.claude/skills/audit/severity-table.md`.
+
+**One finding per issue, not per field**: when a single field or location has multiple distinct problems at *different* severities, emit one finding entry per problem — never merge them into a single finding at the lower severity. Example: a `model:` field with both a deprecated ID (medium) and a tier mismatch (high) must produce two separate table rows, each with its own severity. The higher-severity concern must be visible in the findings table, not buried in prose.
 
 ## Step 6: Cross-validate critical findings
 

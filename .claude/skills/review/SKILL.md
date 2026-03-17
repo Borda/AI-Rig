@@ -149,6 +149,8 @@ Apply consolidation rules from `cat .claude/skills/review/checklist.md` (signal-
 
 **Precision gate**: before including a finding, ask: "Is this a concrete, actionable issue in the code under review, or a general best-practice observation that doesn't specifically apply here?" Omit findings that are valid-in-general but not evidenced in the actual code. Each finding must cite a specific location (function, line range, or variable name). Vague findings without a concrete location are noise — drop them.
 
+**Finding density**: for modules under 100 lines, aim for ≤10 total findings across all sections. When you have more than 10, apply a secondary priority pass: prefer findings that are blocking, affect correctness, or are in the public API surface; defer purely stylistic annotation gaps and minor naming issues to a separate "Minor / Nits" section or omit if already captured by pre-commit hooks. The goal is a report the author can act on in one sitting.
+
 ```
 ## Code Review: [target]
 
@@ -206,7 +208,9 @@ Apply consolidation rules from `cat .claude/skills/review/checklist.md` (signal-
 
 After parsing confidence scores: if any agent scored < 0.7, prepend **⚠ LOW CONFIDENCE** to that agent's findings section and explicitly state the gap. Do not silently drop uncertain findings — flag them so the reviewer can decide whether to investigate further.
 
-After printing the consolidated report, write the full content to `tasks/output-review-$(date +%Y-%m-%d).md` using the Write tool and notify: `→ saved to tasks/output-review-$(date +%Y-%m-%d).md`
+Write the full consolidated report to `tasks/output-review-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full report to terminal**.
+
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template with the **Extended Fields (review only)** addendum. Replace `[entity-line]` with `Review — [target]` and replace `[skill-specific path]` with `tasks/output-review-$(date +%Y-%m-%d).md`.
 
 ## Step 6: Delegate implementation follow-up (optional)
 
@@ -227,7 +231,7 @@ Read `.claude/skills/_shared/codex-delegation.md` and apply the delegation crite
 
 Example prompt: `"use the qa-specialist to add a test for StreamReader.read_chunk() in tests/test_reader.py — the method should raise ValueError when called after close(), currently there is no test for this path"`
 
-Print a `### Codex Delegation` section to the terminal summarizing what was auto-implemented (do not re-write the output file).
+Only print a `### Codex Delegation` section to the terminal when tasks were actually delegated — omit entirely if nothing was delegated. (do not re-write the output file).
 
 End your response with a `## Confidence` block per CLAUDE.md output standards. For static analysis of complete, self-contained code (no missing imports needed to reason about the findings), a baseline confidence of 0.88+ is appropriate; reserve scores below 0.80 for cases where runtime behaviour, external dependencies, or execution traces are genuinely needed to validate a finding.
 
@@ -236,7 +240,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards. F
 <notes>
 
 - Critical issues are always surfaced regardless of scope
-- Skip sections where no issues were found — don't pad with "looks good"
+- Skip sections where no issues were found — don't pad with "looks good". When reviewing isolated code without git context (no PR diff, no repo history available), skip OSS Checks and Performance Concerns sections entirely unless the code itself contains evidence of performance issues (e.g., nested loops over large collections, I/O in tight loops) or OSS concerns (e.g., hardcoded secrets, new dependency strings).
 - In PR mode: check CI status first — if red, report that without full review
 - Blocking issues require explicit `[blocking]` prefix so author knows what must change
 - Follow-up chains:

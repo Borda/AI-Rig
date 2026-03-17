@@ -32,7 +32,10 @@ which codex
 which gh
 ```
 
-If codex is missing: stop with `Pre-flight failed: codex not found. Install: npm install -g @openai/codex` <!-- verify at use time -->
+If codex is missing: stop with `Pre-flight failed: codex not found. Install: npm install -g @openai/codex`
+
+<!-- verify at use time — check npm for current @openai/codex package name -->
+
 If gh is missing: stop with `Pre-flight failed: gh not found. Install: brew install gh`
 
 Parse $ARGUMENTS:

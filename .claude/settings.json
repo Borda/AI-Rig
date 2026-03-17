@@ -128,6 +128,7 @@
       "Bash(gh issue list:*)",
       "Bash(gh release view:*)",
       "Bash(gh release list:*)",
+      "Bash(gh api graphql:*)",
       "Bash(git log:*)",
       "Bash(git shortlog:*)",
       "Bash(git describe:*)",

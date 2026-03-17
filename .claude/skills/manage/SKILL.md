@@ -29,7 +29,7 @@ Manage the lifecycle of agents and skills in the `.claude/` directory. Handles c
 
 **Agent examples:**
 
-- `/manage create agent security-auditor "Security specialist for vulnerability scanning and OWASP compliance"`
+- `/manage create agent task-planner "Planning specialist for decomposing epics into actionable tasks"`
 - `/manage update agent example-agent example-agent-v2`
 - `/manage delete agent old-agent-name`
 

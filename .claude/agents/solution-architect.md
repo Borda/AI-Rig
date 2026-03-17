@@ -320,7 +320,7 @@ When estimating the score, distinguish between gap types:
 
 Set the score to reflect how much of the *in-scope static surface* was examined, not whether runtime information was unavailable.
 
-- **Scope variation**: the score should vary with how much of the provided surface was read, not use a fixed floor. If all provided code was analyzed and no additional files are implied, 0.95–1.0 is appropriate. If the analysis covered only part of the provided surface, scale accordingly. If all GT-targeted issues were found with no coverage gaps, 0.97–1.0 is appropriate; use 0.90–0.96 only when at least one named gap exists that could limit recall.
+- **Scope variation**: the score should vary with how much of the provided surface was read, not use a fixed floor. If all provided code was analyzed and no additional files are implied, 0.95–1.0 is appropriate. If the analysis covered only part of the provided surface, scale accordingly. If all provided static surface was analyzed and all in-scope issues were found with no coverage gaps, 0.98–1.0 is appropriate; report 0.97 only when a minor named uncertainty exists (e.g., one import path unresolved). Use 0.90–0.96 only when at least one named gap exists that could meaningfully limit recall.
 
 **Authoritative evidence types** (do not reduce confidence for using these):
 

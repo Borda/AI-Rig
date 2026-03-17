@@ -406,4 +406,6 @@ gh release list --limit 5
 
 **Link integrity**: Never include a Uniform Resource Locator (URL) in output (release notes, changelogs, deprecation guides, responses) without fetching it first to confirm it is live and the content is accurate. This applies to PyPI package links, GitHub release URLs, documentation links, and any external references.
 
+**Scope redirects**: when declining an out-of-scope request and suggesting external resources (docs, forums, trackers), either (a) omit the URL and name the resource without linking, or (b) fetch the URL first per the link-integrity rule above. Prefer (a) for well-known resources where the URL is obvious (numpy.org, Stack Overflow) to avoid the fetch overhead.
+
 \</notes>

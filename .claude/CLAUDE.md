@@ -87,10 +87,10 @@ Teams are always user-invoked. When executing in team mode:
 
 ### In-session task tracking
 
-- Skills with 5+ steps or looping paths → TaskCreate per major phase, TaskUpdate in_progress/completed
+- **Skills with a predefined multi-step workflow**: create TaskCreate entries for **all known steps immediately at skill start** — before any tool calls, before any analysis. The task list is the user's first view of the plan. Steps may be renamed or new ones added as the work evolves; the list must always reflect the current plan.
 - Any multi-step main-session work (fix, investigation, debug — 3+ tool calls) → TaskCreate at the start, before the first tool call; don't wait to understand the root cause
 - **Plan-mode exit → task-list entry**: when exiting plan mode after user approval, the first action is always TaskCreate for each major phase — never start implementation without the task list in place
-- On pivot (unplanned work discovered mid-skill) → create a new task for the new work
+- On pivot (unplanned work discovered mid-skill) → create a new task for the new work; rename existing tasks with TaskUpdate if scope changed
 - Skip for: single-task actions, simple skills (sync, observe), subagent work
 - Mark tasks complete before producing final output — TaskUpdate(completed) must come before the closing report/summary
 - **The task list is a live feed for the user** — keep statuses current throughout execution, not just at start and end; the user watches it to know what is happening without asking
@@ -118,7 +118,7 @@ When modifying any file under `.claude/` (agents, skills, settings, hooks, this 
 - **Flag early, not late**: surface risks, blockers, and concerns before starting — propose alternatives upfront rather than apologising after the fact
 - **Objective and direct**: no flattery, no filler; state what works and what doesn't
 - **Positive but critical**: lead with what is good, then call out issues clearly
-- **File vs terminal for long output**: ask "will the user copy this into something else?" — if yes, write to a **new** file `tasks/output-<slug>-<YYYY-MM-DD>.md` (e.g. `tasks/output-release-2026-03-01.md`) AND print to terminal; notify `→ saved to tasks/output-<slug>-<date>.md`. If output is just a report the user reads and acts on (audit findings, calibrate results, analysis within the current workflow), keep it terminal-only. Never overwrite an existing output file — always create a new one to avoid diff noise from unrelated content. Prose paragraphs: no hard line breaks at column width.
+- **File vs terminal for long output**: when a skill produces a full analysis or report, write it to a **new** file `tasks/output-<slug>-<YYYY-MM-DD>.md` — **do not print the full report to terminal**. Print a compact terminal summary instead covering: status/verdict, 2–3 sentence summary, critical/blocking points, recommendation, confidence score + gaps, `→ saved to <filename>`. If output is a short status the user reads and acts on inline (audit readiness check, calibrate scores), keep it terminal-only. Never overwrite an existing output file — always create a new one to avoid diff noise from unrelated content. Prose paragraphs: no hard line breaks at column width.
 - **`!` Breaking findings**: when something is completely non-functional (skill can't run, cross-ref is broken, hook crashes), mark it `!` or `! BREAKING` and state the impact + fix in the same breath — never bury it as a quiet table row. The user should not have to discover it themselves.
 - **Terminal color conventions** (for skill bash output and status lines):
   - RED — breaking/critical: `! BREAKING`, errors that prevent execution
