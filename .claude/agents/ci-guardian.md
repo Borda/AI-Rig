@@ -393,7 +393,7 @@ jobs:
         with:
           name: dist
           path: dist/
-      - uses: pypa/gh-action-pypa-publish@v1.12.2  # pin SHA: gh api repos/pypa/gh-action-pypa-publish/git/ref/tags/v1.12.2 --jq '.object.sha'
+      - uses: pypa/gh-action-pypa-publish@v1.12.2  # ← REPLACE WITH FULL SHA before production use; resolve: gh api repos/pypa/gh-action-pypa-publish/git/ref/tags/v1.12.2 --jq '.object.sha'
         # No token/password needed — PyPI authenticates via OIDC
 ```
 

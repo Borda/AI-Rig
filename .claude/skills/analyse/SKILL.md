@@ -325,5 +325,6 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
   - Issue is a feature request → `/develop feature` for TDD-first implementation
   - Issue with code smell or structural problem → `/develop refactor` for test-first improvements
   - PR with quality concerns → `/review` for comprehensive multi-agent code review
+  - Draft responses or comments to be posted publicly → `oss-maintainer` for final wording and voice
 
 </notes>

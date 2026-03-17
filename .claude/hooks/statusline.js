@@ -51,7 +51,6 @@ process.stdin.on("end", () => {
       orange: "\x1b[33m", // closest ANSI to orange
       pink: "\x1b[95m", // bright magenta
       purple: "\x1b[94m", // bright blue
-      red: "\x1b[31m",
       teal: "\x1b[96m", // bright cyan
       violet: "\x1b[35m", // magenta (closest ANSI)
       yellow: "\x1b[93m", // bright yellow

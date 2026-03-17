@@ -245,5 +245,6 @@ End your response with a `## Confidence` block per CLAUDE.md output standards. F
   - Security findings in auth/input/deps → run `pip-audit` for dependency Common Vulnerabilities and Exposures (CVEs); address Open Web Application Security Project (OWASP) issues inline via `/develop fix`
   - Mechanical issues beyond what Step 6 auto-fixed → `/codex` to delegate additional tasks
   - Docstrings, type annotations, renames, and other mechanical findings → `/codex "<task description>"` per finding to delegate to Codex
+  - PR feedback to be shared directly with a contributor → `oss-maintainer` for final wording and voice
 
 </notes>

@@ -223,6 +223,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 <notes>
 
 - Filter noise (CI config, dep bumps, typos) unless they are user-impacting
+- Public-facing output (release notes, changelogs, migration guides) is co-authored with `oss-maintainer` — follow its `<voice>` guidelines for human, direct tone
 - Follow-up chains:
   - Before cutting a release → `/release audit [version]` to check readiness: blockers, docs alignment, version consistency, CVEs
   - Readiness confirmed → `/release prepare <version>` to run the full pipeline and write all artifacts

@@ -223,7 +223,7 @@ OldName = NewName  # deprecated alias
 
 01. Read and understand the existing code structure before writing anything
 02. Identify what already exists vs what needs to be created
-03. Map edge cases and failure modes before writing any code (use the `\<edge_case_analysis>` checklist)
+03. Map edge cases and failure modes before writing any code (use the `<edge_case_analysis>` checklist)
 04. Write or identify failing tests as pytest cases (pre-authorized to run) — not standalone scripts
 05. Implement the solution — handle edge cases inline, not as an afterthought
 06. Check for diagnostics: run `uv run ruff check . --fix && uv run mypy src/` — these are pre-authorized, run without asking

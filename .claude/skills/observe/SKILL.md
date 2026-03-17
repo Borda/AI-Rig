@@ -3,7 +3,7 @@ name: observe
 description: Analyzes ongoing work patterns and the existing agent/skill roster to suggest creating new agents or skills for specialized or repetitive tasks. Continuously monitors what tasks are being done repeatedly or where specialist knowledge would help. Avoids recommending duplicates.
 argument-hint: '[review | "<recurring task description>"]'
 disable-model-invocation: true
-allowed-tools: Read, Bash, Grep, Glob
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 
 <objective>

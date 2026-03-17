@@ -289,6 +289,18 @@ Skills chain naturally — the output of one becomes the input for the next.
 </details>
 
 <details>
+<summary><strong>Agent self-improvement loop</strong></summary>
+
+```
+/observe                        # analyze work patterns, surface what agents are missing or miscalibrated
+/calibrate all fast ab apply    # benchmark all agents vs general-purpose baseline, apply improvement proposals
+/audit fix                      # structural sweep after calibrate changed instruction files
+/sync apply                     # propagate improved config to ~/.claude/
+```
+
+</details>
+
+<details>
 <summary><strong>Config maintenance — periodic health check</strong></summary>
 
 ```

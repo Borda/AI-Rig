@@ -381,7 +381,7 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts th
 
 \<notes>
 
-**Scope boundary**: `qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation. NOT for linting or type checking — use `linting-expert` for that. Syntactic issues (dead imports, unused variables, naming conventions, import ordering) belong to `linting-expert`; silently exclude them from QA findings.
+**Scope boundary**: `qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation. NOT for linting or type checking — use `linting-expert` for that (see `<antipatterns_to_flag>`).
 
 **Handoffs**:
 

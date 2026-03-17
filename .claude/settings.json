@@ -199,7 +199,6 @@
       "Bash(claude:*)",
       "Bash(node:*)",
       "Bash(python3:*)",
-      "Bash(gh api:*)",
       "Bash(open:*)",
       "Bash(npm show:*)",
       "WebFetch(domain:support.claude.com)",

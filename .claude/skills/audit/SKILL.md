@@ -38,7 +38,7 @@ Run a full-sweep quality audit of the `.claude/` configuration: every agent file
 - Phase 5: final report (Step 10) → mark in_progress, then completed before output
 - On loop retry or scope change → create a new task; do not reuse the completed task
 
-Surface progress to the user at natural milestones: after system-wide checks ("✓ Checks 1-9 complete, N findings so far — spawning per-file audits"), after agent reports ("Agent reports received — N medium, N low findings"), and before each fix batch ("Fixing N medium findings in parallel").
+Surface progress to the user at natural milestones: after system-wide checks ("✓ Checks 1-11 complete, N findings so far — spawning per-file audits"), after agent reports ("Agent reports received — N medium, N low findings"), and before each fix batch ("Fixing N medium findings in parallel").
 
 ## Pre-flight checks
 
@@ -157,6 +157,16 @@ else
 fi
 ```
 
+**Check 6b — Permission safety audit** — every `allow` entry must be non-destructive, reversible, and local-only
+
+Read `.claude/settings.json` using the Read tool and extract the `permissions.allow` list. For each entry, use model reasoning to evaluate it against three criteria:
+
+- **Non-destructive**: does not permanently delete or overwrite data (no `rm -rf`, `git push --force`, `DROP TABLE`)
+- **Reversible**: effect can be undone without data loss (local file edits, test runs, read-only queries)
+- **Local-only**: does not affect systems outside the working directory or send data to external services
+
+Flag destructive patterns as **critical** (auto-approved destructive commands are always a breaking safety failure). Flag external-state mutations as **high** and raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
+
 **Check 7 — Skill frontmatter conflicts** — `context:fork + disable-model-invocation:true` is a broken combination: a forked skill has no model to coordinate agents or synthesize results.
 
 ```bash
@@ -173,16 +183,6 @@ done
 ```
 
 Flag any drift between MEMORY.md, README.md, settings.json, and actual disk state. Flag any hardcoded `/Users/` or `/home/` paths — these should be `.claude/`, `~/`, or `$(git rev-parse --show-toplevel)/` style. Flag any permissions-guide.md entries not in the allow list (orphaned docs) or allow entries without a guide row (undocumented permissions).
-
-**Check 6b — Permission safety audit** — every `allow` entry must be non-destructive, reversible, and local-only
-
-Read `.claude/settings.json` using the Read tool and extract the `permissions.allow` list. For each entry, use model reasoning to evaluate it against three criteria:
-
-- **Non-destructive**: does not permanently delete or overwrite data (no `rm -rf`, `git push --force`, `DROP TABLE`)
-- **Reversible**: effect can be undone without data loss (local file edits, test runs, read-only queries)
-- **Local-only**: does not affect systems outside the working directory or send data to external services
-
-Flag destructive patterns as **critical** (auto-approved destructive commands are always a breaking safety failure). Flag external-state mutations as **high** and raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
 
 **Check 8 — Model tier appropriateness**
 
@@ -392,6 +392,29 @@ Using model reasoning, cross-reference each extracted color name against the `CO
 
 Note: `COLOR_MAP` may intentionally include extra entries (future-proofing); flag only the agent-declared-but-missing case as actionable.
 
+**Check 11 — Memory health (MEMORY.md noise accumulation)**
+
+MEMORY.md has a 200-line truncation limit. Noise accumulates silently over time — duplicate rules, stale version pins, and absorbed feedback files all erode the budget without adding information. Run three sub-checks:
+
+**11a — Duplicate with CLAUDE.md**: Read both MEMORY.md and CLAUDE.md. For each section in MEMORY.md, check whether the same rule or directive exists verbatim or near-verbatim in CLAUDE.md. Flag duplicates as **low** — one source of truth is enough; the MEMORY.md copy adds context-window cost with no benefit.
+
+**11b — Stale version pins**: Scan MEMORY.md for lines containing pinned semver values (e.g. `v0.15.2`, `v1.19.1`) or "as of [month year]" staleness markers. Flag each as **low** — pinned versions age within weeks; the actionable rule (e.g. "always run `pre-commit autoupdate`") should survive, the specific version should not.
+
+```bash
+# Find lines with semver pins or "as of" staleness markers in MEMORY.md
+MEMORY_FILE=$(find . -path "*/memory/MEMORY.md" | head -1)
+[ -n "$MEMORY_FILE" ] && grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || true
+```
+
+**11c — Absorbed feedback files**: List all `feedback_*.md` files in the memory directory. For each, read its content and check whether the rule it documents is already present in MEMORY.md or in the relevant agent/skill file. If yes, flag as **low** (delete the feedback file — the lesson is absorbed).
+
+```bash
+MEMORY_DIR=$(find . -path "*/memory" -type d | head -1)
+[ -n "$MEMORY_DIR" ] && ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || true
+```
+
+All three sub-checks produce only **low** findings — auto-fixed under `/audit fix all`; reported only under `/audit fix` or lower. Fix action: remove the duplicate section, drop the version pin (keep the surrounding rule), delete the absorbed feedback file.
+
 ## Step 5: Aggregate and classify findings
 
 **Antipatterns that indicate severity under-classification**: see antipatterns section in `.claude/skills/audit/severity-table.md`.
@@ -414,7 +437,7 @@ Output a structured audit report before fixing anything:
 ### Scope
 - Agents audited: N
 - Skills audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health
 
 ### Findings by Severity
 
