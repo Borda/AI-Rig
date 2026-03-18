@@ -242,7 +242,7 @@ Example prompt: `"use the qa-specialist to add a test for StreamReader.read_chun
 
 Only print a `### Codex Delegation` section to the terminal when tasks were actually delegated — omit entirely if nothing was delegated. (do not re-write the output file).
 
-End your response with a `## Confidence` block per CLAUDE.md output standards. For static analysis of complete, self-contained code (no missing imports needed to reason about the findings), a baseline confidence of 0.88+ is appropriate; reserve scores below 0.80 for cases where runtime behaviour, external dependencies, or execution traces are genuinely needed to validate a finding.
+**STOP CHECK — `REPLY_MODE=true`**: your response is **incomplete** until you have executed Step 8 below and written the reply file. Do not add a Confidence block or end your response here.
 
 ## Step 8: Draft contributor reply (only when --reply)
 
@@ -264,6 +264,8 @@ Print compact terminal summary:
 
   Reply:  tasks/output-reply-<PR#>-<date>.md
 ```
+
+End your response with a `## Confidence` block per CLAUDE.md output standards. For static analysis of complete, self-contained code (no missing imports needed to reason about the findings), a baseline confidence of 0.88+ is appropriate; reserve scores below 0.80 for cases where runtime behaviour, external dependencies, or execution traces are genuinely needed to validate a finding. This is always the very last thing, whether or not `--reply` was used.
 
 </workflow>
 

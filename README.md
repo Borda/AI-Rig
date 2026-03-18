@@ -48,21 +48,22 @@ Specialist roles with deep domain knowledge. You can request a specific agent by
 
 Skills are orchestrations of agents — invoked via slash commands (`/review`, `/develop fix`, etc.). A single skill typically composes multiple agents in parallel and consolidates their output. Think of agents as specialists you can talk to, and skills as predefined workflows that coordinate them.
 
-| Skill         | Command                                      | What It Does                                                                                                                                                                                              |
-| ------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **review**    | `/review [file\|PR#] [--reply]`              | Parallel code review across 7 dimensions (arch, tests, perf, docs, lint, security, API design); `--reply` drafts a contributor-facing comment via oss-maintainer                                          |
-| **optimize**  | `/optimize [target]`                         | Measure-change-measure performance loop                                                                                                                                                                   |
-| **release**   | `/release <mode> [range]`                    | Notes, changelog, summary, migration, or full prepare pipeline; `audit` checks release readiness                                                                                                          |
-| **survey**    | `/survey [topic]`                            | SOTA literature survey with implementation plan                                                                                                                                                           |
-| **analyse**   | `/analyse [#\|health\|dupes\|...] [--reply]` | Issue/PR/Discussion analysis by number (unified index, auto-detected), repo health, duplicate detection; `--reply` drafts a contributor-facing reply, reusing today's report if the item hasn't drifted   |
-| **observe**   | `/observe`                                   | Meta-skill: analyze work patterns and suggest new agents or skills                                                                                                                                        |
-| **audit**     | `/audit [fix [high\|medium\|all]\|upgrade]`  | Full-sweep config audit: broken refs, dead loops, inventory drift, docs freshness + upgrade proposals; `upgrade` applies docs-sourced improvements (config: correctness check, capability: calibrate A/B) |
-| **sync**      | `/sync [apply]`                              | Drift-detect project `.claude/` vs home `~/.claude/`; `apply` performs the sync                                                                                                                           |
-| **manage**    | `/manage <op> <type>`                        | Create, update, or delete agents/skills with cross-ref propagation                                                                                                                                        |
-| **develop**   | `/develop feature\|fix\|refactor`            | Unified development orchestrator: TDD-first feature dev, reproduce-first bug fixing, or test-first refactoring                                                                                            |
-| **calibrate** | `/calibrate [target] [fast\|full]`           | Agent calibration: synthetic problems with known outcomes, measures recall vs confidence bias                                                                                                             |
-| **codex**     | `/codex <task> [target]`                     | Delegate mechanical coding tasks to Codex CLI — Claude orchestrates, Codex executes                                                                                                                       |
-| **resolve**   | `/resolve <PR#\|comment>`                    | Resolve a PR: auto-detects merge conflicts first (semantic resolution with branch intent), then applies review comments via Codex                                                                         |
+| Skill         | Command                                              | What It Does                                                                                                                                                                                              |
+| ------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **review**    | `/review [file\|PR#] [--reply]`                      | Parallel code review across 7 dimensions (arch, tests, perf, docs, lint, security, API design); `--reply` drafts a contributor-facing comment via oss-maintainer                                          |
+| **optimize**  | `/optimize [target]`                                 | Measure-change-measure performance loop                                                                                                                                                                   |
+| **release**   | `/release <mode> [range]`                            | Notes, changelog, summary, migration, or full prepare pipeline; `audit` checks release readiness                                                                                                          |
+| **survey**    | `/survey [topic]`                                    | SOTA literature survey with implementation plan                                                                                                                                                           |
+| **analyse**   | `/analyse [#\|health\|dupes\|...] [--reply]`         | Issue/PR/Discussion analysis by number (unified index, auto-detected), repo health, duplicate detection; `--reply` drafts a contributor-facing reply, reusing today's report if the item hasn't drifted   |
+| **observe**   | `/observe`                                           | Meta-skill: analyze work patterns and suggest new agents or skills                                                                                                                                        |
+| **audit**     | `/audit [fix [high\|medium\|all]\|upgrade]`          | Full-sweep config audit: broken refs, dead loops, inventory drift, docs freshness + upgrade proposals; `upgrade` applies docs-sourced improvements (config: correctness check, capability: calibrate A/B) |
+| **sync**      | `/sync [apply]`                                      | Drift-detect project `.claude/` vs home `~/.claude/`; `apply` performs the sync                                                                                                                           |
+| **manage**    | `/manage <op> <type>`                                | Create, update, or delete agents/skills with cross-ref propagation                                                                                                                                        |
+| **develop**   | `/develop feature\|fix\|refactor`                    | Unified development orchestrator: TDD-first feature dev, reproduce-first bug fixing, or test-first refactoring                                                                                            |
+| **calibrate** | `/calibrate [target] [fast\|full]`                   | Agent calibration: synthetic problems with known outcomes, measures recall vs confidence bias                                                                                                             |
+| **codex**     | `/codex <task> [target]`                             | Delegate mechanical coding tasks to Codex CLI — Claude orchestrates, Codex executes                                                                                                                       |
+| **resolve**   | `/resolve <PR#\|comment>`                            | Resolve a PR: auto-detects merge conflicts first (semantic resolution with branch intent), then applies review comments via Codex                                                                         |
+| **research**  | `/research [plan\|resume] <goal> [--team] [--colab]` | Autonomous goal-directed iteration loop: define metric + guard, iterate with specialist agents (perf-optimizer, sw-engineer, ai-researcher), auto-rollback on regression; GPU workloads via Colab MCP     |
 
 <details>
 <summary><strong>Skill usage examples</strong></summary>
@@ -198,6 +199,24 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
   /resolve "rename foo to bar throughout the auth module"
   ```
 
+- **`/research` — Autonomous metric improvement loop**
+
+  ```bash
+  # Interactive wizard: scan codebase, propose config, dry-run commands
+  /research plan "increase test coverage to 90%"
+  # Run iteration loop (uses existing config or auto-detects)
+  /research "improve test coverage"
+  # Resume a previous run by ID (or auto-picks most recent running run)
+  /research resume
+  /research resume 20240318-143022
+  # Team mode: parallel agents on different optimization axes
+  /research "reduce training time by 20%" --team
+  # GPU workloads via Colab MCP (opt-in — see note below)
+  /research "improve validation accuracy" --colab
+  ```
+
+> **Colab MCP is opt-in and has no overhead when inactive.** `.mcp.json` defines the server but does not start it. To enable: add `"colab-mcp"` to `enabledMcpjsonServers` in `.claude/settings.local.json`, then restart Claude Code. MCP servers load at session start, so a restart is required before `--colab` will work.
+
 </details>
 
 ### Common Workflow Sequences
@@ -255,6 +274,30 @@ Skills chain naturally — the output of one becomes the input for the next.
 /survey "efficient attention for long sequences"  # find SOTA methods
 /develop feature "implement FlashAttention in encoder"    # TDD-first implementation
 /review                                           # validate implementation
+```
+
+</details>
+
+<details>
+<summary><strong>Autonomous metric improvement campaign</strong></summary>
+
+```
+/research plan "increase test coverage to 90%"   # interactive config wizard
+/research "increase test coverage to 90%"        # run 20-iteration loop; auto-rollback on regression
+/research resume                                  # resume after crash or manual stop
+/review                                           # validate kept commits
+```
+
+</details>
+
+<details>
+<summary><strong>Survey SOTA → research toward metric</strong></summary>
+
+```
+/survey "knowledge distillation for small models"   # find best approach
+/research plan "improve F1 from 0.82 to 0.87"       # configure metric + guard + agent
+/research "improve F1 from 0.82 to 0.87" --team     # parallel exploration across axes
+/review                                              # quality pass on kept changes
 ```
 
 </details>
@@ -379,13 +422,14 @@ Claude Code's experimental Agent Teams feature is enabled. Teams are always **us
 
 #### Skills with team support
 
-| Skill                     | Mode          | When to use                                              |
-| ------------------------- | ------------- | -------------------------------------------------------- |
-| `/develop fix --team`     | `--team` flag | Bug spans modules; competing root-cause hypotheses       |
-| `/develop feature --team` | `--team` flag | Cross-layer feature needing impl + QA + docs in parallel |
-| `/survey --team`          | `--team` flag | Multiple competing method families to evaluate           |
-| `/optimize`               | heuristic     | Directory or system-wide scope → Claude proposes team    |
-| `/develop refactor`       | heuristic     | Directory or system-wide scope → Claude proposes team    |
+| Skill                     | Mode          | When to use                                                                     |
+| ------------------------- | ------------- | ------------------------------------------------------------------------------- |
+| `/develop fix --team`     | `--team` flag | Bug spans modules; competing root-cause hypotheses                              |
+| `/develop feature --team` | `--team` flag | Cross-layer feature needing impl + QA + docs in parallel                        |
+| `/survey --team`          | `--team` flag | Multiple competing method families to evaluate                                  |
+| `/research --team`        | `--team` flag | Goal spans multiple optimization axes (e.g., speed = arch + pipeline + compute) |
+| `/optimize`               | heuristic     | Directory or system-wide scope → Claude proposes team                           |
+| `/develop refactor`       | heuristic     | Directory or system-wide scope → Claude proposes team                           |
 
 **Model tiering**: Lead uses `opusplan`/`opus`. Deep reasoning teammates (`sw-engineer`, `qa-specialist`, `ai-researcher`, `perf-optimizer`) use `opus`. Execution teammates (`doc-scribe`, `linting-expert`, `ci-guardian`) use `sonnet`. Keep teams to 3–5 teammates (~7× token cost vs single session).
 
@@ -412,7 +456,7 @@ Row 1 shows the active model name, current project directory, billing indicator,
 - *Specialized agents* (have a `.claude/agents/` file) → shown by type name in their declared `color:` from frontmatter (e.g. `sw-engineer` in blue, `self-mentor` in pink)
 - *General-purpose agents* or agents without a pinned model → shown by model name in gray (e.g. `opus`, `sonnet`)
 - Agents of the same type are grouped with a `×N` count
-- *Codex sessions* — appended after agents as `codex ×N` in yellow when `/codex` is running (tracked via `PreToolUse`/`PostToolUse` Skill hooks; `/resolve` runs `codex exec` via Bash directly and is not counted)
+- *Codex sessions* — appended after agents as `codex ×N` in yellow when `/codex` is running (tracked via `PreToolUse`/`PostToolUse` hooks on both Skill and Bash paths; covers `/codex`, `/resolve`, and any direct `codex exec` or `timeout N codex …` Bash call)
 
 **Tool row** — shows tools called in the last 30 seconds, each in a unique fixed color:
 `Read` (blue) · `Write` (bright green) · `Edit` (green) · `Bash` (yellow) · `Grep` (cyan) · `Glob` (bright cyan) · `WebFetch` (magenta) · `WebSearch` (bright magenta) · `Task`/`Agent` (bright blue) · `Skill` (bright yellow)
@@ -476,6 +520,7 @@ Every skill that reviews or validates code uses a three-tier pipeline, where che
 | `/audit fix`                      |       ✓       |            ✓            |           ✓            |
 | `/resolve`                        |       —       |            —            |           ✓            |
 | `/codex`                          |       —       |            ✓            |           —            |
+| `/research`                       |       ✓       |            —            |           ✓            |
 
 **Why unbiased review matters / Real example**: Claude makes targeted changes with intentionality — it has a mental model of which files are "in scope" for a task. Codex has no such context: it reads the diff and the codebase independently. During one session, Claude applied a docstring-style mandate across 6 files, reported the work done, and scored its own confidence at 0.88. The Codex pre-pass then found `skills/develop/modes/feature.md` still referencing the old style — a direct miss from the batch fix. That file simply wasn't on Claude's mental scope list, so it was never checked. The union of both passes is more complete than either alone.
 

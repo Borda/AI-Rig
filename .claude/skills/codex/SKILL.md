@@ -2,7 +2,6 @@
 name: codex
 description: Delegate narrow, mechanical coding tasks to OpenAI Codex Command Line Interface (CLI) — Claude orchestrates and judges, Codex executes. Pre-flight checks ensure graceful degradation on machines without Codex.
 argument-hint: '"<task description>" ["target file or directory"]'
-disable-model-invocation: true
 allowed-tools: Read, Bash, Grep, Glob, TaskCreate, TaskUpdate
 ---
 
@@ -285,7 +284,7 @@ jq -r '[.ts, .status, .agent, .prompt[:60]] | @tsv' .codex/logs/delegations.json
 - **Validate before capturing**: lint + tests run against the live working tree; only a passing result gets saved as a patch
 - **Patch files are parallel-safe**: each subagent writes a uniquely named file — no shared git state, no stash index races
 - **Parent applies patches**: when running as a subagent, stop after saving the patch; never apply it yourself — the parent serialises application
-- **`disable-model-invocation: true`**: Claude will not auto-invoke this skill; you must type `/codex <task>` explicitly. Once invoked, the parent model executes all workflow steps — this flag only prevents automatic background triggering.
+- **Invocation**: Claude can call this skill via the Skill tool; the user can also type `/codex <task>` directly. Once invoked, the parent model executes all workflow steps.
 - **Codex install command**: the `npm install -g @openai/codex` suggestion in the pre-flight error message should be verified at use time — the package name or install method may change across Codex releases
 - Related agents: `sw-engineer` (fallback for direct implementation), `linting-expert` (validation), `qa-specialist` (test validation)
 - Follow-up chains:

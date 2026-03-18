@@ -52,13 +52,13 @@ Task the `perf-optimizer` agent with:
 5. Identify 2 additional bottlenecks to address next
 6. End your response with a `## Confidence` block per CLAUDE.md output standards.
 
-## Step 2b: Codex correctness check
+## Step 3: Codex correctness check
 
 Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass on the optimization changes from Step 2.
 
-Codex focus: verify functional equivalence — same outputs for same inputs, same error paths, same boundary behavior. Resolve any correctness findings before re-measurement in Step 3.
+Codex focus: verify functional equivalence — same outputs for same inputs, same error paths, same boundary behavior. Resolve any correctness findings before re-measurement in Step 4.
 
-## Step 3: Verify improvement
+## Step 4: Verify improvement
 
 After each change from the perf-optimizer:
 
@@ -72,7 +72,7 @@ time python "$ARGUMENTS"
 
 **Safety break**: max 3 optimization-verification cycles. After 3 perf-optimizer changes, proceed to Step 4 (report). Ask the user whether to run another round.
 
-## Step 4: Report
+## Step 5: Report
 
 ```
 ## Performance Optimization: [target]

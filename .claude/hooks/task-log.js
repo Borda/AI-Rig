@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// PreToolUse hook  — logs Task/Skill invocations; writes codex session file on Skill(codex) start.
-// PostToolUse hook — removes codex session file when Skill(codex) completes.
+// PreToolUse hook  — logs Task/Skill invocations; writes codex session file on Skill(codex) start
+//                    or Bash calls whose command starts with "codex" (e.g. /resolve path).
+// PostToolUse hook — removes codex session file when Skill(codex) or Bash(codex …) completes.
 // SubagentStart hook — adds the subagent to the active-agents state.
 // SubagentStop hook  — removes the subagent from state and logs completion.
 // PreCompact hook  — logs context compaction start to compactions.jsonl.
@@ -60,6 +61,19 @@ process.stdin.on("end", () => {
             );
           } catch (_) {}
         }
+      } else if (tool_name === "Bash") {
+        // Also track Bash calls that run codex directly (e.g. /resolve, /research metric timeout)
+        // Matches: "codex …" and "timeout <N> codex …"
+        const cmd = tool_input?.command || "";
+        if (/^(?:timeout\s+\S+\s+)?codex(\s|$)/m.test(cmd) && data.tool_use_id) {
+          try {
+            fs.mkdirSync(codexDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(codexDir, `${data.tool_use_id}.json`),
+              JSON.stringify({ id: data.tool_use_id, since: ts, via: "bash" }),
+            );
+          } catch (_) {}
+        }
       }
       // Track all tool calls for statusline tool-activity line (count per type within window)
       if (tool_name) {
@@ -75,11 +89,17 @@ process.stdin.on("end", () => {
         } catch (_) {}
       }
     } else if (hook_event_name === "PostToolUse") {
-      // Remove codex session tracking when the Skill call completes
-      if (tool_name === "Skill" && tool_input?.skill === "codex" && data.tool_use_id) {
-        try {
-          fs.unlinkSync(path.join(codexDir, `${data.tool_use_id}.json`));
-        } catch (_) {}
+      // Remove codex session tracking when any Skill(codex) or Bash call completes.
+      // For Bash: always attempt unlink by tool_use_id — ENOENT is silently swallowed for
+      // non-codex calls. This avoids re-parsing tool_input.command which may be absent.
+      if (data.tool_use_id) {
+        const isCodexSkill = tool_name === "Skill" && tool_input?.skill === "codex";
+        const isBash = tool_name === "Bash";
+        if (isCodexSkill || isBash) {
+          try {
+            fs.unlinkSync(path.join(codexDir, `${data.tool_use_id}.json`));
+          } catch (_) {}
+        }
       }
     } else if (hook_event_name === "SubagentStart") {
       // Each agent gets its own file — no read-modify-write race with concurrent agents

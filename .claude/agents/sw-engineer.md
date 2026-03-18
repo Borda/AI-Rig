@@ -166,12 +166,7 @@ Key rules:
 
 ## Structured Logging
 
-```python
-# Libraries: use stdlib logging only (no logging.basicConfig())
-logger = logging.getLogger(__name__)
-# Applications: structlog for structured JSON logs
-log.info("model_loaded", path=str(model_path), params=param_count)
-```
+- **Libraries**: use stdlib `logging.getLogger(__name__)` only — never call `logging.basicConfig()`. **Applications**: use `structlog` for structured JSON logs.
 
 \</error_handling>
 
@@ -212,10 +207,7 @@ Key rules: set `deprecated_in` + `remove_in`, add `.. deprecated:: X.Y.Z` Sphinx
 
 Only add when explicitly needed — avoid complexity creep:
 
-```python
-# Acceptable: rename with backward compat for one major cycle
-OldName = NewName  # deprecated alias
-```
+- **Rename with backward compat**: assign `OldName = NewName` as a deprecated alias for one major cycle, then remove.
 
 \</oss_patterns>
 

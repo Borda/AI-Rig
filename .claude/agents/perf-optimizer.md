@@ -136,11 +136,7 @@ nvitop
 
 ## DataLoader Bottleneck Detection
 
-```python
-# Measure data-only time vs full training step time
-# If data_fraction = data_time / step_time > 0.3: CPU-bound
-# Fix: increase num_workers, use faster augmentations (albumentations)
-```
+If `data_fraction = data_time / step_time > 0.3`, the pipeline is CPU-bound — fix by increasing `num_workers` or switching to faster augmentations (e.g. albumentations).
 
 ## DataLoader Optimization
 

@@ -107,20 +107,20 @@ Do NOT enable all rules at once on an existing codebase — add progressively, f
 # ALWAYS run `pre-commit autoupdate` before committing or check PyPI for current versions:
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit  # verify at use time
-    rev: v0.15.6   # pin to ruff PyPI version — run `pre-commit autoupdate` to bump
+    rev: <CURRENT> # run `pre-commit autoupdate` to set; verify at https://pypi.org/project/ruff
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/mirrors-mypy  # verify at use time
-    rev: v1.19.1   # pin to mypy PyPI version — run `pre-commit autoupdate` to bump
+    rev: <CURRENT> # run `pre-commit autoupdate` to set; verify at https://pypi.org/project/mypy
     hooks:
       - id: mypy
         additional_dependencies: [types-requests, types-PyYAML]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks  # verify at use time
-    rev: v5.0.0
+    rev: <CURRENT> # run `pre-commit autoupdate` to set
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer

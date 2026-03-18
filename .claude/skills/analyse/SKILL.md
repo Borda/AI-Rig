@@ -119,6 +119,8 @@ Write the full report to `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d
 
 Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Issue Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md`.
 
+**STOP CHECK — `REPLY_MODE=true`**: your response is **incomplete** until you have executed "Draft contributor reply" below and written the reply file. Do not add a Confidence block or end your response here.
+
 ## Mode: PR Analysis
 
 Run all three `gh` commands in parallel — they are independent API calls:
@@ -181,6 +183,8 @@ _Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
 Write the full report to `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
 
 Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template. Replace `[entity-line]` with `PR #$ARGUMENTS — [title]` and replace `[skill-specific path]` with `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md`.
+
+**STOP CHECK — `REPLY_MODE=true`**: your response is **incomplete** until you have executed "Draft contributor reply" below and written the reply file. Do not add a Confidence block or end your response here.
 
 ## Mode: Discussion Analysis
 
@@ -251,6 +255,8 @@ Produce:
 Write the full report to `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
 
 Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Discussion Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md`.
+
+**STOP CHECK — `REPLY_MODE=true`**: your response is **incomplete** until you have executed "Draft contributor reply" below and written the reply file. Do not add a Confidence block or end your response here.
 
 ## Mode: Repo Health Overview
 
@@ -452,7 +458,7 @@ Print compact terminal summary:
   Reply:  tasks/output-reply-<type>-<number>-<date>.md
 ```
 
-End your response with a `## Confidence` block per CLAUDE.md output standards.
+End your response with a `## Confidence` block per CLAUDE.md output standards — this is always the very last thing, whether or not `--reply` was used.
 
 </workflow>
 

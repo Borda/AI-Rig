@@ -74,8 +74,8 @@ process.stdin.on("end", () => {
     const TOOL_DEFAULT_COLOR = "\x1b[37m"; // white for unknowns
 
     const parts = [];
-    let agentLine = "";
-    let toolLine = "";
+    let agentsPart = "";
+    let codexPart = "";
 
     if (modelName) parts.push(`\x1b[2m${modelName}\x1b[0m`);
     if (dir) parts.push(`\x1b[2m${dir}\x1b[0m`);
@@ -99,7 +99,7 @@ process.stdin.on("end", () => {
 
     const now = Date.now(); // shared by agents and tools sections
 
-    // Active subagents indicator — one file per agent in .claude/state/agents/ (task-log.js)
+    // Line 2 — agents (always shown, even when 0)
     try {
       const agentsDir = path.join(workspace?.current_dir || process.cwd(), ".claude/state/agents");
       const files = fs.readdirSync(agentsDir).filter((f) => f.endsWith(".json"));
@@ -135,11 +135,15 @@ process.stdin.on("end", () => {
             const colored = isGray ? `\x1b[2m${label}\x1b[0m` : `${ansiColor}${label}\x1b[0m`;
             return count > 1 ? `${colored} ×${count}` : colored;
           });
-        agentLine = `\x1b[35m⚡ ${agents.length} agent${agents.length > 1 ? "s" : ""}\x1b[0m (${items.join(", ")})`;
+        agentsPart = `\x1b[35m🕵 ${agents.length} agent${agents.length > 1 ? "s" : ""}\x1b[0m (${items.join(", ")})`;
+      } else {
+        agentsPart = `\x1b[35m🕵\x1b[0m \x1b[2mnone\x1b[0m`;
       }
-    } catch (_) {} // directory missing = no active agents
+    } catch (_) {
+      agentsPart = `\x1b[35m🕵\x1b[0m \x1b[2mnone\x1b[0m`;
+    }
 
-    // Active codex sessions — written by PreToolUse Skill(codex), deleted by PostToolUse
+    // Line 2 — codex sessions (always shown, even when 0)
     try {
       const codexDir = path.join(workspace?.current_dir || process.cwd(), ".claude/state/codex");
       const codexFiles = fs.readdirSync(codexDir).filter((f) => f.endsWith(".json"));
@@ -153,12 +157,18 @@ process.stdin.on("end", () => {
         }
       });
       if (activeCodex.length > 0) {
-        const codexPart = `\x1b[33mcodex ×${activeCodex.length}\x1b[0m`; // yellow
-        agentLine = agentLine ? `${agentLine} \x1b[2m│\x1b[0m ${codexPart}` : codexPart;
+        codexPart = `\x1b[33m🤖 codex ×${activeCodex.length}\x1b[0m`; // yellow
+      } else {
+        codexPart = `\x1b[33m🤖\x1b[0m \x1b[2mnone\x1b[0m`;
       }
-    } catch (_) {} // directory missing = no active codex
+    } catch (_) {
+      codexPart = `\x1b[33m🤖\x1b[0m \x1b[2mnone\x1b[0m`;
+    }
 
-    // Tool activity line — tools called in last 30s (approximates in-flight activity)
+    const agentLine = `${agentsPart} \x1b[2m│\x1b[0m ${codexPart}`;
+
+    // Line 3 — tool activity (always shown, even when idle)
+    let toolLine = "";
     try {
       const toolsDir = path.join(workspace?.current_dir || process.cwd(), ".claude/state/tools");
       const toolFiles = fs.readdirSync(toolsDir).filter((f) => f.endsWith(".json"));
@@ -179,14 +189,16 @@ process.stdin.on("end", () => {
           const label = n > 1 ? `${t} ×${n}` : t;
           return `${TOOL_COLORS[t] || TOOL_DEFAULT_COLOR}${label}\x1b[0m`;
         });
-        toolLine = `\x1b[2m🔧\x1b[0m (${colored.join(" \x1b[2m|\x1b[0m ")})`;
+        toolLine = `\x1b[2m🔧\x1b[0m ${colored.join(" \x1b[2m|\x1b[0m ")}`;
+      } else {
+        toolLine = `\x1b[2m🔧 none\x1b[0m`;
       }
-    } catch (_) {} // directory missing = no tool activity
+    } catch (_) {
+      toolLine = `\x1b[2m🔧 none\x1b[0m`;
+    }
 
     const line1 = parts.join(" \x1b[2m│\x1b[0m ");
-    const lines = [line1];
-    if (agentLine) lines.push(agentLine);
-    if (toolLine) lines.push(toolLine);
+    const lines = [line1, agentLine, toolLine];
     // Append \x1b[K (clear to end of line) after each row so stale characters
     // from a previous longer render don't bleed through (e.g. "⚡56 agents").
     process.stdout.write(lines.map((l) => l + "\x1b[K").join("\n") + "\x1b[K");

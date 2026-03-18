@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "colab-mcp": {
+      "args": [
+        "git+https://github.com/googlecolab/colab-mcp",
+        "--enable-runtime"
+      ],
+      "command": "uvx",
+      "timeout": 30000
+    }
+  }
+}

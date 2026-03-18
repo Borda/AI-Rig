@@ -152,23 +152,11 @@ def test_deprecated_function_warns():
 
 ## Integration Test with Real Dependencies
 
-```python
-@pytest.mark.integration
-def test_database_roundtrip(db):
-    user = User(name="test", email="test@example.com")
-    db.save(user)
-    retrieved = db.get(user.id)
-    assert retrieved == user
-```
+- Integration tests should cover the full roundtrip (create, persist, retrieve) and verify side effects — not just the happy-path return value.
 
 ## Fixture Design
 
-```python
-@pytest.fixture
-def sample_config():
-    """Minimal valid config for testing."""
-    return Config(host="localhost", port=5432, timeout=30)
-```
+- Fixtures should return the minimal valid object needed for the test scope — only the fields the test actually exercises, nothing more.
 
 \</test_patterns>
 
