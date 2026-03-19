@@ -41,12 +41,20 @@ All subsequent log calls append a single JSON line to this file. The file grows 
 
 ## Step 1: Pre-flight check
 
-Run both checks before doing any other work. Stop at the first failure.
+Pre-flight results are cached per-check in `.claude/state/preflight/<key>.ok` (unix timestamp inside, TTL 4 hours). Checks are skipped individually when their cache is fresh — so `git` cached by another skill is reused here. See `_shared/preflight-helpers.md` for the full key registry and pattern.
+
+```bash
+# From _shared/preflight-helpers.md
+preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }
+preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }
+```
+
+Run each check only when its cache is missing or stale. Stop at the first failure.
 
 **1 — Git is initialised** (required for stash-based handover):
 
 ```bash
-git rev-parse --git-dir
+preflight_ok git || git rev-parse --git-dir
 ```
 
 If this fails: log a `not_started` entry, then stop with the error message.
@@ -58,10 +66,12 @@ printf '{"ts":"%s","status":"not_started","reason":"not a git repository"}\n' \
 
 `Pre-flight failed: not a git repository. Initialise git first — stash handover requires it.`
 
+On success: `preflight_pass git`
+
 **2 — Codex binary on PATH:**
 
 ```bash
-which codex
+preflight_ok codex || which codex
 ```
 
 If this fails: log a `not_started` entry, then stop with the error message.
@@ -72,6 +82,8 @@ printf '{"ts":"%s","status":"not_started","reason":"codex not found on PATH"}\n'
 ```
 
 `Pre-flight failed: codex not found on PATH. Install and retry. npm install -g @openai/codex`
+
+On success: `preflight_pass codex`
 
 ## Step 2: Scope and formulate the prompt
 

@@ -25,7 +25,7 @@ Replace `[entity-line]` with the skill-specific identifier, e.g.:
 
 ## Extended Fields (review only)
 
-When using the **PR Summary** template in `/review`, insert these fields after the `Next steps:` block and before `→ saved to`:
+When using the **PR Summary** template in `/review`, **omit the `Suggestions:` field** from the base template — `Recommendation:` below replaces it. Insert these fields after `Blockers:` and before `→ saved to`:
 
 ```
 Recommendation:

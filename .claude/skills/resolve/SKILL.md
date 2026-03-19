@@ -28,8 +28,21 @@ When given bare comment text, skip straight to Codex dispatch.
 ## Step 1: Pre-flight
 
 ```bash
-which codex && echo "codex: ok" || echo "codex: missing — review-comment step will be skipped"
-which gh
+# From _shared/preflight-helpers.md — TTL 4 hours, keyed per binary
+preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }
+preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }
+
+# codex — optional; conflict resolution works without it
+if preflight_ok codex; then
+  echo "codex: ok (cached)"
+elif which codex &>/dev/null; then
+  preflight_pass codex && echo "codex: ok"
+else
+  echo "codex: missing — review-comment step will be skipped"
+fi
+
+# gh — required
+preflight_ok gh || { which gh && preflight_pass gh; }
 ```
 
 <!-- codex package: npm show @openai/codex version to check latest before pinning -->

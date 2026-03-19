@@ -45,23 +45,31 @@ Surface progress to the user at natural milestones: after system-wide checks ("�
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
 
-# .claude/ directory must exist
+# From _shared/preflight-helpers.md — TTL 4 hours, keyed per binary
+preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }
+preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }
+
+# .claude/ directory must exist (not cached — filesystem state)
 if [ ! -d ".claude" ]; then
   printf "${RED}! BREAKING${NC}: .claude/ directory not found — nothing to audit\n"
   exit 1
 fi
 
 # jq availability — Check 6 depends on it
-if ! command -v jq &>/dev/null; then
+if preflight_ok jq; then
+  JQ_AVAILABLE=true
+elif command -v jq &>/dev/null; then
+  preflight_pass jq; JQ_AVAILABLE=true
+else
   printf "${YEL}⚠ MISSING${NC}: jq not found — Check 6 (permissions-guide drift) will be skipped\n"
   JQ_AVAILABLE=false
-else
-  JQ_AVAILABLE=true
 fi
 
 # git availability — used in path portability check and baseline context
-if ! command -v git &>/dev/null; then
+if ! preflight_ok git && ! command -v git &>/dev/null; then
   printf "${YEL}⚠ MISSING${NC}: git not found — path portability check may miss repo-root references\n"
+else
+  preflight_ok git || preflight_pass git
 fi
 ```
 
@@ -71,7 +79,8 @@ If `.claude/` is missing, abort immediately. Missing `jq` is a warning — the a
 
 ```bash
 # Check whether pre-commit is installed and a config exists
-if command -v pre-commit &>/dev/null && [ -f .pre-commit-config.yaml ]; then
+if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) \
+    && [ -f .pre-commit-config.yaml ]; then
   pre-commit run --all-files
 fi
 ```
