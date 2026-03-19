@@ -124,6 +124,7 @@ Teammates assigned a task via TaskUpdate(owner) **must** update the shared task 
 
 1. `TaskUpdate(status: "in_progress")` — when starting the assigned task
 2. `TaskUpdate(status: "completed")` — when work is done, **before** sending the delta message to @lead
+3. `TaskUpdate(status: "completed")` — **before** sending `omega` on shutdown, even if work was cut short; incomplete tasks use status `"cancelled"` instead.
 
 This keeps the task list as a live progress feed for the user. AgentSpeak delta messages alone do not update task status.
 

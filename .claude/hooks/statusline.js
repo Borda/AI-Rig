@@ -165,8 +165,6 @@ process.stdin.on("end", () => {
       codexPart = `\x1b[33m🤖\x1b[0m \x1b[2mnone\x1b[0m`;
     }
 
-    const agentLine = `${agentsPart} \x1b[2m│\x1b[0m ${codexPart}`;
-
     // Line 3 — tool activity (always shown, even when idle)
     let toolLine = "";
     try {
@@ -186,10 +184,10 @@ process.stdin.on("end", () => {
         .sort((a, b) => a.tool.localeCompare(b.tool));
       if (activeTools.length > 0) {
         const colored = activeTools.map(({ tool: t, count: n }) => {
-          const label = n > 1 ? `${t} ×${n}` : t;
+          const label = n > 1 ? `${t}×${n}` : t;
           return `${TOOL_COLORS[t] || TOOL_DEFAULT_COLOR}${label}\x1b[0m`;
         });
-        toolLine = `\x1b[2m🔧\x1b[0m ${colored.join(" \x1b[2m|\x1b[0m ")}`;
+        toolLine = `\x1b[2m🔧\x1b[0m ${colored.join(" \x1b[2m·\x1b[0m ")}`;
       } else {
         toolLine = `\x1b[2m🔧 none\x1b[0m`;
       }
@@ -198,9 +196,9 @@ process.stdin.on("end", () => {
     }
 
     const line1 = parts.join(" \x1b[2m│\x1b[0m ");
-    const lines = [line1, agentLine, toolLine];
-    // Append \x1b[K (clear to end of line) after each row so stale characters
-    // from a previous longer render don't bleed through (e.g. "⚡56 agents").
+    const line2 = `${agentsPart} \x1b[2m│\x1b[0m ${codexPart} \x1b[2m│\x1b[0m ${toolLine}`;
+    const lines = [line1, line2];
+    // \x1b[K clears to end of line — erases stale chars from longer previous renders.
     process.stdout.write(lines.map((l) => l + "\x1b[K").join("\n") + "\x1b[K");
   } catch (_) {
     process.stdout.write("\x1b[2m?\x1b[0m");

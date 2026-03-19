@@ -444,12 +444,11 @@ Claude Code's experimental Agent Teams feature is enabled. Teams are always **us
 A lightweight hook (`hooks/statusline.js`) adds a persistent multi-row status bar to every Claude Code session:
 
 ```
-Row 1 (always):    claude-sonnet-4-6 │ Borda.local │ Pro ~$1.20 │ ████░░░░░░ 38%
-Row 2 (agents):    ⚡ 5 agents (self-mentor ×3, opus, sw-engineer) │ codex ×2
-Row 3 (tools):     🔧 (Bash ×3 | Edit | Read ×12)
+Row 1:  claude-sonnet-4-6 │ Borda.local │ Pro ~$1.20 │ ████░░░░░░ 38%
+Row 2:  🕵 5 agents (self-mentor ×3, opus, sw-engineer) │ 🤖 codex ×2 │ 🔧 Bash ×3 · Edit · Read ×12
 ```
 
-Row 1 shows the active model name, current project directory, billing indicator, and a 10-segment context usage bar (green → yellow → red). Rows 2 and 3 appear only when there is something to show.
+Row 1 shows the active model name, current project directory, billing indicator, and a 10-segment context usage bar (green → yellow → red). Row 2 combines agent count, Codex sessions, and active tools — always visible (shows `none` when idle).
 
 **Agent row** — groups running agents by display name, then appends active Codex sessions:
 
@@ -567,7 +566,7 @@ which claude && which codex
 
 If `codex` is not found, `/codex` will fail at the pre-flight check and `/resolve`'s review-comment step will be skipped with a clear error. Conflict resolution in `/resolve` (Step 4–5) runs through Claude only and does not require Codex.
 
-The active Codex session count appears in the statusline Row 2 next to the agent count (`⚡ 3 agents │ codex ×2`), driven by `PreToolUse`/`PostToolUse` hooks in `task-log.js`.
+The active Codex session count appears in statusline Row 2 next to the agent count (`🕵 3 agents │ 🤖 codex ×2 │ 🔧 Bash · Edit`), driven by `PreToolUse`/`PostToolUse` hooks in `task-log.js`.
 
 </details>
 
