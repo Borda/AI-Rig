@@ -291,7 +291,7 @@ TaskCreate(
 
 If `CODEX_AVAILABLE=false`: stop with `⚠ codex not found — install: npm install -g @openai/codex` and mark the task completed.
 
-### Step 7 — Resolve
+### 8a: Resolve
 
 Dispatch the comment to Codex:
 
@@ -301,7 +301,7 @@ codex exec "Apply this review comment to the codebase. If the change is already 
 
 Record the initial dispatch outcome (code changed or no change + reason).
 
-### Step 8 — Codex review loop (max 5 passes)
+### 8b: Codex review loop (max 5 passes)
 
 Review the current diff and fix any real issues found, looping until clean or the cap is hit.
 
@@ -322,7 +322,7 @@ for REVIEW_PASS in 1..5:
   if ISSUES_FOUND == 0:
     break  # clean — exit loop
 
-  # Fix phase (Step 7) — dispatch each found issue as a targeted fix
+  # Fix phase (Step 8b) — dispatch each found issue as a targeted fix
   for each issue in the list:
     codex exec "Apply this fix to the codebase: <issue description>" --sandbox workspace-write
 
@@ -366,7 +366,7 @@ Mark the task `completed`, then print:
 - **Verdict from git state** — `git diff HEAD~1 HEAD --stat` (merge) and `git diff HEAD --stat` (comment changes) are the authoritative signals, not prose output
 - **Codex does comment resolution and final review; Claude does conflict resolution** — the two are complementary; Claude has the distilled branch context for conflict decisions that Codex lacks; Codex's final review catches correctness issues introduced across all changes as a unified diff
 - **Final review is a correctness-only loop** — Codex targets bugs, regressions, and logic errors; cosmetic nits are explicitly excluded from the loop trigger; the loop runs until Codex reports zero real issues or the 5-iteration cap is hit; remaining issues at cap are surfaced to the user, not silently dropped
-- **5-iteration cap overrides the global 3-iteration default** — this skill explicitly declares a tighter bound (CLAUDE.md §3.3: "if a skill declares a bound, that bound takes precedence")
+- **5-iteration cap overrides the global 3-iteration default** — this skill explicitly declares a tighter bound (per CLAUDE.md "Safety breaks for loops" — skill-declared bounds take precedence over the global 3-iteration default)
 - **`codex exec` timeout**: each call is a synchronous foreground process — allow up to 2 minutes per comment before considering it stalled. Background health monitoring (CLAUDE.md §8) does not apply here because Codex runs sequentially, not as a spawned background agent
 - **Worktree cleanup safety net**: `SessionEnd` hook runs `git worktree prune` and removes stale `.claude/worktrees/` entries older than 2h — catches worktrees orphaned by crashes or interrupted sessions
 - Follow-up chains:

@@ -173,7 +173,7 @@ Route based on this ground truth:
 - **Codex output contains "permission denied", "Operation not permitted", "cannot write", or "sandbox denied"** alongside a claim that changes ARE in the working tree: treat this as a contradiction requiring manual verification — pause and surface the contradiction to the user before proceeding
 - **Partial completion**: Codex stopped partway (token limit, ambiguity) → resume the session with a clarifying follow-up (max 2 additional attempts):
   ```bash
-  codex exec resume --last "<specific clarification or continuation instruction>" --sandbox workspace-write  # verify 'resume --last' flag: codex exec --help
+  codex exec resume --last "<specific clarification or continuation instruction>" --sandbox workspace-write  # Note: verify 'resume --last <prompt>' syntax with 'codex exec resume --help' — the --last flag may require a session ID rather than a prompt string
   ```
 - **Error / timeout**: report the error, do not retry the same prompt; suggest running Codex interactively (`codex "<task>"`) for diagnostics
 - **Rate limit**: report the limit hit, suggest waiting and retrying
@@ -284,6 +284,7 @@ Output a structured summary:
 To review delegation history:
 
 ```bash
+# Convenience for manual review; use Read tool for single-entry inspection when running as Claude
 # Human-readable table (no dependencies)
 cat .codex/logs/delegations.jsonl | python3 -c "
 import json, sys

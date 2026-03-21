@@ -428,14 +428,22 @@ MEMORY.md has a 200-line truncation limit. Noise accumulates silently over time 
 ```bash
 # Find lines with semver pins or "as of" staleness markers in MEMORY.md
 MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|/|-|g')/memory/MEMORY.md"
-[ -f "$MEMORY_FILE" ] && grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || true
+if [ -f "$MEMORY_FILE" ]; then
+  grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found"
+else
+  printf "${YEL}⚠ SKIPPED${NC}: Check 11b — MEMORY.md not found at derived path: %s\n" "$MEMORY_FILE"
+fi
 ```
 
 **11c — Absorbed feedback files**: List all `feedback_*.md` files in the memory directory. For each, read its content and check whether the rule it documents is already present in MEMORY.md or in the relevant agent/skill file. If yes, flag as **low** (delete the feedback file — the lesson is absorbed).
 
 ```bash
 MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|/|-|g')/memory"
-[ -d "$MEMORY_DIR" ] && ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || true
+if [ -d "$MEMORY_DIR" ]; then
+  ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"
+else
+  printf "${YEL}⚠ SKIPPED${NC}: Check 11c — memory dir not found: %s\n" "$MEMORY_DIR"
+fi
 ```
 
 All three sub-checks produce only **low** findings — auto-fixed under `/audit fix all`; reported only under `/audit fix` or lower. Fix action: remove the duplicate section, drop the version pin (keep the surrounding rule), delete the absorbed feedback file.
@@ -478,7 +486,7 @@ else
   SMOKE_OUT="/tmp/audit-codex-smoke-$$.out"
   # Run a trivial generation task: write a function that checks if n is prime
   codex exec "Write a Python function is_prime(n: int) -> bool that returns True if n is prime. Put it in $SMOKE_FILE. Include a quick sanity-check: assert is_prime(7) and not is_prime(4)." \
-    --quiet 2>"$SMOKE_OUT"
+    --sandbox workspace-write 2>"$SMOKE_OUT"
   EXIT=$?
   if [ $EXIT -ne 0 ]; then
     printf "${RED}! BREAKING${NC}: Check 13 — codex exec exited with code %d\n" "$EXIT"
@@ -770,7 +778,7 @@ Run `/sync apply` automatically after all proposals are processed.
 - **Bash error logging**: if a bash block in Pre-flight checks or Step 4 fails unexpectedly, append a JSONL line to `.claude/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — do not swallow errors silently.
 - **Execution order tip**: Steps 1–2 and Step 4 bash checks are fast (seconds); Step 3 (self-mentor spawns) is expensive (seconds per file). For early signal on system-wide issues, run Steps 1–2 + Step 4 first, then spawn Step 3 agents in parallel with any Step 4 analysis that doesn't depend on per-file results.
 - **Token cost**: Step 3 (self-mentor spawns) is the most expensive part of the audit. For a quick structural scan where you mainly need cross-reference and inventory validation, the system-wide checks in Step 4 are often sufficient on their own. Consider running `/audit agents` or `/audit skills` to scope the sweep, or skip Step 3 entirely for a fast pass when you already trust per-file quality.
-- **Skill-creator complement**: for testing whether skill trigger descriptions fire correctly (trigger accuracy, A/B description testing), see the official `skill-creator` from `github.com/anthropics/skills` <!-- verify at use time -->. `/audit` checks structural quality; `skill-creator` validates that the right skill is selected by Claude Code's dispatcher when the user types a command.
+- **Skill-creator complement**: For testing whether skill trigger descriptions fire correctly (trigger accuracy, A/B description testing), see the official skill-creator utility from Anthropic. `/audit` checks structural quality; `skill-creator` validates that the right skill is selected by Claude Code's dispatcher when the user types a command.
 - Follow-up chains:
   - Audit clean → `/sync apply` to propagate verified config to `~/.claude/`
   - Audit found structural issues → review flagged files manually before syncing

@@ -96,7 +96,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
 ]
-napoleon_numpy_docstring = True
+napoleon_numpy_docstring = False
 napoleon_google_docstring = True
 autoclass_content = "both"  # include __init__ docstring in class docs
 ```

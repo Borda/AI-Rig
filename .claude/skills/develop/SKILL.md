@@ -1,7 +1,7 @@
 ---
 name: develop
 description: Unified development orchestrator with three modes — feature (TDD-first new capability), fix (reproduce-first bug resolution), refactor (test-first code quality). Each mode includes a built-in self-review gate before the shared quality stack and progressive review loop.
-argument-hint: feature|fix|refactor <description or issue #> ["target"]
+argument-hint: feature|fix|refactor|plan <goal>
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate
 ---
@@ -13,6 +13,7 @@ Implement software changes with disciplined, test-driven workflows. The mode det
 - **feature**: TDD-first — validate demo → implement → review+fix loop (max 3 cycles) → doc → quality stack + review
 - **fix**: reproduce-first — validate reproduction → apply minimal fix → review+fix loop (max 3 cycles) → quality stack + review
 - **refactor**: test-first — validate coverage audit → characterization tests → refactor → review+fix loop (max 3 cycles) → quality stack + review
+- **plan**: analysis-only — classify + scope → write structured plan to `tasks/todo.md` → exit (no code)
 
 Each mode includes two layers of built-in review before the shared quality stack:
 
@@ -28,17 +29,18 @@ All modes share a quality stack, a mandatory Codex pre-pass, and a progressive r
 <inputs>
 
 - **$ARGUMENTS**: required
-  - First token: `feature`, `fix`, or `refactor`
+  - First token: `feature`, `fix`, `refactor`, or `plan`
   - Remaining tokens: mode-specific arguments (description, issue #, file path, etc.)
   - `--team` flag (anywhere in arguments): triggers team mode for the active mode
 
 Examples:
 
-- `/develop feature "add batched predict() method to Classifier" "src/classifier"`
+- `/develop feature add batched predict() method to Classifier in src/classifier`
 - `/develop fix 123`
-- `/develop fix "TypeError when passing None to transform()"`
-- `/develop refactor src/transforms.py "simplify error handling"`
-- `/develop feature --team "add authentication flow"`
+- `/develop fix TypeError when passing None to transform()`
+- `/develop refactor simplify error handling in src/transforms.py`
+- `/develop feature --team add authentication flow`
+- `/develop plan improve caching in the data loader`
 
 </inputs>
 
@@ -46,15 +48,17 @@ Examples:
 
 **Task tracking**: immediately after Step 0 (mode is known), create TaskCreate entries for **all steps of the chosen mode's workflow** before doing any other work. This gives the user an instant view of the full plan. Mark each step in_progress when starting it, completed when done. On loop retry or scope change, create a new task or rename the existing one with TaskUpdate.
 
+**`plan` mode shortcut**: if mode is `plan`, read `modes/plan.md` and execute its steps directly — skip Steps 1–2 below and all shared steps (quality stack, Codex pre-pass, review loop). Exit after the plan mode's final output.
+
 ## Step 0: Parse mode
 
-Extract the first token from `$ARGUMENTS` as the mode. Valid values: `feature`, `fix`, `refactor`.
+Extract the first token from `$ARGUMENTS` as the mode. Valid values: `feature`, `fix`, `refactor`, `plan`.
 
 If the first token is not a valid mode, stop and present the usage:
 
 ```
 Usage: /develop <mode> <description>
-Modes: feature, fix, refactor
+Modes: feature, fix, refactor, plan
 ```
 
 Strip the mode token from arguments — the remainder is passed to mode-specific steps.
@@ -207,7 +211,7 @@ Detect `--team` flag in `$ARGUMENTS`. Each mode file defines its team assignment
 
 <notes>
 
-- **Mode determines the entry contract** — use `feature` for net-new capability, `fix` for bugs, `refactor` for quality/structure improvements
+- **Mode determines the entry contract** — use `feature` for net-new capability, `fix` for bugs, `refactor` for quality/structure improvements, `plan` for lightweight scope analysis before committing to implementation
 - **Quality stack runs once** — it is shared across all modes; never skip it
 - **Review loop is bounded** — after 3 cycles without a clean review, stop and re-scope with the user; do not retry indefinitely
 - **`disable-model-invocation: true`** — you must type `/develop <mode> <description>` explicitly; once invoked, the parent model executes all workflow steps

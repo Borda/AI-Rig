@@ -59,7 +59,7 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 | **audit**     | `/audit [fix [high\|medium\|all]\|upgrade]`          | Full-sweep config audit: broken refs, dead loops, inventory drift, docs freshness + upgrade proposals; `upgrade` applies docs-sourced improvements (config: correctness check, capability: calibrate A/B)                                                    |
 | **sync**      | `/sync [apply]`                                      | Drift-detect project `.claude/` vs home `~/.claude/`; `apply` performs the sync                                                                                                                                                                              |
 | **manage**    | `/manage <op> <type>`                                | Create, update, or delete agents/skills with cross-ref propagation                                                                                                                                                                                           |
-| **develop**   | `/develop feature\|fix\|refactor`                    | Unified development orchestrator: TDD-first feature dev, reproduce-first bug fixing, or test-first refactoring                                                                                                                                               |
+| **develop**   | `/develop feature\|fix\|refactor\|plan <goal>`       | Unified development orchestrator: TDD-first feature dev, reproduce-first bug fixing, test-first refactoring, or scope analysis without writing code (`plan`)                                                                                                 |
 | **calibrate** | `/calibrate [target\|routing] [fast\|full]`          | Agent calibration: synthetic problems with known outcomes, measures recall vs confidence bias; `routing` mode tests orchestrator dispatch accuracy — generates task prompts and measures whether agent descriptions correctly disambiguate routing decisions |
 | **codex**     | `/codex <task> [target]`                             | Delegate mechanical coding tasks to Codex CLI — Claude orchestrates, Codex executes                                                                                                                                                                          |
 | **resolve**   | `/resolve <PR#\|comment>`                            | Resolve a PR: auto-detects merge conflicts first (semantic resolution with branch intent), then applies review comments via Codex                                                                                                                            |
@@ -165,21 +165,25 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
   - `feature` — TDD demo validation before writing code; catches scope creep early
   - `fix` — reproduction test before touching anything; prevents fixes that don't actually fix
   - `refactor` — coverage audit before changing structure; prevents regressions
+  - `plan` — scope analysis only; produces a structured plan in `tasks/todo.md` without writing any code
 
   ```bash
   # TDD-first feature development
   /develop feature 87
-  /develop feature "add batched predict() method to Classifier"
-  /develop feature "add batched predict() method to Classifier" "src/classifier"
+  /develop feature add batched predict() method to Classifier
+  /develop feature add batched predict() method to Classifier in src/classifier
 
   # Reproduce-first bug fixing
   /develop fix 42
-  /develop fix "TypeError when passing None to transform()"
+  /develop fix TypeError when passing None to transform()
   /develop fix tests/test_transforms.py::test_none_input
 
   # Test-first refactoring
-  /develop refactor src/mypackage/transforms.py "replace manual loops with vectorized ops"
-  /develop refactor src/mypackage/utils/
+  /develop refactor src/mypackage/transforms.py
+  /develop refactor simplify error handling in src/transforms.py
+
+  # Scope analysis without writing code
+  /develop plan improve caching in the data loader
   ```
 
 - **`/codex` — Delegate mechanical work to Codex**
@@ -430,16 +434,16 @@ Claude Code's experimental Agent Teams feature is enabled. Teams are always **us
 
 #### When to use teams vs subagents
 
-| Signal                                              | Use Team | Use Subagents |
-| --------------------------------------------------- | -------- | ------------- |
-| Competing root-cause hypotheses                     | ✓        |               |
-| Cross-layer feature: impl + QA + docs in parallel   | ✓        |               |
-| SOTA survey: multiple competing method clusters     | ✓        |               |
-| Adversarial review (teammates challenge each other) | ✓        |               |
-| Sequential pipeline (fix → test → lint)             |          | ✓             |
-| Independent parallel review dimensions              |          | ✓             |
-| Single file / single module scope                   |          | ✓             |
-| Routine tasks (sync, observe, release)              |          | ✓             |
+| Signal -> suggestion...                             | Team | Subagents |
+| --------------------------------------------------- | :--: | :-------: |
+| Competing root-cause hypotheses                     |  ✓   |           |
+| Cross-layer feature: impl + QA + docs in parallel   |  ✓   |           |
+| SOTA survey: multiple competing method clusters     |  ✓   |           |
+| Adversarial review (teammates challenge each other) |  ✓   |           |
+| Sequential pipeline (fix → test → lint)             |      |     ✓     |
+| Independent parallel review dimensions              |      |     ✓     |
+| Single file / single module scope                   |      |     ✓     |
+| Routine tasks (sync, observe, release)              |      |     ✓     |
 
 #### Skills with team support
 
@@ -532,15 +536,15 @@ Every skill that reviews or validates code uses a three-tier pipeline, where che
 | **1 — Codex pre-pass**  | Diff-focused review (~60s) — flags bugs, edge cases, logic errors      | Low  | Before expensive agent spawns      |
 | **2 — Claude agents**   | Specialized parallel agents (opus for reasoning, sonnet for execution) | High | Full review, audit, implementation |
 
-| Skill                             | Tier 0 (gate) | Tier 1 (Codex pre-pass) | Tier 2 (Claude agents) |
-| --------------------------------- | :-----------: | :---------------------: | :--------------------: |
-| `/develop` (feature/fix/refactor) |       ✓       |            ✓            |           ✓            |
-| `/review`                         |       ✓       |            ✓            |           ✓            |
-| `/optimize`                       |       ✓       |            ✓            |           ✓            |
-| `/audit fix`                      |       ✓       |            ✓            |           ✓            |
-| `/resolve`                        |       —       |            —            |           ✓            |
-| `/codex`                          |       —       |            ✓            |           —            |
-| `/research`                       |       ✓       |            —            |           ✓            |
+| Skill                                  | Tier 0 (gate) | Tier 1 (Codex pre-pass) | Tier 2 (Claude agents) |
+| -------------------------------------- | :-----------: | :---------------------: | :--------------------: |
+| `/develop` (feature/fix/refactor/plan) |       ✓       |            ✓            |           ✓            |
+| `/review`                              |       ✓       |            ✓            |           ✓            |
+| `/optimize`                            |       ✓       |            ✓            |           ✓            |
+| `/audit fix`                           |       ✓       |            ✓            |           ✓            |
+| `/resolve`                             |       —       |            —            |           ✓            |
+| `/codex`                               |       —       |            ✓            |           —            |
+| `/research`                            |       ✓       |            —            |           ✓            |
 
 **Why unbiased review matters / Real example**: Claude makes targeted changes with intentionality — it has a mental model of which files are "in scope" for a task. Codex has no such context: it reads the diff and the codebase independently. During one session, Claude applied a docstring-style mandate across 6 files, reported the work done, and scored its own confidence at 0.88. The Codex pre-pass then found `skills/develop/modes/feature.md` still referencing the old style — a direct miss from the batch fix. That file simply wasn't on Claude's mental scope list, so it was never checked. The union of both passes is more complete than either alone.
 

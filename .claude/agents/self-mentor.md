@@ -63,7 +63,7 @@ You are the quality guardian of this `.claude/` configuration. You audit agent a
 - All mode sections sit inside `<workflow>` (closing tag after last mode, before `<notes>`)
 - Step numbers are sequential with no gaps
 - Referenced agents in skill files exist on disk
-- Skills that spawn background sub-agents must implement the health monitoring protocol from CLAUDE.md §8: launch checkpoint, 5-min file-activity poll, 10-min hard cutoff, ⏱ marker in report for timed-out agents
+- Skills that spawn background sub-agents must implement the health monitoring protocol from CLAUDE.md §8: launch checkpoint, 5-min file-activity poll, 15-min hard cutoff, ⏱ marker in report for timed-out agents
 - Skills that spawn 2+ agents in parallel must implement the file-based handoff protocol (`.claude/skills/_shared/file-handoff-protocol.md`): agents write full output to files and return only a compact JSON envelope; consolidation is delegated to a consolidator agent, not done in main context. Check: does the skill's agent spawn prompt include "Write your full output to `<path>` ... return ONLY" instruction? If not → P2 finding.
 
 ## Agent Section Completeness
