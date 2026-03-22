@@ -60,21 +60,43 @@ Use classification to skip optional agents:
 - REFACTOR scope → skip Agent 6 (solution-architect)
 - FEATURE/MIXED → spawn all agents
 
-## Step 2: Codex pre-scan
+## Step 2: Codex co-review
 
-Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass on the diff identified in Step 1.
-
-If Codex returns findings, include them in every agent spawn prompt in Step 3 as pre-flagged issues to verify or dismiss. **Truncate the Codex output to a compact findings list** (`[{"loc":"file:line","note":"..."}]`) before injecting — do not inject the full Codex prose output. If Codex was skipped or found nothing, proceed without seed findings.
-
-## Step 3: Spawn sub-agents in parallel
-
-**File-based handoff**: read `.claude/skills/_shared/file-handoff-protocol.md`. Set up the run directory before spawning any agents:
+Set up the run directory (shared by Codex and all agent spawns in Step 3):
 
 ```bash
 TIMESTAMP=$(date +%s)
 RUN_DIR="/tmp/review-$TIMESTAMP"
 mkdir -p "$RUN_DIR"
 ```
+
+Check availability:
+
+```bash
+which codex &>/dev/null && echo "codex available" || echo "⚠ Codex not found — skipping co-review"
+```
+
+If Codex is available, run a comprehensive review on the diff:
+
+```bash
+CODEX_OUT="$RUN_DIR/codex.md"
+codex exec "Review the git diff. Run: git diff HEAD~1 HEAD 2>/dev/null || git diff HEAD. For each changed Python file check:
+1. Bugs and logic errors — wrong conditions, off-by-one, incorrect state transitions, incorrect assumptions
+2. Missed edge cases — None inputs, empty collections, boundary values, integer overflow
+3. Error handling — unhandled exceptions, swallowed errors (bare except/pass), missing cleanup on exception
+4. Security — SQL injection, path traversal, hardcoded secrets, insecure defaults, missing input validation
+5. Type safety — incorrect type assumptions, runtime type errors
+6. Missing test coverage — new public functions with no test, critical error paths not covered
+For each finding produce exactly one line: file:line: [SEVERITY] description — SEVERITY is CRITICAL, HIGH, MEDIUM, or LOW. Skip cosmetic nits.
+Write ALL findings to $CODEX_OUT starting with a count header: 'Findings: N (C critical, H high, M medium, L low)'.
+If no issues found, write: 'Findings: 0 — no issues found.'" --sandbox workspace-write
+```
+
+After Codex writes `$RUN_DIR/codex.md`, extract a compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. If Codex was skipped or found nothing, proceed with an empty seed.
+
+## Step 3: Spawn sub-agents in parallel
+
+**File-based handoff**: read `.claude/skills/_shared/file-handoff-protocol.md`. The run directory was created in Step 2 (`$RUN_DIR`).
 
 Launch agents simultaneously with the Agent tool (security augmentation is folded into Agent 1 — not a separate spawn; Agent 6 is optional). Every agent prompt must end with:
 
@@ -162,7 +184,7 @@ Read and follow the cross-validation protocol from `.claude/skills/_shared/cross
 
 Spawn a **sw-engineer** consolidator agent with this prompt:
 
-> "Read all finding files in `$RUN_DIR/` (agent files: `sw-engineer.md`, `qa-specialist.md`, `perf-optimizer.md`, `doc-scribe.md`, `linting-expert.md`, `solution-architect.md` — skip any that are missing). Apply the consolidation rules from `.claude/skills/review/checklist.md` (signal-to-noise filter, annotation completeness, section caps). Apply the precision gate: only include findings with a concrete, actionable location (function, line range, or variable name). Apply the finding density rule: for modules under 100 lines, aim for ≤10 total findings. Rank findings within each section by impact (blocking > critical > high > medium > low). Parse each agent's `confidence` from its envelope. Write the consolidated report to `tasks/output-review-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a one-line summary: `verdict=<APPROVE|REQUEST_CHANGES|NEEDS_WORK> | findings=N | critical=N | high=N | file=tasks/output-review-<date>.md`"
+> "Read all finding files in `$RUN_DIR/` (agent files: `sw-engineer.md`, `qa-specialist.md`, `perf-optimizer.md`, `doc-scribe.md`, `linting-expert.md`, `solution-architect.md`, and `codex.md` if present — skip any that are missing). Apply the consolidation rules from `.claude/skills/review/checklist.md` (signal-to-noise filter, annotation completeness, section caps). Apply the precision gate: only include findings with a concrete, actionable location (function, line range, or variable name). Apply the finding density rule: for modules under 100 lines, aim for ≤10 total findings. Rank findings within each section by impact (blocking > critical > high > medium > low). For `codex.md`: include its unique findings under a `### Codex Co-Review` section; deduplicate against agent findings (same file:line raised by both → keep the agent version, mark as 'also flagged by Codex'). Parse each agent's `confidence` from its envelope; assign `codex` a fixed confidence of 0.75 (moderate — static analysis, no runtime context). Write the consolidated report to `tasks/output-review-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a one-line summary: `verdict=<APPROVE|REQUEST_CHANGES|NEEDS_WORK> | findings=N | critical=N | high=N | file=tasks/output-review-<date>.md`"
 
 Main context receives only the one-liner verdict. Proceed with that summary for terminal output.
 
@@ -204,6 +226,11 @@ Main context receives only the one-liner verdict. Proceed with that summary for 
 - CHANGELOG: [updated / not updated]
 - Secrets scan: [clean / found: file:line]
 
+### Codex Co-Review
+(omit section if Codex was unavailable or found no unique issues)
+- [unique findings from codex.md not already captured by agents above]
+- Duplicate findings (same location as agent finding): omitted — see agent section
+
 ### Recommended Next Steps
 1. [most important action]
 2. [second most important]
@@ -216,6 +243,7 @@ Main context receives only the one-liner verdict. Proceed with that summary for 
 <!-- | sw-engineer | 0.88 | high | — | -->
 <!-- | qa-specialist | 0.65 | ⚠ low | no test execution; coverage unverifiable without running suite | -->
 <!-- | perf-optimizer | 0.72 | moderate | no profiling data; estimates from static analysis only | -->
+<!-- | codex | 0.75 | moderate | static analysis only; no type inference or runtime context | -->
 
 **Aggregate**: min 0.65 / median 0.N
 [⚠ LOW CONFIDENCE: qa-specialist could not verify test execution — treat coverage findings as indicative, not conclusive]

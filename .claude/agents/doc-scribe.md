@@ -4,6 +4,7 @@ description: Documentation specialist for writing docstrings, API references, an
 tools: Read, Write, Edit, Grep, Glob, WebFetch, TaskCreate, TaskUpdate
 model: sonnet
 color: purple
+memory: project
 ---
 
 <role>

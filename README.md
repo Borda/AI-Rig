@@ -50,7 +50,7 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 
 | Skill         | Command                                              | What It Does                                                                                                                                                                                                                                                 |
 | ------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **review**    | `/review [file\|PR#] [--reply]`                      | Parallel code review across 7 dimensions (arch, tests, perf, docs, lint, security, API design); `--reply` drafts a contributor-facing comment via oss-maintainer                                                                                             |
+| **review**    | `/review [file\|PR#] [--reply]`                      | Parallel code review across 7 agent dimensions + Codex co-review (arch, tests, perf, docs, lint, security, API design); `--reply` drafts a contributor-facing comment via oss-maintainer                                                                     |
 | **optimize**  | `/optimize [target]`                                 | Measure-change-measure performance loop                                                                                                                                                                                                                      |
 | **release**   | `/release <mode> [range]`                            | Notes, changelog, summary, migration, or full prepare pipeline; `audit` checks release readiness                                                                                                                                                             |
 | **survey**    | `/survey [topic]`                                    | SOTA literature survey with implementation plan                                                                                                                                                                                                              |
@@ -259,7 +259,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <summary><strong>Code review → fix blocking issues</strong></summary>
 
 ```
-/review 55             # parallel review across 7 dimensions
+/review 55             # 7 agent dimensions + Codex co-review
 /develop fix "race condition in cache invalidation"  # fix blocking issue from review
 /review 55             # re-review after fix
 ```
@@ -356,7 +356,7 @@ Preferred flow for maintainers responding to external contributions:
                           # reuses today's analysis if no new activity since last run
 
 # or if you need the full deep review first:
-/review 42 --reply        # 7-dimension review + draft overall comment + inline comments table
+/review 42 --reply        # 7-agent + Codex co-review + draft overall comment + inline comments table
                           # output: tasks/output-reply-pr-42-<date>.md
 
 # post when ready:
@@ -539,12 +539,14 @@ Every skill that reviews or validates code uses a three-tier pipeline, where che
 | Skill                                  | Tier 0 (gate) | Tier 1 (Codex pre-pass) | Tier 2 (Claude agents) |
 | -------------------------------------- | :-----------: | :---------------------: | :--------------------: |
 | `/develop` (feature/fix/refactor/plan) |       ✓       |            ✓            |           ✓            |
-| `/review`                              |       ✓       |            ✓            |           ✓            |
+| `/review`                              |       ✓       |           ✓ †           |           ✓            |
 | `/optimize`                            |       ✓       |            ✓            |           ✓            |
 | `/audit fix`                           |       ✓       |            ✓            |           ✓            |
 | `/resolve`                             |       —       |            —            |           ✓            |
 | `/codex`                               |       —       |            ✓            |           —            |
 | `/research`                            |       ✓       |            —            |           ✓            |
+
+† For `/review`, Codex runs as a full **co-reviewer** alongside Tier 2 agents (not as a gate before them) — its findings are independently consolidated rather than seeding the agent prompts.
 
 **Why unbiased review matters / Real example**: Claude makes targeted changes with intentionality — it has a mental model of which files are "in scope" for a task. Codex has no such context: it reads the diff and the codebase independently. During one session, Claude applied a docstring-style mandate across 6 files, reported the work done, and scored its own confidence at 0.88. The Codex pre-pass then found `skills/develop/modes/feature.md` still referencing the old style — a direct miss from the batch fix. That file simply wasn't on Claude's mental scope list, so it was never checked. The union of both passes is more complete than either alone.
 

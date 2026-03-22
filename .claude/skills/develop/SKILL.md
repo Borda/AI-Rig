@@ -198,8 +198,10 @@ Detect `--team` flag in `$ARGUMENTS`. Each mode file defines its team assignment
    `Read .claude/TEAM_PROTOCOL.md — use AgentSpeak v2`
    - compact instructions (preserve: file paths, errors, test results, task IDs; discard: verbose tool output, handshakes)
    - Step 1 analysis broadcast to all teammates
-5. Lead coordinates outputs, then runs shared quality stack + progressive review loop
-6. Team shutdown via `SendMessage shutdown_request` after the final report
+   - **No task tracking in teammate prompts** — teammates signal completion via delta message status; the lead owns all TaskCreate/TaskUpdate calls
+5. **Progressive task completion**: as each teammate's delta message arrives, immediately call `TaskUpdate(completed)` for the corresponding task before processing the next step — never batch task completions at the end; the task list is the user's live feed
+6. Lead coordinates outputs, then runs shared quality stack + progressive review loop; mark each shared step's task complete as it finishes (quality stack → Codex pre-pass → review loop → final report)
+7. Team shutdown via `SendMessage shutdown_request` after the final report
 
 **When to trigger team mode (per mode):**
 

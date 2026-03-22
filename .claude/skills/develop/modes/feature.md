@@ -228,5 +228,5 @@ Read .claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your task: [specific responsibility].
 [If QA]: include security checks for any auth/payment/data-handling code.
 Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
-Task tracking: call TaskUpdate(in_progress) when you start your assigned task; call TaskUpdate(completed) when done, before sending your delta message.
+Task tracking: do NOT call TaskCreate or TaskUpdate — the lead owns all task state. Signal your completion in your final delta message: "Status: complete | blocked — <reason>".
 ```

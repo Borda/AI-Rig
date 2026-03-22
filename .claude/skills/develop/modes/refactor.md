@@ -168,5 +168,5 @@ You are a [sw-engineer|qa-specialist] teammate refactoring: [target].
 Read .claude/TEAM_PROTOCOL.md — use AgentSpeak v2. Apply file locking protocol for concurrent edits.
 Your task: [refactoring steps 4 | characterization tests step 3].
 Compact Instructions: preserve file paths, test results, coverage numbers. Discard verbose tool output.
-Task tracking: call TaskUpdate(in_progress) when you start your assigned task; call TaskUpdate(completed) when done, before sending your delta message.
+Task tracking: do NOT call TaskCreate or TaskUpdate — the lead owns all task state. Signal your completion in your final delta message: "Status: complete | blocked — <reason>".
 ```

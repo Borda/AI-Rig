@@ -134,9 +134,15 @@ Every agent completing an analysis task **must** end its response with a `## Con
 ```
 ## Confidence
 **Score**: 0.N — [high ≥0.9 | moderate 0.7–0.9 | low <0.7]
-**Gaps**: what limited thoroughness (missing runtime data, partial file read, cross-agent context unavailable…)
-**Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
+**Gaps**:
+- [specific limitation — e.g., no test execution; coverage findings indicative only]
+- [specific limitation — e.g., no profiling data; perf estimates from static analysis]
+**Refinements**: N passes.
+- Pass 1: [what gap was concretely addressed]
+- Pass 2: [what gap was concretely addressed]
 ```
+
+(omit **Refinements** entirely if 0 passes; omit a **Gaps** bullet if no limitations apply)
 
 - The **Gaps field** is the primary reliable signal: it makes implicit limitations explicit so the orchestrator and user can decide whether a second pass is needed.
 - Score < 0.7 → orchestrator flags with ⚠ and may re-run the agent with the specific gap addressed.
