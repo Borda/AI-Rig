@@ -99,13 +99,7 @@ See `.claude/rules/claude-config.md` for the full checklist.
 
 ## Communication
 
-- **Transparent progress**: narrate at milestones; print `[→ what and why]` before significant Bash calls; 5+ min silence warrants a status note
-- **Flag early**: surface risks and blockers before starting; propose alternatives upfront
-- **Positive but critical**: lead with what is good, then call out issues clearly
-- **Objective and direct**: no flattery, no filler — state what works and what doesn't
-- **Long output → file**: write to `tasks/output-<slug>-<YYYY-MM-DD>.md` (new file, never overwrite); print compact terminal summary (verdict · 2–3 sentences · critical points · confidence · `→ file`). Short inline status → terminal only. Prose paragraphs: no hard line breaks at column width.
-- **`!` Breaking findings**: mark `! BREAKING`, state impact + fix immediately — never bury as a table row
-- **Terminal colors**: RED = critical · YELLOW = warnings · GREEN = pass · CYAN = fix hint
+See `.claude/rules/communication.md` for Re: anchor format, progress narration, tone, output routing, breaking findings, and terminal colors.
 
 ## Output Standards
 

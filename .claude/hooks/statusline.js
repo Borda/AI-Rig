@@ -122,7 +122,9 @@ process.stdin.on("end", () => {
     }
 
     if (remaining !== null) {
-      const pct = Math.max(0, Math.min(100, 100 - remaining)); // pct = context used (100 - remaining_pct)
+      // remaining_percentage === 0 after /clear means context was just reset, not genuinely full.
+      // Treat it as 0% used; a truly full context triggers compaction before this point.
+      const pct = remaining === 0 ? 0 : Math.max(0, Math.min(100, 100 - remaining)); // pct = context used (100 - remaining_pct)
       const filled = Math.round(pct / 10);
       const bar = "█".repeat(filled) + "░".repeat(10 - filled);
       const color = pct < 50 ? 32 : pct < 75 ? 33 : 31; // green / yellow / red

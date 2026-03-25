@@ -38,5 +38,5 @@ Subsection order: `PURPOSE` → `HOW IT WORKS` → `EXIT CODES` (add others like
 
 - CommonJS: `require()` imports, stdin JSON parse, `process.exit()`
 - Parse stdin: `JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'))`
-- Wrap all logic in try/catch; catch → **always** write `process.stderr.write(String(e))` then `process.exit(0)` — never crash, never swallow silently
+- Wrap all logic in try/catch; catch → **always** `process.exit(0)` — hooks must never crash or block Claude; silent-swallow is acceptable for top-level catches (logging hooks must not interfere with Claude's execution)
 - Use `execFileSync` (not `execSync` with shell strings) for subprocess calls — avoids shell injection

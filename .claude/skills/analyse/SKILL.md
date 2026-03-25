@@ -1,48 +1,90 @@
 ---
 name: analyse
-description: Analyze GitHub issues, Pull Requests (PRs), Discussions, and repo health for an Open Source Software (OSS) project. Summarizes long threads, assesses PR readiness, detects duplicates, extracts reproduction steps, and generates repo health stats. Uses gh Command Line Interface (CLI) for GitHub Application Programming Interface (API) access. Complements oss-maintainer agent.
-argument-hint: <number|health|dupes [keyword]|contributors|ecosystem> [--reply]
+description: Analyze GitHub issues, Pull Requests (PRs), Discussions, and repo health for an Open Source Software (OSS) project. For any specific item, casts a wide net — finds and lists all related open and closed issues/PRs/discussions, explicitly flags duplicates. Also summarizes long threads, assesses PR readiness, extracts reproduction steps, and generates repo health stats. Uses gh Command Line Interface (CLI) for GitHub Application Programming Interface (API) access. Complements oss-maintainer agent.
+argument-hint: <N|health|ecosystem> [--reply]
 allowed-tools: Read, Bash, Write, Agent
 context: fork
 ---
 
 <objective>
 
-Analyze GitHub issues and PRs to help maintainers triage, respond, and decide quickly. Produces actionable, structured output — not just summaries.
+Analyze GitHub threads and repo health to help maintainers triage, respond, and decide
+quickly. Produces actionable, structured output — not just summaries.
 
 </objective>
 
 <inputs>
 
 - **$ARGUMENTS**: one of:
-  - Number (e.g. `42`) — issues, PRs, and discussions share a unified index; auto-detects the type
-  - `health` — generate repo issue/PR health overview
-  - `dupes [keyword]` — find potential duplicate issues
-  - `contributors` — top contributor activity and release cadence
+  - `N` (a number) — any GitHub thread: issue, PR, or discussion; auto-detects the type
+  - `health` — repo issue/PR/discussion health overview with duplicate detection
   - `ecosystem` — downstream consumer impact analysis for library maintainers
-  - `--reply`: after analysis, spawn oss-maintainer to draft a contributor-facing reply from the report. Valid for issue, PR, and discussion modes only — silently ignored for health/dupes/contributors/ecosystem.
+  - `--reply` — only valid with `N`; spawns oss-maintainer to draft a contributor-facing
+    reply after the thread analysis. Silently ignored for `health` and `ecosystem`.
 
 </inputs>
 
 <workflow>
 
-## Flag parsing
+## Step 1: Flag parsing
 
-If `$ARGUMENTS` contains `--reply`, strip it and set `REPLY_MODE=true`. Pass the remaining arguments into the mode-dispatch below. If the resolved mode is health/dupes/contributors/ecosystem, `REPLY_MODE` is silently ignored.
+If `$ARGUMENTS` contains `--reply`, strip it and set `REPLY_MODE=true`. `REPLY_MODE` is only
+meaningful when `$ARGUMENTS` is a number — silently ignored for `health` and `ecosystem`.
 
-## Auto-Detection (for numeric arguments)
+## Step 2: Cache layer (numeric arguments only)
 
-Issues, PRs, and discussions share a unified running index — a given number can only be one type. Detect in two steps:
+Check for a local cache file before making API calls — prevents redundant fetches and avoids
+GitHub rate limits when re-analysing the same item in the same day.
+
+```bash
+CACHE_DIR="cache-gh"
+TODAY=$(date +%Y-%m-%d)
+CACHE_FILE="$CACHE_DIR/$ARGUMENTS-$TODAY.json"
+mkdir -p "$CACHE_DIR"
+```
+
+**Cache hit** — if `$CACHE_FILE` exists:
+
+- Read `type`, `item`, and `comments` fields from the JSON
+- Skip all primary `gh` item fetches in `modes/thread.md`
+- Print `[cache] #$ARGUMENTS ($TODAY)` as a one-line status note
+- Still run wide-net searches (dynamic — never cached)
+
+**Cache miss** — after fetching in `modes/thread.md`, write:
+
+```bash
+jq -n \
+  --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg type "$TYPE" \
+  --argjson number "$ARGUMENTS" \
+  --argjson item "$ITEM" \
+  --arg comments "$COMMENTS" \
+  '{"ts":$ts,"type":$type,"number":$number,"item":$item,"comments":$comments}' \
+  > "$CACHE_FILE"
+```
+
+**Stale cache** — a file for the same number but an earlier date is ignored. Old files are
+left in place — they are small and provide audit history.
+
+Cache applies to: issue/PR/discussion primary fetch and comments.
+Cache does NOT apply to: `gh issue list`, `gh pr list`, `gh pr checks`, `gh pr diff`,
+discussion list queries, health/ecosystem modes.
+
+## Step 3: Auto-Detection (numeric arguments only)
+
+Issues, PRs, and discussions share a unified running index — a given number is exactly one
+type. If cache hit: read `TYPE` and `ITEM` from `$CACHE_FILE` — skip the `gh` calls below.
+
+If cache miss:
 
 ```bash
 # Step 1: try the issues API (covers both issues and PRs)
 ITEM=$(gh api "repos/{owner}/{repo}/issues/$ARGUMENTS" 2>/dev/null)
 
 if [ -n "$ITEM" ]; then
-  # Found — distinguish issue from PR by presence of pull_request key
   TYPE=$(echo "$ITEM" | jq -r 'if .pull_request then "pr" else "issue" end')
 else
-  # Step 2: not an issue/PR — try discussions via GraphQL
+  # Step 2: try discussions via GraphQL
   DISC=$(gh api graphql -f query='
     query($owner:String!,$repo:String!,$number:Int!){
       repository(owner:$owner,name:$repo){
@@ -52,386 +94,34 @@ else
     --jq '.data.repository.discussion.title' 2>/dev/null)
   [ -n "$DISC" ] && TYPE="discussion" || TYPE="unknown"
 fi
-
-# Route: pr → PR Analysis | issue → Issue Analysis | discussion → Discussion Analysis
 # unknown → print "Item #N not found" and stop
 ```
 
-## Mode: Issue Analysis
+## Step 4: Mode dispatch
 
-```bash
-# Fetch issue details
-gh issue view $ARGUMENTS --json number,title,body,labels,comments,createdAt,author,state
+Read `.claude/skills/analyse/modes/<mode>.md` and execute all steps defined there.
 
-# Fetch all comments
-gh issue view $ARGUMENTS --comments
-```
+| Argument          | Mode file            |
+| ----------------- | -------------------- |
+| number (any type) | `modes/thread.md`    |
+| `health`          | `modes/health.md`    |
+| `ecosystem`       | `modes/ecosystem.md` |
 
-Produce:
+## Step 5: Draft contributor reply (--reply only, thread mode only)
 
-````
-## Issue #[number]: [title]
+If `REPLY_MODE` is not set, skip this step entirely.
 
-**State**: [open/closed] | **Author**: @[author] | **Age**: [X days]
-**Labels**: [current labels]
-
-### Summary
-[2-3 sentence plain-language summary of the issue]
-
-### Thread Verdict
-[If thread contains a verified/confirmed solution: extract it here with attribution]
-[If no verified solution: "No confirmed solution in thread." — skip thread detail]
-
-### Root Cause Hypotheses
-
-| # | Hypothesis | Probability | Reasoning |
-|---|-----------|-------------|-----------|
-| 1 | [most likely cause] | [high/medium/low] | [why — reference specific code paths] |
-| 2 | [alternative cause] | [medium/low] | [why] |
-| 3 | [less likely] | [low] | [why] |
-
-### Code Evidence
-
-For the top hypothesis, trace through relevant code:
-
-```[language]
-# [file:line] — [what this code does and why it relates to the hypothesis]
-[relevant code snippet]
-```
-
-### Suggested Labels
-
-[labels to add/remove based on analysis]
-
-### Suggested Response
-
-[draft reply — or "close as duplicate of #X"]
-
-[Use Markdown formatting: wrap function/class/method names in backticks (`func_name`), wrap code samples in fenced blocks with language tag]
-
-### Priority
-
-[Critical / High / Medium / Low] — [rationale]
-
-````
-
-Write the full report to `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Issue Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-issue-$ARGUMENTS-$(date +%Y-%m-%d).md`.
-
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block entirely. Proceed **immediately** to the "Draft contributor reply" section. Your response is not complete until you have spawned oss-maintainer and written the reply file.
-
-## Mode: PR Analysis
-
-Run all three `gh` commands in parallel — they are independent API calls:
-
-```bash
-# --- run these three in parallel ---
-
-# PR metadata
-gh pr view $ARGUMENTS --json number,title,body,labels,reviews,statusCheckRollup,files,additions,deletions,commits,author
-
-# CI status
-gh pr checks $ARGUMENTS
-
-# Files changed
-gh pr diff $ARGUMENTS --name-only
-```
-
-Produce:
-
-```
-## PR #[number]: [title]
-
-**Author**: @[author] | **Size**: +[additions]/-[deletions] lines, [N] files
-**CI**: [passing/failing/pending]
-
-### Recommendation
-[🟢 Approve / 🟡 Minor Suggestions / 🟠 Request Changes / 🔴 Block] — [one-sentence justification]
-
-### Completeness
-_Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
-- [✅/⚠️/❌/🔵] Clear description of what changed and why
-- [✅/⚠️/❌/🔵] Linked to a related issue (`Fixes #NNN` or `Relates to #NNN`)
-- [✅/⚠️/❌/🔵] Tests added/updated (happy path, failure path, edge cases)
-- [✅/⚠️/❌/🔵] Docstrings (Google style — Napoleon) for all new/changed public APIs
-- [✅/⚠️/❌/🔵] No secrets or credentials introduced
-- [✅/⚠️/❌/🔵] Linting and CI checks pass
-
-### Quality Scores
-- Code: n/5 [emoji] — [reason]
-- Testing: n/5 [emoji] — [reason]
-- Documentation: n/5 [emoji] — [reason]
-
-### Risk: n/5 [low / medium / high] [emoji] — [brief description]
-- Breaking changes: [none / detail]
-- Performance: [none / detail]
-- Security: [none / detail]
-- Compatibility: [none / detail]
-
-### Must Fix
-1. [blocking issue]
-
-### Suggestions (non-blocking)
-1. [improvement]
-
-### Next Steps
-1. [most important action for the author]
-2. [second action]
-```
-
-Write the full report to `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template. Replace `[entity-line]` with `PR #$ARGUMENTS — [title]` and replace `[skill-specific path]` with `tasks/output-analyse-pr-$ARGUMENTS-$(date +%Y-%m-%d).md`.
-
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block entirely. Proceed **immediately** to the "Draft contributor reply" section. Your response is not complete until you have spawned oss-maintainer and written the reply file.
-
-## Mode: Discussion Analysis
-
-When `$ARGUMENTS` starts with `discussion`, route directly here. Two accepted patterns:
-
-- `discussion <N>` — first word is `discussion`, second word is a number (e.g. `discussion 15`): route here with N as the discussion number. This is the explicit string-prefix path and takes priority over the numeric auto-detection block above.
-- A bare number that auto-detection resolves to `TYPE="discussion"` (via the GraphQL check in Auto-Detection): also routes here.
-
-```bash
-DISC_NUM=${ARGUMENTS#discussion }
-
-gh api graphql -f query='
-  query($owner: String!, $repo: String!, $number: Int!) {
-    repository(owner: $owner, name: $repo) {
-      discussion(number: $number) {
-        title
-        body
-        author { login }
-        category { name }
-        answer { body author { login } createdAt }
-        comments(first: 50) {
-          nodes { body author { login } createdAt }
-        }
-        labels(first: 10) { nodes { name } }
-        closed
-        closedAt
-        createdAt
-      }
-    }
-  }' -f owner='{owner}' -f repo='{repo}' -F number=$DISC_NUM
-```
-
-If the query returns null for `discussion`, output:
-
-```
-⚠ Discussions not enabled or discussion #[number] not found on this repository.
-```
-
-and stop.
-
-Produce:
-
-```
-## Discussion #[number]: [title]
-
-**State**: [open/closed] | **Author**: @[author] | **Age**: [X days]
-**Category**: [category name]
-**Labels**: [current labels, or "none"]
-
-### Summary
-[2-3 sentence plain-language summary of the discussion topic and current state]
-
-### Thread Verdict
-[If discussion has a marked answer: extract it here with attribution]
-[If no marked answer: "No accepted answer." — note the most useful response if one is clear]
-
-### Key Viewpoints
-
-| # | Position | Author | Support Level |
-|---|----------|--------|---------------|
-| 1 | [main viewpoint or request] | @[author] | [high/medium/low engagement] |
-| 2 | [alternative viewpoint] | @[author] | [medium/low] |
-
-### Actionable Outcome
-[concrete recommendation — e.g. "convert to issue", "mark as answered", "add to docs", "close as resolved"]
-
-### Suggested Labels
-[labels to add/remove based on discussion content]
-```
-
-Write the full report to `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Discussion Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-discussion-$DISC_NUM-$(date +%Y-%m-%d).md`.
-
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block entirely. Proceed **immediately** to the "Draft contributor reply" section. Your response is not complete until you have spawned oss-maintainer and written the reply file.
-
-## Mode: Repo Health Overview
-
-Run all three `gh` commands in parallel — they are independent API calls:
-
-```bash
-# --- run these three in parallel ---
-
-# Open issues count and age distribution
-gh issue list --state open --json number,createdAt,labels --limit 200
-
-# Stale issues (no activity > 90 days)
-gh issue list --state open --json number,title,updatedAt --limit 200 | \
-  jq '[.[] | select(.updatedAt < (now - 7776000 | todate))]'
-
-# Open PRs
-gh pr list --state open --json number,title,createdAt,reviews,statusCheckRollup
-```
-
-Produce:
-
-```
-## Repo Health: [repo]
-
-### Issue Summary
-- Open issues: [N]
-- Stale (>90 days): [N] — [list top 5]
-- Needs triage (no labels): [N]
-- Bugs: [N] | Enhancements: [N] | Questions: [N]
-
-### PR Summary
-- Open PRs: [N]
-- Awaiting review: [N]
-- CI failing: [N]
-- Stale (>30 days): [N]
-
-### Recommended Actions
-1. [most urgent triage action]
-2. [second]
-3. [third]
-```
-
-Write the full report to `tasks/output-analyse-health-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Repo Health Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-health-$(date +%Y-%m-%d).md`.
-
-## Mode: Duplicate Detection
-
-```bash
-# Search existing issues for keyword
-gh issue list --state all --search "$ARGUMENTS" --json number,title,state --limit 50
-```
-
-Group by similarity and output:
-
-```
-## Potential Duplicates for: "[keyword]"
-
-### Group 1: [theme]
-- #[N]: [title] ([state])
-- #[N]: [title] ([state])
-Canonical: #[oldest open issue] — suggest closing others as duplicates
-
-### Unique (not duplicates)
-- #[N]: [title] — [why it's distinct]
-
-### Recommendations
-1. Close #[N] as duplicate of #[canonical] — add comment: "Closing as duplicate of #[canonical]"
-2. [Next highest-impact triage action]
-3. [Any label additions or reassignments]
-```
-
-Write the full report to `tasks/output-analyse-dupes-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Duplicate Detection Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-dupes-$(date +%Y-%m-%d).md`.
-
-## Mode: Contributor Activity
-
-```bash
-# Top contributors in last 90 days
-gh api "repos/{owner}/{repo}/stats/contributors" \
-  | jq '[.[] | {author: .author.login, commits: .total, last_week: .weeks[-1]}] | sort_by(-.commits) | .[:10]'
-
-# Release cadence
-gh release list --limit 20 --json tagName,publishedAt \
-  | jq '[.[] | .publishedAt[:10]]'
-```
-
-Produce:
-
-```
-## Contributor Activity: [repo]
-
-### Top Contributors (90 days)
-| Author | Commits | Trend |
-|--------|---------|-------|
-| @... | N | ... |
-
-### Release Cadence
-- Average: [N days] between releases
-- Last release: [date] ([tag])
-- Overdue? [yes/no based on cadence]
-
-### Recommendations
-1. [Most urgent action — e.g., "cut overdue release", "review stale PRs", "thank top contributor"]
-2. [Bus factor concern if ≥60% commits from one author — suggest onboarding new contributors]
-3. [Cadence suggestion if overdue]
-```
-
-Write the full report to `tasks/output-analyse-contributors-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Contributor Activity Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-contributors-$(date +%Y-%m-%d).md`.
-
-## Mode: Ecosystem Impact (for library maintainers)
-
-When assessing the impact of a change on downstream users:
-
-Replace `mypackage` in the commands below with the actual package name (e.g., from `gh repo view --json name --jq .name`).
-
-```bash
-# Find downstream dependents on GitHub
-gh api "search/code" --field "q=from mypackage import language:python" \
-  --jq '[.items[].repository.full_name] | unique | .[]'
-
-# Check PyPI reverse dependencies (who depends on us?)
-# Requires johnnydep: pip install johnnydep (not installed by default — skip if unavailable)
-# johnnydep mypackage --fields=name --reverse 2>/dev/null || echo "johnnydep not available — skipping PyPI reverse deps"
-
-# Check conda-forge feedstock dependents
-gh api "search/code" --field "q=mypackage repo:conda-forge/*-feedstock filename:meta.yaml" \
-  --jq '[.items[].repository.full_name] | .[]'
-```
-
-Produce:
-
-```
-## Ecosystem Impact: [change description]
-
-### Downstream Consumers Found
-- [repo]: uses [specific API being changed]
-
-### Breaking Risk
-- [High/Medium/Low] — [N] known consumers of changed API
-- Migration path: [available / needs documentation]
-
-### Recommended Communication
-- [create migration guide / add deprecation warning / notify maintainers directly]
-```
-
-Write the full report to `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
-
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `tasks/output-analyse-ecosystem-$(date +%Y-%m-%d).md`.
-
-## Draft contributor reply (--reply only)
-
-If `REPLY_MODE` is not set, skip this step.
-
-**Reuse vs recreate**: reuse an existing report only if it exists *and* the item hasn't had new activity since it was written.
+**Reuse vs recreate**: reuse an existing report only if it exists *and* the item hasn't had
+new activity since it was written.
 
 ```bash
 TODAY=$(date +%Y-%m-%d)
-# Expected report paths by mode:
-# PR:         tasks/output-analyse-pr-$NUMBER-$TODAY.md
-# Issue:      tasks/output-analyse-issue-$NUMBER-$TODAY.md
-# Discussion: tasks/output-analyse-discussion-$DISC_NUM-$TODAY.md
-REPORT_FILE="tasks/output-analyse-<type>-$NUMBER-$TODAY.md"
+REPORT_FILE="tasks/output-analyse-thread-$ARGUMENTS-$TODAY.md"
 
 DRIFT=false
 if [ -f "$REPORT_FILE" ]; then
-  # Compare report mtime against item's last-activity timestamp from GitHub
   REPORT_MTIME=$(stat -f %m "$REPORT_FILE" 2>/dev/null || stat -c %Y "$REPORT_FILE")
-  UPDATED_AT=$(gh api "repos/{owner}/{repo}/issues/$NUMBER" --jq '.updated_at' 2>/dev/null)
+  UPDATED_AT=$(gh api "repos/{owner}/{repo}/issues/$ARGUMENTS" --jq '.updated_at' 2>/dev/null)
   UPDATED_TS=$(date -d "$UPDATED_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$UPDATED_AT" +%s 2>/dev/null)
   [ "$UPDATED_TS" -gt "$REPORT_MTIME" ] && DRIFT=true
 fi
@@ -440,42 +130,49 @@ fi
 Decision:
 
 - Report exists **and** `DRIFT=false` → reuse it; go straight to the oss-maintainer spawn.
-- Report missing **or** `DRIFT=true` → run the full analysis first (mode steps above), then continue. When drift triggered, note it in the terminal summary: `[analysis refreshed — new activity since last report]`.
+- Report missing **or** `DRIFT=true` → run full thread analysis first (Step 4), then continue.
+  Note `[analysis refreshed — new activity since last report]` in the terminal summary.
 
-**Spawn oss-maintainer** with:
+**Spawn oss-maintainer** with the report path, the item number, and this prompt:
 
-- The report file path
-- The item number and contributor handle (from the analysis data)
-- **For PR mode** — prompt: "Read the report at `<path>`. Apply voice and formatting rules from oss-maintainer's `<voice>` block — do not embed formatting rules inline here. Write your full output to `tasks/output-reply-<type>-<number>-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"tasks/output-reply-<type>-<number>-<date>.md\",\"issues\":N,\"blocking\":N,\"inline_rows\":N,\"confidence\":0.N,\"summary\":\"N issues, N blocking, N inline rows\"}`"
-- **For issue/discussion mode** — prompt: "Read the report at `<path>` for context, then fetch the full thread (`gh issue view <number> --comments` or equivalent GraphQL for discussions) and read every comment. Apply voice and formatting rules from oss-maintainer's `<voice>` block — do not embed formatting rules inline here. Write your full reply to `tasks/output-reply-<type>-<number>-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"tasks/output-reply-<type>-<number>-<date>.md\",\"sentences\":N,\"resolved\":\"yes|no|partial\",\"confidence\":0.N,\"summary\":\"Reply: N sentences, resolved: yes|no|partial\"}`"
+"Read the report at `<path>` for context. If the item is an issue or discussion, also fetch
+the full thread (`gh issue view <number> --comments` or equivalent GraphQL for discussions)
+and read every comment. Apply voice and formatting rules from oss-maintainer's `<voice>`
+block — do not embed them inline here. Write your full output to
+`tasks/output-reply-thread-<number>-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY
+a compact JSON envelope on your final line — nothing else after it:
+`{\"status\":\"done\",\"file\":\"tasks/output-reply-thread-<number>-<date>.md\",\"sentences\":N,\"resolved\":\"yes|no|partial\",\"confidence\":0.N,\"summary\":\"Reply: N sentences, resolved: yes|no|partial\"}`"
 
 Print compact terminal summary:
 
 ```
-  [PR]    Overall comment — N issues  |  Inline comments — N rows
-  [Issue] Reply — N sentences
-          [analysis refreshed — new activity since last report]  ← only if drift detected
+  Reply — N sentences  |  resolved: yes|no|partial
+  [analysis refreshed — new activity since last report]  ← only if drift detected
 
-  Reply:  tasks/output-reply-<type>-<number>-<date>.md
+  Reply:  tasks/output-reply-thread-<number>-<date>.md
 ```
 
-End your response with a `## Confidence` block per CLAUDE.md output standards — this is always the **absolute last thing**. If `REPLY_MODE=true`, place this block **after** completing the reply step above, never after the analysis alone.
+End your response with a `## Confidence` block per CLAUDE.md output standards — this is
+always the **absolute last thing**. If `REPLY_MODE=true`, place this block **after**
+completing the reply step above, never after the analysis alone.
 
 </workflow>
 
 <notes>
 
-- This skill uses mode dispatch (`## Mode: X` sections) rather than sequential numbered steps — each mode is self-contained
+- Mode files live in `.claude/skills/analyse/modes/` — one file per mode, fully self-contained
+- `modes/thread.md` handles all three thread types (issue, PR, discussion) via internal branching
 - Always use `gh` CLI — never hardcode repo URLs
 - Run `gh auth status` first if commands fail; user may need to authenticate
-- For closed issues/PRs, note the resolution so history is useful
+- For closed items, note the resolution so history is useful
 - Don't post responses without explicit user instruction — only draft them
-- **Forked context**: this skill runs with `context: fork` — it operates without access to the current conversation history. All required context (PR number, issue URL, branch name) must be provided as the skill argument or in your prompt.
+- **Forked context**: this skill runs with `context: fork` — it operates without access to
+  the current conversation history. All required context must be provided as the skill
+  argument or in your prompt.
 - Follow-up chains:
   - Issue with confirmed bug → `/develop fix` to diagnose, reproduce with test, and apply targeted fix
   - Issue is a feature request → `/develop feature` for TDD-first implementation
-  - Issue with code smell or structural problem → `/develop refactor` for test-first improvements
   - PR with quality concerns → `/review` for comprehensive multi-agent code review
-  - Draft responses or comments to be posted publicly → use `--reply` to auto-draft via oss-maintainer; or invoke oss-maintainer manually for custom framing
+  - Draft responses → use `--reply` to auto-draft via oss-maintainer; or invoke oss-maintainer manually
 
 </notes>
