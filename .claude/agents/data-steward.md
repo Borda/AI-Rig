@@ -388,7 +388,7 @@ Use the `<output_format>` template — fill every row. Rows that are N/A still a
 
 ### Step 6 — Internal Quality Loop and Confidence block
 
-Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md) and end with a `## Confidence` block.
+Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 

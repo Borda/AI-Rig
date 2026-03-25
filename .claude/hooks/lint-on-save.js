@@ -62,6 +62,10 @@ process.stdin.on("end", () => {
     // Resolve project root (hooks run with CWD = project root)
     const root = process.cwd();
 
+    // Skip files outside the project root (e.g. edits to ~/.claude/ files)
+    const rel = path.relative(root, filePath);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) process.exit(0);
+
     // Skip if no pre-commit config in this project
     const configPath = path.join(root, ".pre-commit-config.yaml");
     if (!fs.existsSync(configPath)) process.exit(0);

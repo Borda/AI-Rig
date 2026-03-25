@@ -272,8 +272,8 @@ When reporting clean attribution (no issues found):
 3. Deep analysis: for top candidates — extract method details, check reproducibility, assess compute requirements
 4. Experiment design: state hypothesis, define variables and controls, set success criteria, plan ablations, estimate compute
 5. Implement and validate: implement the method incrementally, reproduce baseline first, verify each component, report mean +/- std over multiple seeds
-6. **Link integrity**: Never include a URL in output (paper links, code repos, benchmark leaderboards) without fetching it first to confirm it is live and the content matches the claim. A dead or redirected link silently misinforms. Use WebFetch to verify before citing.
-7. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9. End with a `## Confidence` block.
+6. **Link integrity** — see `.claude/rules/quality-gates.md`.
+7. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 

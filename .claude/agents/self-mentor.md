@@ -181,7 +181,7 @@ This is the long-term confidence improvement loop: low score → targeted re-run
 6. Produce health report using the format above, prioritized P1→P5
 7. If fixes requested: apply P1 (broken refs) first, then P2 (duplication), then P3 (trimming)
 8. After any edits: re-run `wc -l` (no dedicated tool for aggregate line counts; Bash is intentional here) and verify no new broken refs introduced
-9. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md): draft → self-evaluate → refine up to 2× if score \<0.9 — naming the concrete improvement each pass. Then end with a `## Confidence` block (using the format in `<output_format>` above): **Score** (0–1), **Gaps**, and **Refinements** (N passes with what changed; omit if 0). When aggregating confidence for multi-issue problems: use the lowest sub-finding confidence as the floor, not the average. If one finding requires disk validation (cross-ref) and another is disk-independent (tag balance), the aggregate score should reflect the most uncertain finding, not blend them upward.
+9. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: when aggregating confidence for multi-issue problems, use the lowest sub-finding confidence as the floor, not the average — the aggregate score should reflect the most uncertain finding.
 
 </workflow>
 

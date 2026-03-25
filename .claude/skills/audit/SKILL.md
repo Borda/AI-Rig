@@ -8,7 +8,7 @@ allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdat
 
 <objective>
 
-Run a full-sweep quality audit of the `.claude/` configuration: every agent file, every skill file, settings.json, and hooks. Spawns `self-mentor` for per-file analysis, then aggregates findings system-wide to catch issues that only surface across files — infinite loops, inventory drift, missing permissions, and cross-file interoperability breaks. Reports all findings and auto-fixes at the requested level: `fix high` (critical+high only), `fix medium` (critical+high+medium, default fix level), or `fix all` (all findings including low).
+Run a full-sweep quality audit of the `.claude/` configuration: every agent file, every skill file, every rule file, settings.json, and hooks. Spawns `self-mentor` for per-file analysis, then aggregates findings system-wide to catch issues that only surface across files — infinite loops, inventory drift, missing permissions, and cross-file interoperability breaks. Reports all findings and auto-fixes at the requested level: `fix high` (critical+high only), `fix medium` (critical+high+medium, default fix level), or `fix all` (all findings including low).
 
 </objective>
 
@@ -22,7 +22,8 @@ Run a full-sweep quality audit of the `.claude/` configuration: every agent file
   - `fix` (no level) — alias for `fix medium` (backward compatible)
   - `agents` — restrict sweep to agent files only, report only
   - `skills` — restrict sweep to skill files only, report only
-  - Scope and fix level can be combined: `agents fix medium`, `skills fix all` — scope always precedes `fix`
+  - `rules` — restrict sweep to rule files only, report only
+  - Scope and fix level can be combined: `agents fix medium`, `rules fix all` — scope always precedes `fix`
   - `upgrade` — fetch latest Claude Code docs, filter new features by genuine value, then apply: **config** changes (apply + correctness check), **capability** changes (calibrate before → apply → calibrate after → accept if Δrecall ≥ 0 and ΔF1 ≥ 0). Skip to **Mode: upgrade**.
 
 </inputs>
@@ -102,6 +103,7 @@ Enumerate everything in scope using built-in tools:
 
 - **Agents**: Glob tool, pattern `agents/*.md`, path `.claude/`
 - **Skills**: Glob tool, pattern `skills/*/SKILL.md`, path `.claude/`
+- **Rules**: Glob tool, pattern `rules/*.md`, path `.claude/`
 - **Settings**: Read tool on `.claude/settings.json`
 - **Hooks**: Glob tool, pattern `hooks/*`, path `.claude/`
 
@@ -285,7 +287,7 @@ done
 - `WebFetch`/`WebSearch` declared for an agent whose domain has no web-research component → **medium** (unnecessary permission surface)
 - `Write`/`Edit` declared for a read-only agent (e.g., `solution-architect`) but not used in practice → **medium**
 - `Bash` absent for an agent whose domain involves running code (linting, Continuous Integration (CI) validation, performance profiling) → **high** (silent failure when workflow invokes shell commands)
-- `Task` absent for an orchestrating agent that needs to spawn subagents → **high**
+- `Agent` absent for an orchestrating agent that needs to spawn subagents → **high** (backward-compat alias `Task` also accepted)
 - `tools:` is `*` (wildcard) for a focused domain agent — prefer an explicit list → **low**
 
 Report missing necessary tools as **high**; declared-but-unused tools as **medium**.
@@ -530,6 +532,49 @@ fi
 - Output file missing `def is_prime` or fails `py_compile` → **high** (codex running but producing invalid output)
 - All checks pass → logged as `✓ OK`, no finding
 
+**Check 14 — Rules integrity and efficiency**
+
+Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory does not exist or is empty.
+
+**14a — Inventory vs MEMORY.md**: Glob `.claude/rules/*.md`; extract basenames (strip `.md`). Read the "Agents & Skills Location" section of MEMORY.md; locate the `Rules (N):` line. Compare the disk list against the MEMORY.md roster:
+
+```bash
+ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort
+```
+
+Rules on disk but absent from MEMORY.md roster → **medium** (rule invisible to future agents reading the roster). Rules in MEMORY.md roster but absent on disk → **medium** (stale entry).
+
+**14b — Frontmatter completeness**: For each rule file, read its YAML frontmatter and verify:
+
+- `description:` field is present and non-empty → missing → **high** (Claude Code cannot identify the rule's purpose without it)
+- If `paths:` is present, it must be a non-empty list of non-empty glob strings → malformed → **high** (rule may silently never load)
+
+```bash
+for f in .claude/rules/*.md; do
+  desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{found=1} END{print found+0}' "$f")
+  [ "$desc" -eq 0 ] && printf "MISSING description: %s\n" "$f"
+done
+```
+
+**14c — Redundancy check (efficiency)**: For each rule file, identify its 2–3 most specific directive phrases — single-line rules, not headings (e.g. `"Never switch to NumPy style"`, `"never git add -A"`). Grep those phrases verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. If the exact phrase exists in ≥2 locations outside the rule file itself → **medium** (distillation incomplete; single source of truth violated).
+
+```bash
+# Example: check if a key directive is still duplicated in agents
+grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null
+grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null
+```
+
+Report each duplicated phrase with its source files. Fix action: remove the copy outside the rule file and replace with a reference (`Follow .claude/rules/<name>.md`).
+
+**14d — Cross-reference integrity**: Grep agent files, skill files, and CLAUDE.md for references to `.claude/rules/<name>.md` patterns. For each referenced filename, verify it exists on disk → missing file → **high** (broken reference; agent will follow stale instruction).
+
+```bash
+grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null \
+  | grep -o 'rules/[a-z_-]*\.md' | sort -u
+```
+
+Severity: 14b = **high**; 14a/14c/14d = **medium**. 14c findings are report-only (human judgment on which copy to remove); 14a/14b/14d are auto-fixable at `fix medium` and above.
+
 ## Step 5: Aggregate and classify findings
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
@@ -554,7 +599,8 @@ Output a structured audit report before fixing anything:
 ### Scope
 - Agents audited: N
 - Skills audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test
+- Rules audited: N
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test, rules integrity
 
 ### Findings by Severity
 

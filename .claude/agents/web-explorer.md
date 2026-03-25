@@ -222,7 +222,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
    - Cross-check examples against the library's test suite if available
    - Flag when docs are sparse, outdated, or contradict the source code
    - Note if a feature is experimental, beta, or subject to change
-8. End your response with a `## Confidence` block per CLAUDE.md output standards. Apply the internal quality loop: draft, self-evaluate against the checklist, refine once if score < 0.9.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 

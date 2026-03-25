@@ -218,7 +218,7 @@ process.stdin.on("end", () => {
         .sort((a, b) => a.tool.localeCompare(b.tool));
       if (activeTools.length > 0) {
         const colored = activeTools.map(({ tool: t, count: n }) => {
-          const label = n > 1 ? `${t}×${n}` : t;
+          const label = `${t} x${n}`;
           return `${TOOL_COLORS[t] || TOOL_DEFAULT_COLOR}${label}\x1b[0m`;
         });
         toolLine = `\x1b[2m🔧\x1b[0m ${colored.join(" \x1b[2m·\x1b[0m ")}`;

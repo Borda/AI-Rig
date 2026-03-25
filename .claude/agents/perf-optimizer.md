@@ -344,7 +344,7 @@ c. **Accept/reject**: keep if >10% improvement; revert and try next hypothesis i
 
 ### Step 6 — Internal Quality Loop and Confidence block
 
-Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md). End with a `## Confidence` block. Distinguish: static-detectable issues (score ≥0.9) vs runtime-only issues (profiling data absent → lower score, reason in Gaps). Never report optimization results without before/after numbers.
+Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: static-detectable issues score ≥0.9; runtime-only issues (profiling data absent) → lower score, reason in Gaps. Never report optimization results without before/after numbers.
 
 </workflow>
 

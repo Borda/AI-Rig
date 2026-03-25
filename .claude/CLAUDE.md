@@ -95,14 +95,7 @@ Teams are always user-invoked:
 
 ## Self-Setup Maintenance
 
-When modifying any file under `.claude/`:
-
-1. **Cross-references** — if a name or capability changes, update every file that mentions it
-2. **`memory/MEMORY.md`** — keep the agents/skills roster in sync with disk
-3. **`README.md`** — verify agent/skill tables, Status Line, and Config Sync sections after any change
-4. **`settings.json` permissions** — add a matching allow rule for any new `gh`, `bash`, or `WebFetch` calls
-5. **`</workflow>` tags** — mode sections must sit inside the block; closing tag after the last mode, before `<notes>`
-6. **Step numbering** — renumber sequentially after adding/removing steps
+See `.claude/rules/claude-config.md` for the full checklist.
 
 ## Communication
 
@@ -116,31 +109,7 @@ When modifying any file under `.claude/`:
 
 ## Output Standards
 
-Every agent completing an analysis task **must** end with a `## Confidence` block:
-
-```
-## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.7–0.9 | low <0.7]
-**Gaps**:
-- [specific limitation]
-**Refinements**: N passes.
-- Pass 1: [what gap was addressed]
-```
-
-(omit **Refinements** if 0 passes; omit a **Gaps** bullet if none apply)
-
-- Gaps field is the primary signal — surfaces implicit limitations for re-run decisions
-- Score < 0.7 → flag ⚠; orchestrator may re-run with the specific gap addressed
-- Applies to **all** agents; orchestrating skills aggregate scores; `/calibrate` backstops calibration
-
-### Internal Quality Loop
-
-For analysis tasks only — self-review before returning:
-
-1. Draft → self-evaluate (missed issues, unsupported claims, coverage gaps) → score
-2. If score < 0.9: address highest-impact gap, name it concretely, re-score; cap at 2 passes
-3. Score rises only when a named gap was addressed — "re-checked, looks fine" doesn't count
-4. After 2 passes, report the real score — never inflate; `/calibrate` catches bias
+See `.claude/rules/quality-gates.md` for Confidence block format, Internal Quality Loop, link verification, and output routing rules.
 
 ## Compact Instructions
 

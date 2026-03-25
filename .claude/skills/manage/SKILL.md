@@ -54,7 +54,7 @@ Manage the lifecycle of agents and skills in the `.claude/` directory. Handles c
 - USED_COLORS: blue, green, purple, lime, orange, yellow, cyan, violet, teal, indigo, magenta, pink
 - AVAILABLE_COLORS: coral, gold, olive, navy, salmon, red, maroon, aqua, brown
 
-maintain colors manually — add new agent colors here when creating agents
+maintain colors manually — add new agent colors here when creating agents; this static list is advisory only — the live Grep in Step 3 is the authoritative check for colors in use
 
 </constants>
 

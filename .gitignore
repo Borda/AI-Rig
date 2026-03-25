@@ -6,6 +6,7 @@ tasks/
 
 # Delegation log (local runtime data, not source)
 .codex/logs/
+.codex/reports/
 
 # Hook runtime state and invocation logs
 .claude/state/

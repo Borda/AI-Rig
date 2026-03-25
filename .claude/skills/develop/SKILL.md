@@ -155,7 +155,7 @@ Maximum 3 cycles. Applied after the quality stack.
 - Fix critical/high findings from Cycle 1
 - Re-run quality stack on modified files only
 - Set up a run directory for file-based handoff: `RUN_DIR="/tmp/develop-review-$(date +%s)"; mkdir -p "$RUN_DIR"`
-- For each agent type in `agents_with_findings`: spawn that agent directly (not `/review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N}`"
+- For each agent type in `agents_with_findings`: spawn that agent directly (not `/review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`" (add §8 health monitoring checkpoint after spawns — see /review Step 3 for pattern)
 - Skip agents that were clean in Cycle 1
 - Collect envelopes to update review state (do not read the full finding files into context — check envelopes to determine if critical/high remain)
 

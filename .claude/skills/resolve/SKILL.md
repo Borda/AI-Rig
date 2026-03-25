@@ -335,6 +335,14 @@ Agent(linting-expert): "Review all files changed in the current branch since ori
 Agent(qa-specialist): "Review all files changed in the current branch since origin/<BASE_REF> for correctness, edge cases, and regressions. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
 ```
 
+```bash
+# Health monitoring (CLAUDE.md §8): checkpoint after spawning
+RESOLVE_CHECK="/tmp/resolve-check-$(date +%s)"
+touch "$RESOLVE_CHECK"
+# Every 5 min: find "$RUN_DIR" -newer "$RESOLVE_CHECK" -type f | wc -l — new files = alive
+# Hard cutoff: 15 min of no file activity → timed out; mark ⏱ in report
+```
+
 Wait for both. Then:
 
 - If `linting-expert` made file changes → commit them:
@@ -478,6 +486,14 @@ Spawn both agents in parallel:
 Agent(linting-expert): "Review all files changed in HEAD (git diff HEAD~N..HEAD where N = number of commits just made). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
 
 Agent(qa-specialist): "Review all files changed in the most recent commits for correctness, edge cases, and regressions. Flag any blocking issues. Write your full findings to $RUN_DIR/qa-specialist-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
+```
+
+```bash
+# Health monitoring (CLAUDE.md §8): checkpoint after spawning
+RESOLVE_CHECK="/tmp/resolve-check-$(date +%s)"
+touch "$RESOLVE_CHECK"
+# Every 5 min: find "$RUN_DIR" -newer "$RESOLVE_CHECK" -type f | wc -l — new files = alive
+# Hard cutoff: 15 min of no file activity → timed out; mark ⏱ in report
 ```
 
 - If `linting-expert` made changes → commit: `lint: auto-fix violations after resolve cycle`

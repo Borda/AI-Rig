@@ -85,8 +85,8 @@ mypy src/ --strict
 
 > **Alternative type checkers**:
 >
-> - [basedpyright](https://github.com/DetachHead/basedpyright) # verify at use time: fork of Pyright with stricter rules and better VS Code integration. `pip install basedpyright && basedpyright src/`.
-> - [pyrefly](https://github.com/facebook/pyrefly) # verify at use time: Meta's type checker (Rust-based, fast). Early-stage (active development, known issues) — evaluate cautiously; not recommended for CI until stable.
+> - [basedpyright](https://github.com/DetachHead/basedpyright) — fork of Pyright with stricter rules and better VS Code integration. `pip install basedpyright && basedpyright src/`.
+> - [pyrefly](https://github.com/facebook/pyrefly) — Meta's type checker (Rust-based, fast). Early-stage (active development, known issues) — evaluate cautiously; not recommended for CI until stable.
 
 ## Rule Selection Rationale
 
@@ -102,24 +102,25 @@ Do NOT enable all rules at once on an existing codebase — add progressively, f
 
 ## pre-commit — enforce at commit time
 
+See `.claude/rules/pre-commit-config.md` for version pinning rules before committing.
+
 ```yaml
 # .pre-commit-config.yaml
-# ALWAYS run `pre-commit autoupdate` before committing or check PyPI for current versions:
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit  # verify at use time
+  - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: <CURRENT> # run `pre-commit autoupdate` to set; verify at https://pypi.org/project/ruff
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
-  - repo: https://github.com/pre-commit/mirrors-mypy  # verify at use time
+  - repo: https://github.com/pre-commit/mirrors-mypy
     rev: <CURRENT> # run `pre-commit autoupdate` to set; verify at https://pypi.org/project/mypy
     hooks:
       - id: mypy
         additional_dependencies: [types-requests, types-PyYAML]
 
-  - repo: https://github.com/pre-commit/pre-commit-hooks  # verify at use time
+  - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: <CURRENT> # run `pre-commit autoupdate` to set
     hooks:
       - id: trailing-whitespace
@@ -138,7 +139,7 @@ pre-commit run --all-files      # run on all files
 pre-commit autoupdate           # bump all hook revs to latest — run this regularly
 ```
 
-> **Tip**: Enable [pre-commit.ci](https://pre-commit.ci) # verify at use time to auto-run and auto-fix hooks on every Pull Request (PR) without any local setup burden.
+> **Tip**: Enable [pre-commit.ci](https://pre-commit.ci) to auto-run and auto-fix hooks on every Pull Request (PR) without any local setup burden.
 
 ## PyTorch Application Programming Interface (API) Migration
 
@@ -249,7 +250,7 @@ Secondary annotation findings: var-annotated on instance variables, no-untyped-d
    - ❌ Never: real type errors, ruff-bandit S-rule security findings, or whole-file suppressions in production code
 6. Configure per-file ignores for test files and generated code
 7. Install pre-commit hooks so issues don't creep back in
-8. Apply the **Internal Quality Loop** (see Output Standards, CLAUDE.md) and end with a `## Confidence` block.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 

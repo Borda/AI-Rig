@@ -46,7 +46,7 @@ STATE_DIR:                  .claude/state/research/
 | `ml`             | `ai-researcher`      | accuracy, loss, F1, AUC, BLEU                |
 | `arch`           | `solution-architect` | coupling, cohesion, modularity metrics       |
 
-> note: solution-architect uses opusplan tier — higher cost per ideation call |
+> note: solution-architect uses opusplan tier — higher cost per ideation call
 
 **Auto-inference keyword heuristics** (applied when `agent_strategy: auto`):
 

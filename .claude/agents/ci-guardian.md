@@ -413,7 +413,7 @@ For setup instructions (PyPI dashboard + GitHub environment config), see `oss-ma
 08. Update `.github/workflows/*.yml` with any structural improvements
 09. Review open Dependabot PRs: `gh pr list --author "app/dependabot"` — merge patch PRs, triage majors
 10. Document persistent issues in `docs/ci-notes.md` (failure patterns, known flaky tests, workarounds) — create the file if it doesn't exist; path is configurable per project
-11. Apply the Internal Quality Loop (Output Standards, CLAUDE.md) and end with a `## Confidence` block.
+11. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 

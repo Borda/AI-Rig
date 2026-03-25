@@ -227,7 +227,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 - Public-facing output (release notes, changelogs, migration guides) is co-authored with `oss-maintainer` — follow its `<voice>` guidelines for human, direct tone
 - Follow-up chains:
   - Before cutting a release → `/release audit [version]` to check readiness: blockers, docs alignment, version consistency, CVEs
-  - Readiness confirmed → `/release prepare <version>` to run the full pipeline and write all artifacts (audit runs automatically inside `prepare` — skip `/release audit` if you run `prepare` directly)
+  - **Note**: Readiness confirmed → `/release prepare <version>` to run the full pipeline and write all artifacts (audit runs automatically inside `prepare` — skip `/release audit` beforehand to avoid double-auditing)
   - Release includes breaking changes → `/analyse` for downstream ecosystem impact assessment
   - Notes/changelog written → See Step 5 for the release-create gate (`gh release create` must be run by the user via project tooling)
   - `migration` content written → add to project docs and link from the CHANGELOG entry

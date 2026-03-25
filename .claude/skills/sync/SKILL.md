@@ -186,7 +186,7 @@ echo ".codex files:  $(cd "$PROJECT" && git ls-files .codex/  | wc -l | tr -d ' 
 
 <notes>
 
-- File manifest from `git ls-files` — adding a new agent, skill, hook, or codex agent to git automatically includes it in future syncs; no skill edits needed
+- File manifest from `git ls-files` — adding a new agent, skill, rule, hook, or codex agent to git automatically includes it in future syncs; no skill edits needed
 - `settings.local.json` and `.codex/auth.json` are never synced — gitignored, excluded automatically
 - All `node .claude/hooks/` paths in settings.json are rewritten to `node $HOME/.claude/hooks/` — avoids hardcoded usernames; `$HOME` is expanded by the shell when hooks fire
 - Project owns what it tracks; home-only files are never touched or deleted

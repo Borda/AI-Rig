@@ -11,6 +11,7 @@ borda.local/
 │   ├── settings.json       # permissions and model preferences
 │   ├── agents/             # specialist agents
 │   ├── skills/             # workflow skills (slash commands)
+│   ├── rules/              # per-topic coding and config standards (auto-loaded by Claude Code)
 │   └── hooks/              # UI extensions
 ├── .codex/                 # OpenAI Codex CLI
 │   ├── AGENTS.md           # global instructions and subagent spawn rules
@@ -228,6 +229,22 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 > **Colab MCP is opt-in and has no overhead when inactive.** `.mcp.json` defines the server but does not start it. To enable: add `"colab-mcp"` to `enabledMcpjsonServers` in `.claude/settings.local.json`, then restart Claude Code. MCP servers load at session start, so a restart is required before `--colab` will work.
 
 </details>
+
+### Rules
+
+Rule files in `.claude/rules/` are automatically loaded by Claude Code when working on matching file types (via `paths:` frontmatter). They encode per-topic standards that apply across all agents and skills — no agent needs to repeat them.
+
+| Rule file              | Applies to                        | What it governs                                                                         |
+| ---------------------- | --------------------------------- | --------------------------------------------------------------------------------------- |
+| `ci-workflows.md`      | `.github/workflows/**/*.yml`      | Semantic version tags preferred over SHA pins; Python matrix ≥3.10; fail-fast rules     |
+| `claude-config.md`     | `.claude/**`                      | Checklist for editing `.claude/` files: cross-refs, MEMORY.md roster, README, sync      |
+| `git-commit.md`        | (global)                          | Commit message format, push safety (explicit confirmation required), branch safety      |
+| `hooks-js.md`          | `.claude/hooks/*.js`              | Hook writing standards: state files, age-out patterns, tool activity tracking           |
+| `pre-commit-config.md` | `.pre-commit-config.yaml`         | Version pinning rules, hook ordering, CI integration via pre-commit.ci                  |
+| `python-code.md`       | `**/*.py`                         | Modern Python style: type annotations, dataclasses, structural pattern matching         |
+| `quality-gates.md`     | (global)                          | Confidence blocks on all analysis tasks, internal quality loop, output routing rules    |
+| `release-notes.md`     | `CHANGELOG.md`, `PUBLIC-NOTES.md` | Release note structure, SemVer decision criteria, deprecation notice format             |
+| `testing.md`           | `tests/**/*.py`, `**/test_*.py`   | pytest AAA structure, parametrize standards, doctest location (source files, not tests) |
 
 ### Common Workflow Sequences
 
@@ -507,6 +524,7 @@ This repo is the **source of truth** for all `.claude/` configuration. Home (`~/
 Borda.local/.claude/   →   ~/.claude/
   agents/                    agents/
   skills/                    skills/
+  rules/                     rules/
   hooks/statusline.js        hooks/statusline.js
   settings.json              settings.json  (statusLine path rewritten to absolute)
 ```

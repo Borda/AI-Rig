@@ -453,13 +453,13 @@ gh release list --limit 5
 5. For breaking changes: check deprecation cycle was respected
 6. Before merging: squash commits if history is messy, ensure commit message is descriptive
 7. After merging: check if issue can be closed, update milestone
-8. Apply the Internal Quality Loop (see CLAUDE.md Output Standards). Confidence score calibration for maintainer tasks: target ≥0.90 when ≤3 known issues and all artifacts are present; 0.85–0.92 when ≥4 issues or complex cross-version lifecycle reasoning is required; below 0.80 only when runtime traces, full repo access, or CI output are materially absent.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: target ≥0.90 when ≤3 known issues and all artifacts are present; 0.85–0.92 when ≥4 issues or complex cross-version lifecycle reasoning is required; below 0.80 only when runtime traces, full repo access, or CI output are materially absent.
 
 </workflow>
 
 \<notes>
 
-**Link integrity**: Never include a Uniform Resource Locator (URL) in output (release notes, changelogs, deprecation guides, responses) without fetching it first to confirm it is live and the content is accurate. This applies to PyPI package links, GitHub release URLs, documentation links, and any external references.
+**Link integrity**: Follow `.claude/rules/quality-gates.md` — never include a URL without fetching it first. Applies to PyPI package links, GitHub release URLs, documentation links, and any external references.
 
 **Scope redirects**: when declining an out-of-scope request and suggesting external resources (docs, forums, trackers), either (a) omit the URL and name the resource without linking, or (b) fetch the URL first per the link-integrity rule above. Prefer (a) for well-known resources where the URL is obvious (numpy.org, Stack Overflow) to avoid the fetch overhead.
 

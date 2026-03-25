@@ -23,6 +23,7 @@ Calibration data drives the improvement loop: systematic gaps become instruction
     - `skills` — calibratable skills only (`/audit`, `/review`)
     - `routing` — routing accuracy test: measures how accurately a `general-purpose` orchestrator selects the correct `subagent_type` for synthetic task prompts (not a per-agent quality benchmark; not included in `all`, `agents`, or `skills` — invoke explicitly)
     - `communication` — handover + team protocol compliance: runs `self-mentor` against synthetic agent responses and team transcripts with injected protocol violations (missing JSON envelope, missing `summary`, AgentSpeak v2 breaches); not included in `all`, `agents`, or `skills` — invoke explicitly
+    - `rules` — rule adherence test: for each global rule file (no `paths:`) and each path-scoped rule when a matching file is in context, generates synthetic tasks that should trigger the rule's key directives, measures whether a `general-purpose` agent with the rule loaded correctly applies them; reports rules that are ignored, misapplied, or redundant with each other; not included in `all`, `agents`, or `skills` — invoke explicitly
     - `<agent-name>` — single agent (e.g., `sw-engineer`)
     - `/audit` or `/review` — single skill
   - **Pace** (optional, default `fast`):
@@ -53,7 +54,7 @@ Calibration data drives the improvement loop: systematic gaps become instruction
 - ROUTING_ACCURACY_THRESHOLD: 0.90 (below → agent descriptions need improvement)
 - ROUTING_HARD_THRESHOLD: 0.80 (below → high-overlap pair descriptions need disambiguation)
 
-Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`.
+Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`.
 
 </constants>
 
@@ -79,6 +80,7 @@ From `$ARGUMENTS`, determine:
   - `skills` → `/audit` and `/review` only
   - `routing` → routing accuracy test (NOT included in `all`, `agents`, or `skills` — invoke explicitly)
   - `communication` → handover + team protocol compliance (NOT included in `all`, `agents`, or `skills` — invoke explicitly)
+  - `rules` → rule adherence test (NOT included in `all`, `agents`, or `skills` — invoke explicitly)
   - Any other token → single agent or skill name
 - **Mode**: look for `fast` or `full` in remaining tokens — default `fast`
 - **A/B flag**: `ab` present → also spawn a `general-purpose` baseline per problem
@@ -90,8 +92,8 @@ If benchmark will run (i.e., `fast` or `full` is present, with or without `apply
 
 Create tasks before proceeding:
 
-- Benchmark only (no `apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target is `routing`), TaskCreate "Calibrate communication" (if target is `communication`), TaskCreate "Analyse and report"
-- Benchmark + auto-apply (`fast`/`full` + `apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target is `routing`), TaskCreate "Calibrate communication" (if target is `communication`), TaskCreate "Analyse and report", TaskCreate "Apply findings"
+- Benchmark only (no `apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target is `routing`), TaskCreate "Calibrate communication" (if target is `communication`), TaskCreate "Calibrate rules" (if target is `rules`), TaskCreate "Analyse and report"
+- Benchmark + auto-apply (`fast`/`full` + `apply`): TaskCreate "Calibrate agents" (if target includes agents), TaskCreate "Calibrate skills" (if target includes skills), TaskCreate "Calibrate routing" (if target is `routing`), TaskCreate "Calibrate communication" (if target is `communication`), TaskCreate "Calibrate rules" (if target is `rules`), TaskCreate "Analyse and report", TaskCreate "Apply findings"
 - Pure apply mode (only `apply`, no `fast`/`full`): TaskCreate "Apply findings" only
 
 ## Step 2: Spawn pipeline subagents
@@ -104,12 +106,19 @@ For each target mode in the resolved target list, read the corresponding mode fi
 | skills        | `.claude/skills/calibrate/modes/skills.md`        | "Calibrate skills"        |
 | routing       | `.claude/skills/calibrate/modes/routing.md`       | "Calibrate routing"       |
 | communication | `.claude/skills/calibrate/modes/communication.md` | "Calibrate communication" |
+| rules         | `.claude/skills/calibrate/modes/rules.md`         | "Calibrate rules"         |
 
-Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, and extra instructions for the pipeline subagent. The pipeline template lives at `.claude/skills/calibrate/templates/pipeline-prompt.md`. **N override**: `communication` caps at fast=3 / full=5 (not the global FULL_N=10) to prevent pipeline context overflow — read `modes/communication.md` for details.
+Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, and extra instructions for the pipeline subagent. The pipeline template lives at `.claude/skills/calibrate/templates/pipeline-prompt.md`. **N override**: `communication` caps at fast=3 / full=5 (not the global FULL_N=10) to prevent pipeline context overflow — read `modes/communication.md` for details. **`rules` mode** spawns one `general-purpose` subagent per rule file (not the standard pipeline template) — read `modes/rules.md` for the direct-spawn approach.
 
 ## Step 3: Collect results and print combined report
 
 **Health monitoring** — apply the protocol from CLAUDE.md §8. Run dir for liveness checks: `.claude/calibrate/runs/<TIMESTAMP>/<TARGET>/`. Constants below tighten the global defaults for this skill:
+
+Issue all subagents from both agents and skills in a **single response** — agents and skills are independent and run concurrently. One `general-purpose` subagent per target; do not wait for one to finish before spawning the next.
+
+Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<DOMAIN>`, `<N>`, `<TIMESTAMP>`, `<MODE>`, `<AB_MODE>` before spawning — set `<AB_MODE>` to `true` or `false`):
+
+______________________________________________________________________
 
 ```bash
 # Initialise checkpoints after all pipeline spawns
@@ -279,6 +288,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 - **`routing` target vs `/audit` Check 12**: `/audit` Check 12 performs static analysis of description overlap (finds potential confusion zones); `/calibrate routing` tests behavioral impact — it generates real routing decisions and measures whether descriptions actually disambiguate. Run in sequence: `/audit` first (fast, structural), then `/calibrate routing` (behavioral, slower). They are complementary, not redundant.
 - **`routing` not in `all`**: routing tests orchestrator dispatch logic, not agent quality — excluded from batch calibration. Run `/calibrate routing` explicitly after any agent description change.
 - **`communication` not in `all`**: communication tests protocol compliance and token efficiency — excluded from batch calibration. Run `/calibrate communication` explicitly after any protocol or handoff change.
+- **`rules` not in `all`**: rules tests directive adherence — excluded from batch calibration. Run `/calibrate rules` explicitly after editing or adding rule files in `.claude/rules/`.
 - Follow-up chains:
   - Recall < 0.70 or borderline → `/calibrate <agent> fast apply` → `/calibrate <agent>` to verify improvement — stop and escalate to user if recall is still < 0.70 after this cycle (max 1 apply cycle per run)
   - Calibration bias > 0.15 → add adjusted threshold to MEMORY.md → note in next audit
@@ -289,6 +299,6 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 - **A/B mode rationale**: every specialized agent adds system-prompt tokens — if a `general-purpose` subagent matches its recall and F1, the specialization adds no value. `ab` mode quantifies this gap per-target. `significant` (Δ>0.10) confirms the agent's domain depth earns its cost; `marginal` (0.05–0.10) suggests instruction improvements may help; `none` (\<0.05) signals the agent's current instructions add no measurable lift over a vanilla agent. Token cost is informational (logged in scores.json) but not part of the verdict — prioritize recall/F1 delta as the primary signal.
 - **A/B blind spot — role-specificity beyond recall**: for any agent whose domain is well-covered by general training data, `none` AB verdict does NOT mean "retire the agent". Their specialization shows up in severity accuracy, output actionability, token efficiency, and scope discipline — not recall alone. A `none` ΔRecall result paired with positive ΔSevAcc, ΔFmt, and negative ΔTokens still confirms the specialist earns its cost.
 - **AB mode nesting**: Phase 2b spawns `general-purpose` baseline agents inside the pipeline subagent. Phase 3 spawns `general-purpose` scorer agents inside the same pipeline subagent. All at 2 levels (main → pipeline → agents) — no additional depth.
-- **Mode files**: domain tables and mode-specific spawn instructions live in `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`. Add a new target mode by creating a new file in `modes/` and adding a row to the Step 2 dispatch table.
+- **Mode files**: domain tables and mode-specific spawn instructions live in `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`. Add a new target mode by creating a new file in `modes/` and adding a row to the Step 2 dispatch table.
 
 </notes>
