@@ -81,7 +81,7 @@ printf '{"ts":"%s","status":"not_started","reason":"codex not found on PATH"}\n'
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$CODEX_LOG"
 ```
 
-`Pre-flight failed: codex not found on PATH. Install and retry. npm install -g @openai/codex`
+`Pre-flight failed: codex not found on PATH. Install and retry — see https://github.com/openai/codex for current install instructions`
 
 On success: `preflight_pass codex`
 
@@ -299,7 +299,7 @@ To review delegation history:
 - **Patch files are parallel-safe**: each subagent writes a uniquely named file — no shared git state, no stash index races
 - **Parent applies patches**: when running as a subagent, stop after saving the patch; never apply it yourself — the parent serialises application
 - **Invocation**: Claude can call this skill via the Skill tool; the user can also type `/codex <task>` directly. Once invoked, the parent model executes all workflow steps.
-- **Codex install command**: the `npm install -g @openai/codex` suggestion in the pre-flight error message should be verified at use time — the package name or install method may change across Codex releases
+- **Codex install command**: Pre-flight error message redirects to github.com/openai/codex — update URL if the repo moves.
 - Related agents: `sw-engineer` (fallback for direct implementation), `linting-expert` (validation), `qa-specialist` (test validation)
 - Follow-up chains:
   - Codex changes pass but need architectural review → `/review` for full multi-agent quality validation

@@ -223,19 +223,15 @@ When reviewing code with no inline comments pointing at issues:
 
 <workflow>
 
-## Step 1: Read project structure
+1. **Read project structure** — Use the Glob tool to find Python source files (`src/**/*.py`) and the Read tool to inspect `src/mypackage/__init__.py` and other entry points. Understand the module layout, public exports, and existing patterns before forming any design opinion.
 
-Use the Glob tool to find Python source files (`src/**/*.py`) and the Read tool to inspect `src/mypackage/__init__.py` and other entry points. Understand the module layout, public exports, and existing patterns before forming any design opinion.
+2. **Identify the design question** — State the precise question this artifact will answer. Examples:
 
-## Step 2: Identify the design question
+   - "Should class X be split into two components?"
+   - "What should the public API for feature Y look like?"
+   - "How do we migrate users from old_fn to new_fn?"
 
-State the precise question this artifact will answer. Examples:
-
-- "Should class X be split into two components?"
-- "What should the public API for feature Y look like?"
-- "How do we migrate users from old_fn to new_fn?"
-
-Do not proceed until the question is crisp.
+   Do not proceed until the question is crisp.
 
 ### Alignment check ⏸ (wait for user confirmation before Step 3)
 
@@ -262,55 +258,43 @@ established patterns.
 
 Wait for the user to confirm or revise before continuing to Step 3.
 
-## Step 3: Map current boundaries
+3. **Map current boundaries** — Read the relevant modules. Identify:
 
-Read the relevant modules. Identify:
+   - What is currently public vs private
+   - Where coupling is high
+   - Where cohesion is low
 
-- What is currently public vs private
-- Where coupling is high
-- Where cohesion is low
+4. **Evaluate trade-offs** — For each design option:
 
-## Step 4: Evaluate trade-offs
+   - Name the benefit
+   - Name the cost
+   - Name the risk
+   - Assess reversibility
 
-For each design option:
+5. **Produce the artifact** — Choose the right template from `<design_artifacts>`:
 
-- Name the benefit
-- Name the cost
-- Name the risk
-- Assess reversibility
+   - New decision → ADR
+   - New public API → API Design Proposal
+   - Structural change → Component Diagram
+   - Existing API migration → Migration Plan (Phased)
 
-## Step 5: Produce the artifact
+   Write the artifact to a file using the Write tool (e.g., `docs/adr/ADR-NNN.md` for ADRs, or the path requested by the user). Use Edit to revise existing artifacts.
 
-Choose the right template from `<design_artifacts>`:
+6. **Cross-reference sw-engineer** — Note any implementation constraints the sw-engineer should know:
 
-- New decision → ADR
-- New public API → API Design Proposal
-- Structural change → Component Diagram
-- Existing API migration → Migration Plan (Phased)
+   - Type annotation requirements
+   - Protocol/ABC boundaries to respect
+   - Testability seams to preserve
 
-Write the artifact to a file using the Write tool (e.g., `docs/adr/ADR-NNN.md` for ADRs, or the path requested by the user). Use Edit to revise existing artifacts.
+7. **Cross-reference oss-maintainer** — Flag for release planning:
 
-## Step 6: Cross-reference sw-engineer
+   - Does this change the public API? → needs Semantic Versioning (SemVer) bump
+   - Are deprecated APIs involved? → deprecation timeline
+   - Does this affect downstream consumers? → migration guide needed
 
-Note any implementation constraints the sw-engineer should know:
+8. **Flag irreversible decisions** — Explicitly call out any decision that would be hard or impossible to reverse. These require higher certainty before adoption.
 
-- Type annotation requirements
-- Protocol/ABC boundaries to respect
-- Testability seams to preserve
-
-## Step 7: Cross-reference oss-maintainer
-
-Flag for release planning:
-
-- Does this change the public API? → needs Semantic Versioning (SemVer) bump
-- Are deprecated APIs involved? → deprecation timeline
-- Does this affect downstream consumers? → migration guide needed
-
-## Step 8: Flag irreversible decisions
-
-Explicitly call out any decision that would be hard or impossible to reverse. These require higher certainty before adoption.
-
-## Step 9: Confidence
+9. **Confidence**
 
 Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration:
 

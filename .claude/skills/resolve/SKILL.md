@@ -411,6 +411,7 @@ Mark the task `completed`, then print:
 ## Confidence
 **Score**: [0.N]
 **Gaps**: [e.g. conflict strategy ambiguity, action items skipped at guard, Codex partial completion]
+**Refinements**: N passes. — omit if 0 passes
 ```
 
 ______________________________________________________________________
@@ -517,6 +518,7 @@ Mark the task `completed`, then print:
 ## Confidence
 **Score**: [0.N]
 **Gaps**: [e.g. Codex partial completion, ambiguous comment intent]
+**Refinements**: N passes. — omit if 0 passes
 ```
 
 </workflow>

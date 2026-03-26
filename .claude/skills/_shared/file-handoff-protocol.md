@@ -62,14 +62,31 @@ Main context receives only the envelope JSON.
 
 ## Envelope fields reference
 
-| Field        | Required | Description                                                   |
-| ------------ | -------- | ------------------------------------------------------------- |
-| `status`     | yes      | `"done"`, `"timed_out"`, `"error"`                            |
-| `findings`   | yes      | total finding count (0 if none)                               |
-| `severity`   | yes      | `{"critical":N,"high":N,"medium":N}`                          |
-| `file`       | yes      | absolute path to the written findings file                    |
-| `confidence` | yes      | agent's self-reported confidence (0–1)                        |
-| `summary`    | yes      | one-line human-readable description of what was found or done |
+| Field        | Required | Description                                                                   |
+| ------------ | -------- | ----------------------------------------------------------------------------- |
+| `status`     | yes      | `"done"`, `"done_with_concerns"`, `"needs_context"`, `"timed_out"`, `"error"` |
+| `findings`   | yes      | total finding count (0 if none)                                               |
+| `severity`   | yes      | `{"critical":N,"high":N,"medium":N}`                                          |
+| `file`       | yes      | absolute path to the written findings file                                    |
+| `confidence` | yes      | agent's self-reported confidence (0–1)                                        |
+| `summary`    | yes      | one-line human-readable description of what was found or done                 |
+
+## Status semantics
+
+| Value                  | When to use                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `"done"`               | Completed with full confidence                                                                                                                         |
+| `"done_with_concerns"` | Completed but agent has doubts — low confidence, incomplete coverage, or unverifiable claims; orchestrator should surface this, not silently accept it |
+| `"needs_context"`      | Could not produce quality output; re-running with the specific context named in `summary` would unblock the agent                                      |
+| `"timed_out"`          | Health monitor cut off the agent per §8 protocol                                                                                                       |
+| `"error"`              | Unrecoverable failure                                                                                                                                  |
+
+Orchestrator handling by status:
+
+- `"done"` → accept result normally
+- `"done_with_concerns"` → include agent's `summary` as a flagged concern in the consolidated report; do not treat as clean completion
+- `"needs_context"` → consider re-spawning with the missing context named in `summary`; if not feasible, record as a partial-result gap in the report
+- `"timed_out"` / `"error"` → follow §8 health monitoring protocol; surface with ⏱ marker in report
 
 ## Reference implementation
 

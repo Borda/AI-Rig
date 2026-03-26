@@ -1,7 +1,7 @@
 ---
 name: develop
 description: Unified development orchestrator with three modes — feature (TDD-first new capability), fix (reproduce-first bug resolution), refactor (test-first code quality). Each mode includes a built-in self-review gate before the shared quality stack and progressive review loop.
-argument-hint: feature|fix|refactor|plan <goal>
+argument-hint: feature|fix|refactor|plan|debug <goal>
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate
 ---
@@ -14,6 +14,7 @@ Implement software changes with disciplined, test-driven workflows. The mode det
 - **fix**: reproduce-first — validate reproduction → apply minimal fix → review+fix loop (max 3 cycles) → quality stack + review
 - **refactor**: test-first — validate coverage audit → characterization tests → refactor → review+fix loop (max 3 cycles) → quality stack + review
 - **plan**: analysis-only — classify + scope → write structured plan to `tasks/todo.md` → exit (no code)
+- **debug**: investigate-first — evidence gathering → pattern analysis → hypothesis gate → regression test → minimal fix → review loop
 
 Each mode includes two layers of built-in review before the shared quality stack:
 
@@ -29,7 +30,7 @@ All modes share a quality stack, a mandatory Codex pre-pass, and a progressive r
 <inputs>
 
 - **$ARGUMENTS**: required
-  - First token: `feature`, `fix`, `refactor`, or `plan`
+  - First token: `feature`, `fix`, `refactor`, `plan`, or `debug`
   - Remaining tokens: mode-specific arguments (description, issue #, file path, etc.)
   - `--team` flag (anywhere in arguments): triggers team mode for the active mode
 
@@ -52,13 +53,13 @@ Examples:
 
 ## Step 0: Parse mode
 
-Extract the first token from `$ARGUMENTS` as the mode. Valid values: `feature`, `fix`, `refactor`, `plan`.
+Extract the first token from `$ARGUMENTS` as the mode. Valid values: `feature`, `fix`, `refactor`, `plan`, `debug`.
 
 If the first token is not a valid mode, stop and present the usage:
 
 ```
 Usage: /develop <mode> <description>
-Modes: feature, fix, refactor, plan
+Modes: feature, fix, refactor, plan, debug
 ```
 
 Strip the mode token from arguments — the remainder is passed to mode-specific steps.
@@ -84,7 +85,7 @@ Read `.claude/skills/develop/modes/<mode>.md` and run its **## Step 1** instruct
 
 This step produces a scope analysis that is used by all subsequent steps.
 
-**Gate**: if the mode file's Step 1 flags a complexity smell (feature: 8+ files / 2+ new classes; fix: root cause spans 3+ modules; refactor: directory-wide scope (10+ files, regardless of whether a goal is stated)), present the scope concern to the user before proceeding. These thresholds are exhaustive — no mode file adds additional gate conditions beyond what is listed here. <!-- source of truth — keep in sync with mode files if thresholds change -->
+**Gate**: if the mode file's Step 1 flags a complexity smell (feature: 8+ files / 2+ new classes; fix: root cause spans 3+ modules; refactor: directory-wide scope (10+ files, regardless of whether a goal is stated); debug: root cause spans 3+ modules), present the scope concern to the user before proceeding. These thresholds are exhaustive — no mode file adds additional gate conditions beyond what is listed here. <!-- source of truth — keep in sync with mode files if thresholds change -->
 
 ## Step 2: Mode-specific steps
 
@@ -155,7 +156,14 @@ Maximum 3 cycles. Applied after the quality stack.
 - Fix critical/high findings from Cycle 1
 - Re-run quality stack on modified files only
 - Set up a run directory for file-based handoff: `RUN_DIR="/tmp/develop-review-$(date +%s)"; mkdir -p "$RUN_DIR"`
-- For each agent type in `agents_with_findings`: spawn that agent directly (not `/review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`" (add §8 health monitoring checkpoint after spawns — see /review Step 3 for pattern)
+- For each agent type in `agents_with_findings`: spawn that agent directly (not `/review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
+  ```bash
+  # Health monitoring (CLAUDE.md §8): create checkpoint after spawns
+  CYCLE2_CHECKPOINT="/tmp/develop-cycle2-check-$(date +%s)"
+  touch "$CYCLE2_CHECKPOINT"
+  # Poll every 5 min: find $RUN_DIR -newer "$CYCLE2_CHECKPOINT" -type f | wc -l
+  # Hard cutoff: 15 min of no file activity → declare timed out
+  ```
 - Skip agents that were clean in Cycle 1
 - Collect envelopes to update review state (do not read the full finding files into context — check envelopes to determine if critical/high remain)
 
@@ -225,7 +233,7 @@ Read `.claude/skills/_shared/worktree-protocol.md` before spawning any worktree 
 
 <notes>
 
-- **Mode determines the entry contract** — use `feature` for net-new capability, `fix` for bugs, `refactor` for quality/structure improvements, `plan` for lightweight scope analysis before committing to implementation
+- **Mode determines the entry contract** — use `feature` for net-new capability, `fix` for known-root-cause bugs, `debug` for unknown-root-cause bugs, `refactor` for quality/structure improvements, `plan` for lightweight scope analysis before committing to implementation
 - **Quality stack runs once** — it is shared across all modes; never skip it
 - **Review loop is bounded** — after 3 cycles without a clean review, stop and re-scope with the user; do not retry indefinitely
 - **`disable-model-invocation: true`** — you must type `/develop <mode> <description>` explicitly; once invoked, the parent model executes all workflow steps

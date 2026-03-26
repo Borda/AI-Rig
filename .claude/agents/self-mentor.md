@@ -114,7 +114,7 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 3. Backlog: [P4 freshness, P5 structural]
 
 ### Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.7–0.9 | low <0.7]
+**Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8]
 **Gaps**: [what limited thoroughness — files not fully read, cross-agent context missing, runtime behaviour unobservable from static analysis alone]
 **Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
 ```

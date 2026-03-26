@@ -62,7 +62,8 @@
 //   .claude/state/tools/<tool>.json     — one file per tool type, current turn only
 //   .claude/state/session-context.md    — modified-files breadcrumb for compaction
 //
-// Exit 0 always — logging must never block Claude.
+// EXIT CODES
+//   0  Always — logging hook; must never block or crash Claude.
 
 const fs = require("fs");
 const path = require("path");

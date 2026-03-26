@@ -49,22 +49,23 @@ Specialist roles with deep domain knowledge. You can request a specific agent by
 
 Skills are orchestrations of agents — invoked via slash commands (`/review`, `/develop fix`, etc.). A single skill typically composes multiple agents in parallel and consolidates their output. Think of agents as specialists you can talk to, and skills as predefined workflows that coordinate them.
 
-| Skill         | Command                                        | What It Does                                                                                               |
-| ------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| **review**    | `/review [file\|PR#] [--reply]`                | Parallel review across arch, tests, perf, docs, lint, security, API; `--reply` drafts contributor comment  |
-| **analyse**   | `/analyse <N\|health\|ecosystem> [--reply]`    | GitHub thread analysis (auto-detects issue/PR/discussion); `health` = repo overview + duplicate clustering |
-| **develop**   | `/develop feature\|fix\|refactor\|plan <goal>` | TDD-first feature dev, reproduce-first bug fixing, test-first refactor, or scope analysis (`plan`)         |
-| **resolve**   | `/resolve <PR#\|comment>`                      | Resolve PR merge conflicts or apply review comments via Codex                                              |
-| **calibrate** | `/calibrate [target] [fast\|full] [apply]`     | Synthetic benchmarks measuring recall vs confidence bias; `routing` and `communication` modes available    |
-| **audit**     | `/audit [fix\|upgrade]`                        | Config audit: broken refs, inventory drift, docs freshness; `upgrade` applies sourced improvements         |
-| **release**   | `/release <mode> [range]`                      | Notes, changelog, migration, full prepare pipeline, or readiness `audit`                                   |
-| **survey**    | `/survey [topic]`                              | SOTA literature survey with implementation plan                                                            |
-| **research**  | `/research [plan\|resume] <goal>`              | Autonomous metric-driven iteration loop with auto-rollback; `--team` and `--colab` (GPU) supported         |
-| **optimize**  | `/optimize [target]`                           | Measure-change-measure performance loop                                                                    |
-| **manage**    | `/manage <op> <type>`                          | Create, rename, or delete agents/skills with cross-ref propagation and routing calibration                 |
-| **sync**      | `/sync [apply]`                                | Drift-detect and sync project `.claude/` → home `~/.claude/`                                               |
-| **codex**     | `/codex <task> [target]`                       | Delegate mechanical coding tasks to Codex CLI                                                              |
-| **observe**   | `/observe`                                     | Analyse work patterns and suggest new agents or skills                                                     |
+| Skill          | Command                                               | What It Does                                                                                                                                |
+| -------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **review**     | `/review [file\|PR#] [--reply]`                       | Parallel review across arch, tests, perf, docs, lint, security, API; `--reply` drafts contributor comment                                   |
+| **analyse**    | `/analyse <N\|health\|ecosystem> [--reply]`           | GitHub thread analysis (auto-detects issue/PR/discussion); `health` = repo overview + duplicate clustering                                  |
+| **brainstorm** | `/brainstorm <idea>`                                  | Interactive design-first spec: clarifying questions → 2–3 approaches → spec → self-mentor review → approval gate                            |
+| **develop**    | `/develop feature\|fix\|refactor\|plan\|debug <goal>` | TDD-first feature dev, reproduce-first bug fixing, test-first refactor, scope analysis (`plan`), or investigation-first debugging (`debug`) |
+| **resolve**    | `/resolve <PR#\|comment>`                             | Resolve PR merge conflicts or apply review comments via Codex                                                                               |
+| **calibrate**  | `/calibrate [target] [fast\|full] [apply]`            | Synthetic benchmarks measuring recall vs confidence bias; `routing` and `communication` modes available                                     |
+| **audit**      | `/audit [fix\|upgrade]`                               | Config audit: broken refs, inventory drift, docs freshness; `upgrade` applies sourced improvements                                          |
+| **release**    | `/release <mode> [range]`                             | Notes, changelog, migration, full prepare pipeline, or readiness `audit`                                                                    |
+| **survey**     | `/survey [topic]`                                     | SOTA literature survey with implementation plan                                                                                             |
+| **research**   | `/research [plan\|resume] <goal>`                     | Autonomous metric-driven iteration loop with auto-rollback; `--team` and `--colab` (GPU) supported                                          |
+| **optimize**   | `/optimize [target]`                                  | Measure-change-measure performance loop                                                                                                     |
+| **manage**     | `/manage <op> <type>`                                 | Create, rename, or delete agents/skills with cross-ref propagation and routing calibration                                                  |
+| **sync**       | `/sync [apply]`                                       | Drift-detect and sync project `.claude/` → home `~/.claude/`                                                                                |
+| **codex**      | `/codex <task> [target]`                              | Delegate mechanical coding tasks to Codex CLI                                                                                               |
+| **observe**    | `/observe`                                            | Analyse work patterns and suggest new agents or skills                                                                                      |
 
 <details>
 <summary><strong>Skill usage examples</strong></summary>
@@ -234,17 +235,18 @@ Skills are orchestrations of agents — invoked via slash commands (`/review`, `
 
 Rule files in `.claude/rules/` are automatically loaded by Claude Code when working on matching file types (via `paths:` frontmatter). They encode per-topic standards that apply across all agents and skills — no agent needs to repeat them.
 
-| Rule file              | Applies to                        | What it governs                                                                         |
-| ---------------------- | --------------------------------- | --------------------------------------------------------------------------------------- |
-| `ci-workflows.md`      | `.github/workflows/**/*.yml`      | Semantic version tags preferred over SHA pins; Python matrix ≥3.10; fail-fast rules     |
-| `claude-config.md`     | `.claude/**`                      | Checklist for editing `.claude/` files: cross-refs, MEMORY.md roster, README, sync      |
-| `git-commit.md`        | (global)                          | Commit message format, push safety (explicit confirmation required), branch safety      |
-| `hooks-js.md`          | `.claude/hooks/*.js`              | Hook writing standards: state files, age-out patterns, tool activity tracking           |
-| `pre-commit-config.md` | `.pre-commit-config.yaml`         | Version pinning rules, hook ordering, CI integration via pre-commit.ci                  |
-| `python-code.md`       | `**/*.py`                         | Modern Python style: type annotations, dataclasses, structural pattern matching         |
-| `quality-gates.md`     | (global)                          | Confidence blocks on all analysis tasks, internal quality loop, output routing rules    |
-| `release-notes.md`     | `CHANGELOG.md`, `PUBLIC-NOTES.md` | Release note structure, SemVer decision criteria, deprecation notice format             |
-| `testing.md`           | `tests/**/*.py`, `**/test_*.py`   | pytest AAA structure, parametrize standards, doctest location (source files, not tests) |
+| Rule file              | Applies to                        | What it governs                                                                             |
+| ---------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `ci-workflows.md`      | `.github/workflows/**/*.yml`      | Semantic version tags preferred over SHA pins; Python matrix ≥3.10; fail-fast rules         |
+| `claude-config.md`     | `.claude/**`                      | Checklist for editing `.claude/` files: cross-refs, MEMORY.md roster, README, sync          |
+| `communication.md`     | (global)                          | Re: anchor format, progress narration, tone, output routing, and terminal color conventions |
+| `git-commit.md`        | (global)                          | Commit message format, push safety (explicit confirmation required), branch safety          |
+| `hooks-js.md`          | `.claude/hooks/*.js`              | Hook writing standards: state files, age-out patterns, tool activity tracking               |
+| `pre-commit-config.md` | `.pre-commit-config.yaml`         | Version pinning rules, hook ordering, CI integration via pre-commit.ci                      |
+| `python-code.md`       | `**/*.py`                         | Modern Python style: type annotations, dataclasses, structural pattern matching             |
+| `quality-gates.md`     | (global)                          | Confidence blocks on all analysis tasks, internal quality loop, output routing rules        |
+| `release-notes.md`     | `CHANGELOG.md`, `PUBLIC-NOTES.md` | Release note structure, SemVer decision criteria, deprecation notice format                 |
+| `testing.md`           | `tests/**/*.py`, `**/test_*.py`   | pytest AAA structure, parametrize standards, doctest location (source files, not tests)     |
 
 ### Common Workflow Sequences
 

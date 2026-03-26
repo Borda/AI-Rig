@@ -121,8 +121,6 @@ Anti-pattern checklist — reject the candidate if any apply:
 ### No Action Needed
 [pattern]: already handled by [existing agent/skill]
 
-<!-- review mode: suppress "Recommend: New Agent/Skill" sections — output only "Existing Coverage", "Recommend: Enhance Existing", and "No Action Needed" -->
-
 ## Confidence
 **Score**: [0.N]
 **Gaps**: [e.g., git history too shallow, task files not present, descriptions too generic to compare]

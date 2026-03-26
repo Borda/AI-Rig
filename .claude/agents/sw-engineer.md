@@ -193,7 +193,7 @@ Cross-reference `qa-specialist` for the full edge-case matrix and test-design me
 
 ## Deprecation (mandatory for public API changes)
 
-Use `pyDeprecate` (see `oss-maintainer` agent for full patterns). Prefer it over raw `warnings.warn` — it handles argument forwarding, "warn once" deduplication, and automatic call delegation.
+Use `pyDeprecate` or `deprecated` / `typing_extensions.deprecated` (PEP 702) for deprecation warnings — verify current project preference (see `oss-maintainer` agent for full patterns). Prefer a dedicated library over raw `warnings.warn` — it handles argument forwarding, "warn once" deduplication, and automatic call delegation.
 Key rules: set `deprecated_in` + `remove_in`, add `.. deprecated:: X.Y.Z` Sphinx directive in docstring.
 
 ## API Stability

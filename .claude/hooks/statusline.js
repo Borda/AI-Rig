@@ -39,6 +39,9 @@
 // ANSI RENDERING
 //   \x1b[K at end of each line clears to end of line — prevents stale characters
 //   from longer previous renders bleeding through when the new output is shorter.
+//
+// EXIT CODES
+//   0  Always — status line render; this hook never blocks Claude.
 
 const fs = require("fs");
 const os = require("os");

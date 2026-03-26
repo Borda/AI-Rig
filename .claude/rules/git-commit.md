@@ -45,7 +45,6 @@ Co-authored-by: Claude Code <noreply@anthropic.com>
 
 - Prefer `git revert` over `git reset --hard` (preserves history)
 - Prefer merge commits for conflict resolution over rebase (preserves SHAs)
-- Never force-push to main/master
 
 ## Worktree Commands
 

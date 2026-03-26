@@ -575,6 +575,45 @@ grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/C
 
 Severity: 14b = **high**; 14a/14c/14d = **medium**. 14c findings are report-only (human judgment on which copy to remove); 14a/14b/14d are auto-fixable at `fix medium` and above.
 
+**Check 15 — Cross-file content duplication (>40% consecutive step overlap)**
+
+Flag any skill or agent whose workflow steps contain a **consecutive run** of ≥40% duplicated steps in another file. Consecutive duplication is the structural signal — scattered similarity is expected overlap between related tools; a consecutive block means one file is literally repeating another's workflow, creating silent drift risk.
+
+First, extract step counts to identify candidate pairs (files with similar step counts are most likely to overlap):
+
+```bash
+printf "%-30s %s\n" "FILE" "STEPS"
+for f in .claude/skills/*/SKILL.md; do
+  name="skills/$(basename "$(dirname "$f")")"
+  steps=$(grep -c '^## Step' "$f" 2>/dev/null || echo 0)
+  printf "%-30s %d\n" "$name" "$steps"
+done
+for f in .claude/agents/*.md; do
+  name="agents/$(basename "$f" .md)"
+  sections=$(grep -c '^## ' "$f" 2>/dev/null || echo 0)
+  printf "%-30s %d\n" "$name" "$sections"
+done
+```
+
+Using model reasoning, compare the workflow body of each file against all others in its class (skills vs skills, agents vs agents). For each pair:
+
+1. Count the steps (or major `##` sections) in each file: N_A and N_B
+2. Find the **longest consecutive run** of steps that are substantially similar across the pair (same intent and outcome, even if differently worded): N_run
+3. Compute run fraction: `max(N_run / N_A, N_run / N_B)`
+4. Flag if run fraction ≥ 0.4 (40%)
+
+Scattered similarity (e.g. both files have a "review" step and a "report" step, but separated by different steps) does **not** count — only a contiguous block triggers this check.
+
+Report format per finding:
+
+```
+| `skills/foo/SKILL.md` | Steps 3–5 (consecutive) mirror `skills/bar/SKILL.md` Steps 2–4 — 3-step run = 50% of foo | cross-file duplication |
+```
+
+**Severity**: **medium** — report only, never auto-fix. Deduplication requires human judgment on which file is canonical and how to restructure (collapse, hand-off, or cross-reference).
+
+**Fix guidance** (emit in report): options are (a) trim the duplicated file to just its unique steps and add an explicit hand-off, (b) extract shared steps into a `_shared/` partial, or (c) delete one file if the other fully subsumes it.
+
 ## Step 5: Aggregate and classify findings
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
@@ -600,7 +639,7 @@ Output a structured audit report before fixing anything:
 - Agents audited: N
 - Skills audited: N
 - Rules audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test, rules integrity
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test, rules integrity, cross-file content duplication
 
 ### Findings by Severity
 

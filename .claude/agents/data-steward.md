@@ -351,44 +351,36 @@ num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 
 <workflow>
 
-### Step 1 — Parallel pattern scan (run all Grep calls simultaneously)
+1. **Parallel pattern scan (run all Grep calls simultaneously)** — A general agent reads code linearly; this agent scans in parallel for all known ML leakage patterns at once. Launch these six Grep calls together — they are independent:
 
-A general agent reads code linearly; this agent scans in parallel for all known ML leakage patterns at once. Launch these six Grep calls together — they are independent:
+   ```
+   Grep: pattern="fit_transform\("                                         glob="**/*.py"   # pre-split normalization
+   Grep: pattern="Random(Horizontal|Vertical|Flip|Rotation|Crop|Resized)" glob="**/*.py"   # stochastic augmentation
+   Grep: pattern="train_test_split\("                                      glob="**/*.py"   # ungrouped-split candidates
+   Grep: pattern="patient_id|subject_id|study_uid|case_id"                glob="**/*.py"   # grouped-data signals
+   Grep: pattern="random_split\("                                          glob="**/*.py"   # torch.random_split shared-transform risk
+   Grep: pattern="augment_images\(|\.augment\(|iaa\."                     glob="**/*.py"   # pre-split augmentation risk
+   ```
 
-```
-Grep: pattern="fit_transform\("                                         glob="**/*.py"   # pre-split normalization
-Grep: pattern="Random(Horizontal|Vertical|Flip|Rotation|Crop|Resized)" glob="**/*.py"   # stochastic augmentation
-Grep: pattern="train_test_split\("                                      glob="**/*.py"   # ungrouped-split candidates
-Grep: pattern="patient_id|subject_id|study_uid|case_id"                glob="**/*.py"   # grouped-data signals
-Grep: pattern="random_split\("                                          glob="**/*.py"   # torch.random_split shared-transform risk
-Grep: pattern="augment_images\(|\.augment\(|iaa\."                     glob="**/*.py"   # pre-split augmentation risk
-```
+   These six calls collectively surface the top-6 ML data bugs that generic review misses. **Scope discipline**: report only issues that match a known leakage pattern or checklist item. General code-style observations, docstring notes, or runtime-only unknowns that don't map to a checklist item should go in the Gaps field — not the Findings section. This prevents precision dilution on simple problems where the checklist items are few.
 
-These six calls collectively surface the top-6 ML data bugs that generic review misses. **Scope discipline**: report only issues that match a known leakage pattern or checklist item. General code-style observations, docstring notes, or runtime-only unknowns that don't map to a checklist item should go in the Gaps field — not the Findings section. This prevents precision dilution on simple problems where the checklist items are few.
+2. **Evaluate each hit** —
 
-### Step 2 — Evaluate each hit
+   - `fit_transform`: is it called before the train/val split? If yes → pre-split normalization leakage.
+   - `Random*` augmentations: is the same transform object applied to val/test loaders? If yes → non-deterministic evaluation metrics.
+   - `train_test_split`: is `groups=` or `GroupShuffleSplit` used? If not, check whether a grouping column (`patient_id`, `subject_id`) exists in the dataset — if so, that's patient-level leakage.
+   - Grouped ID columns: cross-check the split implementation to confirm group-aware splitting is in use.
 
-- `fit_transform`: is it called before the train/val split? If yes → pre-split normalization leakage.
-- `Random*` augmentations: is the same transform object applied to val/test loaders? If yes → non-deterministic evaluation metrics.
-- `train_test_split`: is `groups=` or `GroupShuffleSplit` used? If not, check whether a grouping column (`patient_id`, `subject_id`) exists in the dataset — if so, that's patient-level leakage.
-- Grouped ID columns: cross-check the split implementation to confirm group-aware splitting is in use.
+3. **Complete the full Leakage Detection Checklist** — Work through every item in the Leakage Detection Checklist in `<core_principles>` explicitly — do not skip any item without a direct code signal.
 
-### Step 3 — Complete the full Leakage Detection Checklist
+4. **Class balance and DataLoader integrity** —
 
-Work through every item in the Leakage Detection Checklist in `<core_principles>` explicitly — do not skip any item without a direct code signal.
+   - Compute imbalance ratio (`majority / minority`): flag if > 10x, recommend strategy
+   - Validate DataLoader: shapes, dtypes, value ranges, `worker_init_fn` for reproducibility
 
-### Step 4 — Class balance and DataLoader integrity
+5. **Produce the Data Pipeline Audit Report** — Use the `<output_format>` template — fill every row. Rows that are N/A still appear (with "N/A") so reviewers can see what was checked.
 
-- Compute imbalance ratio (`majority / minority`): flag if > 10x, recommend strategy
-- Validate DataLoader: shapes, dtypes, value ranges, `worker_init_fn` for reproducibility
-
-### Step 5 — Produce the Data Pipeline Audit Report
-
-Use the `<output_format>` template — fill every row. Rows that are N/A still appear (with "N/A") so reviewers can see what was checked.
-
-### Step 6 — Internal Quality Loop and Confidence block
-
-Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
+6. **Internal Quality Loop and Confidence block** — Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
 
 </workflow>
 
