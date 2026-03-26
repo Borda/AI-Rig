@@ -30,20 +30,20 @@ Agents and skills for [Claude Code](https://claude.ai/code) (Anthropic's AI codi
 
 Specialist roles with deep domain knowledge. You can request a specific agent by name in your prompt (e.g., *"use the qa-specialist to write tests for this module"*). Claude Code also selects agents automatically when spawning subagents via the Task tool.
 
-| Agent                  | Purpose                          | Key Capabilities                                                                                                 |
-| ---------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **sw-engineer**        | Architecture and implementation  | SOLID principles, type safety, clean architecture, doctest-driven dev                                            |
-| **solution-architect** | System design and API planning   | ADRs, interface specs, migration plans, coupling analysis, API surface audit                                     |
-| **oss-shepherd**       | Project lifecycle management     | Issue triage, PR review, SemVer, pyDeprecate, trusted publishing                                                 |
-| **ai-researcher**      | ML research and implementation   | Paper analysis, experiment design, LLM evaluation, inference optimization                                        |
-| **qa-specialist**      | Testing and validation           | pytest, hypothesis, mutation testing, snapshot tests, ML test patterns                                           |
-| **linting-expert**     | Code quality and static analysis | ruff, mypy, pre-commit, rule selection strategy, CI quality gates; runs autonomously (`permissionMode: dontAsk`) |
-| **perf-optimizer**     | Performance engineering          | Profile-first workflow, CPU/GPU/memory/I/O, torch.compile, mixed precision                                       |
-| **ci-guardian**        | CI/CD reliability                | GitHub Actions, reusable workflows, trusted publishing, flaky test detection                                     |
-| **data-steward**       | ML data pipeline integrity       | Split validation, leakage detection, data contracts, class imbalance                                             |
-| **doc-scribe**         | Documentation                    | Google/Napoleon docstrings (no type duplication), Sphinx/mkdocs, changelog                                       |
-| **web-explorer**       | Web and docs research            | API version comparison, migration guides, PyPI tracking, ecosystem compat                                        |
-| **self-mentor**        | Config quality reviewer (Opus)   | Agent/skill auditing, duplication detection, cross-ref validation, line budgets                                  |
+| Agent                  | Purpose                                       | Key Capabilities                                                                                                 |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **sw-engineer**        | Architecture and implementation               | SOLID principles, type safety, clean architecture, doctest-driven dev                                            |
+| **solution-architect** | System design and API planning                | ADRs, interface specs, migration plans, coupling analysis, API surface audit                                     |
+| **oss-shepherd**       | Project lifecycle management                  | Issue triage, PR review, SemVer, pyDeprecate, trusted publishing                                                 |
+| **ai-researcher**      | ML research and implementation                | Paper analysis, experiment design, LLM evaluation, inference optimization                                        |
+| **qa-specialist**      | Testing and validation                        | pytest, hypothesis, mutation testing, snapshot tests, ML test patterns                                           |
+| **linting-expert**     | Code quality and static analysis              | ruff, mypy, pre-commit, rule selection strategy, CI quality gates; runs autonomously (`permissionMode: dontAsk`) |
+| **perf-optimizer**     | Performance engineering                       | Profile-first workflow, CPU/GPU/memory/I/O, torch.compile, mixed precision                                       |
+| **ci-guardian**        | CI/CD reliability                             | GitHub Actions, reusable workflows, trusted publishing, flaky test detection                                     |
+| **data-steward**       | Data lifecycle — acquisition and ML pipelines | API completeness, dataset versioning, split validation, leakage detection, data contracts                        |
+| **doc-scribe**         | Documentation                                 | Google/Napoleon docstrings (no type duplication), Sphinx/mkdocs, changelog                                       |
+| **web-explorer**       | Web and docs research                         | API version comparison, migration guides, PyPI tracking, ecosystem compat                                        |
+| **self-mentor**        | Config quality reviewer (Opus)                | Agent/skill auditing, duplication detection, cross-ref validation, line budgets                                  |
 
 ### Skills
 

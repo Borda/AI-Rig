@@ -111,6 +111,10 @@ See `.claude/rules/claude-config.md` for the full checklist.
 
 See `.claude/rules/communication.md` for Re: anchor format, progress narration, tone, output routing, breaking findings, and terminal colors.
 
+## External Data & APIs
+
+See `.claude/rules/external-data.md` for pagination rules, completeness requirements, and `gh` CLI usage.
+
 ## Output Standards
 
 See `.claude/rules/quality-gates.md` for Confidence block format, Internal Quality Loop, link verification, and output routing rules.

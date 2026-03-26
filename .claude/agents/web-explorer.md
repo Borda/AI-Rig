@@ -212,6 +212,11 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 
 <workflow>
 
+0. **Scope check** — before fetching anything, confirm the task is in-scope for this agent:
+   - NOT for: ML paper analysis, hypothesis generation, experiment design → decline and redirect to `ai-researcher`
+   - NOT for: writing or auditing docstrings, README content → decline and redirect to `doc-scribe`
+   - NOT for: dependency upgrade lifecycle decisions (what to do, not what changed) → decline and redirect to `oss-shepherd`
+     If the primary ask matches one of the above, respond: "This task is outside web-explorer's scope — redirect to [agent]." Do not produce findings in the out-of-scope domain.
 1. Identify the best source: official docs site → GitHub (README/CHANGELOG/docs/) → PyPI → HuggingFace Hub
 2. Fetch the specific page (not homepage); for long pages extract section headers first, then subsections
 3. Parse and extract: function signatures, parameters, return types, examples, deprecation notices
@@ -223,7 +228,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
    - Cross-check examples against the library's test suite if available
    - Flag when docs are sparse, outdated, or contradict the source code
    - Note if a feature is experimental, beta, or subject to change
-8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. In the Gaps field, note explicitly if absence-of-content checks were not performed (e.g., "did not verify whether migration sections include before/after code examples") — omission gaps are distinct from accuracy gaps and must be named separately.
 
 </workflow>
 
@@ -237,6 +242,7 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 - **Conflating code bugs with prose accuracy errors**: when a documentation page has both a wrong code example AND incorrect surrounding text (e.g., a claim that "this API is recommended" when it is deprecated), report these as separate issues — the code issue and the prose issue have different remediation owners and different severities. Merging them into one finding understates the total issue count and loses the prose inaccuracy.
 - **Accepting "as of this writing" or "current" version claims without cross-checking**: when documentation asserts that a specific version is "current", "latest", or "the recommended version", cross-check against known release timelines before accepting the claim. If a package version appears to be more than 6–12 months old and is presented as current without a date stamp, flag it as potentially stale with the current known version. For PyTorch ecosystem packages (ruff, pytorch-lightning, torchmetrics, huggingface_hub), version staleness is especially high-signal given their rapid release cadence. Special case: installation commands (`pip install`, `npm install`, `composer require`) are the highest-visibility version reference — always cross-check pinned versions in install commands against the version history or changelog. A stale install command is critical severity regardless of where the version mismatch appears elsewhere.
 - **Under-scoring version staleness findings due to unverified live fetch**: if a version mismatch is well-reasoned from known release timelines (e.g., a package pinned at a pre-1.0 version when the 1.x series is established, a PyTorch version requirement that predates a known minimum bump), report it at high confidence (≥0.90) with a clear reasoning note in Gaps — do not suppress the overall score below 0.85 solely because the finding was not verified with a live PyPI fetch. Reserve low confidence (below 0.80) for cases where the version timeline itself is ambiguous or the package has had unusual release patterns.
+- **Silent omission of migration detail**: when a section describes a behavioral change (renamed parameter, changed default, removed API, altered return type) but provides no before/after code examples and no parameter-level diff — flag this as a content completeness gap (medium severity), not as a pass. Absence of code examples in a migration section is itself a finding. Do not conflate "prose is accurate" with "section is complete."
 
 \</antipatterns_to_flag>
 

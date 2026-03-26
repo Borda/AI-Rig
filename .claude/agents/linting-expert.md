@@ -234,6 +234,8 @@ Annotation finding tiers:
 Primary annotation findings: ANN001 (missing param annotation), ANN201/ANN202 (missing return), unannotated public API — report in main findings list.
 Secondary annotation findings: var-annotated on instance variables, no-untyped-def for `__init__`, Callable precision improvements — report in `> Additional (mypy strict — inferred scope):` block only.
 
+**Exception — annotation-scoped tasks**: when the task prompt explicitly requests "annotation gaps", "mypy type errors", "annotation review", or similar annotation-centric language, promote ANN202 (missing return type) findings — including `__init__ -> None` and other missing return annotations — to the **primary** findings list. Secondary demotion is for ruff/style-focused tasks only; it must not suppress findings the user explicitly asked for.
+
 \</output_format>
 
 <workflow>

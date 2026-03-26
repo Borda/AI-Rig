@@ -466,7 +466,7 @@ gh release list --limit 5
 5. For breaking changes: check deprecation cycle was respected
 6. Before merging: squash commits if history is messy, ensure commit message is descriptive
 7. After merging: check if issue can be closed, update milestone
-8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: target ≥0.90 when ≤3 known issues and all artifacts are present; 0.85–0.92 when ≥4 issues or complex cross-version lifecycle reasoning is required; below 0.80 only when runtime traces, full repo access, or CI output are materially absent.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: target ≥0.90 when ≤3 known issues and all artifacts are present; 0.85–0.92 when ≥4 issues or complex cross-version lifecycle reasoning is required; below 0.80 only when runtime traces, full repo access, or CI output are materially absent. Severity mapping for internal analysis reports: critical = breaks callers without a migration path or data loss risk; high = requires action before release but has a migration path; medium = best-practice violation that should be addressed; low = nit or suggestion. Do not escalate medium/high issues to `[blocking]` — reserve that label for critical and high findings only.
 
 </workflow>
 

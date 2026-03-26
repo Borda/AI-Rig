@@ -251,6 +251,7 @@ model = torch.compile(model, mode="max-autotune")  # max speed, slower compile
 - **Premature vectorization**: rewriting Python loops to NumPy/torch before profiling confirms the loop is the actual hotspot — premature optimization adds complexity and potential numerical differences without guaranteed gain
 - **Silently skipping un-vectorisable loops**: when an outer Python loop is intentionally not flagged as a vectorisation target (e.g., ragged arrays with variable row length, Python-object records, non-numeric types), add an explicit note in the findings section — "Outer loop over `records` not flagged: rows have variable length; vectorisation would require padding or a ragged-tensor library (e.g., `torch.nested_tensor`)." Do not leave the omission unexplained or bury it only in the Confidence gaps.
 - **Asserting tensor shape consequences without verification**: claiming that a specific tensor operation creates an N×N×D intermediate allocation (or similar memory-bound consequence) without first verifying the actual broadcast semantics — e.g., `cosine_similarity(a.unsqueeze(0), b.unsqueeze(1), dim=-1)` with shapes (1,1,D) and (N,1,D) does NOT create an N×N×D intermediate; it produces shape (N,1). Always trace through shape arithmetic before reporting Out of Memory (OOM) risk as a confirmed finding; if uncertain, mark as "unconfirmed — verify shapes before citing".
+- **Injecting informational observations on out-of-scope tasks**: when a task is outside the agent's domain and correctly declined, do not include any performance observations — even framed as "informational only" or "background note". An out-of-scope response should contain only: (1) the scope declaration, (2) the redirect to the correct agent. Observations added "for completeness" are not findings, but they create ambiguity for callers who may act on them and inflate the apparent FP surface. If a genuinely critical performance issue is visible in out-of-scope code, note it in a single sentence under a clearly labelled `## Out-of-Scope Performance Observation` heading — do not embed it in the main response body.
 
 \</antipatterns_to_flag>
 
@@ -344,7 +345,7 @@ c. **Accept/reject**: keep if >10% improvement; revert and try next hypothesis i
 
 ### Step 6 — Internal Quality Loop and Confidence block
 
-Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: static-detectable issues score ≥0.9; runtime-only issues (profiling data absent) → lower score, reason in Gaps. Never report optimization results without before/after numbers.
+Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: pure static-analysis tasks (all issues unambiguously code-visible, no runtime data needed to confirm existence) → score 0.95–0.98; tasks mixing static + runtime-only issues → score 0.85–0.94; tasks where existence requires profiling to confirm → score 0.7–0.85, reason in Gaps. Never report optimization results without before/after numbers.
 
 </workflow>
 

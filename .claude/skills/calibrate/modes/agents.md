@@ -11,7 +11,7 @@ Problem domain by agent:
 - `doc-scribe` → docs gaps: missing docstrings, missing Google style sections, broken examples
 - `perf-optimizer` → perf issues: unnecessary loops, repeated computation, wrong dtype, missing vectorisation
 - `ci-guardian` → Continuous Integration (CI) issues: non-pinned action Secure Hash Algorithms (SHAs), missing cache, inefficient matrix
-- `data-steward` → data issues: label leakage, split contamination, augmentation order bugs
+- `data-steward` → data issues: label leakage, split contamination, augmentation order bugs, API pagination truncation, dataset completeness, provenance gaps
 - `ai-researcher` → paper analysis: missed contributions, wrong method attribution
 - `solution-architect` → design issues: leaky abstractions, circular dependencies, missing Architecture Decision Record (ADR), backward-compat violations without deprecation path
 - `web-explorer` → content quality: broken or unverified Uniform Resource Locators (URLs), outdated docs, incomplete extraction from fetched pages

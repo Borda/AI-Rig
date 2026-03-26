@@ -248,6 +248,7 @@ Using model reasoning, classify each agent into a tier based on its `<role>`, `d
 
 - `focused-execution` agent using `opus` or `opusplan` → **medium** (potential overkill — may increase latency and cost without quality gain)
 - `deep-reasoning` agent using `sonnet` → **high** (likely underpowered for multi-file code gen or complex judgment)
+- **Orchestration signal**: if the agent's workflow body contains `Spawn`, `Agent tool`, or explicit sub-agent delegation steps, classify the agent as **deep-reasoning tier** regardless of the description's wording — orchestration requires model-level judgment that sonnet cannot reliably provide. `sonnet` on an orchestrating agent → **high** (not medium).
 - `plan-gated` agent using `sonnet` → **high** (plan mode requires strong long-horizon reasoning)
 - `focused-execution` agent using `haiku` → **not a finding** — haiku is acceptable and economical for narrow/rule-based tasks
 
