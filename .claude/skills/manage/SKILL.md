@@ -98,7 +98,7 @@ Before creating anything, check if existing agents/skills already cover the requ
 2. Compare the new description against each existing one — look for domain overlap, similar workflows, or redundant scope
 3. Present findings to the user:
    - **No overlap**: proceed to Step 3
-   - **Partial overlap**: name the overlapping agent/skill, explain what it covers vs what the new one would add, and ask the user whether to proceed, extend the existing one instead, or abort
+   - **Partial overlap**: name the overlapping agent/skill, explain what it covers vs what the new one would add, and use `AskUserQuestion` to ask whether to proceed, extend, or abort, with options: "Extend existing (Recommended)" (add to the overlapping one instead), "Proceed" (create new agent/skill as planned), "Abort" (stop here)
    - **Strong overlap**: recommend against creation — suggest using or extending the existing agent/skill instead
 
 Skip this step for `update`, `delete`, and perm operations.

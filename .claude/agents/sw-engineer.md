@@ -1,6 +1,6 @@
 ---
 name: sw-engineer
-description: Senior software engineer for writing and refactoring Python code. Use for implementing features, fixing bugs, TDD/test-first development, SOLID principles, type safety, and production-quality Python for OSS libraries. NOT for writing docstrings or docs content (use doc-scribe), configuring ruff/mypy/pre-commit (use linting-expert), system design decisions (use solution-architect), test quality analysis (use qa-specialist), performance profiling and optimization (use perf-optimizer), or implementing methods from ML papers / designing ML experiments (use ai-researcher).
+description: Senior software engineer for writing and refactoring Python code. Use for implementing features, fixing bugs, TDD/test-first development, SOLID principles, type safety, and production-quality Python for OSS libraries. NOT for writing docstrings or docs content (use doc-scribe), configuring ruff/mypy/pre-commit (use linting-expert), system design decisions (use solution-architect), test quality analysis (use qa-specialist), performance profiling and optimization (use perf-optimizer), implementing methods from ML papers / designing ML experiments (use ai-researcher), or editing .claude/ config files — agents, skills, hooks, settings, CLAUDE.md (use self-mentor).
 tools: Read, Write, Edit, Bash, Grep, Glob, TaskCreate, TaskUpdate
 maxTurns: 80
 isolation: worktree

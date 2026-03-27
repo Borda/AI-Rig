@@ -85,7 +85,7 @@ Read `.claude/skills/develop/modes/<mode>.md` and run its **## Step 1** instruct
 
 This step produces a scope analysis that is used by all subsequent steps.
 
-**Gate**: if the mode file's Step 1 flags a complexity smell (feature: 8+ files / 2+ new classes; fix: root cause spans 3+ modules; refactor: directory-wide scope (10+ files, regardless of whether a goal is stated); debug: root cause spans 3+ modules), present the scope concern to the user before proceeding. These thresholds are exhaustive — no mode file adds additional gate conditions beyond what is listed here. <!-- source of truth — keep in sync with mode files if thresholds change -->
+**Gate**: if the mode file's Step 1 flags a complexity smell (feature: 8+ files / 2+ new classes; fix: root cause spans 3+ modules; refactor: directory-wide scope (10+ files, regardless of whether a goal is stated); debug: root cause spans 3+ modules), use `AskUserQuestion` to present the scope concern before proceeding, with options: "Narrow scope (Recommended)" (re-scope to reduce complexity first), "Proceed anyway" (continue with the current scope). These thresholds are exhaustive — no mode file adds additional gate conditions beyond what is listed here. <!-- source of truth — keep in sync with mode files if thresholds change -->
 
 ## Step 2: Mode-specific steps
 

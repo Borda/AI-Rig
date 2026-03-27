@@ -7,15 +7,13 @@ Personal AI coding assistant configuration for Python/ML OSS development. Versio
 
 - [🎯 Why](#-why)
 - [💡 Design Principles](#-design-principles)
-- [🧩 Agents](#-agents)
-- [🤖 Claude Code](#-claude-code)
-  - [Skills](#skills)
-  - [Common Workflow Sequences](#common-workflow-sequences)
-  - [Config Sync](#-config-sync)
-- [🤖 Codex CLI](#-codex-cli)
-- [🤝 Claude + Codex Integration](#-claude--codex-integration)
 - [⚡ Quick Start](#-quick-start)
 - [📦 What's Here](#-whats-here)
+- [🧩 Agents](#-agents)
+- [🤖 Claude Code](#-claude-code)
+- [🤖 Codex CLI](#-codex-cli)
+- [🤝 Claude + Codex Integration](#-claude--codex-integration)
+- [🔄 Config Sync](#-config-sync)
 
 </details>
 
@@ -35,6 +33,39 @@ Managing AI coding workflows for Python/ML OSS is complex — you need domain-aw
 - **Link integrity** — never cite a URL without fetching it first (enforced in all research agents)
 - **Python 3.10+ baseline** — all configs target py310 minimum (3.9 EOL was Oct 2025)
 - **Modern toolchain** — uv, ruff, mypy, pytest, GitHub Actions with trusted publishing
+
+## ⚡ Quick Start
+
+```bash
+# Install Claude Code and Codex CLI
+npm install -g @anthropic-ai/claude-code && npm install -g @openai/codex
+
+# Activate config globally
+cp -r .claude/ ~/.claude/    # Claude Code agents, skills, hooks
+cp -r .codex/ ~/.codex/      # Codex CLI agents and profiles
+```
+
+## 📦 What's Here
+
+```
+borda.ai-home/
+├── .claude/                # Claude Code (Claude by Anthropic)
+│   ├── README.md           # full reference: skills, rules, hooks, architecture
+│   ├── CLAUDE.md           # workflow rules and core principles
+│   ├── settings.json       # permissions and model preferences
+│   ├── agents/             # specialist agents
+│   ├── skills/             # workflow skills (slash commands)
+│   ├── rules/              # per-topic coding and config standards (auto-loaded by Claude Code)
+│   └── hooks/              # UI extensions
+├── .codex/                 # OpenAI Codex CLI
+│   ├── README.md           # full reference: agents, profiles, Claude integration
+│   ├── AGENTS.md           # global instructions and subagent spawn rules
+│   ├── config.toml         # multi-agent config (gpt-5.3-codex baseline)
+│   └── agents/             # per-agent model and instruction overrides
+├── .pre-commit-config.yaml
+├── .gitignore
+└── README.md
+```
 
 ## 🧩 Agents
 
@@ -281,17 +312,6 @@ Run `/calibrate routing fast` after any agent description change. Thresholds: ro
 
 </details>
 
-### 🔄 Config Sync
-
-This repo (`.claude/`) is the source of truth — home (`~/.claude/`) is a downstream copy:
-
-```bash
-/sync          # show what differs between project and home .claude/
-/sync apply    # copy all differing files to ~/.claude/
-```
-
-Run after editing any agent, skill, hook, or `settings.json`. `settings.local.json` is never synced.
-
 ## 🤖 Codex CLI
 
 Multi-agent configuration for [OpenAI Codex CLI](https://github.com/openai/codex) (Rust implementation). Nine specialist roles on `gpt-5.3-codex`, auto-selected by task type or addressed by name. See the Agents table above for the full roster with Claude/Codex availability.
@@ -362,33 +382,13 @@ Without `codex`: `/codex` fails at pre-flight; `/resolve`'s review-comment step 
 
 </details>
 
-## ⚡ Quick Start
+## 🔄 Config Sync
+
+This repo (`.claude/`) is the source of truth — home (`~/.claude/`) is a downstream copy:
 
 ```bash
-# Install Claude Code and Codex CLI
-npm install -g @anthropic-ai/claude-code && npm install -g @openai/codex
-
-# Activate config globally
-cp -r .claude/ ~/.claude/    # Claude Code agents, skills, hooks
-cp -r .codex/ ~/.codex/      # Codex CLI agents and profiles
+/sync          # show what differs between project and home .claude/
+/sync apply    # copy all differing files to ~/.claude/
 ```
 
-## 📦 What's Here
-
-```
-borda.ai-home/
-├── .claude/                # Claude Code (Claude by Anthropic)
-│   ├── CLAUDE.md           # workflow rules and core principles
-│   ├── settings.json       # permissions and model preferences
-│   ├── agents/             # specialist agents
-│   ├── skills/             # workflow skills (slash commands)
-│   ├── rules/              # per-topic coding and config standards (auto-loaded by Claude Code)
-│   └── hooks/              # UI extensions
-├── .codex/                 # OpenAI Codex CLI
-│   ├── AGENTS.md           # global instructions and subagent spawn rules
-│   ├── config.toml         # multi-agent config (gpt-5.3-codex baseline)
-│   └── agents/             # per-agent model and instruction overrides
-├── .pre-commit-config.yaml
-├── .gitignore
-└── README.md
-```
+Run after editing any agent, skill, hook, or `settings.json`. `settings.local.json` is never synced.

@@ -11,6 +11,7 @@ ci:
   autofix_prs: true
   autoupdate_commit_msg: "[pre-commit.ci] bump ⬆ suggestions"
   autoupdate_schedule: monthly
+  skip: [lychee] # pre-commit.ci has no lychee binary and no cargo to install it
   # submodules: true
 
 repos:
@@ -66,3 +67,13 @@ repos:
           - mdformat-ruff
           - mdformat-frontmatter
           - mdformat-config
+
+  - repo: https://github.com/lycheeverse/lychee.git
+    rev: lychee-v0.23.0 # run `pre-commit autoupdate` to set; verify release at https://github.com/lycheeverse/lychee/releases
+    hooks:
+      - id: lychee
+        args:
+          - --offline
+          - --no-progress
+          #- --exclude=^https?://
+        types_or: [markdown, toml]

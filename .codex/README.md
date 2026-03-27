@@ -7,6 +7,7 @@ Multi-agent configuration for [OpenAI Codex CLI](https://github.com/openai/codex
 <details>
 <summary><strong>Contents</strong></summary>
 
+- [🔄 Config Sync](#-config-sync)
 - [🧩 Agents](#-agents)
   - [Reference table](#reference-table)
   - [Spawn rules](#spawn-rules)
@@ -18,7 +19,28 @@ Multi-agent configuration for [OpenAI Codex CLI](https://github.com/openai/codex
   - [AGENTS.md layering](#agentsmd-layering)
   - [MCP server](#mcp-server)
 - [🤝 Integration with Claude](#-integration-with-claude)
-- [🔄 Config Sync](#-config-sync)
+
+</details>
+
+## 🔄 Config Sync
+
+This repo (`.codex/`) is the source of truth — home (`~/.codex/`) is a downstream copy:
+
+```bash
+cp -r .codex/ ~/.codex/    # activate globally (config_file paths are relative — no rewriting needed)
+```
+
+Run after editing any agent config, `config.toml`, or `AGENTS.md`. Unlike `.claude/`, there is no drift-detection command — copy directly.
+
+A project-local `AGENTS.md` at the repo root extends the global `~/.codex/AGENTS.md` automatically — no additional config needed.
+
+<details>
+<summary><strong>Install</strong></summary>
+
+```bash
+npm install -g @openai/codex    # install Codex CLI
+cp -r .codex/ ~/.codex/         # activate globally (config_file paths are relative — no rewriting needed)
+```
 
 </details>
 
@@ -179,22 +201,3 @@ url = "https://developers.openai.com/mcp"
 - Final validation: Claude always reviews Codex output with lint + tests before marking work complete
 
 **Why the division works:** Claude has a mental model of which files are "in scope" for a task; Codex reads the diff and codebase independently, without that context. Their blind spots are complementary — the union of both passes catches more than either alone.
-
-### Install
-
-```bash
-npm install -g @openai/codex    # install Codex CLI
-cp -r .codex/ ~/.codex/         # activate globally (config_file paths are relative — no rewriting needed)
-```
-
-A project-local `AGENTS.md` at the repo root extends the global `~/.codex/AGENTS.md` automatically — no additional config needed.
-
-## 🔄 Config Sync
-
-This repo (`.codex/`) is the source of truth — home (`~/.codex/`) is a downstream copy:
-
-```bash
-cp -r .codex/ ~/.codex/    # activate globally (config_file paths are relative — no rewriting needed)
-```
-
-Run after editing any agent config, `config.toml`, or `AGENTS.md`. Unlike `.claude/`, there is no drift-detection command — copy directly.

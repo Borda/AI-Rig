@@ -7,6 +7,7 @@ Configuration for [Claude Code](https://claude.ai/code) (Anthropic's AI coding C
 <details>
 <summary><strong>Contents</strong></summary>
 
+- [🔄 Config Sync](#-config-sync)
 - [🧩 Agents](#-agents)
   - [Reference table](#reference-table)
   - [Agent relationship map](#agent-relationship-map)
@@ -24,9 +25,35 @@ Configuration for [Claude Code](https://claude.ai/code) (Anthropic's AI coding C
   - [Agent Teams](#agent-teams)
 - [📊 Status Line](#-status-line)
 - [🤝 Integration with Codex](#-integration-with-codex)
-- [🔄 Config Sync](#-config-sync)
 
 </details>
+
+## 🔄 Config Sync
+
+This repo is the **source of truth** for all `.claude/` configuration. Home (`~/.claude/`) is a downstream copy kept in sync via the `/sync` skill.
+
+```
+.claude/   (source)       →   ~/.claude/   (downstream)
+  agents/                       agents/
+  skills/                       skills/
+  rules/                        rules/
+  hooks/statusline.js           hooks/statusline.js
+  settings.json                 settings.json  (statusLine path rewritten to absolute)
+  CLAUDE.md                     CLAUDE.md
+```
+
+**What is NOT synced:** `settings.local.json` (machine-local overrides — API keys, MCP server activation, local permissions).
+
+**Workflow:**
+
+```bash
+/sync          # dry-run: show drift report (MISSING / DIFFERS / IDENTICAL per file)
+/sync apply    # apply: copy all differing files and verify outcome
+```
+
+Run `/sync` after editing any agent, skill, hook, or `settings.json` in this repo to propagate the change to home config.
+
+**Path rewriting:** `statusLine` and hook paths in home `settings.json` use `$HOME` prefix (`node $HOME/.claude/hooks/statusline.js`) — portable, avoids hardcoded usernames. The `/sync` skill applies this rewrite automatically.
 
 ## 🧩 Agents
 
@@ -506,30 +533,3 @@ Row 2:  🕵 5 agents (self-mentor ×3, opus, sw-engineer) │ 🤖 codex ×2 �
 - Final validation: Claude always reviews Codex output with lint + tests before marking work complete
 
 **Why the division works:** Claude has a mental model of which files are "in scope" for a task; Codex reads the diff and codebase independently, without that context. Their blind spots are complementary — the union of both passes catches more than either alone.
-
-## 🔄 Config Sync
-
-This repo is the **source of truth** for all `.claude/` configuration. Home (`~/.claude/`) is a downstream copy kept in sync via the `/sync` skill.
-
-```
-.claude/   (source)       →   ~/.claude/   (downstream)
-  agents/                       agents/
-  skills/                       skills/
-  rules/                        rules/
-  hooks/statusline.js           hooks/statusline.js
-  settings.json                 settings.json  (statusLine path rewritten to absolute)
-  CLAUDE.md                     CLAUDE.md
-```
-
-**What is NOT synced:** `settings.local.json` (machine-local overrides — API keys, MCP server activation, local permissions).
-
-**Workflow:**
-
-```bash
-/sync          # dry-run: show drift report (MISSING / DIFFERS / IDENTICAL per file)
-/sync apply    # apply: copy all differing files and verify outcome
-```
-
-Run `/sync` after editing any agent, skill, hook, or `settings.json` in this repo to propagate the change to home config.
-
-**Path rewriting:** `statusLine` and hook paths in home `settings.json` use `$HOME` prefix (`node $HOME/.claude/hooks/statusline.js`) — portable, avoids hardcoded usernames. The `/sync` skill applies this rewrite automatically.

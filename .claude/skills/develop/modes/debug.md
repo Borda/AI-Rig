@@ -32,7 +32,7 @@ Spawn a **sw-engineer** agent to map the execution path and produce:
 - What invariant is violated at the point of failure?
 - Any recent commit that touched this path (from git log output)
 
-**Complexity gate**: if the root cause spans 3+ modules or requires a design change, flag it and ask the user whether to proceed with this debug session or open a wider `/develop feature` track.
+**Complexity gate**: if the root cause spans 3+ modules or requires a design change, flag it and use `AskUserQuestion` to ask whether to proceed, with options: "Continue debug (Recommended)" (fix the root cause in this session), "Open /develop feature" (open a wider feature track instead).
 
 Present the agent's analysis summary before proceeding.
 

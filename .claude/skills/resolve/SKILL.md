@@ -155,7 +155,7 @@ Print the action item table:
 | 3 | [question] | @reviewer | why not use X instead? | — |
 ```
 
-> **Guard**: if `[req]` items > 15, print the full list and ask the user which subset to implement before continuing.
+> **Guard**: if `[req]` items > 15, print the full list and use `AskUserQuestion` to ask which subset to implement, listing up to 4 grouped options drawn from the items table (mark the first/smallest group as "(Recommended)"), before continuing.
 
 Answer any `[question]` items that can be resolved from reading the code — if the answer is clear, reclassify to `[req]` or `[suggest]`; if it requires maintainer judgement, surface and pause. A question answered by the **contributor** (not the maintainer) is not automatically closed — if the contributor's answer reveals a known limitation or deferred work (e.g., "currently per-process, Redis is a follow-up"), keep it as `[question]` and surface it for the maintainer to explicitly accept or reject before proceeding.
 
@@ -216,7 +216,7 @@ If more than 20 conflicted files → abort and stop:
 git merge --abort
 ```
 
-Report the count and file list; ask the user whether to continue or re-scope.
+Report the count and file list; use `AskUserQuestion` to ask whether to continue or re-scope, with options: "Continue (Recommended)" (proceed with all conflicted files), "Re-scope" (abort and narrow the merge target).
 
 ## Step 6: Distill conflict context
 
@@ -289,7 +289,7 @@ If `CODEX_AVAILABLE=false`: mark all items `⚠ skipped — codex not installed`
 
 Process `[req]` items first, then `[suggest]` items. **Each item gets its own commit.**
 
-> **Guard**: process at most 10 items, then pause and ask the user whether to continue with the remaining items.
+> **Guard**: process at most 10 items, then pause and use `AskUserQuestion` to ask whether to continue with the remaining items, with options: "Continue (Recommended)" (process next batch of items), "Stop here" (finish report with items processed so far).
 
 For each action item:
 

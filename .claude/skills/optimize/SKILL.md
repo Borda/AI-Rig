@@ -73,7 +73,7 @@ time python "$ARGUMENTS"
 
 **Accept** if improvement > 10% (adjust threshold for your workload — GPU benchmarks may need 20%+ to clear noise; hot-path latency may justify 2%). **Revert** if not measurable or < noise floor.
 
-**Safety break**: max 3 optimization-verification cycles. After 3 perf-optimizer changes, proceed to Step 5 (report). Ask the user whether to run another round.
+**Safety break**: max 3 optimization-verification cycles. After 3 perf-optimizer changes, proceed to Step 5 (report). Use `AskUserQuestion` to ask whether to run another round, with options: "Stop and report (Recommended)" (proceed to Step 5 report), "Run another round" (continue optimization).
 
 ## Step 5: Report
 
