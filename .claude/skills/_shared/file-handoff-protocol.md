@@ -29,7 +29,7 @@ The spawned agent **must**:
 }
 ```
 
-Include any additional task-specific keys (e.g. `"papers":5` for survey, `"verdict":"approve"` for review) but keep the envelope ≤250 bytes. The `summary` field is a one-line human-readable description of what was found or done — always include it.
+Include any additional task-specific keys (e.g. `"papers":5` for research, `"verdict":"approve"` for review) but keep the envelope ≤250 bytes. The `summary` field is a one-line human-readable description of what was found or done — always include it.
 
 ## RUN_DIR convention
 

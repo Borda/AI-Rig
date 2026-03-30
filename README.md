@@ -106,9 +106,9 @@ Skills are multi-agent workflows invoked via slash commands. Each skill composes
 | **calibrate**  | Synthetic benchmarks measuring recall vs confidence bias                                                                                                                                      |
 | **audit**      | Config audit: broken refs, inventory drift, docs freshness; `fix [high\|medium\|all]` auto-fixes by severity; `upgrade` applies docs-sourced improvements (mutually exclusive)                |
 | **release**    | Notes, changelog, migration, full prepare pipeline, or readiness `audit`                                                                                                                      |
-| **survey**     | SOTA literature survey with implementation plan                                                                                                                                               |
+| **research**   | SOTA literature research with implementation plan; `plan` mode produces a phased, codebase-mapped implementation plan (auto-detects latest research output)                                   |
 | **optimize**   | Four modes: `plan` = config wizard → `program.md`; `campaign` = metric-driven iteration loop; `resume` = continue after crash; `perf` = profiling deep-dive; `--team` and `--colab` supported |
-| **manage**     | Create, update (inline content-edit or rename), delete agents/skills/rules with auto type-detection and cross-ref propagation                                                                 |
+| **manage**     | Create, update (content-edit or rename), delete agents/skills/rules with auto type-detection and cross-ref propagation                                                                        |
 | **sync**       | Drift-detect and sync project `.claude/` → home `~/.claude/`                                                                                                                                  |
 | **codex**      | Delegate mechanical coding tasks to Codex CLI                                                                                                                                                 |
 | **distill**    | Suggest new agents/skills, prune memory, consolidate lessons into rules                                                                                                                       |
@@ -164,12 +164,12 @@ Skills chain naturally — the output of one becomes the input for the next.
 </details>
 
 <details>
-<summary><strong>New capability → survey → implement</strong></summary>
+<summary><strong>New capability → research → implement</strong></summary>
 
 ```
-/survey "efficient attention for long sequences"  # find SOTA methods
+/research "efficient attention for long sequences"        # find SOTA methods
 /develop feature "implement FlashAttention in encoder"    # TDD-first implementation
-/review                                           # validate implementation
+/review                                                   # validate implementation
 ```
 
 </details>
@@ -187,12 +187,12 @@ Skills chain naturally — the output of one becomes the input for the next.
 </details>
 
 <details>
-<summary><strong>Survey SOTA → optimize toward metric</strong></summary>
+<summary><strong>Research SOTA → optimize toward metric</strong></summary>
 
 ```
-/survey "knowledge distillation for small models"            # find best approach
-/optimize plan "improve F1 from 0.82 to 0.87"              # configure metric + guard + agent
-/optimize campaign "improve F1 from 0.82 to 0.87" --team    # parallel exploration across axes
+/research "knowledge distillation for small models"           # find best approach
+/optimize plan "improve F1 from 0.82 to 0.87"                 # configure metric + guard + agent
+/optimize campaign  --team                                    # parallel exploration across axes
 /review                                                       # quality pass on kept changes
 ```
 

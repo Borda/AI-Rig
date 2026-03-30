@@ -255,6 +255,6 @@ gh api repos/Lightning-AI/torchmetrics/contents/README.md -q .content | base64 -
 - **Computer Vision (CV)/tensor documentation** → `doc-scribe` for writing, `web-explorer` for sourcing from external references
 - **Docs build failures** → `ci-guardian` for the CI failure; web-explorer for fetching the upstream docs
 
-**Incoming handoffs**: called by `/survey` (Step 2a parallel codebase check), `/audit` (Claude Code docs freshness check), and `/manage` (agent/skill frontmatter schema validation).
+**Incoming handoffs**: called by `/research` (Step 2a parallel codebase check), `/audit` (Claude Code docs freshness check), and `/manage` (agent/skill frontmatter schema validation).
 
 </notes>

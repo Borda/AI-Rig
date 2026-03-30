@@ -196,12 +196,12 @@ Targets with verdict `calibrated` and no proposed changes get a single line: `âœ
 
 ## Step 4: Concatenate JSONL logs
 
-Append each target's result line to `.claude/logs/calibrations.jsonl` (create dir if needed):
+Append each target's result line to `.claude/logs/calibrations.jsonl` using native tools (no Bash needed):
 
-```bash
-mkdir -p .claude/logs
-cat _calibrate/<TIMESTAMP>/*/result.jsonl >> .claude/logs/calibrations.jsonl
-```
+1. Use Glob (pattern `*/result.jsonl`, path `_calibrate/<TIMESTAMP>/`) to find all result files
+2. Read each result file with the Read tool
+3. Read `.claude/logs/calibrations.jsonl` (if it exists; use empty string if missing)
+4. Append the new lines and Write the combined content back to `.claude/logs/calibrations.jsonl`
 
 ## Step 5: Surface improvement signals
 

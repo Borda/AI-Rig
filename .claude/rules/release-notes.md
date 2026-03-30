@@ -49,7 +49,7 @@ Every release entry must end with:
 
 `**Full changelog**: https://github.com/[org]/[repo]/compare/vPREV...vNEXT`
 
-- This line must be the final line of the entry, after the Contributors section
+- This line must be the final line of the entry, after the Contributors section — no notes, annotations, separators, or prose may follow it
 - Never omit it, even for patch releases
 
 Full template + writing-patterns table in `.claude/skills/release/SKILL.md` (Step 3).

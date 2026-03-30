@@ -104,7 +104,7 @@ Key relationships:
 | **calibrate**  | `/calibrate [target] [fast\|full] [apply]`              | Synthetic benchmarks measuring recall vs confidence bias; `routing` and `communication` modes available                                                                                                  |
 | **audit**      | `/audit [scope] fix [high\|medium\|all] \| upgrade`     | Config audit: broken refs, inventory drift, docs freshness; `fix` auto-fixes at the requested severity level; `upgrade` applies docs-sourced improvements (mutually exclusive with `fix`)                |
 | **release**    | `/release <mode> [range]`                               | Notes, changelog, migration, full prepare pipeline, or readiness `audit`                                                                                                                                 |
-| **survey**     | `/survey [topic]`                                       | SOTA literature survey with implementation plan                                                                                                                                                          |
+| **research**   | `/research <topic> \| plan [path]`                      | SOTA literature research with implementation plan; `plan` mode produces a phased, codebase-mapped implementation plan (auto-detects latest research output)                                              |
 | **optimize**   | `/optimize plan\|campaign\|resume\|perf <goal\|target>` | Four modes: `plan` = config wizard → `program.md`; `campaign` = metric-driven iteration loop; `resume` = continue after crash/stop; `perf` = profiling deep-dive; `--team` and `--colab` (GPU) supported |
 | **manage**     | `/manage <op> <type>`                                   | Create, rename, or delete agents/skills with cross-ref propagation and routing calibration                                                                                                               |
 | **sync**       | `/sync [apply]`                                         | Drift-detect and sync project `.claude/` → home `~/.claude/`                                                                                                                                             |
@@ -160,7 +160,7 @@ Step 5: review+fix loop (max 3 cycles)
 Quality stack: linting-expert → qa-specialist → Codex pre-pass
 ```
 
-**`/survey`** — research-first:
+**`/research`** — research-first:
 
 ```
 web-explorer (fetch current papers/docs) → ai-researcher (deep analysis, writes to file)
@@ -464,7 +464,7 @@ Agent Teams is Claude Code's experimental multi-agent feature. Teams are always 
 | --------------------------------------------------- | :--: | :-------: |
 | Competing root-cause hypotheses                     |  ✓   |           |
 | Cross-layer feature: impl + QA + docs in parallel   |  ✓   |           |
-| SOTA survey: multiple competing method clusters     |  ✓   |           |
+| SOTA research: multiple competing method clusters   |  ✓   |           |
 | Adversarial review (teammates challenge each other) |  ✓   |           |
 | Sequential pipeline (fix → test → lint)             |      |     ✓     |
 | Independent parallel review dimensions              |      |     ✓     |
@@ -477,7 +477,7 @@ Agent Teams is Claude Code's experimental multi-agent feature. Teams are always 
 | --------------------------- | ------------------------------------------------------------------------- |
 | `/develop fix --team`       | Bug spans modules; competing root-cause hypotheses                        |
 | `/develop feature --team`   | Cross-layer feature needing impl + QA + docs in parallel                  |
-| `/survey --team`            | Multiple competing method families to evaluate                            |
+| `/research --team`          | Multiple competing method families to evaluate                            |
 | `/optimize campaign --team` | Goal spans multiple optimization axes (speed = arch + pipeline + compute) |
 | `/optimize plan --team`     | Wizard + parallel exploration: teammates each own a different axis        |
 | `/optimize`                 | Directory or system-wide scope → Claude proposes team (heuristic)         |
@@ -532,7 +532,7 @@ Row 2:  🕵 5 agents (self-mentor ×3, opus, sw-engineer) │ 🤖 codex ×2 �
 
 **What Claude retains:**
 
-- Long-horizon planning and research (`/survey`, `/optimize campaign`, `/develop plan`)
+- Long-horizon planning and research (`/research`, `/optimize campaign`, `/develop plan`)
 - Orchestration of multiple agents in defined topologies
 - Judgment calls: design decisions, spec approval, test validity assessment
 - Final validation: Claude always reviews Codex output with lint + tests before marking work complete

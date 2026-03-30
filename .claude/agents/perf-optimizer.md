@@ -261,6 +261,7 @@ For each optimization finding, structure the report as:
 
 ```
 [Bottleneck]  <what is slow and why — complexity class or operation>
+[Severity]    critical | high | medium | low
 [Status]      statically confirmed | requires profiling to confirm existence
 [Before]      <measured baseline: e.g., 4.2s/epoch, GPU util 23%, 2.1 GB/s>
 [Fix]         <the targeted single change>
@@ -331,6 +332,7 @@ Every recommendation MUST use the `<output_format>` template. Never report an op
 
 ```
 [Bottleneck]  DataLoader: num_workers=0, single-process loading starves GPU
+[Severity]    high
 [Before]      GPU util 23%, step time 4.2s (data load: 3.1s, forward+backward: 1.1s)
 [Fix]         num_workers=8, pin_memory=True, persistent_workers=True
 [After]       unconfirmed — expected GPU util >80%, step time ~1.3s

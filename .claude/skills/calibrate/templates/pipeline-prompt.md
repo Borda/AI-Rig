@@ -10,7 +10,12 @@ Check Codex availability once at pipeline start and set `CODEX_AVAILABLE` for us
 
 ```bash
 if which codex >/dev/null 2>&1; then CODEX_AVAILABLE=true; else CODEX_AVAILABLE=false; fi
-echo "Codex: $CODEX_AVAILABLE"
+# timeout (GNU coreutils) or gtimeout (macOS brew) — optional safety net
+if which timeout >/dev/null 2>&1; then TIMEOUT_CMD="timeout"
+elif which gtimeout >/dev/null 2>&1; then TIMEOUT_CMD="gtimeout"
+else TIMEOUT_CMD=""
+fi
+echo "Codex: $CODEX_AVAILABLE | Timeout: ${TIMEOUT_CMD:-none}"
 ```
 
 Codex integration is active only for `agents` and `skills` modes. If the pipeline was spawned for `routing`, `communication`, or `rules`, treat `CODEX_AVAILABLE=false` regardless of installation status — those modes test Claude-specific internals that Codex lacks context for.
@@ -29,7 +34,7 @@ Split `<N>` in-scope problems between two generators. Claude always owns the 1 o
 **Step 1 — Codex generates N_CODEX in-scope problems** (runs first; writes directly to file):
 
 ```bash
-timeout 300 codex exec "Generate <N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
+${TIMEOUT_CMD:+$TIMEOUT_CMD 300} codex exec "Generate <N_CODEX> synthetic calibration problems for domain: '<DOMAIN>'.
 
 Each problem must be a JSON object with these exact fields:
 - problem_id: kebab-slug string, prefix with 'cx-' (e.g. 'cx-type-mismatch')
@@ -158,7 +163,7 @@ Collect the compact JSON from each Claude scorer. **Do not write scores.json yet
 For each problem, run one Codex scoring call via Bash. Run these **sequentially** (not parallel — Codex runs as a subprocess):
 
 ```bash
-timeout 120 codex exec "You are scoring a calibration response against ground truth.
+${TIMEOUT_CMD:+$TIMEOUT_CMD 120} codex exec "You are scoring a calibration response against ground truth.
 
 Problem ID: <PROBLEM_ID>
 Ground truth (JSON array): <GROUND_TRUTH_JSON>

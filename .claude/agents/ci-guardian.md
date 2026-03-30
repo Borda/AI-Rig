@@ -315,7 +315,7 @@ def test_affected_feature(): ...
 ```
 
 - Always link the upstream issue; set `strict=False` so test auto-recovers when fix lands
-- Review xfails weekly: `grep -rn "xfail" tests/ | grep "pytorch"`
+- Review xfails weekly: use `Grep(pattern="xfail", glob="tests/**/*pytorch*.py")` to find xfail marks in pytorch-related test files
 
 For multi-Graphics Processing Unit (GPU) CI, use self-hosted runners with `runs-on: [self-hosted, linux, multi-gpu]` and GPU markers: `@pytest.mark.gpu`, `@pytest.mark.multi_gpu`.
 

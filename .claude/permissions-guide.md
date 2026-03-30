@@ -185,14 +185,11 @@ ______________________________________________________________________
 
 ## macOS / ecosystem
 
-| Permission          | Description                                                   | Typical use case                                                                |
-| ------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| `Bash(brew info:*)` | Check whether a Homebrew formula is installed and its version | Verify a tool dependency (e.g. `codex`, `gh`) is available                      |
-| `Bash(codex:*)`     | Invoke the OpenAI Codex CLI                                   | `/codex` skill delegates mechanical coding tasks to Codex                       |
-| `Bash(claude:*)`    | Invoke the Claude Code CLI                                    | SessionStart hook runs `claude auth status` to cache plan info                  |
-| `Bash(node:*)`      | Run Node.js scripts                                           | Hooks (`task-log.js`, `statusline.js`) are Node scripts executed by Claude Code |
-| `Bash(npm show:*)`  | Fetch npm package metadata                                    | Check latest version of a Node package without installing it                    |
-| `Bash(open:*)`      | Open a file or URL with the default macOS application         | Open a browser, Finder, or app from a workflow step                             |
+| Permission       | Description                 | Typical use case                                                                |
+| ---------------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `Bash(codex:*)`  | Invoke the OpenAI Codex CLI | `/codex` skill delegates mechanical coding tasks to Codex                       |
+| `Bash(claude:*)` | Invoke the Claude Code CLI  | SessionStart hook runs `claude auth status` to cache plan info                  |
+| `Bash(node:*)`   | Run Node.js scripts         | Hooks (`task-log.js`, `statusline.js`) are Node scripts executed by Claude Code |
 
 ______________________________________________________________________
 
@@ -210,7 +207,7 @@ ______________________________________________________________________
 | `WebFetch(domain:anthropic.com)`             | Anthropic blog, model cards, policy docs | Research model capabilities, fetch release announcements                                     |
 | `WebFetch(domain:docs.anthropic.com)`        | Claude Code documentation                | Fetch Claude Code docs; redirects to code.claude.com — both domains needed for full coverage |
 | `WebFetch(domain:code.claude.com)`           | Claude Code documentation                | `/audit` fetches hook, agent, and skill schemas for validation                               |
-| `WebFetch(domain:arxiv.org)`                 | ML preprints                             | `/survey` and `ai-researcher` fetch papers                                                   |
+| `WebFetch(domain:arxiv.org)`                 | ML preprints                             | `/research` and `ai-researcher` fetch papers                                                 |
 | `WebFetch(domain:developers.openai.com)`     | OpenAI developer documentation           | Codex CLI docs, API reference                                                                |
 | `WebFetch(domain:platform.openai.com)`       | OpenAI platform and API reference        | Model capabilities, pricing, endpoint docs                                                   |
 | `WebFetch(domain:openai.com)`                | OpenAI blog and model release notes      | Track new model releases                                                                     |
@@ -220,7 +217,7 @@ ______________________________________________________________________
 | `WebFetch(domain:api.codecov.io)`            | Codecov REST API                         | `/ci-guardian` and CI audit reads: coverage reports, branch summaries, PR coverage deltas    |
 | `WebFetch(domain:app.codecov.io)`            | Codecov web application                  | Fetch coverage badge URLs and web-facing coverage reports                                    |
 | `WebFetch(domain:hr.linkedin.com)`           | LinkedIn profile pages                   | `release-notes.md` contributor lookup: confirm a contributor's real name via their profile   |
-| `WebFetch(domain:scholar.google.com)`        | Google Scholar academic search           | `ai-researcher` and `/survey` find papers and citation counts                                |
+| `WebFetch(domain:scholar.google.com)`        | Google Scholar academic search           | `ai-researcher` and `/research` find papers and citation counts                              |
 
 ______________________________________________________________________
 

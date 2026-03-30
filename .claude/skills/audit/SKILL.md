@@ -619,6 +619,116 @@ Report format per finding:
 
 **Fix guidance** (emit in report): options are (a) trim the duplicated file to just its unique steps and add an explicit hand-off, (b) extract shared steps into a `_shared/` partial, or (c) delete one file if the other fully subsumes it.
 
+**Check 16 — File length (context budget risk)**
+
+Flag config files that exceed line-count thresholds. Oversized files increase per-spawn context cost and are harder to maintain — every agent loaded with an overgrown config pays that cost on every invocation.
+
+Thresholds: agents > 300 lines · skill SKILL.md > 600 lines · rules > 200 lines.
+
+```bash
+YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
+printf "%-52s %s\n" "FILE" "LINES"
+for f in .claude/agents/*.md; do
+  lines=$(wc -l < "$f" | tr -d ' ')
+  [ "$lines" -gt 300 ] \
+    && printf "${YEL}⚠ TOO LONG${NC}: agents/%s — %d lines (threshold: 300)\n" "$(basename "$f")" "$lines" \
+    || printf "  %-50s %d\n" "agents/$(basename "$f")" "$lines"
+done
+for f in .claude/skills/*/SKILL.md; do
+  lines=$(wc -l < "$f" | tr -d ' ')
+  [ "$lines" -gt 600 ] \
+    && printf "${YEL}⚠ TOO LONG${NC}: skills/%s/SKILL.md — %d lines (threshold: 600)\n" "$(basename "$(dirname "$f")")" "$lines" \
+    || printf "  %-50s %d\n" "skills/$(basename "$(dirname "$f")")/SKILL.md" "$lines"
+done
+for f in .claude/rules/*.md; do
+  lines=$(wc -l < "$f" | tr -d ' ')
+  [ "$lines" -gt 200 ] \
+    && printf "${YEL}⚠ TOO LONG${NC}: rules/%s — %d lines (threshold: 200)\n" "$(basename "$f")" "$lines" \
+    || printf "  %-50s %d\n" "rules/$(basename "$f")" "$lines"
+done
+```
+
+**Severity**: **medium** — oversized files raise context cost and maintenance burden. Fix: trim content, extract shared logic to `_shared/` partials, or split into a focused sub-scope.
+
+**Report only** — never auto-fix; trimming requires human judgment on what to cut.
+
+**Check 17 — Bash command misuse / native tool substitution**
+
+Scan all `.claude/` config files (agents, skills, rules) for inline Bash commands that could be replaced with native Claude tools. Native tools (Read, Grep, Glob, Write, Edit) are always available without `settings.json` approval, are auditable, and preferred over shell equivalents per CLAUDE.md §Pre-Authorized Operations.
+
+Use Grep to find candidate patterns across all config files:
+
+```bash
+YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
+printf "=== Check 17: Bash misuse candidates ===\n"
+# cat → Read tool
+grep -rn '\bcat \|`cat ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
+  | grep -v '^Binary' | grep -v '# ' \
+  && printf "  ${CYN}hint${NC}: replace cat with Read tool\n" || true
+# grep/rg → Grep tool
+grep -rn '\bgrep \|\brg \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
+  | grep -v '^Binary' | grep -v '# .*grep\|Grep tool\|Use Grep' \
+  && printf "  ${CYN}hint${NC}: replace grep/rg with Grep tool\n" || true
+# find/ls for file discovery → Glob tool
+grep -rn '\bfind \b.*-name\|\bls \b.*\*' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
+  | grep -v '^Binary' | grep -v '# .*Glob\|Use Glob\|Glob tool' \
+  && printf "  ${CYN}hint${NC}: replace find/ls with Glob tool\n" || true
+# echo > / tee for writing → Write tool
+grep -rn 'echo .* >\|tee ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
+  | grep -v '^Binary' | grep -v '# .*Write tool\|Use Write' \
+  && printf "  ${CYN}hint${NC}: replace echo-redirect/tee with Write tool\n" || true
+# sed/awk for content editing → Edit tool
+grep -rn '\bsed \b\|\bawk \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
+  | grep -v '^Binary' | grep -v '# .*Edit tool\|Use Edit\|awk.*{print\|awk.*BEGIN' \
+  && printf "  ${CYN}hint${NC}: replace sed/awk text-substitution with Edit tool\n" || true
+printf "${GRN}✓${NC}: Check 17 scan complete\n"
+```
+
+After the Bash scan, apply model reasoning to each match: exclude cases where the shell command is genuinely necessary (e.g., `awk` for numeric aggregation, `find` in a pipeline with `xargs`, `grep -c` for counting). Flag only instances where the native tool is a direct drop-in replacement.
+
+Substitution table for findings:
+
+| Shell command                      | Preferred native tool | Severity |
+| ---------------------------------- | --------------------- | -------- |
+| `cat <file>`                       | Read tool             | medium   |
+| `grep`/`rg` for content search     | Grep tool             | medium   |
+| `find`/`ls` for file listing       | Glob tool             | medium   |
+| `echo … >` / `tee` to write a file | Write tool            | medium   |
+| `sed`/`awk` for text substitution  | Edit tool             | medium   |
+
+**Severity**: **medium** for each flagged instance. Fix: replace the Bash invocation with the native tool call and remove the command from `settings.json` allow list if it was added solely for this purpose.
+
+**Report only** — never auto-fix; some Bash invocations in example/illustration code blocks are intentional and should be preserved.
+
+**Check 18 — Stale settings.json allow entries**
+
+Cross-check every allow entry in `.claude/settings.json` against actual usage across all `.claude/` files. An allow entry with no corresponding usage anywhere in agents, skills, rules, hooks, or CLAUDE.md is a stale permission — it expands the attack surface without providing value.
+
+```bash
+YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
+if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then
+  printf "${YEL}⚠ SKIPPED${NC}: Check 18 — jq not available\n"
+elif [ ! -f ".claude/settings.json" ]; then
+  printf "${YEL}⚠ SKIPPED${NC}: Check 18 — .claude/settings.json not found\n"
+else
+  printf "=== Check 18: Stale allow entries ===\n"
+  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | while IFS= read -r entry; do
+    # Extract the command name from entries like "Bash(git status)" → "git status"
+    cmd=$(echo "$entry" | sed 's/^[A-Za-z]*(\(.*\))$/\1/' | sed 's/^"\(.*\)"$/\1/')
+    # Search across all .claude/ config files and hooks for any reference to the command
+    hits=$(grep -rl "$cmd" .claude/agents/ .claude/skills/ .claude/rules/ .claude/hooks/ .claude/CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$hits" -eq 0 ]; then
+      printf "${YEL}⚠ STALE allow${NC}: %s — no usage found in .claude/ files\n" "$entry"
+    fi
+  done
+  printf "${GRN}✓${NC}: Check 18 scan complete\n"
+fi
+```
+
+**Severity**: **low** per stale entry (no functional impact, but expands permission surface unnecessarily). Fix: remove the stale entry from `settings.json` (report only — `settings.json` is never auto-edited per audit policy).
+
+**Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p _audit/*)`) that do not appear verbatim in config files — they are exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file; entries where a partial substring match exists are not stale.
+
 ## Step 5: Aggregate and classify findings
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
@@ -644,7 +754,7 @@ Output a structured audit report before fixing anything:
 - Agents audited: N
 - Skills audited: N
 - Rules audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test, rules integrity, cross-file content duplication
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex integration smoke-test, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries
 
 ### Findings by Severity
 

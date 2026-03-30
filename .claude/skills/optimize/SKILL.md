@@ -107,7 +107,7 @@ Usage: /optimize plan <goal> [out.md]
 - Perf changes non-trivial code paths → `/review` for quality validation
 - Perf optimized code needs documentation updates → Step P6 auto-delegates to Codex
 - Campaign improves metric → `/review` for quality validation of kept commits
-- Campaign metric plateauing → `/survey` for SOTA comparison — maybe a fundamentally different approach is needed
+- Campaign metric plateauing → `/research` for SOTA comparison — maybe a fundamentally different approach is needed
 - Campaign kept commits accumulate technical debt → `/develop refactor` for structural cleanup with test safety net
 - Campaign exposes a performance ceiling → `/optimize perf` for a deeper profiling pass on the bottleneck
 - `/optimize perf` reveals a systemic throughput issue (not a single hot path) → `/optimize campaign <goal>` for a sustained multi-iteration improvement run
