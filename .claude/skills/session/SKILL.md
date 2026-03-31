@@ -33,6 +33,12 @@ Track open-loop ideas, deferred questions, and diverging threads that arise duri
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 ## Mode: resume (list pending items)
 
 ### Step 1: Resolve the memory directory

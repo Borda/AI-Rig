@@ -70,6 +70,12 @@ maintain colors manually — add new agent colors here when creating agents; thi
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
 
 ## Step 1: Parse and validate

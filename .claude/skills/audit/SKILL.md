@@ -39,6 +39,12 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase and mark status live so the user can see progress in real time:
 
 - Phase 1: setup + collect (Pre-flight + Steps 1–2) → mark in_progress when starting, completed when file list is ready

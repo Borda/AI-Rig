@@ -47,6 +47,12 @@ Examples:
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: immediately after Step 0 (mode is known), create TaskCreate entries for **all steps of the chosen mode's workflow** before doing any other work. This gives the user an instant view of the full plan. Mark each step in_progress when starting it, completed when done. On loop retry or scope change, create a new task or rename the existing one with TaskUpdate.
 
 **`plan` mode shortcut**: if mode is `plan`, read `modes/plan.md` and execute its steps directly — skip Steps 1–2 below and all shared steps (quality stack, Codex pre-pass, review loop). Exit after the plan mode's final output.

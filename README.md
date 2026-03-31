@@ -57,6 +57,7 @@ borda.ai-home/
 │   ├── skills/             # workflow skills (slash commands)
 │   ├── rules/              # per-topic coding and config standards (auto-loaded by Claude Code)
 │   └── hooks/              # UI extensions
+├── .mcp.json               # MCP server definitions (source of truth; synced to ~/.claude/.mcp.json)
 ├── .codex/                 # OpenAI Codex CLI
 │   ├── README.md           # full reference: agents, profiles, Claude integration
 │   ├── AGENTS.md           # global instructions and subagent spawn rules
@@ -386,6 +387,17 @@ Install the Codex plugin in Claude Code:
 Without the plugin: pre-pass review is skipped gracefully (skills check with `claude plugin list | grep 'codex@openai-codex'`); `/resolve`'s review-comment step is skipped (conflict resolution works with Claude alone).
 
 </details>
+
+## 🔌 MCP Servers
+
+Two optional MCP servers are defined in `.mcp.json` (synced to `~/.claude/.mcp.json` by `/sync apply`). Both are **disabled by default** — enable per-machine in `settings.local.json`.
+
+| Server        | Purpose                                                                                                                                   | Enable                                       |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| **openspace** | Skill auto-evolution — reduces token consumption on repeated tasks via `execute_task`, `search_skills`, `fix_skill`, `upload_skill` tools | add `"openspace"` to `enabledMcpjsonServers` |
+| **colab-mcp** | GPU workloads via Google Colab (used by `/optimize campaign --colab`)                                                                     | add `"colab-mcp"` to `enabledMcpjsonServers` |
+
+→ New-machine setup and full reference: [`.claude/README.md` → MCP Servers](.claude/README.md#-mcp-servers)
 
 ## 🔄 Config Sync
 

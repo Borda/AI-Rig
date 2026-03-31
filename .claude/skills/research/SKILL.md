@@ -32,6 +32,12 @@ EXTENSION:   300   # one +5 min extension if output file explains the delay
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, ai-researcher analysis, and report generation. Mark in_progress/completed throughout.
 
 ## Step 1: Understand the codebase context

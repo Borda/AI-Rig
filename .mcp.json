@@ -7,6 +7,14 @@
       ],
       "command": "uvx",
       "timeout": 30000
+    },
+    "openspace": {
+      "command": "~/.local/bin/openspace-mcp",
+      "env": {
+        "OPENSPACE_HOST_SKILL_DIRS": "/Users/jirka/.claude/skills",
+        "OPENSPACE_WORKSPACE": "/Users/jirka/.claude/openspace"
+      },
+      "toolTimeout": 600
     }
   }
 }

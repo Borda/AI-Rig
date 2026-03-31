@@ -35,6 +35,12 @@ When given bare comment text, skip straight to Codex dispatch (Step 12).
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 ## Step 1: Pre-flight
 
 ```bash

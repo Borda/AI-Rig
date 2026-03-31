@@ -30,6 +30,12 @@ Examples:
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps
 (context scan, clarifying questions, propose approaches, write spec, spec review,
 present + gate). Then print a session plan to the user:

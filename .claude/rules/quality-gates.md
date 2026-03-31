@@ -39,6 +39,15 @@ Before returning, self-review:
    from initial draft")
 4. After 2 passes, report the real score — never inflate; `/calibrate` catches bias
 
+## Pre-Handover Check
+
+Before presenting any result to the user, if confidence is below 0.9:
+
+- If the `codex` plugin is available, invoke `Skill("codex:adversarial-review", "--wait <gap>")` where `<gap>` names the specific low-confidence area — incorporate any issues raised before handing over
+- If Codex is unavailable, do not silently hand over — explicitly state the gap and confidence score so the user can decide whether to re-run
+
+Applies to: any analysis, recommendation, or report handed directly to the user.
+
 ## Link Verification
 
 **Never add a URL to any file without completing all three steps for that URL:**

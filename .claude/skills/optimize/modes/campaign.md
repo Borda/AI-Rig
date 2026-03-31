@@ -223,24 +223,29 @@ For `--colab` runs: the ideation agent (especially `ai-researcher`) may call `mc
 
 If the Agent tool is unavailable (nested subagent context), implement the change inline and construct the JSON result manually.
 
-#### Phase 2b — Codex ideation fallback (`--codex` only)
+#### Phase 2b — Codex co-pilot (`--codex` only)
 
-Run Phase 2b **only when `--codex` is active** AND the Claude specialist's result from Phase 2 was reverted (Phase 7 outcome: `reverted`) or a no-op (Phase 3 outcome: `no-op`). Claude-first, Codex as fallback — if Claude's change is kept, Codex is skipped for this iteration.
+Run Phase 2b on **every iteration** when `--codex` is active. Claude-first co-pilot — Codex always gets a second turn; keep whichever of the two proposals produces a better net metric improvement (or keep Claude's if Codex produces no additional improvement).
 
-When Phase 2b runs, `git revert` has already restored the working tree to the pre-Phase-2 state. Run Codex ideation on the clean tree:
+- If Claude's Phase 2 change was **kept**: Codex runs a second pass on the current state — building on Claude's work, trying an additional improvement.
+- If Claude's Phase 2 change was **reverted or no-op**: the working tree has already been restored to the pre-Phase-2 state; Codex gets a fresh attempt on the clean tree.
+
+Run Codex ideation:
 
 ```
 Agent(
   subagent_type="codex:codex-rescue",
-  prompt="Goal: <goal>. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Read context from .claude/state/optimize/<run-id>/context-<i>.md. Propose and implement ONE atomic optimization change most likely to improve the metric without breaking <guard_cmd>. Write your full reasoning to .claude/state/optimize/<run-id>/codex-ideation-<i>.md."
+  prompt="Goal: <goal>. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Read context from .claude/state/optimize/<run-id>/context-<i>.md. Starting state: Claude's change was [kept|reverted|no-op]. [If kept: try to improve further from the current state. If reverted/no-op: propose a fresh approach.] Propose and implement ONE atomic optimization change most likely to improve the metric without breaking <guard_cmd>. Write your full reasoning to .claude/state/optimize/<run-id>/codex-ideation-<i>.md."
 )
 ```
 
-- If Agent returns no file changes: append `status: codex-no-op` to JSONL with `ideation_source: "codex"`, continue loop
-- If files changed: proceed through Phases 3–7 exactly as for a Claude ideation — commit, verify metric, run guard, decide keep/revert
-- Set `"ideation_source": "codex"` in the Phase 8 JSONL record
+- If Claude's change was **kept** AND Codex proposes additional changes: proceed through Phases 3–7 exactly as for a standard ideation (commit, verify metric, run guard, decide keep/revert). Codex wins only if delta ≥ 0.1% AND guard passes.
+- If Claude's change was **kept** AND Codex produces no changes (no-op on top of Claude's kept change): append a `codex-no-op` record and continue — Claude's kept result stands.
+- If Claude's change was **reverted or no-op** AND Codex proposes changes: proceed through Phases 3–7 exactly as for a Claude ideation — commit, verify metric, run guard, decide keep/revert.
+- If Claude's change was **reverted or no-op** AND Codex returns no file changes: append `status: codex-no-op` to JSONL with `ideation_source: "codex"`, continue loop.
+- Set `"ideation_source": "codex"` in the Phase 8 JSONL record for any Codex-proposed change.
 
-**Stuck escalation with `--codex`**: when Phase 9 detects `STUCK_THRESHOLD` consecutive discards and `--codex` is active, reverse the ordering for the next 3 iterations — Codex ideates first (Phase 2b runs before the Claude specialist), Claude gets the fallback turn. This gives a genuinely different model's perspective when Claude's specialist is blocked.
+**Stuck escalation with `--codex`**: when Phase 9 detects `STUCK_THRESHOLD` consecutive discards and `--codex` is active, increase Codex ideation effort — add this hint to the Codex prompt for the next iteration: "Previous N attempts were all reverted. Focus on a fundamentally different approach (different file, different algorithm, different abstraction)."
 
 #### Phase 3 — Verify files changed
 
@@ -337,7 +342,7 @@ Write full report to `_outputs/$(date +%Y)/$(date +%m)/output-optimize-campaign-
 **Baseline**: <metric> = <baseline value>
 **Best**: <metric> = <best value> (<delta>% improvement)
 **Best commit**: <sha>
-**Codex ideation**: <N> iterations tried (when --codex active; omit line if --codex not used)
+**Codex co-pilot**: active (ran every iteration) — <N> Codex passes run (omit line if --codex not used)
 **Codex wins**: <N> Codex proposals kept vs <N> Claude proposals kept
 
 ### Experiment History

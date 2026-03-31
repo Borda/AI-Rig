@@ -28,6 +28,12 @@ If $ARGUMENTS is empty or too vague, use AskUserQuestion: "What exactly is faili
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: TaskCreate tasks for Gather, Hypothesise, Probe, Report; mark in_progress/completed as you go.
 
 ## Step 1: Parse symptom and scope
@@ -130,9 +136,10 @@ Stop when one hypothesis is confirmed with clear evidence, or all top-3 are rule
 **Ruled out**: <hypotheses eliminated and why>
 
 **Recommended next action**: <one of:>
-  - `/develop fix` — code regression confirmed
-  - `/manage` or `/audit fix` — config issue confirmed
-  - `/sync apply` — drift between project and home .claude/ confirmed
+  - `/develop fix` — code regression confirmed (application code only — NOT for `.claude/` changes)
+  - `/manage update <name> "<change directive>"` — `.claude/` agent/skill/rule content needs updating (use this, NOT `/develop`, for any proposed change to `.claude/`)
+  - `/audit fix` — structural/quality issue in `.claude/` config confirmed
+  - `/sync apply` — drift between project and home `.claude/` confirmed
   - Manual step: <exact command to run>
   - Further investigation needed: <what additional info would resolve it>
 ```

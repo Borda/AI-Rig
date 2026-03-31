@@ -8,6 +8,7 @@ Configuration for [Claude Code](https://claude.ai/code) (Anthropic's AI coding C
 <summary><strong>Contents</strong></summary>
 
 - [🔄 Config Sync](#-config-sync)
+- [🔌 MCP Servers](#-mcp-servers)
 - [🧩 Agents](#-agents)
   - [Reference table](#reference-table)
   - [Agent relationship map](#agent-relationship-map)
@@ -55,6 +56,48 @@ This repo is the **source of truth** for all `.claude/` configuration. Home (`~/
 Run `/sync` after editing any agent, skill, hook, or `settings.json` in this repo to propagate the change to home config.
 
 **Path rewriting:** `statusLine` and hook paths in home `settings.json` use `$HOME` prefix (`node $HOME/.claude/hooks/statusline.js`) — portable, avoids hardcoded usernames. The `/sync` skill applies this rewrite automatically.
+
+## 🔌 MCP Servers
+
+Two optional MCP servers are defined in `.mcp.json` at the repo root (synced to `~/.claude/.mcp.json` via `/sync apply`). Both are **disabled by default** and must be enabled per-machine.
+
+### openspace
+
+Connects [HKUDS/OpenSpace](https://github.com/HKUDS/OpenSpace) as a local MCP server. Exposes four tools — `execute_task`, `search_skills`, `fix_skill`, `upload_skill` — that let Claude delegate tasks to OpenSpace's skill-evolving runtime. Skills auto-improve through use; the benchmark reports ~46% fewer tokens on warm reruns.
+
+**New-machine setup:**
+
+```bash
+# 1. Install OpenSpace globally via pipx (Python ≥ 3.12 required)
+brew install pipx
+pipx install https://github.com/HKUDS/OpenSpace/archive/refs/heads/main.zip --python python3.12
+~/.local/bin/openspace-mcp --help   # smoke test
+
+# 2. Update the command path in .mcp.json if your username differs:
+#    "/Users/<you>/.local/bin/openspace-mcp"
+
+# 3. Make the server available globally (user-level config):
+cp .mcp.json ~/.claude/.mcp.json
+# Note: /sync apply syncs .claude/ contents only; .mcp.json at the repo root
+# must be copied manually. The project-level .mcp.json already loads when
+# Claude Code runs inside this repo.
+
+# 4. Enable for the current session
+# Add "openspace" to enabledMcpjsonServers in .claude/settings.local.json:
+#   "enabledMcpjsonServers": ["openspace"]
+
+# 5. Restart Claude Code — openspace tools appear in the MCP tool list
+```
+
+**Runtime data** lives at `~/.claude/openspace/` (SQLite lineage DB + execution recordings). Not version-controlled, not synced. Persists across sessions.
+
+**Conflict policy:** existing hand-crafted `SKILL.md` files in `~/.claude/skills/` are protected with `chmod 444` after setup — OpenSpace cannot overwrite them. Remove the protection with `chmod 644 ~/.claude/skills/<name>/SKILL.md` only when you intend to let OpenSpace evolve that skill.
+
+**Disable:** remove `"openspace"` from `enabledMcpjsonServers` in `settings.local.json`.
+
+### colab-mcp
+
+Used by `/optimize campaign --colab` for GPU workloads via Google Colab. See the `/optimize` skill examples for usage. Enable by adding `"colab-mcp"` to `enabledMcpjsonServers`.
 
 ## 🧩 Agents
 

@@ -30,6 +30,12 @@ If no mode is given, defaults to `notes`. `prepare` is the full release pipeline
 
 <workflow>
 
+**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+
+- status `completed` if the work is clearly done
+- status `deleted` if orphaned / no longer relevant
+- keep `in_progress` only if genuinely continuing
+
 **Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
 
 ## Mode Detection
@@ -88,11 +94,11 @@ Section order (fixed — never reorder): 🚀 Added → ⚠️ Breaking Changes 
 | **Deprecations**     | 🗑️ Deprecated          | Old API **still works** this release but is scheduled for removal — emits a warning, replacement exists                                                                              |
 | **Removals**         | ❌ Removed             | Previously deprecated API now gone (this is what becomes a Breaking Change in the next cycle)                                                                                        |
 | **Bug Fixes**        | 🔧 Fixed               | Correctness fixes                                                                                                                                                                    |
-| **Internal**         | *(omit)*               | Refactors, Continuous Integration (CI), deps — omit unless user-impacting                                                                                                            |
+| **Internal**         | *(omit)*               | Refactors, CI/tooling, deps, code cleanup, developer-facing housekeeping — omit unless directly user-impacting                                                                       |
 
 **Breaking vs Deprecated**: if the old call still works (even with a warning), it is **Deprecated** — never Breaking Changes. Breaking Changes are strictly for changes where upgrading causes immediate failures with no compatibility period.
 
-Filter out: merge commits, minor dep bumps, CI config, comment typos.
+Filter out: merge commits, minor dep bumps, CI/tooling config, comment typos, internal refactors, code cleanup, internal-only dependency bumps, developer-facing housekeeping, and any change with no user-visible impact. **Never include internal staff names or internal maintenance details in public-facing output** (release notes, changelogs, migration guides).
 Always include: any breaking change, any behavior change, any new API surface.
 
 ## Step 3: Explore interesting changes
@@ -252,6 +258,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 <notes>
 
 - Filter noise (CI config, dep bumps, typos) unless they are user-impacting
+- **Public-facing content policy**: release notes, changelogs, and migration guides must contain only user-visible changes, fixes, and improvements. Never include: internal staff names, internal maintenance details, internal refactors, CI/tooling-only changes, internal-only dependency bumps, code cleanup, or developer-facing housekeeping with no user-visible impact.
 - Public-facing output (release notes, changelogs, migration guides) is co-authored with `oss-shepherd` — follow its `<voice>` guidelines for human, direct tone
 - Follow-up chains:
   - Readiness check → `/release prepare <version>` runs a built-in audit first; use standalone `/release audit [version]` only when you want a readiness check without cutting the release

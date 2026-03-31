@@ -27,6 +27,7 @@ paths:
 - Fetch recent releases first (`gh release list --limit 5` + `gh release view`) to match formatting style
 - Deprecated and Removed are independent sections (not collapsed into Changed)
 - Each item: description + PR number(s) in parentheses, e.g. `(#263, #702)`
+- When an item includes a multiline code block: place `(#number)` at the end of the description text **before** the opening fence — never after the closing fence; trailing refs after fenced blocks are invisible in rendered output and get lost
 - Code examples in fenced blocks where helpful; tables for option comparisons
 
 ## Contributors Section
