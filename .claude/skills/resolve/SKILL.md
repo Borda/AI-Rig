@@ -170,7 +170,7 @@ Map each finding bullet to the action item schema:
 - `author`: the section owner agent (e.g., `sw-engineer` for Architecture, `qa-specialist` for Test Coverage)
 - `file` / `line`: extract from `file:line` notation in the finding bullet; leave blank if absent
 - `full_comment_text`: the full finding bullet text
-- All items carry the tag `[from-review]` as a prefix to `type` (e.g., `[from-review][req]`, `[from-review][suggest]`)
+- All items carry the tag `[report]` as a prefix to `type` (e.g., `[report][req]`, `[report][suggest]`)
 
 If PR# was found in the report header (`## Code Review: PR #<N>` or similar):
 
@@ -272,12 +272,14 @@ Find and read the latest review report (`ls -t _outputs/*/*/output-review-*.md 2
 - For each report finding, check if a GitHub action item already targets the same `file:line`:
   - **Match found** → drop the report item; annotate the GitHub item's summary with `(also flagged by /review)`
   - **Semantic match** (same file, no exact line, similar description) → drop the report item; same annotation
-  - **No match** → append the report finding to the action item list as a `[from-review]` item
+  - **No match** → append the report finding to the action item list as a `[report]` item
 
-**Result**: a single merged `ACTION_ITEMS` list. GitHub-sourced items appear first (maintaining `[req]`/`[suggest]` order), followed by surviving `[from-review]` items. Print a merge summary before the action item table:
+**Re-prefix GitHub items**: once deduplication is complete, add `[gh]` as a source prefix to all GitHub-sourced items — `[req]` → `[gh][req]`, `[suggest]` → `[gh][suggest]`, `[question]` → `[gh][question]`. This matches the `[report]` source prefix and makes source unambiguous in the merged table. This re-prefixing applies only in `pr + report` mode; single-source `pr` mode items remain plain `[req]`/`[suggest]`.
+
+**Result**: a single merged `ACTION_ITEMS` list. GitHub-sourced items appear first (maintaining `[gh][req]`/`[gh][suggest]` order), followed by surviving `[report]` items. Print a merge summary before the action item table:
 
 ```
-Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [from-review] items
+Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
 ```
 
 ## Step 4: Checkout PR branch
@@ -371,7 +373,7 @@ For each conflicted file (work in the current PR branch checkout):
 
 a. **Read** the file — examine `<<<<<<<`, `=======`, `>>>>>>>` markers and surrounding context
 
-b. **Determine resolution** using the contribution motivation (Step 3a) and drift (Step 6b):
+b. **Determine resolution** using the contribution motivation (Step 3b in pr mode, Step 3a in report mode) and drift (Step 6b):
 
 - Contributor's new functionality takes priority for files the PR owns (introduced or substantially rewrote)
 - Base's independent refactors and config updates are always preserved
@@ -593,7 +595,7 @@ for REVIEW_PASS in 1 2 3 4 5; do
 
   # Orchestrator pseudocode — Skill() is a Claude Code tool call, not a bash command; CODEX_OUT captures the tool output conceptually
   # Review phase
-  CODEX_OUT=$(Skill("codex:review", args="--wait") 2>&1)
+  CODEX_OUT=$(Agent(subagent_type="codex:codex-rescue", prompt="Review the current working-tree changes. End your output with ISSUES_FOUND=<number> where <number> is the count of distinct issues found. Read-only: do not apply fixes.") 2>&1)
   ISSUES_FOUND=$(echo "$CODEX_OUT" | grep -oE 'ISSUES_FOUND=[0-9]+' | tail -1 | cut -d= -f2)
   ISSUES_FOUND=${ISSUES_FOUND:-0}
   echo "$CODEX_OUT"
@@ -670,13 +672,13 @@ Mark the task `completed`, then print:
 - **Push verification** — always confirm via `gh pr view --json commits` that new commits appear on GitHub before reporting success; exit code 0 from `git push` is necessary but not sufficient (branch protection rules can silently reject)
 - **`gh pr merge` flags**: `--merge` preserves all commits and history; `--squash` collapses to one (loses individual action-item commits); never suggest `--rebase` (rewrites SHAs); default recommendation is `--merge` unless project convention says otherwise
 - **Escape hatch**: `git merge --abort` undoes the entire conflict state and returns the PR branch to pre-merge state; use `git push --force-with-lease` (never plain `--force`) if push is rejected after local amending
-- **5-iteration cap** on the Step 12 Codex review loop overrides the global 3-iteration default — skill-declared bounds take precedence (CLAUDE.md §3 "Safety breaks for loops")
 - **Codex agent health**: `Agent(subagent_type="codex:codex-rescue", ...)` calls are background agents subject to CLAUDE.md §8 health monitoring — 15-min hard cutoff, ⏱ marker on timeout; surface partial results via `tail -100` on the output file if the agent stalls
 - **Worktree cleanup safety net**: `SessionEnd` hook runs `git worktree prune` — catches any orphaned worktrees from prior sessions
 - **Review → resolve handoff**: `/review <PR#>` writes its consolidated findings to `_outputs/YYYY/MM/output-review-YYYY-MM-DD.md`. `/resolve` (no arguments) reads the most recent file from this path, extracts the PR number, and proceeds in **pr mode** — fetching live GitHub comments and implementing them. The review report serves as the PR number lookup only; the action item list comes from live GitHub comments. The review output file persists across turns.
 - **`report` mode**: use when you want to implement the `/review` agent findings directly, without going back to GitHub. Action items are derived from the report's structured sections; CRITICAL/HIGH become `[req]`, MEDIUM become `[suggest]`. If the report header contains a PR number, the PR branch is checked out first; otherwise the current branch is used. No GitHub API calls are made.
-- **`pr + report` mode**: use for a comprehensive one-pass resolve — live GitHub reviewer comments are the primary source; `/review` report findings are merged in and deduplicated. Items that appear in both sources are resolved once (GitHub comment version kept, annotated with "also flagged by /review"). Surviving report-only findings are appended as `[from-review]` items. This avoids running two separate resolve loops.
-- **`[from-review]` items**: commit messages for these items should attribute the finding to the agent, not a GitHub commenter: `[resolve #<id>] /review finding by <agent-name> (report: <report-path>):` — this distinguishes automated findings from human reviewer requests in git history.
+- **`pr + report` mode**: use for a comprehensive one-pass resolve — live GitHub reviewer comments are the primary source; `/review` report findings are merged in and deduplicated. Items that appear in both sources are resolved once (GitHub comment version kept, annotated with "also flagged by /review"). Surviving report-only findings are appended as `[report]` items; all GitHub items are re-prefixed with `[gh]` (`[gh][req]`, `[gh][suggest]`, `[gh][question]`) so both sources are symmetrically tagged. This avoids running two separate resolve loops.
+- **`[gh]` items** (pr + report mode only): commit messages use: `[resolve #<id>] @<reviewer> (gh):` — same as plain `[req]`/`[suggest]` in pr mode, plus the `(gh)` source annotation.
+- **`[report]` items**: commit messages for these items should attribute the finding to the agent, not a GitHub commenter: `[resolve #<id>] /review finding by <agent-name> (report: <report-path>):` — this distinguishes automated findings from human reviewer requests in git history.
 - **Sources block**: always printed after mode resolution and before any GitHub API calls — gives the user a clear "abort if wrong source" moment with zero cost.
 - Follow-up chains:
   - After push → `gh pr review <PR#> --approve` if satisfied; for substantial maintainer changes, comment on the PR explaining what was done and why — don't silently push to a contributor's fork

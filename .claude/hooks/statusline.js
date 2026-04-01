@@ -10,8 +10,8 @@
 //   1. Parse stdin JSON for model, workspace, context_window, cost, and session_id
 //   2. Resolve the per-session temp dir at /tmp/claude-state-<session_id>/ (written by task-log.js)
 //   3. Build Line 1: model name, project dir, billing (API key = yellow; OAuth = cyan plan name),
-//      context bar (10-char block bar; green <50% · yellow <75% · red ≥75% used), and 💬 badge
-//      while Claude is processing the current turn (marker exists in state/queue/)
+//      context bar (10-char block bar; green <50% · yellow <75% · red ≥75% used), and 💬 [N]
+//      badge while Claude is processing the current turn; N shown only when >1 messages queued
 //   4. Build Line 2 agent segment (🕵): read state/agents/*.json; skip codex:* agents and entries
 //      older than 10 min (safety net); group by type; color from agent frontmatter COLOR_MAP
 //   5. Build Line 2 codex segment (🤖): read state/codex/*.json; skip entries older than 30 min;
@@ -164,19 +164,21 @@ process.stdin.on("end", () => {
     // Line 1 — processing badge (💬) — shown while Claude is handling the current turn.
     // UserPromptSubmit writes a marker when Claude begins processing; Stop deletes it when done.
     // No age gate: markers are ephemeral (turn-scoped); SessionEnd cleans up any crash remnants.
+    // Shows 💬 N when N > 1 messages are queued (user sent more while Claude was busy).
     try {
       const queueDir = path.join(tmpDir, "queue");
       const queueFiles = fs.readdirSync(queueDir).filter((f) => f.endsWith(".json"));
-      const active = queueFiles.some((f) => {
+      const pending = queueFiles.filter((f) => {
         try {
           const q = JSON.parse(fs.readFileSync(path.join(queueDir, f), "utf8"));
           return !q.processed_at;
         } catch (_) {
           return false;
         }
-      });
-      if (active) {
-        parts.push(`\x1b[36m💬\x1b[0m`); // cyan — processing indicator
+      }).length;
+      if (pending > 0) {
+        const badge = pending > 1 ? `💬 ${pending}` : "💬";
+        parts.push(`\x1b[36m${badge}\x1b[0m`); // cyan — processing indicator
       }
     } catch (_) {}
 

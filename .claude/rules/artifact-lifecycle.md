@@ -58,13 +58,13 @@ The `SessionEnd` hook runs this cleanup automatically:
 # Delete completed skill runs older than 30 days
 find _calibrations _resolutions _audits _reviews _optimizations _developments \
   -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null \
-  | xargs -r dirname | xargs -r rm -rf
+  | xargs dirname | xargs rm -rf
 
 # Delete stale brainstorm specs and temp outputs older than 30 days
-find _brainstorming _analyse _outputs -type f -mtime +30 2>/dev/null | xargs -r rm -f
+find _brainstorming _analyse _outputs -type f -mtime +30 2>/dev/null | xargs rm -f
 
 # Prune empty year/month dirs in _outputs
-find _outputs -mindepth 1 -maxdepth 2 -type d -empty 2>/dev/null | xargs -r rmdir
+find _outputs -mindepth 1 -maxdepth 2 -type d -empty 2>/dev/null | xargs rmdir
 ```
 
 ## Settings.json allow entries

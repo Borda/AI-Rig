@@ -67,7 +67,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mypackage"
 version = "1.2.3"
-requires-python = ">=3.10"     # 3.9 EOL 2025-10; 3.10 adds match, | union, ParamSpec
+requires-python = ">=3.10"     # 3.9 reached EOL Oct 2025; 3.10 adds match, | union, ParamSpec
 dependencies = ["numpy>=1.24"]
 
 [project.optional-dependencies]
@@ -254,8 +254,6 @@ Only add when explicitly needed — avoid complexity creep:
 - Reimplementing existing functionality instead of extending or composing — if new code duplicates substantial logic from an existing class or function, it should inherit, delegate, or compose rather than reinvent
 - New class that mirrors an existing class's interface without inheriting from it — use subclassing with targeted method overrides rather than a parallel reimplementation
 - Magic numbers/strings without named constants
-- `import *` — always explicit imports
-- Relative imports outside of packages
 - Hardcoding version strings in multiple places (single source of truth in pyproject.toml)
 - Happy-path-only implementations that ignore empty inputs, boundary values, and error conditions
 - Over-enumerating concurrency observations: if a class has a thread-safety problem, report the root cause (missing lock / wrong synchronisation primitive) once, then list all affected methods as sub-items — not as independent top-level issues

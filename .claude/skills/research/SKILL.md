@@ -195,6 +195,10 @@ Produce a sequenced, dependency-ordered implementation plan from SOTA research f
 
 **Validation**: the file must contain a clear **Recommendation** section naming a specific method. If missing or ambiguous, stop and report: "Research output does not contain a clear method recommendation — run `/research <topic>` first, then pass the output path."
 
+Before spawning in Steps R2–R3, pre-compute the output path components:
+`YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)`
+`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
+
 ### Step R2: Codebase analysis
 
 Spawn a **solution-architect** agent with this prompt:
@@ -208,14 +212,14 @@ Analyze the current codebase to map the recommended method against existing code
 4. Flag conflicts: existing patterns that would need to change
 5. Estimate complexity per integration point (low/medium/high)
 
-Write your full analysis to `_outputs/$(date +%Y)/$(date +%m)/output-research-codebase-$BRANCH-$(date +%Y-%m-%d).md` using the Write tool.
+Write your full analysis to `_outputs/$YYYY/$MM/output-research-codebase-$BRANCH-$DATE.md` using the Write tool.
 Return ONLY a compact JSON envelope on your final line — nothing else after it:
 {"status":"done","integration_points":N,"conflicts":N,"file":"_outputs/YYYY/MM/output-research-codebase-<date>.md","confidence":0.N,"summary":"N integration points, N conflicts"}
 ```
 
 ### Step R3: Synthesize plan
 
-Read both files (research findings from R1 + codebase analysis from R2). Produce a phased plan and write it to `_outputs/$(date +%Y)/$(date +%m)/output-research-plan-$BRANCH-$(date +%Y-%m-%d).md`:
+Read both files (research findings from R1 + codebase analysis from R2). Produce a phased plan and write it to `_outputs/$YYYY/$MM/output-research-plan-$BRANCH-$DATE.md`:
 
 ```
 ## Implementation Roadmap: [method name]

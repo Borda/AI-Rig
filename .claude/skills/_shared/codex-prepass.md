@@ -13,7 +13,7 @@ git diff HEAD --stat
 **Run** when changes include new logic, functions, conditionals, error paths, or restructured code:
 
 ```
-Skill("codex:review", args="--wait")
+Agent(subagent_type="codex:codex-rescue", prompt="Review the current working-tree changes for bugs, missed edge cases, and inconsistencies. Read-only: do not apply fixes.")
 ```
 
 Treat any Codex findings as pre-flagged issues entering cycle 1. If Codex found nothing or was skipped, start cycle 1 from scratch.

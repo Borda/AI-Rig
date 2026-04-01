@@ -139,7 +139,7 @@ Decision:
 - Report missing **or** `DRIFT=true` → run full thread analysis first (Step 4), then continue.
   Note `[analysis refreshed — new activity since last report]` in the terminal summary.
 
-**Spawn oss-shepherd** with the report path, the item number, and this prompt:
+**Spawn oss-shepherd** with the report path, the item number, and this prompt (note: oss-shepherd runs in a forked context — all required context must be self-contained in the prompt):
 
 "Read the report at `<path>` for context. If the item is an issue or discussion, also fetch
 the full thread (`gh issue view <number> --comments` or equivalent GraphQL for discussions)

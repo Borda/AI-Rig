@@ -99,12 +99,12 @@ Common categories to consider:
 - **Sync drift** — project `.claude/` and home `~/.claude/` diverged; use `/sync` to check
 - **External service** — network unavailable, API rate-limited, or remote tool unreachable
 
-## Step 3b: Auxiliary review (optional)
+## Step 4: Auxiliary review (optional)
 
 If the `codex` plugin is available AND the top hypothesis has weak or circumstantial evidence (no direct confirming signal), request an adversarial review of the hypothesis set:
 
 ```
-Skill("codex:adversarial-review", "--wait hypothesis-quality")
+Agent(subagent_type="codex:codex-rescue", prompt="Adversarial review of hypothesis quality: [provide symptom, signals, and hypothesis table]. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only.")
 ```
 
 Provide Codex with: the symptom (Step 1 output), key signals gathered (Step 2), and the ranked hypothesis table (Step 3). Ask it to: identify any blindspots not in the table, challenge the top hypothesis, and surface alternative root causes.
@@ -119,7 +119,7 @@ Provide Codex with: the symptom (Step 1 output), key signals gathered (Step 2), 
 - `codex` plugin is not available (`claude plugin list` shows no `codex@openai-codex`)
 - User requested speed or `/investigate --fast` was specified
 
-## Step 4: Probe top hypotheses
+## Step 5: Probe top hypotheses
 
 Design one targeted test per hypothesis that gives a clear confirm/rule-out signal. Run independent probes in parallel.
 
@@ -143,7 +143,7 @@ For each probe result: mark **Confirmed**, **Ruled out**, or **Inconclusive**.
 
 Stop when one hypothesis is confirmed with clear evidence, or all top-3 are ruled out (expand to lower-ranked candidates).
 
-## Step 5: Report findings
+## Step 6: Report findings
 
 ```
 ## Investigation: <symptom>

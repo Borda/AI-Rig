@@ -3,7 +3,7 @@ name: distill
 description: One-time snapshot that extracts patterns from work history and accumulated lessons, then distills them into concrete improvements — new agent/skill suggestions, roster quality review, memory pruning, or consolidating lessons and feedback into rules and agent/skill updates.
 argument-hint: '[review | prune | lessons | "<recurring task description>"]'
 disable-model-invocation: true
-allowed-tools: Read, Edit, Bash, Glob, Write
+allowed-tools: Read, Edit, Bash, Glob, Write, AskUserQuestion
 effort: high
 ---
 

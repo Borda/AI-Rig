@@ -12,7 +12,7 @@ paths:
 
 ## Deprecation
 
-**Version check first**: before generating any deprecation code, run `python3 -c "import deprecate; print(deprecate.__version__)"`. If the installed version is newer than Claude's training snapshot (~v0.6), read `help(deprecate)` or the project CHANGELOG before generating code — do not assume Claude knows the latest API. Do **not** upgrade pyDeprecate in projects that are on an older version and working fine.
+**Version check first**: before generating any deprecation code, run `python3 -c "import deprecate; print(deprecate.__version__)"`. If the installed version differs from what Claude knows, read `help(deprecate)` or the project CHANGELOG before generating code — do not assume Claude knows the latest API. Do **not** upgrade pyDeprecate in projects that are on an older version and working fine.
 
 **Never use `warnings.warn` for deprecation** — use `pyDeprecate` exclusively. Import from `deprecate`, not `pyDeprecate`:
 
@@ -87,7 +87,7 @@ Claude's training data has a fixed cutoff — any library released or substantia
 **Before using any third-party library feature**:
 
 1. Check the installed version: `python3 -c "import <pkg>; print(<pkg>.__version__)"` or `pip show <pkg>`
-2. Compare against what Claude was trained on: Claude's cutoff is ~mid-2025; any library with active development after that may have new or changed APIs
+2. Compare against what Claude was trained on: Claude's cutoff is ~August 2025; any library with active development after that may have new or changed APIs
 3. If the installed version is newer than Claude's training snapshot: read the library's CHANGELOG or online docs first; `python3 -c "import <pkg>; help(<pkg>)"` is a fallback for offline inspection
 4. Use the API that matches the **installed** version — do not assume Claude's training knowledge is current
 

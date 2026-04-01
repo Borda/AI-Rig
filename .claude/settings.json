@@ -2,6 +2,9 @@
   "autoCompactThreshold": 0.7,
   "autoUpdatesChannel": "stable",
   "effortLevel": "high",
+  "enabledPlugins": {
+    "codex@openai-codex": true
+  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
@@ -79,7 +82,7 @@
         "hooks": [
           {
             "async": true,
-            "command": "find _calibrations _resolutions _audits _reviews _optimizations _developments -maxdepth 2 -name 'result.jsonl' -mtime +30 2>/dev/null | xargs -r dirname | xargs -r rm -rf; find _brainstorming _analyse _outputs -type f -mtime +30 2>/dev/null | xargs -r rm -f; find _outputs -mindepth 1 -maxdepth 2 -type d -empty 2>/dev/null | xargs -r rmdir",
+            "command": "find _calibrations _resolutions _audits _reviews _optimizations _developments -maxdepth 2 -name 'result.jsonl' -mtime +30 2>/dev/null | xargs dirname | xargs rm -rf; find _brainstorming _analyse _outputs -type f -mtime +30 2>/dev/null | xargs rm -f; find _outputs -mindepth 1 -maxdepth 2 -type d -empty 2>/dev/null | xargs rmdir",
             "type": "command"
           }
         ]
@@ -102,7 +105,8 @@
             "command": "rm -f .claude/state/session-context.md",
             "type": "command"
           }
-        ]
+        ],
+        "matcher": "startup"
       }
     ],
     "Stop": [
@@ -198,6 +202,7 @@
       "Glob(./**)",
       "Grep(./**)",
       "Read(/tmp/**)",
+      "Write(_calibrations/**)",
       "WebSearch",
       "Bash(curl:*)",
       "Bash(echo:*)",

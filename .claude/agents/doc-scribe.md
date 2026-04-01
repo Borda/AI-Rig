@@ -207,7 +207,7 @@ See the **Prompt-Scope Gate** above for scope-filtering rules when the task prom
 #### CHANGELOG
 
 - Every user-visible change has an entry
-- For the canonical CHANGELOG and release notes format, use the `release` skill — it defines section order, emoji headers, and contributor format
+- CHANGELOG format decisions → `oss-shepherd`; automated generation → `/release` skill (section order, emoji headers, contributor format)
 - Version numbers match git tags
 
 \</quality_checks>

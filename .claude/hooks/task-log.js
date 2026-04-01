@@ -37,13 +37,17 @@
 //     • Writes/increments a per-tool-type file in state/tools/ for the 🔧 display.
 //       Agent and Task tool calls are excluded here — they are tracked via the
 //       dedicated SubagentStart/Stop events to avoid double-counting.
+//     • For Agent() calls: writes state/pending/<tool_use_id>.json with subagent_type so
+//       SubagentStart can resolve agent_type when its payload omits it (Agent() vs Task()).
 //
 //   PostToolUse
 //     • Closes the codex session file when Skill(codex:*) or Agent(codex:*) completes,
 //       so the 🤖 counter drops back to zero immediately after the run finishes.
 //
 //   SubagentStart
-//     • Creates state/agents/<id>.json with the agent type, model, color (read from
+//     • Resolves agent_type from the state/pending/<tool_use_id>.json cache written by
+//       PreToolUse when the SubagentStart payload omits agent_type (Agent() tool spawns).
+//     • Creates state/agents/<id>.json with the resolved type, model, color (read from
 //       the agent's frontmatter), and start timestamp.  One file per agent ID means
 //       concurrent agents never overwrite each other (no read-modify-write race).
 //
@@ -66,9 +70,9 @@
 //
 //   Stop  (end of Claude's turn)
 //     • Clears state/tools/ so the 🔧 line resets between turns.
-//     • Removes the processing marker from state/queue/ so the 💬 badge disappears.
-//       Agents are intentionally NOT cleared here — subagents can still be running
-//       across turns and must stay visible on the status line.
+//     • Removes ALL processing markers from state/queue/ so the 💬 badge disappears.
+//       Clears all (not just oldest) to handle interrupted turns where Stop didn't fire
+//       and stale markers accumulated. Agents are intentionally NOT cleared here.
 //
 //   SessionEnd  (full session teardown)
 //     • Clears state/agents/, state/tools/, state/codex/, and state/queue/ completely.
@@ -83,6 +87,7 @@
 //   /tmp/claude-state-<session_id>/codex/<id>.json    — one file per active codex plugin session
 //   /tmp/claude-state-<session_id>/tools/<tool>.json  — one file per tool type, current turn only
 //   /tmp/claude-state-<session_id>/queue/<ts>.json    — one file per pending user input (cleared on Stop)
+//   /tmp/claude-state-<session_id>/pending/<id>.json  — one file per in-flight Agent() call (consumed by SubagentStart; cleaned at SessionEnd)
 //   .claude/state/session-context.md    — modified-files breadcrumb for compaction
 //
 // SESSION ISOLATION
@@ -124,6 +129,7 @@ process.stdin.on("end", () => {
     const toolsDir = path.join(tmpDir, "tools");
     const codexDir = path.join(tmpDir, "codex");
     const queueDir = path.join(tmpDir, "queue");
+    const pendingDir = path.join(tmpDir, "pending");
 
     const ts = new Date().toISOString();
 
@@ -133,6 +139,17 @@ process.stdin.on("end", () => {
         const desc = tool_input?.description || "";
         const prompt = (tool_input?.prompt || "").slice(0, 200);
         appendLog(logFile, logsDir, { ts, event: "started", tool: "Task", agent: agentType, desc, prompt });
+        // Cache subagent_type so SubagentStart can resolve agent_type when its payload omits it.
+        // Agent()-spawned agents may have null agent_type in SubagentStart; pending/ bridges the gap.
+        if (tool_name === "Agent" && tool_input?.subagent_type && data.tool_use_id) {
+          try {
+            fs.mkdirSync(pendingDir, { recursive: true });
+            fs.writeFileSync(
+              path.join(pendingDir, `${data.tool_use_id}.json`),
+              JSON.stringify({ type: tool_input.subagent_type, ts }),
+            );
+          } catch (_) {}
+        }
       } else if (tool_name === "Skill") {
         const skill = tool_input?.skill || "unknown";
         const args = tool_input?.args || "";
@@ -179,25 +196,42 @@ process.stdin.on("end", () => {
       try {
         fs.mkdirSync(agentsDir, { recursive: true });
         const id = agent_id || ts;
+        // Resolve agent type — Agent()-spawned agents may have null agent_type in the SubagentStart
+        // payload. Look up the pending cache written by PreToolUse to recover the true type.
+        let resolvedType = agent_type;
+        if (!resolvedType && data.tool_use_id) {
+          try {
+            const pendingFile = path.join(pendingDir, `${data.tool_use_id}.json`);
+            const p = JSON.parse(fs.readFileSync(pendingFile, "utf8"));
+            resolvedType = p.type;
+            fs.unlinkSync(pendingFile); // consume once — remainder cleaned at SessionEnd
+          } catch (_) {}
+        }
         // Try hook data first; fall back to reading model+color from agent frontmatter
-        const info = readAgentInfo(root, agent_type);
+        const info = readAgentInfo(root, resolvedType);
         const model = data.model || info.model;
         const color = info.color;
         fs.writeFileSync(
           path.join(agentsDir, `${id}.json`),
-          JSON.stringify({ id, type: agent_type || "unknown", model, color, since: ts }),
+          JSON.stringify({ id, type: resolvedType || "unknown", model, color, since: ts }),
         );
         // Also track codex:* agents in state/codex/ so statusline shows them in the 🤖 section
-        if (agent_type && agent_type.startsWith("codex:")) {
+        if (resolvedType && resolvedType.startsWith("codex:")) {
           fs.mkdirSync(codexDir, { recursive: true });
-          const shortName = agent_type.slice("codex:".length);
+          const shortName = resolvedType.slice("codex:".length);
           fs.writeFileSync(path.join(codexDir, `${id}.json`), JSON.stringify({ id, since: ts, type: shortName }));
         }
       } catch (_) {}
     } else if (hook_event_name === "SubagentStop") {
-      // Delete the per-agent file
+      // Delete the per-agent file; read stored type first for accurate completion logging
+      const id = agent_id || ts;
+      let loggedType = agent_type;
       try {
-        const id = agent_id || ts;
+        const agentFile = path.join(agentsDir, `${id}.json`);
+        const stored = JSON.parse(fs.readFileSync(agentFile, "utf8"));
+        if (stored.type && stored.type !== "unknown") loggedType = stored.type;
+      } catch (_) {}
+      try {
         fs.unlinkSync(path.join(agentsDir, `${id}.json`));
         // Also clean up codex tracking entry if this was a codex:* agent
         try {
@@ -210,7 +244,7 @@ process.stdin.on("end", () => {
         ts,
         event: "completed",
         tool: "Task",
-        agent: agent_type || "unknown",
+        agent: loggedType || "unknown",
         ...(lastMsg && { last_msg: lastMsg }),
       });
     } else if (hook_event_name === "PreCompact") {
@@ -286,12 +320,13 @@ process.stdin.on("end", () => {
         }
       } catch (_) {}
       try {
-        // Delete the oldest processing marker — it corresponds to the turn just completed.
-        // There should be exactly one marker per turn (dedup prevents doubles).
-        const qFiles = fs.readdirSync(queueDir).sort();
-        if (qFiles.length > 0) {
+        // Delete ALL processing markers on Stop — ensures the badge always clears when
+        // Claude goes idle. Deleting only the oldest left stale files when turns were
+        // interrupted (no Stop fired) or when rapid messages accumulated multiple markers.
+        const qFiles = fs.readdirSync(queueDir);
+        for (const f of qFiles) {
           try {
-            fs.unlinkSync(path.join(queueDir, qFiles[0]));
+            fs.unlinkSync(path.join(queueDir, f));
           } catch (_) {}
         }
       } catch (_) {}

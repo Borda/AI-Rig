@@ -74,7 +74,7 @@ Compute age in days for each file:
 NOW=$(date +%s)
 for f in "$MEMORY_DIR"/session-open-*.md; do
   [ -f "$f" ] || continue
-  MTIME=$(stat -f "%m" "$f" 2>/dev/null || stat -c "%Y" "$f" 2>/dev/null)
+  MTIME=$(if [ "$(uname -s)" = "Darwin" ]; then stat -f "%m" "$f"; else stat -c "%Y" "$f"; fi)
   AGE=$(( (NOW - MTIME) / 86400 ))
   echo "$AGE $f"
 done

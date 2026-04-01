@@ -242,7 +242,12 @@ Flag any drift between MEMORY.md, README.md, settings.json, and actual disk stat
 
 Three capability tiers define the expected model assignment for each agent:
 
-See `self-mentor` agent for the canonical tier-to-model mapping.
+| Tier                  | Model      | Example agents                                            |
+| --------------------- | ---------- | --------------------------------------------------------- |
+| Plan-gated            | `opusplan` | solution-architect, oss-shepherd, self-mentor             |
+| Implementation        | `opus`     | sw-engineer, qa-specialist, ai-researcher, perf-optimizer |
+| Diagnostics / writing | `sonnet`   | web-explorer, doc-scribe, data-steward                    |
+| High-freq diagnostics | `haiku`    | linting-expert, ci-guardian                               |
 
 Extract declared models with Bash:
 
@@ -510,17 +515,23 @@ Skip if codex (openai-codex) plugin is not installed.
 
 ```bash
 RED='\033[1;31m'; GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
-if ! claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'; then
+CODEX_LINE=$(claude plugin list 2>/dev/null | grep 'codex@openai-codex')
+if [ -z "$CODEX_LINE" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 13 — codex (openai-codex) plugin not installed\n"
+elif echo "$CODEX_LINE" | grep -q 'disabled'; then
+  printf "${YEL}⚠ WARN${NC}: Check 13 — codex (openai-codex) plugin installed but DISABLED\n"
+  printf "  Fix: run \`claude plugin enable codex@openai-codex\` then \`/reload-plugins\`\n"
+  printf "  Impact: codex:review, codex:adversarial-review, and codex:codex-rescue are unavailable\n"
 else
-  printf "${GRN}✓ OK${NC}: Check 13 — codex (openai-codex) plugin present\n"
+  printf "${GRN}✓ OK${NC}: Check 13 — codex (openai-codex) plugin present and enabled\n"
   printf "  Behavioral verification: run \`/calibrate skills\` to confirm codex:codex-rescue dispatches correctly.\n"
 fi
 ```
 
 - codex not installed → **skipped** (not a finding)
+- Plugin installed but **disabled** → **medium** (codex:review, codex:adversarial-review, codex:codex-rescue all unavailable; fix: `claude plugin enable codex@openai-codex` + `/reload-plugins`)
 - Plugin present but dispatches fail → **high** (verify with `/calibrate skills`)
-- Plugin present → logged as `✓ OK`, no finding
+- Plugin present and enabled → logged as `✓ OK`, no finding
 
 **Check 14 — Rules integrity and efficiency**
 
@@ -714,6 +725,34 @@ fi
 
 **Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p _audits/*)`) that do not appear verbatim in config files — they are exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file; entries where a partial substring match exists are not stale.
 
+**Check 19 — Calibration coverage gap**
+
+Every skill mode with deterministic, structured output is a candidate for calibration testing via `/calibrate skills`. This check detects two conditions: (a) unregistered calibratable modes that could be added to the domain table, and (b) stale domain table entries pointing to targets that no longer exist on disk.
+
+**Step 1 — Read the calibrate domain table**:
+
+Read `.claude/skills/calibrate/modes/skills.md` and extract the registered target list (entries under `### Domain table` that begin with `- `/\`). Build the set of registered targets.
+
+**Step 2 — Scan all skill modes on disk**:
+
+Use Glob (`skills/*/SKILL.md`, path `.claude/`) and Glob (`skills/*/modes/*.md`, path `.claude/`) to enumerate every skill and mode file. Extract mode names from `argument-hint:` frontmatter and `## Mode:` / `### Mode:` headings. Build an inventory of `{skill-name}` and `{skill-name}-{mode}` identifiers.
+
+**Step 3 — Validate registered targets exist on disk**:
+
+For each registered target in the domain table, verify the corresponding skill (and mode file if applicable) exists in the inventory. A registered target with no matching file on disk is a stale entry.
+
+→ Stale domain table entry: **medium** (calibrate will fail at runtime when it reads the missing target file)
+
+**Step 4 — Identify unregistered calibratable candidates** (using model reasoning):
+
+For each skill/mode NOT in the domain table and NOT in the `### Future Candidates` section of `calibrate/modes/skills.md`, apply the calibrability heuristic. A mode is calibratable when ALL three signals are present:
+
+1. **Deterministic structured output**: produces a findings list, completeness checklist, structured table, or machine-readable verdict — not free-form creative prose
+2. **Synthetic input feasible**: can be tested with a self-contained synthetic input that does not require external services (no GitHub API, no live git history, no running test suites, no interactive user input)
+3. **Ground truth constructable**: known issues or expected outputs can be injected and scored (recall/precision pattern applies)
+
+→ Unregistered mode matching all three signals: **low** (recommendation to add to `calibrate/modes/skills.md` domain table)
+
 ## Step 5: Aggregate and classify findings
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
@@ -739,7 +778,7 @@ Output a structured audit report before fixing anything:
 - Agents audited: N
 - Skills audited: N
 - Rules audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex plugin integration check, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex plugin integration check, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries, calibration coverage gap
 
 ### Findings by Severity
 
@@ -986,5 +1025,7 @@ Propose `/sync apply` to the user after upgrade completes — do not auto-execut
   - Audit Check 12 found description overlap → `/calibrate routing` to verify behavioral routing impact; update descriptions for confused pairs based on the routing report
   - Audit surfaced upgrade proposals → `/audit upgrade` to apply with correctness checks and calibrate A/B evidence for capability changes
   - `/audit upgrade` reverted a capability change → run `/calibrate <agent> full` for deeper signal (N=10 vs N=3 used in upgrade mode)
+  - Audit Check 19 found unregistered calibratable mode → update `calibrate/modes/skills.md` domain table and run `/calibrate skills` to verify the new target works
+  - Audit Check 19 found stale domain table entry → remove it from `calibrate/modes/skills.md`
 
 </notes>

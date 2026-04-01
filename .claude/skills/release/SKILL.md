@@ -143,7 +143,7 @@ Omit any section that has no content.
 
 For `notes` mode: first produce a CHANGELOG-format classification (Step 2 output in
 changelog structure). Then derive the user-facing notes FROM that classification,
-expanding interesting features with implementation insights from Step 2.5.
+expanding interesting features with implementation insights from Step 3.
 The changelog classification is a working document — do not write it to disk in
 `notes` mode, but use it as the structural backbone for the notes.
 

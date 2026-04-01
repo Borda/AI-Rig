@@ -1,7 +1,7 @@
 ---
 name: brainstorm
-description: Interactive design-first skill for turning fuzzy ideas into approved specs. Asks clarifying questions one at a time, proposes 2–3 approaches with trade-offs, writes a structured spec to _brainstorming/, runs a self-mentor review for gaps and ambiguity, then gates on explicit user approval before any implementation begins.
-argument-hint: <fuzzy idea or feature goal> | breakdown <spec-file>
+description: Iterative brainstorming skill for turning fuzzy ideas into approved tree documents. Diverges into branches, deepens and prunes them over many rounds, saves a tree doc. Run breakdown on the tree to distill it into a spec via guided questions.
+argument-hint: <fuzzy idea or feature goal> | breakdown <tree-or-spec-file>
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Agent, TaskCreate, TaskUpdate, AskUserQuestion
 effort: high
@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Turn an unformed idea into a concrete, approved spec before any code is written. The session is conversational — clarifying questions narrow the problem; a proposal crystallises the solution; a written spec locks in scope. `self-mentor` reviews the spec for gaps and ambiguity before you see it. Nothing advances to implementation until you give explicit approval.
+Turn an unformed idea into a branching exploration tree, then distill that tree into a spec. Idea mode is pure divergence — you grow a tree of directions, deepen promising branches, prune others, and save the result. Nothing is forced to converge prematurely. Run `breakdown` on the tree when ready: it asks distillation questions and writes the spec section-by-section.
 
 </objective>
 
@@ -25,7 +25,7 @@ Examples:
 
 - `/brainstorm I want users to be able to export results as CSV`
 
-- **`breakdown <spec-file>`** — breakdown mode: read an already-approved spec (must be a path to a `_brainstorming/*.md` file), ask for clarification on blocking questions before generating the plan, then produce a structured, ordered action plan with discrete tasks each tagged with a ready-to-run invocation. Skips Steps 1–6 entirely.
+- **`breakdown <tree-or-spec-file>`** — breakdown mode: read an already-saved tree (`Status: tree`) or spec (`Status: draft`). For a tree: ask distillation questions and write the spec section-by-section. For a spec: scan for blocking open questions then generate an ordered action plan. Skips Steps 1–6 entirely.
 
 </inputs>
 
@@ -38,11 +38,11 @@ Examples:
 - keep `in_progress` only if genuinely continuing
 
 **Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps
-(context scan, clarifying questions, propose approaches, write spec, spec review,
+(context scan, clarifying questions, build tree, save tree, tree review,
 present + gate). Then print a session plan to the user:
 
 > **Brainstorming: \<goal from $ARGUMENTS>**
-> Plan: context scan → clarifying questions → propose approaches → write spec → review → approval gate.
+> Plan: context scan → clarifying questions → build tree → save tree doc → review → approval gate.
 > Starting with a codebase scan...
 
 ## Step 1: Context scan
@@ -63,30 +63,226 @@ Rules:
 
 - Ask **one question at a time** — call `AskUserQuestion` once, wait for the answer, then decide whether another question is needed
 - Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so the user can reply with just "a", "b", or "c"; mark the option you recommend with **★** (e.g., `a) Option A ★ recommended`) so the user has a sensible default
-- Maximum **3 questions** — after 3, call `AskUserQuestion` with two framings and ask which is closer
+- Maximum **10 questions** — after 10, proceed to Step 3 with what you have
+- After question 3 (and on every subsequent question), always include an **escape hatch option**: `x) Enough questions — let's start building the tree` so the user can move on if the problem is already well-defined
 - No solution proposals during this step — only gather information
+- After each answer, briefly restate the updated problem understanding in 1–2 sentences before asking the next question or proceeding — a simple acknowledgment ("Got it", "Understood") does not count; the restatement must name what is now known about the problem (e.g., "So the goal is X and the constraint is Y.")
 
-**Gate**: do not proceed to Step 3 until the problem is well-defined.
+**Gate**: do not proceed to Step 3 until the problem is well-defined or the maximum question count is reached. Aim for at least 3 questions to build enough context for a rich tree.
 
-## Step 3: Propose approaches
+## Step 3: Build the tree
 
-Present 2–3 candidate approaches based on the clarified problem in your text response. Write the full approach table — including Name, Summary, Pros, Cons, and When to prefer for every option — **before** making any tool call. Only after all approaches are written in prose, call `AskUserQuestion` to ask the user to pick one:
+This step is the full creative session — grow, deepen, and prune a tree of directions. The tree is the output; convergence happens later in `breakdown`. Runs as a loop of **tree operations**.
 
-For each approach in the text include:
+### Seeding the tree
 
-- **Name**: short label (e.g. "Lazy cache", "Eager precompute")
-- **Summary**: one sentence
-- **Pros**: 1–3 bullets
-- **Cons**: 1–3 bullets
-- **When to prefer**: one sentence
+Present **3–5 initial branches** (top-level directions). For each include:
 
-After presenting, call `AskUserQuestion` with the lettered options so the user can reply with a single letter. Do not proceed until a direction is chosen.
+- **Name**: short label
+- **Core idea**: 2–3 sentences — what makes this branch distinct
+- **Tension it resolves**: which aspect of the problem does this branch prioritise?
+- **What it trades away**: what gets harder or is left unsolved?
 
-## Step 4: Write spec
+After presenting all initial branches, call `AskUserQuestion` with one letter per branch (labelled by name), plus:
 
-Write to `_brainstorming/YYYY-MM-DD-<slug>.md` using the Write tool (creates the directory if absent):
+- f) None of these — describe what you're thinking
+- g) Add more initial branches — I want more angles
 
-Use this structure:
+On **(f)**: ask what direction the user is thinking, then generate 2–3 new branches incorporating it.
+On **(g)**: generate 2–3 fresh branches with genuinely different framing.
+
+User may select **1–3 branches** to mark as initial focus. All other branches start as [open] too — they are not closed yet, just not the initial focus.
+
+### Tree operations loop
+
+After seeding, enter the operations loop. Each iteration:
+
+1. Show the current **tree summary** (see format below)
+2. Call `AskUserQuestion` with the available operations:
+   - a) Deepen a branch — add sub-branches to [branch name]
+   - b) Close a branch — mark [branch name] as closed with a reason
+   - c) Merge two branches — combine [branch name] + [branch name]
+   - d) Add a new top-level branch — explore a different angle
+   - e) Reopen a closed branch — reconsider [branch name]
+   - f) Ready — save tree and proceed
+
+**Operations**:
+
+- **Deepen**: generate 2–3 sub-branches under the named branch. Sub-branches use the same format as top-level branches. Ask which one(s) to focus on.
+- **Close**: mark the named branch as `[closed — <user's reason>]`. Add a one-line entry to the pruning log. Ask if the reason captures it correctly before proceeding.
+- **Merge**: synthesise two named branches into a single hybrid branch; present the merged description; mark the original two as `[merged into <new name>]` immediately in the tree summary shown after the merge, and in all subsequent tree summaries.
+- **Add**: generate 1–2 fresh top-level branches with directions not yet represented in the tree.
+- **Reopen**: change `[closed]` to `[open]` on the named branch; note the re-opening reason.
+- **Ready**: exit the loop, proceed to Step 4.
+
+### Tree summary format
+
+Always show the tree summary **before** calling `AskUserQuestion`:
+
+```
+Tree: <title>
+├─ Branch 1: <name> [open]
+│  ├─ 1a: <name> [open]
+│  └─ 1b: <name> [closed — <reason>]
+├─ Branch 2: <name> [closed — <reason>]
+└─ Branch 3: <name> [open]
+Open: N | Closed: N | Merged: N
+```
+
+Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches indented one level. Closed branches show their reason inline.
+
+### Loop bounds
+
+- Maximum **10 operations** (a round = one operation)
+- After 10: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
+- **Gate**: do not proceed to Step 4 until the user selects "Ready" or the max is reached with at least 2 closed branches; if fewer than 2 branches are closed, prompt: "The tree has few closed branches — consider closing 1–2 that are clearly not the right direction before saving."
+
+## Step 4: Save tree
+
+Assemble the tree state and write to `_brainstorming/YYYY-MM-DD-<slug>.md` using the Write tool (creates the directory if absent). The slug is derived from the title (kebab-case, max 5 words).
+
+```markdown
+# <title>
+
+**Date**: YYYY-MM-DD
+**Status**: tree
+
+## Root idea
+
+[The original user input and the refined problem understanding built up during Step 2 — 2–3 sentences.]
+
+## Branches
+
+[For each branch in the tree, using this structure:]
+
+### Branch N: <name> [open | closed — <reason> | merged into <name>]
+
+**Core idea**: ...
+**Tension it resolves**: ...
+**What it trades away**: ...
+
+[Sub-branches nested as H4 headings if present:]
+
+#### N.a: <sub-branch name> [open | closed — <reason>]
+
+**Core idea**: ...
+
+## Pruning log
+
+- Branch N closed: <reason>
+- Sub-branch N.a closed: <reason>
+[One bullet per closed or merged branch, in the order they were closed.]
+
+## Open threads
+
+[Unanswered questions, untested combinations, and constraints that surfaced during Step 3. Each thread is a one-line bullet.]
+```
+
+**Gate**: do not proceed to Step 5 until the file is written and the path is confirmed.
+
+## Step 5: Tree review
+
+Before spawning, pre-compute the output path:
+`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
+`OUTPUT_PATH="_outputs/$(date +%Y)/$(date +%m)/output-brainstorm-review-$BRANCH-$(date +%Y-%m-%d).md"`
+
+Spawn **self-mentor** with a tree-focused prompt (inject the pre-computed `$OUTPUT_PATH` in place of `<output-path>`):
+
+```
+Read _brainstorming/<tree-file>. Audit for tree quality only (do NOT audit `.claude/` config files — scope is the brainstorm tree only):
+- Root idea: is the original problem clearly stated in the "Root idea" section?
+- Branch depth: do open branches have enough detail (not just a name)?
+- Closure quality: are closure reasons substantive (not just "not chosen" or "skipped")?
+- Coverage: are there obvious high-level directions completely missing from the tree?
+- Open threads: are there unresolved questions worth capturing?
+Write your full findings to <output-path> using the Write tool.
+Return ONLY a compact JSON envelope: {"status":"done","findings":N,"file":"<path>","confidence":0.N,"summary":"<one-line>"}
+```
+
+**Passive health monitoring**: the Agent tool is synchronous — Claude awaits self-mentor's response natively. If self-mentor does not return within 15 min, surface any partial output already written to `_outputs/` with a ⏱ marker and continue to Step 6 with an incomplete review noted.
+
+If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles). After 2 cycles with remaining findings, surface unresolved issues to the user and proceed to Step 6 anyway.
+
+**Gate**: do not proceed to Step 6 until `findings == 0` or 2 revision cycles are exhausted.
+
+## Step 6: Present and gate
+
+Show the tree file path and a compact tree summary (same format as Step 3). Then call `AskUserQuestion` with:
+
+- (a) Tree looks good — ready to distill ★ recommended
+- (b) Needs more exploration — [describe what to add or close]
+- (c) Start over — back to clarifying questions
+
+**Gate**: do not exit until the user approves. On (b): return to Step 3 with the existing tree state — add the requested branches or close the specified ones, then loop back to Step 5. On (c): loop back to Step 2. (Max 3 approval cycles — after 3 (b) responses with no convergence, surface unresolved concerns to user and stop.)
+
+On approval, suggest: `/brainstorm breakdown _brainstorming/<file>` to distill the tree into a spec.
+
+## Mode: Breakdown
+
+Triggered when `$ARGUMENTS` starts with `breakdown ` followed by a file path.
+
+Read the file at the given path. Check the `**Status**:` field:
+
+- `Status: tree` → **Distillation mode** (Steps D1–D4 below)
+- `Status: draft` → **Action plan mode** (Steps B1–B3 below)
+
+______________________________________________________________________
+
+### Distillation mode (Status: tree)
+
+#### Step D1: Present tree summary
+
+Read all open branches from the file. Show the compact tree summary (same format as Step 3) and a one-sentence description of each open branch. State the count of open and closed branches.
+
+#### Step D2: Distillation questions
+
+Ask up to **5 distillation questions**, one at a time via `AskUserQuestion`, to narrow the open branches into a single direction:
+
+Start with these (adapt based on the tree content):
+
+1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as a lettered option
+2. "Should any of the remaining open branches be combined with the chosen direction, or are they separate concerns?"
+3. "What is the single most important success criterion for this idea?"
+   4–5. Ask additional questions based on gaps in the open threads section or unresolved tensions between branches
+
+After the questions, briefly restate the distilled direction in 2–3 sentences — the synthesis of what was just decided.
+
+#### Step D3: Write spec
+
+Build the spec section by section, showing each section inline and asking for feedback before moving on. Write nothing to disk until the full draft is assembled.
+
+For each section, write it inline then call `AskUserQuestion`:
+
+- a) Looks good — next section ★ recommended
+- b) Change this — [describe what to revise]
+- c) This section sparks a new thought — [add context]
+
+On **(b)**: revise inline, show updated version, re-offer. Max 2 revisions per section.
+On **(c)**: incorporate context, revise if needed, re-offer.
+
+**Sections**:
+
+**Section 1 — Goal** (1 paragraph: what problem this solves and for whom)
+Derive from the distilled direction from D2. Reference the open branches that fed into it.
+
+**Section 2 — Non-goals** (explicit list)
+Derive from closed branches and the open branches not chosen in D2.
+
+**Section 3 — Proposed design** (the distilled direction with enough detail to implement)
+Break into sub-points. Describe *what*, not *how*. If the direction is a merge of multiple open branches, name each part.
+
+**Section 4 — Open questions** (unresolved decisions)
+Seed from the "Open threads" section of the tree. For each, note blocking vs non-blocking and a recommended default if possible.
+
+**Section 5 — Success criteria** (observable, testable outcomes)
+Include the criterion identified in D2 question 3. Each criterion must be concrete enough to write a pass/fail check.
+
+**Section 6 — Exploration notes** (summary of closed branches and why)
+Draw from the Pruning log in the tree. This is context for future readers — what was considered and rejected.
+
+**Gate**: do not write to disk until all 6 sections are drafted and individually approved.
+
+After all sections approved: write to `_brainstorming/YYYY-MM-DD-<slug>.md` (new file; use the tree's slug with a `-spec` suffix if writing alongside the tree):
 
 ```markdown
 # <title>
@@ -95,81 +291,50 @@ Use this structure:
 **Status**: draft
 
 ## Goal
-[One paragraph: what problem this solves and for whom]
+[Section 1]
 
 ## Non-goals
-[Explicit list of what this does NOT cover]
+[Section 2]
 
 ## Proposed design
-[The chosen approach from Step 3, with enough detail to implement]
+[Section 3]
 
 ## Open questions
-[Unresolved decisions that need answers before or during implementation]
+[Section 4]
 
 ## Success criteria
-[Observable, testable outcomes that confirm the design is working]
+[Section 5]
+
+## Exploration notes
+[Section 6]
 ```
 
-Describe *what*, not *how*. No implementation details.
+#### Step D4: Suggest next step
 
-## Step 5: Spec review
+After writing the spec, suggest:
 
-Before spawning, pre-compute the output path:
-`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
-`OUTPUT_PATH="_outputs/$(date +%Y)/$(date +%m)/output-brainstorm-review-$BRANCH-$(date +%Y-%m-%d).md"`
+- **Spec targets `.claude/` config**: `/manage update <name> _brainstorming/<spec-file>` or `/manage create <type> <name> "description"`
+- **Spec targets application code or mixed changes**: `/brainstorm breakdown _brainstorming/<spec-file>` to generate the action plan
 
-Spawn **self-mentor** with a spec-focused prompt scoped to spec quality only — not a full config audit (inject the pre-computed `$OUTPUT_PATH` into the prompt in place of `<output-path>`):
+______________________________________________________________________
 
-```
-Read _brainstorming/<spec-file>. Audit for spec quality only:
-- Completeness: are all five sections present and non-empty?
-- Ambiguity: any section vague enough that two implementers would build different things?
-- Scope creep: does the Proposed design exceed the stated Goal?
-- Placeholders: any "[TBD]" or "[TODO]" that must be filled before approval?
-Write your full findings to <output-path> using the Write tool.
-Return ONLY a compact JSON envelope: {"status":"done","findings":N,"file":"<path>","confidence":0.N,"summary":"<one-line>"}
-```
+### Action plan mode (Status: draft)
 
-**Passive health monitoring**: the Agent tool is synchronous — Claude awaits self-mentor's response natively. If self-mentor does not return within 15 min (Claude Code's internal timeout), surface any partial output already written to `_outputs/` with a ⏱ marker and continue to Step 6 with an incomplete review noted.
+#### Step B1: Scan for blocking open questions
 
-If `findings > 0`: revise the spec to address the findings and loop back to Step 5 (max 2 revision cycles total). After 2 cycles with remaining findings, surface unresolved issues to the user and proceed to Step 6 anyway.
+Read the spec's "Open questions" section. For each question, determine whether it is **blocking** (no recommended option stated and the answer is genuinely unknown) or **non-blocking** (spec states a recommended option or the answer is inferable).
 
-## Step 6: Present and gate
+For each blocking question: call `AskUserQuestion` — one at a time, in order. Non-blocking questions go into the plan table footnote.
 
-Show the spec path and a one-paragraph summary of the spec. Then call `AskUserQuestion` with:
+#### Step B2: Generate the action plan
 
-- (a) Approved — proceed to planning
-- (b) Needs changes — describe what to revise
-- (c) Start over — back to clarifying questions
-
-**Gate**: do not exit until the user approves. On (b): revise the spec and loop back to Step 5. On (c): loop back to Step 2. (max 3 approval cycles — after 3 (b) rejection responses with no convergence, surface unresolved concerns to user and stop rather than looping again.)
-
-On approval suggest the natural next step based on what the spec targets:
-
-- **Spec targets `.claude/` config** (an agent, skill, or rule described in `agents/`, `skills/`, or `rules/`): suggest `/manage update <name> _brainstorming/<file>` to apply the spec inline, or `/manage create <type> <name> "description"` for a new entity.
-- **Spec targets application code, system setup, or mixed changes**: suggest `/brainstorm breakdown _brainstorming/<file>` to generate a structured action plan with per-task skill/command tags. Use `/develop plan _brainstorming/<file>` only if the spec is purely a code implementation task with no setup or config steps.
-
-## Mode: Breakdown
-
-Triggered when `$ARGUMENTS` starts with `breakdown ` followed by a file path.
-
-Read the spec file at the given path. Then:
-
-### Step B1: Scan for blocking open questions
-
-Read the spec's "Open questions" section. For each question, determine whether it is **blocking** (no recommended option stated and the answer is genuinely unknown — two implementers would make different assumptions) or **non-blocking** (spec already states a recommended option or the answer is inferable from context).
-
-For each blocking question found: call `AskUserQuestion` with the question as a multiple-choice prompt — one question at a time, in order — before proceeding to Step B2. Non-blocking questions must not trigger a question; list them in the plan table footnote instead.
-
-### Step B2: Generate the action plan
-
-1. Parse the spec into discrete action items from the "Proposed design" and "Success criteria" sections
-2. For each action item, classify and tag with the recommended downstream skill or command, and write a ready-to-run invocation string — not just a label:
-   - `.claude/` config change (agent/skill/rule) → full `/manage create <type> <name> "description"` or `/manage update <name> <spec-file>` string
-   - System install or shell setup → full shell command (e.g., `python3 -m venv ~/tools/my-venv && pip install package`)
-   - Application code change → full `/develop feature "<goal>"` or `/develop fix "<symptom>"` string
-   - Documentation → full `/develop feature "<doc goal>" --mode doc` string
-   - Verification/testing → full `/develop feature "<test goal>"` string or manual check command
+1. Parse the spec into discrete action items from "Proposed design" and "Success criteria"
+2. For each item, write a ready-to-run invocation:
+   - `.claude/` config change → `/manage create <type> <name> "description"` or `/manage update <name> <spec-file>`
+   - System install or shell setup → full shell command
+   - Application code change → `/develop feature "<goal>"` or `/develop fix "<symptom>"`
+   - Documentation → `/develop feature "<doc goal>" --mode doc`
+   - Verification/testing → `/develop feature "<test goal>"` or manual check command
 3. Output an ordered task table:
 
 ```
@@ -179,24 +344,22 @@ Spec: <file path>
 
 | # | Task | Invocation |
 |---|------|------------|
-| 1 | Install venv | `bash` — `python3 -m venv ~/tools/my-venv && pip install package` |
-| 2 | Add `.mcp.json` entry | `/manage update .mcp.json "add my-server config"` |
-| … | … | … |
+| 1 | ... | `...` |
 
 ### Non-blocking open questions (resolve during implementation)
-- [Any non-blocking open questions from the spec, or "None" if absent]
+- [list, or "None"]
 ```
 
-### Step B3: Post-plan prompt
+#### Step B3: Post-plan prompt
 
-After presenting the plan table, call `AskUserQuestion` with:
+Call `AskUserQuestion` with:
 
 - (a) Start task 1 now ★ recommended
 - (b) Copy plan and pass to another agent
 - (c) Revise spec first
 
-On **(a)**: proceed immediately with the invocation string from task 1 — run the bash command, invoke the skill, or call the tool as specified.
-On **(b)**: output the full plan table as a clean markdown block (no prose wrapper) suitable for pasting into another agent's prompt, then stop.
+On **(a)**: proceed immediately with the invocation from task 1.
+On **(b)**: output the plan table as a clean markdown block, then stop.
 On **(c)**: stop and tell the user to revise the spec and re-run `/brainstorm breakdown <spec>`.
 
 End with a `## Confidence` block per CLAUDE.md output standards.
@@ -205,11 +368,14 @@ End with a `## Confidence` block per CLAUDE.md output standards.
 
 <notes>
 
-- **No code at any point** — this skill produces a spec document only; implementation is out of scope
+- **No code at any point** — this skill produces tree documents and specs only; implementation is out of scope
 - **`disable-model-invocation: true`** — the skill is conversational; the parent model drives all steps turn by turn
-- **self-mentor scope in Step 5** — the spawn prompt must constrain scope to spec quality explicitly; do not let it audit `.claude/` config files
-- **\_brainstorming/ directory** — created if absent; spec filenames use `YYYY-MM-DD-<kebab-slug>.md` format
-- **Breakdown heading convention**: Breakdown mode uses H3 headings with `B` prefix (e.g., `### B1: ...`) to distinguish breakdown sub-steps from main workflow steps (H2, `## Step N:`).
-- **Follow-up**: on spec approval → if targeting `.claude/` config (agent/skill/rule): `/manage update <name> <spec-file>` (type auto-detected) or `/manage create <type> <name> "desc"`; for mixed or system-level specs: `/brainstorm breakdown _brainstorming/<file>` to generate a per-task action plan; for pure code implementation: `/develop plan <spec-file>` then `/develop feature`
+- **self-mentor scope in Step 5** — the spawn prompt must constrain scope to tree quality explicitly; do not let it audit `.claude/` config files
+- **\_brainstorming/ directory** — created if absent; filenames use `YYYY-MM-DD-<kebab-slug>.md` format; tree files use the base slug; spec files append `-spec` to the slug to avoid collision
+- **Status field**: tree documents use `Status: tree`; spec documents use `Status: draft`; breakdown auto-detects which path to take
+- **Breakdown heading convention**: distillation mode uses D-prefix steps (D1–D4); action plan mode uses B-prefix steps (B1–B3)
+- **Exploration notes in spec**: Section 6 is derived from the tree's Pruning log — it is intentional context for future readers and should not be removed by self-mentor review
+- **Interaction budget**: idea mode — max 10 questions + 10 tree operations + 3 approval cycles ≈ 23 worst case; breakdown distillation — max 5 questions + 6 section drafts ≈ 11; typical sessions use ~8–15 total AskUserQuestion calls across both
+- **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown _brainstorming/<spec-file>` for the action plan
 
 </notes>

@@ -43,7 +43,7 @@ Before returning, self-review:
 
 Before presenting any result to the user, if confidence is below 0.9:
 
-- If the `codex` plugin is available, invoke `Skill("codex:adversarial-review", "--wait <gap>")` where `<gap>` names the specific low-confidence area — incorporate any issues raised before handing over
+- If the `codex` plugin is available, spawn `Agent(subagent_type="codex:codex-rescue")` with a prompt naming the specific low-confidence area and asking for an adversarial challenge review — incorporate any issues raised before handing over
 - If Codex is unavailable, do not silently hand over — explicitly state the gap and confidence score so the user can decide whether to re-run
 
 Applies to: any analysis, recommendation, or report handed directly to the user.

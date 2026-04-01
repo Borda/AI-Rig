@@ -92,6 +92,11 @@ else
     <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$SETTINGS_TMP" 2>/dev/null | sort) \
     <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) \
     | grep '^[<>]' | sed 's/^< /  project: /' | sed 's/^> /  home:    /'
+  # enabledPlugins changes (plugin enable/disable state)
+  diff \
+    <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$SETTINGS_TMP" 2>/dev/null | sort) \
+    <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) \
+    | grep '^[<>]' | sed 's/^< /  plugin+ /' | sed 's/^> /  plugin- /'
 fi
 rm -f "$SETTINGS_TMP"
 ```
@@ -205,5 +210,6 @@ fi
 - rsync skips identical files — only changed files are transferred, making repeated runs cheap
 - Run `/sync` (dry-run) first, then `/sync apply` once the report looks correct
 - Follow-up: after `/sync apply`, run `/audit` to confirm the propagated config is structurally sound
+- **`enabledPlugins` and other top-level keys**: sync fully replaces `~/.claude/settings.json` with the project version — any key present only in the home file will be lost on the next `/sync apply`. Ensure `enabledPlugins` (e.g. `"enabledPlugins": { "codex@openai-codex": true }`) and any other user-level setting you want to keep is tracked in `.claude/settings.json`. If it is not in the project file, it will not survive a sync.
 
 </notes>

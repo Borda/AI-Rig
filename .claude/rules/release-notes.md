@@ -53,4 +53,4 @@ Every release entry must end with:
 - This line must be the final line of the entry, after the Contributors section — no notes, annotations, separators, or prose may follow it
 - Never omit it, even for patch releases
 
-Full template + writing-patterns table in `.claude/skills/release/SKILL.md`.
+Full template + writing-patterns table in `.claude/skills/release/SKILL.md` — see `### CHANGELOG Entry` section.

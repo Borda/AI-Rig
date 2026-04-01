@@ -19,16 +19,17 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
-## Built-in tool read permissions
+## Built-in tool permissions
 
-These entries pre-authorize `Read`, `Glob`, and `Grep` on directories that skills and teammates access frequently as part of their own configuration or runtime state. Without them, agents are prompted to confirm reading their own config files.
+These entries pre-authorize `Read`, `Glob`, `Grep`, and `Write` on directories that skills and teammates access frequently as part of their own configuration or runtime state. Without them, agents are prompted to confirm accessing their own config files or writing output to skill run dirs.
 
-| Permission      | Description                        | Typical use case                                                                                    |
-| --------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `Read(./**)`    | Read any file in the project root  | Teammates read `TEAM_PROTOCOL.md` and agent files at spawn; skills read their own SKILL.md files    |
-| `Glob(./**)`    | Glob-match any file in the project | `/audit` and `/manage` enumerate agents, skills, hooks, and source files without shell `find`       |
-| `Grep(./**)`    | Search content in any project file | `/audit` checks cross-references; `/calibrate` locates skill keyword patterns                       |
-| `Read(/tmp/**)` | Read temporary files under `/tmp/` | `/calibrate` reads checkpoint files for background agent health monitoring; skill temp output files |
+| Permission                | Description                                | Typical use case                                                                                                          |
+| ------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `Read(./**)`              | Read any file in the project root          | Teammates read `TEAM_PROTOCOL.md` and agent files at spawn; skills read their own SKILL.md files                          |
+| `Glob(./**)`              | Glob-match any file in the project         | `/audit` and `/manage` enumerate agents, skills, hooks, and source files without shell `find`                             |
+| `Grep(./**)`              | Search content in any project file         | `/audit` checks cross-references; `/calibrate` locates skill keyword patterns                                             |
+| `Read(/tmp/**)`           | Read temporary files under `/tmp/`         | `/calibrate` reads checkpoint files for background agent health monitoring; skill temp output files                       |
+| `Write(_calibrations/**)` | Write files into `_calibrations/` run dirs | Codex subagent (spawned via `claude` CLI) writes problem and score files during dual-source calibration without prompting |
 
 ______________________________________________________________________
 
@@ -47,6 +48,7 @@ ______________________________________________________________________
 | `Bash(curl:*)`                    | HTTP requests and file downloads                     | Hit a REST API, download a file, fetch raw URLs for link verification                          |
 | `Bash(echo:*)`                    | Print strings to stdout                              | Pipe content into another command, emit simple diagnostics                                     |
 | `Bash(find:*)`                    | Locate files by name, type, or modification time     | Discover files matching a pattern across a directory tree                                      |
+| `Bash(find _analyse*)`            | Locate files inside `_analyse/` skill run dirs       | `/analyse` artifact cache inspection and TTL cleanup                                           |
 | `Bash(find _calibrations*)`       | Locate files inside `_calibrations/` skill run dirs  | `/calibrate` health monitoring: find new files in run dir to detect stalled agents             |
 | `Bash(find _resolutions*)`        | Locate files inside `_resolutions/` skill run dirs   | `/resolve` artifact inspection and TTL cleanup                                                 |
 | `Bash(find _audits*)`             | Locate files inside `_audits/` skill run dirs        | `/audit` health monitoring and TTL cleanup                                                     |
@@ -62,6 +64,7 @@ ______________________________________________________________________
 | `Bash(diff:*)`                    | Compare two files line-by-line                       | Confirm patch outcome, spot drift between config files                                         |
 | `Bash(cp:*)`                      | Copy files                                           | `/sync` uses this to propagate config files to `~/.claude/`                                    |
 | `Bash(mkdir:*)`                   | Create directories                                   | Ensure target paths exist before writing                                                       |
+| `Bash(mkdir -p _analyse/*)`       | Create `_analyse/` skill run subdirs                 | `/analyse` creates a timestamped run dir before spawning subagents                             |
 | `Bash(mkdir -p _calibrations/*)`  | Create `_calibrations/` skill run subdirs            | `/calibrate` creates a timestamped run dir before spawning pipeline agents                     |
 | `Bash(mkdir -p _resolutions/*)`   | Create `_resolutions/` skill run subdirs             | `/resolve` creates a run dir for lint+QA gate artifacts                                        |
 | `Bash(mkdir -p _audits/*)`        | Create `_audits/` skill run subdirs                  | `/audit` creates a timestamped run dir before spawning self-mentor agents                      |

@@ -13,7 +13,7 @@ paths:
 ## After Any Change
 
 1. **Cross-references** — if a name or capability changes, update every file that mentions it
-2. **`memory/MEMORY.md`** — keep the agents/skills roster in sync with disk
+2. **Auto-memory MEMORY.md** — keep the agents/skills roster in sync with disk (not stored under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md`)
 3. **`README.md`** — verify agent/skill tables, Status Line, and Config Sync sections
 4. **`settings.json` permissions** — IF this change introduces any new `gh`, `bash`, or `WebFetch`
    call (directly or in a step/workflow you are adding), you MUST add a matching allow rule before
@@ -25,7 +25,7 @@ paths:
 
 - No hardcoded absolute user paths (`/Users/<name>/` or `/home/<name>/`) — use `.claude/`, `~/`, or `git rev-parse --show-toplevel`
 - statusLine and hook paths in home `settings.json` use `$HOME`: `node $HOME/.claude/hooks/statusline.js`
-- **Artifact dirs** belong at the project root, not inside `.claude/` — canonical pattern: `_<skill>/$(date -u +%Y-%m-%dT%H-%M-%SZ)/`; see `.claude/rules/artifact-lifecycle.md`
+- **Artifact dirs** belong at the project root, not inside `.claude/` — see `.claude/rules/artifact-lifecycle.md`
 
 ## Bash Timeouts
 
@@ -60,6 +60,12 @@ uv run pytest tests/
 Required because Claude Code's permission matcher checks only the **first token** of a Bash command. Applies to `uv run`, `python`, `pytest`, `git`, etc. Alternative: spawn an agent with `isolation: "worktree"` — its CWD is the worktree root.
 
 Worktrees land under `.claude/worktrees/<id>/`. Permissions in `settings.local.json` are snapshotted at worktree-creation time — not updated retroactively.
+
+## Agent/Skill File XML Tag Conventions
+
+- **Structural tags** (`<role>`, `<workflow>`, `<notes>`): unescaped — the primary Claude Code-parsed sections
+- **Non-structural section tags** (e.g. `\<antipatterns_to_flag>`, `\<toolchain>`, `\<core_principles>`): backslash-escaped — internal organisation that Claude Code does not parse as metadata
+- When adding a new section tag: use `\<tag>` for any subsection inside `<role>` or `<workflow>`; leave the three structural tags unescaped
 
 ## Sync
 

@@ -10,6 +10,16 @@ Triggered by `plan <goal>`. Interactive wizard to configure a campaign run.
 
 ### Step C-P1: Parse and scan
 
+**Scope guard (first action)**: Before scanning, check whether `<goal>` is an optimization goal. If the input is clearly not an optimization goal — e.g., a question about code semantics, a regex or algorithm explanation request, a debugging question, or any prompt that does not describe a measurable improvement target — print:
+
+```
+⚠ This input does not look like an optimization goal.
+/optimize plan expects: "Reduce X" / "Increase Y" / "Improve Z metric".
+Use /ask or /research for explanatory questions.
+```
+
+Then stop. Do not proceed to C-P2 or C-P3.
+
 Parse `<goal>` from arguments. Scan the codebase to detect:
 
 - Language and framework (Python, PyTorch, pytest, etc.)
@@ -77,7 +87,10 @@ Print:
 
 ```
 ✓ Program saved to program.md
-Run /optimize campaign program.md to start the iteration loop.
+
+Next steps:
+  /optimize judge program.md   ← validate plan before running (recommended)
+  /optimize campaign program.md ← start iteration loop directly
 ```
 
 ______________________________________________________________________
@@ -111,6 +124,7 @@ Generate a `run-id` = `$(date +%Y%m%d-%H%M%S)`. Create the run directory:
 _optimizations/state/<run-id>/
   state.json         ← iteration count, best metric, status
   experiments.jsonl  ← one line per iteration
+  diary.md           ← human-readable research diary (hypothesis → outcome → decision)
 ```
 
 Write initial `state.json` (`program_file` is the absolute path to the `.md` file, or `null` when launching from a text goal):
@@ -166,7 +180,21 @@ Run `metric_cmd` and `guard_cmd`. Parse the metric value. Append to `experiments
 
 Update `state.json`: `best_metric = <baseline>`, `best_commit = <HEAD sha>`.
 
-Print: `Baseline: <metric_cmd key> = <value>`. Then proceed to Step C5.
+Print: `Baseline: <metric_cmd key> = <value>`.
+
+Write initial diary header to `_optimizations/state/<run-id>/diary.md`:
+
+```markdown
+# Research Diary — <goal>
+
+**Run**: <run-id>
+**Started**: <ISO timestamp>
+**Baseline**: <metric_key> = <baseline value>
+
+---
+```
+
+Then proceed to Step C5.
 
 ### Step C5: Iteration loop
 
@@ -318,6 +346,36 @@ Run `guard_cmd` (exit-code check only). Record pass or fail.
 
 `git revert HEAD --no-edit` — never `git reset --hard` (preserves history, not in deny list).
 
+#### Phase 7b — Diary
+
+After the Phase 7 decision, append one entry to `diary.md`:
+
+```markdown
+## Iteration N — <ISO timestamp>
+
+**Hypothesis**: <agent's description from Phase 2 JSON — the proposed change and expected improvement>
+
+**Outcome**: <metric_key> = <value> (Δ<delta>% vs baseline) — <kept|reverted|rework|no-op|hook-blocked|timeout>
+
+**Decision**: <one sentence: why the outcome was accepted or rejected — e.g. "Metric improved 1.2% with guard passing" or "Reverted: metric regressed by 0.5%" or "Guard failed after 2 rework attempts">
+
+---
+```
+
+For `no-op` iterations (agent made no file changes), write:
+
+```markdown
+## Iteration N — <ISO timestamp>
+
+**Hypothesis**: <description> — no files modified
+
+**Outcome**: no-op
+
+**Decision**: Skipped (no changes made)
+
+---
+```
+
 #### Phase 8 — Log
 
 Append one JSONL record to `experiments.jsonl`:
@@ -376,6 +434,7 @@ Write full report to `_outputs/$(date +%Y)/$(date +%m)/output-optimize-campaign-
 **Baseline**: <metric> = <baseline value>
 **Best**: <metric> = <best value> (<delta>% improvement)
 **Best commit**: <sha>
+**Diary**: "_optimizations/state/<run-id>/diary.md"
 **Codex co-pilot**: active (ran every iteration) — <N> Codex passes run (omit line if --codex not used)
 **Codex wins**: <N> Codex proposals kept vs <N> Claude proposals kept
 
@@ -401,6 +460,7 @@ Baseline:   <metric_key> = <baseline>
 Best:       <metric_key> = <best> (<delta>% improvement, commit <sha>)
 Agent:      <agent type used>
 → saved to _outputs/YYYY/MM/output-optimize-campaign-<date>.md
+→ diary: _optimizations/state/<run-id>/diary.md
 ---
 ```
 
@@ -430,7 +490,7 @@ Triggered by `resume` or `resume <file.md>`.
    ```
    If the user confirms, remove the last line before resuming. If they decline, stop and let the user fix it manually.
 4. Validate git HEAD: if the current HEAD has diverged from `state.json.best_commit` in an unexpected direction, warn and ask before continuing.
-5. Continue the iteration loop from `state.json.iteration + 1`.
+5. Continue the iteration loop from `state.json.iteration + 1`. The `diary.md` file is NOT re-initialized on resume — iteration entries continue appending to the existing file.
 
 ______________________________________________________________________
 

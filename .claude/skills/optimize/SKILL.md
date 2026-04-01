@@ -1,7 +1,7 @@
 ---
 name: optimize
-description: Performance orchestrator with four modes. `plan` = interactive wizard → writes `program.md` config. `campaign` = sustained metric-improvement loop with atomic commits, auto-rollback, and experiment logging; accepts a `program.md` file. `resume` = continue a crashed or stopped campaign. `perf` = single-pass profiling deep-dive (baseline → perf-optimizer → verify → report). Supports --team, --colab, and --codex in plan/campaign/resume.
-argument-hint: plan <goal> [out.md] | campaign <goal|file.md> | resume [file.md] | perf <target> [--team] [--colab] [--codex]
+description: Performance orchestrator with five modes. `plan` = interactive wizard → writes `program.md` config. `judge` = research-supervisor review of `program.md` — validates experimental methodology (hypothesis clarity, measurement validity, control adequacy, scope, strategy fit) and emits APPROVED / NEEDS-REVISION / BLOCKED verdict before the expensive campaign loop. `campaign` = sustained metric-improvement loop with atomic commits, auto-rollback, and experiment logging; accepts a `program.md` file. `resume` = continue a crashed or stopped campaign. `perf` = single-pass profiling deep-dive (baseline → perf-optimizer → verify → report). Supports --team, --colab, and --codex in plan/campaign/resume.
+argument-hint: plan <goal> [out.md] | judge [file.md] [--no-dry-run] | campaign <goal|file.md> | resume [file.md] | perf <target> [--team] [--colab] [--codex]
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate
 effort: high
@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Four complementary modes under one skill. `plan` mode runs an interactive wizard: scans the codebase, proposes a metric/guard/agent config, and writes a `program.md` human-readable campaign spec. `campaign` mode runs a sustained improvement campaign: iterate with specialist agents, commit atomically, auto-rollback on regression, and log every experiment to JSONL — until the metric goal is reached or the iteration limit is hit. `resume` mode continues a campaign that was stopped or crashed, re-reading the program file to pick up any edits. `perf` mode orchestrates a single-pass performance investigation: establish a baseline, spawn perf-optimizer to find and fix the top bottleneck, verify the improvement, and report.
+Five complementary modes under one skill. `plan` mode runs an interactive wizard: scans the codebase, proposes a metric/guard/agent config, and writes a `program.md` human-readable campaign spec. `judge` mode is a read-only pre-flight gate — like a research supervisor reviewing a PhD student's experimental protocol before approving expensive lab time: audits `program.md` for structural completeness (J2), reviews the experimental methodology for design soundness via solution-architect (J3), optionally dry-runs metric and guard commands to confirm they execute (J4), and requests a Codex adversarial review of any identified gaps (J5). Emits a deterministic verdict: APPROVED / NEEDS-REVISION / BLOCKED. `campaign` mode runs a sustained improvement campaign: iterate with specialist agents, commit atomically, auto-rollback on regression, and log every experiment to JSONL — until the metric goal is reached or the iteration limit is hit. `resume` mode continues a campaign that was stopped or crashed, re-reading the program file to pick up any edits. `perf` mode orchestrates a single-pass performance investigation: establish a baseline, spawn perf-optimizer to find and fix the top bottleneck, verify the improvement, and report.
 
 </objective>
 
@@ -17,6 +17,9 @@ Four complementary modes under one skill. `plan` mode runs an interactive wizard
 
 - `plan <goal>` — interactive wizard: scan codebase, propose config, write `program.md` at project root
 - `plan <goal> output.md` — same wizard, write to specified path
+- `judge` — research-supervisor review of `program.md`; emit APPROVED / NEEDS-REVISION / BLOCKED verdict
+- `judge path/to/plan.md` — audit the specified program file
+- `judge --no-dry-run` — skip metric/guard dry-run (cross-machine workflows)
 - `campaign <goal>` — run the iteration loop directly with a text goal
 - `campaign program.md` — parse `program.md`, run campaign
 - `resume` — resume most recent running campaign (reads `program_file` from `state.json`)
@@ -84,12 +87,13 @@ STATE_DIR:                  _optimizations/state/
 
 ## Step 1: Parse mode
 
-Extract the first token from arguments. Valid values: `plan`, `campaign`, `resume`, `perf`.
+Extract the first token from arguments. Valid values: `plan`, `judge`, `campaign`, `resume`, `perf`.
 
 If the first token is not a valid mode, stop and present:
 
 ```
 Usage: /optimize plan <goal> [out.md]
+       /optimize judge [file.md] [--no-dry-run]
        /optimize campaign <goal|file.md> [--team] [--colab] [--codex]
        /optimize resume [file.md] [--team] [--colab] [--codex]
        /optimize perf <file|module|dir>
@@ -99,9 +103,11 @@ Usage: /optimize plan <goal> [out.md]
 
 **If mode is `perf`**: Read `.claude/skills/optimize/modes/perf.md` and execute its steps (P1–P6) in order, passing the remaining arguments as `$ARGUMENTS`.
 
+**If mode is `judge`**: Read `.claude/skills/optimize/modes/judge.md` and execute its steps (J1–J6) in order, passing the remaining arguments (optional `file.md` and `--no-dry-run` flag).
+
 **If mode is `campaign`**: Read `.claude/skills/optimize/modes/campaign.md` and execute its Default Mode steps (C1–C7) in order, passing the remaining arguments along with any flags (`--team`, `--colab`, `--codex`).
 
-**If mode is `plan`**: Read `.claude/skills/optimize/modes/campaign.md` and execute its Plan Mode steps (C-P1–C-P3), passing the remaining arguments as `<goal> [out.md]`.
+**If mode is `plan`**: Read `.claude/skills/optimize/modes/campaign.md` (the Plan Mode section — different from Default Mode) and execute its Plan Mode steps (C-P1–C-P3), passing the remaining arguments as `<goal> [out.md]`.
 
 **If mode is `resume`**: Read `.claude/skills/optimize/modes/campaign.md` and execute its Resume Mode steps, passing the optional `file.md` argument along with any flags (`--team`, `--colab`, `--codex`).
 
@@ -111,6 +117,8 @@ Usage: /optimize plan <goal> [out.md]
 
 **Cross-mode follow-up chains:**
 
+- Wizard produces `program.md` → run `/optimize judge` before starting the expensive campaign loop
+- Judge emits NEEDS-REVISION or BLOCKED → fix the flagged items, re-run `/optimize judge` to confirm, then proceed to `/optimize campaign`
 - Perf bottleneck is architectural (not just a hot loop) → `/develop refactor` for structural changes with test safety net
 - Perf changes non-trivial code paths → `/review` for quality validation
 - Perf optimized code needs documentation updates → Step P6 auto-delegates to Codex
