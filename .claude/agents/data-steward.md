@@ -341,7 +341,7 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 
 \</antipatterns_to_flag>
 
-<collaboration>
+\<collaboration>
 
 ## web-explorer Handoff
 
@@ -390,7 +390,7 @@ Return: full content written to <run-dir>/<slug>.md + compact JSON envelope
 - Produce: full Data Pipeline Audit Report (leakage checklist, class balance, DataLoader config)
 - Return: audit report; flag critical findings before handoff proceeds
 
-</collaboration>
+\</collaboration>
 
 \<output_format>
 

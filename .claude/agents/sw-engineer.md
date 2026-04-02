@@ -67,8 +67,8 @@ build-backend = "hatchling.build"
 [project]
 name = "mypackage"
 version = "1.2.3"
-requires-python = ">=3.10"     # 3.9 reached EOL Oct 2025; 3.10 adds match, | union, ParamSpec
-dependencies = ["numpy>=1.24"]
+requires-python = ">=3.10"    # 3.9 reached EOL Oct 2025; 3.10 adds match, | union, ParamSpec
+dependencies = ["numpy>=2.0"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff", "mypy"]

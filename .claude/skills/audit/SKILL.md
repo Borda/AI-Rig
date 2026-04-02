@@ -753,6 +753,41 @@ For each skill/mode NOT in the domain table and NOT in the `### Future Candidate
 
 → Unregistered mode matching all three signals: **low** (recommendation to add to `calibrate/modes/skills.md` domain table)
 
+**Check 20 — Markdown heading hierarchy continuity**
+
+Detect heading level jumps greater than 1 (e.g. `##` followed directly by `####`, skipping `###`) across all agent files, skill SKILL.md files, and rule files. Skipped heading levels break screen-reader navigation and indicate structural drift from the intended document outline.
+
+````bash
+GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
+printf "=== Check 20: Heading hierarchy continuity ===\n"
+violations=0
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do
+  [ -f "$f" ] || continue
+  awk -v file="$f" '
+    /^```/ { in_code = !in_code; next }
+    in_code { next }
+    /^#+ / {
+      n = 0; s = $0
+      while (substr(s,1,1) == "#") { n++; s = substr(s,2) }
+      if (prev > 0 && n > prev + 1) {
+        printf "  \033[1;33m⚠ HEADING JUMP\033[0m: %s:%d — h%d followed by h%d (skipped h%d)\n", \
+          file, NR, prev, n, prev+1
+        found++
+      }
+      prev = n
+    }
+    END { exit (found > 0) ? 1 : 0 }
+  ' "$f" || violations=$((violations + 1))
+done
+if [ "$violations" -eq 0 ]; then
+  printf "${GRN}✓${NC}: Check 20 — no heading hierarchy violations found\n"
+fi
+````
+
+**Severity**: **medium** — heading jumps impair navigation and often signal a heading was accidentally promoted or demoted during editing. Fix: insert the missing intermediate heading level, or demote/promote the offending heading to restore continuity.
+
+**Report only** — never auto-fix; heading restructuring requires human judgment on which level is correct.
+
 ## Step 5: Aggregate and classify findings
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
@@ -778,7 +813,7 @@ Output a structured audit report before fixing anything:
 - Agents audited: N
 - Skills audited: N
 - Rules audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex plugin integration check, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries, calibration coverage gap
+- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, memory health, agent routing alignment, codex plugin integration check, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries, calibration coverage gap, heading hierarchy continuity
 
 ### Findings by Severity
 

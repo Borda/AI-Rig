@@ -1,7 +1,7 @@
 ---
 name: brainstorm
 description: Iterative brainstorming skill for turning fuzzy ideas into approved tree documents. Diverges into branches, deepens and prunes them over many rounds, saves a tree doc. Run breakdown on the tree to distill it into a spec via guided questions.
-argument-hint: <fuzzy idea or feature goal> | breakdown <tree-or-spec-file>
+argument-hint: <fuzzy idea or feature goal> [--tight|--deep] [--type <type>] | breakdown <tree-or-spec-file>
 disable-model-invocation: true
 allowed-tools: Read, Write, Glob, Grep, Agent, TaskCreate, TaskUpdate, AskUserQuestion
 effort: high
@@ -24,6 +24,14 @@ Examples:
 - `/brainstorm redesign how agents hand off to each other`
 
 - `/brainstorm I want users to be able to export results as CSV`
+
+- **`--tight`** — reduced-ceremony mode: cap clarifying questions at 5 (not 10), cap tree operations at 5 (not 10), require only 1 closed branch (not 2) before saving. Good for well-scoped ideas where the problem is already understood.
+
+- **`--deep`** — extended-ceremony mode: cap clarifying questions at 15, cap tree operations at 15, require 3+ closed branches before saving. Good for genuinely ambiguous problems where more exploration is valuable.
+
+- Default (no flag): behaviour unchanged — 10/10/2 bounds.
+
+- **`--type <type>`** — optional type hint for idea mode. One of: `application` (app/service with users/endpoints), `workflow` (automation, pipeline, script), `utility` (helper library, tool, CLI), `config` (`.claude/` agents/skills/rules), `research` (investigation, survey, experiment design). Affects Step 1 scan patterns and Step 2 question framing. Omit if unsure — the skill works without it.
 
 - **`breakdown <tree-or-spec-file>`** — breakdown mode: read an already-saved tree (`Status: tree`) or spec (`Status: draft`). For a tree: ask distillation questions and write the spec section-by-section. For a spec: scan for blocking open questions then generate an ordered action plan. Skips Steps 1–6 entirely.
 
@@ -53,6 +61,16 @@ Gather project context before asking anything:
 - Grep for keywords from `$ARGUMENTS` across `src/` or the project root
 - Identify: related code that already exists, stated non-goals in docs, prior design decisions
 
+**Type-aware scan patterns** (when `--type` is declared):
+
+- `application`: look for existing routes, controllers, components, API endpoints, auth middleware
+- `workflow`: look for existing scripts, pipelines, CI configs, scheduled jobs, automation files
+- `utility`: look for existing utils/, helpers/, lib/ directories and similar functions
+- `config`: look for `.claude/` agents, skills, rules, and `settings.json` entries
+- `research`: look for existing notes, benchmarks, prior experiment results, and related papers/tickets
+
+When no `--type` is declared, perform the generic scan as before.
+
 Goal: understand constraints so questions are targeted, not generic. If the idea already exists or is clearly out of scope, say so immediately and stop.
 
 ## Step 2: Clarifying questions
@@ -63,12 +81,20 @@ Rules:
 
 - Ask **one question at a time** — call `AskUserQuestion` once, wait for the answer, then decide whether another question is needed
 - Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so the user can reply with just "a", "b", or "c"; mark the option you recommend with **★** (e.g., `a) Option A ★ recommended`) so the user has a sensible default
-- Maximum **10 questions** — after 10, proceed to Step 3 with what you have
+- Maximum **10 questions** (5 in `--tight` mode, 15 in `--deep` mode) — after the limit, proceed to Step 3 with what you have
 - After question 3 (and on every subsequent question), always include an **escape hatch option**: `x) Enough questions — let's start building the tree` so the user can move on if the problem is already well-defined
 - No solution proposals during this step — only gather information
 - After each answer, briefly restate the updated problem understanding in 1–2 sentences before asking the next question or proceeding — a simple acknowledgment ("Got it", "Understood") does not count; the restatement must name what is now known about the problem (e.g., "So the goal is X and the constraint is Y.")
 
 **Gate**: do not proceed to Step 3 until the problem is well-defined or the maximum question count is reached. Aim for at least 3 questions to build enough context for a rich tree.
+
+**Type-aware question framing** (when `--type` is declared): lead with type-appropriate questions first:
+
+- `application`: ask about users (who uses it?), scale, and integration points before general questions
+- `workflow`: ask about triggers (what starts it?), inputs, outputs, and failure handling first
+- `utility`: ask about callers (who uses this library/tool?), interface shape, and scope of responsibility
+- `config`: ask whether this targets an existing agent/skill or is new, and what gap it fills in the current setup
+- `research`: ask about the hypothesis or question being investigated, and what constitutes a useful finding
 
 ## Step 3: Build the tree
 
@@ -133,13 +159,13 @@ Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches inde
 
 ### Loop bounds
 
-- Maximum **10 operations** (a round = one operation)
-- After 10: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
-- **Gate**: do not proceed to Step 4 until the user selects "Ready" or the max is reached with at least 2 closed branches; if fewer than 2 branches are closed, prompt: "The tree has few closed branches — consider closing 1–2 that are clearly not the right direction before saving."
+- Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (a round = one operation)
+- After the limit: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
+- **Gate**: do not proceed to Step 4 until the user selects "Ready" or the max is reached with at least 2 closed branches (1 in `--tight`, 3 in `--deep`); if fewer than the required closed branches exist, prompt: "The tree has few closed branches — consider closing 1–2 that are clearly not the right direction before saving."
 
 ## Step 4: Save tree
 
-Assemble the tree state and write to `_brainstorming/YYYY-MM-DD-<slug>.md` using the Write tool (creates the directory if absent). The slug is derived from the title (kebab-case, max 5 words).
+Assemble the tree state and write to `_brainstorming/YYYY-MM-DD-<slug>.md` using the Write tool (creates the directory if absent). The slug is derived from the title (kebab-case, max 5 words). If a file already exists at the target path (e.g., same day, same slug after a restart), append a counter suffix (`-2`, `-3`, etc.) rather than overwriting.
 
 ```markdown
 # <title>
@@ -213,7 +239,7 @@ Show the tree file path and a compact tree summary (same format as Step 3). Then
 - (b) Needs more exploration — [describe what to add or close]
 - (c) Start over — back to clarifying questions
 
-**Gate**: do not exit until the user approves. On (b): return to Step 3 with the existing tree state — add the requested branches or close the specified ones, then loop back to Step 5. On (c): loop back to Step 2. (Max 3 approval cycles — after 3 (b) responses with no convergence, surface unresolved concerns to user and stop.)
+**Gate**: do not exit until the user approves. On (b): return to Step 3 with the existing tree state — add the requested branches or close the specified ones, then loop back to Step 5. Use a reduced cap of **3 additional operations** for this re-entry (not a fresh full budget reset); the cap resets only at the start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles — after 3 (b) responses with no convergence, surface unresolved concerns to user and stop.)
 
 On approval, suggest: `/brainstorm breakdown _brainstorming/<file>` to distill the tree into a spec.
 
@@ -281,6 +307,21 @@ Include the criterion identified in D2 question 3. Each criterion must be concre
 Draw from the Pruning log in the tree. This is context for future readers — what was considered and rejected.
 
 **Gate**: do not write to disk until all 6 sections are drafted and individually approved.
+
+**Graduation checklist** — verify before writing to disk:
+
+- [ ] Goal (Section 1) is concrete and names who benefits
+- [ ] Proposed design (Section 3) has at least 3 distinct sub-points
+- [ ] Success criteria (Section 5) are observable/testable — not vague ("it works") but checkable ("running X produces Y")
+- [ ] At least one non-goal is stated (Section 2 is not empty)
+
+If any item fails, call `AskUserQuestion` with:
+
+- a) Revise the failing section(s) now — return to that section in D3 ★ recommended
+- b) Proceed anyway — I accept the spec may be underspecified
+
+On **(a)**: jump back to the failing section in D3 (max 1 extra revision per section).
+On **(b)**: proceed to write.
 
 After all sections approved: write to `_brainstorming/YYYY-MM-DD-<slug>.md` (new file; use the tree's slug with a `-spec` suffix if writing alongside the tree):
 
@@ -375,7 +416,8 @@ End with a `## Confidence` block per CLAUDE.md output standards.
 - **Status field**: tree documents use `Status: tree`; spec documents use `Status: draft`; breakdown auto-detects which path to take
 - **Breakdown heading convention**: distillation mode uses D-prefix steps (D1–D4); action plan mode uses B-prefix steps (B1–B3)
 - **Exploration notes in spec**: Section 6 is derived from the tree's Pruning log — it is intentional context for future readers and should not be removed by self-mentor review
-- **Interaction budget**: idea mode — max 10 questions + 10 tree operations + 3 approval cycles ≈ 23 worst case; breakdown distillation — max 5 questions + 6 section drafts ≈ 11; typical sessions use ~8–15 total AskUserQuestion calls across both
+- **Interaction budget**: idea mode — worst case: 13 (`--tight`) / 23 (default) / 33 (`--deep`) questions + operations + 3 approval cycles; breakdown distillation — max 5 questions + 6 section drafts ≈ 11; typical sessions use ~8–15 total AskUserQuestion calls across both
+- **Flag modes**: `--tight` / `--deep` scale question and operation caps (5/15 vs default 10); `--type` enables type-aware scan and question framing in Steps 1–2; these flags apply to idea mode only and are ignored in breakdown
 - **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown _brainstorming/<spec-file>` for the action plan
 
 </notes>

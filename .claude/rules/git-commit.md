@@ -8,6 +8,18 @@ description: Git commit conventions and safety rules — applies globally
 - Blank line, then bullet list — one bullet per logical change; include extended description of the top changes plus all other notable changes; skip typos, linting, and whitespace-only edits; if all changes are skip-worthy, omit the bullet list entirely and use a subject-only commit
 - No line wrapping — each bullet is a single long line
 
+## Gathering Diff Context
+
+Before writing a commit message, always run these three commands in parallel:
+
+- `git status` — identify staged new files (`A` prefix) and unstaged changes
+- `git diff HEAD` — **not** bare `git diff`; bare `git diff` shows only unstaged changes and misses staged new files entirely; `git diff HEAD` captures both staged and unstaged changes vs HEAD
+- `git log --oneline -5` — reference the repo's existing commit style
+
+**New files are always significant**: any file marked `A` in `git status` must be explicitly mentioned in the commit bullet list, regardless of line count. New files represent added capability, not just changed lines.
+
+**Semantic novelty beats diff verbosity**: when ranking significance, a new capability, new interface, or new script outranks a verbose-but-routine config edit even if the config diff has more lines. Ask "what would a reviewer need to know first?" — that is the most significant change.
+
 ## Co-authors
 
 Separate the co-author block from the bullet list with `---`:

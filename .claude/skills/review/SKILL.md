@@ -179,11 +179,12 @@ While agents from Step 3 are completing, run these two independent checks simult
 ### 4a: Ecosystem impact check (for libraries with downstream users)
 
 ```bash
+TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
 # Check if changed APIs are used by downstream projects
 # Rate-limit guard: if gh api returns HTTP 429, wait 10 seconds and retry once.
 # If still rate-limited, log "rate-limited — downstream search may be incomplete" and continue.
 # --paginate is available for large result sets but increases rate-limit exposure; omit unless completeness is critical.
-CHANGED_EXPORTS=$(git diff $(git merge-base HEAD origin/main) HEAD -- "src/**/__init__.py" | grep "^[-+]" | grep -v "^[-+][-+]" | grep -oP '\w+' | sort -u)
+CHANGED_EXPORTS=$(git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py" | grep "^[-+]" | grep -v "^[-+][-+]" | grep -oP '\w+' | sort -u)
 for export in $CHANGED_EXPORTS; do
   echo "=== $export ==="
   gh api "search/code" --field "q=$export language:python" --jq '.items[:5] | .[].repository.full_name' 2>/dev/null
@@ -191,23 +192,24 @@ for export in $CHANGED_EXPORTS; do
 done
 
 # Check if deprecated APIs have migration guides
-git diff $(git merge-base HEAD origin/main) HEAD | grep -A2 "deprecated"
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -A2 "deprecated"
 ```
 
 ### 4b: Open Source Software (OSS) checks
 
 ```bash
+TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
 # Check for new dependencies — license compatibility
-git diff $(git merge-base HEAD origin/main) HEAD -- pyproject.toml requirements*.txt
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- pyproject.toml requirements*.txt
 
 # Check for secrets accidentally committed
-git diff $(git merge-base HEAD origin/main) HEAD | grep -iE "(password|secret|api_key|token)\s*=\s*['\"][^'\"]{8,}"
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -iE "(password|secret|api_key|token)\s*=\s*['\"][^'\"]{8,}"
 
 # Check for API stability: are public APIs being removed without deprecation?
-git diff $(git merge-base HEAD origin/main) HEAD -- "src/**/__init__.py"
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py"
 
 # Check CHANGELOG was updated
-git diff $(git merge-base HEAD origin/main) HEAD -- CHANGELOG.md CHANGES.md
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- CHANGELOG.md CHANGES.md
 ```
 
 ## Step 5: Cross-validate critical/blocking findings
