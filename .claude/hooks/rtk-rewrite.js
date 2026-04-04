@@ -55,10 +55,7 @@ const RTK_PREFIXES = [
   // JS / TS
   "tsc",
   "vitest",
-  "playwright",
   "next",
-  "npm",
-  "npx",
   "pnpm",
   "prettier",
   "lint",
@@ -87,7 +84,6 @@ const RTK_PREFIXES = [
   // .NET
   "dotnet",
   // Network
-  "curl",
   "wget",
   // Files & search
   "ls",

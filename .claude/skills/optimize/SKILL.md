@@ -1,7 +1,7 @@
 ---
 name: optimize
-description: Performance orchestrator with five modes. `plan` = interactive wizard → writes `program.md` config. `judge` = research-supervisor review of `program.md` — validates experimental methodology (hypothesis clarity, measurement validity, control adequacy, scope, strategy fit) and emits APPROVED / NEEDS-REVISION / BLOCKED verdict before the expensive campaign loop. `campaign` = sustained metric-improvement loop with atomic commits, auto-rollback, and experiment logging; accepts a `program.md` file. `resume` = continue a crashed or stopped campaign. `perf` = single-pass profiling deep-dive (baseline → perf-optimizer → verify → report). Supports --team, --colab, and --codex in plan/campaign/resume.
-argument-hint: plan <goal> [out.md] | judge [file.md] [--no-dry-run] | campaign <goal|file.md> | resume [file.md] | perf <target> [--team] [--colab] [--codex]
+description: Performance orchestrator with five modes. `plan` = interactive wizard → writes `program.md` config. `judge` = research-supervisor review of `program.md` — validates experimental methodology (hypothesis clarity, measurement validity, control adequacy, scope, strategy fit) and emits APPROVED / NEEDS-REVISION / BLOCKED verdict before the expensive campaign loop. `campaign` = sustained metric-improvement loop with atomic commits, auto-rollback, and experiment logging; accepts a `program.md` file. `resume` = continue a crashed or stopped campaign. `perf` = single-pass profiling deep-dive (baseline → perf-optimizer → verify → report). Supports --team, --colab, --codex, and --compute=local|colab|docker in plan/campaign/resume.
+argument-hint: plan <goal> [out.md] | judge [file.md] [--no-dry-run] | campaign <goal|file.md> [--compute=local|colab|docker] [--docker] | resume [file.md] | perf <target> [--team] [--colab] [--codex]
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate
 effort: high
@@ -29,7 +29,8 @@ Five complementary modes under one skill. `plan` mode runs an interactive wizard
 **Auto-detect rule** (for `campaign`): if the argument ends in `.md` → treat as program file path. Otherwise → treat as text goal.
 
 - `--team` flag (plan/campaign/resume only) — parallel strategy exploration: 2–3 teammates each own a different optimization axis
-- `--colab` flag (plan/campaign/resume only) — route metric verification through a Colab MCP GPU runtime
+- `--colab` flag (plan/campaign/resume only) — alias for `--compute=colab`; route metric verification through a Colab MCP GPU runtime
+- `--compute=local|colab|docker` flag (campaign/resume only) — override the `compute` field in program.md: `local` = run on host (default), `colab` = Colab MCP GPU runtime, `docker` = Docker sandbox (read-only project mount, ephemeral `/tmp`); `--colab` and `--compute=colab` are equivalent; `--docker` and `--compute=docker` are equivalent; if Docker daemon is not running when `docker` is selected, falls back to `local` with a warning
 - `--codex` flag (plan/campaign/resume only) — offload ideation to Codex: each iteration, Codex proposes and implements an optimization as a fallback when the Claude specialist agent's change is reverted or a no-op; Claude orchestrates the loop, compares metric results, and keeps the winner; gracefully degrades to Claude-only if `codex` is not installed
 
 </inputs>

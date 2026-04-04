@@ -62,8 +62,8 @@ Manage the lifecycle of agents, skills, and rules in the `.claude/` directory. H
 - AGENTS_DIR: `.claude/agents`
 - SKILLS_DIR: `.claude/skills`
 - RULES_DIR: `.claude/rules`
-- USED_COLORS: blue, green, purple, lime, orange, yellow, cyan, violet, teal, indigo, magenta, pink
-- AVAILABLE_COLORS: coral, gold, olive, navy, salmon, red, maroon, aqua, brown
+- USED_COLORS: blue, cyan, green, orange, pink, purple, yellow
+- AVAILABLE_COLORS: indigo, lime, magenta, teal, violet
 
 maintain colors manually — add new agent colors here when creating agents; this static list is advisory only — the live Grep in Step 3 is the authoritative check for colors in use
 
@@ -210,7 +210,7 @@ Atomic update — write new file before deleting old:
 
 1. Read `.claude/agents/<old-name>.md` using the Read tool.
 
-2. Write new file with updated name in frontmatter using the Edit tool (update the `name:` line in frontmatter to use new-name).
+2. Write new file to `.claude/agents/<new-name>.md` using the Write tool (copy content of old file with `name:` line updated to `<new-name>`).
 
 3. Verify the new file exists and is valid: `Read(file_path=".claude/agents/<new-name>.md", limit=5)`
 

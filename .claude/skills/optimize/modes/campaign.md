@@ -39,7 +39,7 @@ guard_cmd:       [command that must pass (exit 0) on every kept commit]
 max_iterations:  [default 20]
 agent_strategy:  [auto | perf | code | ml | arch]
 scope_files:     [files the ideation agent may modify]
-compute:         local | colab
+compute:         local | colab | docker
 ```
 
 Dry-run both commands before presenting. If either fails, flag the error and propose corrections. Do not proceed to C-P3 until the user confirms or edits the config.
@@ -76,7 +76,8 @@ max_iterations: 20
 agent_strategy: auto | perf | code | ml | arch
 scope_files:
   - <path or glob>
-compute: local | colab
+compute: local | colab | docker
+sandbox_network: none | bridge
 ```
 
 ## Notes
@@ -202,21 +203,36 @@ For each iteration `i` from 1 to `max_iterations`:
 
 **Phase overview** (all phases run per iteration):
 
-| Phase | Name            | Trigger / description                                                                                 |
-| ----- | --------------- | ----------------------------------------------------------------------------------------------------- |
-| 0     | Announce        | Always — print `[→ Iter N/max · starting]`; TaskUpdate C5 subject with current iteration              |
-| 1     | Review          | Always — build compact context from git log, JSONL history, and recent diff                           |
-| 2     | Ideate          | Always — spawn specialist agent to propose and implement ONE atomic change                            |
-| 2b    | Codex co-pilot  | `--codex` only — **MANDATORY every iteration**; Codex second pass after Phase 2; must not be skipped  |
-| 3     | Verify files    | Always — check `git diff --stat`; skip to Phase 8 if no files changed (no-op)                         |
-| 4     | Commit          | Always — stage modified files and commit before verifying metric                                      |
-| 5     | Verify metric   | Always — run `metric_cmd` with timeout; revert on timeout                                             |
-| 6     | Guard           | Always — run `guard_cmd`; record pass or fail                                                         |
-| 7     | Decide          | Always — keep, rework, or revert based on metric + guard result                                       |
-| 8     | Log             | Always — append JSONL record, update `state.json`, print iteration summary, TaskUpdate C5 with result |
-| 9     | Progress checks | Always — summary every SUMMARY_INTERVAL, stuck detection, diminishing-returns warn, early-stop check  |
+| Phase | Name             | Trigger / description                                                                                                        |
+| ----- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| 0     | Print header     | Always — print `[→ Iter N/max · starting]`; TaskUpdate C5 subject with current iteration                                     |
+| 1     | Build context    | Always — build compact context from git log, JSONL history, and recent diff                                                  |
+| 2     | Propose change   | Always — spawn specialist agent to read code, research, investigate, and generate a hypothesis with optional sandbox scripts |
+| 2a    | Sandbox validate | `compute: docker` only — run agent's exploratory scripts in Docker sandbox (read-only mount); skip if sandbox unavailable    |
+| 2b    | Apply change     | Always — agent applies the (validated) proposal to real codebase using Write/Edit tools only; no Bash on codebase            |
+| 2c    | Codex co-pilot   | `--codex` only — **MANDATORY every iteration**; Codex second pass after Phase 2b; must not be skipped                        |
+| 3     | Verify files     | Always — check `git diff --stat`; skip to Phase 8 if no files changed (no-op)                                                |
+| 4     | Commit change    | Always — stage modified files and commit before verifying metric                                                             |
+| 5     | Verify metric    | Always — run `metric_cmd` via `compute` mode (local/colab/docker); revert on timeout                                         |
+| 6     | Run guard        | Always — run `guard_cmd` via `compute` mode; record pass or fail                                                             |
+| 7     | Evaluate outcome | Always — keep, rework, or revert based on metric + guard result                                                              |
+| 7a    | Write diary      | Always — append one structured entry to `diary.md` recording hypothesis, outcome, and decision rationale                     |
+| 8     | Write log        | Always — append JSONL record, update `state.json`, print iteration summary, TaskUpdate C5 with result                        |
+| 9     | Progress checks  | Always — summary every SUMMARY_INTERVAL, stuck detection, diminishing-returns warn, early-stop check                         |
 
-#### Phase 0 — Announce
+> **Phase 2a and 2b are Track 2 (Docker sandbox) features**. Until Track 2 is implemented, Phase 2 continues to propose AND implement in one step as before. The table above shows the target architecture.
+
+**Command execution rules** (apply to ALL phases that run external commands):
+
+1. **No compound commands**: Never `cd /path && command`. Always two separate Bash calls — CWD persists between calls.
+2. **Use Bash tool `timeout` parameter**: Never the `timeout` shell command wrapper. Pass `timeout: <ms>` on the Bash tool call itself.
+3. **No inline multi-line Python**: For Python logic longer than 3 lines, always write the script to `.experiments/state/<run-id>/scripts/script-<i>.py` using the Write tool, then execute with `python3 <path>` or `uv run python <path>`. Two triggers that Claude Code always flags regardless of allow list: (a) patterns like `=([0-9.]+)` inside `-c "..."` (false Zsh substitution match); (b) multi-line `-c "..."` containing `#`-prefixed comment lines ("quoted newline followed by #-prefixed line" safety check). Writing to a file sidesteps both.
+4. **No Zsh constructs**: Never use `=()`, `<()`, `>()` in Bash commands — even inside quoted strings; Claude Code scans raw command text.
+5. **Local exploratory scripts that write to real files** (e.g., scanning config combos, patching JSON, running experiments with temp overrides): write to `.experiments/state/<run-id>/scripts/`, execute locally with `python3 <path>`. These scripts legitimately modify project files and must run locally — NOT in Docker sandbox.
+6. **Docker sandbox** (when available — see Phase 2a): Phases 4–6 route `metric_cmd`/`guard_cmd` through Docker when `compute: docker`. Phase 2a runs read-only hypothesis scripts in sandbox. Scripts that write to project files always run locally regardless of compute mode.
+7. **One change per iteration, no batch loops**: Never write a script that iterates over multiple config variants, parameter combos, or implementations in a single Bash/Python call. Each variant is one campaign iteration — the loop, measurement, and comparison are the campaign framework's job, not the ideation agent's.
+
+#### Phase 0 — Print header
 
 Before any phase work, print the iteration header and update the C5 task subject:
 
@@ -226,7 +242,7 @@ Before any phase work, print the iteration header and update the C5 task subject
 
 TaskUpdate C5 subject: `C5: Iteration N/max_iterations — running`
 
-#### Phase 1 — Review
+#### Phase 1 — Build context
 
 Build context for the ideation agent and write it to a file — do NOT accumulate this inline in the main context:
 
@@ -239,7 +255,7 @@ git diff --stat HEAD~5 HEAD >> .experiments/state/<run-id>/context-<i>.md
 
 Prepend a header block to `context-<i>.md` with: goal, current metric vs baseline, delta trend (last 5 kept deltas), and the iteration number. The ideation agent in Phase 2 reads this file directly — the content is never echoed back to the main context.
 
-#### Phase 2 — Ideate
+#### Phase 2 — Propose change
 
 Spawn the selected specialist agent with `maxTurns: 15` and this prompt (adapt as needed):
 
@@ -248,9 +264,15 @@ Goal: <goal>
 Current metric: <metric_cmd key> = <current value> (baseline: <baseline>, direction: <higher|lower>)
 Experiment history: read `.experiments/state/<run-id>/context-<i>.md` for the full context block.
 Scope files (read and modify only these): <scope_files>
+Program constraints: read `<program_file>` — especially `## Notes`, `## Config`, and any named subsections
+  (e.g., "Hard boundaries", "Optuna's role", "What the agent is free to change"). These take precedence
+  over general campaign rules. If program_file is null, skip this step.
 
-Read `context-<i>.md` and the scope files. Propose and implement ONE atomic change most likely to improve the metric.
+Read `context-<i>.md`, the scope files, and the program constraints. Propose and implement ONE atomic change most likely to improve the metric.
 The change must not break <guard_cmd>.
+ONE means ONE: do NOT write a script that loops over multiple config variants or implementations to find the best one —
+each variant is a separate iteration; the campaign loop handles comparison and selection.
+Pick the single most promising hypothesis and apply it directly to the source files.
 Write your full analysis (reasoning, alternatives considered, Confidence block) to
 `.experiments/state/<run-id>/ideation-<i>.md` using the Write tool.
 Return ONLY the JSON result line — nothing else after it:
@@ -263,19 +285,19 @@ For `--colab` runs: the ideation agent (especially `ai-researcher`) may call `mc
 
 If the Agent tool is unavailable (nested subagent context), implement the change inline and construct the JSON result manually.
 
-#### Phase 2b — Codex co-pilot (`--codex` only)
+#### Phase 2c — Codex co-pilot (`--codex` only)
 
 > **MANDATORY — do not skip.** When `--codex` was active at Step C2 and not cleared, this phase MUST run on every iteration regardless of Phase 2 outcome. Print the narration line and update the C5b task before calling Agent.
 
 Print:
 
 ```
-[→ Iter N/max · Phase 2b: Codex co-pilot — running]
+[→ Iter N/max · Phase 2c: Codex co-pilot — running]
 ```
 
 TaskUpdate C5b subject: `C5b: Codex co-pilot — iter N/max_iterations running`, status: `in_progress`
 
-Run Phase 2b on **every iteration** when `--codex` is active. Claude-first co-pilot — Codex always gets a second turn; keep whichever of the two proposals produces a better net metric improvement (or keep Claude's if Codex produces no additional improvement).
+Run Phase 2c on **every iteration** when `--codex` is active. Claude-first co-pilot — Codex always gets a second turn; keep whichever of the two proposals produces a better net metric improvement (or keep Claude's if Codex produces no additional improvement).
 
 - If Claude's Phase 2 change was **kept**: Codex runs a second pass on the current state — building on Claude's work, trying an additional improvement.
 - If Claude's Phase 2 change was **reverted or no-op**: the working tree has already been restored to the pre-Phase-2 state; Codex gets a fresh attempt on the clean tree.
@@ -305,7 +327,7 @@ TaskUpdate C5b subject: `C5b: Codex co-pilot — iter N done (<outcome>)`
 
 `git diff --stat`. If no files changed (no-op): append to JSONL with `status: no-op`, skip to Phase 8 (log), continue loop.
 
-#### Phase 4 — Commit
+#### Phase 4 — Commit change
 
 Stage only the modified files (never `git add -A`):
 
@@ -321,21 +343,38 @@ If pre-commit hooks fail:
 
 #### Phase 5 — Verify metric
 
-Run `metric_cmd` with timeout:
+**If `sandbox_mode = "docker"`** (Phase 2a set this):
 
 ```bash
-timeout <VERIFY_TIMEOUT_SEC> <metric_cmd>
+docker run --rm --network <sandbox_network> \
+  -v "$(pwd):/workspace:ro" \
+  -v "$(pwd)/.experiments:/workspace/.experiments:rw" \
+  --tmpfs /tmp:rw,size=256m \
+  campaign-<run-id> \
+  sh -c '<metric_cmd>'
 ```
 
-For `--colab`: route through `mcp__colab-mcp__runtime_execute_code` instead of local Bash. Parse numeric result from output.
+No resource limits — the container may use all available CPU and memory. Use the Bash tool `timeout` parameter (not the `timeout` command): `timeout: <VERIFY_TIMEOUT_SEC * 1000>`.
+
+**If `sandbox_mode = "local"`** (Docker unavailable or `--sandbox=local`):
+Run `metric_cmd` directly using the Bash tool with `timeout: <VERIFY_TIMEOUT_SEC * 1000>` (milliseconds). Do NOT use the `timeout` shell command wrapper.
+If the command requires a different working directory, issue a separate `cd <path>` Bash call first (CWD persists).
+If metric parsing requires complex Python logic (regex, JSON), write a parser script to `.experiments/state/<run-id>/scripts/parse-metric-<i>.py` using the Write tool and execute it with `python3 <path>` instead of an inline `python3 -c "..."` one-liner.
+If the local command triggers a user approval prompt, include in the approval description: "⚠ Docker sandbox unavailable — running metric_cmd uncontained. Start Docker Desktop to enable sandboxed execution."
+
+**If `--colab` active**: `--colab` and `--sandbox` are mutually exclusive. Colab routes all execution through the remote GPU runtime via `mcp__colab-mcp__runtime_execute_code`; Docker sandbox is not used. If both flags are present, `--colab` takes precedence and `sandbox_mode` is ignored for Phases 5/6.
 
 If timeout expires: append `status: timeout`, revert via `git revert HEAD --no-edit`, continue loop.
 
-#### Phase 6 — Guard
+#### Phase 6 — Run guard
 
-Run `guard_cmd` (exit-code check only). Record pass or fail.
+**If `sandbox_mode = "docker"`**: run `guard_cmd` inside the same Docker container as Phase 5 (same flags: `--network <sandbox_network>`, `:ro` project mount, `:rw` `.experiments/` mount, `--tmpfs /tmp`; no resource limits). Check exit code only. `--colab` flag: same mutual-exclusion rule as Phase 5 — colab takes precedence, sandbox is ignored.
 
-#### Phase 7 — Decide
+**If `sandbox_mode = "local"`**: run `guard_cmd` directly. If it triggers a user approval prompt, include: "⚠ Docker sandbox unavailable — running guard_cmd uncontained. Start Docker Desktop to enable sandboxed execution."
+
+Record pass (exit 0) or fail (non-zero).
+
+#### Phase 7 — Evaluate outcome
 
 | Condition                                             | Action                                                                                                           |
 | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -346,7 +385,7 @@ Run `guard_cmd` (exit-code check only). Record pass or fail.
 
 `git revert HEAD --no-edit` — never `git reset --hard` (preserves history, not in deny list).
 
-#### Phase 7b — Diary
+#### Phase 7a — Write diary
 
 After the Phase 7 decision, append one entry to `diary.md`:
 
@@ -376,7 +415,7 @@ For `no-op` iterations (agent made no file changes), write:
 ---
 ```
 
-#### Phase 8 — Log
+#### Phase 8 — Write log
 
 Append one JSONL record to `experiments.jsonl`:
 
@@ -397,7 +436,7 @@ Append one JSONL record to `experiments.jsonl`:
 }
 ```
 
-`ideation_source` is `"claude"` when the Claude specialist agent proposed the change, `"codex"` when Phase 2b (Codex fallback) proposed it.
+`ideation_source` is `"claude"` when the Claude specialist agent proposed the change, `"codex"` when Phase 2c (Codex fallback) proposed it.
 
 Update `state.json`: `iteration = i`, `status = running`.
 
@@ -439,9 +478,10 @@ Write full report to `.temp/output-optimize-campaign-$BRANCH-$(date +%Y-%m-%d).m
 **Codex wins**: <N> Codex proposals kept vs <N> Claude proposals kept
 
 ### Experiment History
-| # | Metric | Delta | Status | Description | Agent | Confidence |
-|---|--------|-------|--------|-------------|-------|------------|
-| ... |
+
+| #   | Metric | Delta  | Status   | Description | Agent | Confidence |
+| --- | ------ | ------ | -------- | ----------- | ----- | ---------- |
+| N   | value  | +X.X%  | status   | desc        | agent | 0.N        |
 
 ### Summary
 [2-3 sentences on what strategies worked, what didn't, what to try next]

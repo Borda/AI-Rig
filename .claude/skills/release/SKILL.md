@@ -2,7 +2,7 @@
 name: release
 description: 'Prepare release communication and check release readiness. Modes — notes (writes PUBLIC-NOTES.md), changelog (prepends CHANGELOG.md), summary (internal brief), migration (breaking-changes guide), prepare (full pipeline: audit → notes + changelog + summary + migration if breaking changes), audit (pre-release readiness check: blockers, docs alignment, version consistency, Common Vulnerabilities and Exposures (CVEs)). Use whenever the user says "prepare release", "write changelog", "what changed since v1.x", "prepare v2.0", "write release notes", "am I ready to release", "check release readiness", or wants to announce a version to users.'
 argument-hint: <mode> [range] | migration <from> <to> | prepare <version> | audit [version]
-allowed-tools: Read, Write, Bash, Grep, Glob, TaskCreate, TaskUpdate
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, TaskCreate, TaskUpdate
 ---
 
 <objective>

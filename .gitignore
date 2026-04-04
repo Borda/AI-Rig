@@ -18,8 +18,7 @@ docs/
 .experiments/
 .reports/
 .temp/
-_audits/
-_analyse/
+.outputs/
 
 # Agent auto-memory (machine-local, not source)
 .claude/agent-memory/

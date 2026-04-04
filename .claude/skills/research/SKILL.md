@@ -60,7 +60,7 @@ Use this prompt scaffold (adapt the constraints from Step 1):
 Note: pre-compute output paths before spawning — the orchestrator must extract the branch and evaluate date expressions, then substitute concrete paths into all spawn prompts:
 `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
 
-# Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts
+**Note**: Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts.
 
 ```
 Research the literature on: <$ARGUMENTS>

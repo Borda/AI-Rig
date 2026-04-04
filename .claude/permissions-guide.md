@@ -163,33 +163,32 @@ ______________________________________________________________________
 
 ## Python toolchain
 
-| Permission                          | Description                                     | Typical use case                                                          |
-| ----------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------- |
-| `Bash(python3:*)`                   | Run Python 3 scripts directly                   | Execute helper scripts, one-off data transforms, quick interpreter checks |
-| `Bash(pytest:*)`                    | Run the test suite via the `pytest` entry point | Quick test run during TDD loop in `/develop feature` and `/develop fix`   |
-| `Bash(pre-commit run:*)`            | Run pre-commit hooks on staged or all files     | Verify formatting and linting before marking a task done                  |
-| `Bash(python -m pytest:*)`          | Run tests via the module interface              | Environment-safe alternative when `pytest` binary is not on PATH          |
-| `Bash(python -m doctest:*)`         | Execute doctests embedded in a module           | Validate inline usage examples in docstrings                              |
-| `Bash(python -m pre_commit run:*)`  | Run pre-commit via module interface             | Alternative invocation inside virtual environments                        |
-| `Bash(python -m cProfile:*)`        | Profile a script and output timing data         | `/optimize` Step 1 baseline measurement                                   |
-| `Bash(ruff:*)`                      | Lint and auto-fix Python source                 | Run after edits; `check` for diagnostics, `format` for style              |
-| `Bash(mypy:*)`                      | Static type-checking                            | Validate type annotations on a module or package                          |
-| `Bash(pip show:*)`                  | Display metadata for an installed package       | Check installed version, confirm dependency is present                    |
-| `Bash(pip list:*)`                  | List all installed packages and their versions  | Dependency audit, environment snapshot                                    |
-| `Bash(pip index:*)`                 | Query PyPI for available versions of a package  | Check whether a newer release is available                                |
-| `Bash(pip-audit:*)`                 | Scan installed packages for known CVEs          | Pre-release dependency CVE scan                                           |
-| `Bash(uv run pytest:*)`             | Run tests via uv-managed pytest                 | Same as `pytest:*` but uses the project's uv-managed environment          |
-| `Bash(uv run python -m pytest:*)`   | Run tests via uv python module interface        | Environment-safe pytest invocation through uv                             |
-| `Bash(uv run python -m doctest:*)`  | Execute doctests via uv python                  | Validate inline usage examples via uv-managed interpreter                 |
-| `Bash(uv run python -m cProfile:*)` | Profile a script via uv python                  | `/optimize` baseline measurement through uv-managed interpreter           |
-| `Bash(uv run ruff:*)`               | Lint and auto-fix Python source via uv          | Run ruff through uv to ensure project venv rules apply                    |
-| `Bash(uv run mypy:*)`               | Static type-checking via uv                     | Run mypy through uv to use project-pinned version                         |
-| `Bash(uv run pre-commit run:*)`     | Run pre-commit hooks via uv                     | Verify formatting/linting via uv-managed pre-commit                       |
-| `Bash(uv run pip-audit:*)`          | Scan packages for CVEs via uv                   | Pre-release CVE scan through uv-managed environment                       |
-| `Bash(uv pip show:*)`               | Display metadata for an installed package       | Check installed version in the uv-managed environment                     |
-| `Bash(uv pip list:*)`               | List all packages installed via uv              | Dependency audit of a uv-managed environment                              |
-| `Bash(uv pip check:*)`              | Verify package compatibility in uv environment  | Detect dependency conflicts without installing anything                   |
-| `Bash(uv tree:*)`                   | Show dependency tree for the project            | Visualize transitive deps; identify why a package is installed            |
+| Permission                          | Description                                     | Typical use case                                                        |
+| ----------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| `Bash(pytest:*)`                    | Run the test suite via the `pytest` entry point | Quick test run during TDD loop in `/develop feature` and `/develop fix` |
+| `Bash(pre-commit run:*)`            | Run pre-commit hooks on staged or all files     | Verify formatting and linting before marking a task done                |
+| `Bash(python -m pytest:*)`          | Run tests via the module interface              | Environment-safe alternative when `pytest` binary is not on PATH        |
+| `Bash(python -m doctest:*)`         | Execute doctests embedded in a module           | Validate inline usage examples in docstrings                            |
+| `Bash(python -m pre_commit run:*)`  | Run pre-commit via module interface             | Alternative invocation inside virtual environments                      |
+| `Bash(python -m cProfile:*)`        | Profile a script and output timing data         | `/optimize` Step 1 baseline measurement                                 |
+| `Bash(ruff:*)`                      | Lint and auto-fix Python source                 | Run after edits; `check` for diagnostics, `format` for style            |
+| `Bash(mypy:*)`                      | Static type-checking                            | Validate type annotations on a module or package                        |
+| `Bash(pip show:*)`                  | Display metadata for an installed package       | Check installed version, confirm dependency is present                  |
+| `Bash(pip list:*)`                  | List all installed packages and their versions  | Dependency audit, environment snapshot                                  |
+| `Bash(pip index:*)`                 | Query PyPI for available versions of a package  | Check whether a newer release is available                              |
+| `Bash(pip-audit:*)`                 | Scan installed packages for known CVEs          | Pre-release dependency CVE scan                                         |
+| `Bash(uv run pytest:*)`             | Run tests via uv-managed pytest                 | Same as `pytest:*` but uses the project's uv-managed environment        |
+| `Bash(uv run python -m pytest:*)`   | Run tests via uv python module interface        | Environment-safe pytest invocation through uv                           |
+| `Bash(uv run python -m doctest:*)`  | Execute doctests via uv python                  | Validate inline usage examples via uv-managed interpreter               |
+| `Bash(uv run python -m cProfile:*)` | Profile a script via uv python                  | `/optimize` baseline measurement through uv-managed interpreter         |
+| `Bash(uv run ruff:*)`               | Lint and auto-fix Python source via uv          | Run ruff through uv to ensure project venv rules apply                  |
+| `Bash(uv run mypy:*)`               | Static type-checking via uv                     | Run mypy through uv to use project-pinned version                       |
+| `Bash(uv run pre-commit run:*)`     | Run pre-commit hooks via uv                     | Verify formatting/linting via uv-managed pre-commit                     |
+| `Bash(uv run pip-audit:*)`          | Scan packages for CVEs via uv                   | Pre-release CVE scan through uv-managed environment                     |
+| `Bash(uv pip show:*)`               | Display metadata for an installed package       | Check installed version in the uv-managed environment                   |
+| `Bash(uv pip list:*)`               | List all packages installed via uv              | Dependency audit of a uv-managed environment                            |
+| `Bash(uv pip check:*)`              | Verify package compatibility in uv environment  | Detect dependency conflicts without installing anything                 |
+| `Bash(uv tree:*)`                   | Show dependency tree for the project            | Visualize transitive deps; identify why a package is installed          |
 
 ______________________________________________________________________
 

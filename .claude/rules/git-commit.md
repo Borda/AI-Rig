@@ -16,6 +16,10 @@ Before writing a commit message, always run these three commands in parallel:
 - `git diff HEAD` — **not** bare `git diff`; bare `git diff` shows only unstaged changes and misses staged new files entirely; `git diff HEAD` captures both staged and unstaged changes vs HEAD
 - `git log --oneline -5` — reference the repo's existing commit style
 
+**Truncated diff — mandatory follow-up**: when `git diff HEAD` output is large and the Bash tool saves it to a file (showing only a 2 KB preview), **read the saved file completely before writing the commit**. Do not write from the preview alone — the most significant changes are often past the truncation point. Also run `git diff --stat HEAD` (always fits in context) to get a complete file-by-file change map; use the stat output to identify which files changed most and whether any were missed in the preview.
+
+**Ranking rule — diff first, recency last**: rank significance across the full diff before writing the title. Conversational recency bias (the last thing worked on in the session) must not dominate. The title must reflect the most significant change in the diff, not the most recent one.
+
 **New files are always significant**: any file marked `A` in `git status` must be explicitly mentioned in the commit bullet list, regardless of line count. New files represent added capability, not just changed lines.
 
 **Semantic novelty beats diff verbosity**: when ranking significance, a new capability, new interface, or new script outranks a verbose-but-routine config edit even if the config diff has more lines. Ask "what would a reviewer need to know first?" — that is the most significant change.

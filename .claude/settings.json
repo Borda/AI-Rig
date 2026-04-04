@@ -330,7 +330,6 @@
       "Bash(mkdir -p .temp/)",
       "Bash(claude:*)",
       "Bash(node:*)",
-      "Bash(python3:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:docs.github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
