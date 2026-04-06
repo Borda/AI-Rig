@@ -10,7 +10,7 @@
 ci:
   autofix_prs: true
   autoupdate_commit_msg: "[pre-commit.ci] bump ⬆ suggestions"
-  autoupdate_schedule: monthly
+  autoupdate_schedule: quarterly
   skip: [lychee] # pre-commit.ci has no lychee binary and no cargo to install it
   # submodules: true
 
@@ -43,7 +43,7 @@ repos:
         args: ["--print-width=120"]
 
   - repo: https://github.com/pre-commit/mirrors-eslint
-    rev: v10.0.3
+    rev: v10.2.0
     hooks:
       - id: eslint
         additional_dependencies:
@@ -69,7 +69,7 @@ repos:
           - mdformat-config
 
   - repo: https://github.com/lycheeverse/lychee.git
-    rev: lychee-v0.23.0 # run `pre-commit autoupdate` to set; verify release at https://github.com/lycheeverse/lychee/releases
+    rev: nightly # run `pre-commit autoupdate` to set; verify release at https://github.com/lycheeverse/lychee/releases
     hooks:
       - id: lychee
         args:
