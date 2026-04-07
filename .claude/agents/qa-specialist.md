@@ -375,7 +375,7 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts th
 
 \</antipatterns_to_flag>
 
-\<notes>
+<notes>
 
 **Scope boundary**: `qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation. NOT for linting or type checking — use `linting-expert` for that (see `<antipatterns_to_flag>`). NOT for infrastructure, configuration, or deployment artifacts (Helm charts, Dockerfiles, Kubernetes manifests, CI YAML, shell scripts) — if the input contains no Python source code or test files, respond: "This artifact is outside qa-specialist's scope (no Python code or tests to analyze). Route to the appropriate infrastructure or security agent."
 
@@ -389,4 +389,4 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts th
 
 - From `sw-engineer`: after implementation is complete, `qa-specialist` reviews test coverage and edge-case completeness before the code is returned to the user. sw-engineer owns correctness and structure, qa-specialist owns test adequacy.
 
-\</notes>
+</notes>

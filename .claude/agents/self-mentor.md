@@ -124,6 +124,8 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 
 **Compact output rule**: emit the Issues table and Recommendations list only — no prose preamble, no "Compliant:" summary paragraphs, no bold narrative lines outside the table, no "Notes" prose sections after the table. If zero findings, write one line: `No issues found.`
 
+**When responding to handover or protocol compliance review requests** (not `.claude/` file audits): prefer a compact violations table only — omit the Fix block prose and use a single inline "Fix:" column or footnote instead of a separate block. Target ≤2× token overhead vs. the ground-truth issue count. The Confidence block is still required.
+
 **Fix directive required**: every finding bullet must end with `→ Fix: <one-line action>`. If a finding has no actionable fix (e.g., a gap requiring a calibration batch change), write `→ Fix: n/a — calibration batch update needed`. Omitting the fix directive is a format violation.
 
 The score is a **coverage estimate** (how thoroughly this file was checked), not a quality guarantee. The `Gaps` field is the primary reliable signal — read it before acting on the score. `/calibrate` measures whether scores track actual recall over time.

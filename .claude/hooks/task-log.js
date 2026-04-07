@@ -2,13 +2,14 @@
 // task-log.js — multi-event lifecycle hook
 //
 // PURPOSE
-//   Central nervous system for session state tracking.  It handles six distinct
-//   Claude Code hook events and maintains three categories of runtime state that
+//   Central nervous system for session state tracking.  It handles seven distinct
+//   Claude Code hook events and maintains four categories of runtime state that
 //   other hooks (statusline.js) read to render the live status line:
 //
 //     agents/   — which subagents are currently running
 //     codex/    — which codex plugin sessions are active
 //     tools/    — which tool types fired in the current turn (for the 🔧 line)
+//     timings/  — in-flight start markers for per-tool wall-clock timing
 //
 //   It also appends to append-only audit logs so you have a full history of every
 //   agent launch, skill invocation, and context compaction across sessions.
@@ -17,16 +18,20 @@
 //   1. Parse stdin JSON for hook_event_name, tool_name, tool_input, agent_id, agent_type, session_id
 //   2. Resolve per-session temp dir at /tmp/claude-state-<session_id>/ for ephemeral state
 //   3. PreToolUse: log Task/Agent/Skill invocations to invocations.jsonl; open a codex session
-//      file in state/codex/ for codex:* skills; increment per-tool-type counter in state/tools/
-//   4. PostToolUse: close the codex session file when Skill(codex:*) completes
-//   5. SubagentStart: write agent metadata (type, model, color, timestamp) to state/agents/<id>.json
-//   6. SubagentStop: delete the per-agent file; append completion entry (with last_assistant_message)
+//      file in state/codex/ for codex:* skills; increment per-tool-type counter in state/tools/;
+//      write a timing start marker (tool name, args summary, timestamp) to state/timings/
+//   4. PostToolUse: close the codex session file when Skill(codex:*) completes; read the
+//      timing start marker, compute duration_ms, append to timings.jsonl, delete marker
+//   5. PostToolUseFailure: same as PostToolUse timing path but records status "error"
+//   6. SubagentStart: write agent metadata (type, model, color, timestamp) to state/agents/<id>.json
+//   7. SubagentStop: delete the per-agent file; append completion entry (with last_assistant_message)
 //      to invocations.jsonl; also clean up codex tracking if the agent was a codex:* type
-//   7. PreCompact: log to compactions.jsonl; scan transcript tail for Write/Edit tool_use blocks
+//   8. PreCompact: log to compactions.jsonl; scan transcript tail for Write/Edit tool_use blocks
 //      and write modified file paths to state/session-context.md as a compaction breadcrumb
-//   8. UserPromptSubmit: write a queue marker to state/queue/ (deduplicated via 500ms lock)
-//   9. Stop: clear state/tools/ and remove oldest queue marker (deduplicated); agents left intact
-//  10. SessionEnd: delete entire /tmp/claude-state-<session_id>/ subtree; prune stale git worktrees
+//   9. UserPromptSubmit: write a queue marker to state/queue/ (deduplicated via 500ms lock)
+//  10. Stop: clear state/tools/ and remove oldest queue marker (deduplicated); agents left intact;
+//      delete any orphaned timing start markers (tool calls that never got a PostToolUse)
+//  11. SessionEnd: delete entire /tmp/claude-state-<session_id>/ subtree; prune stale git worktrees
 //
 // HOOK EVENT RESPONSIBILITIES
 //
@@ -43,6 +48,12 @@
 //   PostToolUse
 //     • Closes the codex session file when Skill(codex:*) or Agent(codex:*) completes,
 //       so the 🤖 counter drops back to zero immediately after the run finishes.
+//     • Reads the timing start marker written by PreToolUse, computes wall-clock duration,
+//       appends a record to timings.jsonl (status "ok"), and deletes the marker.
+//
+//   PostToolUseFailure
+//     • Same timing path as PostToolUse but records status "error" so failed tool calls
+//       are distinguishable in timing analysis without blocking normal flow.
 //
 //   SubagentStart
 //     • Resolves agent_type from the state/pending/<tool_use_id>.json cache written by
@@ -73,6 +84,8 @@
 //     • Removes ALL processing markers from state/queue/ so the 💬 badge disappears.
 //       Clears all (not just oldest) to handle interrupted turns where Stop didn't fire
 //       and stale markers accumulated. Agents are intentionally NOT cleared here.
+//     • Deletes any remaining files in state/timings/ (orphaned start markers from tool
+//       calls that never received a PostToolUse/PostToolUseFailure event).
 //
 //   SessionEnd  (full session teardown)
 //     • Clears state/agents/, state/tools/, state/codex/, and state/queue/ completely.
@@ -81,13 +94,15 @@
 //       (orphaned by crashed agents or interrupted sessions).
 //
 // STATE FILES
-//   .claude/logs/invocations.jsonl      — append-only audit log (agents + skills)
-//   .claude/logs/compactions.jsonl      — compaction events log
-//   /tmp/claude-state-<session_id>/agents/<id>.json   — one file per active subagent
-//   /tmp/claude-state-<session_id>/codex/<id>.json    — one file per active codex plugin session
-//   /tmp/claude-state-<session_id>/tools/<tool>.json  — one file per tool type, current turn only
-//   /tmp/claude-state-<session_id>/queue/<ts>.json    — one file per pending user input (cleared on Stop)
-//   /tmp/claude-state-<session_id>/pending/<id>.json  — one file per in-flight Agent() call (consumed by SubagentStart; cleaned at SessionEnd)
+//   ~/.claude/logs/invocations.jsonl    — append-only audit log (agents + skills); global across all projects; includes project field
+//   ~/.claude/logs/compactions.jsonl    — compaction events log; global across all projects; includes project field
+//   ~/.claude/logs/timings.jsonl        — append-only per-tool timing log {ts, project, tool, args, tool_use_id, session_id, duration_ms, status, model}
+//   /tmp/claude-state-<session_id>/agents/<id>.json     — one file per active subagent
+//   /tmp/claude-state-<session_id>/codex/<id>.json      — one file per active codex plugin session
+//   /tmp/claude-state-<session_id>/tools/<tool>.json    — one file per tool type, current turn only
+//   /tmp/claude-state-<session_id>/queue/<ts>.json      — one file per pending user input (cleared on Stop)
+//   /tmp/claude-state-<session_id>/pending/<id>.json    — one file per in-flight Agent() call (consumed by SubagentStart; cleaned at SessionEnd)
+//   /tmp/claude-state-<session_id>/timings/<id>.json    — in-flight timing start marker (written by PreToolUse, consumed by PostToolUse/Failure; orphans cleared at Stop)
 //   .claude/state/session-context.md    — modified-files breadcrumb for compaction
 //
 // SESSION ISOLATION
@@ -101,6 +116,7 @@
 //   0  Always — logging hook; must never block or crash Claude.
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
@@ -114,10 +130,14 @@ process.stdin.on("end", () => {
 
     // Resolve workspace root from CWD (hooks run with CWD = project root)
     const root = process.cwd();
-    const logsDir = path.join(root, ".claude", "logs");
     const stateDir = path.join(root, ".claude", "state");
-    const logFile = path.join(logsDir, "invocations.jsonl");
-    const compactFile = path.join(logsDir, "compactions.jsonl");
+    // Global logs dir — audit logs accumulate across all projects and sessions
+    const globalLogsDir = path.join(os.homedir(), ".claude", "logs");
+    const logFile = path.join(globalLogsDir, "invocations.jsonl");
+    const compactFile = path.join(globalLogsDir, "compactions.jsonl");
+    const timingsFile = path.join(globalLogsDir, "timings.jsonl");
+    // Project slug used to tag log entries so they can be filtered by project
+    const projectSlug = root.replace(/[/.]/g, "-");
 
     // Ephemeral per-session state lives in /tmp scoped by session_id.
     // This prevents cross-session contamination when multiple Claude Code instances run
@@ -130,6 +150,7 @@ process.stdin.on("end", () => {
     const codexDir = path.join(tmpDir, "codex");
     const queueDir = path.join(tmpDir, "queue");
     const pendingDir = path.join(tmpDir, "pending");
+    const timingsDir = path.join(tmpDir, "timings");
 
     const ts = new Date().toISOString();
 
@@ -138,7 +159,15 @@ process.stdin.on("end", () => {
         const agentType = tool_input?.subagent_type || "unknown";
         const desc = tool_input?.description || "";
         const prompt = (tool_input?.prompt || "").slice(0, 200);
-        appendLog(logFile, logsDir, { ts, event: "started", tool: "Task", agent: agentType, desc, prompt });
+        appendLog(logFile, globalLogsDir, {
+          ts,
+          project: projectSlug,
+          event: "started",
+          tool: "Task",
+          agent: agentType,
+          desc,
+          prompt,
+        });
         // Cache subagent_type so SubagentStart can resolve agent_type when its payload omits it.
         // Agent()-spawned agents may have null agent_type in SubagentStart; pending/ bridges the gap.
         if (tool_name === "Agent" && tool_input?.subagent_type && data.tool_use_id) {
@@ -153,7 +182,7 @@ process.stdin.on("end", () => {
       } else if (tool_name === "Skill") {
         const skill = tool_input?.skill || "unknown";
         const args = tool_input?.args || "";
-        appendLog(logFile, logsDir, { ts, event: "invoked", tool: "Skill", skill, args });
+        appendLog(logFile, globalLogsDir, { ts, project: projectSlug, event: "invoked", tool: "Skill", skill, args });
         // Track codex plugin sessions for statusline display (tool_use_id is the stable key)
         // Matches any codex: plugin command (codex:review, codex:adversarial-review, codex:rescue, etc.)
         if (skill && skill.startsWith("codex:") && data.tool_use_id) {
@@ -181,6 +210,22 @@ process.stdin.on("end", () => {
           fs.writeFileSync(toolFile, JSON.stringify({ tool: tool_name, since: ts, count }));
         } catch (_) {}
       }
+      // Write timing start marker. PostToolUse reads it to compute wall-clock duration.
+      // isDuplicateEvent dedup prevents double-write when both project and home settings.json fire.
+      if (data.tool_use_id && !isDuplicateEvent(`Pre-${data.tool_use_id}`, tmpDir)) {
+        try {
+          fs.mkdirSync(timingsDir, { recursive: true });
+          fs.writeFileSync(
+            path.join(timingsDir, `${data.tool_use_id}.json`),
+            JSON.stringify({
+              tool: tool_name,
+              start: Date.now(),
+              model: data.model || null,
+              args: summarizeArgs(tool_name, tool_input),
+            }),
+          );
+        } catch (_) {}
+      }
     } else if (hook_event_name === "PostToolUse") {
       // Remove codex plugin session tracking when any Skill(codex:*) completes.
       if (data.tool_use_id) {
@@ -190,6 +235,23 @@ process.stdin.on("end", () => {
             fs.unlinkSync(path.join(codexDir, `${data.tool_use_id}.json`));
           } catch (_) {}
         }
+        // Complete timing: read start marker, compute duration, append to timings.jsonl, delete marker.
+        // Natural dedup: first fire reads+deletes the marker; second fire finds it gone and exits silently.
+        recordTiming(data.tool_use_id, tool_name, session_id, "ok", timingsDir, timingsFile, globalLogsDir, data.model);
+      }
+    } else if (hook_event_name === "PostToolUseFailure") {
+      // Same as PostToolUse timing but marks status "error".
+      if (data.tool_use_id) {
+        recordTiming(
+          data.tool_use_id,
+          tool_name,
+          session_id,
+          "error",
+          timingsDir,
+          timingsFile,
+          globalLogsDir,
+          data.model,
+        );
       }
     } else if (hook_event_name === "SubagentStart") {
       // Each agent gets its own file — no read-modify-write race with concurrent agents
@@ -240,15 +302,16 @@ process.stdin.on("end", () => {
       } catch (_) {}
       // Capture last assistant message (up to 500 chars) for post-mortem debugging
       const lastMsg = (data.last_assistant_message || "").slice(0, 500) || undefined;
-      appendLog(logFile, logsDir, {
+      appendLog(logFile, globalLogsDir, {
         ts,
+        project: projectSlug,
         event: "completed",
         tool: "Task",
         agent: loggedType || "unknown",
         ...(lastMsg && { last_msg: lastMsg }),
       });
     } else if (hook_event_name === "PreCompact") {
-      appendLog(compactFile, logsDir, { ts, event: "pre_compact" });
+      appendLog(compactFile, globalLogsDir, { ts, project: projectSlug, event: "pre_compact" });
       // Extract modified files from transcript and write context snapshot
       const transcriptPath = data.transcript_path;
       if (transcriptPath) {
@@ -330,6 +393,17 @@ process.stdin.on("end", () => {
           } catch (_) {}
         }
       } catch (_) {}
+      // Clear orphaned timing start markers — any marker left at Stop means PostToolUse never
+      // fired for that tool call (crashed/interrupted). Prevents stale markers from corrupting
+      // future timing if tool_use_ids were ever reused.
+      try {
+        const tFiles = fs.readdirSync(timingsDir);
+        for (const f of tFiles) {
+          try {
+            fs.unlinkSync(path.join(timingsDir, f));
+          } catch (_) {}
+        }
+      } catch (_) {}
     } else if (hook_event_name === "SessionEnd") {
       // Full session teardown — delete the entire session-scoped temp directory.
       // All ephemeral state (agents, tools, codex, queue, dedup locks) lives there.
@@ -406,5 +480,60 @@ function appendLog(logFile, dir, entry) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     fs.appendFileSync(logFile, JSON.stringify(entry) + "\n");
+  } catch (_) {}
+}
+
+// summarizeArgs — extract a compact, safe summary of tool_input for timings.jsonl.
+// Omits large content fields (Write/Edit body) to keep log lines short.
+function summarizeArgs(toolName, toolInput) {
+  if (!toolInput) return null;
+  try {
+    switch (toolName) {
+      case "Read": {
+        let s = "file_path=" + (toolInput.file_path || "?");
+        if (toolInput.offset) s += " offset=" + toolInput.offset;
+        if (toolInput.limit) s += " limit=" + toolInput.limit;
+        return s;
+      }
+      case "Write":
+      case "Edit":
+        return "file_path=" + (toolInput.file_path || "?");
+      case "Bash":
+        return "command=" + (toolInput.command || "").slice(0, 200);
+      case "Grep":
+        return "pattern=" + (toolInput.pattern || "") + " path=" + (toolInput.path || ".");
+      case "Glob":
+        return "pattern=" + (toolInput.pattern || "");
+      case "Agent":
+      case "Task":
+        return "type=" + (toolInput.subagent_type || "?") + " desc=" + (toolInput.description || "");
+      case "Skill":
+        return "skill=" + (toolInput.skill || "") + " args=" + (toolInput.args || "");
+      default:
+        return JSON.stringify(toolInput).slice(0, 200);
+    }
+  } catch (_) {
+    return null;
+  }
+}
+
+// recordTiming — read start marker, compute wall-clock duration, append to timings.jsonl, delete marker.
+// Natural dedup: first PostToolUse fire reads+deletes the marker; second fire finds it gone and skips.
+function recordTiming(toolUseId, toolName, sid, status, timingsDir, timingsFile, logsDir, model) {
+  try {
+    const f = path.join(timingsDir, toolUseId + ".json");
+    const d = JSON.parse(fs.readFileSync(f, "utf8"));
+    const duration_ms = Date.now() - d.start;
+    appendLog(timingsFile, logsDir, {
+      ts: new Date().toISOString(),
+      tool: toolName || d.tool,
+      args: d.args || null,
+      tool_use_id: toolUseId,
+      session_id: sid,
+      duration_ms,
+      status,
+      model: model || d.model || null,
+    });
+    fs.unlinkSync(f);
   } catch (_) {}
 }

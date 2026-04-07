@@ -33,7 +33,7 @@ Rules:
 
 ## Artifact Framing
 
-- **Verbal summary as skeleton**: when the user provides a verbal summary before requesting a written artifact, that summary is the output skeleton — mirror their order, abstraction level, and named examples verbatim; source material (README, code) only fills gaps they left open; preserve quotable phrases from the source exactly rather than paraphrasing.
+- **Verbal summary as skeleton**: when the user provides a verbal summary before requesting a written artifact, that summary is the output skeleton — mirror their order, abstraction level, and named examples verbatim; do not add information the user did not mention — no elaboration, no expansion; source material (README, code) may only fill explicit gaps the user left open; preserve quotable phrases from the source exactly rather than paraphrasing.
 - **Format-label register**: translate the format label to its implied register before writing:
   - *Slack message* — no headers, 2–4 short paragraphs, casual voice, inline links, one quotable block max
   - *PR description* — sections with headers, tables ok, technical register

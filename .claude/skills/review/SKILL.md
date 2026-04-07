@@ -296,7 +296,9 @@ Main context receives only the one-liner verdict. Proceed with that summary for 
 
 After parsing confidence scores: if any agent scored < 0.7, prepend **⚠ LOW CONFIDENCE** to that agent's findings section and explicitly state the gap. Do not silently drop uncertain findings — flag them so the reviewer can decide whether to investigate further.
 
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template with the **Extended Fields (review only)** addendum. Replace `[entity-line]` with `Review — [target]` and replace `[skill-specific path]` with `.temp/output-review-$BRANCH-$DATE.md`.
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template with the **Extended Fields (review only)** addendum. Replace `[entity-line]` with `Review — [target]` and replace `[skill-specific path]` with `.temp/output-review-$BRANCH-$DATE.md`. The rendered terminal block must follow this exact structure: opening `---` on its own line, followed by the entity line on the next line (never concatenated as `---Review...`); the `→ saved to .temp/output-review-$BRANCH-$DATE.md` line must be present after `Confidence:`; closing `---` must follow the `→ saved to` line. Print this block to the terminal.
+
+After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Code Review: [target]` content.
 
 ## Step 7: Delegate implementation follow-up (optional)
 
@@ -354,6 +356,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards. F
 
 - Critical issues are always surfaced regardless of scope
 - Skip sections where no issues were found — don't pad with "looks good". When reviewing isolated code without git context (no PR diff, no repo history available), skip OSS Checks and Performance Concerns sections entirely unless the code itself contains evidence of performance issues (e.g., nested loops over large collections, I/O in tight loops) or OSS concerns (e.g., hardcoded secrets, new dependency strings).
+- **Signal-to-noise gate**: When a function or class has ≤50 lines and only 1–2 ground-level issues (critical/high), do not add more than 2 medium/low findings beyond them. Surface the remainder as `[nit]` in a dedicated "Minor Observations" section rather than elevating them to the same tier as high-severity findings. The goal is that the first 3 findings a reader sees are always the most impactful.
 - In PR mode: check CI status first — if red, report that without full review
 - Blocking issues require explicit `[blocking]` prefix so author knows what must change
 - Follow-up chains:

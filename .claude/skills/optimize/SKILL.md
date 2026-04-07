@@ -112,9 +112,9 @@ Usage: /optimize plan <goal|file> [out.md]
 
 **If mode is `judge`**: Read `.claude/skills/optimize/modes/judge.md` and execute its steps (J1–J6) in order, passing the remaining arguments (optional `file.md` and `--skip-validation` flag).
 
-**If mode is `run`**: Read `.claude/skills/optimize/modes/run.md` and execute its Default Mode steps (R0–R7) in order, passing the remaining arguments along with any flags (`--team`, `--colab`, `--codex`, `--researcher`, `--journal`, `--hypothesis`, `--architect`).
+**If mode is `run`**: Read `.claude/skills/optimize/modes/run.md` and execute its Default Mode steps (R0–R7) in order, passing the remaining arguments along with any flags (`--team`, `--colab`, `--codex`, `--researcher`, `--journal`, `--hypothesis`, `--architect`). When `--team` is active, `run.md` delegates to `.claude/skills/optimize/modes/team.md`.
 
-**If mode is `plan`**: Read `.claude/skills/optimize/modes/run.md` (the Plan Mode section — different from Default Mode) and execute its Plan Mode steps (P-P0–P-P3), passing the remaining arguments as `<goal|file> [out.md]`. # plan+resume both live in run.md — do not split or rename these sections
+**If mode is `plan`**: Read `.claude/skills/optimize/modes/plan.md` and execute its Plan Mode steps (P-P0–P-P3), passing the remaining arguments as `<goal|file> [out.md]`.
 
 **If mode is `resume`**: Read `.claude/skills/optimize/modes/run.md` and execute its Resume Mode steps, passing the optional `file.md` argument along with any flags (`--team`, `--colab`, `--codex`, `--compute`).
 
@@ -135,7 +135,7 @@ Usage: /optimize plan <goal|file> [out.md]
 - Bottleneck is architectural (not just a hot loop) → `/develop refactor` for structural changes with test safety net
 - Quick end-to-end without interactive wizard → `/optimize sweep "goal"` to auto-plan, validate, and run in one shot
 
-**Mode file locations**: `plan` and `run` both live in `modes/run.md`; that file contains three mode sections: Plan Mode (P-P0–P-P3), Default Mode (R0–R7), and Resume Mode. `judge` lives in `modes/judge.md`. `sweep` lives in `modes/sweep.md`; that file contains steps S1–S5.
+**Mode file locations**: `plan` lives in `modes/plan.md` (P-P0–P-P3). `run` and `resume` live in `modes/run.md` (R0–R7 + Resume Mode). `--team` extension lives in `modes/team.md` (Phases A–D). `judge` lives in `modes/judge.md`. `sweep` lives in `modes/sweep.md` (S1–S5).
 
 **Research pipeline**: `--researcher` activates pre-phase hypothesis generation (R0) before the campaign loop — see `.claude/rules/optimize-hypothesis-protocol.md` for `hypotheses.jsonl` schema, `checkpoint.json`, and entry format. `--journal` records all outcomes (kept and reverted) to `journal.md` for failure feedback. `--architect` enables a parallel architectural hypothesis pass via `solution-architect`.
 

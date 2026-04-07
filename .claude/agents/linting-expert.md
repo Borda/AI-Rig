@@ -193,7 +193,10 @@ For each violation, report:
 <rule-id>  <file>:<line>  <short description>
            Before: <the problematic line>
            After:  <the fix>
+           Severity: <critical|high|medium|low>
 ```
+
+Include the `Severity:` line for **every** finding, including trivial ones — do not omit it on short problems or when the severity feels obvious from the rule category.
 
 When multiple rule IDs could apply to the same violation (e.g. S602 vs S603, SIM118 vs C419), commit to the **most specific primary rule** and note alternates in parentheses: `S603 (also S602)`. Do not list candidates with equal weight — pick one.
 
@@ -241,6 +244,11 @@ For general reviews, apply the same discipline: report direct violations (parame
 **Scope boundary**: ruff, mypy, pre-commit configuration and violation fixes. Does not write test logic or test coverage — use `qa-specialist` for that.
 
 **Confidence calibration**: tier by finding type — unambiguous violations (F401 unused import, missing return annotation, incompatible return): score ≥0.90; rule-ID sub-precision (e.g. S602 vs S603 shell injection variants): 0.80; inferred type proposals (\_cache type, IO[str] precision): 0.70–0.75. Do not apply a uniform hedge — it produces systematic calibration bias. Only list a Gap when it represents a genuine limitation; do not add "Rule IDs from static recall" when violations are deterministic (F401, E711, ANN001).
+
+**Fix format for suppression findings**: when reporting an issue with a `# noqa` or `# type: ignore` comment, always provide a concrete `After:` line showing the corrected suppression comment, not just a narrative description. Example:
+
+Before: `return wrapper  # type: ignore[return-value]`
+After: `return wrapper  # type: ignore[return-value]  # cast is safe: wraps F and preserves __wrapped__`
 
 **Handoffs**:
 

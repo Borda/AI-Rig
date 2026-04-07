@@ -43,16 +43,17 @@ A completed run always contains `result.jsonl`. Incomplete runs (crashed, timed 
 
 ## TTL policy
 
-| Location                                                                   | TTL     | Condition                                           |
-| -------------------------------------------------------------------------- | ------- | --------------------------------------------------- |
-| `.reports/<skill>/YYYY-MM-DDTHH-MM-SSZ/`, `.<skill>/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | only dirs containing `result.jsonl`                 |
-| `.plans/blueprint/`                                                        | 30 days | keyed on file mtime (flat spec/tree files)          |
-| `.cache/gh/`                                                               | 30 days | keyed on file mtime (GitHub API response cache)     |
-| `.temp/`                                                                   | 30 days | keyed on file mtime                                 |
-| `.plans/active/`, `.plans/closed/`                                         | manual  | move to `closed/` when done; never auto-delete      |
-| `.notes/`                                                                  | manual  | human-maintained                                    |
-| `releases/<version>/`                                                      | manual  | release artefacts; archive or delete after shipping |
-| `.claude/logs/`                                                            | forever | rotate at 10 MB                                     |
+| Location                                                                   | TTL     | Condition                                                                                           |
+| -------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------- |
+| `.reports/<skill>/YYYY-MM-DDTHH-MM-SSZ/`, `.<skill>/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | only dirs containing `result.jsonl`                                                                 |
+| `.plans/blueprint/`                                                        | 30 days | keyed on file mtime (flat spec/tree files)                                                          |
+| `.cache/gh/`                                                               | 30 days | keyed on file mtime (GitHub API response cache)                                                     |
+| `.temp/`                                                                   | 30 days | keyed on file mtime                                                                                 |
+| `.plans/active/`, `.plans/closed/`                                         | manual  | move to `closed/` when done; never auto-delete                                                      |
+| `.notes/`                                                                  | manual  | human-maintained                                                                                    |
+| `releases/<version>/`                                                      | manual  | release artefacts; archive or delete after shipping                                                 |
+| `~/.claude/logs/`                                                          | forever | hook audit logs (invocations, compactions, timings) — global across all projects; rotate at 10 MB   |
+| `.claude/logs/`                                                            | forever | skill-specific logs (calibrations, session-archive, audit-errors) — project-scoped; rotate at 10 MB |
 
 ## Cleanup hook (SessionEnd)
 
@@ -60,7 +61,7 @@ The `SessionEnd` hook runs this cleanup automatically:
 
 ```bash
 # Delete completed skill runs older than 30 days
-find .reports/calibrate .reports/resolve .reports/audit .reports/review .experiments .developments \
+find .reports/calibrate .reports/resolve .reports/audit .reports/review .reports/analyse .experiments .developments \
   -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null \
   | xargs dirname | xargs rm -rf
 

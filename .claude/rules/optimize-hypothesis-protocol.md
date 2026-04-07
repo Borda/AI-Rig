@@ -131,7 +131,7 @@ When `--team` is active, hypothesis agents in Phase A produce entries with `sour
 | `agent_type`   | `str` | Specialist agent type to use for implementation (e.g., `"perf-optimizer"`, `"ai-researcher"`)                                                              |
 | `change_scope` | `str` | Estimated blast radius: `"small"` (1–2 files), `"medium"` (3–5 files), `"large"` (6+ files or architectural) (primary Phase B sort key — small runs first) |
 
-**Backfill rule** (for R0 `--researcher`/`--architect` entries merged into a team queue): see Phase A Step 5 in `.claude/skills/optimize/modes/run.md` for the full backfill logic.
+**Backfill rule** (for R0 `--researcher`/`--architect` entries merged into a team queue): see Phase A Step 5 in `.claude/skills/optimize/modes/team.md` for the full backfill logic.
 
 **Team-mode output files** (in `<RUN_DIR>/`, alongside `hypotheses.jsonl`):
 

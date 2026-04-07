@@ -17,7 +17,7 @@ Mark "Calibrate skills" in_progress. For each skill in the domain table, spawn o
 
 For skill targets (target name starts with `/`): spawn a `general-purpose` subagent with the skill's `SKILL.md` content prepended as context, running against the synthetic input from the problem. The pipeline template write-and-acknowledge pattern still applies.
 
-For mode-specific targets (`/optimize-plan`, `/optimize-judge`): instead of the full `SKILL.md`, prepend the relevant mode file as context — read `.claude/skills/optimize/modes/run.md` (plan wizard steps P-P0–P-P3) for `/optimize-plan`, and `.claude/skills/optimize/modes/judge.md` (steps J1–J6) for `/optimize-judge`. The `<TARGET>` substitution uses the kebab form without leading slash (e.g. `optimize-plan`, `optimize-judge`).
+For mode-specific targets (`/optimize-plan`, `/optimize-judge`): instead of the full `SKILL.md`, prepend the relevant mode file as context — read `.claude/skills/optimize/modes/plan.md` (plan wizard steps P-P0–P-P3) for `/optimize-plan`, and `.claude/skills/optimize/modes/judge.md` (steps J1–J6) for `/optimize-judge`. The `<TARGET>` substitution uses the kebab form without leading slash (e.g. `optimize-plan`, `optimize-judge`).
 
 For `/optimize-judge`, the calibration pattern mirrors `/audit`: inject N specific known issues into the synthetic `program.md`, then score recall of those injected issues against the judge's findings list. Ground truth is the set of injected issues and their severities (per the J2 severity table: critical/high/medium/low).
 

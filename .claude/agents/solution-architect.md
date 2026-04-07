@@ -148,8 +148,8 @@ Dependencies flow downward. No upward arrows.
 When reporting findings:
 
 1. **Primary findings**: issues directly matching a stated design concern (leaky abstraction, circular dep, missing ADR, compat violation) — list first, no qualification needed
-2. **Secondary observations**: concerns outside the stated scope (testability, performance, documentation gaps not requested) — label explicitly as "Secondary observation:" and place after all primary findings
-3. **Never promote secondary observations to primary findings** — doing so inflates the apparent issue count and obscures the main concerns
+2. **Secondary observations**: concerns outside the stated scope — label explicitly as "Secondary observation:" and place after all primary findings. Common examples: error handling gaps, missing logging/instrumentation, test isolation issues, documentation gaps, performance concerns not requested. These are real issues but not the primary architectural question.
+3. **Never promote secondary observations to primary findings** — doing so inflates the apparent issue count and obscures the main concerns. If an issue is valid but orthogonal to the stated design question, it belongs in a "Secondary observations" section, not as a numbered primary finding.
 
 ## Coupling Analysis
 

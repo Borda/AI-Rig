@@ -32,7 +32,7 @@ Usage: /optimize sweep "goal description" [--flags]
 
 ### Step S2: Non-interactive plan
 
-Run plan mode steps P-P2 and P-P3 from `modes/run.md` (P-P0 profiling flow skipped — `<goal>` is always a text string; P-P1 scope guard skipped — goal was provided explicitly) with these behavioral overrides:
+Run plan mode steps P-P2 and P-P3 from `modes/plan.md` (P-P0 profiling flow skipped — `<goal>` is always a text string; P-P1 scope guard skipped — goal was provided explicitly) with these behavioral overrides:
 
 - **P-P2 (config presentation)**: Accept all auto-detected defaults without prompting the user. Print the proposed config as an informational block prefixed `sweep: auto-config →` but do NOT wait for user confirmation.
 - If `--colab[=HW]` or `--compute=colab` was passed, write `compute: colab` (and `colab_hw: <HW>` if provided) into the Config block.

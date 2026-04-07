@@ -77,11 +77,11 @@ git remote -v
 # This prevents the downstream `git merge --continue --no-edit` from being called out of state.
 UPSTREAM=$(git rev-parse --abbrev-ref @{u} 2>/dev/null)
 if [ -n "$UPSTREAM" ]; then
-  git fetch origin 2>/dev/null || true
+  git fetch origin 2>/dev/null || true  # timeout: 3000
   REMOTE_AHEAD=$(git log HEAD..@{u} --oneline 2>/dev/null | wc -l | tr -d ' ')
   if [ "$REMOTE_AHEAD" -gt 0 ]; then
     echo "Remote is $REMOTE_AHEAD commit(s) ahead — running git pull..."
-    git pull || { echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"; exit 1; }
+    git pull || { echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"; exit 1; }  # timeout: 3000
     echo "✓ git pull: merged"
   else
     echo "✓ git: up to date"
@@ -285,15 +285,15 @@ Report merged: <N> findings from /review · <M> deduplicated against GitHub comm
 ## Step 4: Checkout PR branch
 
 ```bash
-SAVED_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-gh pr checkout <PR#>   # fetches HEAD_REF; for forks, adds the contributor's remote + sets up tracking
+SAVED_BRANCH=$(git rev-parse --abbrev-ref HEAD)  # timeout: 3000
+gh pr checkout <PR#>   # fetches HEAD_REF; for forks, adds the contributor's remote + sets up tracking  # timeout: 15000
 ```
 
 `gh pr checkout` handles forks automatically — it adds a remote named after the contributor's GitHub login and configures tracking. Verify:
 
 ```bash
-git remote -v | grep -v fetch | grep -v push | head -10
-git status  # confirm we are on HEAD_REF
+git remote -v | grep -v fetch | grep -v push | head -10  # timeout: 3000
+git status  # confirm we are on HEAD_REF  # timeout: 3000
 ```
 
 Record `FORK_REMOTE`: for fork PRs it is the contributor's login (e.g. `alice`); for same-repo PRs it is `origin`. The push command in Step 9 is always `git push` (tracking is configured correctly by `gh pr checkout`).
@@ -302,7 +302,7 @@ Record `FORK_REMOTE`: for fork PRs it is the contributor's login (e.g. `alice`);
 
 ```bash
 # Detect in-progress merge via MERGE_HEAD sentinel — git status --porcelain does not expose this reliably
-MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD"
+MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD"  # timeout: 3000
 test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 ```
 
@@ -360,9 +360,9 @@ One-sentence summary: which files/modules this PR owns and what it changes about
 ### 6b: Target-branch drift (the "surprises")
 
 ```bash
-git log $MERGE_BASE..origin/$BASE_REF --oneline --no-merges
-SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")
-git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline    # commits the contributor never saw
+git log $MERGE_BASE..origin/$BASE_REF --oneline --no-merges  # timeout: 3000
+SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")  # timeout: 3000
+git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline    # commits the contributor never saw  # timeout: 3000
 ```
 
 One-sentence summary: what independent changes landed on base after the contributor's last commit — these must be preserved unconditionally.
@@ -447,21 +447,22 @@ For each action item:
 test -z "$(git status --porcelain)" || { echo "⚠ dirty tree before item #<id> — stashing"; git stash push -m "resolve-pre-item-<id>"; }
 
 # Snapshot before
-git diff HEAD --stat
+git diff HEAD --stat  # timeout: 3000
 
 # Dispatch to Codex
 Agent(subagent_type="codex:codex-rescue", prompt="Apply this review feedback to the codebase. Implement exactly what is requested and nothing more. If the change is already present or there is nothing actionable, make no changes and explain why. Feedback from @<author>: <full_comment_text>")
 
 # Check whether code changed
-git diff HEAD --stat
+git diff HEAD --stat  # timeout: 3000
 ```
 
 If code changed → commit:
 
 ```bash
 # Stage tracked modifications + new files from Codex (never git add -A)
-git add $(git diff HEAD --name-only)
-git ls-files --others --exclude-standard | grep . | xargs git add -- 2>/dev/null || true  # grep . filters empty output (macOS-portable; xargs -r is GNU-only); permission matcher sees 'git ls-files' as first token
+git add $(git diff HEAD --name-only)  # timeout: 3000
+git ls-files --others --exclude-standard | grep . | xargs git add -- 2>/dev/null || true  # grep . filters empty output (macOS-portable; xargs -r is GNU-only); permission matcher sees 'git ls-files' as first token  # timeout: 3000
+# timeout: 3000 — git commit (local operation)
 git commit -m "$(cat <<'EOF'
 <imperative short summary of the change>
 

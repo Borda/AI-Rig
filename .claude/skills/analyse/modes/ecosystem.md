@@ -39,4 +39,7 @@ Write tool — **do not print the full analysis to terminal**.
 
 Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md`
 — use the **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with
-`.reports/analyse/ecosystem/output-analyse-ecosystem-$(date +%Y-%m-%d).md`.
+`.reports/analyse/ecosystem/output-analyse-ecosystem-$(date +%Y-%m-%d).md`, ensuring the
+output opens with `---` on its own line, followed by the entity line on the next line, includes
+a `→ saved to <path>` line at the end, and closes with `---` on its own line after it.
+After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Ecosystem Impact:` content.
