@@ -3,6 +3,7 @@ name: release
 description: 'Prepare release communication and check release readiness. Modes — notes (writes PUBLIC-NOTES.md), changelog (prepends CHANGELOG.md), summary (internal brief), migration (breaking-changes guide), prepare (full pipeline: audit → notes + changelog + summary + migration if breaking changes), audit (pre-release readiness check: blockers, docs alignment, version consistency, Common Vulnerabilities and Exposures (CVEs)). Use whenever the user says "prepare release", "write changelog", "what changed since v1.x", "prepare v2.0", "write release notes", "am I ready to release", "check release readiness", or wants to announce a version to users.'
 argument-hint: <mode> [range] | migration <from> <to> | prepare <version> | audit [version]
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, TaskCreate, TaskUpdate
+model: opus
 ---
 
 <objective>
@@ -62,18 +63,18 @@ LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-pare
 RANGE="${RANGE:-$LAST_TAG..HEAD}"
 
 # One-liner overview (navigation index)
-git log $RANGE --oneline --no-merges
+git log $RANGE --oneline --no-merges  # timeout: 3000
 
 # Full commit messages — read these to catch BREAKING CHANGE footers,
 # co-authors, and details omitted from the subject line
-git log $RANGE --no-merges --format="--- %H%n%B"
+git log $RANGE --no-merges --format="--- %H%n%B"  # timeout: 3000
 
 # File-level diff stat — confirms what areas actually changed
-git diff --stat $(echo "$RANGE" | sed 's/\.\./\ /')
+git diff --stat $(echo "$RANGE" | sed 's/\.\./\ /')  # timeout: 3000
 
 # PR titles, bodies, and labels for merged PRs (richer context than commits)
 TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
-gh pr list --state merged --base "${TRUNK:-main}" --limit 100 \
+gh pr list --state merged --base "${TRUNK:-main}" --limit 100 \  # timeout: 15000
   --json number,title,body,labels,mergedAt,author 2>/dev/null
 ```
 
@@ -107,8 +108,8 @@ For the top 3–5 most significant classified changes (features, breaking change
 major behaviour changes), read the actual diff or changed files:
 
 ```bash
-git diff $RANGE -- <file>    # for specific files
-git show <commit>:<file>     # to see final state
+git diff $RANGE -- <file>    # timeout: 3000
+git show <commit>:<file>     # timeout: 3000
 ```
 
 Goal: understand what the change actually does at the implementation level —
@@ -122,7 +123,7 @@ Skip this for trivial changes (typos, dep bumps, CI config).
 Pre-flight — verify all templates are present before proceeding:
 
 ```bash
-for tmpl in PUBLIC-NOTES.tmpl.md CHANGELOG.tmpl.md SUMMARY.tmpl.md MIGRATION.tmpl.md; do
+for tmpl in PUBLIC-NOTES.tmpl.md CHANGELOG.tmpl.md SUMMARY.tmpl.md MIGRATION.tmpl.md; do  # timeout: 5000
   [ -f ".claude/skills/release/templates/$tmpl" ] || { echo "Missing template: $tmpl — aborting"; exit 1; }
 done
 ```
@@ -130,9 +131,9 @@ done
 Before writing, fetch the last 2–3 releases from the repo to check for project-specific formatting conventions:
 
 ```bash
-gh release list --limit 3
-LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')
-gh release view "$LATEST_TAG"   # read the body to match style, tone, and structure
+gh release list --limit 3  # timeout: 30000
+LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')  # timeout: 30000
+gh release view "$LATEST_TAG"   # timeout: 15000
 ```
 
 If the existing releases deviate significantly from the templates below (e.g., no emoji sections, different heading levels, prose-style entries), match their style. The templates below are the default — project conventions take precedence.
@@ -174,7 +175,7 @@ After applying the guidelines above to polish the output, write to disk per mode
 
 ## Step 6: Publish (after writing notes)
 
-**Human gate** — stop here and hand off to the user: the GitHub release must be created with project-level tooling (e.g. `gh release create`). Refer to the project's CLAUDE.md or `oss-shepherd` agent (see `<release_workflow>` section) for the exact command. Resume after the release is live.
+**Human gate** — stop here and hand off to the user: the GitHub release must be created with project-level tooling (e.g. `gh release create`). Refer to the project's CLAUDE.md or `oss-shepherd` agent (see `<release_workflow>` section) for the exact command.
 
 ## Mode: prepare
 

@@ -157,7 +157,7 @@ A good `good first issue` must have:
 
 ## Deprecation Discipline
 
-Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) (Borda's own package) — handles warning emission, argument forwarding, and "warn once" behaviour automatically. Read the latest docs on PyPI for current API and examples.
+Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) <!-- verified: 2026-04-08 --> (Borda's own package) — handles warning emission, argument forwarding, and "warn once" behaviour automatically. Read the latest docs on PyPI for current API and examples.
 
 **Deprecation lifecycle**: deprecate in minor release → keep for ≥1 minor cycle → remove in next major.
 **Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in the docstring so docs generators render a deprecation notice automatically.
@@ -203,6 +203,8 @@ Trusted Publishing uses GitHub OpenID Connect (OIDC) — no `API_TOKEN` or `TWIN
 
 4. **Create a GitHub release**
    Tag the commit (`git tag vX.Y.Z && git push --tags`), then create a GitHub release from the tag. The `publish.yml` workflow triggers on `release: published` and handles the rest automatically.
+
+   # Always confirm with user before pushing tags (CLAUDE.md push safety rule)
 
 ### Post-release
 
@@ -515,7 +517,7 @@ gh release list --limit 5
 5. For breaking changes: check deprecation cycle was respected
 6. Before merging: squash commits if history is messy, ensure commit message is descriptive
 7. After merging: check if issue can be closed, update milestone
-8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration: target ≥0.90 when ≤3 known issues and all artifacts are present; 0.85–0.92 when ≥4 issues or complex cross-version lifecycle reasoning is required; below 0.80 only when runtime traces, full repo access, or CI output are materially absent. Severity mapping for internal analysis reports: critical = breaks callers without a migration path or data loss risk (removed public API, changed return type with no deprecation cycle, data corruption); high = requires action before release but has a workaround or migration path (incorrect SemVer bump for a breaking change, missing deprecation window, behavior change without deprecation); medium = best-practice violation or process gap that should be addressed but does not directly break callers (missing CHANGELOG entry, checklist inaccuracy, missing release date, inconsistent version references across files); low = nit, style, or suggestion that improves quality but has no user impact. When in doubt between two adjacent tiers, prefer the lower tier — the agent's historical pattern is to over-escalate. Before finalizing severity labels, self-check: "Does this issue directly break a caller's code at runtime?" If no, it cannot be critical. "Does this issue require a version bump change or API redesign before release?" If no, it is at most medium. Apply the tier definitions mechanically rather than by instinct. Do not escalate medium/high issues to `[blocking]` — reserve that label for critical and high findings only.
+8. Apply the Internal Quality Loop and end with a `## Confidence` block — see `.claude/rules/quality-gates.md`. Domain calibration and severity mapping: see `\<calibration>` in `<notes>` below.
 
 </workflow>
 
@@ -524,5 +526,31 @@ gh release list --limit 5
 **Link integrity**: Follow `.claude/rules/quality-gates.md` — never include a URL without fetching it first. Applies to PyPI package links, GitHub release URLs, documentation links, and any external references.
 
 **Scope redirects**: when declining an out-of-scope request and suggesting external resources (docs, forums, trackers), either (a) omit the URL and name the resource without linking, or (b) fetch the URL first per the link-integrity rule above. Prefer (a) for well-known resources where the URL is obvious (numpy.org, Stack Overflow) to avoid the fetch overhead.
+
+\<calibration>
+
+## Confidence Calibration
+
+Target confidence by issue volume and artifact completeness:
+
+- ≥0.90 — ≤3 known issues and all artifacts (diff, CHANGELOG, CI output) are present
+- 0.85–0.92 — ≥4 issues or complex cross-version lifecycle reasoning is required
+- Below 0.80 — runtime traces, full repo access, or CI output are materially absent
+
+## Severity Mapping (internal analysis reports)
+
+- **critical** — breaks callers without a migration path or data loss risk (removed public API, changed return type with no deprecation cycle, data corruption)
+- **high** — requires action before release but has a workaround or migration path (incorrect SemVer bump for a breaking change, missing deprecation window, behavior change without deprecation)
+- **medium** — best-practice violation or process gap that should be addressed but does not directly break callers (missing CHANGELOG entry, checklist inaccuracy, missing release date, inconsistent version references across files)
+- **low** — nit, style, or suggestion that improves quality but has no user impact
+
+When in doubt between two adjacent tiers, prefer the lower tier — the agent's historical pattern is to over-escalate. Before finalizing severity labels, self-check:
+
+- "Does this issue directly break a caller's code at runtime?" If no, it cannot be critical.
+- "Does this issue require a version bump change or API redesign before release?" If no, it is at most medium.
+
+Apply the tier definitions mechanically rather than by instinct. Do not escalate medium/high issues to `[blocking]` — reserve that label for critical and high findings only.
+
+\</calibration>
 
 </notes>

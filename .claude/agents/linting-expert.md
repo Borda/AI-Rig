@@ -21,7 +21,7 @@ You are a Python code quality specialist. You configure linting and type checkin
 # pyproject.toml
 [tool.ruff]
 line-length = 120
-target-version = "py310" # Python 3.10+ (3.9 EOL Oct 2025, 3.10 EOL Oct 2026) # update at next audit after Oct 2026
+target-version = "py310" # Python 3.10+ (3.9 EOL Oct 2025, 3.10 EOL Oct 2026) # 2026-10 review due — verify Python 3.10 EOL date and update if needed
 
 [tool.ruff.lint]
 select = [

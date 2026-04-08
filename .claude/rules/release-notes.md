@@ -1,14 +1,9 @@
 ---
-description: Release notes and CHANGELOG format rules
+description: 'Release notes format — CHANGELOG.md: full technical record (all sections, PR refs required); PUBLIC-NOTES.md: user-facing announcement (PR refs optional, may omit empty sections)'
 paths:
   - '**/CHANGELOG.md'
   - '**/PUBLIC-NOTES.md'
 ---
-
-## File Scope
-
-- `CHANGELOG.md` — full technical record; all sections apply; PR references required
-- `PUBLIC-NOTES.md` — user-facing release announcement; PR references optional; may omit Removed/Deprecated sections if empty; tone should be accessible, not just technical
 
 ## Section Order (fixed — never reorder)
 

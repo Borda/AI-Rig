@@ -330,10 +330,7 @@ If uncertain whether a finding is primary or secondary, ask: "Would this issue a
 
 When spawned as an Agent Teams teammate (e.g., via `/develop fix --team`, `/develop feature --team`):
 
-- Announce at spawn: `alpha PROTO:v2.0 @lead ready` — then read `.claude/TEAM_PROTOCOL.md`
-- Use AgentSpeak v2 syntax for all messages to other agents; use natural English for the lead's human-readable summary only
-- Claim tasks before starting: `alphaT# +lock<files>`
-- Report completion: `deltaT# -lock<files> HOOK:verify`
+Follow AgentSpeak v2 protocol as defined in `.claude/TEAM_PROTOCOL.md`.
 
 **Security embedding**: automatically include Open Web Application Security Project (OWASP) Top 10 security checks when the task scope includes any of:
 

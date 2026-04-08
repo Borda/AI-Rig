@@ -92,6 +92,7 @@ def test_speed(benchmark):
 
 ```bash
 strace -c python script.py   # system call tracing (Linux only; macOS: dtruss)
+# Note: dtruss requires SIP disabled on modern macOS — prefer Instruments or dtrace -n 'syscall:::entry /pid == $target/ {}'
 iostat -x 1                  # file I/O stats
 ```
 

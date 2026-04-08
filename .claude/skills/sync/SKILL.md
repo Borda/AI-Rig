@@ -4,6 +4,7 @@ description: Drift-detect and sync git-tracked .claude/ and .codex/ config from 
 argument-hint: '[apply]'
 allowed-tools: Read, Bash
 effort: low
+model: sonnet
 ---
 
 <objective>
@@ -54,7 +55,8 @@ Each bash block must be self-contained (redeclare variables at the top). Do not 
 PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
-cd "$PROJECT" && git ls-files .claude/ \
+cd "$PROJECT"
+git ls-files .claude/ \
   | grep -vE 'settings\.json$|settings\.local\.json$' \
   | sed 's|^\.claude/||' \
   | rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"  # timeout: 5000
@@ -107,7 +109,8 @@ rm -f "$SETTINGS_TMP"
 PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CODEX="$HOME_EXPANDED/.codex"
-cd "$PROJECT" && git ls-files .codex/ \
+cd "$PROJECT"
+git ls-files .codex/ \
   | sed 's|^\.codex/||' \
   | rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/"  # timeout: 5000
 ```
@@ -127,7 +130,8 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 mkdir -p "$HOME_CLAUDE"
-cd "$PROJECT" && git ls-files .claude/ \
+cd "$PROJECT"
+git ls-files .claude/ \
   | grep -vE 'settings\.json$|settings\.local\.json$' \
   | sed 's|^\.claude/||' \
   | rsync -av --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"  # timeout: 30000
@@ -160,7 +164,8 @@ fi
 PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CODEX="$HOME_EXPANDED/.codex"
-cd "$PROJECT" && git ls-files .codex/ \
+cd "$PROJECT"
+git ls-files .codex/ \
   | sed 's|^\.codex/||' \
   | rsync -av --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/"  # timeout: 30000
 ```
@@ -174,8 +179,9 @@ HOME_EXPANDED="$HOME"
 jq empty "$HOME_EXPANDED/.claude/settings.json" && echo "settings.json: valid"  # timeout: 5000
 
 # Counts
-echo ".claude files: $(cd "$PROJECT" && git ls-files .claude/ | wc -l | tr -d ' ')"
-echo ".codex files:  $(cd "$PROJECT" && git ls-files .codex/  | wc -l | tr -d ' ')"
+cd "$PROJECT"
+echo ".claude files: $(git ls-files .claude/ | wc -l | tr -d ' ')"
+echo ".codex files:  $(git ls-files .codex/  | wc -l | tr -d ' ')"
 ```
 
 ```bash

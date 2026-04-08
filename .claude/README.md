@@ -74,7 +74,7 @@ pipx install https://github.com/HKUDS/OpenSpace/archive/refs/heads/main.zip --py
 ~/.local/bin/openspace-mcp --help   # smoke test
 
 # 2. Update the command path in .mcp.json if your username differs:
-#    "/Users/<you>/.local/bin/openspace-mcp"
+#    "$HOME/.local/bin/openspace-mcp"
 
 # 3. Make the server available globally (user-level config):
 cp .mcp.json ~/.claude/.mcp.json

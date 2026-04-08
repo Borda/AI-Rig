@@ -5,6 +5,7 @@ argument-hint: resume | archive <text> | summary
 allowed-tools: Read, Write, Edit, Glob, Grep, TaskCreate, TaskUpdate, Bash
 effort: low
 model: sonnet
+context: fork
 ---
 
 <objective>
@@ -220,7 +221,19 @@ Draft the digest:
 - <hash> <message>
 ```
 
-Apply output-routing rule: if the digest is ≤ 10 lines, print to terminal only. If longer, write to `.temp/output-session-summary-<YYYY-MM-DD>.md` (never overwrite — append `-2.md` counter if the slug exists) and print a compact terminal summary with `→ file`.
+Apply output-routing rule: if the digest is ≤ 10 lines, print to terminal only. If longer:
+
+```bash
+mkdir -p .temp/
+OUTPUT=".temp/output-session-summary-$(date +%Y-%m-%d).md"
+# Anti-overwrite: increment counter if slug already exists
+if [ -f "$OUTPUT" ]; then
+  n=2; while [ -f "${OUTPUT%.md}-$n.md" ]; do n=$((n+1)); done
+  OUTPUT="${OUTPUT%.md}-$n.md"
+fi
+```
+
+Write to `$OUTPUT` and print a compact terminal summary with `→ file`.
 
 </workflow>
 

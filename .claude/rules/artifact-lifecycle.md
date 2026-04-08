@@ -1,5 +1,7 @@
 ---
 description: Artifact directory layout, naming convention, TTL policy, and cleanup hook
+paths:
+  - .claude/**
 ---
 
 ## Canonical artifact layout

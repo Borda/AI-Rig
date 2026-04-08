@@ -13,7 +13,7 @@ paths:
 ## After Any Change
 
 1. **Cross-references** — if a name or capability changes, update every file that mentions it
-2. **Auto-memory MEMORY.md** — keep the agents/skills roster in sync with disk (not stored under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md`)
+2. **Auto-memory MEMORY.md** — keep the agents/skills roster in sync with disk (not stored under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '-' | tr '.' '-')/memory/MEMORY.md`)
 3. **`README.md`** — verify agent/skill tables, Status Line, and Config Sync sections
 4. **`settings.json` permissions** — IF this change introduces any new `gh`, `bash`, or `WebFetch`
    call (directly or in a step/workflow you are adding), you MUST add a matching allow rule before

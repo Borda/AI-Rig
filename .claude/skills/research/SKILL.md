@@ -28,7 +28,7 @@ This skill is NOT for deep single-paper analysis or experiment design — use th
 
 <constants>
 HARD_CUTOFF: 900   # 15 min — if ai-researcher does not return, surface partial results from .temp/
-EXTENSION:   300   # one +5 min extension if output file explains the delay
+# Agent calls are synchronous — timeout is handled by Claude Code's native call timeout; no manual extension possible.
 # Deviation from §8: Agent tool is synchronous; no file-activity poll available; timeout enforced by HARD_CUTOFF only
 </constants>
 
@@ -62,6 +62,7 @@ Note: pre-compute output paths before spawning — the orchestrator must extract
 
 ```bash
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
+DATE=$(date +%Y-%m-%d)
 ```
 
 **Note**: Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts.
@@ -70,12 +71,12 @@ BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # t
 Research the literature on: <$ARGUMENTS>
 Codebase constraints: <framework, Python version, compute budget, existing dependencies from Step 1>
 Deliver: comparison table (method, key idea, benchmarks, compute, code available), recommendation for best method, a 3-step implementation plan for this codebase, key hyperparameters (name, typical range, what it controls) for the recommended method, and common gotchas (failure modes and how to avoid them).
-Write your full findings (comparison table, paper analysis, recommendation, implementation plan, Confidence block) to `.temp/output-research-agent-$BRANCH-<date>.md` using the Write tool.
+Write your full findings (comparison table, paper analysis, recommendation, implementation plan, Confidence block) to `.temp/output-research-agent-$BRANCH-$DATE.md` using the Write tool.
 Then return ONLY a compact JSON envelope on your final line — nothing else after it:
-{"status":"done","papers":N,"recommendation":"<method name>","file":".temp/output-research-agent-$BRANCH-<date>.md","confidence":0.N}
+{"status":"done","papers":N,"recommendation":"<method name>","file":".temp/output-research-agent-$BRANCH-$DATE.md","confidence":0.N}
 ```
 
-**Health monitoring** — the Agent tool is synchronous; Claude awaits the ai-researcher response natively (no Bash checkpoint available in this skill). If ai-researcher does not return within `$HARD_CUTOFF` seconds (~15 min), use the Read tool to surface any partial results already written to `.temp/` and continue with what was found; mark timed-out agents with ⏱ in the report. Grant one `$EXTENSION` extension if the output file explains the delay.
+**Health monitoring** — the Agent tool is synchronous; Claude awaits the ai-researcher response natively (no Bash checkpoint available in this skill). If ai-researcher does not return within `$HARD_CUTOFF` seconds (~15 min), use the Read tool to surface any partial results already written to `.temp/` and continue with what was found; mark timed-out agents with ⏱ in the report. # Agent calls are synchronous — timeout is handled by Claude Code's native call timeout; no manual extension possible.
 
 **If the Agent tool is unavailable** (running as a subagent where nested agent spawning is blocked), skip the Agent call and conduct the research inline: use WebSearch and WebFetch to find the top 5 papers, then synthesize the comparison table yourself. Notify the user: "Note: ai-researcher agent could not be spawned in this context — conducting research inline."
 
@@ -125,13 +126,13 @@ Use the Grep tool to search the codebase for any existing related code:
 - [Paper title] ([year]) — [link]
 
 ### Agent Confidence
-<!-- One row per spawned ai-researcher; team mode spawns 2–3 -->
+<!-- One row per spawned agent; team mode: 2–3 rows -->
 | Agent | Score | Gaps |
 |---|---|---|
 | ai-researcher | [score] | [gaps] |
 ```
 
-Write the full report to `.temp/output-research-$BRANCH-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full report to terminal**.
+Write the full report to `.temp/output-research-$BRANCH-$DATE.md` using the Write tool — **do not print the full report to terminal**.
 
 Then print a compact terminal summary:
 
@@ -201,9 +202,11 @@ Produce a sequenced, dependency-ordered implementation plan from SOTA research f
 
 Before spawning in Steps R2–R3, pre-compute the output path components:
 `YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)`
-`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
+`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` <!-- same pattern as Step 2a date/branch block -->
 
 ### Step R2: Codebase analysis
+
+<!-- Pre-compute DATE and BRANCH before spawning: DATE=$(date +%Y-%m-%d); BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main') -->
 
 Spawn a **solution-architect** agent with this prompt:
 

@@ -67,8 +67,8 @@ Surface progress to the user at natural milestones: after system-wide checks ("�
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
 
 # From _shared/preflight-helpers.md — TTL 4 hours, keyed per binary
-preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }
-preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }
+preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }  # timeout: 5000
+preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }  # timeout: 5000
 
 # .claude/ directory must exist (not cached — filesystem state)
 if [ ! -d ".claude" ]; then
@@ -79,7 +79,7 @@ fi
 # jq availability — Check 6 depends on it
 if preflight_ok jq; then
   JQ_AVAILABLE=true
-elif command -v jq &>/dev/null; then
+elif command -v jq &>/dev/null; then  # timeout: 5000
   preflight_pass jq; JQ_AVAILABLE=true
 else
   printf "${YEL}⚠ MISSING${NC}: jq not found — Check 6 (permissions-guide drift) will be skipped\n"
@@ -87,10 +87,20 @@ else
 fi
 
 # git availability — used in path portability check and baseline context
-if ! preflight_ok git && ! command -v git &>/dev/null; then
+if ! preflight_ok git && ! command -v git &>/dev/null; then  # timeout: 5000
   printf "${YEL}⚠ MISSING${NC}: git not found — path portability check may miss repo-root references\n"
 else
   preflight_ok git || preflight_pass git
+fi
+
+# node availability — Check 11 (RTK prefix parsing) and upgrade mode (hook syntax check) depend on it
+if preflight_ok node; then
+  NODE_AVAILABLE=true
+elif command -v node &>/dev/null; then  # timeout: 5000
+  preflight_pass node; NODE_AVAILABLE=true
+else
+  printf "${YEL}⚠ MISSING${NC}: node not found — Check 11 (RTK hook parsing) and upgrade hook syntax check will be skipped\n"
+  NODE_AVAILABLE=false
 fi
 ```
 
@@ -102,7 +112,7 @@ If `.claude/` is missing, abort immediately. Missing `jq` is a warning — the a
 # Check whether pre-commit is installed and a config exists
 if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) \
     && [ -f .pre-commit-config.yaml ]; then
-  pre-commit run --all-files
+  pre-commit run --all-files  # timeout: 600000
 fi
 ```
 
@@ -130,8 +140,8 @@ Record the full file list — this becomes the audit scope for Steps 3–4. Cros
 Set up the run directory once before spawning any agents:
 
 ```bash
-RUN_DIR=".reports/audit/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-mkdir -p "$RUN_DIR"
+RUN_DIR=".reports/audit/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # timeout: 5000
+mkdir -p "$RUN_DIR"  # timeout: 5000
 echo "Run dir: $RUN_DIR"
 ```
 
@@ -154,8 +164,8 @@ After all spawns complete, you will have a list of short summaries in context. U
 **Health monitoring** (CLAUDE.md §8): after spawning all batches, create a checkpoint:
 
 ```bash
-AUDIT_CHECKPOINT="/tmp/audit-check-$(date +%s)"
-touch "$AUDIT_CHECKPOINT"
+AUDIT_CHECKPOINT="/tmp/audit-check-$(date +%s)"  # timeout: 5000
+touch "$AUDIT_CHECKPOINT"  # timeout: 5000
 ```
 
 Every `$MONITOR_INTERVAL` seconds, run `find $RUN_DIR -newer "$AUDIT_CHECKPOINT" -type f | wc -l` — new files = agents alive; zero new files for `$HARD_CUTOFF` seconds = stalled. Grant one `$EXTENSION` extension if the output file tail explains the delay. On timeout: read partial output from the stalled agent's file; surface it with ⏱ in the final report. Never silently omit timed-out agents.
@@ -184,7 +194,7 @@ Run the following checks. For file-listing steps use Glob; for content-search st
 Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames and sort, then write to `/tmp/agents_disk.txt` via Bash:
 
 ```bash
-ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort > /tmp/agents_disk.txt || true
+ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort > /tmp/agents_disk.txt || true  # timeout: 5000
 ```
 
 Read the `- Agents:` and `- Skills:` roster lines from the MEMORY.md content injected in the conversation context (available as auto-memory at session start). Do not attempt to Grep a file path — the MEMORY.md is not stored under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
@@ -209,7 +219,7 @@ Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`,
 
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
-if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then
+if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then  # timeout: 5000
   printf "${YEL}⚠ SKIPPED${NC}: Check 6 — jq not available\n"
 elif [ ! -f ".claude/settings.json" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/settings.json not found\n"
@@ -217,16 +227,16 @@ elif [ ! -f ".claude/permissions-guide.md" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/permissions-guide.md not found\n"
 else
   # Allow entries missing from guide
-  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \
+  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \  # timeout: 5000
   while IFS= read -r perm; do
     grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
       || printf "${YEL}⚠ MISSING from guide${NC}: %s\n" "$perm"
   done
 
   # Guide entries orphaned (not in allow list)
-  grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \
+  grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \  # timeout: 5000
   while IFS= read -r perm; do
-    jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \
+    jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \  # timeout: 5000
       || printf "${YEL}⚠ ORPHANED in guide${NC}: %s\n" "$perm"
   done
 fi
@@ -246,7 +256,7 @@ Flag destructive patterns as **critical** (auto-approved destructive commands ar
 
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
-for f in .claude/skills/*/SKILL.md; do
+for f in .claude/skills/*/SKILL.md; do  # timeout: 5000
   name=$(basename "$(dirname "$f")")
   if awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' && \
      awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true'; then
@@ -274,7 +284,7 @@ Extract declared models with Bash:
 
 ```bash
 printf "%-30s %s\n" "AGENT" "MODEL"
-for f in .claude/agents/*.md; do
+for f in .claude/agents/*.md; do  # timeout: 5000
   name=$(basename "$f" .md)
   model=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^model:/{sub(/^model: /,""); print}' "$f")
   printf "%-30s %s\n" "$name" "${model:-(inherit)}"
@@ -303,7 +313,7 @@ For each agent and skill, validate that declared tools match actual usage — no
 
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
-for f in .claude/skills/*/SKILL.md; do
+for f in .claude/skills/*/SKILL.md; do  # timeout: 5000
   name=$(basename "$(dirname "$f")")
   declared=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^allowed-tools:/{sub(/^allowed-tools: /,""); print}' "$f")
   body=$(awk '/^---$/{c++} c>=2{print}' "$f")
@@ -426,7 +436,7 @@ Cap at 5 proposals per run; if more pass the filter, rank by expected impact and
 First, detect whether the project has local context files that reduce the need for generic examples:
 
 ```bash
-for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do
+for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do  # timeout: 5000
   [ -f "$f" ] && printf "✓ found: %s\n" "$f"
 done
 ```
@@ -434,7 +444,7 @@ done
 Then scan agent and skill files for inline examples:
 
 ````bash
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do  # timeout: 5000
   count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
   lines=$(wc -l < "$f" | tr -d ' ')
   [ "$count" -gt 0 ] && printf "%s: %d example blocks, %d total lines\n" "$f" "$count" "$lines"
@@ -459,7 +469,7 @@ Each agent declares a `color:` in its frontmatter. `hooks/statusline.js` maps th
 
 ```bash
 # Extract color: values declared in agent frontmatter
-for f in .claude/agents/*.md; do
+for f in .claude/agents/*.md; do  # timeout: 5000
   name=$(basename "$f" .md)
   color=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^color:/{sub(/^color: */,""); print}' "$f")
   [ -n "$color" ] && printf "%s: %s\n" "$name" "$color"
@@ -484,13 +494,16 @@ YEL='\033[1;33m'; RED='\033[1;31m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033
 printf "=== Check 11: RTK hook alignment ===\n"
 
 # Verify prerequisites
-if ! command -v rtk &>/dev/null; then
+if ! command -v rtk &>/dev/null; then  # timeout: 5000
   printf "${YEL}⚠ SKIPPED${NC}: Check 11 — rtk not installed\n"
 elif [ ! -f ".claude/hooks/rtk-rewrite.js" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 11 — .claude/hooks/rtk-rewrite.js not found\n"
 else
+  if ! command -v node &>/dev/null; then  # timeout: 5000
+    printf "${YEL}⚠ SKIPPED${NC}: Check 11 RTK parsing — node not in PATH\n"
+  else
   # Step 1: collect RTK-supported subcommands from --help output
-  RTK_HELP=$(rtk --help 2>&1)
+  RTK_HELP=$(rtk --help 2>&1)  # timeout: 5000
 
   # Step 2: extract RTK_PREFIXES array from the hook file
   HOOK_PREFIXES=$(node -e "
@@ -500,7 +513,7 @@ else
     if (!m) { process.exit(1); }
     const entries = m[1].match(/"[^"]+"/g) || [];
     entries.forEach(e => console.log(e.replace(/'/g, '')));
-  " 2>/dev/null)
+  " 2>/dev/null)  # timeout: 5000
 
   if [ -z "$HOOK_PREFIXES" ]; then
     printf "${YEL}⚠ SKIPPED${NC}: Check 11 — could not parse RTK_PREFIXES from hook file\n"
@@ -538,6 +551,7 @@ else
       printf "${GRN}✓ OK${NC}: Check 11 — RTK hook prefixes aligned with installed RTK version\n"
     fi
   fi
+  fi
 fi
 ```
 
@@ -562,9 +576,9 @@ MEMORY.md has a 200-line truncation limit. Noise accumulates silently over time 
 ```bash
 # Find lines with semver pins or "as of" staleness markers in MEMORY.md
 # Same slug derivation pattern used in skills/distill/SKILL.md
-MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md"
+MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md"  # timeout: 3000
 if [ -f "$MEMORY_FILE" ]; then
-  grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found"
+  grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found"  # timeout: 5000
 else
   printf "${YEL}⚠ SKIPPED${NC}: Check 12b — MEMORY.md not found at derived path: %s\n" "$MEMORY_FILE"
 fi
@@ -573,9 +587,9 @@ fi
 **12c — Absorbed feedback files**: List all `feedback_*.md` files in the memory directory. For each, read its content and check whether the rule it documents is already present in MEMORY.md or in the relevant agent/skill file. If yes, flag as **low** (delete the feedback file — the lesson is absorbed).
 
 ```bash
-MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory"
+MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory"  # timeout: 3000
 if [ -d "$MEMORY_DIR" ]; then
-  ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"
+  ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"  # timeout: 5000
 else
   printf "${YEL}⚠ SKIPPED${NC}: Check 12c — memory dir not found: %s\n" "$MEMORY_DIR"
 fi
@@ -591,7 +605,7 @@ First, extract all agent descriptions:
 
 ```bash
 printf "%-25s %s\n" "AGENT" "DESCRIPTION"
-for f in .claude/agents/*.md; do
+for f in .claude/agents/*.md; do  # timeout: 5000
   name=$(basename "$f" .md)
   desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{sub(/^description: /,""); print}' "$f")
   printf "%-25s %s\n" "$name" "$desc"
@@ -614,7 +628,7 @@ Skip if codex (openai-codex) plugin is not installed.
 
 ```bash
 RED='\033[1;31m'; GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
-CODEX_LINE=$(claude plugin list 2>/dev/null | grep 'codex@openai-codex')
+CODEX_LINE=$(claude plugin list 2>/dev/null | grep 'codex@openai-codex')  # timeout: 5000
 if [ -z "$CODEX_LINE" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 14 — codex (openai-codex) plugin not installed\n"
 elif echo "$CODEX_LINE" | grep -q 'disabled'; then
@@ -639,7 +653,7 @@ Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory does not e
 **15a — Inventory vs MEMORY.md**: Glob `.claude/rules/*.md`; extract basenames (strip `.md`). Read the "Agents & Skills Location" section of MEMORY.md; locate the `Rules (N):` line. Compare the disk list against the MEMORY.md roster:
 
 ```bash
-ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort
+ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort  # timeout: 5000
 ```
 
 Rules on disk but absent from MEMORY.md roster → **medium** (rule invisible to future agents reading the roster). Rules in MEMORY.md roster but absent on disk → **medium** (stale entry).
@@ -650,7 +664,7 @@ Rules on disk but absent from MEMORY.md roster → **medium** (rule invisible to
 - If `paths:` is present, it must be a non-empty list of non-empty glob strings → malformed → **high** (rule may silently never load)
 
 ```bash
-for f in .claude/rules/*.md; do
+for f in .claude/rules/*.md; do  # timeout: 5000
   desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{found=1} END{print found+0}' "$f")
   [ "$desc" -eq 0 ] && printf "MISSING description: %s\n" "$f"
 done
@@ -660,8 +674,8 @@ done
 
 ```bash
 # Example: check if a key directive is still duplicated in agents
-grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null
-grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null
+grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null  # timeout: 5000
+grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null  # timeout: 5000
 ```
 
 Report each duplicated phrase with its source files. Fix action: remove the copy outside the rule file and replace with a reference (`Follow .claude/rules/<name>.md`).
@@ -670,7 +684,7 @@ Report each duplicated phrase with its source files. Fix action: remove the copy
 
 ```bash
 grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null \
-  | grep -o 'rules/[a-z_-]*\.md' | sort -u
+  | grep -o 'rules/[a-z_-]*\.md' | sort -u  # timeout: 5000
 ```
 
 Severity: 15b = **high**; 15a/15c/15d = **medium**. 15c findings are report-only (human judgment on which copy to remove); 15a/15b/15d are auto-fixable at `fix medium` and above.
@@ -683,7 +697,7 @@ First, extract step counts to identify candidate pairs (files with similar step 
 
 ```bash
 printf "%-30s %s\n" "FILE" "STEPS"
-for f in .claude/skills/*/SKILL.md; do
+for f in .claude/skills/*/SKILL.md; do  # timeout: 5000
   name="skills/$(basename "$(dirname "$f")")"
   steps=$(grep -c '^## Step' "$f" 2>/dev/null || echo 0)
   printf "%-30s %d\n" "$name" "$steps"
@@ -723,7 +737,7 @@ Thresholds: agents > 300 lines · skill SKILL.md > 600 lines · rules > 200 line
 ```bash
 YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
 printf "%-52s %s\n" "FILE" "LINES"
-for f in .claude/agents/*.md; do
+for f in .claude/agents/*.md; do  # timeout: 5000
   lines=$(wc -l < "$f" | tr -d ' ')
   [ "$lines" -gt 300 ] \
     && printf "${YEL}⚠ TOO LONG${NC}: agents/%s — %d lines (threshold: 300)\n" "$(basename "$f")" "$lines" \
@@ -801,17 +815,17 @@ Cross-check every allow entry in `.claude/settings.json` against actual usage ac
 
 ```bash
 YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
-if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then
+if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then  # timeout: 5000
   printf "${YEL}⚠ SKIPPED${NC}: Check 19 — jq not available\n"
 elif [ ! -f ".claude/settings.json" ]; then
   printf "${YEL}⚠ SKIPPED${NC}: Check 19 — .claude/settings.json not found\n"
 else
   printf "=== Check 19: Stale allow entries ===\n"
-  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | while IFS= read -r entry; do
+  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | while IFS= read -r entry; do  # timeout: 5000
     # Extract the command name from entries like "Bash(git status)" → "git status"
     cmd=$(echo "$entry" | sed 's/^[A-Za-z]*(\(.*\))$/\1/' | sed 's/^"\(.*\)"$/\1/')
     # Search across all .claude/ config files and hooks for any reference to the command
-    hits=$(grep -rl "$cmd" .claude/agents/ .claude/skills/ .claude/rules/ .claude/hooks/ .claude/CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')
+    hits=$(grep -rl "$cmd" .claude/agents/ .claude/skills/ .claude/rules/ .claude/hooks/ .claude/CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')  # timeout: 5000
     if [ "$hits" -eq 0 ]; then
       printf "${YEL}⚠ STALE allow${NC}: %s — no usage found in .claude/ files\n" "$entry"
     fi
@@ -860,7 +874,7 @@ Detect heading level jumps greater than 1 (e.g. `##` followed directly by `####`
 GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
 printf "=== Check 21: Heading hierarchy continuity ===\n"
 violations=0
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do  # timeout: 5000
   [ -f "$f" ] || continue
   awk -v file="$f" '
     /^```/ { in_code = !in_code; next }
@@ -893,9 +907,9 @@ After all checks complete: collect all `⚠` lines, write the full details to `$
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **self-mentor** consolidator agent with this prompt:
 
-> "Read all finding files in `<RUN_DIR>/` (\*.md files from Steps 3–4, including `docs-freshness.md` if present). Apply the severity classification from `.claude/skills/audit/severity-table.md`. Antipatterns that indicate severity under-classification are also in that file. Group all findings by severity (critical, high, medium, low). Apply the one-finding-per-issue rule: when a single location has multiple distinct problems at different severities, emit one finding entry per problem. Write the aggregated severity table to `<RUN_DIR>/aggregate.md` using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/aggregate.md\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"N findings total: C critical, H high, M medium, L low\"}`"
+> "Read all finding files in `<RUN_DIR>/` (\*.md files from Steps 3–4, including `docs-freshness.md` if present). Apply the severity classification from `.claude/skills/audit/severity-table.md`. Antipatterns that indicate severity under-classification are also in that file. Group all findings by severity (critical, high, medium, low). Apply the one-finding-per-issue rule: when a single location has multiple distinct problems at different severities, emit one finding entry per problem. Write the aggregated severity table to `<RUN_DIR>/aggregate.md` using the Write tool. Also write `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one line per finding: `{"file":"<basename>","sev":"high|medium|low","id":"H1","one_line":"<finding description>"}`. This file is what the orchestrator will read; aggregate.md is for human review only. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/aggregate.md\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"N findings total: C critical, H high, M medium, L low\"}`"
 
-Main context receives only that one-liner for the Step 7 report structure. Read `<RUN_DIR>/aggregate.md` only if you need to display specific finding details in Step 7.
+Main context receives only that one-liner. The orchestrator MUST NOT read `aggregate.md` in full — it is 200–600 lines and would overflow context on large audits. Instead, use `$RUN_DIR/summary.jsonl` for all dispatch decisions in Steps 7 and 8.
 
 ## Step 6: Cross-validate critical findings
 
@@ -948,6 +962,8 @@ If no fix level was passed, stop here and present the report.
 
 ## Step 8: Delegate fixes to subagents
 
+> **HARD RULE — No inline fixes**: The orchestrator MUST NOT apply any fix directly using Edit or Write tools — not even single-line edits. Every fix at every severity level goes through a sub-agent. This is not optional. The overhead of spawning is always lower than the context cost of 40+ inline Edit calls accumulated across a `fix all` run.
+
 **Fix Action Hierarchy** — before applying any fix, reason through this order:
 
 1. **Reason** — is the finding actually correct? Is the flagged content genuinely wrong, or just in the wrong place? A misidentified finding should be discarded, not acted on.
@@ -966,6 +982,28 @@ Choose the fix agent based on file type:
 Spawn one agent per affected file, batching all findings for that file into a single subagent prompt. Issue **all spawns in a single response** for parallelism.
 
 Each subagent prompt template: Read the fix prompt template from .claude/skills/audit/templates/fix-prompt.md and use it, filling in `<file path>` and the list of findings.
+
+**Preferred orchestration pattern — audit-fix sub-agent**
+
+When the finding count exceeds 10 or `fix all` was passed, spawn a dedicated **audit-fix** sub-agent that handles all of Steps 8–10 in isolation:
+
+```
+Read `<RUN_DIR>/summary.jsonl` — this is the findings list (one JSON object per line).
+Read `.claude/skills/audit/templates/fix-prompt.md` for the per-file fix prompt template.
+For each unique file in the findings list, spawn one fix agent (self-mentor for .md files, sw-engineer for .js/.py files) with all findings for that file batched into a single prompt.
+Issue all fix spawns in a single response for parallelism.
+After all fix agents complete, spawn self-mentor re-audit agents (one per changed file) to confirm fixes held.
+Write a completion summary to `<RUN_DIR>/fix-summary.md`:
+  - findings_total: N
+  - fixed: N
+  - failed: N
+  - re_audit_clean: true|false
+Return ONLY: {"status":"done","file":"<RUN_DIR>/fix-summary.md","fixed":N,"failed":N,"re_audit_clean":true|false,"confidence":0.N}
+```
+
+The orchestrator (main context) then reads only the compact JSON envelope. It does NOT read fix-summary.md unless `re_audit_clean: false` or `failed > 0`.
+
+When finding count ≤ 10 and fix level is `fix high` or `fix medium` (not `fix all`), the inline batched pattern (one fix-agent per file, all spawned in parallel) is acceptable without the dedicated orchestrator sub-agent.
 
 **Exceptions — handle inline without subagents (note in report):**
 
@@ -1062,7 +1100,7 @@ Before applying anything, verify the baseline is structurally sound:
 
 ```bash
 # Check for the most likely breaking issue — frontmatter conflicts — without running the full audit
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do  # timeout: 5000
   awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' && \
   awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true' && \
   echo "BREAKING: $f — context:fork + disable-model-invocation:true"
@@ -1096,9 +1134,9 @@ Mark "Apply config proposals" in_progress. For each **config** proposal, in sequ
 2. Correctness check:
    ```bash
    # settings.json — JSON validity
-   jq empty .claude/settings.json && echo "✓ valid JSON" || echo "✗ invalid JSON"
+   jq empty .claude/settings.json && echo "✓ valid JSON" || echo "✗ invalid JSON"  # timeout: 5000
    # JS hook files — syntax check
-   node --check .claude/hooks/*.js 2>&1 | grep -v '^$' || true
+   node --check .claude/hooks/*.js 2>&1 | grep -v '^$' || true  # timeout: 5000
    ```
 3. Accept (✓) if check passes; revert and mark rejected (✗) with reason if it fails
 
@@ -1165,7 +1203,7 @@ Propose `/sync apply` to the user after upgrade completes — do not auto-execut
 - **Dead loops need human judgment**: a cycle in follow-up chains might be intentional (e.g., refactor → review → fix → refactor) — flag and explain, don't auto-remove
 - **Max 2 re-audit cycles**: if fixes don't converge after 2 loops, surface the remaining issues to the user rather than spinning
 - **Relationship to self-mentor**: `self-mentor` is a single-file reactive audit; `/audit` is the system-wide sweep that runs self-mentor at scale and adds cross-file checks
-- `general-purpose` is a Claude Code built-in agent type (no `.claude/agents/general-purpose.md` file needed) — it provides a baseline Claude instance with access to all tools but no custom system prompt.
+- `general-purpose` is a built-in Claude Code agent type (no `.claude/agents/general-purpose.md` file needed); no custom system prompt, all tools available.
 - **Paths must be portable**: `.claude/` for project-relative paths, `~/` or `$HOME/` for home paths — never a literal `/Users/` or `/home/` path; this rule applies to ALL config files including `settings.json`
 - Pre-flight for `/sync` — run clean before `/sync apply`.
 - **Bash error logging**: if a bash block in Pre-flight checks or Step 4 fails unexpectedly, append a JSONL line to `.claude/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — do not swallow errors silently.

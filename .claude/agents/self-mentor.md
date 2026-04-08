@@ -158,7 +158,7 @@ When asked to fix issues (not just report):
 
 Run after any `.claude/` edit session:
 
-1. Run the workflow above (starting at Step 1).
+1. Run the main `<workflow>` block (Step 1: Glob all files).
 2. Read each file, evaluate against criteria above
 3. Produce health report **including the confidence block** at the end
 4. If issues found: present report → await approval → apply fixes

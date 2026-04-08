@@ -18,6 +18,7 @@ Rules:
 
 - Bold line: neutral factual gist of what the user asked — not a full restatement, no labels
 - Blank line between the bold summary and the response
+- Never use a table or pipe-delimited format for the anchor line — pipe characters pollute copy-paste
 - No exceptions — apply to every response including short ones
 
 ## Progress and Transparency

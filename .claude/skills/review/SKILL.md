@@ -1,7 +1,7 @@
 ---
 name: review
 description: Multi-agent code review covering architecture, tests, performance, docs, lint, security, and Application Programming Interface (API) design.
-argument-hint: '[file, directory, or PR number] [--reply]'
+argument-hint: '[PR number|file|dir|path/to/report.md] [--reply]'
 allowed-tools: Read, Write, Bash, Grep, Agent, TaskCreate, TaskUpdate
 context: fork
 model: opus
@@ -20,7 +20,7 @@ Perform a comprehensive code review by spawning specialized sub-agents in parall
   - If a number is given (e.g. `42`): review the PR diff
   - If a path is given: review those files
   - If omitted: review recently changed files
-  - `--reply`: after review, spawn oss-shepherd to draft a contributor-facing PR comment from the findings
+  - `--reply`: after review, spawn oss-shepherd to draft a contributor-facing PR comment from the findings. When the argument is a path ending in `.md`, spawns oss-shepherd directly from that report without running a new review.
   - **Scope**: this skill reviews Python source code only. If the input is a non-Python file (YAML, JSON, shell script, etc.), state that it is out of scope and suggest the appropriate tool — do not produce findings.
 
 </inputs>
@@ -47,6 +47,11 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 ```bash
 # Parse --reply flag — must run before any gh calls
 REPLY_MODE=false; CLEAN_ARGS=$ARGUMENTS; if echo "$ARGUMENTS" | grep -q -- '--reply'; then REPLY_MODE=true; CLEAN_ARGS=$(echo "$ARGUMENTS" | sed 's/--reply//g' | xargs); fi
+```
+
+```bash
+DIRECT_PATH_MODE=false
+if echo "$CLEAN_ARGS" | grep -qE '\.md$'; then DIRECT_PATH_MODE=true; REVIEW_FILE="$CLEAN_ARGS"; fi
 ```
 
 ```bash
@@ -92,6 +97,14 @@ If `ISSUE_NUMS` is non-empty, spawn one **sw-engineer** agent per issue at the s
 
 If `ISSUE_NUMS` is empty, skip all issue-related checks in downstream steps.
 
+### Direct report fast-path
+
+If `DIRECT_PATH_MODE=true`:
+
+- `REPLY_MODE=false` → print `Error: --reply is required when passing a .md report path` and stop.
+- `REPLY_MODE=true` and `[ ! -f "$REVIEW_FILE" ]` → print `Error: report not found: $REVIEW_FILE` and stop.
+- `REPLY_MODE=true` and file exists → print `[direct] using $REVIEW_FILE` → **skip immediately to Step 9**. Do not run Steps 2–8.
+
 ## Step 2: Codex co-review
 
 Set up the run directory (shared by Codex and all agent spawns in Step 3):
@@ -120,6 +133,10 @@ After Codex writes `$RUN_DIR/codex.md`, extract a compact seed list (≤10 items
 ## Step 3: Spawn sub-agents in parallel
 
 **File-based handoff**: read `.claude/skills/_shared/file-handoff-protocol.md`. The run directory was created in Step 2 (`$RUN_DIR`).
+
+<!-- Note: $RUN_DIR must be pre-expanded before inserting into spawn prompts — replace with the literal path string computed in Step 2 setup. -->
+
+Replace `$RUN_DIR` in the spawn prompt below with the actual path from Step 2.
 
 Launch agents simultaneously with the Agent tool (security augmentation is folded into Agent 1 — not a separate spawn; Agent 6 is optional). Every agent prompt must end with:
 
@@ -166,16 +183,19 @@ If `ISSUE_NUMS` is non-empty, linked issue analysis files exist at `$RUN_DIR/iss
 
 **Agent 6 — solution-architect (optional, for PRs touching public API boundaries)**: If the diff touches `__init__.py` exports, adds/modifies Protocols or Abstract Base Classes (ABCs), changes module structure, or introduces new public classes — evaluate API design quality, coupling impact, and backward compatibility. Skip if changes are internal implementation only.
 
-**Health monitoring** (CLAUDE.md §8): Agent calls are synchronous — Claude awaits each response natively; no Bash checkpoint polling is available. If any agent does not return within `$HARD_CUTOFF` seconds (~15 min), use the Read tool to surface any partial results already written to `$RUN_DIR` and continue with what was found; mark timed-out agents with ⏱ in the final report. Grant one `$EXTENSION` extension if the output file tail explains the delay. Never silently omit timed-out agents.
+**Health monitoring** (CLAUDE.md §8): Agent calls are synchronous — Claude awaits each response natively; no Bash checkpoint polling is available. If any agent does not return within `$HARD_CUTOFF` seconds, use the Read tool to surface any partial results already written to `$RUN_DIR` and continue with what was found; mark timed-out agents with ⏱ in the final report. Grant one `$EXTENSION` extension if the output file tail explains the delay. Never silently omit timed-out agents.
 
 ## Step 4: Post-agent checks (run in parallel)
 
 While agents from Step 3 are completing, run these two independent checks simultaneously:
 
+```bash
+TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')  # timeout: 6000  # shared by 4a and 4b
+```
+
 ### 4a: Ecosystem impact check (for libraries with downstream users)
 
 ```bash
-TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')  # timeout: 6000
 # Check if changed APIs are used by downstream projects
 # Rate-limit guard: if gh api returns HTTP 429, wait 10 seconds and retry once.
 # If still rate-limited, log "rate-limited — downstream search may be incomplete" and continue.
@@ -194,7 +214,6 @@ git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -A2 "deprecate
 ### 4b: Open Source Software (OSS) checks
 
 ```bash
-TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')  # timeout: 6000
 # Check for new dependencies — license compatibility
 git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- pyproject.toml requirements*.txt  # timeout: 3000
 
@@ -210,7 +229,7 @@ git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- CHANGELOG.md CHANG
 
 ## Step 5: Cross-validate critical/blocking findings
 
-Read and follow the cross-validation protocol from `.claude/skills/_shared/cross-validation-protocol.md`.
+Read and follow the cross-validation protocol from `.claude/skills/_shared/cross-validation-protocol.md`. If `.claude/skills/_shared/cross-validation-protocol.md` is not present, skip Step 5.
 
 **Skill-specific**: use the **same agent type** that raised the finding as the verifier (e.g., sw-engineer verifies sw-engineer's critical finding).
 
@@ -296,6 +315,8 @@ Main context receives only the one-liner verdict. Proceed with that summary for 
 
 After parsing confidence scores: if any agent scored < 0.7, prepend **⚠ LOW CONFIDENCE** to that agent's findings section and explicitly state the gap. Do not silently drop uncertain findings — flag them so the reviewer can decide whether to investigate further.
 
+<!-- Extended Fields live in .claude/skills/_shared/terminal-summaries.md — if that file is absent, omit the extended fields block -->
+
 Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **PR Summary** template with the **Extended Fields (review only)** addendum. Replace `[entity-line]` with `Review — [target]` and replace `[skill-specific path]` with `.temp/output-review-$BRANCH-$DATE.md`. The rendered terminal block must follow this exact structure: opening `---` on its own line, followed by the entity line on the next line (never concatenated as `---Review...`); the `→ saved to .temp/output-review-$BRANCH-$DATE.md` line must be present after `Confidence:`; closing `---` must follow the `→ saved to` line. Print this block to the terminal.
 
 After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Code Review: [target]` content.
@@ -317,7 +338,7 @@ After consolidating findings, identify tasks from the review that Codex can impl
 
 Read `.claude/skills/_shared/codex-delegation.md` and apply the delegation criteria defined there.
 
-Example prompt: `"use the qa-specialist to add a test for StreamReader.read_chunk() in tests/test_reader.py — the method should raise ValueError when called after close(), currently there is no test for this path"`
+Example prompt: `"Add a test for StreamReader.read_chunk() in tests/test_reader.py — the method should raise ValueError when called after close(), currently no test covers this path."`
 
 Only print a `### Codex Delegation` section to the terminal when tasks were actually delegated — omit entirely if nothing was delegated. (do not re-write the output file).
 
@@ -337,7 +358,7 @@ Spawn the **oss-shepherd** agent with:
 
 - The review output file path from Step 6
 - The PR number and contributor handle (if known from Step 1)
-- Prompt: "Read the review report at `<path>`. Produce the standard two-part contributor reply per your `<voice>` block. **Part 1 — Reply summary** (always present, always complete on its own): (a) acknowledgement + praise naming what is genuinely good — technique, structural decisions, test quality — 1–3 concrete observations, not generic; (b) thematic areas needing improvement — no counts, no itemisation, no 'see below'; name the concern areas concretely enough that the contributor knows what to look at without Part 2; (c) optional closing sentence only when Part 2 follows (e.g. 'I've left inline suggestions with specifics.'). **Part 2 — Inline suggestions** (optional; single unified table, all findings in one place — no separate prose paragraphs): `| Importance | Confidence | File | Line | Comment |` — Importance and Confidence as the two leftmost columns; high → medium → low, then most confident first within tier; 1–2 sentences per row for high items; include all high/medium/low findings in one table. No column-width line-wrapping in prose. Write your full output to `.temp/output-reply-<PR#>-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a one-line summary: `part1=done | part2=N_rows | → .temp/output-reply-<PR#>-<date>.md`"
+- Prompt: "Read the review report at `<path>`. Write a two-part contributor reply: **Part 1 — Reply summary** (always present, always complete on its own): (a) acknowledgement + praise naming what is genuinely good — technique, structural decisions, test quality — 1–3 concrete observations, not generic; (b) thematic areas needing improvement — no counts, no itemisation, no 'see below'; name the concern areas concretely enough that the contributor knows what to look at without Part 2; (c) optional closing sentence only when Part 2 follows (e.g. 'I've left inline suggestions with specifics.'). **Part 2 — Inline suggestions** (optional; single unified table, all findings in one place — no separate prose paragraphs): `| Importance | Confidence | File | Line | Comment |` — Importance and Confidence as the two leftmost columns; high → medium → low, then most confident first within tier; 1–2 sentences per row for high items; include all high/medium/low findings in one table. No column-width line-wrapping in prose. Write your full output to `.temp/output-reply-<PR#>-$(date +%Y-%m-%d).md` using the Write tool. Return ONLY a one-line summary: `part1=done | part2=N_rows | → .temp/output-reply-<PR#>-<date>.md`"
 
 Print compact terminal summary:
 

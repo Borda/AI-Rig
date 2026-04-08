@@ -237,6 +237,8 @@ Return ONLY a compact JSON envelope: {"status":"done","findings":N,"file":"<path
 
 **Passive health monitoring**: the Agent tool is synchronous — Claude awaits self-mentor's response natively. If self-mentor does not return within 15 min, surface any partial output already written to `.temp/` with a ⏱ marker and continue to Step 6 with an incomplete review noted.
 
+# Note: synchronous Agent calls do not support mid-call extensions per CLAUDE.md §8 — simplified monitoring is intentional for synchronous spawns.
+
 If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles). After 2 cycles with remaining findings, surface unresolved issues to the user and proceed to Step 6 anyway.
 
 **Gate**: do not proceed to Step 6 until `findings == 0` or 2 revision cycles are exhausted.

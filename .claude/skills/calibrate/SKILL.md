@@ -49,7 +49,7 @@ Calibration data drives the improvement loop: systematic gaps become instruction
 - CALIBRATE_LOG: `.claude/logs/calibrations.jsonl`
 - AB_ADVANTAGE_THRESHOLD: 0.10 (delta recall or F1 above this → meaningful advantage; below → marginal or none)
 - PHASE_TIMEOUT_MIN: 5 (per-phase budget — if spawned subagents haven't all returned, collect partial results and continue)
-- PIPELINE_TIMEOUT_MIN: 10 (hard cutoff — pipeline not notified within 10 min of launch is timed out; extendable if the agent explains the delay)
+- PIPELINE_TIMEOUT_MIN: 10 (hard cutoff — pipeline not notified within 10 min of launch is timed out; extendable if the agent explains the delay) # tighter than global 15-min cutoff from CLAUDE.md §8 — intentional for calibrate
 - HEALTH_CHECK_INTERVAL_MIN: 5 (orchestrator polls each running pipeline every 5 min for liveness) # = global default (CLAUDE.md §8)
 - EXTENSION_MIN: 5 # = global default (CLAUDE.md §8)
 - ROUTING_ACCURACY_THRESHOLD: 0.90 (below → agent descriptions need improvement)
@@ -131,13 +131,17 @@ Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, and extra instru
 LAUNCH_AT=$(date +%s)
 for TARGET in <target-list>; do touch /tmp/calibrate-check-$TARGET; done
 
+# Use extended timeout for dual-source runs (Codex active in agents/skills modes)
+EFFECTIVE_TIMEOUT_MIN=$PIPELINE_TIMEOUT_MIN
+for T in agents skills; do [ "$TARGET" = "$T" ] && EFFECTIVE_TIMEOUT_MIN=$PIPELINE_TIMEOUT_MIN_DUAL; done
+
 # Every HEALTH_CHECK_INTERVAL_MIN (5 min): check each still-running pipeline
 NEW=$(find .reports/calibrate/<TIMESTAMP>/$TARGET/ -newer /tmp/calibrate-check-$TARGET -type f 2>/dev/null | wc -l | tr -d ' ')  # tr -d strips leading spaces from wc -l on macOS
 touch /tmp/calibrate-check-$TARGET
 ELAPSED=$(( ($(date +%s) - LAUNCH_AT) / 60 ))
 if [ "$NEW" -gt 0 ]; then
   echo "✓ $TARGET active"
-elif [ "$ELAPSED" -ge "$PIPELINE_TIMEOUT_MIN" ]; then
+elif [ "$ELAPSED" -ge "$EFFECTIVE_TIMEOUT_MIN" ]; then
   echo "⏱ $TARGET TIMED OUT (hard limit)"
 elif [ "$ELAPSED" -ge "$HEALTH_CHECK_INTERVAL_MIN" ]; then
   OUTPUT_FILE=".reports/calibrate/<TIMESTAMP>/$TARGET/pipeline.jsonl"
@@ -282,7 +286,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 - **Context safety**: each target runs in its own pipeline subagent — only a compact JSON (~200 bytes) returns to the main context. `all full ab` with all targets (agents + skills + routing + communication + rules) returns ~5KB total, well within limits.
 - **Scorer delegation**: Phase 3a delegates scoring to per-problem `general-purpose` subagents. Each scorer reads response files from disk, returns ~200 bytes. Phase 3b runs Codex scorers sequentially via Bash (writes per-problem files). Phase 3c merges both into `scores.json`. The pipeline holds only compact JSONs regardless of N or A/B mode — no context budget concern.
 - **Nesting depth**: main → pipeline subagent → target/scorer agents (2 levels). Pipeline spawns target agents (Phase 2), Claude scorer agents (Phase 3a), and Codex scoring Bash calls (Phase 3b) at the same depth — no additional nesting.
-- `general-purpose` is a Claude Code built-in agent type (no `.claude/agents/general-purpose.md` file needed) — it provides a baseline Claude instance with access to all tools but no custom system prompt.
+- `general-purpose` is a built-in Claude Code agent type (no `.claude/agents/general-purpose.md` file needed) — no custom system prompt, all tools available.
 - **Quasi-ground-truth limitation**: partially addressed by cross-model generation (Claude + Codex) — two model families now produce independent ground truth, reducing same-family blind spots. Adversarial and ceiling-difficulty problems are included in every run (see difficulty distribution rules in `templates/pipeline-prompt.md` Phase 1a) to test false-positive discipline and reveal upper-bound limits. Remaining gap: synthetically generated adversarial problems are weaker than expert-authored ones; `generator_recall_delta` surfaces whether one generator's problems are systematically easier or harder. `ceiling_recall` (reported separately from `mean_recall`) is the primary signal for upper-bound performance — partial recall (0.4–0.7) on ceiling problems is expected and does not affect the calibration verdict.
 - **Dual evaluation and scorer agreement**: Phase 3a (Claude) and Phase 3b (Codex) score each response independently. Phase 3c merges with Claude as 51% tiebreaker. `scorer_agreement` measures fraction of issues where both scorers agreed — low agreement (< SCORER_AGREEMENT_WARN=0.70) flags ambiguous ground truth or scorer blind spots. Severity disputes (scorers disagree >1 tier) are excluded from the SevAcc aggregate.
 - **File-based Codex handoff**: Codex writes all output (problem JSON, score JSON) directly to the run dir. This avoids bash stdout corruption that can occur when capturing large JSON from shell subprocesses. The pipeline reads from disk, never from stdout capture.

@@ -52,21 +52,21 @@ Collect evidence in parallel — do NOT form hypotheses yet.
 **Tool versions and PATH**:
 
 ```bash
-which python3 && python3 --version
-which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"
-node --version 2>/dev/null || echo "node: not found"
-claude plugin list 2>/dev/null | grep 'codex@openai-codex' || echo "codex (openai-codex): not found"
+which python3 && python3 --version  # timeout: 5000
+which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"  # timeout: 5000
+node --version 2>/dev/null || echo "node: not found"  # timeout: 5000
+claude plugin list 2>/dev/null | grep 'codex@openai-codex' || echo "codex (openai-codex): not found"  # timeout: 5000
 ```
 
 ```bash
-env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | sort
+env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | sort  # timeout: 5000
 ```
 
 **Recent changes**:
 
 ```bash
-git log --oneline -10
-git diff HEAD~3..HEAD --stat
+git log --oneline -10  # timeout: 3000
+git diff HEAD~3..HEAD --stat  # timeout: 3000
 ```
 
 **Config state** (when symptom involves Claude Code, hooks, or skills):
@@ -129,8 +129,8 @@ Design one targeted test per hypothesis that gives a clear confirm/rule-out sign
 # Environment mismatch: check active interpreter
 python3 -c "import sys; print(sys.executable, sys.version)"
 
-# Missing allow entry: check settings.json
-python3 -c "import json, os; d=json.load(open(os.path.expanduser('~/.claude/settings.json'))); print([p for p in d['permissions']['allow'] if 'Bash' in p and 'relevant-cmd' in p])"
+# Missing allow entry: check home settings.json allow list
+cat ~/.claude/settings.json | jq -r '.permissions.allow[]'
 
 # Hook path wrong: verify hook file exists
 ls -la ~/.claude/hooks/

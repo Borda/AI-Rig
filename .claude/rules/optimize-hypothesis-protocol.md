@@ -53,7 +53,14 @@ One JSON object per line. Field groups are written by separate agents in two pas
 ```
 
 **After feasibility annotation** (3 fields added by solution-architect — see Pass 2 table above):
-`feasible: true`, `blocker: null`, `codebase_mapping: "src/model.py:Encoder.forward"`
+
+```json
+{
+  "feasible": true,
+  "blocker": null,
+  "codebase_mapping": "src/model.py:Encoder.forward"
+}
+```
 
 ## Feasibility Filter Rules
 

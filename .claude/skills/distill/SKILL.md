@@ -143,6 +143,7 @@ Anti-pattern checklist — reject the candidate if any apply:
 ## Confidence
 **Score**: [0.N]
 **Gaps**: [e.g., git history too shallow, task files not present, descriptions too generic to compare]
+
 **Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
 ```
 

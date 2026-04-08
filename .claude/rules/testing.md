@@ -7,6 +7,8 @@ paths:
 
 ## Adding Tests — Process
 
+**For new features, use the test-first approach** — see TDD section below.
+
 1. Check all existing tests for the relevant scope first
 2. Investigate if adding parametrization to existing tests (with minimal body changes) is sufficient
 3. Only then create completely new test functions/cases

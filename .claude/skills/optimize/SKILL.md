@@ -131,8 +131,7 @@ Usage: /optimize plan <goal|file> [out.md]
 - Judge emits NEEDS-REVISION or BLOCKED → fix the flagged items, re-run `/optimize judge` to confirm, then proceed to `/optimize run`
 - Run improves metric → `/review` for quality validation of kept commits
 - Run metric plateauing → `/research` for SOTA comparison — maybe a fundamentally different approach is needed
-- Run kept commits accumulate technical debt → `/develop refactor` for structural cleanup with test safety net
-- Bottleneck is architectural (not just a hot loop) → `/develop refactor` for structural changes with test safety net
+- Run kept commits accumulate technical debt or bottleneck is architectural (not just a hot loop) → `/develop refactor` for structural cleanup and architectural changes with test safety net
 - Quick end-to-end without interactive wizard → `/optimize sweep "goal"` to auto-plan, validate, and run in one shot
 
 **Mode file locations**: `plan` lives in `modes/plan.md` (P-P0–P-P3). `run` and `resume` live in `modes/run.md` (R0–R7 + Resume Mode). `--team` extension lives in `modes/team.md` (Phases A–D). `judge` lives in `modes/judge.md`. `sweep` lives in `modes/sweep.md` (S1–S5).

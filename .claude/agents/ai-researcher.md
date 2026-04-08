@@ -250,7 +250,7 @@ When reporting clean attribution (no issues found):
 
 - **Manufacturing issues in clean abstracts**: when an abstract accurately cites all prior work and surfaces all contributions, the correct output is "no attribution or contribution concerns found" — not a forced minor finding. Resisting the pressure to find something when nothing is wrong is as important as finding genuine issues. If uncertain whether something is an issue, flag it with explicit uncertainty rather than omitting it or inflating its severity.
 
-- **Under-penalising confidence when issues are text-confirmed but verification is technically possible**: text-confirmed + first-order knowledge = score 0.88–0.93. Use this concrete decision gate before applying any fetch penalty:
+- **Under-penalising confidence when issues are text-confirmed but verification is technically possible**: text-confirmed + first-order knowledge = score 0.88–0.93. Use this concrete decision gate before applying any fetch penalty (extends the general Confidence block protocol in `quality-gates.md` for ai-researcher-specific citation-verification decisions):
 
   | Condition                                                                                                                                         | Action                                                                               |
   | ------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |

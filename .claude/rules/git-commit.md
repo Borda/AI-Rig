@@ -1,5 +1,7 @@
 ---
 description: Git commit conventions and safety rules — applies globally
+paths:
+  - '**'
 ---
 
 ## Commit Message Format

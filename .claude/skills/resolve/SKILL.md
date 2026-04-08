@@ -70,18 +70,18 @@ else
 fi
 
 # Show current remotes — confirms we are in the right repo and surfaces any existing fork remotes
-git remote -v
+git remote -v  # timeout: 3000
 
 # Sync with remote tracking branch before any git work.
 # When local is 1 commit ahead and remote is also 1 commit ahead, git pull merges cleanly.
 # This prevents the downstream `git merge --continue --no-edit` from being called out of state.
 UPSTREAM=$(git rev-parse --abbrev-ref @{u} 2>/dev/null)
 if [ -n "$UPSTREAM" ]; then
-  git fetch origin 2>/dev/null || true  # timeout: 3000
+  git fetch origin 2>/dev/null || true  # timeout: 6000
   REMOTE_AHEAD=$(git log HEAD..@{u} --oneline 2>/dev/null | wc -l | tr -d ' ')
   if [ "$REMOTE_AHEAD" -gt 0 ]; then
     echo "Remote is $REMOTE_AHEAD commit(s) ahead — running git pull..."
-    git pull || { echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"; exit 1; }  # timeout: 3000
+    git pull || { echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"; exit 1; }  # timeout: 6000
     echo "✓ git pull: merged"
   else
     echo "✓ git: up to date"
@@ -322,7 +322,7 @@ git merge "origin/$BASE_REF" --no-commit --no-ff  # timeout: 6000
 Check for conflicted files:
 
 ```bash
-git diff --name-only --diff-filter=U
+git diff --name-only --diff-filter=U  # timeout: 3000
 ```
 
 If no conflicts → complete the merge and skip to Step 8:
@@ -416,7 +416,7 @@ Parse the JSON envelope returned by sw-engineer. Check that `resolved == staged`
 Complete the merge:
 
 ```bash
-git merge --continue --no-edit  # timeout: 6000
+git merge --continue --no-edit  # timeout: 3000
 ```
 
 Print conflict report:
@@ -444,7 +444,7 @@ For each action item:
 
 ```bash
 # Guard: ensure clean state before each item
-test -z "$(git status --porcelain)" || { echo "⚠ dirty tree before item #<id> — stashing"; git stash push -m "resolve-pre-item-<id>"; }
+test -z "$(git status --porcelain)" || { echo "⚠ dirty tree before item #<id> — stashing"; git stash push -m "resolve-pre-item-<id>"; }  # timeout: 3000
 
 # Snapshot before
 git diff HEAD --stat  # timeout: 3000
@@ -459,6 +459,7 @@ git diff HEAD --stat  # timeout: 3000
 If code changed → commit:
 
 ```bash
+# Prerequisite: working tree must be clean before Step 7 Codex calls; verify with git diff --stat HEAD before proceeding.
 # Stage tracked modifications + new files from Codex (never git add -A)
 git add $(git diff HEAD --name-only)  # timeout: 3000
 git ls-files --others --exclude-standard | grep . | xargs git add -- 2>/dev/null || true  # grep . filters empty output (macOS-portable; xargs -r is GNU-only); permission matcher sees 'git ls-files' as first token  # timeout: 3000
@@ -497,8 +498,8 @@ Wait for both. Then:
 - If `linting-expert` made file changes → commit them:
 
 ```bash
-git add $(git diff HEAD --name-only)
-git commit -m "lint: auto-fix violations after resolve cycle"
+git add $(git diff HEAD --name-only)  # timeout: 3000
+git commit -m "lint: auto-fix violations after resolve cycle"  # timeout: 3000
 ```
 
 - If `qa-specialist` reports **blocking** issues → fix each one (via Codex if `CODEX_AVAILABLE=true`, otherwise inline edit), then re-run qa-specialist once to confirm resolution; if issues remain after one fix pass, surface them in the final report and continue (do not loop indefinitely)
@@ -510,17 +511,17 @@ git commit -m "lint: auto-fix violations after resolve cycle"
 
 ```bash
 # Ensure fork remote is present (gh pr checkout may not have added it for all setups)
-if ! git remote get-url "$FORK_REMOTE" &>/dev/null; then
+if ! git remote get-url "$FORK_REMOTE" &>/dev/null; then  # timeout: 3000
   REPO_NAME=$(git remote get-url origin | sed 's|.*/||' | sed 's|\.git$||')
-  git remote add "$FORK_REMOTE" "https://github.com/$FORK_REMOTE/$REPO_NAME.git"
+  git remote add "$FORK_REMOTE" "https://github.com/$FORK_REMOTE/$REPO_NAME.git"  # timeout: 3000
   echo "→ Added remote $FORK_REMOTE → https://github.com/$FORK_REMOTE/$REPO_NAME.git"
 fi
 
 # Configure tracking if not already set
-git branch --set-upstream-to="$FORK_REMOTE/$HEAD_REF" 2>/dev/null || true
+git branch --set-upstream-to="$FORK_REMOTE/$HEAD_REF" 2>/dev/null || true  # timeout: 3000
 
 # Count commits ready to push and announce — user must approve the toolbar permission prompt
-PUSH_COUNT=$(git rev-list "$FORK_REMOTE/$HEAD_REF..HEAD" --count 2>/dev/null || git rev-list "origin/$BASE_REF..HEAD" --count)
+PUSH_COUNT=$(git rev-list "$FORK_REMOTE/$HEAD_REF..HEAD" --count 2>/dev/null || git rev-list "origin/$BASE_REF..HEAD" --count)  # timeout: 3000
 echo "→ $PUSH_COUNT commits ready to push to $FORK_REMOTE/$HEAD_REF — approve the git push request in the toolbar ↑ to complete"
 
 git push  # timeout: 30000
@@ -530,13 +531,13 @@ git push  # timeout: 30000
 If push is rejected (fork protection or stale tracking):
 
 ```bash
-git push "$FORK_REMOTE" HEAD:"$HEAD_REF"
+git push "$FORK_REMOTE" HEAD:"$HEAD_REF"  # timeout: 30000
 ```
 
 Verify the push reached GitHub:
 
 ```bash
-gh pr view <PR#> --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline'
+gh pr view <PR#> --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline'  # timeout: 6000
 ```
 
 Confirm the latest commit headlines match what was just committed.
@@ -610,7 +611,7 @@ Record the initial dispatch outcome (code changed or no change + reason).
 ### 12b: Codex review loop (max 5 passes)
 
 ```bash
-git diff HEAD --stat  # confirm there are changes to review
+git diff HEAD --stat  # timeout: 3000 — confirm there are changes to review
 ```
 
 If no changes: skip the loop; set `CODEX_REVIEW_FINDINGS=""`.
@@ -655,7 +656,13 @@ Agent(qa-specialist, maxTurns: 15): "Review all files changed in the most recent
 
 > **Health monitoring**: Agent calls are synchronous; Claude awaits responses natively. If no response within ~15 min, surface partial results from `$RUN_DIR` with ⏱.
 
-- If `linting-expert` made changes → commit: `lint: auto-fix violations after resolve cycle`
+- If `linting-expert` made changes → commit:
+
+```bash
+git add $(git diff HEAD --name-only)  # timeout: 3000
+git commit -m "lint: auto-fix violations after resolve cycle"  # timeout: 3000
+```
+
 - If `qa-specialist` reports blocking issues → fix inline, then re-run once; surface any unresolved issues in the report
 
 Mark the task `completed`, then print:

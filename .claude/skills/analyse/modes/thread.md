@@ -170,6 +170,6 @@ Read the compact terminal summary template from `.claude/skills/_shared/terminal
 — use the **Issue Summary** template. Replace `[skill-specific path]` with
 `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md`, ensuring the block opens with `---` on its own line, the entity line follows on the next line, the `→ saved to <path>` line is present at the end, and the block closes with `---` on its own line after it. After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Thread #[number]:` content.
 
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block here — it is emitted in SKILL.md Step 5 after the reply, or as the last step of SKILL.md if not in reply mode. Proceed
-**immediately** to the "Draft contributor reply" section in SKILL.md. Your response is not
+**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block here — it is emitted in SKILL.md Step 6 after the reply, or as the last step of SKILL.md if not in reply mode. Proceed
+**immediately** to the "Draft contributor reply" section in SKILL.md (Step 7). Your response is not
 complete until you have spawned oss-shepherd and written the reply file.

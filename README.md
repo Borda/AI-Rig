@@ -305,6 +305,21 @@ Run `/calibrate routing fast` after any agent description change. Thresholds: ro
 </details>
 
 <details>
+<summary><strong>Memory hygiene — monthly or after a burst of corrections</strong></summary>
+
+MEMORY.md is injected into every message in every session. As it grows, so does the per-message token cost — compounding across every turn. Keep it lean.
+
+```
+/distill lessons    # promote recurring corrections into durable rules/agents/skills
+/distill prune      # trim MEMORY.md — drop entries now covered by rules, stale facts, or superseded decisions
+/sync apply         # propagate rule changes to ~/.claude/
+```
+
+Run after any session with significant corrections, or monthly as routine hygiene.
+
+</details>
+
+<details>
 <summary><strong>Keep config current after Claude Code releases</strong></summary>
 
 ```
@@ -437,6 +452,8 @@ A pre-configured `PreToolUse` hook (`.claude/hooks/rtk-rewrite.js`) transparentl
 | Files        | ls, grep, find, diff                   | 60–75%          |
 
 **Scope**: RTK only compresses **Bash tool output** — shell commands like `git`, `cargo`, `pytest`, etc. It does not affect Claude Code's native tools (Read, Grep, Glob, Edit, Write), which run inside Claude's own engine and are already token-efficient by design.
+
+**Context reset between heavy skills**: large skills (`/audit`, `/resolve`, `/review`) are loaded into context on invocation and stay there for every subsequent message in that session — `/audit` alone adds ~19K tokens. Use `/clear` between heavy skill invocations or before switching topics. Unlike terminating the session, `/clear` is instant and keeps all config (CLAUDE.md, rules, hooks) intact.
 
 RTK is optional — removing it leaves all functionality intact.
 

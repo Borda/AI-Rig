@@ -356,7 +356,9 @@
       "WebFetch(domain:scholar.google.com)",
       "Skill(sync)",
       "Skill(calibrate)",
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Glob(~/.claude/**)",
+      "Read(~/.claude/**)"
     ],
     "deny": [
       "Bash(git branch -D:*)",

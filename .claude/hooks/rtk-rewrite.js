@@ -40,6 +40,8 @@ const DENY_PATTERNS = [
   /^git\s+(push|branch\s+-[Dd]|branch\s+--delete|reset\s+--hard|clean\s+-[fd]|checkout\s+--)\b/,
   // gh: release/publish actions require explicit user confirmation
   /^gh\s+(release\s+create|pr\s+merge|repo\s+delete)\b/,
+  // curl: block mutation methods to prevent auto-approving external state changes
+  /^curl\s+(?:.*-X\s+(?:POST|PUT|PATCH|DELETE)|.*--(?:data|data-raw|upload-file))\b/,
 ];
 
 // Commands RTK knows how to filter (derived from `rtk --help`).
@@ -57,6 +59,7 @@ const RTK_PREFIXES = [
   "vitest",
   "next",
   "pnpm",
+  "npm",
   "prettier",
   "lint",
   "format",
@@ -85,6 +88,7 @@ const RTK_PREFIXES = [
   "dotnet",
   // Network
   "wget",
+  "curl",
   // Files & search
   "ls",
   "tree",

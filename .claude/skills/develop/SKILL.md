@@ -48,6 +48,8 @@ Examples:
 
 <workflow>
 
+<!-- Execution order: Step 0 → Step 1 → Step 2 → [mode-specific steps 3–N in mode file] → Shared Step: Quality stack → Shared Step: Codex pre-pass → Shared Step: Progressive review loop → Shared Step: Codex mechanical delegation → Shared Step: Final report -->
+
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
 - status `completed` if the work is clearly done
@@ -76,8 +78,8 @@ Detect `--team` flag: if present anywhere in arguments, enable team mode (see ##
 **Branch safety guard** (skip for `plan` mode — plan mode makes no code changes):
 
 ```bash
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)  # timeout: 3000
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')  # timeout: 3000
 if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] || [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
   echo "⚠ On default branch ($CURRENT_BRANCH) — create a feature branch before running /develop"
   exit 1
@@ -106,17 +108,17 @@ Run after all mode-specific steps complete:
 
 ```bash
 # Linting and formatting
-uv run ruff check <changed_files> --fix
-uv run ruff format <changed_files>
+uv run ruff check <changed_files> --fix  # timeout: 30000
+uv run ruff format <changed_files>  # timeout: 30000
 
 # Type checking
-uv run mypy <changed_files> --no-error-summary 2>&1 | head -30
+uv run mypy <changed_files> --no-error-summary 2>&1 | head -30  # timeout: 30000
 
 # Full test suite
-uv run pytest <test_dir> -v --tb=short -q
+uv run pytest <test_dir> -v --tb=short -q  # timeout: 600000
 
 # Doctests (if applicable)
-uv run pytest --doctest-modules <target_module> -v 2>&1 | tail -20
+uv run pytest --doctest-modules <target_module> -v 2>&1 | tail -20  # timeout: 600000
 ```
 
 Spawn a **linting-expert** agent if mypy or ruff issues require non-trivial fixes.
@@ -154,13 +156,23 @@ Maximum 3 cycles. Applied after the quality stack.
 - Re-run quality stack on modified files only
 - Set up a run directory for file-based handoff: `RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"`
 - For each agent type in `agents_with_findings`: spawn that agent directly (not `/review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
-  ```bash
-  # Health monitoring (CLAUDE.md §8): create checkpoint after spawns
-  CYCLE2_CHECKPOINT="/tmp/develop-cycle2-check-$(date +%s)"
-  touch "$CYCLE2_CHECKPOINT"
-  # Poll every 5 min: find $RUN_DIR -newer "$CYCLE2_CHECKPOINT" -type f | wc -l
-  # Hard cutoff: 15 min of no file activity → declare timed out
-  ```
+
+**Health monitoring** (CLAUDE.md §8): after spawning, create a checkpoint:
+
+```bash
+DEVELOP_CHECKPOINT="/tmp/develop-check-$(date +%s)"  # timeout: 5000
+touch "$DEVELOP_CHECKPOINT"  # timeout: 5000
+```
+
+Every 5 min:
+
+```bash
+COUNT=$(find "$RUN_DIR" -newer "$DEVELOP_CHECKPOINT" -type f | wc -l)  # timeout: 5000
+touch "$DEVELOP_CHECKPOINT"  # refresh — next poll detects only new writes, not old ones  # timeout: 5000
+```
+
+`COUNT == 0` → stalled; `COUNT > 0` → alive. Hard cutoff: 15 min with COUNT == 0 → timed out.
+
 - Skip agents that were clean in Cycle 1
 - Collect envelopes to update review state (do not read the full finding files into context — check envelopes to determine if critical/high remain)
 

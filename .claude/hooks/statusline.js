@@ -104,14 +104,14 @@ process.stdin.on("end", () => {
       blue: "\x1b[34m",
       cyan: "\x1b[36m",
       green: "\x1b[32m",
-      indigo: "\x1b[34m", // closest ANSI to indigo
-      lime: "\x1b[92m", // bright green
-      magenta: "\x1b[35m",
+      indigo: "\x1b[34m", // closest ANSI to indigo — reserved (no agent declares this color)
+      lime: "\x1b[92m", // bright green — reserved (no agent declares this color)
+      magenta: "\x1b[35m", // reserved (no agent declares this color)
       orange: "\x1b[33m", // closest ANSI to orange
       pink: "\x1b[95m", // bright magenta
       purple: "\x1b[94m", // bright blue
-      teal: "\x1b[96m", // bright cyan
-      violet: "\x1b[35m", // magenta (closest ANSI)
+      teal: "\x1b[96m", // bright cyan — reserved (no agent declares this color)
+      violet: "\x1b[35m", // magenta (closest ANSI) — reserved (no agent declares this color)
       yellow: "\x1b[93m", // bright yellow
     };
 

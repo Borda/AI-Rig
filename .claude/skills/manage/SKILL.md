@@ -1,6 +1,6 @@
 ---
 name: manage
-description: Create, update, or delete agents, skills, and rules with full cross-reference propagation. Non-trivial writes (agent/skill content-edits and creates) are delegated to self-mentor subagents; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates and handles MEMORY.md, README, audit, and the final report. Also manages settings.json permissions atomically with permissions-guide.md.
+description: Create, update, or delete agents, skills, rules, and hooks with full cross-reference propagation. Non-trivial writes (agent/skill content-edits and creates) are delegated to self-mentor subagents; hook content-edits are delegated to sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates and handles MEMORY.md, README, audit, and the final report. Also manages settings.json permissions atomically with permissions-guide.md.
 argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Manage the lifecycle of agents, skills, and rules in the `.claude/` directory. Handles creation with rich domain content, atomic renames with cross-reference propagation, content editing (agent/skill edits delegated to self-mentor subagent; rule edits inline), and clean deletion with broken-reference cleanup. Keeps the MEMORY.md inventory in sync with what actually exists on disk.
+Manage the lifecycle of agents, skills, rules, and hooks in the `.claude/` directory. Handles creation with rich domain content, atomic renames with cross-reference propagation, content editing (agent/skill edits delegated to self-mentor subagent; hook edits delegated to sw-engineer; rule edits inline), and clean deletion with broken-reference cleanup. Keeps the MEMORY.md inventory in sync with what actually exists on disk.
 
 </objective>
 
@@ -20,9 +20,9 @@ Manage the lifecycle of agents, skills, and rules in the `.claude/` directory. H
   - `create skill <name> "description"` — create a new skill with workflow scaffold
   - `create rule <name> "description"` — create a new rule file with frontmatter and sections
   - `update <name> <new-name>` — rename; type auto-detected from disk
-  - `update <name> "change description"` — content-edit; agent/skill edits delegated to self-mentor, rule edits inline
-  - `update <name> <spec-file.md>` — content-edit from spec file; agent/skill edits delegated to self-mentor, rule edits inline
-  - `delete <name>` — delete; type auto-detected from disk; asks user if ambiguous
+  - `update <name> "change description"` — content-edit; agent/skill edits delegated to self-mentor, hook edits delegated to sw-engineer, rule edits inline
+  - `update <name> <spec-file.md>` — content-edit from spec file; agent/skill edits delegated to self-mentor, hook edits delegated to sw-engineer, rule edits inline
+  - `delete <name>` — delete; type auto-detected from disk (agents, skills, rules, hooks); asks user if ambiguous
   - `add perm <rule> "description" "use case"` — add a permission to settings.json allow list and permissions-guide.md
   - `remove perm <rule>` — remove a permission from settings.json allow list and permissions-guide.md
 - Names must be **kebab-case** (lowercase, hyphens only)
@@ -39,8 +39,8 @@ Manage the lifecycle of agents, skills, and rules in the `.claude/` directory. H
 **Update second-argument discrimination**:
 
 - Two bare kebab-case args (second arg no spaces, no `.md` extension) → **rename mode**
-- One name + quoted string → **content-edit mode** (agent/skill: self-mentor subagent; rule: inline)
-- One name + path ending in `.md` → **content-edit mode** (agent/skill: self-mentor subagent; rule: inline)
+- One name + quoted string → **content-edit mode** (agent/skill: self-mentor subagent; hook: sw-engineer subagent; rule: inline)
+- One name + path ending in `.md` → **content-edit mode** (agent/skill: self-mentor subagent; hook: sw-engineer subagent; rule: inline)
 
 **Examples:**
 
@@ -62,6 +62,7 @@ Manage the lifecycle of agents, skills, and rules in the `.claude/` directory. H
 - AGENTS_DIR: `.claude/agents`
 - SKILLS_DIR: `.claude/skills`
 - RULES_DIR: `.claude/rules`
+- HOOKS_DIR: `.claude/hooks`
 - USED_COLORS: blue, cyan, green, orange, pink, purple, yellow
 - AVAILABLE_COLORS: indigo, lime, magenta, teal, violet
 
@@ -92,17 +93,18 @@ Extract operation, type, name, and optional arguments from `$ARGUMENTS`.
 - For `add perm`: rule must NOT already exist in settings.json allow list; description and use case are required
 - For `remove perm`: rule MUST already exist in settings.json allow list
 
-**Type auto-detection** (for `update` and `delete`): run all three Glob checks in parallel:
+**Type auto-detection** (for `update` and `delete`): run all four Glob checks in parallel:
 
 - Agent: pattern `agents/<name>.md`, path `.claude/`
 - Skill: pattern `skills/<name>/SKILL.md`, path `.claude/`
 - Rule: pattern `rules/<name>.md`, path `.claude/`
+- Hook: pattern `hooks/<name>.js`, path `.claude/`
 
 Results:
 
 - Exactly one non-empty result → resolved type; proceed
-- Multiple non-empty results → use `AskUserQuestion`: "Multiple entities named `<name>` found. Which one? (a) agent (b) skill (c) rule"
-- All empty → report "No agent, skill, or rule named `<name>` found" and stop
+- Multiple non-empty results → use `AskUserQuestion`: "Multiple entities named `<name>` found. Which one? (a) agent (b) skill (c) rule (d) hook"
+- All empty → report "No agent, skill, rule, or hook named `<name>` found" and stop
 
 For `create`, check only the relevant type's path.
 
@@ -122,6 +124,7 @@ If validation fails, report the error and stop.
 **Step skip rules**:
 
 - **Perm operations**: skip Steps 2, 3, 5, 6, 7, 8, 9 — go directly from Step 1 → Step 4 → Step 10
+- **Hook operations**: skip Steps 2, 3, 6 (no color inventory, no MEMORY.md roster entry, no README table row for hooks); in Steps 5 and 7 skip cross-ref propagation (hook filenames are not referenced from agent/skill markdown) — go Step 1 → Step 4 → Step 9 → Step 10
 - **Content-edit operations**: skip Step 2 (entity already exists); skip Step 3 color inventory (no create); in Steps 5–7 only update cross-refs and README if the name or description changed
 
 ## Step 2: Overlap review (create only)
@@ -154,6 +157,10 @@ Branch into one of these modes:
 1. Fetch the latest Claude Code agent frontmatter schema to ensure the template is current:
 
    - Spawn **web-explorer** to fetch `https://code.claude.com/docs/en/sub-agents` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `/tmp/manage-schema-$(date +%s).md` using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"/tmp/manage-schema-<ts>.md\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`" <!-- URL spot-checked 2026-04-05 — resolves -->
+     <!-- Health monitoring (CLAUDE.md §8): create checkpoint after spawn:
+          LAUNCH_AT=$(date +%s); touch /tmp/manage-check-web-explorer
+          Every 5 min: find /tmp -newer /tmp/manage-check-web-explorer -name "manage-schema-*.md" | wc -l
+          Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
    - Read the returned summary and use it to extract: valid frontmatter fields (`name`, `description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `maxTurns`, `effort`, `initialPrompt`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `isolation`), current model shorthands, and any new fields
    - Note any new fields worth including in the generated template
      Adjust the template generated in steps 2–4 to reflect the current schema. If a new field is
@@ -181,11 +188,20 @@ Write the file using the Write tool.
 Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confidence":0.N}
 ```
 
+<!-- Health monitoring (CLAUDE.md §8): create checkpoint after spawn:
+     LAUNCH_AT=$(date +%s); touch /tmp/manage-check-self-mentor-agent
+     Every 5 min: find .claude/agents -newer /tmp/manage-check-self-mentor-agent -name "<name>.md" | wc -l
+     Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
+
 ### Mode: Create Skill
 
 1. Fetch the latest Claude Code skill frontmatter schema to ensure the template is current:
 
    - Spawn **web-explorer** to fetch `https://code.claude.com/docs/en/skills` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `/tmp/manage-skill-schema-$(date +%s).md` using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"/tmp/manage-skill-schema-<ts>.md\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`" <!-- URL spot-checked 2026-04-05 — resolves -->
+     <!-- Health monitoring (CLAUDE.md §8): create checkpoint after spawn:
+          LAUNCH_AT=$(date +%s); touch /tmp/manage-check-web-explorer-skill
+          Every 5 min: find /tmp -newer /tmp/manage-check-web-explorer-skill -name "manage-skill-schema-*.md" | wc -l
+          Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
    - Read the returned summary and use it to extract: valid frontmatter fields (`name`, `description`, `argument-hint`, `disable-model-invocation`, `user-invocable`, `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, `hooks`), and any new fields
    - Note any new fields worth including in the generated template
      Adjust the template generated in step 3 to reflect the current schema. Include `model`
@@ -204,6 +220,11 @@ Write using the Write tool.
 Return ONLY: {"status":"done","file":".claude/skills/<name>/SKILL.md","lines":N,"confidence":0.N}
 ```
 
+<!-- Health monitoring (CLAUDE.md §8): create checkpoint after spawn:
+     LAUNCH_AT=$(date +%s); touch /tmp/manage-check-self-mentor-skill
+     Every 5 min: find .claude/skills -newer /tmp/manage-check-self-mentor-skill -name "SKILL.md" | wc -l
+     Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
+
 ### Mode: Update Agent
 
 Atomic update — write new file before deleting old:
@@ -216,7 +237,7 @@ Atomic update — write new file before deleting old:
 
 ```bash
 # 4. Delete old file only after new file is confirmed
-rm .claude/agents/<old-name>.md
+rm .claude/agents/<old-name>.md  # timeout: 5000
 ```
 
 ### Mode: Update Skill
@@ -226,7 +247,7 @@ Atomic update — create new directory before removing old:
 1. Create new directory:
 
 ```bash
-mkdir -p .claude/skills/<new-name>
+mkdir -p .claude/skills/<new-name>  # timeout: 5000
 ```
 
 2. Read old SKILL.md, update the `name:` line in frontmatter, Write to new location.
@@ -234,19 +255,19 @@ mkdir -p .claude/skills/<new-name>
 
 ```bash
 # 4. Remove old directory only after new is confirmed
-rm -r .claude/skills/<old-name>
+rm -r .claude/skills/<old-name>  # timeout: 5000
 ```
 
 ### Mode: Delete Agent
 
 ```bash
-rm .claude/agents/<name>.md
+rm .claude/agents/<name>.md  # timeout: 5000
 ```
 
 ### Mode: Delete Skill
 
 ```bash
-rm -r .claude/skills/<name>
+rm -r .claude/skills/<name>  # timeout: 5000
 ```
 
 ### Mode: Content-Edit Agent
@@ -333,13 +354,43 @@ Atomic update — write new file before deleting old:
 1. Read `.claude/rules/<old-name>.md` using the Read tool.
 2. Rule files have no `name:` frontmatter field — the filename IS the identifier. Write a new file at `.claude/rules/<new-name>.md` with identical content.
 3. Verify new file exists.
-4. Delete old file only after new file is confirmed: `rm .claude/rules/<old-name>.md`
+4. Delete old file only after new file is confirmed: `rm .claude/rules/<old-name>.md` <!-- timeout: 5000 -->
 
 ### Mode: Delete Rule
 
 ```bash
-rm .claude/rules/<name>.md
+rm .claude/rules/<name>.md  # timeout: 5000
 ```
+
+### Mode: Content-Edit Hook
+
+Hook files are JavaScript — delegate to **sw-engineer** (not self-mentor) for implementation-quality edits:
+
+1. Determine the change directive (same as Content-Edit Agent).
+2. Spawn **sw-engineer** subagent — hook files contain Node.js logic with security-sensitive patterns (stdin handling, subprocess calls, exit codes); sw-engineer has the implementation domain knowledge to edit them safely:
+
+```
+Read `.claude/hooks/<name>.js`.
+Read `.claude/rules/hooks-js.md` for the file-header structure, exit code semantics, stdin pattern, and anti-patterns to avoid.
+Apply this change: <directive>
+Rules:
+- Preserve the file header block (PURPOSE, HOW IT WORKS, EXIT CODES) unless the change explicitly modifies that logic
+- Preserve CommonJS require() style; do not convert to ESM
+- stdin must use event-based accumulation (process.stdin.on("data"/"end")); never readFileSync("/dev/stdin")
+- All subprocess calls must use execFileSync or spawnSync (args array — no execSync with shell strings)
+- All logic must be wrapped in try/catch; catch always exits 0
+- After editing: verify exit codes match documented cases, no shell injection surface added
+Write all changes using the Edit tool.
+Return ONLY: {"status":"done","file":".claude/hooks/<name>.js","edits":N,"confidence":0.N}
+```
+
+### Mode: Delete Hook
+
+```bash
+rm .claude/hooks/<name>.js  # timeout: 5000
+```
+
+> After deleting a hook, also remove its entry from `.claude/settings.json` hooks configuration so Claude Code does not try to invoke a missing file.
 
 ### Mode: Add Permission
 
@@ -358,8 +409,10 @@ Adds a rule to both `settings.json` and `permissions-guide.md` atomically.
 
 2. Update `settings.json` — parse, append, write back:
 
+<!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
+
 ```bash
-python3 -c "
+python3 -c "  # timeout: 5000
 import json
 with open('.claude/settings.json') as f:
     d = json.load(f)
@@ -380,8 +433,10 @@ Use the Edit tool to insert the row: find the last table row in the target secti
 
 4. Verify both files were updated:
 
+<!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
+
 ```bash
-python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' in d['permissions']['allow'] else 'MISSING')"
+python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' in d['permissions']['allow'] else 'MISSING')"  # timeout: 5000
 grep -F '`<rule>`' .claude/permissions-guide.md
 ```
 
@@ -391,8 +446,10 @@ Removes a rule from both `settings.json` and `permissions-guide.md` atomically.
 
 1. Update `settings.json` — parse, filter, write back:
 
+<!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
+
 ```bash
-python3 -c "
+python3 -c "  # timeout: 5000
 import json
 with open('.claude/settings.json') as f:
     d = json.load(f)
@@ -407,8 +464,10 @@ with open('.claude/settings.json', 'w') as f:
 
 3. Verify both files are clean:
 
+<!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
+
 ```bash
-python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' not in d['permissions']['allow'] else 'STILL PRESENT')"
+python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' not in d['permissions']['allow'] else 'STILL PRESENT')"  # timeout: 5000
 grep -cF '`<rule>`' .claude/permissions-guide.md && echo "STILL IN GUIDE" || echo "OK"
 ```
 
@@ -543,7 +602,7 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
 - **MEMORY.md inventory**: always regenerated from disk (`ls`), never manually calculated — this prevents drift
 - **Rule files have no `name:` frontmatter** — the filename IS the identifier. Renames only change the file on disk and update cross-references; there is no frontmatter `name:` field to update.
 - **Non-trivial write delegation** — agent/skill content-edits and creates are delegated to `self-mentor` subagents to prevent main-context inflation from large file reads and generations (200–600 line files). Rule content-edits stay inline (rule files are ≤ 80 lines). Cross-ref propagation (Step 5) delegates to `self-mentor` when > 3 files need updating. The subagent always returns a compact JSON envelope; the parent handles MEMORY.md (Step 6), README (Step 7), audit (Step 9), and the final report.
-- **Type auto-detection**: `update` and `delete` search all three dirs in parallel; the name is the unique identifier. If two entities share a name (rare), `AskUserQuestion` resolves the ambiguity.
+- **Type auto-detection**: `update` and `delete` search all four dirs in parallel (agents, skills, rules, hooks); the name is the unique identifier. If two entities share a name (rare), `AskUserQuestion` resolves the ambiguity.
 - **Content-edit vs rename discrimination**: bare kebab-case second arg = rename; quoted string or `.md` path = content-edit. Unambiguous because names never contain spaces or end in `.md`.
 - Follow-up chains:
   - After any create/update/delete → `/audit` to verify config integrity, then `/sync apply` to propagate
