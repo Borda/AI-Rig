@@ -1,12 +1,8 @@
 # Mode: Thread Analysis (Issue, Discussion, or PR)
 
-All three are GitHub conversation threads — same analysis structure, different API fetch.
-`TYPE` is set by auto-detection in SKILL.md (`issue`, `discussion`, or `pr`).
-`NUMBER` = the item number (strip `discussion ` prefix if present).
+All three are GitHub conversation threads — same analysis structure, different API fetch. `TYPE` is set by auto-detection in SKILL.md (`issue`, `discussion`, or `pr`). `NUMBER` = the item number (strip `discussion ` prefix if present).
 
-**Cache check first**: if `$CACHE_FILE` exists (see SKILL.md Cache layer), read `item` and
-`comments` from it — skip the primary fetch. Still run wide-net searches (never cached).
-For PRs: `gh pr checks` and `gh pr diff` are never cached — always live.
+**Cache check first**: if `$CACHE_FILE` exists (see SKILL.md Cache layer), read `item` and `comments` from it — skip the primary fetch. Still run wide-net searches (never cached). For PRs: `gh pr checks` and `gh pr diff` are never cached — always live.
 
 If cache miss, run all fetches in parallel:
 
@@ -15,20 +11,20 @@ If cache miss, run all fetches in parallel:
 
 if [ "$TYPE" = "issue" ]; then
 
-  gh issue view $NUMBER --json number,title,body,labels,comments,createdAt,author,state
-  gh issue view $NUMBER --comments
-  # After both complete: write cache (see SKILL.md Cache layer write pattern)
+    gh issue view $NUMBER --json number,title,body,labels,comments,createdAt,author,state
+    gh issue view $NUMBER --comments
+    # After both complete: write cache (see SKILL.md Cache layer write pattern)
 
 elif [ "$TYPE" = "pr" ]; then
 
-  gh pr view $NUMBER --json number,title,body,labels,reviews,statusCheckRollup,files,additions,deletions,commits,author
-  gh pr checks $NUMBER       # never cached — always live
-  gh pr diff $NUMBER --name-only  # never cached — always live
-  # After pr view completes: write cache (see SKILL.md Cache layer write pattern)
+    gh pr view $NUMBER --json number,title,body,labels,reviews,statusCheckRollup,files,additions,deletions,commits,author
+    gh pr checks $NUMBER           # never cached — always live
+    gh pr diff $NUMBER --name-only # never cached — always live
+    # After pr view completes: write cache (see SKILL.md Cache layer write pattern)
 
-else  # discussion
+else # discussion
 
-  gh api graphql -f query='
+    gh api graphql -f query='
     query($owner: String!, $repo: String!, $number: Int!) {
       repository(owner: $owner, name: $repo) {
         discussion(number: $number) {
@@ -41,19 +37,19 @@ else  # discussion
         }
       }
     }' -f owner='{owner}' -f repo='{repo}' -F number=$NUMBER
-  # If query returns null → print "⚠ Discussions not enabled or #N not found" and stop
-  # After complete: write cache (see SKILL.md Cache layer write pattern)
+    # If query returns null → print "⚠ Discussions not enabled or #N not found" and stop
+    # After complete: write cache (see SKILL.md Cache layer write pattern)
 
 fi
 
 # Wide-net: same for all types — all related items open AND closed
-TITLE=$(...)  # extract from fetched item above
+TITLE=$(...) # extract from fetched item above
 
-gh issue list --state all --search "$TITLE" --json number,title,state,labels --limit 50 \
-  | jq --argjson self $NUMBER '[.[] | select(.number != $self)]'
+gh issue list --state all --search "$TITLE" --json number,title,state,labels --limit 50 |
+jq --argjson self $NUMBER '[.[] | select(.number != $self)]'
 
-gh pr list --state all --search "$TITLE" --json number,title,state --limit 30 \
-  | jq --argjson self $NUMBER '[.[] | select(.number != $self)]'
+gh pr list --state all --search "$TITLE" --json number,title,state --limit 30 |
+jq --argjson self $NUMBER '[.[] | select(.number != $self)]'
 
 gh api graphql -f query='
   query($owner:String!,$repo:String!){
@@ -62,8 +58,8 @@ gh api graphql -f query='
         nodes { number title closed }
       }
     }
-  }' -f owner='{owner}' -f repo='{repo}' 2>/dev/null \
-  | jq --arg q "$TITLE" --argjson self $NUMBER '
+  }' -f owner='{owner}' -f repo='{repo}' 2>/dev/null |
+jq --arg q "$TITLE" --argjson self $NUMBER '
       .data.repository.discussions.nodes // [] |
       map(select(.number != $self) |
           select(.title | ascii_downcase | contains(($q | ascii_downcase | split(" ") | .[0]))))
@@ -162,14 +158,8 @@ _Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
 [Critical / High / Medium / Low] — [rationale]  ← omit for discussions
 ````
 
-Run `mkdir -p .reports/analyse/thread` then write the full report to
-`.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md` using the
-Write tool — **do not print the full analysis to terminal**.
+Run `mkdir -p .reports/analyse/thread` then write the full report to `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
 
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md`
-— use the **Issue Summary** template. Replace `[skill-specific path]` with
-`.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md`, ensuring the block opens with `---` on its own line, the entity line follows on the next line, the `→ saved to <path>` line is present at the end, and the block closes with `---` on its own line after it. After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Thread #[number]:` content.
+Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Issue Summary** template. Replace `[skill-specific path]` with `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md`, ensuring the block opens with `---` on its own line, the entity line follows on the next line, the `→ saved to <path>` line is present at the end, and the block closes with `---` on its own line after it. After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Thread #[number]:` content.
 
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block here — it is emitted in SKILL.md Step 6 after the reply, or as the last step of SKILL.md if not in reply mode. Proceed
-**immediately** to the "Draft contributor reply" section in SKILL.md (Step 7). Your response is not
-complete until you have spawned oss-shepherd and written the reply file.
+**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block here — it is emitted in SKILL.md Step 6 after the reply, or as the last step of SKILL.md if not in reply mode. Proceed **immediately** to the "Draft contributor reply" section in SKILL.md (Step 7). Your response is not complete until you have spawned oss-shepherd and written the reply file.

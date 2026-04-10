@@ -64,43 +64,54 @@ Surface progress to the user at natural milestones: after system-wide checks ("�
 **Context budget**: the full audit (12+ agents, 14+ skills, 12 system checks) runs close to context limits. Strict file-based handoff is mandatory — every sub-agent writes its full output to a file and returns only a compact JSON envelope. Any sub-agent that echoes findings back to context will cause compaction before the audit completes.
 
 ```bash
-RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
+RED='\033[1;31m'
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+NC='\033[0m'
 
 # From _shared/preflight-helpers.md — TTL 4 hours, keyed per binary
-preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }  # timeout: 5000
-preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }  # timeout: 5000
+preflight_ok() {
+    local f=".claude/state/preflight/$1.ok"
+    [ -f "$f" ] && [ $(($(date +%s) - $(cat "$f"))) -lt 14400 ]
+} # timeout: 5000
+preflight_pass() {
+    mkdir -p .claude/state/preflight
+    date +%s >".claude/state/preflight/$1.ok"
+} # timeout: 5000
 
 # .claude/ directory must exist (not cached — filesystem state)
 if [ ! -d ".claude" ]; then
-  printf "${RED}! BREAKING${NC}: .claude/ directory not found — nothing to audit\n"
-  exit 1
+    printf "${RED}! BREAKING${NC}: .claude/ directory not found — nothing to audit\n"
+    exit 1
 fi
 
 # jq availability — Check 6 depends on it
 if preflight_ok jq; then
-  JQ_AVAILABLE=true
-elif command -v jq &>/dev/null; then  # timeout: 5000
-  preflight_pass jq; JQ_AVAILABLE=true
+    JQ_AVAILABLE=true
+elif command -v jq &>/dev/null; then # timeout: 5000
+    preflight_pass jq
+    JQ_AVAILABLE=true
 else
-  printf "${YEL}⚠ MISSING${NC}: jq not found — Check 6 (permissions-guide drift) will be skipped\n"
-  JQ_AVAILABLE=false
+    printf "${YEL}⚠ MISSING${NC}: jq not found — Check 6 (permissions-guide drift) will be skipped\n"
+    JQ_AVAILABLE=false
 fi
 
 # git availability — used in path portability check and baseline context
-if ! preflight_ok git && ! command -v git &>/dev/null; then  # timeout: 5000
-  printf "${YEL}⚠ MISSING${NC}: git not found — path portability check may miss repo-root references\n"
+if ! preflight_ok git && ! command -v git &>/dev/null; then # timeout: 5000
+    printf "${YEL}⚠ MISSING${NC}: git not found — path portability check may miss repo-root references\n"
 else
-  preflight_ok git || preflight_pass git
+    preflight_ok git || preflight_pass git
 fi
 
 # node availability — Check 11 (RTK prefix parsing) and upgrade mode (hook syntax check) depend on it
 if preflight_ok node; then
-  NODE_AVAILABLE=true
-elif command -v node &>/dev/null; then  # timeout: 5000
-  preflight_pass node; NODE_AVAILABLE=true
+    NODE_AVAILABLE=true
+elif command -v node &>/dev/null; then # timeout: 5000
+    preflight_pass node
+    NODE_AVAILABLE=true
 else
-  printf "${YEL}⚠ MISSING${NC}: node not found — Check 11 (RTK hook parsing) and upgrade hook syntax check will be skipped\n"
-  NODE_AVAILABLE=false
+    printf "${YEL}⚠ MISSING${NC}: node not found — Check 11 (RTK hook parsing) and upgrade hook syntax check will be skipped\n"
+    NODE_AVAILABLE=false
 fi
 ```
 
@@ -110,9 +121,9 @@ If `.claude/` is missing, abort immediately. Missing `jq` is a warning — the a
 
 ```bash
 # Check whether pre-commit is installed and a config exists
-if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) \
-    && [ -f .pre-commit-config.yaml ]; then
-  pre-commit run --all-files  # timeout: 600000
+if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) &&
+[ -f .pre-commit-config.yaml ]; then
+    pre-commit run --all-files # timeout: 600000
 fi
 ```
 
@@ -140,8 +151,8 @@ Record the full file list — this becomes the audit scope for Steps 3–4. Cros
 Set up the run directory once before spawning any agents:
 
 ```bash
-RUN_DIR=".reports/audit/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # timeout: 5000
-mkdir -p "$RUN_DIR"  # timeout: 5000
+RUN_DIR=".reports/audit/$(date -u +%Y-%m-%dT%H-%M-%SZ)" # timeout: 5000
+mkdir -p "$RUN_DIR"                                     # timeout: 5000
 echo "Run dir: $RUN_DIR"
 ```
 
@@ -164,8 +175,8 @@ After all spawns complete, you will have a list of short summaries in context. U
 **Health monitoring** (CLAUDE.md §8): after spawning all batches, create a checkpoint:
 
 ```bash
-AUDIT_CHECKPOINT="/tmp/audit-check-$(date +%s)"  # timeout: 5000
-touch "$AUDIT_CHECKPOINT"  # timeout: 5000
+AUDIT_CHECKPOINT="/tmp/audit-check-$(date +%s)" # timeout: 5000
+touch "$AUDIT_CHECKPOINT"                       # timeout: 5000
 ```
 
 Every `$MONITOR_INTERVAL` seconds, run `find $RUN_DIR -newer "$AUDIT_CHECKPOINT" -type f | wc -l` — new files = agents alive; zero new files for `$HARD_CUTOFF` seconds = stalled. Grant one `$EXTENSION` extension if the output file tail explains the delay. On timeout: read partial output from the stalled agent's file; surface it with ⏱ in the final report. Never silently omit timed-out agents.
@@ -219,8 +230,7 @@ Run the following checks. Use native tools first (Glob, Grep, Read); Bash only f
 
 ### Claude Code docs freshness (within Step 4)
 
-Spawn a **web-explorer** agent to fetch current Claude Code documentation. **File-based handoff**: web-explorer writes full findings to `$RUN_DIR/docs-freshness.md` using the Write tool. Return ONLY a compact JSON envelope:
-`{"status":"done","file":"$RUN_DIR/docs-freshness.md","findings":N,"deprecated":N,"new_features":N,"confidence":0.N,"summary":"N findings, N deprecated, N new features"}`
+Spawn a **web-explorer** agent to fetch current Claude Code documentation. **File-based handoff**: web-explorer writes full findings to `$RUN_DIR/docs-freshness.md` using the Write tool. Return ONLY a compact JSON envelope: `{"status":"done","file":"$RUN_DIR/docs-freshness.md","findings":N,"deprecated":N,"new_features":N,"confidence":0.N,"summary":"N findings, N deprecated, N new features"}`
 
 Validate the local config against fetched docs:
 
@@ -432,10 +442,10 @@ Before applying anything, verify the baseline is structurally sound:
 
 ```bash
 # Check for the most likely breaking issue — frontmatter conflicts — without running the full audit
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do  # timeout: 5000
-  awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' && \
-  awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true' && \
-  echo "BREAKING: $f — context:fork + disable-model-invocation:true"
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
+    awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' &&
+    awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true' &&
+    echo "BREAKING: $f — context:fork + disable-model-invocation:true"
 done
 ```
 
@@ -466,9 +476,9 @@ Mark "Apply config proposals" in_progress. For each **config** proposal, in sequ
 2. Correctness check:
    ```bash
    # settings.json — JSON validity
-   jq empty .claude/settings.json && echo "✓ valid JSON" || echo "✗ invalid JSON"  # timeout: 5000
+   jq empty .claude/settings.json && echo "✓ valid JSON" || echo "✗ invalid JSON" # timeout: 5000
    # JS hook files — syntax check
-   node --check .claude/hooks/*.js 2>&1 | grep -v '^$' || true  # timeout: 5000
+   node --check .claude/hooks/*.js 2>&1 | grep -v '^$' || true # timeout: 5000
    ```
 3. Accept (✓) if check passes; revert and mark rejected (✗) with reason if it fails
 

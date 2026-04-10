@@ -131,9 +131,7 @@ Run all checks before touching code. Fail fast with a clear message if any fail:
 2. **Not detached HEAD**: `git rev-parse --abbrev-ref HEAD` → must not be `HEAD`.
 3. **Metric command produces numeric output**: run `metric_cmd` once; parse stdout for a float. If no float found: show the output and stop.
 4. **Guard command passes**: run `guard_cmd` once; must exit 0. If it fails: show the output and stop.
-5. **`--colab` check** (if flag present): verify Colab MCP tools are available by checking for `mcp__colab-mcp__runtime_execute_code`. If unavailable, print setup instructions (see Colab MCP section) and stop.
-   If `--colab=HW` was specified (`colab_hw` is non-null): print:
-   `  Hardware requested: --colab=<colab_hw>. Ensure your Colab notebook is running with a <colab_hw> GPU before proceeding.`
+5. **`--colab` check** (if flag present): verify Colab MCP tools are available by checking for `mcp__colab-mcp__runtime_execute_code`. If unavailable, print setup instructions (see Colab MCP section) and stop. If `--colab=HW` was specified (`colab_hw` is non-null): print: `  Hardware requested: --colab=<colab_hw>. Ensure your Colab notebook is running with a <colab_hw> GPU before proceeding.`
 6. **`--codex` check** (if flag present): verify `claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'`. If unavailable: print `⚠ codex plugin not found. Install it with: /plugin marketplace add openai/codex-plugin-cc` and **stop** — do not proceed with the run.
 7. **`compute: docker` check** (if `compute` field = `docker` or `--docker` flag was passed): run `docker ps` using the Bash tool with `timeout: 5000`. If it exits non-zero: print `⚠ Docker daemon not running. Start Docker Desktop and retry.` and **stop** — do not proceed with the run.
 8. **Flag conflict check**: if both `--colab` (or `compute: colab`) and `--docker` (or `compute: docker`) are active: print `⚠ --colab and --docker are mutually exclusive. Use one or the other.` and **stop**.
@@ -237,9 +235,9 @@ Build context for the ideation agent and write it to a file — do NOT accumulat
 
 ```bash
 # Collect signals
-git log --oneline -10 > .experiments/state/<run-id>/context-<i>.md
-tail -10 .experiments/state/<run-id>/experiments.jsonl >> .experiments/state/<run-id>/context-<i>.md
-git diff --stat HEAD~5 HEAD >> .experiments/state/<run-id>/context-<i>.md
+git log --oneline -10 >.experiments/state/ <run-id >/context- <i >.md
+tail -10 .experiments/state/ <run-id >/experiments.jsonl >>.experiments/state/ <run-id >/context- <i >.md
+git diff --stat HEAD~5 HEAD >>.experiments/state/ <run-id >/context- <i >.md
 ```
 
 Prepend a header block to `context-<i>.md` with: goal, current metric vs baseline, delta trend (last 5 kept deltas), and the iteration number. The ideation agent in Phase 2 reads this file directly — the content is never echoed back to the main context.
@@ -282,11 +280,11 @@ If Phase 2 returned `"scripts": [...]` with a non-empty list: run each script in
 
 ```bash
 docker run --rm --network <sandbox_network> \
-  -v "$(pwd):/workspace:ro" \
-  --tmpfs /tmp:rw,size=256m \
-  -w /workspace \
-  python:3.11-slim \
-  python3 /workspace/.experiments/state/<run-id>/scripts/<script>
+    -v "$(pwd):/workspace:ro" \
+    --tmpfs /tmp:rw,size=256m \
+    -w /workspace \
+    python:3.11-slim \
+    python3 /workspace/.experiments/state/<run-id>/scripts/<script>
 ```
 
 Use the Bash tool `timeout` parameter: `timeout: <VERIFY_TIMEOUT_SEC * 1000>`. Do NOT use the `timeout` shell command.
@@ -370,20 +368,17 @@ If pre-commit hooks fail:
 **If `sandbox_mode = "docker"`** (set in Step R2):
 
 ```bash
-docker run --rm --network <sandbox_network> \
-  -v "$(pwd):/workspace:ro" \
-  -v "$(pwd)/.experiments:/workspace/.experiments:rw" \
-  --tmpfs /tmp:rw,size=256m \
-  python:3.11-slim \
-  sh -c '<metric_cmd>'
+docker run --rm --network \
+    "$(pwd):/workspace:ro" \
+    -v "$(pwd)/.experiments:/workspace/.experiments:rw" \
+    --tmpfs /tmp:rw,size=256m \
+    python:3.11-slim \
+    sh -c '<metric_cmd>' <sandbox_network >-v
 ```
 
 No resource limits — the container may use all available CPU and memory. Use the Bash tool `timeout` parameter (not the `timeout` command): `timeout: <VERIFY_TIMEOUT_SEC * 1000>`.
 
-**If `sandbox_mode = "local"`**:
-Run `metric_cmd` directly using the Bash tool with `timeout: <VERIFY_TIMEOUT_SEC * 1000>` (milliseconds). Do NOT use the `timeout` shell command wrapper.
-If the command requires a different working directory, issue a separate `cd <path>` Bash call first (CWD persists).
-If metric parsing requires complex Python logic (regex, JSON), write a parser script to `.experiments/state/<run-id>/scripts/parse-metric-<i>.py` using the Write tool and execute it with `python3 <path>` instead of an inline `python3 -c "..."` one-liner.
+**If `sandbox_mode = "local"`**: Run `metric_cmd` directly using the Bash tool with `timeout: <VERIFY_TIMEOUT_SEC * 1000>` (milliseconds). Do NOT use the `timeout` shell command wrapper. If the command requires a different working directory, issue a separate `cd <path>` Bash call first (CWD persists). If metric parsing requires complex Python logic (regex, JSON), write a parser script to `.experiments/state/<run-id>/scripts/parse-metric-<i>.py` using the Write tool and execute it with `python3 <path>` instead of an inline `python3 -c "..."` one-liner.
 
 **If `--colab` active**: Colab routes all execution through the remote GPU runtime via `mcp__colab-mcp__runtime_execute_code`; Docker sandbox is not used. (`--colab` + `--docker` conflict is caught at R2 — they never coexist at runtime.) If `colab_hw` is non-null, prepend a GPU identity check to the `metric_cmd` call: execute `import torch; actual=torch.cuda.get_device_name(0); assert '<colab_hw>' in actual, f'Wrong GPU: expected <colab_hw>, got {actual}'` via `mcp__colab-mcp__runtime_execute_code` before running the metric command. If the assertion fails, print a warning and stop the run: `"⚠ GPU mismatch: requested <colab_hw> but runtime has {actual}. Change the Colab runtime type and re-run."` Do not proceed to Phase 6.
 

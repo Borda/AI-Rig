@@ -45,15 +45,15 @@ Each problem must be a JSON object with these exact fields:
 
 Difficulty tiers:
 
-- trivial: single-line, obvious issue visible at a glance; any reviewer finds it immediately; used in full mode only
-- low: isolated, obvious issue; single-function scope; domain expert finds it immediately
-- medium: requires reading 2-3 related functions or sections; non-obvious but unambiguous
-- high: requires cross-function or cross-module reasoning; subtle but still detectable by reading
-- extreme: intentionally adversarial or near-unsolvable from reading alone — use ONE of these patterns:
-  (a) adversarial/misleading: code that looks like a common anti-pattern but is actually correct in context (tests false-positive discipline); issue description in ground_truth explains why it IS a problem despite the appearance
-  (b) deep cross-function control flow: issue only visible by tracing state across 4+ functions
-  (c) subtle concurrency or ordering bug: requires reasoning about interleaved execution or init order
-  (d) incomplete detectability: issue is real but only partially diagnosable from reading (e.g., depends on runtime config); ground_truth includes what IS detectable statically
+- **trivial**: single-line, obvious issue visible at a glance; any reviewer finds it immediately; used in full mode only
+- **low**: isolated, obvious issue; single-function scope; domain expert finds it immediately
+- **medium**: requires reading 2-3 related functions or sections; non-obvious but unambiguous
+- **high**: requires cross-function or cross-module reasoning; subtle but still detectable by reading
+- **extreme**: intentionally adversarial or near-unsolvable from reading alone — use ONE of these patterns:
+  1. adversarial/misleading: code that looks like a common anti-pattern but is actually correct in context (tests false-positive discipline); issue description in ground_truth explains why it IS a problem despite the appearance
+  2. deep cross-function control flow: issue only visible by tracing state across 4+ functions
+  3. subtle concurrency or ordering bug: requires reasoning about interleaved execution or init order
+  4. incomplete detectability: issue is real but only partially diagnosable from reading (e.g., depends on runtime config); ground_truth includes what IS detectable statically
 
 Distribution rules for N_CODEX problems (fast=2, full=5):
 
@@ -73,17 +73,7 @@ Write the JSON array to: .reports/calibrate/<TIMESTAMP>/<TARGET>/problems-codex.
 
 Generate `<N_CLAUDE>` in-scope problems for domain `<DOMAIN>`, plus exactly 1 out-of-scope problem, as a JSON array. Fields: `problem_id` (kebab-slug), `difficulty`, `task_prompt`, `input`, `ground_truth` (array of `{issue, location, severity}`).
 
-Difficulty tiers:
-
-- `trivial`: single-line, obvious issue visible at a glance; any reviewer finds it immediately; used in full mode only
-- `low`: isolated, obvious issue; single-function scope; domain expert finds it immediately
-- `medium`: requires reading 2–3 related functions or sections; non-obvious but unambiguous
-- `high`: requires cross-function or cross-module reasoning; subtle but still detectable by reading
-- `extreme`: intentionally adversarial or near-unsolvable from reading alone — use ONE of these patterns:
-  (a) adversarial/misleading: code that looks like a common anti-pattern but is actually correct in context (tests false-positive discipline); ground_truth explains why it IS still a problem despite the appearance
-  (b) deep cross-function control flow: issue only visible by tracing state across 4+ functions
-  (c) subtle concurrency or ordering bug: requires reasoning about interleaved execution or init order
-  (d) incomplete detectability: issue is real but only partially diagnosable from reading (e.g., depends on runtime config); ground_truth includes what IS statically detectable
+Difficulty tiers: same as Step 1 above.
 
 Rules:
 
@@ -175,8 +165,7 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 > <GROUND_TRUTH_JSON>
 > ```
 >
-> Read the target response from `<RUN_DIR>/response-<PROBLEM_ID>.md`.
-> \[If AB_MODE is true: also read `<RUN_DIR>/response-<PROBLEM_ID>-general.md`.\]
+> Read the target response from `<RUN_DIR>/response-<PROBLEM_ID>.md`. \[If AB_MODE is true: also read `<RUN_DIR>/response-<PROBLEM_ID>-general.md`.\]
 >
 > For each ground truth issue: mark `true` if the response identified the same issue type at the same location (exact match or semantically equivalent). Count false positives: reported issues with no corresponding ground truth entry. Extract confidence from the `## Confidence` block (use 0.5 if absent).
 >
@@ -190,8 +179,7 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > Compute: `recall = found / total` (skip if total=0), `precision = found / (found + fp + 1e-9)`, `f1 = 2·r·p / (r+p+1e-9)`.
 >
-> Write the following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using the Write tool:
-> `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"target_chars":N,"scorer":"claude"}`
+> Write the following JSON (no prose, no markdown fences) to `<RUN_DIR>/score-<PROBLEM_ID>-claude.json` using the Write tool: `{"problem_id":"<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"target_chars":N,"scorer":"claude"}`
 >
 > \[If AB_MODE is true, also include before the closing `}`: `,"recall_general":0.N,"precision_general":0.N,"f1_general":0.N,"confidence_general":0.N,"severity_accuracy_general":0.N,"format_score_general":0.N,"general_chars":N`\]
 >
@@ -205,24 +193,25 @@ For each problem, spawn one Codex scoring subagent using the **Agent tool** — 
 
 Agent(subagent_type="codex:codex-rescue", prompt="You are scoring a calibration response against ground truth.
 
+```
 Problem ID: \<PROBLEM_ID>
 Ground truth (JSON array): \<GROUND_TRUTH_JSON>
+```
 
-Read the response from: .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>.md
-\[If AB_MODE is true: also read .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>-general.md\]
+Read the response from: .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>.md \[If AB_MODE is true: also read .reports/calibrate/<TIMESTAMP>/<TARGET>/response-\<PROBLEM_ID>-general.md\]
 
 For each ground truth issue: mark true if the response identified the same issue type at the same location (exact or semantically equivalent). Count false positives: reported issues with no ground truth match. Extract confidence from the ## Confidence block (use 0.5 if absent).
 
 For out-of-scope problems (ground_truth is []): set recall=null, all reported findings are FPs, set severity_accuracy=null, format_score=null.
 
+```
 Severity accuracy: for found issues, check severity match (allow +-1 tier; tiers: critical>high>medium>low).
 Format score: for found issues, check for all three of: location reference, severity label, fix suggestion.
+```
 
 Compute: recall=found/total (null if total=0), precision=found/(found+fp+1e-9), f1=2*r*p/(r+p+1e-9).
 
-Write ONLY this JSON (no prose, no markdown fences, no trailing commas) to the file below:
-{"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scorer":"codex"}
-[If AB_MODE is true, append before the closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"format_score_general":0.N]
+Write ONLY this JSON (no prose, no markdown fences, no trailing commas) to the file below: {"problem_id":"\<PROBLEM_ID>","found":[true/false,...],"false_positives":N,"confidence":0.N,"recall":0.N,"precision":0.N,"f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"scorer":"codex"} [If AB_MODE is true, append before the closing }: ,"recall_general":0.N,"confidence_general":0.N,"precision_general":0.N,"f1_general":0.N,"severity_accuracy_general":0.N,"format_score_general":0.N]
 
 Output file: .reports/calibrate/<TIMESTAMP>/<TARGET>/score-\<PROBLEM_ID>-codex.json")
 
@@ -342,8 +331,7 @@ Verdict: `significant` (delta_recall or delta_f1 > 0.10) / `marginal` (0.05–0.
 ...
 ```
 
-Write a single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl`:
-(one line per pipeline run — the orchestrating skill concatenates these across runs into `.claude/logs/calibrations.jsonl`)
+Write a single-line JSONL result to `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl`: (one line per pipeline run — the orchestrating skill concatenates these across runs into `.claude/logs/calibrations.jsonl`)
 
 `{"ts":"<TIMESTAMP>","target":"<TARGET>","mode":"<MODE>","mean_recall":0.N,"extreme_recall":0.N_or_null,"mean_confidence":0.N,"calibration_bias":0.N,"mean_f1":0.N,"severity_accuracy":0.N,"format_score":0.N,"problems":<N>,"scope_fp":N,"verdict":"...","gaps":["..."],"source_mode":"dual|claude-only","scoring":"dual|single","scorer_agreement":0.N_or_null,"recall_trivial":0.N_or_null,"recall_low":0.N_or_null,"recall_medium":0.N_or_null,"recall_high":0.N_or_null,"recall_extreme":0.N_or_null,"recall_claude_problems":0.N_or_null,"recall_codex_problems":0.N_or_null,"generator_recall_delta":0.N_or_null,"severity_disputed_count":N,"codex_generation_failed":false}`
 
@@ -382,8 +370,7 @@ Spawn a **self-mentor** subagent using the **Agent tool** — never via Bash or 
 > **Rationale**: one sentence — why this closes the gap
 > ```
 
-Write the self-mentor response verbatim to `.reports/calibrate/<TIMESTAMP>/<TARGET>/proposal.md`.
-Ask self-mentor to end their proposed changes with a `## Confidence` block per CLAUDE.md output standards.
+Write the self-mentor response verbatim to `.reports/calibrate/<TIMESTAMP>/<TARGET>/proposal.md`. Ask self-mentor to end their proposed changes with a `## Confidence` block per CLAUDE.md output standards.
 
 ### Return value
 

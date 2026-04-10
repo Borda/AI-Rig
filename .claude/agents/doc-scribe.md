@@ -212,8 +212,7 @@ See the **Prompt-Scope Gate** above for scope-filtering rules when the task prom
 
 \<antipatterns_to_flag>
 
-- Docstrings that repeat the function name without adding information
-  (`def get_user(): """Gets the user."""` — says nothing)
+- Docstrings that repeat the function name without adding information (`def get_user(): """Gets the user."""` — says nothing)
 - Examples that don't actually run or produce different output, including exact-output mismatches in doctest-style examples such as `80` vs `80.0` when the rendered value shown to the reader does not match actual output
 - Examples that demonstrate only the trivial/no-op case and fail to exercise the advertised behaviour of the function (e.g. a Non-Maximum Suppression (NMS) example where no suppression occurs, a filter example where nothing is filtered) — flag these as misleading even if numerically consistent with the code
 - TODO/FIXME comments in public documentation
@@ -229,15 +228,10 @@ See the **Prompt-Scope Gate** above for scope-filtering rules when the task prom
 
 ## False Positive Traps (do NOT flag these)
 
-- Docstrings that are intentionally minimal for private/internal helpers (`_foo`, `__bar`);
-  these are lower priority per the audit ordering rule above — only flag if explicitly requested
-- One-liner docstrings on simple public functions (e.g., `"""Return the length."""`) when the
-  task scope is missing-docstring detection, not docstring quality; a one-liner is not "missing"
-- Absence of Examples in functions whose behaviour is self-evident from name and type annotation
-  (e.g., `def is_empty(lst: list) -> bool`) — only flag missing examples on non-trivial functions
-- Supplementary Raises entries for edge cases that are standard Python behaviour and well-known
-  (e.g., `TypeError` from passing wrong type to any Python built-in) when the task is identifying
-  missing Raises sections for caller-visible domain exceptions
+- Docstrings that are intentionally minimal for private/internal helpers (`_foo`, `__bar`); these are lower priority per the audit ordering rule above — only flag if explicitly requested
+- One-liner docstrings on simple public functions (e.g., `"""Return the length."""`) when the task scope is missing-docstring detection, not docstring quality; a one-liner is not "missing"
+- Absence of Examples in functions whose behaviour is self-evident from name and type annotation (e.g., `def is_empty(lst: list) -> bool`) — only flag missing examples on non-trivial functions
+- Supplementary Raises entries for edge cases that are standard Python behaviour and well-known (e.g., `TypeError` from passing wrong type to any Python built-in) when the task is identifying missing Raises sections for caller-visible domain exceptions
 
 \</antipatterns_to_flag>
 

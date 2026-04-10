@@ -32,7 +32,7 @@ Multi-agent configuration for [OpenAI Codex CLI](https://github.com/openai/codex
 This repo (`.codex/`) is the source of truth. Home (`~/.codex/`) is a downstream copy:
 
 ```bash
-cp -r .codex/ ~/.codex/    # activate globally (config_file paths are relative)
+cp -r .codex/ ~/.codex/ # activate globally (config_file paths are relative)
 ```
 
 Run after editing any agent config, `config.toml`, hooks, or `AGENTS.md`.
@@ -41,8 +41,8 @@ Run after editing any agent config, `config.toml`, hooks, or `AGENTS.md`.
 <summary><strong>Install</strong></summary>
 
 ```bash
-npm install -g @openai/codex    # install Codex CLI
-cp -r .codex/ ~/.codex/         # activate globally
+npm install -g @openai/codex # install Codex CLI
+cp -r .codex/ ~/.codex/      # activate globally
 ```
 
 </details>

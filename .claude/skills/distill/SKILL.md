@@ -201,7 +201,7 @@ ls .notes/lessons.md 2>/dev/null && echo "found" || echo "not found"
 
 # Memory feedback files
 PROJECT="$(git rev-parse --show-toplevel)"
-MEMORY_DIR="$HOME/.claude/projects/$(echo "$PROJECT" | sed 's|[/.]|-|g')/memory"  # slug derivation: git rev-parse --show-toplevel | sed 's|[/.]|-|g'
+MEMORY_DIR="$HOME/.claude/projects/$(echo "$PROJECT" | sed 's|[/.]|-|g')/memory" # slug derivation: git rev-parse --show-toplevel | sed 's|[/.]|-|g'
 ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"
 ```
 
@@ -296,10 +296,7 @@ ______________________________________________________________________
 
 Print the proposal table. Then use AskUserQuestion:
 
-> "Apply the distillation proposals?"
-> (a) Apply — write all `→ rule` and `→ agent/skill update` changes now
-> (b) Review first — show a diff of each proposed change before writing
-> (c) Skip — discard proposals and exit without changes
+> "Apply the distillation proposals?" (a) Apply — write all `→ rule` and `→ agent/skill update` changes now (b) Review first — show a diff of each proposed change before writing (c) Skip — discard proposals and exit without changes
 
 If the user selects (a), apply changes:
 

@@ -46,25 +46,33 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 ```bash
 # Parse --reply flag — must run before any gh calls
-REPLY_MODE=false; CLEAN_ARGS=$ARGUMENTS; if echo "$ARGUMENTS" | grep -q -- '--reply'; then REPLY_MODE=true; CLEAN_ARGS=$(echo "$ARGUMENTS" | sed 's/--reply//g' | xargs); fi
+REPLY_MODE=false
+CLEAN_ARGS=$ARGUMENTS
+if echo "$ARGUMENTS" | grep -q -- '--reply'; then
+    REPLY_MODE=true
+    CLEAN_ARGS=$(echo "$ARGUMENTS" | sed 's/--reply//g' | xargs)
+fi
 ```
 
 ```bash
 DIRECT_PATH_MODE=false
-if echo "$CLEAN_ARGS" | grep -qE '\.md$'; then DIRECT_PATH_MODE=true; REVIEW_FILE="$CLEAN_ARGS"; fi
+if echo "$CLEAN_ARGS" | grep -qE '\.md$'; then
+    DIRECT_PATH_MODE=true
+    REVIEW_FILE="$CLEAN_ARGS"
+fi
 ```
 
 ```bash
 # If $CLEAN_ARGS is a PR number — run all four in parallel:
-gh pr diff $CLEAN_ARGS --name-only   # files changed in PR                    # timeout: 6000
-gh pr view $CLEAN_ARGS               # PR description and metadata             # timeout: 6000
-gh pr checks $CLEAN_ARGS             # CI status — don't review if CI is red  # timeout: 15000
-gh pr view $CLEAN_ARGS --json reviews,labels,milestone                         # timeout: 6000
+gh pr diff $CLEAN_ARGS --name-only                     # files changed in PR                    # timeout: 6000
+gh pr view $CLEAN_ARGS                                 # PR description and metadata             # timeout: 6000
+gh pr checks $CLEAN_ARGS                               # CI status — don't review if CI is red  # timeout: 15000
+gh pr view $CLEAN_ARGS --json reviews,labels,milestone # timeout: 6000
 
 # If $CLEAN_ARGS is a path: use it directly
 
 # If no argument: find recently changed files
-git diff --name-only HEAD~1 HEAD  # timeout: 3000
+git diff --name-only HEAD~1 HEAD # timeout: 3000
 ```
 
 If Continuous Integration (CI) is red, report that without full review.
@@ -112,13 +120,13 @@ Set up the run directory (shared by Codex and all agent spawns in Step 3):
 ```bash
 TIMESTAMP=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 RUN_DIR=".reports/review/$TIMESTAMP"
-mkdir -p "$RUN_DIR"  # timeout: 5000
+mkdir -p "$RUN_DIR" # timeout: 5000
 ```
 
 Check availability:
 
 ```bash
-claude plugin list 2>/dev/null | grep -q 'codex@openai-codex' && echo "codex (openai-codex) available" || echo "⚠ codex (openai-codex) not found — skipping co-review"  # timeout: 15000
+claude plugin list 2>/dev/null | grep -q 'codex@openai-codex' && echo "codex (openai-codex) available" || echo "⚠ codex (openai-codex) not found — skipping co-review" # timeout: 15000
 ```
 
 If Codex is available, run a comprehensive review on the diff:
@@ -190,7 +198,7 @@ If `ISSUE_NUMS` is non-empty, linked issue analysis files exist at `$RUN_DIR/iss
 While agents from Step 3 are completing, run these two independent checks simultaneously:
 
 ```bash
-TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')  # timeout: 6000  # shared by 4a and 4b
+TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}') # timeout: 6000  # shared by 4a and 4b
 ```
 
 ### 4a: Ecosystem impact check (for libraries with downstream users)
@@ -200,31 +208,31 @@ TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $N
 # Rate-limit guard: if gh api returns HTTP 429, wait 10 seconds and retry once.
 # If still rate-limited, log "rate-limited — downstream search may be incomplete" and continue.
 # --paginate is available for large result sets but increases rate-limit exposure; omit unless completeness is critical.
-CHANGED_EXPORTS=$(git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py" | grep "^[-+]" | grep -v "^[-+][-+]" | grep -oP '\w+' | sort -u)  # timeout: 3000
+CHANGED_EXPORTS=$(git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py" | grep "^[-+]" | grep -v "^[-+][-+]" | grep -oP '\w+' | sort -u) # timeout: 3000
 for export in $CHANGED_EXPORTS; do
-  echo "=== $export ==="
-  gh api "search/code" --field "q=$export language:python" --jq '.items[:5] | .[].repository.full_name' 2>/dev/null  # timeout: 30000
-  # Note: GitHub code search API is rate-limited (~30 req/min); empty results may indicate rate limiting, not absence of usage
+    echo "=== $export ==="
+    gh api "search/code" --field "q=$export language:python" --jq '.items[:5] | .[].repository.full_name' 2>/dev/null # timeout: 30000
+    # Note: GitHub code search API is rate-limited (~30 req/min); empty results may indicate rate limiting, not absence of usage
 done
 
 # Check if deprecated APIs have migration guides
-git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -A2 "deprecated"  # timeout: 3000
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -A2 "deprecated" # timeout: 3000
 ```
 
 ### 4b: Open Source Software (OSS) checks
 
 ```bash
 # Check for new dependencies — license compatibility
-git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- pyproject.toml requirements*.txt  # timeout: 3000
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- pyproject.toml requirements*.txt # timeout: 3000
 
 # Check for secrets accidentally committed
-git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -iE "(password|secret|api_key|token)\s*=\s*['\"][^'\"]{8,}"  # timeout: 3000
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD | grep -iE "(password|secret|api_key|token)\s*=\s*['\"][^'\"]{8,}" # timeout: 3000
 
 # Check for API stability: are public APIs being removed without deprecation?
-git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py"  # timeout: 3000
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- "src/**/__init__.py" # timeout: 3000
 
 # Check CHANGELOG was updated
-git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- CHANGELOG.md CHANGES.md  # timeout: 3000
+git diff $(git merge-base HEAD origin/${TRUNK:-main}) HEAD -- CHANGELOG.md CHANGES.md # timeout: 3000
 ```
 
 ## Step 5: Cross-validate critical/blocking findings
@@ -235,9 +243,7 @@ Read and follow the cross-validation protocol from `.claude/skills/_shared/cross
 
 ## Step 6: Consolidate findings
 
-Before constructing the output path, extract the current branch and date components:
-`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`
-`YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)`
+Before constructing the output path, extract the current branch and date components: `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` `YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)`
 
 Spawn a **sw-engineer** consolidator agent with this prompt:
 

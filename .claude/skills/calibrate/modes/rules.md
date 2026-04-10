@@ -8,21 +8,18 @@ Rule adherence test: for each rule file in `.claude/rules/`, measures three dime
 
 ### Three scoring dimensions
 
-**1. Trigger fidelity** (path-scoped rules only — `paths:` frontmatter present)
-Does the rule load when it should and stay silent when it shouldn't?
+**1. Trigger fidelity** (path-scoped rules only — `paths:` frontmatter present) Does the rule load when it should and stay silent when it shouldn't?
 
 - Trigger recall ≥ 0.95: rule fires for all matching file contexts
 - Trigger precision ≥ 0.95: rule stays silent for non-matching file contexts
 - Global rules (no `paths:`) always load — no trigger test; set to `null`
 
-**2. Directive adherence**
-Given the rule is loaded, does a `general-purpose` agent apply its directives?
+**2. Directive adherence** Given the rule is loaded, does a `general-purpose` agent apply its directives?
 
 - Adherence recall ≥ 0.80 per directive (stricter than the 0.70 agent threshold — rules are narrow action-prescribing directives)
 - Three outcomes per task: `correct` / `missed` / `misapplied`
 
-**3. Outcome correctness**
-Beyond stating intent, does the response's actual content (commands used, flags omitted, files listed) satisfy the directive?
+**3. Outcome correctness** Beyond stating intent, does the response's actual content (commands used, flags omitted, files listed) satisfy the directive?
 
 - Outcome correctness ≥ 0.80 of "correct" adherence scores
 - Distinguishes "agent acknowledged the rule" from "agent actually followed it"

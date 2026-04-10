@@ -114,7 +114,7 @@ Execute each command once to verify they work. These are **non-blocking** — fa
 
 ```bash
 # Metric validation — captures baseline value
-timeout 120 <metric_cmd> 2>&1
+timeout 120 <metric_cmd >2 >&1
 ```
 
 Parse stdout for a float value. If found, record as `baseline_value`. If not found or command exits non-zero: add critical finding: "Metric command failed or produced no numeric output".

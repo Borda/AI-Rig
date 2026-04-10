@@ -162,10 +162,7 @@ Branch into one of these modes:
           Every 5 min: find /tmp -newer /tmp/manage-check-web-explorer -name "manage-schema-*.md" | wc -l
           Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
    - Read the returned summary and use it to extract: valid frontmatter fields (`name`, `description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `maxTurns`, `effort`, `initialPrompt`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `isolation`), current model shorthands, and any new fields
-   - Note any new fields worth including in the generated template
-     Adjust the template generated in steps 2–4 to reflect the current schema. If a new field is
-     broadly useful for the agent's role (e.g. `maxTurns` for long-running agents), include it
-     with a sensible default and inline comment.
+   - Note any new fields worth including in the generated template Adjust the template generated in steps 2–4 to reflect the current schema. If a new field is broadly useful for the agent's role (e.g. `maxTurns` for long-running agents), include it with a sensible default and inline comment.
 
 2. Pick the first unused color from the AVAILABLE_COLORS pool (compare against colors found in Step 3)
 
@@ -203,9 +200,7 @@ Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confi
           Every 5 min: find /tmp -newer /tmp/manage-check-web-explorer-skill -name "manage-skill-schema-*.md" | wc -l
           Hard cutoff: 15 min of no activity → surface partial results with ⏱ -->
    - Read the returned summary and use it to extract: valid frontmatter fields (`name`, `description`, `argument-hint`, `disable-model-invocation`, `user-invocable`, `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, `hooks`), and any new fields
-   - Note any new fields worth including in the generated template
-     Adjust the template generated in step 3 to reflect the current schema. Include `model`
-     or `context: fork` only when the skill's described purpose clearly benefits from them.
+   - Note any new fields worth including in the generated template Adjust the template generated in step 3 to reflect the current schema. Include `model` or `context: fork` only when the skill's described purpose clearly benefits from them.
 
 2. Spawn **self-mentor** subagent to create the directory and generate the skill file — content generation is non-trivial and should not inflate the main context:
 
@@ -237,7 +232,7 @@ Atomic update — write new file before deleting old:
 
 ```bash
 # 4. Delete old file only after new file is confirmed
-rm .claude/agents/<old-name>.md  # timeout: 5000
+rm .claude/agents/ <old-name >.md # timeout: 5000
 ```
 
 ### Mode: Update Skill
@@ -261,7 +256,7 @@ rm -r .claude/skills/<old-name>  # timeout: 5000
 ### Mode: Delete Agent
 
 ```bash
-rm .claude/agents/<name>.md  # timeout: 5000
+rm .claude/agents/ <name >.md # timeout: 5000
 ```
 
 ### Mode: Delete Skill
@@ -359,7 +354,7 @@ Atomic update — write new file before deleting old:
 ### Mode: Delete Rule
 
 ```bash
-rm .claude/rules/<name>.md  # timeout: 5000
+rm .claude/rules/ <name >.md # timeout: 5000
 ```
 
 ### Mode: Content-Edit Hook
@@ -387,7 +382,7 @@ Return ONLY: {"status":"done","file":".claude/hooks/<name>.js","edits":N,"confid
 ### Mode: Delete Hook
 
 ```bash
-rm .claude/hooks/<name>.js  # timeout: 5000
+rm .claude/hooks/ <name >.js # timeout: 5000
 ```
 
 > After deleting a hook, also remove its entry from `.claude/settings.json` hooks configuration so Claude Code does not try to invoke a missing file.
@@ -436,7 +431,7 @@ Use the Edit tool to insert the row: find the last table row in the target secti
 <!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
 
 ```bash
-python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' in d['permissions']['allow'] else 'MISSING')"  # timeout: 5000
+python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' in d['permissions']['allow'] else 'MISSING')" # timeout: 5000
 grep -F '`<rule>`' .claude/permissions-guide.md
 ```
 
@@ -467,7 +462,7 @@ with open('.claude/settings.json', 'w') as f:
 <!-- Note: python3 is excluded from auto-allow list by design — user will see an approval prompt for this command. -->
 
 ```bash
-python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' not in d['permissions']['allow'] else 'STILL PRESENT')"  # timeout: 5000
+python3 -c "import json; d=json.load(open('.claude/settings.json')); print('OK' if '<rule>' not in d['permissions']['allow'] else 'STILL PRESENT')" # timeout: 5000
 grep -cF '`<rule>`' .claude/permissions-guide.md && echo "STILL IN GUIDE" || echo "OK"
 ```
 

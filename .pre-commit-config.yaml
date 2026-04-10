@@ -19,25 +19,38 @@ repos:
     rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
+        name: 📄 end-of-file-fixer
       - id: trailing-whitespace
+        name: ✂️ trailing-whitespace
       - id: check-json
+        name: 🔍 check-json
       - id: check-yaml
+        name: 🔍 check-yaml
       - id: check-toml
+        name: 🔍 check-toml
       - id: check-executables-have-shebangs
+        name: ⚡ check-executables-have-shebangs
       - id: check-case-conflict
+        name: 🔤 check-case-conflict
       - id: check-added-large-files
+        name: 📦 check-added-large-files
         args: ["--maxkb=100", "--enforce-all"]
       - id: detect-private-key
+        name: 🔐 detect-private-key
       - id: check-merge-conflict
+        name: 🔀 check-merge-conflict
       - id: mixed-line-ending
+        name: ↩️ mixed-line-ending
         args: ["--fix=lf"]
       - id: pretty-format-json
+        name: ✨ pretty-format-json
         args: ["--autofix"]
 
   - repo: https://github.com/JoC0de/pre-commit-prettier
     rev: v3.8.1 # using tag; previously pinned SHA when tags were not persistent
     hooks:
       - id: prettier
+        name: 🎨 prettier
         files: \.(html|yml|yaml|toml|js)$
         # https://prettier.io/docs/en/options.html#print-width
         args: ["--print-width=120"]
@@ -46,6 +59,7 @@ repos:
     rev: v10.2.0
     hooks:
       - id: eslint
+        name: 🛡️ eslint
         additional_dependencies:
           - eslint@9.21.0
           - globals@16.0.0
@@ -55,23 +69,29 @@ repos:
     rev: v2.4.2
     hooks:
       - id: codespell
+        name: ✏️ codespell
         args: ["--write-changes"]
 
   - repo: https://github.com/executablebooks/mdformat
     rev: 1.0.0
     hooks:
       - id: mdformat
-        args: ["--number"]
+        name: 📝 mdformat
+        args: ["--number", "--wrap=no"]
         additional_dependencies:
           - mdformat-gfm
           - mdformat-ruff
           - mdformat-frontmatter
           - mdformat-config
+          - mdformat-beautysh
+          - mdformat-admon
+          - mdformat-web
 
   - repo: https://github.com/lycheeverse/lychee.git
     rev: lychee-v0.23.0
     hooks:
       - id: lychee
+        name: 🔗 lychee
         args:
           - --offline
           - --no-progress
@@ -81,22 +101,23 @@ repos:
   - repo: local
     hooks:
       - id: node-syntax-check
-        name: node --check (hooks)
+        name: 🟩 node --check (hooks)
         language: system
         entry: node --check
-        files: ^\.claude/hooks/.*\.js$
+        files: ^\.claude/hooks/.*\.js$|^\.codex/hooks/.*\.js$
         types: [javascript]
 
       - id: no-hardcoded-user-paths
-        name: No hardcoded user paths in .claude/
+        name: 🚫 No hardcoded user paths
         language: pygrep
         # Matches /Users/<realname>/ or /home/<realname>/ — alphanumeric usernames only.
         # Placeholder docs like /Users/<name>/ are not flagged (< is not alphanumeric).
         entry: /Users/[a-zA-Z0-9_-]+/|/home/[a-zA-Z0-9_-]+/
-        files: ^\.claude/(agents|skills|rules)/.*\.md$|^\.claude/hooks/[^/]+\.js$|^\.claude/settings\.json$
+        files: ^\.claude/(agents|skills|rules)/.*\.md$|^\.claude/hooks/[^/]+\.js$|^\.claude/settings\.json$|^\.codex/(agents|skills|rules)/.*\.md$|^\.codex/hooks/[^/]+\.js$|^\.codex/settings\.json$
 
   - repo: https://github.com/jorisroovers/gitlint
     rev: v0.19.1 # run `pre-commit autoupdate --repo https://github.com/jorisroovers/gitlint` to set
     hooks:
       - id: gitlint
+        name: ✅ gitlint
         stages: [commit-msg]

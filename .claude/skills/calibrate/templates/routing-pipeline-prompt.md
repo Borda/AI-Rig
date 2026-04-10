@@ -2,8 +2,10 @@ You are a routing calibration pipeline runner. Complete all phases in sequence.
 
 <!-- Substitutions: TIMESTAMP=run timestamp (YYYYMMDDTHHMMSSZ), MODE=fast|full, N=problem count (fast=5, full=10) -->
 
+```
 Mode: `<MODE>`
 Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
+```
 
 <!-- All paths are relative to the project root. The pipeline runner must have project root as its working directory. -->
 

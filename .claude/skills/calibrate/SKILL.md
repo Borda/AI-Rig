@@ -79,8 +79,7 @@ Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing
 - "Calibrate routing" — Step 2 (benchmark mode, when target includes routing)
 - "Calibrate communication" — Step 2 (benchmark mode, when target includes communication)
 - "Analyse and report" — Steps 3–5 (benchmark mode)
-- "Apply findings" — Step 6 (apply mode only)
-  Mark each in_progress when starting, completed when done. On loop retry or scope change, create a new task.
+- "Apply findings" — Step 6 (apply mode only) Mark each in_progress when starting, completed when done. On loop retry or scope change, create a new task.
 
 ## Step 1: Parse targets and create run directory
 
@@ -140,16 +139,16 @@ NEW=$(find .reports/calibrate/<TIMESTAMP>/$TARGET/ -newer /tmp/calibrate-check-$
 touch /tmp/calibrate-check-$TARGET
 ELAPSED=$(( ($(date +%s) - LAUNCH_AT) / 60 ))
 if [ "$NEW" -gt 0 ]; then
-  echo "✓ $TARGET active"
+    echo "✓ $TARGET active"
 elif [ "$ELAPSED" -ge "$EFFECTIVE_TIMEOUT_MIN" ]; then
-  echo "⏱ $TARGET TIMED OUT (hard limit)"
+    echo "⏱ $TARGET TIMED OUT (hard limit)"
 elif [ "$ELAPSED" -ge "$HEALTH_CHECK_INTERVAL_MIN" ]; then
-  OUTPUT_FILE=".reports/calibrate/<TIMESTAMP>/$TARGET/pipeline.jsonl"
-  if tail -20 "$OUTPUT_FILE" 2>/dev/null | grep -qi 'delay\|wait\|slow'; then
-    echo "⏸ $TARGET: extension granted (+5 min)"
-  else
-    echo "⏱ $TARGET TIMED OUT"
-  fi
+    OUTPUT_FILE=".reports/calibrate/<TIMESTAMP>/$TARGET/pipeline.jsonl"
+    if tail -20 "$OUTPUT_FILE" 2>/dev/null | grep -qi 'delay\|wait\|slow'; then
+        echo "⏸ $TARGET: extension granted (+5 min)"
+    else
+        echo "⏱ $TARGET TIMED OUT"
+    fi
 fi
 ```
 

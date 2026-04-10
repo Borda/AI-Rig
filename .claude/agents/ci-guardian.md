@@ -98,7 +98,7 @@ gh run rerun <run-id> --job <job-id> --failed-only
 
 ```bash
 # Run tests N times to detect flakiness (pytest-repeat)
-pytest --count=5 tests/unit/ -x    # fail on first flaky
+pytest --count=5 tests/unit/ -x # fail on first flaky
 
 # Or use pytest-flakefinder
 uv add --dev pytest-flakefinder
@@ -116,7 +116,7 @@ Common flakiness causes:
 ## Build Time Profiling
 
 ```bash
-uv run pytest --durations=20 tests/ -q  # find slow tests
+uv run pytest --durations=20 tests/ -q # find slow tests
 # Check uv cache hit rate in run logs; review step timing in GitHub Actions UI
 ```
 
@@ -165,8 +165,7 @@ Key `.github/dependabot.yml` settings:
 
 ### Auto-merge Dependabot PRs (patch/minor dev-deps, after CI passes)
 
-Auto-approve patch and minor dev-dep updates; enable squash-merge. Key conditional:
-`dependency-type == 'direct:development' && update-type in [semver-patch, semver-minor]`
+Auto-approve patch and minor dev-dep updates; enable squash-merge. Key conditional: `dependency-type == 'direct:development' && update-type in [semver-patch, semver-minor]`
 
 Use `gh pr list --author 'app/dependabot'` to check for stale PRs.
 
@@ -217,9 +216,8 @@ Key `.github/workflows/benchmark.yml` settings:
 - Trigger: `push: branches: [main]`
 - Run: `pytest tests/benchmarks/ --benchmark-json output.json`
 - Use `benchmark-action/github-action-benchmark` with `tool: pytest`, `alert-threshold: 120%`, `fail-on-alert: true`
-
-Track: training step time, inference latency, peak memory, data loading throughput.
-Alert: when any metric regresses > 20% vs main branch baseline.
+- Track: training step time, inference latency, peak memory, data loading throughput.
+- Alert: when any metric regresses > 20% vs main branch baseline.
 
 \</perf_regression_ci>
 
@@ -260,13 +258,11 @@ For setup instructions (PyPI dashboard + GitHub environment config), see `oss-sh
 \<antipatterns_to_flag>
 
 - `continue-on-error: true` — hides failures instead of fixing them. Exception: job-level `continue-on-error: true` is acceptable in non-gating nightly/upstream workflows where failures are expected and informational only. Never use it on jobs that are required status checks.
-- Not pinning Action versions — all Actions (first-party and third-party) must use SHA pins, not version tags or branch refs; three tiers of risk in increasing order: version tags like `@v4` (mutable, can be repointed), named branch refs like `@main` or `@master` (worst — tracks live branch tip, changes on every push), and `@latest` aliases; correct form: `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4`
-  Three risk tiers, apply consistently:
+- Not pinning Action versions — all Actions (first-party and third-party) must use SHA pins, not version tags or branch refs; three tiers of risk in increasing order: version tags like `@v4` (mutable, can be repointed), named branch refs like `@main` or `@master` (worst — tracks live branch tip, changes on every push), and `@latest` aliases; correct form: `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4` Three risk tiers, apply consistently:
   - **critical** — branch/named refs (`@main`, `@master`, `@latest`) — tracks live branch, changes on every push
   - **high** — mutable version tags (`@v4`, `@v5`) — can be repointed, but requires explicit action by maintainer
   - (pinned SHA = compliant, no finding)
-  - When reporting severity in structured reviews: use **high** for mutable version tags, **critical** for branch refs. Do not downgrade to medium even for first-party GitHub Actions — the risk tier is explicit.
-    To find the current full SHA for an action: `gh api repos/<owner>/<action-repo>/git/ref/tags/<tag> --jq '.object.sha'`. Alternatively, Dependabot github-actions updates automatically upgrade tags to full SHAs.
+  - When reporting severity in structured reviews: use **high** for mutable version tags, **critical** for branch refs. Do not downgrade to medium even for first-party GitHub Actions — the risk tier is explicit. To find the current full SHA for an action: `gh api repos/<owner>/<action-repo>/git/ref/tags/<tag> --jq '.object.sha'`. Alternatively, Dependabot github-actions updates automatically upgrade tags to full SHAs.
 - Short SHAs (fewer than 40 hex characters, e.g. `@abc1234`) — treat as unpinned; short SHAs can collide and are not cryptographically safe; always use the full 40-character commit SHA
 - Running all tests in a single large job when parallelism is available
 - Skipping `fail-fast: false` — early exit hides failures in other matrix cells

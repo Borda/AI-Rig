@@ -29,13 +29,13 @@ uses: actions/checkout@main
 To find the latest tag for an action:
 
 ```bash
-gh api repos/<owner>/<action-repo>/tags --jq '.[0].name'
+gh api repos/ --jq '.[0].name' <owner >/ <action-repo >/tags
 ```
 
 To resolve the SHA for a tag (if pinning is required):
 
 ```bash
-gh api repos/<owner>/<action-repo>/git/ref/tags/<tag> --jq '.object.sha'
+gh api repos/ '.object.sha' <owner >/ <action-repo >/git/ref/tags/ <tag >--jq
 ```
 
 Severity tiers:

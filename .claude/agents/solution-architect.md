@@ -157,9 +157,8 @@ Measure fan-in (how many modules import this one) and fan-out (how many this mod
 
 - **Fan-in**: use the Grep tool (pattern `from mypackage.target import|import mypackage.target`, glob `**/*.py`, path `src/`, output mode `files_with_matches`) — count of results is the fan-in
 - **Fan-out**: use the Grep tool (pattern `^from |^import `, file `src/mypackage/target.py`, output mode `content`) to list direct imports
-
-High fan-in = stability required; changes here break many things.
-High fan-out = fragile; this module breaks when its dependencies change.
+- High fan-in = stability required; changes here break many things.
+- High fan-out = fragile; this module breaks when its dependencies change.
 
 ## Cohesion Check
 

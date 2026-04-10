@@ -30,32 +30,32 @@ mkdir -p "$OUT_DIR"
 2. Collect inventory.
 
 ```bash
-find .codex -maxdepth 4 -type f | sort > "$OUT_DIR/inventory.txt"
+find .codex -maxdepth 4 -type f | sort >"$OUT_DIR/inventory.txt"
 ```
 
 3. Run shared quality gates.
 
 ```bash
 .codex/skills/_shared/run-gates.sh \
-  --out "$OUT_DIR" \
-  --lint "${LINT_CMD:-bash -lc 'if command -v ruff >/dev/null 2>&1; then ruff check .codex; else UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/codex-uv-cache} uv run --no-sync ruff check .codex; fi'}" \
-  --format "${FORMAT_CMD:-bash -lc 'if command -v ruff >/dev/null 2>&1; then ruff format --check .codex; else UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/codex-uv-cache} uv run --no-sync ruff format --check .codex; fi'}" \
-  --types "${TYPES_CMD:-true}" \
-  --tests "${TESTS_CMD:-true}" \
-  --review "${REVIEW_CMD:-git diff --check}"
+    --out "$OUT_DIR" \
+    --lint "${LINT_CMD:-bash -lc 'if command -v ruff >/dev/null 2>&1; then ruff check .codex; else UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/codex-uv-cache} uv run --no-sync ruff check .codex; fi'}" \
+    --format "${FORMAT_CMD:-bash -lc 'if command -v ruff >/dev/null 2>&1; then ruff format --check .codex; else UV_CACHE_DIR=${UV_CACHE_DIR:-/tmp/codex-uv-cache} uv run --no-sync ruff format --check .codex; fi'}" \
+    --types "${TYPES_CMD:-true}" \
+    --tests "${TESTS_CMD:-true}" \
+    --review "${REVIEW_CMD:-git diff --check}"
 ```
 
 4. Detect drift and broken references.
 
 ```bash
-rg -n "config_file|skills/|quality-gates|run-gates.sh|write-result.sh" .codex > "$OUT_DIR/reference-scan.txt"
+rg -n "config_file|skills/|quality-gates|run-gates.sh|write-result.sh" .codex >"$OUT_DIR/reference-scan.txt"
 ```
 
 5. Audit spawn-pattern coverage and overlap in `AGENTS.md` (instruction-level check).
 
 ```bash
-rg -n "^### Spawn `.+` when:" .codex/AGENTS.md > "$OUT_DIR/spawn-sections.txt"
-rg -n "Automatic spawn patterns \\(all agents\\)|Collaboration team patterns" .codex/AGENTS.md > "$OUT_DIR/spawn-policy-sections.txt"
+rg -n "^### Spawn $(.+) when:" .codex/AGENTS.md >"$OUT_DIR/spawn-sections.txt"
+rg -n "Automatic spawn patterns \\(all agents\\)|Collaboration team patterns" .codex/AGENTS.md >"$OUT_DIR/spawn-policy-sections.txt"
 ```
 
 6. Classify findings using `../_shared/severity-map.md`.
@@ -63,16 +63,16 @@ rg -n "Automatic spawn patterns \\(all agents\\)|Collaboration team patterns" .c
 
 ```bash
 .codex/skills/_shared/write-result.sh \
-  --out "$OUT_DIR/result.json" \
-  --status "$STATUS" \
-  --checks-run "lint,format,types,tests,review" \
-  --checks-failed "$CHECKS_FAILED" \
-  --critical "$CRITICAL" \
-  --high "$HIGH" \
-  --medium "$MEDIUM" \
-  --low "$LOW" \
-  --confidence "$CONFIDENCE" \
-  --artifact-path "$OUT_DIR/result.json"
+    --out "$OUT_DIR/result.json" \
+    --status "$STATUS" \
+    --checks-run "lint,format,types,tests,review" \
+    --checks-failed "$CHECKS_FAILED" \
+    --critical "$CRITICAL" \
+    --high "$HIGH" \
+    --medium "$MEDIUM" \
+    --low "$LOW" \
+    --confidence "$CONFIDENCE" \
+    --artifact-path "$OUT_DIR/result.json"
 ```
 
 ## Fail-fast Rules

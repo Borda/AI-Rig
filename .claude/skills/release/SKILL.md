@@ -44,7 +44,7 @@ If no mode is given, defaults to `notes`. `prepare` is the full release pipeline
 Parse `$ARGUMENTS` by the first token:
 
 ```bash
-read FIRST REST <<< "$ARGUMENTS"
+read FIRST REST <<<"$ARGUMENTS"
 ```
 
 | First token                     | Mode      | Routing                                                                                                                                |
@@ -63,24 +63,22 @@ LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-pare
 RANGE="${RANGE:-$LAST_TAG..HEAD}"
 
 # One-liner overview (navigation index)
-git log $RANGE --oneline --no-merges  # timeout: 3000
+git log $RANGE --oneline --no-merges # timeout: 3000
 
 # Full commit messages — read these to catch BREAKING CHANGE footers,
 # co-authors, and details omitted from the subject line
-git log $RANGE --no-merges --format="--- %H%n%B"  # timeout: 3000
+git log $RANGE --no-merges --format="--- %H%n%B" # timeout: 3000
 
 # File-level diff stat — confirms what areas actually changed
-git diff --stat $(echo "$RANGE" | sed 's/\.\./\ /')  # timeout: 3000
+git diff --stat $(echo "$RANGE" | sed 's/\.\./\ /') # timeout: 3000
 
 # PR titles, bodies, and labels for merged PRs (richer context than commits)
 TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
 gh pr list --state merged --base "${TRUNK:-main}" --limit 100 \  # timeout: 15000
-  --json number,title,body,labels,mergedAt,author 2>/dev/null
+--json number,title,body,labels,mergedAt,author 2>/dev/null
 ```
 
-Cross-reference commit bodies against Pull Request (PR) descriptions — the canonical source of
-truth for *why* a change was made. If a commit footer contains `BREAKING CHANGE:`,
-it is a breaking change regardless of how it was labelled in the PR.
+Cross-reference commit bodies against Pull Request (PR) descriptions — the canonical source of truth for *why* a change was made. If a commit footer contains `BREAKING CHANGE:`, it is a breaking change regardless of how it was labelled in the PR.
 
 ## Step 2: Classify each change
 
@@ -99,22 +97,18 @@ Section order (fixed — never reorder): 🚀 Added → ⚠️ Breaking Changes 
 
 **Breaking vs Deprecated**: if the old call still works (even with a warning), it is **Deprecated** — never Breaking Changes. Breaking Changes are strictly for changes where upgrading causes immediate failures with no compatibility period.
 
-Filter out: merge commits, minor dep bumps, CI/tooling config, comment typos, internal refactors, code cleanup, internal-only dependency bumps, developer-facing housekeeping, and any change with no user-visible impact. **Never include internal staff names or internal maintenance details in public-facing output** (release notes, changelogs, migration guides).
-Always include: any breaking change, any behavior change, any new API surface.
+Filter out: merge commits, minor dep bumps, CI/tooling config, comment typos, internal refactors, code cleanup, internal-only dependency bumps, developer-facing housekeeping, and any change with no user-visible impact. **Never include internal staff names or internal maintenance details in public-facing output** (release notes, changelogs, migration guides). Always include: any breaking change, any behavior change, any new API surface.
 
 ## Step 3: Explore interesting changes
 
-For the top 3–5 most significant classified changes (features, breaking changes,
-major behaviour changes), read the actual diff or changed files:
+For the top 3–5 most significant classified changes (features, breaking changes, major behaviour changes), read the actual diff or changed files:
 
 ```bash
 git diff $RANGE -- <file>    # timeout: 3000
 git show <commit>:<file>     # timeout: 3000
 ```
 
-Goal: understand what the change actually does at the implementation level —
-new APIs, new parameters, new behaviour — so notes and changelog describe
-real functionality, not just commit subject lines.
+Goal: understand what the change actually does at the implementation level — new APIs, new parameters, new behaviour — so notes and changelog describe real functionality, not just commit subject lines.
 
 Skip this for trivial changes (typos, dep bumps, CI config).
 
@@ -123,17 +117,20 @@ Skip this for trivial changes (typos, dep bumps, CI config).
 Pre-flight — verify all templates are present before proceeding:
 
 ```bash
-for tmpl in PUBLIC-NOTES.tmpl.md CHANGELOG.tmpl.md SUMMARY.tmpl.md MIGRATION.tmpl.md; do  # timeout: 5000
-  [ -f ".claude/skills/release/templates/$tmpl" ] || { echo "Missing template: $tmpl — aborting"; exit 1; }
+for tmpl in PUBLIC-NOTES.tmpl.md CHANGELOG.tmpl.md SUMMARY.tmpl.md MIGRATION.tmpl.md; do # timeout: 5000
+    [ -f ".claude/skills/release/templates/$tmpl" ] || {
+        echo "Missing template: $tmpl — aborting"
+        exit 1
+    }
 done
 ```
 
 Before writing, fetch the last 2–3 releases from the repo to check for project-specific formatting conventions:
 
 ```bash
-gh release list --limit 3  # timeout: 30000
-LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName')  # timeout: 30000
-gh release view "$LATEST_TAG"   # timeout: 15000
+gh release list --limit 3                                                  # timeout: 30000
+LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName') # timeout: 30000
+gh release view "$LATEST_TAG"                                              # timeout: 15000
 ```
 
 If the existing releases deviate significantly from the templates below (e.g., no emoji sections, different heading levels, prose-style entries), match their style. The templates below are the default — project conventions take precedence.
@@ -142,11 +139,7 @@ If the existing releases deviate significantly from the templates below (e.g., n
 
 Omit any section that has no content.
 
-For `notes` mode: first produce a CHANGELOG-format classification (Step 2 output in
-changelog structure). Then derive the user-facing notes FROM that classification,
-expanding interesting features with implementation insights from Step 3.
-The changelog classification is a working document — do not write it to disk in
-`notes` mode, but use it as the structural backbone for the notes.
+For `notes` mode: first produce a CHANGELOG-format classification (Step 2 output in changelog structure). Then derive the user-facing notes FROM that classification, expanding interesting features with implementation insights from Step 3. The changelog classification is a working document — do not write it to disk in `notes` mode, but use it as the structural backbone for the notes.
 
 Read the PUBLIC-NOTES template from .claude/skills/release/templates/PUBLIC-NOTES.tmpl.md and use it as the format for the notes output.
 

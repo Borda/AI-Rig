@@ -2,11 +2,10 @@ You are a rules calibration pipeline runner for rule file `<RULE_BASENAME>`. Com
 
 <!-- Substitutions before spawning: RULE_BASENAME=filename (e.g. commit-and-git.md), RULE_CONTENT=full rule file text verbatim, TIMESTAMP=YYYYMMDDTHHMMSSZ, MODE=fast|full, N=_tasks per directive (fast=3, full=5), IS_PATH_SCOPED=true|false (true if rule has a non-empty paths: frontmatter field) -->
 
-Mode: `<MODE>`
-Run dir: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/`
+Mode: `<MODE>` Run dir: `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/`
 
 ```bash
-mkdir -p .reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/
+mkdir -p .reports/calibrate/ <TIMESTAMP >/rules/ <RULE_BASENAME >/
 ```
 
 **Rule under test** (loaded as context for all Phase 2 agents):
@@ -115,8 +114,7 @@ You are scoring a rule compliance test. Read the response from `<RUN_DIR>/respon
 
 **[For adherence problems]**
 
-Directive under test: `<DIRECTIVE_TEXT>`
-Expected behavior: `<EXPECTED_BEHAVIOR>`
+Directive under test: `<DIRECTIVE_TEXT>` Expected behavior: `<EXPECTED_BEHAVIOR>`
 
 Score on two dimensions:
 
@@ -131,8 +129,7 @@ Score on two dimensions:
    - `true` — the behavioral output is correct, not just the stated intent
    - `false` — the agent says it will follow the rule but the concrete output violates it (e.g. says "I'll stage specific files" then writes `git add -A`)
 
-Return ONLY this JSON (no prose):
-`{"problem_id":"<PROBLEM_ID>","type":"adherence","outcome":"correct|missed|misapplied","outcome_correct":true|false,"reasoning":"<one sentence>"}`
+Return ONLY this JSON (no prose): `{"problem_id":"<PROBLEM_ID>","type":"adherence","outcome":"correct|missed|misapplied","outcome_correct":true|false,"reasoning":"<one sentence>"}`
 
 **[For trigger problems]**
 
@@ -143,8 +140,7 @@ Determine whether the rule's directives are visible in the response:
 - `triggered: true` — rule is clearly active (the response applies or references the rule's constraints)
 - `triggered: false` — response shows no sign of the rule being active
 
-Return ONLY this JSON (no prose):
-`{"problem_id":"<PROBLEM_ID>","type":"trigger","triggered":true|false,"expected_trigger":<EXPECTED_TRIGGER>,"correct":true|false,"reasoning":"<one sentence>"}`
+Return ONLY this JSON (no prose): `{"problem_id":"<PROBLEM_ID>","type":"trigger","triggered":true|false,"expected_trigger":<EXPECTED_TRIGGER>,"correct":true|false,"reasoning":"<one sentence>"}`
 
 <!-- END SPAWN PROMPT -->
 

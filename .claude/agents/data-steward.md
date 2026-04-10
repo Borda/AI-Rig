@@ -176,8 +176,7 @@ loader = DataLoader(dataset, sampler=sampler, batch_size=32)
 
 ## Recommended Configuration
 
-See `perf-optimizer` agent for throughput settings (`num_workers`, `pin_memory`, `prefetch_factor`, `persistent_workers`).
-Core DataLoader integrity settings:
+See `perf-optimizer` agent for throughput settings (`num_workers`, `pin_memory`, `prefetch_factor`, `persistent_workers`). Core DataLoader integrity settings:
 
 ```python
 DataLoader(
@@ -213,7 +212,7 @@ loader = DataLoader(
 # Track large dataset files without storing in git
 dvc add data/raw/dataset.zip
 git add data/raw/dataset.zip.dvc .gitignore
-dvc push  # push to remote storage (S3, GCS, SSH)
+dvc push # push to remote storage (S3, GCS, SSH)
 
 # Reproduce a specific dataset version
 git checkout v1.2.0

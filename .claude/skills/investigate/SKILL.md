@@ -52,21 +52,21 @@ Collect evidence in parallel — do NOT form hypotheses yet.
 **Tool versions and PATH**:
 
 ```bash
-which python3 && python3 --version  # timeout: 5000
-which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"  # timeout: 5000
-node --version 2>/dev/null || echo "node: not found"  # timeout: 5000
-claude plugin list 2>/dev/null | grep 'codex@openai-codex' || echo "codex (openai-codex): not found"  # timeout: 5000
+which python3 && python3 --version                                                                   # timeout: 5000
+which uv 2>/dev/null && uv --version 2>/dev/null || echo "uv: not found"                             # timeout: 5000
+node --version 2>/dev/null || echo "node: not found"                                                 # timeout: 5000
+claude plugin list 2>/dev/null | grep 'codex@openai-codex' || echo "codex (openai-codex): not found" # timeout: 5000
 ```
 
 ```bash
-env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | sort  # timeout: 5000
+env | grep -E 'PATH|VIRTUAL_ENV|UV_|CLAUDE|HOME|SHELL|NODE' | sort # timeout: 5000
 ```
 
 **Recent changes**:
 
 ```bash
-git log --oneline -10  # timeout: 3000
-git diff HEAD~3..HEAD --stat  # timeout: 3000
+git log --oneline -10        # timeout: 3000
+git diff HEAD~3..HEAD --stat # timeout: 3000
 ```
 
 **Config state** (when symptom involves Claude Code, hooks, or skills):

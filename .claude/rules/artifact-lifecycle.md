@@ -34,7 +34,7 @@ All dot-prefixed artifact dirs are gitignored — they are ephemeral and TTL-man
 Every skill creates a timestamped subdirectory using its canonical base dir:
 
 ```bash
-RUN_DIR=".reports/<skill>/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # for .reports/<skill>/ skills
+RUN_DIR=".reports/<skill>/$(date -u +%Y-%m-%dT%H-%M-%SZ)" # for .reports/<skill>/ skills
 # or: RUN_DIR=".<skill>/$(date -u +%Y-%m-%dT%H-%M-%SZ)"   # for dedicated dirs (.experiments/, .developments/)
 mkdir -p "$RUN_DIR"
 ```
@@ -64,8 +64,8 @@ The `SessionEnd` hook runs this cleanup automatically:
 ```bash
 # Delete completed skill runs older than 30 days
 find .reports/calibrate .reports/resolve .reports/audit .reports/review .reports/analyse .experiments .developments \
-  -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null \
-  | xargs dirname | xargs rm -rf
+    -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null |
+xargs dirname | xargs rm -rf
 
 # Delete stale blueprint specs, cache, and temp outputs older than 30 days
 find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs rm -f

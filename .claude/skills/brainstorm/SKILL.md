@@ -45,13 +45,9 @@ Examples:
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps
-(context scan, clarifying questions, build tree, save tree, tree review,
-present + gate). Then print a session plan to the user:
+**Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps (context scan, clarifying questions, build tree, save tree, tree review, present + gate). Then print a session plan to the user:
 
-> **Brainstorming: \<goal from $ARGUMENTS>**
-> Plan: context scan → clarifying questions → build tree → save tree doc → review → approval gate.
-> Starting with a codebase scan...
+> **Brainstorming: \<goal from $ARGUMENTS>** Plan: context scan → clarifying questions → build tree → save tree doc → review → approval gate. Starting with a codebase scan...
 
 ## Step 1: Context scan
 
@@ -114,8 +110,7 @@ After presenting all initial branches, call `AskUserQuestion` with one letter pe
 - f) None of these — describe what you're thinking
 - g) Add more initial branches — I want more angles
 
-On **(f)**: ask what direction the user is thinking, then generate 2–3 new branches incorporating it.
-On **(g)**: generate 2–3 fresh branches with genuinely different framing.
+On **(f)**: ask what direction the user is thinking, then generate 2–3 new branches incorporating it. On **(g)**: generate 2–3 fresh branches with genuinely different framing.
 
 User may select **1–3 branches** to mark as initial focus. All other branches start as [open] too — they are not closed yet, just not the initial focus.
 
@@ -280,8 +275,7 @@ Start with these (adapt based on the tree content):
 
 1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as a lettered option
 2. "Should any of the remaining open branches be combined with the chosen direction, or are they separate concerns?"
-3. "What is the single most important success criterion for this idea?"
-   4–5. Ask additional questions based on gaps in the open threads section or unresolved tensions between branches
+3. "What is the single most important success criterion for this idea?" 4–5. Ask additional questions based on gaps in the open threads section or unresolved tensions between branches
 
 After the questions, briefly restate the distilled direction in 2–3 sentences — the synthesis of what was just decided.
 
@@ -295,28 +289,21 @@ For each section, write it inline then call `AskUserQuestion`:
 - b) Change this — [describe what to revise]
 - c) This section sparks a new thought — [add context]
 
-On **(b)**: revise inline, show updated version, re-offer. Max 2 revisions per section.
-On **(c)**: incorporate context, revise if needed, re-offer.
+On **(b)**: revise inline, show updated version, re-offer. Max 2 revisions per section. On **(c)**: incorporate context, revise if needed, re-offer.
 
 **Sections**:
 
-**Section 1 — Goal** (1 paragraph: what problem this solves and for whom)
-Derive from the distilled direction from D2. Reference the open branches that fed into it.
+**Section 1 — Goal** (1 paragraph: what problem this solves and for whom) Derive from the distilled direction from D2. Reference the open branches that fed into it.
 
-**Section 2 — Non-goals** (explicit list)
-Derive from closed branches and the open branches not chosen in D2.
+**Section 2 — Non-goals** (explicit list) Derive from closed branches and the open branches not chosen in D2.
 
-**Section 3 — Proposed design** (the distilled direction with enough detail to implement)
-Break into sub-points. Describe *what*, not *how*. If the direction is a merge of multiple open branches, name each part.
+**Section 3 — Proposed design** (the distilled direction with enough detail to implement) Break into sub-points. Describe *what*, not *how*. If the direction is a merge of multiple open branches, name each part.
 
-**Section 4 — Open questions** (unresolved decisions)
-Seed from the "Open threads" section of the tree. For each, note blocking vs non-blocking and a recommended default if possible.
+**Section 4 — Open questions** (unresolved decisions) Seed from the "Open threads" section of the tree. For each, note blocking vs non-blocking and a recommended default if possible.
 
-**Section 5 — Success criteria** (observable, testable outcomes)
-Include the criterion identified in D2 question 3. Each criterion must be concrete enough to write a pass/fail check.
+**Section 5 — Success criteria** (observable, testable outcomes) Include the criterion identified in D2 question 3. Each criterion must be concrete enough to write a pass/fail check.
 
-**Section 6 — Exploration notes** (summary of closed branches and why)
-Draw from the Pruning log in the tree. This is context for future readers — what was considered and rejected.
+**Section 6 — Exploration notes** (summary of closed branches and why) Draw from the Pruning log in the tree. This is context for future readers — what was considered and rejected.
 
 **Gate**: do not write to disk until all 6 sections are drafted and individually approved.
 
@@ -332,8 +319,7 @@ If any item fails, call `AskUserQuestion` with:
 - a) Revise the failing section(s) now — return to that section in D3 ★ recommended
 - b) Proceed anyway — I accept the spec may be underspecified
 
-On **(a)**: jump back to the failing section in D3 (max 1 extra revision per section).
-On **(b)**: proceed to write.
+On **(a)**: jump back to the failing section in D3 (max 1 extra revision per section). On **(b)**: proceed to write.
 
 After all sections approved: write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` (new file; use the tree's slug with a `-spec` suffix if writing alongside the tree):
 
@@ -411,9 +397,7 @@ Call `AskUserQuestion` with:
 - (b) Copy plan and pass to another agent
 - (c) Revise spec first
 
-On **(a)**: proceed immediately with the invocation from task 1.
-On **(b)**: output the plan table as a clean markdown block, then stop.
-On **(c)**: stop and tell the user to revise the spec and re-run `/brainstorm breakdown <spec>`.
+On **(a)**: proceed immediately with the invocation from task 1. On **(b)**: output the plan table as a clean markdown block, then stop. On **(c)**: stop and tell the user to revise the spec and re-run `/brainstorm breakdown <spec>`.
 
 End with a `## Confidence` block per CLAUDE.md output standards.
 

@@ -1,7 +1,6 @@
 # `.claude/settings.json` Permissions Reference
 
-Annotated companion to the `permissions.allow` and `permissions.deny` lists in `settings.json`.
-Every entry here must have a matching entry there, and vice versa — kept in sync by `/audit` (drift check) and `/manage add perm` / `/manage remove perm`.
+Annotated companion to the `permissions.allow` and `permissions.deny` lists in `settings.json`. Every entry here must have a matching entry there, and vice versa — kept in sync by `/audit` (drift check) and `/manage add perm` / `/manage remove perm`.
 
 **Destructive git commands are explicitly denied** — see the Deny List section below. Deny rules are evaluated before allow rules; a matching deny always blocks execution regardless of any allow entry. Remote-mutating operations (`git push`, `git remote`) are not denied — they prompt the user for approval.
 

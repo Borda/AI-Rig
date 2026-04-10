@@ -51,7 +51,7 @@ This repo is the **source of truth** for all `.claude/` configuration. Home (`~/
 
 **Workflow:**
 
-```bash
+```text
 /sync          # dry-run: show drift report (MISSING / DIFFERS / IDENTICAL per file)
 /sync apply    # apply: copy all differing files and verify outcome
 ```
@@ -76,7 +76,7 @@ Connects [HKUDS/OpenSpace](https://github.com/HKUDS/OpenSpace) as a local MCP se
 # 1. Install OpenSpace globally via pipx (Python ≥ 3.12 required)
 brew install pipx
 pipx install https://github.com/HKUDS/OpenSpace/archive/refs/heads/main.zip --python python3.12
-~/.local/bin/openspace-mcp --help   # smoke test
+~/.local/bin/openspace-mcp --help # smoke test
 
 # 2. Update the command path in .mcp.json if your username differs:
 #    "$HOME/.local/bin/openspace-mcp"
@@ -248,7 +248,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/optimize` — Profile-first bottleneck discovery and run mode</strong></summary>
 
-```bash
+```text
 # plan mode — interactive config wizard → program.md
 /optimize plan "increase test coverage to 90%"
 /optimize plan src/mypackage/train.py           # profile-first: cProfile → ask what to optimize → wizard
@@ -283,7 +283,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/review` — Parallel code review</strong></summary>
 
-```bash
+```text
 /review 42          # review PR by number
 /review src/mypackage/transforms.py
 /review             # review latest commit
@@ -295,7 +295,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/analyse` — Issue, PR, Discussion and repo health</strong></summary>
 
-```bash
+```text
 /analyse 123           # auto-detects issue/PR/discussion; wide-net related search
 /analyse health        # repo health overview with duplicate clustering
 /analyse ecosystem     # downstream consumer impact analysis
@@ -307,7 +307,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/release` — Release notes, changelog, readiness checks</strong></summary>
 
-```bash
+```text
 /release notes v1.2.0..HEAD
 /release changelog v1.2.0..HEAD
 /release prepare v2.0.0
@@ -319,7 +319,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/sync` — Config drift detection</strong></summary>
 
-```bash
+```text
 /sync          # dry-run: show what differs between project and home .claude/
 /sync apply    # apply: copy differing files to ~/.claude/
 ```
@@ -329,7 +329,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/manage` — Agent/skill lifecycle</strong></summary>
 
-```bash
+```text
 /manage create agent security-auditor "Security specialist for vulnerability scanning"
 /manage update skill optimize perf-audit
 /manage delete agent web-explorer
@@ -340,7 +340,7 @@ per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<fi
 <details>
 <summary><strong>`/audit` — Config health sweep + upgrade</strong></summary>
 
-```bash
+```text
 /audit            # full sweep — report only, includes upgrade proposals table
 /audit fix        # auto-fix critical and high findings
 /audit upgrade    # apply docs-sourced improvements
@@ -361,7 +361,7 @@ Each mode enforces a validation gate *before* writing implementation code:
 - `refactor` — coverage audit before changing structure
 - `debug` — investigation-first; evidence gathering → hypothesis gate → minimal fix
 
-```bash
+```text
 /develop feature add batched predict() method to Classifier
 /develop fix TypeError when passing None to transform()
 /develop refactor src/mypackage/transforms.py
@@ -374,7 +374,7 @@ Each mode enforces a validation gate *before* writing implementation code:
 <details>
 <summary><strong>`/resolve` — Resolve a PR end-to-end</strong></summary>
 
-```bash
+```text
 /resolve 42                                              # pr mode: live GitHub comments → conflict check → semantic resolution → action items
 /resolve https://github.com/org/repo/pull/42             # same as above, URL form
 /resolve report                                          # report mode: latest /review findings as action items; no GitHub re-fetch
@@ -387,7 +387,7 @@ Each mode enforces a validation gate *before* writing implementation code:
 <details>
 <summary><strong>`/investigate` — Systematic failure diagnosis</strong></summary>
 
-```bash
+```text
 /investigate "hooks not firing on Save"
 /investigate "codex exec exits 127 on this machine"
 /investigate "CI fails but passes locally"
@@ -400,7 +400,7 @@ Each mode enforces a validation gate *before* writing implementation code:
 <details>
 <summary><strong>`/session` — Session parking lot</strong></summary>
 
-```bash
+```text
 /session            # auto-parks current diverging ideas and open questions
 /session resume     # show all pending parked items
 /session archive    # close all pending items
@@ -674,7 +674,7 @@ Row 2:  🕵 2 agents (self-mentor, sw-engineer) │ 🤖 codex-rescue │ 🔧 
 
 Install the Codex plugin in Claude Code — not an MCP server, a local plugin:
 
-```bash
+```text
 /plugin marketplace add openai/codex-plugin-cc
 /plugin install codex@openai-codex
 /reload-plugins

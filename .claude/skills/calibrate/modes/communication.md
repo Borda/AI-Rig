@@ -26,8 +26,7 @@ decision-relevant signal at ≤30% of raw token count, and any omission of a sev
 is a critical violation
 ```
 
-**Ground truth format** (extended for subdomain tagging):
-`{"issue": "...", "location": "...", "severity": "...", "subdomain": "handover|context-contamination|agentspeak|completeness"}`
+**Ground truth format** (extended for subdomain tagging): `{"issue": "...", "location": "...", "severity": "...", "subdomain": "handover|context-contamination|agentspeak|completeness"}`
 
 **Per-subdomain recall** (Phase 4 aggregate addition):
 

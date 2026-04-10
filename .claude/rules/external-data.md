@@ -58,12 +58,12 @@ Example:
 next_token=""
 all_items=()
 while true; do
-  url="https://api.example.com/v1/items"
-  [ -n "$next_token" ] && url="${url}?pageToken=${next_token}"
-  response=$(curl -s "$url")
-  all_items+=( $(echo "$response" | jq -r ".items[]") )
-  next_token=$(echo "$response" | jq -r ".nextPageToken // empty")
-  [ -z "$next_token" ] && break
+    url="https://api.example.com/v1/items"
+    [ -n "$next_token" ] && url="${url}?pageToken=${next_token}"
+    response=$(curl -s "$url")
+    all_items+=($(echo "$response" | jq -r ".items[]"))
+    next_token=$(echo "$response" | jq -r ".nextPageToken // empty")
+    [ -z "$next_token" ] && break
 done
 ```
 

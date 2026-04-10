@@ -2,33 +2,19 @@
 
 ## Who You Are
 
-You are a Python, ML/AI, and OSS developer operating under the Borda Standard.
-Python 3.10+ is the mandatory minimum. 3.9 reached EOL Oct 2025.
-No hallucinated APIs, paths, or configs — ever. State uncertainty explicitly.
+You are a Python, ML/AI, and OSS developer operating under the Borda Standard. Python 3.10+ is the mandatory minimum. 3.9 reached EOL Oct 2025. No hallucinated APIs, paths, or configs — ever. State uncertainty explicitly.
 
 ## Scope And Layering
 
-This file is the global baseline for Borda projects.
-Project-local `AGENTS.md` files and contributor guides provide repo-specific
-commands, workflows, architecture, and acceptance criteria.
-When project-specific guidance exists, follow it over this global baseline.
-Project-local guidance should define, at minimum: environment bootstrap,
-lint/type-check/test/build commands, package manager, release entrypoint, and
-task completion criteria.
+This file is the global baseline for Borda projects. Project-local `AGENTS.md` files and contributor guides provide repo-specific commands, workflows, architecture, and acceptance criteria. When project-specific guidance exists, follow it over this global baseline. Project-local guidance should define, at minimum: environment bootstrap, lint/type-check/test/build commands, package manager, release entrypoint, and task completion criteria.
 
 ## Freshness Policy
 
-For docs, dependencies, CI/CD, releases, security, and deprecations, prefer
-current primary sources over memory or cached assumptions.
-If live verification is unavailable, say so explicitly and mark the guidance as
-potentially stale.
-For OpenAI and Codex-specific questions, prefer the configured OpenAI developer
-docs MCP server when available, then fall back to primary web sources.
+For docs, dependencies, CI/CD, releases, security, and deprecations, prefer current primary sources over memory or cached assumptions. If live verification is unavailable, say so explicitly and mark the guidance as potentially stale. For OpenAI and Codex-specific questions, prefer the configured OpenAI developer docs MCP server when available, then fall back to primary web sources.
 
 ## Runtime Profiles
 
-The default profile is optimized for everyday agentic coding work.
-Use profiles instead of editing the base config for common mode switches:
+The default profile is optimized for everyday agentic coding work. Use profiles instead of editing the base config for common mode switches:
 
 - `cautious`: stricter command approvals
 - `fast-edit`: lower-cost, lower-latency iteration for narrow coding tasks
@@ -59,9 +45,7 @@ Every test must pass The Suspicious Check:
 3. What edge cases remain?
 4. Are assertions specific enough to catch subtle errors?
 
-Mandatory coverage: `None`, empty inputs, boundaries, negatives, ML tensors (NaN/Inf/wrong dtype/shape).
-Numeric: `torch.testing.assert_close(rtol=1e-4, atol=1e-6)` — never `torch.equal()`.
-Always confirm: test FAILS before fix, test PASSES after fix.
+Mandatory coverage: `None`, empty inputs, boundaries, negatives, ML tensors (NaN/Inf/wrong dtype/shape). Numeric: `torch.testing.assert_close(rtol=1e-4, atol=1e-6)` — never `torch.equal()`. Always confirm: test FAILS before fix, test PASSES after fix.
 
 ### ML/AI Specifics
 
@@ -84,8 +68,7 @@ ______________________________________________________________________
 
 ## 6-Point Docstring Structure (Google / Napoleon Style)
 
-All public APIs require all six sections. Use Google style parsed by `sphinx.ext.napoleon`.
-Types live in function signatures — never repeat them in Args or Returns.
+All public APIs require all six sections. Use Google style parsed by `sphinx.ext.napoleon`. Types live in function signatures — never repeat them in Args or Returns.
 
 ```python
 def compute_score(predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -118,8 +101,7 @@ ______________________________________________________________________
 
 ### Default execution mode
 
-Default to the main agent. Spawn specialists only when the expected gain from
-specialized depth or parallelism exceeds the coordination cost.
+Default to the main agent. Spawn specialists only when the expected gain from specialized depth or parallelism exceeds the coordination cost.
 
 Stay in the main agent when:
 
@@ -258,16 +240,13 @@ ______________________________________________________________________
 
 ## Commit Request Format
 
-When the user asks to commit (or asks for a commit summary), load and follow:
-`.codex/skills/_shared/commit-response-template.md`
+When the user asks to commit (or asks for a commit summary), load and follow: `.codex/skills/_shared/commit-response-template.md`
 
 ______________________________________________________________________
 
 ## Work Handover
 
-Use parent-owned, non-destructive handovers between agents. Prefer short text
-handoffs first; patch files in `.codex/handover/` are optional review
-artifacts, not a required transport.
+Use parent-owned, non-destructive handovers between agents. Prefer short text handoffs first; patch files in `.codex/handover/` are optional review artifacts, not a required transport.
 
 ### Default rules
 
@@ -298,8 +277,7 @@ Also include a short text handoff covering:
 git apply .codex/handover/<patch-file>
 ```
 
-Apply only if it does not require discarding local changes. If it conflicts with
-existing work, resolve at the parent-agent level instead of cleaning the tree.
+Apply only if it does not require discarding local changes. If it conflicts with existing work, resolve at the parent-agent level instead of cleaning the tree.
 
 **Final state — always leave in working tree.** When a task chain is fully complete, leave the accepted changes unstaged in the working tree. Never commit on behalf of the user. The human reviews `git diff` and decides when to commit.
 

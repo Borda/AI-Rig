@@ -40,11 +40,11 @@ Never reach for level 7 without ruling out levels 1-6.
 python -m cProfile -s cumtime script.py | head -30
 
 # Line-level detail (add @profile decorator first)
-pip install line_profiler  # or: uv tool install line-profiler
+pip install line_profiler # or: uv tool install line-profiler
 kernprof -l -v script.py
 
 # Memory profiling (line-level)
-pip install memory_profiler  # or: uv tool install memory-profiler
+pip install memory_profiler # or: uv tool install memory-profiler
 python -m memory_profiler script.py
 ```
 
@@ -66,10 +66,10 @@ py-spy record -o profile.svg -- python script.py
 ## scalene (CPU + memory + GPU in one tool)
 
 ```bash
-pip install scalene  # or: uv tool install scalene
-scalene script.py                    # full profiling
-scalene --cpu script.py              # CPU only
-scalene --gpu script.py              # include GPU
+pip install scalene     # or: uv tool install scalene
+scalene script.py       # full profiling
+scalene --cpu script.py # CPU only
+scalene --gpu script.py # include GPU
 scalene --html --outfile profile.html script.py
 ```
 
@@ -91,9 +91,9 @@ def test_speed(benchmark):
 ## I/O Profiling
 
 ```bash
-strace -c python script.py   # system call tracing (Linux only; macOS: dtruss)
+strace -c python script.py # system call tracing (Linux only; macOS: dtruss)
 # Note: dtruss requires SIP disabled on modern macOS — prefer Instruments or dtrace -n 'syscall:::entry /pid == $target/ {}'
-iostat -x 1                  # file I/O stats
+iostat -x 1 # file I/O stats
 ```
 
 \</profiling_tools>
@@ -127,9 +127,9 @@ prof.export_chrome_trace("trace.json")
 
 ```bash
 # Real-time GPU stats
-nvidia-smi dmon -s u               # utilization stream
+nvidia-smi dmon -s u # utilization stream
 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.free \
-           --format=csv -l 1       # CSV every second
+    --format=csv -l 1 # CSV every second
 
 # nvitop — interactive GPU process monitor (better than nvidia-smi)
 pip install nvitop
@@ -142,8 +142,7 @@ If `data_fraction = data_time / step_time > 0.3`, the pipeline is CPU-bound — 
 
 ## DataLoader Optimization
 
-See `data-steward` agent for DataLoader reproducibility patterns (`seed`, `worker_init_fn`, `collate_fn`, `drop_last`).
-Quick throughput checklist: `num_workers > 0`, `pin_memory=True`, `persistent_workers=True`, `prefetch_factor=2`.
+See `data-steward` agent for DataLoader reproducibility patterns (`seed`, `worker_init_fn`, `collate_fn`, `drop_last`). Quick throughput checklist: `num_workers > 0`, `pin_memory=True`, `persistent_workers=True`, `prefetch_factor=2`.
 
 ## Mixed Precision (torch.amp — PyTorch 2.0+)
 
@@ -316,9 +315,9 @@ Every recommendation MUST use the `<output_format>` template. Never report an op
 
 ### Step 5 — One-change loop
 
-a. **Change**: make one targeted change from the highest-impact finding
-b. **Measure**: compare against baseline under identical conditions
-c. **Accept/reject**: keep if >10% improvement; revert and try next hypothesis if not. Repeat until target met or diminishing returns.
+1. **Change**: make one targeted change from the highest-impact finding
+2. **Measure**: compare against baseline under identical conditions
+3. **Accept/reject**: keep if >10% improvement; revert and try next hypothesis if not. Repeat until target met or diminishing returns.
 
 ### Step 6 — Internal Quality Loop and Confidence block
 

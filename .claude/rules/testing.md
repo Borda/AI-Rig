@@ -34,8 +34,7 @@ Mirror `src/` layout in `tests/unit/`: `src/foo/bar.py` → `tests/unit/foo/test
 
 ## Seeding / Randomness
 
-- Never seed RNG anywhere except inside an `autouse=True` fixture — not in test bodies,
-  not at module level, not in non-autouse fixtures
+- Never seed RNG anywhere except inside an `autouse=True` fixture — not in test bodies, not at module level, not in non-autouse fixtures
 - If the fixture is needed project-wide, place it in `tests/conftest.py` — do not duplicate it per file. Per-file placement is acceptable only when a specific file needs a different seed strategy.
 - Use a pytest fixture that resets all RNG sources: `torch.manual_seed`, `numpy.random.seed`, `random.seed`, `torch.cuda.manual_seed_all`
 - Fixture should use `autouse=True`

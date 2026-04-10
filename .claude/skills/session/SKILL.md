@@ -66,7 +66,7 @@ echo "$MEMORY_DIR"
 
 ```bash
 # MEMORY_DIR derived in Step 1 — reuse that value
-find "$MEMORY_DIR" -name "session-open-*.md" -mtime +30 -delete 2>/dev/null  # timeout: 5000
+find "$MEMORY_DIR" -name "session-open-*.md" -mtime +30 -delete 2>/dev/null # timeout: 5000
 echo "cleanup done"
 ```
 
@@ -80,10 +80,10 @@ Compute age in days for each file:
 # MEMORY_DIR derived in Step 1 — reuse that value
 NOW=$(date +%s)
 for f in "$MEMORY_DIR"/session-open-*.md; do
-  [ -f "$f" ] || continue
-  MTIME=$(if [ "$(uname -s)" = "Darwin" ]; then stat -f "%m" "$f"; else stat -c "%Y" "$f"; fi)  # timeout: 5000
-  AGE=$(( (NOW - MTIME) / 86400 ))
-  echo "$AGE $f"
+    [ -f "$f" ] || continue
+    MTIME=$(if [ "$(uname -s)" = "Darwin" ]; then stat -f "%m" "$f"; else stat -c "%Y" "$f"; fi) # timeout: 5000
+    AGE=$(((NOW - MTIME) / 86400))
+    echo "$AGE $f"
 done
 ```
 
@@ -148,13 +148,13 @@ echo "deleted"
 Ensure the log directory exists:
 
 ```bash
-mkdir -p .claude/logs  # timeout: 5000
+mkdir -p .claude/logs # timeout: 5000
 ```
 
 Append a one-line JSON entry using Write/Edit — or Bash:
 
 ```bash
-echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"item\":\"<name>\",\"action\":\"archived\"}" >> .claude/logs/session-archive.jsonl  # timeout: 5000
+echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"item\":\"<name>\",\"action\":\"archived\"}" >>.claude/logs/session-archive.jsonl # timeout: 5000
 ```
 
 ### Step 5: Confirm to user
@@ -183,19 +183,19 @@ Read each file with the Read tool for its `name` and `description`.
 ### Step 3: Collect recent git commits
 
 ```bash
-git log --oneline --since="$(date -u -d '8 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8H '+%Y-%m-%dT%H:%M:%SZ')" 2>/dev/null | head -20  # timeout: 3000
+git log --oneline --since="$(date -u -d '8 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8H '+%Y-%m-%dT%H:%M:%SZ')" 2>/dev/null | head -20 # timeout: 3000
 ```
 
 If the date flag syntax fails on the current platform, fall back to:
 
 ```bash
-git log --oneline -15  # timeout: 3000
+git log --oneline -15 # timeout: 3000
 ```
 
 ### Step 4: Collect archived items from this session
 
 ```bash
-[ -f .claude/logs/session-archive.jsonl ] && tail -20 .claude/logs/session-archive.jsonl || echo "none"  # timeout: 5000
+[ -f .claude/logs/session-archive.jsonl ] && tail -20 .claude/logs/session-archive.jsonl || echo "none" # timeout: 5000
 ```
 
 Filter entries with `ts` matching today's date.
@@ -228,8 +228,9 @@ mkdir -p .temp/
 OUTPUT=".temp/output-session-summary-$(date +%Y-%m-%d).md"
 # Anti-overwrite: increment counter if slug already exists
 if [ -f "$OUTPUT" ]; then
-  n=2; while [ -f "${OUTPUT%.md}-$n.md" ]; do n=$((n+1)); done
-  OUTPUT="${OUTPUT%.md}-$n.md"
+    n=2
+    while [ -f "${OUTPUT%.md}-$n.md" ]; do n=$((n + 1)); done
+    OUTPUT="${OUTPUT%.md}-$n.md"
 fi
 ```
 

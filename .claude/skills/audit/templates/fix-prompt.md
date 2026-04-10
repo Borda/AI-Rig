@@ -2,8 +2,7 @@ Fix the following issues in `<file path>`. Apply only the listed fixes — do no
 
 \<for each finding in this file, one bullet per fix>
 
-- [SEVERITY] <specific fix description>
-  Fix: \<exactly what to change, with enough context to locate it>
+- [SEVERITY] <specific fix description> Fix: \<exactly what to change, with enough context to locate it>
 
 Fix type reference:
 

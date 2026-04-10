@@ -45,47 +45,56 @@ When given bare comment text, skip straight to Codex dispatch (Step 12).
 
 ```bash
 # From _shared/preflight-helpers.md — TTL 4 hours, keyed per binary
-preflight_ok()  { local f=".claude/state/preflight/$1.ok"; [ -f "$f" ] && [ $(( $(date +%s) - $(cat "$f") )) -lt 14400 ]; }
-preflight_pass(){ mkdir -p .claude/state/preflight; date +%s > ".claude/state/preflight/$1.ok"; }
+preflight_ok() {
+    local f=".claude/state/preflight/$1.ok"
+    [ -f "$f" ] && [ $(($(date +%s) - $(cat "$f"))) -lt 14400 ]
+}
+preflight_pass() {
+    mkdir -p .claude/state/preflight
+    date +%s >".claude/state/preflight/$1.ok"
+}
 
 # codex — optional; intelligence + conflict resolution work without it
 CODEX_AVAILABLE=false
 if preflight_ok codex; then
-  CODEX_AVAILABLE=true && echo "codex (openai-codex): ok (cached)"
-elif claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'; then  # timeout: 15000
-  preflight_pass codex && CODEX_AVAILABLE=true && echo "codex (openai-codex): ok"
+    CODEX_AVAILABLE=true && echo "codex (openai-codex): ok (cached)"
+elif claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'; then # timeout: 15000
+    preflight_pass codex && CODEX_AVAILABLE=true && echo "codex (openai-codex): ok"
 else
-  echo "codex (openai-codex): missing — action item implementation (Step 8) will be skipped"
+    echo "codex (openai-codex): missing — action item implementation (Step 8) will be skipped"
 fi
 
 # gh binary + auth — required; cached for 4h (auth won't change within a session)
 if preflight_ok gh; then
-  echo "gh: ok (cached)"
+    echo "gh: ok (cached)"
 elif which gh &>/dev/null && gh auth status &>/dev/null; then
-  preflight_pass gh && echo "gh: ok ($(gh auth status 2>&1 | grep 'Logged in' | head -1 | xargs))"
+    preflight_pass gh && echo "gh: ok ($(gh auth status 2>&1 | grep 'Logged in' | head -1 | xargs))"
 elif which gh &>/dev/null; then
-  echo "Pre-flight failed: gh found but not authenticated — run: gh auth login" && exit 1
+    echo "Pre-flight failed: gh found but not authenticated — run: gh auth login" && exit 1
 else
-  echo "Pre-flight failed: gh not found — install: brew install gh" && exit 1
+    echo "Pre-flight failed: gh not found — install: brew install gh" && exit 1
 fi
 
 # Show current remotes — confirms we are in the right repo and surfaces any existing fork remotes
-git remote -v  # timeout: 3000
+git remote -v # timeout: 3000
 
 # Sync with remote tracking branch before any git work.
 # When local is 1 commit ahead and remote is also 1 commit ahead, git pull merges cleanly.
 # This prevents the downstream `git merge --continue --no-edit` from being called out of state.
 UPSTREAM=$(git rev-parse --abbrev-ref @{u} 2>/dev/null)
 if [ -n "$UPSTREAM" ]; then
-  git fetch origin 2>/dev/null || true  # timeout: 6000
-  REMOTE_AHEAD=$(git log HEAD..@{u} --oneline 2>/dev/null | wc -l | tr -d ' ')
-  if [ "$REMOTE_AHEAD" -gt 0 ]; then
-    echo "Remote is $REMOTE_AHEAD commit(s) ahead — running git pull..."
-    git pull || { echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"; exit 1; }  # timeout: 6000
-    echo "✓ git pull: merged"
-  else
-    echo "✓ git: up to date"
-  fi
+    git fetch origin 2>/dev/null || true # timeout: 6000
+    REMOTE_AHEAD=$(git log HEAD..@{u} --oneline 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$REMOTE_AHEAD" -gt 0 ]; then
+        echo "Remote is $REMOTE_AHEAD commit(s) ahead — running git pull..."
+        git pull || {
+            echo "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve"
+            exit 1
+        } # timeout: 6000
+        echo "✓ git pull: merged"
+    else
+        echo "✓ git: up to date"
+    fi
 fi
 ```
 
@@ -101,8 +110,8 @@ If `$ARGUMENTS` is empty:
 # Find most recent review output (written by /review to .temp/)
 REVIEW_FILE=$(ls -t .temp/output-review-*.md 2>/dev/null | head -1)
 if [ -z "$REVIEW_FILE" ]; then
-  echo "No review output found in .temp/ — run /review <PR#> first, or provide a PR number"
-  exit 1
+    echo "No review output found in .temp/ — run /review <PR#> first, or provide a PR number"
+    exit 1
 fi
 echo "→ Using: $REVIEW_FILE"
 ```
@@ -187,11 +196,8 @@ If no PR# was found in the header:
 Fetch full PR metadata in one call:
 
 ```bash
-gh pr view <PR#> --json \
-  number,title,body,author,labels,isDraft,state,\
-  headRefName,baseRefName,\
-  headRepositoryOwner,headRepository,isCrossRepository,url,\
-  closingIssuesReferences
+gh pr view \
+    number,title,body,author,labels,isDraft,state, headRefName,baseRefName, headRepositoryOwner,headRepository,isCrossRepository,url, closingIssuesReferences <PR# >--json
 ```
 
 Extract and record:
@@ -207,15 +213,15 @@ Extract and record:
 Fetch the full discussion:
 
 ```bash
-gh pr view <PR#> --comments                                          # PR-level comments + timeline
-gh api repos/{owner}/{repo}/pulls/<PR#>/reviews                      # formal reviews (Approve / Request Changes)
-gh api repos/{owner}/{repo}/pulls/<PR#>/comments                     # inline code comments with file + line
+gh pr view <PR# >--comments                        # PR-level comments + timeline
+gh api repos/{owner}/{repo}/pulls/ <PR# >/reviews  # formal reviews (Approve / Request Changes)
+gh api repos/{owner}/{repo}/pulls/ <PR# >/comments # inline code comments with file + line
 ```
 
 If `CLOSING_ISSUES` is non-empty, fetch each linked issue for motivation context:
 
 ```bash
-gh issue view <issue#> --json title,body
+gh issue view title,body <issue# >--json
 ```
 
 ### Synthesize contribution motivation
@@ -292,8 +298,8 @@ gh pr checkout <PR#>   # fetches HEAD_REF; for forks, adds the contributor's rem
 `gh pr checkout` handles forks automatically — it adds a remote named after the contributor's GitHub login and configures tracking. Verify:
 
 ```bash
-git remote -v | grep -v fetch | grep -v push | head -10  # timeout: 3000
-git status  # confirm we are on HEAD_REF  # timeout: 3000
+git remote -v | grep -v fetch | grep -v push | head -10 # timeout: 3000
+git status                                              # confirm we are on HEAD_REF  # timeout: 3000
 ```
 
 Record `FORK_REMOTE`: for fork PRs it is the contributor's login (e.g. `alice`); for same-repo PRs it is `origin`. The push command in Step 9 is always `git push` (tracking is configured correctly by `gh pr checkout`).
@@ -302,7 +308,7 @@ Record `FORK_REMOTE`: for fork PRs it is the contributor's login (e.g. `alice`);
 
 ```bash
 # Detect in-progress merge via MERGE_HEAD sentinel — git status --porcelain does not expose this reliably
-MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD"  # timeout: 3000
+MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD" # timeout: 3000
 test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 ```
 
@@ -315,14 +321,14 @@ Work directly with the existing markers. Skip to Step 6, substep 6c.
 Merge `BASE_REF` into the PR branch (this updates the PR with the latest base changes — the merge direction is BASE → HEAD_REF, not the reverse):
 
 ```bash
-git fetch origin "$BASE_REF"          # ensure origin/$BASE_REF is current  # timeout: 6000
-git merge "origin/$BASE_REF" --no-commit --no-ff  # timeout: 6000
+git fetch origin "$BASE_REF"                     # ensure origin/$BASE_REF is current  # timeout: 6000
+git merge "origin/$BASE_REF" --no-commit --no-ff # timeout: 6000
 ```
 
 Check for conflicted files:
 
 ```bash
-git diff --name-only --diff-filter=U  # timeout: 3000
+git diff --name-only --diff-filter=U # timeout: 3000
 ```
 
 If no conflicts → complete the merge and skip to Step 8:
@@ -350,9 +356,9 @@ Run before touching any conflict markers.
 Use the contribution motivation from Step 3b as the primary lens. Additionally:
 
 ```bash
-MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF")  # timeout: 3000
-git log $MERGE_BASE..$HEAD_REF --oneline --no-merges  # timeout: 3000
-git diff $MERGE_BASE $HEAD_REF --stat  # timeout: 3000
+MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF") # timeout: 3000
+git log $MERGE_BASE..$HEAD_REF --oneline --no-merges        # timeout: 3000
+git diff $MERGE_BASE $HEAD_REF --stat                       # timeout: 3000
 ```
 
 One-sentence summary: which files/modules this PR owns and what it changes about them.
@@ -360,9 +366,9 @@ One-sentence summary: which files/modules this PR owns and what it changes about
 ### 6b: Target-branch drift (the "surprises")
 
 ```bash
-git log $MERGE_BASE..origin/$BASE_REF --oneline --no-merges  # timeout: 3000
-SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")  # timeout: 3000
-git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline    # commits the contributor never saw  # timeout: 3000
+git log $MERGE_BASE..origin/$BASE_REF --oneline --no-merges    # timeout: 3000
+SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")      # timeout: 3000
+git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline # commits the contributor never saw  # timeout: 3000
 ```
 
 One-sentence summary: what independent changes landed on base after the contributor's last commit — these must be preserved unconditionally.
@@ -416,7 +422,7 @@ Parse the JSON envelope returned by sw-engineer. Check that `resolved == staged`
 Complete the merge:
 
 ```bash
-git merge --continue --no-edit  # timeout: 3000
+git merge --continue --no-edit # timeout: 3000
 ```
 
 Print conflict report:
@@ -461,10 +467,11 @@ If code changed → commit:
 ```bash
 # Prerequisite: working tree must be clean before Step 7 Codex calls; verify with git diff --stat HEAD before proceeding.
 # Stage tracked modifications + new files from Codex (never git add -A)
-git add $(git diff HEAD --name-only)  # timeout: 3000
-git ls-files --others --exclude-standard | grep . | xargs git add -- 2>/dev/null || true  # grep . filters empty output (macOS-portable; xargs -r is GNU-only); permission matcher sees 'git ls-files' as first token  # timeout: 3000
+git add $(git diff HEAD --name-only)                                                     # timeout: 3000
+git ls-files --others --exclude-standard | grep . | xargs git add -- 2>/dev/null || true # grep . filters empty output (macOS-portable; xargs -r is GNU-only); permission matcher sees 'git ls-files' as first token  # timeout: 3000
 # timeout: 3000 — git commit (local operation)
-git commit -m "$(cat <<'EOF'
+git commit -m "$(
+	cat <<'EOF'
 <imperative short summary of the change>
 
 [resolve #<item_id>] Review comment by @<author> (PR #<PR_NUMBER>):
@@ -480,7 +487,8 @@ Record per-item: `committed <SHA>` or `skipped — <Codex reason>`.
 ## Step 9: Lint and QA gate
 
 ```bash
-RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"  # timeout: 5000
+RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+mkdir -p "$RUN_DIR" # timeout: 5000
 ```
 
 Spawn both agents in parallel:
@@ -498,8 +506,8 @@ Wait for both. Then:
 - If `linting-expert` made file changes → commit them:
 
 ```bash
-git add $(git diff HEAD --name-only)  # timeout: 3000
-git commit -m "lint: auto-fix violations after resolve cycle"  # timeout: 3000
+git add $(git diff HEAD --name-only)                          # timeout: 3000
+git commit -m "lint: auto-fix violations after resolve cycle" # timeout: 3000
 ```
 
 - If `qa-specialist` reports **blocking** issues → fix each one (via Codex if `CODEX_AVAILABLE=true`, otherwise inline edit), then re-run qa-specialist once to confirm resolution; if issues remain after one fix pass, surface them in the final report and continue (do not loop indefinitely)
@@ -511,33 +519,33 @@ git commit -m "lint: auto-fix violations after resolve cycle"  # timeout: 3000
 
 ```bash
 # Ensure fork remote is present (gh pr checkout may not have added it for all setups)
-if ! git remote get-url "$FORK_REMOTE" &>/dev/null; then  # timeout: 3000
-  REPO_NAME=$(git remote get-url origin | sed 's|.*/||' | sed 's|\.git$||')
-  git remote add "$FORK_REMOTE" "https://github.com/$FORK_REMOTE/$REPO_NAME.git"  # timeout: 3000
-  echo "→ Added remote $FORK_REMOTE → https://github.com/$FORK_REMOTE/$REPO_NAME.git"
+if ! git remote get-url "$FORK_REMOTE" &>/dev/null; then # timeout: 3000
+    REPO_NAME=$(git remote get-url origin | sed 's|.*/||' | sed 's|\.git$||')
+    git remote add "$FORK_REMOTE" "https://github.com/$FORK_REMOTE/$REPO_NAME.git" # timeout: 3000
+    echo "→ Added remote $FORK_REMOTE → https://github.com/$FORK_REMOTE/$REPO_NAME.git"
 fi
 
 # Configure tracking if not already set
-git branch --set-upstream-to="$FORK_REMOTE/$HEAD_REF" 2>/dev/null || true  # timeout: 3000
+git branch --set-upstream-to="$FORK_REMOTE/$HEAD_REF" 2>/dev/null || true # timeout: 3000
 
 # Count commits ready to push and announce — user must approve the toolbar permission prompt
-PUSH_COUNT=$(git rev-list "$FORK_REMOTE/$HEAD_REF..HEAD" --count 2>/dev/null || git rev-list "origin/$BASE_REF..HEAD" --count)  # timeout: 3000
+PUSH_COUNT=$(git rev-list "$FORK_REMOTE/$HEAD_REF..HEAD" --count 2>/dev/null || git rev-list "origin/$BASE_REF..HEAD" --count) # timeout: 3000
 echo "→ $PUSH_COUNT commits ready to push to $FORK_REMOTE/$HEAD_REF — approve the git push request in the toolbar ↑ to complete"
 
-git push  # timeout: 30000
+git push # timeout: 30000
 # gh pr checkout configured tracking to the fork branch — git push targets it automatically
 ```
 
 If push is rejected (fork protection or stale tracking):
 
 ```bash
-git push "$FORK_REMOTE" HEAD:"$HEAD_REF"  # timeout: 30000
+git push "$FORK_REMOTE" HEAD:"$HEAD_REF" # timeout: 30000
 ```
 
 Verify the push reached GitHub:
 
 ```bash
-gh pr view <PR#> --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline'  # timeout: 6000
+gh pr view headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' <PR# >--json # timeout: 6000
 ```
 
 Confirm the latest commit headlines match what was just committed.
@@ -611,7 +619,7 @@ Record the initial dispatch outcome (code changed or no change + reason).
 ### 12b: Codex review loop (max 5 passes)
 
 ```bash
-git diff HEAD --stat  # timeout: 3000 — confirm there are changes to review
+git diff HEAD --stat # timeout: 3000 — confirm there are changes to review
 ```
 
 If no changes: skip the loop; set `CODEX_REVIEW_FINDINGS=""`.
@@ -643,7 +651,8 @@ if REVIEW_PASS == 5 and ISSUES_FOUND > 0:
 If code was changed (dispatch or review loop produced commits):
 
 ```bash
-RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"  # timeout: 5000
+RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+mkdir -p "$RUN_DIR" # timeout: 5000
 ```
 
 Spawn both agents in parallel:
@@ -659,8 +668,8 @@ Agent(qa-specialist, maxTurns: 15): "Review all files changed in the most recent
 - If `linting-expert` made changes → commit:
 
 ```bash
-git add $(git diff HEAD --name-only)  # timeout: 3000
-git commit -m "lint: auto-fix violations after resolve cycle"  # timeout: 3000
+git add $(git diff HEAD --name-only)                          # timeout: 3000
+git commit -m "lint: auto-fix violations after resolve cycle" # timeout: 3000
 ```
 
 - If `qa-specialist` reports blocking issues → fix inline, then re-run once; surface any unresolved issues in the report

@@ -2,9 +2,9 @@
 
 AgentSpeak v2 compressed inter-agent messaging for Claude Code Agent Teams. Achieves ~60% token savings vs natural language on inter-agent messages. Adapted from [github.com/yuvalsuede/claude-teams-language-protocol](https://github.com/yuvalsuede/claude-teams-language-protocol) (MIT) <!-- attribution-only; not a runtime dependency -->.
 
-**Rule 1**: Teammate↔teammate uses this protocol. Lead↔human uses normal English.
-**Rule 2**: Declare version at spawn: `alpha PROTO:v2.0 @lead ready`
-**Rule 3**: Two teammates must NEVER edit the same file simultaneously — use file locking.
+- **Rule 1**: Teammate↔teammate uses this protocol. Lead↔human uses normal English.
+- **Rule 2**: Declare version at spawn: `alpha PROTO:v2.0 @lead ready`
+- **Rule 3**: Two teammates must NEVER edit the same file simultaneously — use file locking.
 
 ______________________________________________________________________
 

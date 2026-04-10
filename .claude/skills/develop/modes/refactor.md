@@ -30,7 +30,7 @@ Use the Glob tool (pattern `**/test_*.py` or `**/*_test.py`) to find candidates,
 ```bash
 # Check coverage
 python -m pytest --co -q 2>/dev/null | grep -i "<module_name>" || echo "No tests found"
-python -m pytest --cov=<target_module> --cov-report=term-missing -q 2>/dev/null
+python -m pytest --cov= -q <target_module >--cov-report=term-missing 2>/dev/null
 ```
 
 Classify each public function/method as:
@@ -60,7 +60,7 @@ For every **uncovered** or **partially covered** public API, spawn a **qa-specia
 
 ```bash
 # Run to confirm they pass against current code
-python -m pytest <test_file> -v
+python -m pytest <test_file >-v
 ```
 
 **Gate**: all characterization tests must pass before proceeding. If any fail, fix the test, not the code.
@@ -72,7 +72,7 @@ For each change:
 1. Make one focused change (single responsibility per edit)
 2. Run the test suite:
    ```bash
-   python -m pytest <test_files> -v --tb=short
+   python -m pytest --tb=short <test_files >-v
    ```
 3. If tests pass: proceed to the next change
 4. If tests fail: revert and try a different approach
@@ -108,7 +108,7 @@ Full review of the refactored code. This is a **loop** — review → targeted r
 3. Re-run the full test suite:
 
    ```bash
-   python -m pytest <test_files> -v --tb=short 2>&1 | tail -20
+   python -m pytest --tb=short <test_files >-v 2>&1 | tail -20
    ```
 
 4. **If only nits remain** (variable naming, comment clarity, minor formatting): document in Follow-up and exit the loop.

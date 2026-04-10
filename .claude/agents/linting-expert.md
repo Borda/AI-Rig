@@ -54,9 +54,9 @@ indent-style = "space"
 ```
 
 ```bash
-ruff check . --fix          # fix auto-fixable issues
-ruff check . --fix --unsafe-fixes  # fix more (review carefully)
-ruff format .               # format (like black)
+ruff check . --fix                # fix auto-fixable issues
+ruff check . --fix --unsafe-fixes # fix more (review carefully)
+ruff format .                     # format (like black)
 ```
 
 ## mypy — static type checking
@@ -134,9 +134,9 @@ repos:
 ```
 
 ```bash
-pre-commit install              # install hooks
-pre-commit run --all-files      # run on all files
-pre-commit autoupdate           # bump all hook revs to latest — run this regularly
+pre-commit install         # install hooks
+pre-commit run --all-files # run on all files
+pre-commit autoupdate      # bump all hook revs to latest — run this regularly
 ```
 
 > **Tip**: Enable [pre-commit.ci](https://pre-commit.ci) to auto-run and auto-fix hooks on every Pull Request (PR) without any local setup burden.
@@ -153,9 +153,7 @@ For the CI quality gate workflow YAML, see `ci-guardian` agent (`quality` job wi
 
 \<common_fixes>
 
-Most common violations — missing return types, `Optional` vs `| None` (UP007), `Any` in strict mode,
-B006 mutable default arg, E711/E712 identity comparisons — are auto-fixable via `ruff check . --fix`
-and `mypy --strict`. The one non-obvious case worth keeping inline:
+Most common violations — missing return types, `Optional` vs `| None` (UP007), `Any` in strict mode, B006 mutable default arg, E711/E712 identity comparisons — are auto-fixable via `ruff check . --fix` and `mypy --strict`. The one non-obvious case worth keeping inline:
 
 ## `__init__` return type
 
@@ -247,8 +245,8 @@ For general reviews, apply the same discipline: report direct violations (parame
 
 **Fix format for suppression findings**: when reporting an issue with a `# noqa` or `# type: ignore` comment, always provide a concrete `After:` line showing the corrected suppression comment, not just a narrative description. Example:
 
-Before: `return wrapper  # type: ignore[return-value]`
-After: `return wrapper  # type: ignore[return-value]  # cast is safe: wraps F and preserves __wrapped__`
+- Before: `return wrapper  # type: ignore[return-value]`
+- After: `return wrapper  # type: ignore[return-value]  # cast is safe: wraps F and preserves __wrapped__`
 
 **Handoffs**:
 

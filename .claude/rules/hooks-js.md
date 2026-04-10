@@ -10,7 +10,7 @@ Every hook file must start with:
 
 ```js
 #!/usr/bin/env node
-// <filename>.js — <HookType> hook  ← the word `hook` is literal, not a placeholder
+ // <filename>.js — <HookType> hook  ← the word `hook` is literal, not a placeholder
 //
 // PURPOSE
 //   <one-paragraph description of what this hook does and why>
@@ -39,15 +39,14 @@ Subsection order: `PURPOSE` → `HOW IT WORKS` → `EXIT CODES` (add others like
 ## Implementation Pattern
 
 - CommonJS: `require()` imports, stdin JSON parse, `process.exit()`
-- **Only permitted stdin pattern** — use event-based accumulation; do not use
-  `fs.readFileSync("/dev/stdin")` or any synchronous stdin read:
+- **Only permitted stdin pattern** — use event-based accumulation; do not use `fs.readFileSync("/dev/stdin")` or any synchronous stdin read:
   ```js
   let raw = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("data", (d) => (raw += d));
   process.stdin.on("end", () => {
-    const data = JSON.parse(raw);
-    // ... handler logic
+      const data = JSON.parse(raw);
+      // ... handler logic
   });
   ```
 - Wrap all logic in try/catch; catch → **always** `process.exit(0)` — hooks must never crash or block Claude; silent-swallow is acceptable for top-level catches (logging hooks must not interfere with Claude's execution)
@@ -89,5 +88,4 @@ Hook files are JavaScript — editing or creating them is delegated to **`sw-eng
 
 ## Anti-patterns
 
-> **Prohibited**: `execSync` with a shell string — shell injection risk; takes a raw string parsed by `/bin/sh`.
-> Use `execFileSync(cmd, argsArray)` or `spawnSync(cmd, argsArray)` instead (both take an args array, no shell involved).
+> **Prohibited**: `execSync` with a shell string — shell injection risk; takes a raw string parsed by `/bin/sh`. Use `execFileSync(cmd, argsArray)` or `spawnSync(cmd, argsArray)` instead (both take an args array, no shell involved).

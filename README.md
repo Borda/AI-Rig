@@ -45,8 +45,8 @@ Managing AI coding workflows for Python/ML OSS is complex — you need domain-aw
 npm install -g @anthropic-ai/claude-code && npm install -g @openai/codex
 
 # Activate config globally
-cp -r .claude/ ~/.claude/    # Claude Code agents, skills, hooks
-cp -r .codex/ ~/.codex/      # Codex CLI agents and profiles
+cp -r .claude/ ~/.claude/ # Claude Code agents, skills, hooks
+cp -r .codex/ ~/.codex/   # Codex CLI agents and profiles
 
 # Optional: install RTK for 60–99% token savings on CLI output
 # See the Token Savings section below for install instructions
@@ -58,7 +58,7 @@ cp -r .codex/ ~/.codex/      # Codex CLI agents and profiles
 
 A typical maintainer morning — 15 new issues, 3 PRs waiting, a release due:
 
-```bash
+```text
 # 1. Morning triage — what needs attention?
 /analyse health                    # repo overview, duplicate issue clustering, stale PR detection
 
@@ -378,8 +378,8 @@ Multi-agent configuration for [OpenAI Codex CLI](https://github.com/openai/codex
 ### Usage
 
 ```bash
-codex                                                          # interactive — auto-selects agents
-codex "use the qa-specialist to review src/api/auth.py"        # address agent by name
+codex                                                         # interactive — auto-selects agents
+codex "use the qa-specialist to review src/api/auth.py"       # address agent by name
 codex --profile deep-review "full security audit of src/api/" # activate a profile
 ```
 
@@ -408,8 +408,8 @@ codex "run resolve on this repo and apply required quality gates"
 ### Install
 
 ```bash
-npm install -g @openai/codex    # install Codex CLI
-cp -r .codex/ ~/.codex/         # activate globally
+npm install -g @openai/codex # install Codex CLI
+cp -r .codex/ ~/.codex/      # activate globally
 ```
 
 ### Files
@@ -445,7 +445,7 @@ Every skill that reviews or validates code uses a three-tier pipeline: **Tier 0*
 
    After Claude stages changes, `codex:review --wait` serves as a second pass — examining the diff, applying review comments, or resolving PR conflicts. The `/resolve` skill automates this: it resolves conflicts semantically (Claude) then applies review comments (plugin agent).
 
-   ```bash
+   ```text
    /resolve 42   # Claude resolves conflicts → plugin agent applies review comments
    /resolve "rename the `fit` method to `train` throughout the module"
    ```
@@ -455,7 +455,7 @@ Every skill that reviews or validates code uses a three-tier pipeline: **Tier 0*
 
 Install the Codex plugin in Claude Code:
 
-```bash
+```text
 /plugin marketplace add openai/codex-plugin-cc
 /plugin install codex@openai-codex
 /reload-plugins
@@ -483,8 +483,8 @@ RTK is an optional CLI proxy that compresses build, test, and git output before 
 **Install** — see [rtk-ai/rtk](https://github.com/rtk-ai/rtk) for platform-specific instructions. Quick options:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | sh  # Linux / macOS
-cargo install --git https://github.com/rtk-ai/rtk                                 # via Cargo
+curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh | sh # Linux / macOS
+cargo install --git https://github.com/rtk-ai/rtk                              # via Cargo
 ```
 
 > ⚠️ There are two projects named `rtk` on crates.io — always install from `rtk-ai/rtk`, not `reachingforthejack/rtk` (Rust Type Kit). Verify with `rtk gain` after install.
@@ -492,12 +492,11 @@ cargo install --git https://github.com/rtk-ai/rtk                               
 **Verify it's working:**
 
 ```bash
-rtk gain            # shows actual token savings from this session
-rtk gain --history  # per-command savings history
+rtk gain           # shows actual token savings from this session
+rtk gain --history # per-command savings history
 ```
 
-**How it integrates with this config:**
-A pre-configured `PreToolUse` hook (`.claude/hooks/rtk-rewrite.js`) transparently rewrites supported CLI calls — `git status` becomes `rtk git status` — without needing duplicate entries in `settings.json`. The hook is a no-op when RTK is not installed, so the config stays portable across machines.
+**How it integrates with this config:** A pre-configured `PreToolUse` hook (`.claude/hooks/rtk-rewrite.js`) transparently rewrites supported CLI calls — `git status` becomes `rtk git status` — without needing duplicate entries in `settings.json`. The hook is a no-op when RTK is not installed, so the config stays portable across machines.
 
 | Category     | Commands                               | Typical Savings |
 | ------------ | -------------------------------------- | --------------- |
@@ -517,7 +516,7 @@ RTK is optional — removing it leaves all functionality intact.
 
 This repo (`.claude/`) is the source of truth — home (`~/.claude/`) is a downstream copy:
 
-```bash
+```text
 /sync          # show what differs between project and home .claude/
 /sync apply    # copy all differing files to ~/.claude/
 ```

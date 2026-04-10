@@ -78,11 +78,11 @@ Detect `--team` flag: if present anywhere in arguments, enable team mode (see ##
 **Branch safety guard** (skip for `plan` mode — plan mode makes no code changes):
 
 ```bash
-CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)  # timeout: 3000
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')  # timeout: 3000
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)                                                         # timeout: 3000
+DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@') # timeout: 3000
 if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] || [ "$CURRENT_BRANCH" = "main" ] || [ "$CURRENT_BRANCH" = "master" ]; then
-  echo "⚠ On default branch ($CURRENT_BRANCH) — create a feature branch before running /develop"
-  exit 1
+    echo "⚠ On default branch ($CURRENT_BRANCH) — create a feature branch before running /develop"
+    exit 1
 fi
 ```
 
@@ -160,15 +160,15 @@ Maximum 3 cycles. Applied after the quality stack.
 **Health monitoring** (CLAUDE.md §8): after spawning, create a checkpoint:
 
 ```bash
-DEVELOP_CHECKPOINT="/tmp/develop-check-$(date +%s)"  # timeout: 5000
-touch "$DEVELOP_CHECKPOINT"  # timeout: 5000
+DEVELOP_CHECKPOINT="/tmp/develop-check-$(date +%s)" # timeout: 5000
+touch "$DEVELOP_CHECKPOINT"                         # timeout: 5000
 ```
 
 Every 5 min:
 
 ```bash
-COUNT=$(find "$RUN_DIR" -newer "$DEVELOP_CHECKPOINT" -type f | wc -l)  # timeout: 5000
-touch "$DEVELOP_CHECKPOINT"  # refresh — next poll detects only new writes, not old ones  # timeout: 5000
+COUNT=$(find "$RUN_DIR" -newer "$DEVELOP_CHECKPOINT" -type f | wc -l) # timeout: 5000
+touch "$DEVELOP_CHECKPOINT"                                           # refresh — next poll detects only new writes, not old ones  # timeout: 5000
 ```
 
 `COUNT == 0` → stalled; `COUNT > 0` → alive. Hard cutoff: 15 min with COUNT == 0 → timed out.
@@ -223,8 +223,7 @@ Read `.claude/skills/_shared/worktree-protocol.md` before spawning any worktree 
    - Reasoning (sw-engineer, qa-specialist): model = `opus`
    - Execution (doc-scribe, linting-expert): model = `sonnet`
    - Max 3–5 teammates
-4. Every spawn prompt includes:
-   `Read .claude/TEAM_PROTOCOL.md — use AgentSpeak v2`
+4. Every spawn prompt includes: `Read .claude/TEAM_PROTOCOL.md — use AgentSpeak v2`
    - compact instructions (preserve: file paths, errors, test results, task IDs; discard: verbose tool output, handshakes)
    - Step 1 analysis broadcast to all teammates
    - **No task tracking in teammate prompts** — teammates signal completion via delta message status; the lead owns all TaskCreate/TaskUpdate calls

@@ -64,9 +64,7 @@ class OldClass: ...
 
 `deprecated_class` wraps the class in a transparent proxy — per installed docs, attribute access, method calls, `isinstance()`, and instantiation all forward to `NewClass` with a `FutureWarning`.
 
-**Version conflict resolution**: If the installed pyDeprecate is below v0.6.0 and upgrading is
-prohibited (stable project, pinned deps), do NOT use `deprecated_class` — instead apply
-`@deprecated` to a thin subclass wrapper:
+**Version conflict resolution**: If the installed pyDeprecate is below v0.6.0 and upgrading is prohibited (stable project, pinned deps), do NOT use `deprecated_class` — instead apply `@deprecated` to a thin subclass wrapper:
 
 ```python
 from deprecate import deprecated
@@ -86,8 +84,7 @@ def OldModelWrapper(*args, **kwargs):  # noqa: N802
     return _OldModelWrapperImpl(*args, **kwargs)
 ```
 
-Alternatively, ask the user whether upgrading pyDeprecate is acceptable before proceeding.
-Never silently recommend an upgrade.
+Alternatively, ask the user whether upgrading pyDeprecate is acceptable before proceeding. Never silently recommend an upgrade.
 
 ### Instance deprecation — use `deprecated_instance` (v0.6.0+) <!-- verified: 2026-04-06; re-verify if pyDeprecate is upgraded past 0.6.x -->
 
@@ -125,9 +122,7 @@ Claude's training data has a fixed cutoff — any library released or substantia
 
 ## PyTorch AMP
 
-- `torch.cuda.amp.autocast` deprecated since PyTorch 2.4 — stable replacement:
-  `torch.amp.autocast('cuda', ...)` and `torch.amp.GradScaler('cuda')`
-  (verify current stable release at pytorch.org before citing specific versions) <!-- verified: 2026-04-06 -->
+- `torch.cuda.amp.autocast` deprecated since PyTorch 2.4 — stable replacement: `torch.amp.autocast('cuda', ...)` and `torch.amp.GradScaler('cuda')` (verify current stable release at pytorch.org before citing specific versions) <!-- verified: 2026-04-06 -->
 
 ## Security
 

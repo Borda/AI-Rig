@@ -61,7 +61,7 @@ Use this prompt scaffold (adapt the constraints from Step 1):
 Note: pre-compute output paths before spawning — the orchestrator must extract the branch and evaluate date expressions, then substitute concrete paths into all spawn prompts:
 
 ```bash
-BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # timeout: 3000
+BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main') # timeout: 3000
 DATE=$(date +%Y-%m-%d)
 ```
 
@@ -200,9 +200,7 @@ Produce a sequenced, dependency-ordered implementation plan from SOTA research f
 
 **Validation**: the file must contain a clear **Recommendation** section naming a specific method. If missing or ambiguous, stop and report: "Research output does not contain a clear method recommendation — run `/research <topic>` first, then pass the output path."
 
-Before spawning in Steps R2–R3, pre-compute the output path components:
-`YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)`
-`BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` <!-- same pattern as Step 2a date/branch block -->
+Before spawning in Steps R2–R3, pre-compute the output path components: `YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)` `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` <!-- same pattern as Step 2a date/branch block -->
 
 ### Step R2: Codebase analysis
 

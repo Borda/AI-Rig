@@ -1,8 +1,6 @@
 # System-Wide Check Instructions
 
-Full implementation details for all 21 checks in `/audit` Step 4. Read this file at the start
-of Step 4 before executing any check. Each section contains the bash script and reasoning
-instructions for the corresponding check number.
+Full implementation details for all 21 checks in `/audit` Step 4. Read this file at the start of Step 4 before executing any check. Each section contains the bash script and reasoning instructions for the corresponding check number.
 
 ______________________________________________________________________
 
@@ -11,7 +9,7 @@ ______________________________________________________________________
 Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames and sort, then write to `/tmp/agents_disk.txt` via Bash:
 
 ```bash
-ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort > /tmp/agents_disk.txt || true  # timeout: 5000
+ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort >/tmp/agents_disk.txt || true # timeout: 5000
 ```
 
 Read the `- Agents:` and `- Skills:` roster lines from the MEMORY.md content injected in the conversation context (available as auto-memory at session start). Do not attempt to Grep a file path — the MEMORY.md is not stored under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
@@ -53,25 +51,25 @@ Every allow entry must appear in the guide, and vice versa.
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
 if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then  # timeout: 5000
-  printf "${YEL}⚠ SKIPPED${NC}: Check 6 — jq not available\n"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 6 — jq not available\n"
 elif [ ! -f ".claude/settings.json" ]; then
-  printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/settings.json not found\n"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/settings.json not found\n"
 elif [ ! -f ".claude/permissions-guide.md" ]; then
-  printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/permissions-guide.md not found\n"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 6 — .claude/permissions-guide.md not found\n"
 else
-  # Allow entries missing from guide
-  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \  # timeout: 5000
-  while IFS= read -r perm; do
-    grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
-      || printf "${YEL}⚠ MISSING from guide${NC}: %s\n" "$perm"
-  done
+    # Allow entries missing from guide
+    jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | \  # timeout: 5000
+    while IFS= read -r perm; do
+        grep -qF "\`$perm\`" .claude/permissions-guide.md 2>/dev/null \
+            || printf "${YEL}⚠ MISSING from guide${NC}: %s\n" "$perm"
+    done
 
-  # Guide entries orphaned (not in allow list)
-  grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \  # timeout: 5000
-  while IFS= read -r perm; do
-    jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \  # timeout: 5000
-      || printf "${YEL}⚠ ORPHANED in guide${NC}: %s\n" "$perm"
-  done
+    # Guide entries orphaned (not in allow list)
+    grep '^| `' .claude/permissions-guide.md 2>/dev/null | awk -F'`' '{print $2}' | \  # timeout: 5000
+    while IFS= read -r perm; do
+        jq -e --arg p "$perm" '(.permissions.allow // []) + (.permissions.deny // []) | contains([$p])' .claude/settings.json > /dev/null 2>&1 \  # timeout: 5000
+        || printf "${YEL}⚠ ORPHANED in guide${NC}: %s\n" "$perm"
+    done
 fi
 ```
 
@@ -96,15 +94,19 @@ ______________________________________________________________________
 `context:fork + disable-model-invocation:true` is a broken combination.
 
 ```bash
-RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
-for f in .claude/skills/*/SKILL.md; do  # timeout: 5000
-  name=$(basename "$(dirname "$f")")
-  if awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' && \
-     awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true'; then
-    printf "${RED}! BREAKING${NC} skills/%s: context:fork + disable-model-invocation:true\n" "$name"
-    printf "  ${RED}→${NC} forked skill has no model to coordinate agents or synthesize results\n"
-    printf "  ${CYN}fix${NC}: remove disable-model-invocation:true (or remove context:fork if purely tool-only)\n"
-  fi
+RED='\033[1;31m'
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+CYN='\033[0;36m'
+NC='\033[0m'
+for f in .claude/skills/*/SKILL.md; do # timeout: 5000
+    name=$(basename "$(dirname "$f")")
+    if awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'context: fork' &&
+    awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q 'disable-model-invocation: true'; then
+        printf "${RED}! BREAKING${NC} skills/%s: context:fork + disable-model-invocation:true\n" "$name"
+        printf "  ${RED}→${NC} forked skill has no model to coordinate agents or synthesize results\n"
+        printf "  ${CYN}fix${NC}: remove disable-model-invocation:true (or remove context:fork if purely tool-only)\n"
+    fi
 done
 ```
 
@@ -125,10 +127,10 @@ Extract declared models:
 
 ```bash
 printf "%-30s %s\n" "AGENT" "MODEL"
-for f in .claude/agents/*.md; do  # timeout: 5000
-  name=$(basename "$f" .md)
-  model=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^model:/{sub(/^model: /,""); print}' "$f")
-  printf "%-30s %s\n" "$name" "${model:-(inherit)}"
+for f in .claude/agents/*.md; do # timeout: 5000
+    name=$(basename "$f" .md)
+    model=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^model:/{sub(/^model: /,""); print}' "$f")
+    printf "%-30s %s\n" "$name" "${model:-(inherit)}"
 done
 ```
 
@@ -151,18 +153,18 @@ ______________________________________________________________________
 First, detect whether the project has local context files:
 
 ```bash
-for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do  # timeout: 5000
-  [ -f "$f" ] && printf "✓ found: %s\n" "$f"
+for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do # timeout: 5000
+    [ -f "$f" ] && printf "✓ found: %s\n" "$f"
 done
 ```
 
 Then scan agent and skill files for inline examples:
 
 ````bash
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do  # timeout: 5000
-  count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
-  lines=$(wc -l < "$f" | tr -d ' ')
-  [ "$count" -gt 0 ] && printf "%s: %d example blocks, %d total lines\n" "$f" "$count" "$lines"
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
+    count=$(grep -cE '^```|^## Example|^### Example' "$f" 2>/dev/null || true)
+    lines=$(wc -l <"$f" | tr -d ' ')
+    [ "$count" -gt 0 ] && printf "%s: %d example blocks, %d total lines\n" "$f" "$count" "$lines"
 done
 ````
 
@@ -179,10 +181,10 @@ ______________________________________________________________________
 
 ```bash
 # Extract color: values declared in agent frontmatter
-for f in .claude/agents/*.md; do  # timeout: 5000
-  name=$(basename "$f" .md)
-  color=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^color:/{sub(/^color: */,""); print}' "$f")
-  [ -n "$color" ] && printf "%s: %s\n" "$name" "$color"
+for f in .claude/agents/*.md; do # timeout: 5000
+    name=$(basename "$f" .md)
+    color=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^color:/{sub(/^color: */,""); print}' "$f")
+    [ -n "$color" ] && printf "%s: %s\n" "$name" "$color"
 done
 ```
 
@@ -200,59 +202,63 @@ Verify that the prefix list in `.claude/hooks/rtk-rewrite.js` (`RTK_PREFIXES` ar
 Skip this check if RTK is not installed (`rtk --version` fails) or if `.claude/hooks/rtk-rewrite.js` does not exist.
 
 ```bash
-YEL='\033[1;33m'; RED='\033[1;31m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
+YEL='\033[1;33m'
+RED='\033[1;31m'
+GRN='\033[0;32m'
+CYN='\033[0;36m'
+NC='\033[0m'
 printf "=== Check 11: RTK hook alignment ===\n"
 
-if ! command -v rtk &>/dev/null; then  # timeout: 5000
-  printf "${YEL}⚠ SKIPPED${NC}: Check 11 — rtk not installed\n"
+if ! command -v rtk &>/dev/null; then # timeout: 5000
+	printf "${YEL}⚠ SKIPPED${NC}: Check 11 — rtk not installed\n"
 elif [ ! -f ".claude/hooks/rtk-rewrite.js" ]; then
-  printf "${YEL}⚠ SKIPPED${NC}: Check 11 — .claude/hooks/rtk-rewrite.js not found\n"
+	printf "${YEL}⚠ SKIPPED${NC}: Check 11 — .claude/hooks/rtk-rewrite.js not found\n"
 else
-  if ! command -v node &>/dev/null; then  # timeout: 5000
-    printf "${YEL}⚠ SKIPPED${NC}: Check 11 RTK parsing — node not in PATH\n"
-  else
-  RTK_HELP=$(rtk --help 2>&1)  # timeout: 5000
-  HOOK_PREFIXES=$(node -e "
+	if ! command -v node &>/dev/null; then # timeout: 5000
+		printf "${YEL}⚠ SKIPPED${NC}: Check 11 RTK parsing — node not in PATH\n"
+	else
+		RTK_HELP=$(rtk --help 2>&1) # timeout: 5000
+		HOOK_PREFIXES=$(node -e "
     const fs = require('fs');
     const src = fs.readFileSync('.claude/hooks/rtk-rewrite.js', 'utf8');
     const m = src.match(/RTK_PREFIXES\s*=\s*\[([^\]]*)\]/s);
     if (!m) { process.exit(1); }
     const entries = m[1].match(/\"[^\"]+\"/g) || [];
     entries.forEach(e => console.log(e.replace(/'/g, '')));
-  " 2>/dev/null)  # timeout: 5000
+  " 2>/dev/null) # timeout: 5000
 
-  if [ -z "$HOOK_PREFIXES" ]; then
-    printf "${YEL}⚠ SKIPPED${NC}: Check 11 — could not parse RTK_PREFIXES from hook file\n"
-  else
-    INVALID=0
-    while IFS= read -r prefix; do
-      [ -z "$prefix" ] && continue
-      if ! echo "$RTK_HELP" | grep -qw "$prefix"; then
-        printf "${RED}! INVALID hook prefix${NC}: '%s' — not a recognized RTK subcommand\n" "$prefix"
-        INVALID=$((INVALID + 1))
-      fi
-    done <<< "$HOOK_PREFIXES"
+		if [ -z "$HOOK_PREFIXES" ]; then
+			printf "${YEL}⚠ SKIPPED${NC}: Check 11 — could not parse RTK_PREFIXES from hook file\n"
+		else
+			INVALID=0
+			while IFS= read -r prefix; do
+				[ -z "$prefix" ] && continue
+				if ! echo "$RTK_HELP" | grep -qw "$prefix"; then
+					printf "${RED}! INVALID hook prefix${NC}: '%s' — not a recognized RTK subcommand\n" "$prefix"
+					INVALID=$((INVALID + 1))
+				fi
+			done <<<"$HOOK_PREFIXES"
 
-    META_CMDS="gain discover proxy init version help"
-    MISSING=0
-    while IFS= read -r rtk_cmd; do
-      [ -z "$rtk_cmd" ] && continue
-      is_meta=0
-      for meta in $META_CMDS; do
-        [ "$rtk_cmd" = "$meta" ] && is_meta=1 && break
-      done
-      [ "$is_meta" -eq 1 ] && continue
-      if ! echo "$HOOK_PREFIXES" | grep -qw "$rtk_cmd"; then
-        printf "${YEL}⚠ MISSING hook prefix${NC}: '%s' — RTK supports filtering this command but hook does not list it\n" "$rtk_cmd"
-        MISSING=$((MISSING + 1))
-      fi
-    done < <(echo "$RTK_HELP" | grep -oE '^\s{2,4}[a-z][a-z0-9_-]+' | tr -d ' ' | sort -u)
+			META_CMDS="gain discover proxy init version help"
+			MISSING=0
+			while IFS= read -r rtk_cmd; do
+				[ -z "$rtk_cmd" ] && continue
+				is_meta=0
+				for meta in $META_CMDS; do
+					[ "$rtk_cmd" = "$meta" ] && is_meta=1 && break
+				done
+				[ "$is_meta" -eq 1 ] && continue
+				if ! echo "$HOOK_PREFIXES" | grep -qw "$rtk_cmd"; then
+					printf "${YEL}⚠ MISSING hook prefix${NC}: '%s' — RTK supports filtering this command but hook does not list it\n" "$rtk_cmd"
+					MISSING=$((MISSING + 1))
+				fi
+			done < <(echo "$RTK_HELP" | grep -oE '^\s{2,4}[a-z][a-z0-9_-]+' | tr -d ' ' | sort -u)
 
-    if [ "$INVALID" -eq 0 ] && [ "$MISSING" -eq 0 ]; then
-      printf "${GRN}✓ OK${NC}: Check 11 — RTK hook prefixes aligned with installed RTK version\n"
-    fi
-  fi
-  fi
+			if [ "$INVALID" -eq 0 ] && [ "$MISSING" -eq 0 ]; then
+				printf "${GRN}✓ OK${NC}: Check 11 — RTK hook prefixes aligned with installed RTK version\n"
+			fi
+		fi
+	fi
 fi
 ```
 
@@ -269,22 +275,22 @@ MEMORY.md has a 200-line truncation limit. Three sub-checks:
 **12b — Stale version pins**:
 
 ```bash
-MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md"  # timeout: 3000
+MEMORY_FILE="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory/MEMORY.md" # timeout: 3000
 if [ -f "$MEMORY_FILE" ]; then
-  grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found"  # timeout: 5000
+    grep -nE '(v[0-9]+\.[0-9]+\.[0-9]+|as of [A-Z][a-z]+ 20[0-9]{2})' "$MEMORY_FILE" || echo "no stale pins found" # timeout: 5000
 else
-  printf "${YEL}⚠ SKIPPED${NC}: Check 12b — MEMORY.md not found at derived path: %s\n" "$MEMORY_FILE"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 12b — MEMORY.md not found at derived path: %s\n" "$MEMORY_FILE"
 fi
 ```
 
 **12c — Absorbed feedback files**:
 
 ```bash
-MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory"  # timeout: 3000
+MEMORY_DIR="$HOME/.claude/projects/$(git rev-parse --show-toplevel | sed 's|[/.]|-|g')/memory" # timeout: 3000
 if [ -d "$MEMORY_DIR" ]; then
-  ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"  # timeout: 5000
+    ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files" # timeout: 5000
 else
-  printf "${YEL}⚠ SKIPPED${NC}: Check 12c — memory dir not found: %s\n" "$MEMORY_DIR"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 12c — memory dir not found: %s\n" "$MEMORY_DIR"
 fi
 ```
 
@@ -300,10 +306,10 @@ Extract all agent descriptions:
 
 ```bash
 printf "%-25s %s\n" "AGENT" "DESCRIPTION"
-for f in .claude/agents/*.md; do  # timeout: 5000
-  name=$(basename "$f" .md)
-  desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{sub(/^description: /,""); print}' "$f")
-  printf "%-25s %s\n" "$name" "$desc"
+for f in .claude/agents/*.md; do # timeout: 5000
+    name=$(basename "$f" .md)
+    desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{sub(/^description: /,""); print}' "$f")
+    printf "%-25s %s\n" "$name" "$desc"
 done
 ```
 
@@ -324,15 +330,18 @@ ______________________________________________________________________
 Skip if codex (openai-codex) plugin is not installed.
 
 ```bash
-RED='\033[1;31m'; GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
-CODEX_LINE=$(claude plugin list 2>/dev/null | grep 'codex@openai-codex')  # timeout: 5000
+RED='\033[1;31m'
+GRN='\033[0;32m'
+YEL='\033[1;33m'
+NC='\033[0m'
+CODEX_LINE=$(claude plugin list 2>/dev/null | grep 'codex@openai-codex') # timeout: 5000
 if [ -z "$CODEX_LINE" ]; then
-  printf "${YEL}⚠ SKIPPED${NC}: Check 14 — codex (openai-codex) plugin not installed\n"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 14 — codex (openai-codex) plugin not installed\n"
 elif echo "$CODEX_LINE" | grep -q 'disabled'; then
-  printf "${YEL}⚠ WARN${NC}: Check 14 — codex (openai-codex) plugin installed but DISABLED\n"
-  printf "  Fix: run \`claude plugin enable codex@openai-codex\` then \`/reload-plugins\`\n"
+    printf "${YEL}⚠ WARN${NC}: Check 14 — codex (openai-codex) plugin installed but DISABLED\n"
+    printf "  Fix: run \`claude plugin enable codex@openai-codex\` then \`/reload-plugins\`\n"
 else
-  printf "${GRN}✓ OK${NC}: Check 14 — codex (openai-codex) plugin present and enabled\n"
+    printf "${GRN}✓ OK${NC}: Check 14 — codex (openai-codex) plugin present and enabled\n"
 fi
 ```
 
@@ -348,7 +357,7 @@ Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory does not e
 **15a — Inventory vs MEMORY.md**:
 
 ```bash
-ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort  # timeout: 5000
+ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort # timeout: 5000
 ```
 
 Rules on disk but absent from MEMORY.md roster → **medium**. Rules in MEMORY.md but absent on disk → **medium**.
@@ -356,9 +365,9 @@ Rules on disk but absent from MEMORY.md roster → **medium**. Rules in MEMORY.m
 **15b — Frontmatter completeness**:
 
 ```bash
-for f in .claude/rules/*.md; do  # timeout: 5000
-  desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{found=1} END{print found+0}' "$f")
-  [ "$desc" -eq 0 ] && printf "MISSING description: %s\n" "$f"
+for f in .claude/rules/*.md; do # timeout: 5000
+    desc=$(awk '/^---$/{c++; if(c==2)exit} c==1 && /^description:/{found=1} END{print found+0}' "$f")
+    [ "$desc" -eq 0 ] && printf "MISSING description: %s\n" "$f"
 done
 ```
 
@@ -367,15 +376,15 @@ Missing `description:` → **high**. Malformed `paths:` → **high**.
 **15c — Redundancy check**: For each rule file, identify 2–3 most specific directive phrases. Grep those phrases verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. If exact phrase exists in ≥2 locations outside the rule file → **medium** (distillation incomplete).
 
 ```bash
-grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null  # timeout: 5000
-grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null  # timeout: 5000
+grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null # timeout: 5000
+grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null         # timeout: 5000
 ```
 
 **15d — Cross-reference integrity**: Grep agent files, skill files, and CLAUDE.md for references to `.claude/rules/<name>.md` patterns. Verify each referenced filename exists on disk → missing file → **high**.
 
 ```bash
-grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null \
-  | grep -o 'rules/[a-z_-]*\.md' | sort -u  # timeout: 5000
+grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null |
+grep -o 'rules/[a-z_-]*\.md' | sort -u # timeout: 5000
 ```
 
 Severity: 15b = **high**; 15a/15c/15d = **medium**.
@@ -386,15 +395,15 @@ ______________________________________________________________________
 
 ```bash
 printf "%-30s %s\n" "FILE" "STEPS"
-for f in .claude/skills/*/SKILL.md; do  # timeout: 5000
-  name="skills/$(basename "$(dirname "$f")")"
-  steps=$(grep -c '^## Step' "$f" 2>/dev/null || echo 0)
-  printf "%-30s %d\n" "$name" "$steps"
+for f in .claude/skills/*/SKILL.md; do # timeout: 5000
+    name="skills/$(basename "$(dirname "$f")")"
+    steps=$(grep -c '^## Step' "$f" 2>/dev/null || echo 0)
+    printf "%-30s %d\n" "$name" "$steps"
 done
 for f in .claude/agents/*.md; do
-  name="agents/$(basename "$f" .md)"
-  sections=$(grep -c '^## ' "$f" 2>/dev/null || echo 0)
-  printf "%-30s %d\n" "$name" "$sections"
+    name="agents/$(basename "$f" .md)"
+    sections=$(grep -c '^## ' "$f" 2>/dev/null || echo 0)
+    printf "%-30s %d\n" "$name" "$sections"
 done
 ```
 
@@ -414,25 +423,27 @@ ______________________________________________________________________
 Thresholds: agents > 300 lines · skill SKILL.md > 600 lines · rules > 200 lines.
 
 ```bash
-YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+NC='\033[0m'
 printf "%-52s %s\n" "FILE" "LINES"
-for f in .claude/agents/*.md; do  # timeout: 5000
-  lines=$(wc -l < "$f" | tr -d ' ')
-  [ "$lines" -gt 300 ] \
-    && printf "${YEL}⚠ TOO LONG${NC}: agents/%s — %d lines (threshold: 300)\n" "$(basename "$f")" "$lines" \
-    || printf "  %-50s %d\n" "agents/$(basename "$f")" "$lines"
+for f in .claude/agents/*.md; do # timeout: 5000
+    lines=$(wc -l <"$f" | tr -d ' ')
+    [ "$lines" -gt 300 ] &&
+    printf "${YEL}⚠ TOO LONG${NC}: agents/%s — %d lines (threshold: 300)\n" "$(basename "$f")" "$lines" ||
+    printf "  %-50s %d\n" "agents/$(basename "$f")" "$lines"
 done
 for f in .claude/skills/*/SKILL.md; do
-  lines=$(wc -l < "$f" | tr -d ' ')
-  [ "$lines" -gt 600 ] \
-    && printf "${YEL}⚠ TOO LONG${NC}: skills/%s/SKILL.md — %d lines (threshold: 600)\n" "$(basename "$(dirname "$f")")" "$lines" \
-    || printf "  %-50s %d\n" "skills/$(basename "$(dirname "$f")")/SKILL.md" "$lines"
+    lines=$(wc -l <"$f" | tr -d ' ')
+    [ "$lines" -gt 600 ] &&
+    printf "${YEL}⚠ TOO LONG${NC}: skills/%s/SKILL.md — %d lines (threshold: 600)\n" "$(basename "$(dirname "$f")")" "$lines" ||
+    printf "  %-50s %d\n" "skills/$(basename "$(dirname "$f")")/SKILL.md" "$lines"
 done
 for f in .claude/rules/*.md; do
-  lines=$(wc -l < "$f" | tr -d ' ')
-  [ "$lines" -gt 200 ] \
-    && printf "${YEL}⚠ TOO LONG${NC}: rules/%s — %d lines (threshold: 200)\n" "$(basename "$f")" "$lines" \
-    || printf "  %-50s %d\n" "rules/$(basename "$f")" "$lines"
+    lines=$(wc -l <"$f" | tr -d ' ')
+    [ "$lines" -gt 200 ] &&
+    printf "${YEL}⚠ TOO LONG${NC}: rules/%s — %d lines (threshold: 200)\n" "$(basename "$f")" "$lines" ||
+    printf "  %-50s %d\n" "rules/$(basename "$f")" "$lines"
 done
 ```
 
@@ -443,23 +454,26 @@ ______________________________________________________________________
 ## Check 18 — Bash command misuse / native tool substitution
 
 ```bash
-YEL='\033[1;33m'; GRN='\033[0;32m'; CYN='\033[0;36m'; NC='\033[0m'
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+CYN='\033[0;36m'
+NC='\033[0m'
 printf "=== Check 18: Bash misuse candidates ===\n"
-grep -rn '\bcat \|`cat ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
-  | grep -v '^Binary' | grep -v '# ' \
-  && printf "  ${CYN}hint${NC}: replace cat with Read tool\n" || true
-grep -rn '\bgrep \|\brg \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
-  | grep -v '^Binary' | grep -v '# .*grep\|Grep tool\|Use Grep' \
-  && printf "  ${CYN}hint${NC}: replace grep/rg with Grep tool\n" || true
-grep -rn '\bfind \b.*-name\|\bls \b.*\*' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
-  | grep -v '^Binary' | grep -v '# .*Glob\|Use Glob\|Glob tool' \
-  && printf "  ${CYN}hint${NC}: replace find/ls with Glob tool\n" || true
-grep -rn 'echo .* >\|tee ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
-  | grep -v '^Binary' | grep -v '# .*Write tool\|Use Write' \
-  && printf "  ${CYN}hint${NC}: replace echo-redirect/tee with Write tool\n" || true
-grep -rn '\bsed \b\|\bawk \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null \
-  | grep -v '^Binary' | grep -v '# .*Edit tool\|Use Edit\|awk.*{print\|awk.*BEGIN' \
-  && printf "  ${CYN}hint${NC}: replace sed/awk text-substitution with Edit tool\n" || true
+grep -rn '\bcat \|`cat ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+grep -v '^Binary' | grep -v '# ' &&
+printf "  ${CYN}hint${NC}: replace cat with Read tool\n" || true
+grep -rn '\bgrep \|\brg \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+grep -v '^Binary' | grep -v '# .*grep\|Grep tool\|Use Grep' &&
+printf "  ${CYN}hint${NC}: replace grep/rg with Grep tool\n" || true
+grep -rn '\bfind \b.*-name\|\bls \b.*\*' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+grep -v '^Binary' | grep -v '# .*Glob\|Use Glob\|Glob tool' &&
+printf "  ${CYN}hint${NC}: replace find/ls with Glob tool\n" || true
+grep -rn 'echo .* >\|tee ' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+grep -v '^Binary' | grep -v '# .*Write tool\|Use Write' &&
+printf "  ${CYN}hint${NC}: replace echo-redirect/tee with Write tool\n" || true
+grep -rn '\bsed \b\|\bawk \b' .claude/agents/ .claude/skills/ .claude/rules/ 2>/dev/null |
+grep -v '^Binary' | grep -v '# .*Edit tool\|Use Edit\|awk.*{print\|awk.*BEGIN' &&
+printf "  ${CYN}hint${NC}: replace sed/awk text-substitution with Edit tool\n" || true
 printf "${GRN}✓${NC}: Check 18 scan complete\n"
 ```
 
@@ -480,21 +494,23 @@ ______________________________________________________________________
 ## Check 19 — Stale settings.json allow entries
 
 ```bash
-YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
-if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then  # timeout: 5000
-  printf "${YEL}⚠ SKIPPED${NC}: Check 19 — jq not available\n"
+YEL='\033[1;33m'
+GRN='\033[0;32m'
+NC='\033[0m'
+if [ "${JQ_AVAILABLE:-false}" = "false" ] || ! command -v jq &>/dev/null; then # timeout: 5000
+    printf "${YEL}⚠ SKIPPED${NC}: Check 19 — jq not available\n"
 elif [ ! -f ".claude/settings.json" ]; then
-  printf "${YEL}⚠ SKIPPED${NC}: Check 19 — .claude/settings.json not found\n"
+    printf "${YEL}⚠ SKIPPED${NC}: Check 19 — .claude/settings.json not found\n"
 else
-  printf "=== Check 19: Stale allow entries ===\n"
-  jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | while IFS= read -r entry; do  # timeout: 5000
-    cmd=$(echo "$entry" | sed 's/^[A-Za-z]*(\(.*\))$/\1/' | sed 's/^"\(.*\)"$/\1/')
-    hits=$(grep -rl "$cmd" .claude/agents/ .claude/skills/ .claude/rules/ .claude/hooks/ .claude/CLAUDE.md 2>/dev/null | wc -l | tr -d ' ')  # timeout: 5000
-    if [ "$hits" -eq 0 ]; then
-      printf "${YEL}⚠ STALE allow${NC}: %s — no usage found in .claude/ files\n" "$entry"
-    fi
-  done
-  printf "${GRN}✓${NC}: Check 19 scan complete\n"
+    printf "=== Check 19: Stale allow entries ===\n"
+    jq -r '.permissions.allow[]' .claude/settings.json 2>/dev/null | while IFS= read -r entry; do # timeout: 5000
+        cmd=$(echo "$entry" | sed 's/^[A-Za-z]*(\(.*\))$/\1/' | sed 's/^"\(.*\)"$/\1/')
+        hits=$(grep -rl "$cmd" .claude/agents/ .claude/skills/ .claude/rules/ .claude/hooks/ .claude/CLAUDE.md 2>/dev/null | wc -l | tr -d ' ') # timeout: 5000
+        if [ "$hits" -eq 0 ]; then
+            printf "${YEL}⚠ STALE allow${NC}: %s — no usage found in .claude/ files\n" "$entry"
+        fi
+    done
+    printf "${GRN}✓${NC}: Check 19 scan complete\n"
 fi
 ```
 
@@ -527,12 +543,14 @@ ______________________________________________________________________
 ## Check 21 — Markdown heading hierarchy continuity
 
 ````bash
-GRN='\033[0;32m'; YEL='\033[1;33m'; NC='\033[0m'
+GRN='\033[0;32m'
+YEL='\033[1;33m'
+NC='\033[0m'
 printf "=== Check 21: Heading hierarchy continuity ===\n"
 violations=0
-for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do  # timeout: 5000
-  [ -f "$f" ] || continue
-  awk -v file="$f" '
+for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do # timeout: 5000
+    [ -f "$f" ] || continue
+    awk -v file="$f" '
     /^```/ { in_code = !in_code; next }
     in_code { next }
     /^#+ / {
@@ -549,7 +567,7 @@ for f in .claude/agents/*.md .claude/skills/*/SKILL.md .claude/rules/*.md; do  #
   ' "$f" || violations=$((violations + 1))
 done
 if [ "$violations" -eq 0 ]; then
-  printf "${GRN}✓${NC}: Check 21 — no heading hierarchy violations found\n"
+    printf "${GRN}✓${NC}: Check 21 — no heading hierarchy violations found\n"
 fi
 ````
 

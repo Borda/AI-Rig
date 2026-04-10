@@ -39,7 +39,7 @@ Project always wins: files in home that have no counterpart in the project are l
 ## Step 1: Resolve paths
 
 ```bash
-PROJECT="$(git rev-parse --show-toplevel)"  # timeout: 3000
+PROJECT="$(git rev-parse --show-toplevel)" # timeout: 3000
 HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 HOME_CODEX="$HOME_EXPANDED/.codex"
@@ -56,10 +56,10 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 cd "$PROJECT"
-git ls-files .claude/ \
-  | grep -vE 'settings\.json$|settings\.local\.json$' \
-  | sed 's|^\.claude/||' \
-  | rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"  # timeout: 5000
+git ls-files .claude/ |
+grep -vE 'settings\.json$|settings\.local\.json$' |
+sed 's|^\.claude/||' |
+rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/" # timeout: 5000
 ```
 
 rsync prints only files that would change; identical files are silently skipped.
@@ -70,35 +70,35 @@ rsync prints only files that would change; identical files are silently skipped.
 PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
-SETTINGS_TMP="$(mktemp /tmp/settings_sync_XXXXXX.json)"  # timeout: 5000
+SETTINGS_TMP="$(mktemp /tmp/settings_sync_XXXXXX.json)" # timeout: 5000
 sed 's|node \.claude/hooks/|node $HOME/.claude/hooks/|g' \
-  "$PROJECT/.claude/settings.json" > "$SETTINGS_TMP"
+    "$PROJECT/.claude/settings.json" >"$SETTINGS_TMP"
 CHANGED=$(rsync --checksum --itemize-changes --dry-run \
-  "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1)
+    "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1)
 if [ -z "$CHANGED" ]; then
-  echo "✓ IDENTICAL settings.json"
+    echo "✓ IDENTICAL settings.json"
 else
-  echo "DIFFERS — semantic summary:"
-  # Permissions added (in project, not in home)
-  comm -23 \
-    <(jq -r '.permissions.allow[]' "$SETTINGS_TMP" | sort) \
-    <(jq -r '.permissions.allow[]' "$HOME_CLAUDE/settings.json" | sort) \
-    | sed 's/^/  + /'
-  # Permissions removed (in home, not in project)
-  comm -13 \
-    <(jq -r '.permissions.allow[]' "$SETTINGS_TMP" | sort) \
-    <(jq -r '.permissions.allow[]' "$HOME_CLAUDE/settings.json" | sort) \
-    | sed 's/^/  - /'
-  # Hook matcher changes
-  diff \
-    <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$SETTINGS_TMP" 2>/dev/null | sort) \
-    <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) \
-    | grep '^[<>]' | sed 's/^< /  project: /' | sed 's/^> /  home:    /'
-  # enabledPlugins changes (plugin enable/disable state)
-  diff \
-    <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$SETTINGS_TMP" 2>/dev/null | sort) \
-    <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) \
-    | grep '^[<>]' | sed 's/^< /  plugin+ /' | sed 's/^> /  plugin- /'
+    echo "DIFFERS — semantic summary:"
+    # Permissions added (in project, not in home)
+    comm -23 \
+        <(jq -r '.permissions.allow[]' "$SETTINGS_TMP" | sort) \
+        <(jq -r '.permissions.allow[]' "$HOME_CLAUDE/settings.json" | sort) |
+    sed 's/^/  + /'
+    # Permissions removed (in home, not in project)
+    comm -13 \
+        <(jq -r '.permissions.allow[]' "$SETTINGS_TMP" | sort) \
+        <(jq -r '.permissions.allow[]' "$HOME_CLAUDE/settings.json" | sort) |
+    sed 's/^/  - /'
+    # Hook matcher changes
+    diff \
+        <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$SETTINGS_TMP" 2>/dev/null | sort) \
+        <(jq -r '.hooks // {} | to_entries[] | "\(.key): \(.value[].matcher // "")"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) |
+    grep '^[<>]' | sed 's/^< /  project: /' | sed 's/^> /  home:    /'
+    # enabledPlugins changes (plugin enable/disable state)
+    diff \
+        <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$SETTINGS_TMP" 2>/dev/null | sort) \
+        <(jq -r '(.enabledPlugins // {}) | to_entries[] | "\(.key): \(.value)"' "$HOME_CLAUDE/settings.json" 2>/dev/null | sort) |
+    grep '^[<>]' | sed 's/^< /  plugin+ /' | sed 's/^> /  plugin- /'
 fi
 rm -f "$SETTINGS_TMP"
 ```
@@ -110,9 +110,9 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CODEX="$HOME_EXPANDED/.codex"
 cd "$PROJECT"
-git ls-files .codex/ \
-  | sed 's|^\.codex/||' \
-  | rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/"  # timeout: 5000
+git ls-files .codex/ |
+sed 's|^\.codex/||' |
+rsync -a --itemize-changes --dry-run --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/" # timeout: 5000
 ```
 
 If `$ARGUMENTS` is empty: print the combined dry-run output and offer `/sync apply`. Stop here.
@@ -131,10 +131,10 @@ HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 mkdir -p "$HOME_CLAUDE"
 cd "$PROJECT"
-git ls-files .claude/ \
-  | grep -vE 'settings\.json$|settings\.local\.json$' \
-  | sed 's|^\.claude/||' \
-  | rsync -av --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/"  # timeout: 30000
+git ls-files .claude/ |
+grep -vE 'settings\.json$|settings\.local\.json$' |
+sed 's|^\.claude/||' |
+rsync -av --files-from=- "$PROJECT/.claude/" "$HOME_CLAUDE/" # timeout: 30000
 ```
 
 **`settings.json`** — transform and apply (self-contained, content-based comparison):
@@ -145,14 +145,16 @@ HOME_EXPANDED="$HOME"
 HOME_CLAUDE="$HOME_EXPANDED/.claude"
 SETTINGS_TMP="$(mktemp /tmp/settings_sync_XXXXXX.json)"
 sed 's|node \.claude/hooks/|node $HOME/.claude/hooks/|g' \
-  "$PROJECT/.claude/settings.json" > "$SETTINGS_TMP"
-CHANGED=$(rsync --checksum --itemize-changes \  # timeout: 5000
-  "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1)
+    "$PROJECT/.claude/settings.json" >"$SETTINGS_TMP"
+CHANGED=$(
+    rsync --checksum --itemize-changes \  # timeout: 5000
+    "$SETTINGS_TMP" "$HOME_CLAUDE/settings.json" 2>&1
+)
 rm -f "$SETTINGS_TMP"
 if [ -n "$CHANGED" ]; then
-  echo "merged   settings.json"
+    echo "merged   settings.json"
 else
-  echo "✓ unchanged settings.json"
+    echo "✓ unchanged settings.json"
 fi
 ```
 
@@ -165,9 +167,9 @@ PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 HOME_CODEX="$HOME_EXPANDED/.codex"
 cd "$PROJECT"
-git ls-files .codex/ \
-  | sed 's|^\.codex/||' \
-  | rsync -av --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/"  # timeout: 30000
+git ls-files .codex/ |
+sed 's|^\.codex/||' |
+rsync -av --files-from=- "$PROJECT/.codex/" "$HOME_CODEX/" # timeout: 30000
 ```
 
 ## Step 4: Verify and report outcome (apply mode only)
@@ -176,22 +178,22 @@ git ls-files .codex/ \
 PROJECT="$(git rev-parse --show-toplevel)"
 HOME_EXPANDED="$HOME"
 # JSON validity
-jq empty "$HOME_EXPANDED/.claude/settings.json" && echo "settings.json: valid"  # timeout: 5000
+jq empty "$HOME_EXPANDED/.claude/settings.json" && echo "settings.json: valid" # timeout: 5000
 
 # Counts
 cd "$PROJECT"
 echo ".claude files: $(git ls-files .claude/ | wc -l | tr -d ' ')"
-echo ".codex files:  $(git ls-files .codex/  | wc -l | tr -d ' ')"
+echo ".codex files:  $(git ls-files .codex/ | wc -l | tr -d ' ')"
 ```
 
 ```bash
 # Plugin presence check
-if claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'; then  # timeout: 15000
-  echo "✓ codex (openai-codex) plugin: installed"
+if claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'; then # timeout: 15000
+    echo "✓ codex (openai-codex) plugin: installed"
 else
-  echo "⚠ codex (openai-codex) plugin: NOT installed on this machine"
-  echo "  Run in Claude Code: /plugin marketplace add openai/codex-plugin-cc"
-  echo "  Then: /plugin install codex@openai-codex && /reload-plugins"
+    echo "⚠ codex (openai-codex) plugin: NOT installed on this machine"
+    echo "  Run in Claude Code: /plugin marketplace add openai/codex-plugin-cc"
+    echo "  Then: /plugin install codex@openai-codex && /reload-plugins"
 fi
 ```
 

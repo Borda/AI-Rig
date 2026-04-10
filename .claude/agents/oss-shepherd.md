@@ -159,9 +159,8 @@ A good `good first issue` must have:
 
 Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) <!-- verified: 2026-04-08 --> (Borda's own package) — handles warning emission, argument forwarding, and "warn once" behaviour automatically. Read the latest docs on PyPI for current API and examples.
 
-**Deprecation lifecycle**: deprecate in minor release → keep for ≥1 minor cycle → remove in next major.
-**Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in the docstring so docs generators render a deprecation notice automatically.
-Anti-patterns: see `\<antipatterns_to_flag>` below.
+- **Deprecation lifecycle**: deprecate in minor release → keep for ≥1 minor cycle → remove in next major.
+- **Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in the docstring so docs generators render a deprecation notice automatically. Anti-patterns: see `\<antipatterns_to_flag>` below.
 
 \</semver_decisions>
 
@@ -180,29 +179,24 @@ Anti-patterns: see `\<antipatterns_to_flag>` below.
 [ ] No dev dependencies leaked into main dependencies
 ```
 
-For release notes format and CHANGELOG generation, use the `release` skill.
-For the full Continuous Integration (CI) publish YAML, see the `ci-guardian` agent `\<trusted_publishing>` section.
+For release notes format and CHANGELOG generation, use the `release` skill. For the full Continuous Integration (CI) publish YAML, see the `ci-guardian` agent `\<trusted_publishing>` section.
 
 ### Setting Up Trusted Publishing (one-time, per project)
 
 Trusted Publishing uses GitHub OpenID Connect (OIDC) — no `API_TOKEN` or `TWINE_PASSWORD` secret needed.
 
-1. **Create the PyPI environment in GitHub**
-   Settings → Environments → New environment → name it `pypi`. Add a deployment protection rule (require a reviewer) for extra safety.
+1. **Create the PyPI environment in GitHub** Settings → Environments → New environment → name it `pypi`. Add a deployment protection rule (require a reviewer) for extra safety.
 
-2. **Register the Trusted Publisher on PyPI**
-   PyPI project → Manage → Publishing → Add a new pending publisher:
+2. **Register the Trusted Publisher on PyPI** PyPI project → Manage → Publishing → Add a new pending publisher:
 
    - Owner: `<your-github-org-or-username>`
    - Repository: `<repo-name>`
    - Workflow filename: `publish.yml`
    - Environment: `pypi`
 
-3. **Verify `pyproject.toml` metadata is complete**
-   PyPI requires at minimum: `[project]` with `name`, `version`, `description`, `requires-python`, and `[project.urls]` with `Homepage`.
+3. **Verify `pyproject.toml` metadata is complete** PyPI requires at minimum: `[project]` with `name`, `version`, `description`, `requires-python`, and `[project.urls]` with `Homepage`.
 
-4. **Create a GitHub release**
-   Tag the commit (`git tag vX.Y.Z && git push --tags`), then create a GitHub release from the tag. The `publish.yml` workflow triggers on `release: published` and handles the rest automatically.
+4. **Create a GitHub release** Tag the commit (`git tag vX.Y.Z && git push --tags`), then create a GitHub release from the tag. The `publish.yml` workflow triggers on `release: published` and handles the rest automatically.
 
 > Always confirm with user before pushing tags (CLAUDE.md push safety rule)
 
@@ -484,7 +478,8 @@ gh issue view 123
 gh issue list --label "bug" --state open --limit 1000
 
 # Comment on an issue (using heredoc for multi-line)
-gh issue comment 123 --body "$(cat <<'EOF'
+gh issue comment 123 --body "$(
+	cat <<'EOF'
 Thank you for the report! Could you provide a minimal reproduction script?
 EOF
 )"
@@ -500,7 +495,7 @@ gh issue list --search "topic keyword" --state open
 
 # Find downstream usage of a changed API (rate-limited ~30 req/min; add --paginate for complete results)
 gh api "search/code" --field "q=from mypackage import changed_fn language:python" \
-  --jq '.items[:10] | .[].repository.full_name'
+    --jq '.items[:10] | .[].repository.full_name'
 
 # View release list to find the previous tag for changelog range
 gh release list --limit 5

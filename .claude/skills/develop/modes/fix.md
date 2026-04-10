@@ -8,14 +8,14 @@ Gather all available context about the bug:
 
 ```bash
 # If issue number: fetch the full issue with comments
-gh issue view <number> --comments
+gh issue view <number >--comments
 ```
 
 If an error message or pattern was provided: use the Grep tool (pattern `<error_pattern>`, path `.`) to search the codebase for the failing code path.
 
 ```bash
 # If failing test: run it to capture the exact failure
-python -m pytest <test_path> -v --tb=long 2>&1 | tail -40
+python -m pytest --tb=long <test_path >-v 2>&1 | tail -40
 ```
 
 Spawn a **sw-engineer** agent to analyze the failing code path and identify:
@@ -30,7 +30,7 @@ Create or identify a test that demonstrates the failure:
 
 ```bash
 # If a failing test already exists — run it to confirm it fails
-python -m pytest <test_file>::<test_name> -v --tb=short
+python -m pytest --tb=short <test_file >:: <test_name >-v
 
 # If no test exists — write a regression test that captures the bug
 ```
@@ -62,11 +62,11 @@ Make the minimal change to fix the root cause:
 1. Edit only the code necessary to resolve the bug
 2. Run the regression test to confirm it now passes:
    ```bash
-   python -m pytest <test_file>::<test_name> -v --tb=short
+   python -m pytest --tb=short <test_file >:: <test_name >-v
    ```
 3. Run the full test suite for the affected module:
    ```bash
-   python -m pytest <test_dir> -v --tb=short
+   python -m pytest --tb=short <test_dir >-v
    ```
 4. If any existing tests break: the fix has side effects — reconsider the approach
 
@@ -90,7 +90,7 @@ Full review of the fix. This is a **loop** — review → fix → re-review unti
 3. Re-run the test suite:
 
    ```bash
-   python -m pytest <test_dir> -v --tb=short -q 2>&1 | tail -20
+   python -m pytest --tb=short -q <test_dir >-v 2>&1 | tail -20
    ```
 
 4. **Adjacent bugs** (observation only): scan for similar patterns in the codebase; document in Follow-up — do not fix here to avoid scope creep.

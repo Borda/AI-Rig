@@ -8,7 +8,7 @@ Gather full context before writing any code:
 
 ```bash
 # If issue number: fetch the full issue with comments
-gh issue view <number> --comments
+gh issue view <number >--comments
 ```
 
 If a free-text description was provided: use the Grep tool (pattern `<keyword>`, glob `**/*.py`, path `src/`) to search for related code before spawning the analysis agent.
@@ -63,10 +63,10 @@ Both forms must:
 
 ```bash
 # Doctest form: confirm it fails
-python -m pytest --doctest-modules src/<module>.py -v 2>&1 | tail -10
+python -m pytest --doctest-modules src/ -v <module >.py 2>&1 | tail -10
 
 # Script form: confirm it errors (ImportError, AttributeError, NotImplementedError)
-python examples/demo_<feature>.py 2>&1 | tail -5
+python examples/demo_ <feature >.py 2>&1 | tail -5
 ```
 
 **Gate**: demo must fail or error. If it passes, the feature may already exist — revisit Step 1.
@@ -88,7 +88,7 @@ Drive the implementation by making tests pass, one cycle at a time:
 
 ```bash
 # Baseline: confirm existing suite is green before adding any new code
-python -m pytest <target_test_dir> -v --tb=short -q 2>&1 | tail -20
+python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
 ```
 
 **Gate**: all existing tests must pass before proceeding. If any fail, stop — do not add new code on a broken baseline. Use `/develop fix` to address pre-existing failures first, then return here.
@@ -98,16 +98,16 @@ Start from the Step 2 demo — it is already failing and becomes the first targe
 1. **Target the demo or write the next focused test** — first iteration uses the Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
 2. **Run the existing suite — confirm all pass**:
    ```bash
-   python -m pytest <target_test_dir> -v --tb=short -q 2>&1 | tail -20
+   python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
    ```
 3. **Run the new demo/test — confirm it fails**:
    ```bash
    # doctest form
-   python -m pytest --doctest-modules src/<module>.py -v --tb=short 2>&1 | tail -10
+   python -m pytest --doctest-modules src/ -v --tb=short <module >.py 2>&1 | tail -10
    # pytest form
-   python -m pytest <test_file>::<test_name> -v --tb=short
+   python -m pytest --tb=short <test_file >:: <test_name >-v
    # script form
-   python examples/demo_<feature>.py 2>&1 | tail -5
+   python examples/demo_ <feature >.py 2>&1 | tail -5
    ```
 4. **Implement the minimal code** (spawn **sw-engineer** agent for non-trivial logic):
    - Reuse or extend existing code identified in Step 1 — prefer subclassing or composing over parallel reimplementation
@@ -115,7 +115,7 @@ Start from the Step 2 demo — it is already failing and becomes the first targe
 5. **Run the demo/test — confirm it passes**
 6. **Run the full suite** to catch regressions:
    ```bash
-   python -m pytest <target_test_dir> -v --tb=short -q
+   python -m pytest --tb=short -q <target_test_dir >-v
    ```
 7. If regressions appear: fix them before moving on — never carry forward a broken suite
 
@@ -144,7 +144,7 @@ Full review of the implementation. This is a **loop** — review → fix → re-
 3. Re-run the full suite to confirm nothing regressed:
 
    ```bash
-   python -m pytest <target_test_dir> -v --tb=short -q 2>&1 | tail -20
+   python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
    ```
 
 4. **If only nits remain** (style, cosmetic naming, minor formatting): document in Follow-up and exit the loop.
@@ -165,7 +165,7 @@ Spawn a **doc-scribe** agent to update all affected documentation:
 
 ```bash
 # Verify doctests pass after doc updates
-python -m pytest --doctest-modules <target_module> -v 2>&1 | tail -20
+python -m pytest --doctest-modules <target_module >-v 2>&1 | tail -20
 ```
 
 ## Final Report

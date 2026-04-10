@@ -8,7 +8,7 @@ Collect all available signals before forming any hypothesis:
 
 ```bash
 # Read the full traceback — never just the last line
-python -m pytest <test_path> -v --tb=long 2>&1 | tail -60
+python -m pytest --tb=long <test_path >-v 2>&1 | tail -60
 ```
 
 ```bash
@@ -20,7 +20,7 @@ git diff HEAD~5..HEAD -- <suspect_file>
 If a GitHub issue number was provided:
 
 ```bash
-gh issue view <number> --comments
+gh issue view <number >--comments
 ```
 
 Use Grep (pattern: failing symbol, class, or error keyword; path: `src/`) to trace the call path from entry point to failure site.
