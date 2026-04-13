@@ -206,12 +206,12 @@ This is the long-term confidence improvement loop: low score → targeted re-run
 
 - Model assignments must follow this policy:
 
-  | Category              | Model      | Agents                                                    |
-  | --------------------- | ---------- | --------------------------------------------------------- |
-  | Plan-gated            | `opusplan` | solution-architect, oss-shepherd, self-mentor             |
-  | Implementation        | `opus`     | sw-engineer, qa-specialist, ai-researcher, perf-optimizer |
-  | Diagnostics / writing | `sonnet`   | web-explorer, doc-scribe, data-steward                    |
-  | High-freq diagnostics | `haiku`    | linting-expert, ci-guardian — cost optimization           |
+  | Category              | Model      | Agents                                                             |
+  | --------------------- | ---------- | ------------------------------------------------------------------ |
+  | Plan-gated            | `opusplan` | solution-architect, oss:oss-shepherd, self-mentor                  |
+  | Implementation        | `opus`     | sw-engineer, qa-specialist, research:ai-researcher, perf-optimizer |
+  | Diagnostics / writing | `sonnet`   | web-explorer, doc-scribe, research:data-steward                    |
+  | High-freq diagnostics | `haiku`    | linting-expert, oss:ci-guardian — cost optimization                |
 
   Never use `sonnet` for agents that make complex multi-file design decisions.
 

@@ -34,7 +34,7 @@ Generate `<N>` synthetic task prompts covering routing accuracy across all agent
 Rules:
 
 - Cover every agent from the roster at least once in `expected_agent` across the full set (distribute coverage as evenly as possible given N)
-- Include ≥2 hard problems testing high-overlap pairs: e.g., sw-engineer vs qa-specialist, doc-scribe vs oss-shepherd, linting-expert vs sw-engineer, solution-architect vs sw-engineer
+- Include ≥2 hard problems testing high-overlap pairs: e.g., sw-engineer vs qa-specialist, doc-scribe vs oss:oss-shepherd, linting-expert vs sw-engineer, solution-architect vs sw-engineer
 - Include exactly 1 problem where no specialized agent is appropriate — `expected_agent: "general-purpose"` (e.g., a general question unrelated to any agent's specialty)
 - Difficulty distribution: ~40% easy, ~40% medium, ~20% hard (adjust to cover all agents)
 - Return a valid JSON array only (no prose)

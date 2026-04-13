@@ -8,8 +8,8 @@ Skill domains:
 
 - `/audit` → synthetic `.claude/` config with N injected structural issues
 - `/review` → synthetic Python module with N cross-domain issues (arch + tests + docs + lint)
-- `/optimize-plan` → synthetic optimization goal (e.g. "reduce pytest runtime by 30%"); measure whether the plan mode produces a complete, valid `program.md` with all required sections, a plausible `metric_cmd`, correct `direction`, and coherent `scope_files`
-- `/optimize-judge` → synthetic `program.md` with N injected plan-quality issues (e.g. missing guard command, absent `direction`, non-existent `scope_files` path, invalid `agent_strategy`); measure whether judge correctly identifies each injected issue at the right severity
+- `/research:plan` → synthetic optimization goal (e.g. "reduce pytest runtime by 30%"); measure whether the plan mode produces a complete, valid `program.md` with all required sections, a plausible `metric_cmd`, correct `direction`, and coherent `scope_files`
+- `/research:judge` → synthetic `program.md` with N injected plan-quality issues (e.g. missing guard command, absent `direction`, non-existent `scope_files` path, invalid `agent_strategy`); measure whether judge correctly identifies each injected issue at the right severity
 
 ### Step 2: Spawn skill pipeline subagents
 
@@ -17,11 +17,11 @@ Mark "Calibrate skills" in_progress. For each skill in the domain table, spawn o
 
 For skill targets (target name starts with `/`): spawn a `general-purpose` subagent with the skill's `SKILL.md` content prepended as context, running against the synthetic input from the problem. The pipeline template write-and-acknowledge pattern still applies.
 
-For mode-specific targets (`/optimize-plan`, `/optimize-judge`): instead of the full `SKILL.md`, prepend the relevant mode file as context — read `.claude/skills/optimize/modes/plan.md` (plan wizard steps P-P0–P-P3) for `/optimize-plan`, and `.claude/skills/optimize/modes/judge.md` (steps J1–J6) for `/optimize-judge`. The `<TARGET>` substitution uses the kebab form without leading slash (e.g. `optimize-plan`, `optimize-judge`).
+For mode-specific targets (`/research:plan`, `/research:judge`): instead of the full `SKILL.md`, prepend the relevant mode file as context — read `plugins/research/skills/plan/SKILL.md` (plan wizard steps P-P0–P-P3) for `/research:plan`, and `plugins/research/skills/judge/SKILL.md` (steps J1–J6) for `/research:judge`. The `<TARGET>` substitution uses the kebab form without leading slash (e.g. `research-plan`, `research-judge`).
 
-For `/optimize-judge`, the calibration pattern mirrors `/audit`: inject N specific known issues into the synthetic `program.md`, then score recall of those injected issues against the judge's findings list. Ground truth is the set of injected issues and their severities (per the J2 severity table: critical/high/medium/low).
+For `/research:judge`, the calibration pattern mirrors `/audit`: inject N specific known issues into the synthetic `program.md`, then score recall of those injected issues against the judge's findings list. Ground truth is the set of injected issues and their severities (per the J2 severity table: critical/high/medium/low).
 
-For `/optimize-plan`, the calibration measures output completeness: generate a synthetic goal and score whether the produced `program.md` (a) contains all four required sections (Goal, Metric, Guard, Config), (b) has a `direction` field, (c) has non-empty `scope_files`, and (d) includes a plausible `metric_cmd`. Ground truth is the checklist; recall = fraction of checklist items present.
+For `/research:plan`, the calibration measures output completeness: generate a synthetic goal and score whether the produced `program.md` (a) contains all four required sections (Goal, Metric, Guard, Config), (b) has a `direction` field, (c) has non-empty `scope_files`, and (d) includes a plausible `metric_cmd`. Ground truth is the checklist; recall = fraction of checklist items present.
 
 Each subagent receives the pipeline template from `.claude/skills/calibrate/templates/pipeline-prompt.md` with these substitutions:
 
@@ -64,12 +64,12 @@ Modes evaluated for calibration but deferred due to significant barriers. `/audi
 - `/resolve` — orchestrates live PR review, lint, push; fully external-service-dependent
 - `/manage` — CRUD on config files; no findings list to score
 - `/develop feature/fix/refactor/debug` — full dev lifecycle; requires git, tests, linting
-- `/research` — SOTA literature search; depends on live web results; no deterministic ground truth
+- `/research:topic` — SOTA literature search; depends on live web results; no deterministic ground truth
 - `/brainstorm` — creative ideation; no deterministic ground truth
 - `/investigate` — open-ended diagnosis; output varies completely by symptom
 - `/session` — session lifecycle management; no quality signal to measure
 - `/sync` — drift detection; deterministic but trivially correct (diff-based, no findings to score)
 - `/calibrate` itself — meta-calibration is circular
-- `/optimize-run` — sustained iteration loop with live metric commands and git state
-- `/optimize-resume` — continuation of run; same barriers as run
-- `/optimize-sweep` — same barriers as `/optimize-run` — sustained iteration loop requiring live metrics and git state; not calibratable synthetically
+- `/research:run` — sustained iteration loop with live metric commands and git state
+- `/research:run --resume` — continuation of run; same barriers as run
+- `/research:sweep` — same barriers as `/research:run` — sustained iteration loop requiring live metrics and git state; not calibratable synthetically

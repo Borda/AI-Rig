@@ -6,12 +6,12 @@ ______________________________________________________________________
 
 Three capability tiers:
 
-| Tier                  | Model      | Example agents                                            |
-| --------------------- | ---------- | --------------------------------------------------------- |
-| Plan-gated            | `opusplan` | solution-architect, oss-shepherd, self-mentor             |
-| Implementation        | `opus`     | sw-engineer, qa-specialist, ai-researcher, perf-optimizer |
-| Diagnostics / writing | `sonnet`   | web-explorer, doc-scribe, data-steward                    |
-| High-freq diagnostics | `haiku`    | linting-expert, ci-guardian                               |
+| Tier                  | Model      | Example agents                                                     |
+| --------------------- | ---------- | ------------------------------------------------------------------ |
+| Plan-gated            | `opusplan` | solution-architect, oss:oss-shepherd, self-mentor                  |
+| Implementation        | `opus`     | sw-engineer, qa-specialist, research:ai-researcher, perf-optimizer |
+| Diagnostics / writing | `sonnet`   | web-explorer, doc-scribe, research:data-steward                    |
+| High-freq diagnostics | `haiku`    | linting-expert, oss:ci-guardian                                    |
 
 Extract declared models:
 

@@ -168,10 +168,10 @@ Branch into one of these modes:
 
 3. Choose model based on role complexity:
 
-   - `opusplan` — plan-gated roles (solution-architect, oss-shepherd, self-mentor): long-horizon reasoning + plan mode
-   - `opus` — complex implementation roles (sw-engineer, qa-specialist, ai-researcher, perf-optimizer): deep reasoning without plan mode
-   - `sonnet` — focused execution roles (data-steward, web-explorer, doc-scribe): pattern-matching, structured output
-   - `haiku` — high-frequency diagnostics roles (linting-expert, ci-guardian): rule-application, structured lint output
+   - `opusplan` — plan-gated roles (solution-architect, oss:oss-shepherd, self-mentor): long-horizon reasoning + plan mode
+   - `opus` — complex implementation roles (sw-engineer, qa-specialist, research:ai-researcher, perf-optimizer): deep reasoning without plan mode
+   - `sonnet` — focused execution roles (research:data-steward, web-explorer, doc-scribe): pattern-matching, structured output
+   - `haiku` — high-frequency diagnostics roles (linting-expert, oss:ci-guardian): rule-application, structured lint output
 
 4. Spawn **self-mentor** subagent to generate and write the agent file — generating 200–400 lines of domain content inline inflates the main context:
 
