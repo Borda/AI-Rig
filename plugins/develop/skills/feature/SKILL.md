@@ -17,6 +17,16 @@ NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/manage
 
 <workflow>
 
+## Anti-Rationalizations
+
+| Temptation                                                           | Reality                                                                                      |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| "The feature is clear — I can skip the demo and go straight to code" | Without a crystallized API contract, implementation drifts. The demo is the spec.            |
+| "I know this library — no need to check docs"                        | Training data contains deprecated patterns. One fetch prevents hours of rework.              |
+| "I'll write tests after the implementation is stable"                | Tests drive design. Writing them first reveals API problems before they are baked in.        |
+| "The existing suite still passes — the feature is good"              | The existing suite doesn't cover the new feature. The demo and edge-case tests do.           |
+| "Step 1 analysis is unnecessary for a small addition"                | Scope analysis reveals reuse opportunities and blast radius. Small additions regularly grow. |
+
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
 - status `completed` if the work is clearly done
@@ -54,7 +64,53 @@ Spawn a **foundry:sw-engineer** agent to analyse the codebase and produce:
 
 Present the analysis summary before proceeding.
 
+## Step 1.5: Source verification (when using external APIs or version-sensitive libraries)
+
+Skip if the feature is purely internal to the project's own code.
+
+**Trigger**: the feature calls an external library API — a new framework feature, a third-party SDK method, or a stdlib function that has changed in a recent Python version.
+
+**DETECT → FETCH → CITE pipeline:**
+
+1. **DETECT** — read `pyproject.toml` or `requirements*.txt` for the exact version and output:
+
+   ```
+   STACK DETECTED:
+   - <library> <exact-version> (from pyproject.toml)
+   → Fetching official docs for the relevant API.
+   ```
+
+2. **FETCH** — use WebFetch to retrieve the **specific relevant docs page** (not the homepage). Source priority: official docs > official changelog/migration guide > web standards (MDN). Never cite Stack Overflow, blog posts, or AI training data.
+
+3. **CITE** — when implementing, embed a comment with the source URL and the key quoted passage:
+
+   ```python
+   # Docs: https://docs.example.com/v2/api/method
+   # "The recommended pattern for X is Y" (v2.1 docs)
+   ```
+
+4. **Conflict** — if docs describe a pattern that conflicts with how the codebase currently uses the library:
+
+   ```
+   CONFLICT DETECTED:
+   Existing code uses <old pattern>.
+   <library> <version> docs recommend <new pattern> for this use case.
+   Options:
+   A) Use the documented pattern (may require updating existing call sites)
+   B) Match existing code (works but not idiomatic for this version)
+   → Which approach?
+   ```
+
 ## Step 2: Write a demo use-case
+
+Before crystallising the API, surface any non-obvious design decisions:
+
+> ASSUMPTIONS I'M MAKING:
+>
+> 1. [assumption about API shape, e.g. "returning a list not a generator"]
+> 2. [assumption about caller context, e.g. "called once per batch, not per item"] → Correct me now or I'll proceed with these.
+
+Do not proceed to the demo if any assumption would materially change the API shape.
 
 Crystallise the intended API contract before any implementation exists. Choose the form based on scope:
 
@@ -157,6 +213,16 @@ Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass before
 Full review of the implementation. This is a **loop** — review -> fix -> re-review until only nits remain. Maximum 3 cycles.
 
 **Each cycle:**
+
+**5-axis quality scan** — before the full criteria evaluation, assess the implementation on each axis:
+
+- **Correctness**: does it match the exact API from Step 2? Edge cases and error paths covered?
+- **Readability**: can another engineer understand the feature without reading the issue or demo?
+- **Architecture**: does it fit established patterns? Is the abstraction level appropriate?
+- **Security**: if the feature touches input handling, auth, or data storage — are those paths hardened?
+- **Performance**: any N+1 patterns, unbounded collections, or unnecessary computation introduced?
+
+Use this scan to prioritize which criteria below get deepest scrutiny.
 
 1. Evaluate against all criteria:
 

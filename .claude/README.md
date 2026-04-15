@@ -441,6 +441,7 @@ Each mode enforces a validation gate *before* writing implementation code:
 <summary><strong>Agent short names</strong></summary>
 
 **foundry** 🔨
+
 - `🔨sm` — self-mentor
 - `🔨sw` — sw-engineer
 - `🔨qa` — qa-specialist
@@ -451,14 +452,17 @@ Each mode enforces a validation gate *before* writing implementation code:
 - `🔨web` — web-explorer
 
 **oss** 🌐
+
 - `🌐cig` — ci-guardian
 - `🌐shep` — shepherd
 
 **research** 🔬
+
 - `🔬sci` — scientist
 - `🔬ds` — data-steward
 
 **ext** 🤖
+
 - `🤖cx` — codex-rescue
 
 </details>
@@ -479,22 +483,22 @@ _Leaf agents — no outgoing calls: 🔨sw, 🔨qa, 🔨lint, 🔨perf, 🔨arch
 
 _Skills with no direct agent calls: init, manage, distill, session (foundry); plan, debug→fix (develop); plan, judge, sweep→run (research)_
 
-| Skill              | plugin   | 🔨sm | 🔨sw | 🔨qa | 🔨lint | 🔨arch | 🔨perf | 🔨doc | 🔨web | 🌐shep | 🔬sci | 🔬ds | 🤖cx |
-| ------------------ | -------- | ---- | ---- | ---- | ------ | ------ | ------ | ----- | ----- | ------ | ----- | ---- | ---- |
-| **brainstorm**     | foundry  | ✓    | —    | —    | —      | —      | —      | —     | —     | —      | —     | —    | —    |
-| **investigate**    | foundry  | —    | —    | —    | —      | —      | —      | —     | —     | —      | —     | —    | ✓    |
-| **audit**          | foundry  | ✓    | —    | —    | —      | —      | —      | —     | ✓     | —      | —     | —    | —    |
-| **calibrate**      | foundry  | ✓    | ✓    | ✓    | ✓      | ✓      | ✓      | ✓     | ✓     | ✓      | ✓     | ✓    | —    |
-| **review**         | oss      | —    | ✓    | ✓    | ✓      | ✓      | ✓      | ✓     | —     | ✓      | —     | —    | ✓    |
-| **analyse**        | oss      | —    | —    | —    | —      | —      | —      | —     | —     | ✓      | —     | —    | —    |
-| **release**        | oss      | —    | —    | —    | —      | —      | —      | —     | ✓     | —      | —     | —    | —    |
-| **resolve**        | oss      | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
-| **review**         | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
-| **feature**        | develop  | —    | ✓    | ✓    | ✓      | —      | —      | ✓     | —     | —      | —     | —    | ✓    |
-| **fix**            | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
-| **refactor**       | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
-| **topic**          | research | —    | —    | —    | —      | —      | —      | —     | ✓     | —      | ✓     | —    | —    |
-| **run**            | research | —    | ✓    | —    | —      | ?      | ✓      | —     | —     | —      | ✓     | ✓    | ✓    |
+| Skill           | plugin   | 🔨sm | 🔨sw | 🔨qa | 🔨lint | 🔨arch | 🔨perf | 🔨doc | 🔨web | 🌐shep | 🔬sci | 🔬ds | 🤖cx |
+| --------------- | -------- | ---- | ---- | ---- | ------ | ------ | ------ | ----- | ----- | ------ | ----- | ---- | ---- |
+| **brainstorm**  | foundry  | ✓    | —    | —    | —      | —      | —      | —     | —     | —      | —     | —    | —    |
+| **investigate** | foundry  | —    | —    | —    | —      | —      | —      | —     | —     | —      | —     | —    | ✓    |
+| **audit**       | foundry  | ✓    | —    | —    | —      | —      | —      | —     | ✓     | —      | —     | —    | —    |
+| **calibrate**   | foundry  | ✓    | ✓    | ✓    | ✓      | ✓      | ✓      | ✓     | ✓     | ✓      | ✓     | ✓    | —    |
+| **review**      | oss      | —    | ✓    | ✓    | ✓      | ✓      | ✓      | ✓     | —     | ✓      | —     | —    | ✓    |
+| **analyse**     | oss      | —    | —    | —    | —      | —      | —      | —     | —     | ✓      | —     | —    | —    |
+| **release**     | oss      | —    | —    | —    | —      | —      | —      | —     | ✓     | —      | —     | —    | —    |
+| **resolve**     | oss      | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
+| **review**      | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
+| **feature**     | develop  | —    | ✓    | ✓    | ✓      | —      | —      | ✓     | —     | —      | —     | —    | ✓    |
+| **fix**         | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
+| **refactor**    | develop  | —    | ✓    | ✓    | ✓      | —      | —      | —     | —     | —      | —     | —    | ✓    |
+| **topic**       | research | —    | —    | —    | —      | —      | —      | —     | ✓     | —      | ✓     | —    | —    |
+| **run**         | research | —    | ✓    | —    | —      | ?      | ✓      | —     | —     | —      | ✓     | ✓    | ✓    |
 
 ## 📐 Rules
 

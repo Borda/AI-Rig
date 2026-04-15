@@ -17,6 +17,16 @@ NOT for: unknown failures without a traceback (use `/investigate`); `.claude/` c
 
 <workflow>
 
+## Anti-Rationalizations
+
+| Temptation                                                 | Reality                                                                                               |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| "I already know the root cause from the symptom"           | Assumptions without verification produce fixes for the wrong bug. Read the code path first.           |
+| "The regression test can wait — I'll add it after the fix" | A fix without a failing test is unverifiable. The test is the proof the bug existed.                  |
+| "I'll clean up nearby code while I'm here"                 | Scope creep produces side effects and obscures the actual fix. Touch only the root cause.             |
+| "The targeted test passes — that's sufficient"             | The targeted test shows the bug is fixed; the full suite shows nothing else broke. Both are required. |
+| "The fix is obvious — Step 1 analysis is overkill"         | Obvious causes are often symptoms. Analysis reveals the actual root cause and blast radius.           |
+
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
 - status `completed` if the work is clearly done
@@ -50,6 +60,13 @@ Spawn a **foundry:sw-engineer** agent to analyze the failing code path and ident
 - The root cause (not just the symptom)
 - The minimal code surface that needs to change
 - Any related code that might be affected by the fix
+
+If the root cause is not definitively established after analysis, surface assumptions before proceeding:
+
+> ASSUMPTIONS I'M MAKING:
+>
+> 1. [assumption about root cause]
+> 2. [assumption about affected scope] → Correct me now or I'll proceed with these.
 
 **Scope gate**: if the root cause spans 3+ modules, flag the complexity smell. Use `AskUserQuestion` to present the scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
@@ -106,6 +123,16 @@ Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass before
 Full review of the fix. This is a **loop** — review -> fix -> re-review until only nits remain. Maximum 3 cycles.
 
 **Each cycle:**
+
+**5-axis quality scan** — before the full criteria evaluation, assess the fix on each axis:
+
+- **Correctness**: does the fix address the root cause (not the symptom)? Edge cases covered?
+- **Readability**: is the fix comprehensible without surrounding bug context?
+- **Architecture**: does it fit existing patterns? Any new coupling introduced?
+- **Security**: does the bug path touch input handling, auth, or data? If yes, is that addressed?
+- **Performance**: does the fix introduce any loops, queries, or calls in a hot path?
+
+Use this scan to prioritize which criteria below get deepest scrutiny.
 
 1. Evaluate against all criteria:
 
