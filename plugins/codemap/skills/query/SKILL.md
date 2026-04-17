@@ -2,14 +2,11 @@
 name: query
 description: Query the codemap structural index — central, coupled, deps, rdeps, or import path between modules.
 argument-hint: <central [--top N] | coupled [--top N] | deps <module> | rdeps <module> | path <from> <to>>
-effort: low
-allowed-tools: Bash
-disable-model-invocation: false
 ---
 
 <objective>
 
-Query the codemap structural index. Delegates to `scan-query` and returns JSON results. Checks staleness on every call — warns if Python files were committed after the index was built.
+Query the codemap structural index for import-graph analysis. `scan-query` is at `${CLAUDE_PLUGIN_ROOT}/bin/scan-query` — use this exact path.
 
 Queries:
 
@@ -25,88 +22,35 @@ NOT for: building or rebuilding the index (use `/codemap:scan`).
 
 <workflow>
 
-## Step 1: Check index exists
+## Step 1: Run the query
+
+Run `scan-query` via Bash with the appropriate arguments:
 
 ```bash
-INDEX=".cache/scan/$(basename $(git rev-parse --show-toplevel)).json"
-[ -f "$INDEX" ] || { echo "[codemap] No index found. Run /codemap:scan first."; exit 1; }
+# timeout: 20000
+scan-query <QUERY_ARGS>
 ```
 
-## Step 2: Run the query
+Replace `<QUERY_ARGS>` with the appropriate command:
 
-Pass the argument directly to scan-query. All output is JSON.
+| Goal                          | Command            |
+| ----------------------------- | ------------------ |
+| what imports X (reverse deps) | `rdeps <module>`   |
+| what X imports (direct deps)  | `deps <module>`    |
+| most-imported modules         | `central --top 10` |
+| most-coupled modules          | `coupled --top 10` |
+| path between A and B          | `path <from> <to>` |
 
-**central** (most-imported modules):
+`scan-query` is on PATH and locates the index automatically via git root — no setup required. If the index is missing it prints a clear error.
 
-```bash
-# timeout: 15000
-scan-query central --top 10
-```
+## Step 2: Format and return
 
-**coupled** (modules with most imports):
+For `rdeps` / `deps`: list the modules, one per line.
 
-```bash
-# timeout: 15000
-scan-query coupled --top 10
-```
-
-**deps**:
-
-```bash
-# timeout: 15000
-scan-query deps <module>
-```
-
-**rdeps**:
-
-```bash
-# timeout: 15000
-scan-query rdeps <module>
-```
-
-**path**:
-
-```bash
-# timeout: 15000
-scan-query path <from> <to>
-```
-
-If `scan-query` prints a staleness warning to stderr, surface it to the user before the results.
-
-## Step 3: Format and return
-
-Parse the JSON output and present it clearly.
-
-For `central`: list top modules by rdep_count — "N modules import this; changing it has wide blast radius."
-
-```
-Top 10 most-imported modules (blast radius):
-
-  rdep_count  module
-  ----------  ------
-          42  mypackage.models
-          28  mypackage.config
-          15  mypackage.core.dispatcher
-  ...
-```
-
-For `coupled`: list top modules by dep_count — "imports N modules; tightly coupled."
-
-```
-Top 10 most-coupled modules:
-
-  dep_count  module
-  ---------  ------
-         18  mypackage.pipeline.runner
-         14  mypackage.auth
-         11  mypackage.api
-  ...
-```
-
-For `deps` / `rdeps`: list the modules, one per line.
+For `central` / `coupled`: list top modules by count with a brief note.
 
 For `path`: show the import chain as `A → B → C → D`.
 
-If the result contains `{"error": "..."}`: surface the error and suggest corrective action (re-scan, check module name spelling).
+If the result is `{"error": "..."}`: surface the error and suggest re-running `/codemap:scan`.
 
 </workflow>

@@ -21,18 +21,16 @@ NOT for: querying an existing index (use `/codemap:query`).
 
 ## Step 1: Run the scanner
 
-`scan-index` is on PATH via the plugin's `bin/` directory — invoke it directly:
-
 ```bash
 # timeout: 360000
-scan-index
+${CLAUDE_PLUGIN_ROOT}/bin/scan-index
 ```
 
 If `--root` was passed as an argument, forward it:
 
 ```bash
 # timeout: 360000
-scan-index --root <path>
+${CLAUDE_PLUGIN_ROOT}/bin/scan-index --root <path>
 ```
 
 The scanner writes to `.cache/scan/<project>.json` and prints a summary line:
@@ -49,7 +47,7 @@ After the scan completes, read the index and report a compact summary:
 ```bash
 python3 -c "
 import json, sys
-with open('.cache/scan/$(basename $(git rev-parse --show-toplevel)).json') as f:
+with open('.cache/scan/\$(basename \$(git rev-parse --show-toplevel)).json') as f:
     d = json.load(f)
 ok = [m for m in d['modules'] if m.get('status') == 'ok']
 deg = [m for m in d['modules'] if m.get('status') == 'degraded']
@@ -61,21 +59,6 @@ for m in top:
 "
 ```
 
-Output format:
-
-```
-✓ codemap index built: .cache/scan/<project>.json
-  Modules:  N indexed, M degraded
-
-  Most central (rdep_count):
-    42  mypackage.models
-    28  mypackage.config
-    ...
-
-  Degraded files (if any):
-    ⚠ src/generated/proto.py — SyntaxError: ...
-```
-
 If degraded files exist: list them with their reason. Do not treat degraded files as a failure — the index is still useful.
 
 ## Step 3: Suggest next step
@@ -83,11 +66,9 @@ If degraded files exist: list them with their reason. Do not treat degraded file
 ```
 Index ready. Query it with:
   /codemap:query central --top 10
-  scan-query deps <module>
-  scan-query rdeps <module>
-  scan-query coupled --top 10
-
-develop:feature, develop:fix, develop:plan, and develop:refactor pick this up automatically.
+  /codemap:query deps <module>
+  /codemap:query rdeps <module>
+  /codemap:query coupled --top 10
 ```
 
 </workflow>

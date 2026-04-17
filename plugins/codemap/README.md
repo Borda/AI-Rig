@@ -101,15 +101,34 @@ Scanned [`pytorch-lightning`](https://github.com/Lightning-AI/pytorch-lightning)
 ```bash
 scan-query central --top 5
 ```
+
 ```json
-{"central": [
-  {"name": "lightning.pytorch",                    "rdep_count": 245},
-  {"name": "lightning.pytorch.demos.boring_classes","rdep_count": 134},
-  {"name": "lightning.pytorch.utilities.exceptions","rdep_count": 89},
-  {"name": "lightning.fabric.utilities.types",     "rdep_count": 76},
-  {"name": "lightning.pytorch.callbacks",          "rdep_count": 73}
-]}
+{
+  "central": [
+    {
+      "name": "lightning.pytorch",
+      "rdep_count": 245
+    },
+    {
+      "name": "lightning.pytorch.demos.boring_classes",
+      "rdep_count": 134
+    },
+    {
+      "name": "lightning.pytorch.utilities.exceptions",
+      "rdep_count": 89
+    },
+    {
+      "name": "lightning.fabric.utilities.types",
+      "rdep_count": 76
+    },
+    {
+      "name": "lightning.pytorch.callbacks",
+      "rdep_count": 73
+    }
+  ]
+}
 ```
+
 `lightning.pytorch` is imported by 245 of 646 modules. Any breaking change there cascades to 38% of the codebase. `boring_classes.py` — a demo file — affects more modules than the entire callbacks package.
 
 </details>
@@ -120,14 +139,17 @@ scan-query central --top 5
 ```bash
 scan-query rdeps lightning.pytorch.trainer.trainer
 ```
+
 ```json
-{"imported_by": [
-  "lightning.pytorch.trainer",
-  "tests.tests_pytorch.loops.test_loop_state_dict",
-  "tests.tests_pytorch.loops.test_training_epoch_loop",
-  "tests.tests_pytorch.trainer.flags.test_check_val_every_n_epoch",
-  "tests.tests_pytorch.trainer.flags.test_val_check_interval"
-]}
+{
+  "imported_by": [
+    "lightning.pytorch.trainer",
+    "tests.tests_pytorch.loops.test_loop_state_dict",
+    "tests.tests_pytorch.loops.test_training_epoch_loop",
+    "tests.tests_pytorch.trainer.flags.test_check_val_every_n_epoch",
+    "tests.tests_pytorch.trainer.flags.test_val_check_interval"
+  ]
+}
 ```
 
 </details>
@@ -138,18 +160,29 @@ scan-query rdeps lightning.pytorch.trainer.trainer
 ```bash
 scan-query deps lightning.pytorch.trainer.connectors.checkpoint_connector
 ```
+
 ```json
-{"direct_imports": [
-  "fsspec.core", "fsspec.implementations.local",
-  "lightning.fabric.plugins.environments.slurm",
-  "lightning.fabric.utilities.cloud_io",
-  "lightning.pytorch", "lightning.pytorch.callbacks",
-  "lightning.pytorch.trainer", "lightning.pytorch.trainer.states",
-  "lightning.pytorch.utilities.exceptions",
-  "lightning.pytorch.utilities.rank_zero",
-  "torch", "omegaconf", "os", "re", "typing"
-]}
+{
+  "direct_imports": [
+    "fsspec.core",
+    "fsspec.implementations.local",
+    "lightning.fabric.plugins.environments.slurm",
+    "lightning.fabric.utilities.cloud_io",
+    "lightning.pytorch",
+    "lightning.pytorch.callbacks",
+    "lightning.pytorch.trainer",
+    "lightning.pytorch.trainer.states",
+    "lightning.pytorch.utilities.exceptions",
+    "lightning.pytorch.utilities.rank_zero",
+    "torch",
+    "omegaconf",
+    "os",
+    "re",
+    "typing"
+  ]
+}
 ```
+
 24 direct imports — high coupling. Any upstream change in `fsspec`, `omegaconf`, or the fabric utilities layer touches this connector.
 
 </details>
@@ -160,17 +193,21 @@ scan-query deps lightning.pytorch.trainer.connectors.checkpoint_connector
 ```bash
 scan-query path lightning.fabric.connector lightning.pytorch.trainer.trainer
 ```
+
 ```json
-{"path": [
-  "lightning.fabric.connector",
-  "lightning.fabric.utilities",
-  "lightning.fabric.utilities.throughput",
-  "lightning.fabric",
-  "lightning",
-  "lightning.pytorch.trainer",
-  "lightning.pytorch.trainer.trainer"
-]}
+{
+  "path": [
+    "lightning.fabric.connector",
+    "lightning.fabric.utilities",
+    "lightning.fabric.utilities.throughput",
+    "lightning.fabric",
+    "lightning",
+    "lightning.pytorch.trainer",
+    "lightning.pytorch.trainer.trainer"
+  ]
+}
 ```
+
 7-hop import chain — found instantly. Without the graph this chain has to be traced manually across 7 files.
 
 </details>
@@ -181,32 +218,98 @@ scan-query path lightning.fabric.connector lightning.pytorch.trainer.trainer
 ```bash
 scan-query coupled --top 5
 ```
+
 ```json
-{"coupled": [
-  {"name": "lightning.pytorch.trainer.trainer",  "dep_count": 49},
-  {"name": "lightning.pytorch.core.module",      "dep_count": 45},
-  {"name": "lightning.fabric.strategies.fsdp",   "dep_count": 40},
-  {"name": "lightning.pytorch.strategies.fsdp",  "dep_count": 40},
-  {"name": "lightning.fabric.fabric",            "dep_count": 34}
-]}
+{
+  "coupled": [
+    {
+      "name": "lightning.pytorch.trainer.trainer",
+      "dep_count": 49
+    },
+    {
+      "name": "lightning.pytorch.core.module",
+      "dep_count": 45
+    },
+    {
+      "name": "lightning.fabric.strategies.fsdp",
+      "dep_count": 40
+    },
+    {
+      "name": "lightning.pytorch.strategies.fsdp",
+      "dep_count": 40
+    },
+    {
+      "name": "lightning.fabric.fabric",
+      "dep_count": 34
+    }
+  ]
+}
 ```
+
 `Trainer` both imports 49 modules (most coupled) and is imported by 5 others. It is the highest-risk file to touch in the entire repo — one query surfaced that.
 
 </details>
 
----
+______________________________________________________________________
 
 ### vs. cold Glob/Grep
 
-| Question | codemap | Cold Glob/Grep |
-|---|---|---|
-| Most central modules | 1 call | ~20 calls — Glob all files, read each, count manually; still can't rank |
-| What breaks if I touch X? | 1 call | 3–5 Greps; misses transitive importers |
-| What does X depend on? | 1 call | 1 Read + parse (comparable) |
-| Import path A → B | 1 call | Infeasible — requires tracing N files by hand |
-| Most coupled modules | 1 call | 646 Reads — one per file to count imports |
+| Question                  | codemap | Cold Glob/Grep                                                          |
+| ------------------------- | ------- | ----------------------------------------------------------------------- |
+| Most central modules      | 1 call  | ~20 calls — Glob all files, read each, count manually; still can't rank |
+| What breaks if I touch X? | 1 call  | 3–5 Greps; misses transitive importers                                  |
+| What does X depend on?    | 1 call  | 1 Read + parse (comparable)                                             |
+| Import path A → B         | 1 call  | Infeasible — requires tracing N files by hand                           |
+| Most coupled modules      | 1 call  | 646 Reads — one per file to count imports                               |
 
 4 of 5 questions are structurally infeasible without a pre-built graph.
+
+## 📈 Benchmark evidence
+
+Controlled benchmark on **pytorch-lightning** (646 modules) — 8 tasks × 3 model tiers × 2 arms = 48 runs. Tasks cover all four developer workflows: fix, feature, refactor, review.
+
+> Source: `benchmarks/results/code-2026-04-17-5.md` · Savings = median `1 − (codemap / plain)` · positive = codemap needs less
+
+### Efficiency savings
+
+| Metric             |  Haiku   |  Sonnet  |   Opus   |
+| :----------------- | :------: | :------: | :------: |
+| Elapsed time       | **−51%** | **−60%** | **−71%** |
+| Tool result tokens | **−85%** | **−84%** | **−93%** |
+| Tool calls         |   −43%   |   −61%   |   −77%   |
+| Input tokens       |   −68%   |  −5%\*   |   −60%   |
+
+_\* Sonnet input token savings are low due to context expansion on large review tasks — see Known Issues._
+
+Tool result token savings are the most consistent signal (84–93% across all model tiers): codemap returns a compact JSON answer where plain-arm grep passes return full file excerpts, multiplied by the number of tool calls.
+
+### Quality — where it matters most
+
+Plain-arm runs **failed or timed out** on complex tasks; codemap arm completed all tasks:
+
+| Task | Type     | Model  |        Plain recall         | Codemap recall |
+| :--- | :------- | :----- | :-------------------------: | :------------: |
+| T03  | feature  | haiku  |           **16%**           |      100%      |
+| T03  | feature  | opus   |           **16%**           |      100%      |
+| T04  | feature  | haiku  |           **40%**           |      100%      |
+| T05  | refactor | haiku  |       **0%** (failed)       |      100%      |
+| T05  | refactor | sonnet | ⏱ timeout (300s, 27 calls)  |      100%      |
+| T05  | refactor | opus   | ⏱ timeout (300s, 101 calls) |      100%      |
+| T07  | review   | opus   | ⏱ timeout (300s, 87 calls)  |      100%      |
+
+Recall = fraction of ground-truth reverse-dependencies surfaced in the agent's final answer. Ground truth is deterministic (index-derived); matching uses multi-form surface patterns (2+ path components) to avoid false positives.
+
+Three plain-arm runs hit the hard 300-second timeout. Zero codemap timeouts.
+
+### Known issues (actively being worked on)
+
+- **Input token expansion on large review tasks**: when codemap returns a wide rdep list, some models re-echo the full structured result in their reasoning, consuming more input tokens than the equivalent grep passes would (Sonnet T07: codemap used 6× more input tokens than plain). We are investigating context-trimming for large query results before injection.
+
+- **Refactor tasks benefit less**: on tasks where the challenge is reshaping code rather than locating what to change, structural context provides less uplift (T06 Sonnet: ≈0% elapsed savings; T06 Opus: −48%). Targeted context injection (rdeps + deps of the specific target module, not global central) is on the roadmap for the `develop:refactor` integration.
+
+- **Single-codebase validation**: all 48 runs on `pytorch-lightning`. Savings likely generalise to any large Python monorepo, but small projects (< 50 modules) and non-Python projects have not been benchmarked.
+
+- **Quality metric is rdep recall, not correctness**: the benchmark measures whether the agent surfaces the right blast-radius modules — not whether the resulting code change is correct. End-to-end correctness evaluation is planned.
 
 ## 🔌 Integrating codemap
 
@@ -273,34 +376,34 @@ fi
 
 ### Decision guide — which query to use when
 
-| Situation | Query |
-| --- | --- |
-| "What breaks if I change X?" | `rdeps X` |
-| "What does X pull in?" | `deps X` |
-| "Are A and B already coupled?" | `path A B` — `null` means not connected |
+| Situation                              | Query                                   |
+| -------------------------------------- | --------------------------------------- |
+| "What breaks if I change X?"           | `rdeps X`                               |
+| "What does X pull in?"                 | `deps X`                                |
+| "Are A and B already coupled?"         | `path A B` — `null` means not connected |
 | "What's the riskiest module to touch?" | `central --top 10` (highest rdep_count) |
-| "What's the most entangled module?" | `coupled --top 10` (highest dep_count) |
-| "List all modules in the project" | `list` |
+| "What's the most entangled module?"    | `coupled --top 10` (highest dep_count)  |
+| "List all modules in the project"      | `list`                                  |
 
 ## 🗺️ Overview
 
 ### 2 Skills
 
-| Skill     | Trigger          | What it does                                                              |
-| --------- | ---------------- | ------------------------------------------------------------------------- |
+| Skill     | Trigger          | What it does                                                                  |
+| --------- | ---------------- | ----------------------------------------------------------------------------- |
 | **scan**  | `/codemap:scan`  | Runs `ast.parse` across all Python files; writes `.cache/scan/<project>.json` |
-| **query** | `/codemap:query` | Queries the index; checks staleness on every call; returns JSON           |
+| **query** | `/codemap:query` | Queries the index; checks staleness on every call; returns JSON               |
 
 ### 5 CLI Commands
 
-| Command              | Question it answers                                           |
-| -------------------- | ------------------------------------------------------------- |
-| `central [--top N]`  | Which modules are imported by the most others? (blast radius) |
-| `coupled [--top N]`  | Which modules import the most others? (coupling)              |
-| `deps <module>`      | What does this module import?                                 |
-| `rdeps <module>`     | What imports this module?                                     |
-| `path <from> <to>`   | What is the shortest import chain between two modules?        |
-| `list`               | Enumerate all indexed modules                                 |
+| Command             | Question it answers                                           |
+| ------------------- | ------------------------------------------------------------- |
+| `central [--top N]` | Which modules are imported by the most others? (blast radius) |
+| `coupled [--top N]` | Which modules import the most others? (coupling)              |
+| `deps <module>`     | What does this module import?                                 |
+| `rdeps <module>`    | What imports this module?                                     |
+| `path <from> <to>`  | What is the shortest import chain between two modules?        |
+| `list`              | Enumerate all indexed modules                                 |
 
 ### Index schema (`.cache/scan/<project>.json`)
 
@@ -317,7 +420,10 @@ fi
       "loc": 234,
       "rdep_count": 8,
       "dep_count": 5,
-      "direct_imports": ["mypackage.models", "mypackage.config"],
+      "direct_imports": [
+        "mypackage.models",
+        "mypackage.config"
+      ],
       "is_entry_point": false,
       "status": "ok"
     },
@@ -331,8 +437,7 @@ fi
 }
 ```
 
-`rdep_count` — how many project modules import this one (blast radius proxy).
-`dep_count` — how many modules this one imports (coupling proxy).
+`rdep_count` — how many project modules import this one (blast radius proxy). `dep_count` — how many modules this one imports (coupling proxy).
 
 ### Staleness detection
 

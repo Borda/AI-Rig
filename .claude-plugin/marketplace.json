@@ -23,6 +23,11 @@
       "description": "ML/perf investigation skills: topic, plan, judge, run, sweep",
       "name": "research",
       "source": "./plugins/research"
+    },
+    {
+      "description": "Codebase structural index \u2014 scan Python projects, query the import graph for blast-radius and coupling",
+      "name": "codemap",
+      "source": "./plugins/codemap"
     }
   ]
 }

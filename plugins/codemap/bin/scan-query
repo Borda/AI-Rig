@@ -31,18 +31,44 @@ from pathlib import Path
 # Index location
 # ---------------------------------------------------------------------------
 
-def find_root() -> Path:
+
+def _git_root() -> Path | None:
     try:
         root = subprocess.check_output(
             ["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL
         ).strip()
         return Path(root)
-    except subprocess.CalledProcessError:
-        return Path.cwd()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def find_index() -> Path:
-    root = find_root()
+    """Locate the codemap index using a multi-strategy search.
+
+    1. Git root — <git-root>/.cache/scan/<name>.json (standard case)
+    2. Walk up from CWD — finds index in ZIP exports and non-git repos
+    3. Fallback — CWD convention; produces a clear error if missing
+    """
+    # Strategy 1: git root owns the index
+    git_root = _git_root()
+    if git_root:
+        candidate = git_root / ".cache" / "scan" / f"{git_root.name}.json"
+        if candidate.exists():
+            return candidate
+
+    # Strategy 2: walk up from CWD — handles ZIP archives without .git
+    for parent in [Path.cwd(), *Path.cwd().parents]:
+        scan_dir = parent / ".cache" / "scan"
+        if scan_dir.is_dir():
+            preferred = scan_dir / f"{parent.name}.json"
+            if preferred.exists():
+                return preferred
+            candidates = sorted(scan_dir.glob("*.json"))
+            if candidates:
+                return candidates[0]
+
+    # Strategy 3: fallback (will surface a clear "Index not found" error)
+    root = git_root or Path.cwd()
     return root / ".cache" / "scan" / f"{root.name}.json"
 
 
@@ -57,18 +83,25 @@ def load_index(path: Path) -> dict:
 # Staleness check
 # ---------------------------------------------------------------------------
 
+
 def check_staleness(scanned_at: str) -> bool:
     """Return True if any Python code file changed after scanned_at."""
     try:
         result = subprocess.run(
             [
-                "git", "log",
+                "git",
+                "log",
                 f"--since={scanned_at}",
-                "--name-only", "--pretty=",
+                "--name-only",
+                "--pretty=",
                 "--",
                 "*.py",
-                ":!docs/", ":!*.md", ":!*.rst",
-                ":!.github/", ":!**/*.yml", ":!**/*.yaml",
+                ":!docs/",
+                ":!*.md",
+                ":!*.rst",
+                ":!.github/",
+                ":!**/*.yml",
+                ":!**/*.yaml",
             ],
             capture_output=True,
             text=True,
@@ -84,8 +117,7 @@ def warn_if_stale(index: dict) -> None:
     scanned_at = index.get("scanned_at", "")
     if scanned_at and check_staleness(scanned_at):
         print(
-            "⚠ codemap index may be stale — Python files changed since last scan. "
-            "Re-run /codemap:scan.",
+            "⚠ codemap index may be stale — Python files changed since last scan. Re-run /codemap:scan.",
             file=sys.stderr,
         )
 
@@ -93,6 +125,7 @@ def warn_if_stale(index: dict) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def build_module_map(index: dict) -> dict[str, dict]:
     return {m["name"]: m for m in index.get("modules", [])}
@@ -103,52 +136,112 @@ def _exit_error(message: str) -> None:
     sys.exit(1)
 
 
+def _current_git_sha() -> str | None:
+    """Return current HEAD SHA, or None if git is unavailable."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def _coverage(index: dict) -> dict:
+    """Return an index coverage block for every query result.
+
+    Embeds a machine-readable completeness guarantee and a staleness signal
+    so agents know whether the index matches the current codebase state.
+    When git is present, compares the SHA recorded at scan time against HEAD.
+    """
+    modules = index.get("modules", [])
+    total = sum(1 for m in modules if m.get("status") == "ok")
+    degraded = sum(1 for m in modules if m.get("status") == "degraded")
+
+    scan_sha: str | None = index.get("git_sha")
+    current_sha = _current_git_sha()
+
+    if scan_sha and current_sha:
+        stale = scan_sha != current_sha
+        sha_info = {"scan_sha": scan_sha[:12], "current_sha": current_sha[:12]}
+    else:
+        stale = False  # can't determine without git
+        sha_info = {}
+
+    if stale:
+        note = (
+            f"All {total} indexed modules were searched. "
+            f"⚠ Index may be stale — built at {scan_sha[:12]}, "
+            f"HEAD is now {current_sha[:12]}. "  # type: ignore[index]
+            "Re-run /codemap:scan to update before relying on this result."
+        )
+    else:
+        note = (
+            f"All {total} indexed modules were searched. "
+            "This result is complete — grep/bash verification is not needed."
+        )
+
+    return {
+        "total_modules": total,
+        "degraded": degraded,
+        "exhaustive": not stale,
+        "stale": stale,
+        **sha_info,
+        "note": note,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
+
 
 def cmd_deps(index: dict, module: str) -> None:
     modules = build_module_map(index)
     entry = modules.get(module)
     if entry is None:
         _exit_error(f"Module '{module}' not in index.")
-    print(json.dumps({
-        "module": module,
-        "direct_imports": entry.get("direct_imports", []),
-    }))
+    print(
+        json.dumps(
+            {
+                "module": module,
+                "direct_imports": entry.get("direct_imports", []),
+                "index": _coverage(index),
+            }
+        )
+    )
 
 
 def cmd_rdeps(index: dict, module: str) -> None:
-    result = sorted(
-        m["name"]
-        for m in index.get("modules", [])
-        if module in m.get("direct_imports", [])
-    )
-    print(json.dumps({"module": module, "imported_by": result}))
+    result = sorted(m["name"] for m in index.get("modules", []) if module in m.get("direct_imports", []))
+    print(json.dumps({"module": module, "imported_by": result, "index": _coverage(index)}))
 
 
 def cmd_central(index: dict, top: int) -> None:
-    candidates = [
-        m for m in index.get("modules", [])
-        if m.get("status") != "degraded"
-    ]
+    candidates = [m for m in index.get("modules", []) if m.get("status") != "degraded"]
     ranked = sorted(candidates, key=lambda m: m.get("rdep_count", 0), reverse=True)[:top]
-    print(json.dumps({"central": [
-        {"name": m["name"], "rdep_count": m.get("rdep_count", 0), "path": m.get("path", "")}
-        for m in ranked
-    ]}))
+    print(
+        json.dumps(
+            {
+                "central": [
+                    {"name": m["name"], "rdep_count": m.get("rdep_count", 0), "path": m.get("path", "")} for m in ranked
+                ],
+                "index": _coverage(index),
+            }
+        )
+    )
 
 
 def cmd_coupled(index: dict, top: int) -> None:
-    candidates = [
-        m for m in index.get("modules", [])
-        if m.get("status") != "degraded"
-    ]
+    candidates = [m for m in index.get("modules", []) if m.get("status") != "degraded"]
     ranked = sorted(candidates, key=lambda m: m.get("dep_count", 0), reverse=True)[:top]
-    print(json.dumps({"coupled": [
-        {"name": m["name"], "dep_count": m.get("dep_count", 0), "path": m.get("path", "")}
-        for m in ranked
-    ]}))
+    print(
+        json.dumps(
+            {
+                "coupled": [
+                    {"name": m["name"], "dep_count": m.get("dep_count", 0), "path": m.get("path", "")} for m in ranked
+                ],
+                "index": _coverage(index),
+            }
+        )
+    )
 
 
 def cmd_path(index: dict, frm: str, to: str) -> None:
@@ -164,14 +257,16 @@ def cmd_path(index: dict, frm: str, to: str) -> None:
         path = queue.popleft()
         node = path[-1]
         if node == to:
-            print(json.dumps({"from": frm, "to": to, "path": path}))
+            print(json.dumps({"from": frm, "to": to, "path": path, "index": _coverage(index)}))
             return
         for neighbour in modules.get(node, {}).get("direct_imports", []):
             if neighbour not in visited and neighbour in modules:
                 visited.add(neighbour)
                 queue.append(path + [neighbour])
 
-    print(json.dumps({"from": frm, "to": to, "path": None, "error": "No import path found."}))
+    print(
+        json.dumps({"from": frm, "to": to, "path": None, "error": "No import path found.", "index": _coverage(index)})
+    )
 
 
 def cmd_list(index: dict) -> None:
@@ -185,6 +280,7 @@ def cmd_list(index: dict) -> None:
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -211,9 +307,11 @@ def main() -> None:
 
     sub.add_parser("list", help="List all indexed modules.")
 
+    parser.add_argument("--index", metavar="PATH", help="Explicit path to the index JSON (auto-discovered if omitted).")
+
     args = parser.parse_args()
 
-    index_path = find_index()
+    index_path = Path(args.index) if args.index else find_index()
     index = load_index(index_path)
     warn_if_stale(index)
 

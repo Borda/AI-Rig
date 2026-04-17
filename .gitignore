@@ -34,3 +34,7 @@ CLAUDE.local.md
 *.ipr
 out/
 .idea_modules/
+
+# Benchmarks and logs
+benchmarks/results/
+pytorch-lightning-master/

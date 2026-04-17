@@ -65,6 +65,16 @@ repos:
           - globals@16.0.0
           - "@eslint/js@9.21.0"
 
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.4
+    hooks:
+      - id: ruff
+        name: 🦀 ruff
+        args: ["--line-length=120", "--fix"]
+      - id: ruff-format
+        name: 🦀 ruff-format
+        args: ["--line-length=120"]
+
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
     hooks:

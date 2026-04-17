@@ -22,9 +22,19 @@ from pathlib import Path
 SCAN_VERSION = "2"
 
 SKIP_DIRS = {
-    ".git", ".venv", "venv", "__pycache__", ".tox",
-    "dist", "build", ".eggs", "node_modules", ".mypy_cache",
-    ".pytest_cache", ".ruff_cache", "htmlcov",
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    "dist",
+    "build",
+    ".eggs",
+    "node_modules",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "htmlcov",
 }
 
 
@@ -38,15 +48,73 @@ def find_root() -> Path:
         return Path.cwd()
 
 
+def get_git_sha(root: Path) -> str | None:
+    """Return the current HEAD commit SHA, or None if git is unavailable."""
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL, cwd=str(root)
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def detect_src_root(root: Path) -> Path:
     """Return the effective Python source root.
 
-    For src-layout projects (src/ dir exists without __init__.py),
-    returns root/src so module names match importable names.
+    Resolution order:
+    1. pyproject.toml / setup.cfg  [tool.setuptools.packages.find] where = [...]
+    2. __init__.py chain — find directories that ARE packages whose parent is NOT;
+       their common parent is the source root (works for src-layout and flat layout)
+    3. src/ heuristic — fallback for repos without __init__.py-based packages
     """
+    # ── Strategy 1: explicit package config ──────────────────────────────
+    for config in (root / "pyproject.toml", root / "setup.cfg"):
+        if not config.exists():
+            continue
+        text = config.read_text(errors="replace")
+        # [tool.setuptools.packages.find] where = ["src"]  or  where = ["lib"]
+        import re as _re
+
+        m = _re.search(r"where\s*=\s*\[([^\]]+)\]", text)
+        if m:
+            # take the first quoted entry
+            entries = _re.findall(r'["\']([^"\']+)["\']', m.group(1))
+            for entry in entries:
+                candidate = root / entry
+                if candidate.is_dir():
+                    return candidate
+
+    # ── Strategy 2: __init__.py chain ────────────────────────────────────
+    # A "top-level package directory" is one that:
+    #   - contains __init__.py
+    #   - whose parent does NOT contain __init__.py
+    #   - whose parent is within root (not root itself when flat-layout)
+    source_roots: set[Path] = set()
+    for init in sorted(root.rglob("__init__.py")):
+        pkg_dir = init.parent
+        parent = pkg_dir.parent
+        # skip if parent is outside root or if parent itself is a package
+        if not str(parent).startswith(str(root)):
+            continue
+        if (parent / "__init__.py").exists():
+            continue
+        source_roots.add(parent)
+
+    if len(source_roots) == 1:
+        return source_roots.pop()
+    if len(source_roots) > 1:
+        # Multiple candidates: prefer the one named "src" or deepest common ancestor
+        for candidate in source_roots:
+            if candidate.name == "src":
+                return candidate
+        # Return the one with the longest path (most specific)
+        return max(source_roots, key=lambda p: len(p.parts))
+
+    # ── Strategy 3: src/ heuristic ───────────────────────────────────────
     src_dir = root / "src"
     if src_dir.is_dir() and not (src_dir / "__init__.py").exists():
         return src_dir
+
     return root
 
 
@@ -101,29 +169,35 @@ def scan(root: Path) -> dict:
         try:
             source = filepath.read_text(encoding="utf-8", errors="replace")
             imports = extract_imports(source, str(filepath))
-            modules.append({
-                "name": name,
-                "path": str(rel_path),
-                "loc": count_loc(source),
-                "dep_count": len(imports),
-                "direct_imports": imports,
-                "is_entry_point": has_main_guard(source),
-                "status": "ok",
-            })
+            modules.append(
+                {
+                    "name": name,
+                    "path": str(rel_path),
+                    "loc": count_loc(source),
+                    "dep_count": len(imports),
+                    "direct_imports": imports,
+                    "is_entry_point": has_main_guard(source),
+                    "status": "ok",
+                }
+            )
         except SyntaxError as exc:
-            modules.append({
-                "name": name,
-                "path": str(rel_path),
-                "status": "degraded",
-                "reason": f"SyntaxError: {exc}",
-            })
+            modules.append(
+                {
+                    "name": name,
+                    "path": str(rel_path),
+                    "status": "degraded",
+                    "reason": f"SyntaxError: {exc}",
+                }
+            )
         except Exception as exc:
-            modules.append({
-                "name": name,
-                "path": str(rel_path),
-                "status": "degraded",
-                "reason": str(exc),
-            })
+            modules.append(
+                {
+                    "name": name,
+                    "path": str(rel_path),
+                    "status": "degraded",
+                    "reason": str(exc),
+                }
+            )
 
     # Compute rdep_count post-scan from the full import graph
     rdep_counts: dict[str, int] = {}
@@ -134,9 +208,11 @@ def scan(root: Path) -> dict:
         if m.get("status") == "ok":
             m["rdep_count"] = rdep_counts.get(m["name"], 0)
 
+    git_sha = get_git_sha(root)
     return {
         "scan_version": "2",
         "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "git_sha": git_sha,
         "project": root.name,
         "src_layout": src_root != root,
         "modules": modules,

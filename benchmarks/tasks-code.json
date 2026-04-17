@@ -1,0 +1,478 @@
+[
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports"
+    ],
+    "id": "B-01",
+    "primary_module": "lightning.pytorch.trainer.connectors.checkpoint_connector",
+    "prompt": "Checkpointing silently skips saving the final epoch when max_epochs is set to a value divisible by check_val_every_n_epoch. The bug is in trainer.connectors.checkpoint_connector. What else will break if I change it?",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.trainer.connectors.checkpoint_connector"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.trainer.connectors.checkpoint_connector"
+        ],
+        "cmd": "deps"
+      }
+    ],
+    "risk_tier": "high",
+    "skill": "fix"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports"
+    ],
+    "id": "B-02",
+    "primary_module": "lightning.fabric.plugins.environments.slurm",
+    "prompt": "On SLURM clusters the job is requeued twice on preemption \u2014 once by our code and once by the scheduler. The duplicate signal originates in fabric.plugins.environments.slurm. Which modules rely on this environment plugin and will be affected by tightening the requeue guard?",
+    "queries": [
+      {
+        "args": [
+          "lightning.fabric.plugins.environments.slurm"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.fabric.plugins.environments.slurm"
+        ],
+        "cmd": "deps"
+      }
+    ],
+    "risk_tier": "moderate",
+    "skill": "fix"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports"
+    ],
+    "id": "B-03",
+    "primary_module": "lightning.pytorch.utilities.rank_zero",
+    "prompt": "A user reports that custom loggers get log() called on all ranks after upgrading to 2.1. The guard in utilities.rank_zero isn't filtering correctly when LOCAL_RANK differs from GLOBAL_RANK. Which modules call into rank_zero utilities \u2014 I need to know the blast radius before I tighten the guard.",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.utilities.rank_zero"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.utilities.rank_zero"
+        ],
+        "cmd": "deps"
+      }
+    ],
+    "risk_tier": "high",
+    "skill": "fix"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports"
+    ],
+    "id": "B-04",
+    "primary_module": "lightning.pytorch.callbacks.progress.tqdm_progress",
+    "prompt": "The TQDMProgressBar callback raises ZeroDivisionError when num_sanity_val_steps=0 and validation runs at epoch end. The bug is in callbacks.progress.tqdm_progress. Which other callbacks or trainer internals import this module?",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.callbacks.progress.tqdm_progress"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.callbacks.progress.tqdm_progress"
+        ],
+        "cmd": "deps"
+      }
+    ],
+    "risk_tier": "low",
+    "skill": "fix"
+  },
+  {
+    "ground_truth_keys": [
+      "direct_imports",
+      "imported_by",
+      "path"
+    ],
+    "id": "B-05",
+    "primary_module": "lightning.fabric.strategies.fsdp",
+    "prompt": "When CPU offload is enabled with FSDP, some parameters remain un-sharded after _init_model_parallel. The bug is in fabric.strategies.fsdp. This module is listed as one of the most coupled in the project \u2014 what are all its deps and who imports it?",
+    "queries": [
+      {
+        "args": [
+          "lightning.fabric.strategies.fsdp"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.fabric.strategies.fsdp"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.fabric.strategies.fsdp",
+          "lightning.pytorch.strategies.fsdp"
+        ],
+        "cmd": "path"
+      }
+    ],
+    "risk_tier": "high",
+    "skill": "fix"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports",
+      "central"
+    ],
+    "id": "F-01",
+    "primary_module": "lightning.pytorch.loggers.csv_logs",
+    "prompt": "Add a json_logs=True flag to CSVLogger so it writes structured JSON alongside the CSV. I plan to add the serialisation logic in loggers.csv_logs. Check coupling and blast radius before I touch it.",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.loggers.csv_logs"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.loggers.csv_logs"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "central"
+      }
+    ],
+    "risk_tier": "low-moderate",
+    "skill": "feature"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "path"
+    ],
+    "id": "F-02",
+    "primary_module": "lightning.pytorch.callbacks.callback",
+    "prompt": "I want to add on_after_optimizer_step(trainer, pl_module, optimizer) as a new lifecycle hook in the callback base class. The hook should fire after each optimizer step in the training loop. Where do I add it and what is the coupling risk to the rest of the trainer?",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.callbacks.callback"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.callbacks"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.callbacks.callback",
+          "lightning.pytorch.trainer.trainer"
+        ],
+        "cmd": "path"
+      }
+    ],
+    "risk_tier": "high",
+    "skill": "feature"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports",
+      "path"
+    ],
+    "id": "F-03",
+    "primary_module": "lightning.fabric.utilities.throughput",
+    "prompt": "Add tokens-per-second throughput tracking to fabric.utilities.throughput. The metric should be computed on every step and accessible via Fabric.log. I need to know what currently imports throughput and what it imports before I extend it.",
+    "queries": [
+      {
+        "args": [
+          "lightning.fabric.utilities.throughput"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.fabric.utilities.throughput"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.fabric.utilities.throughput",
+          "lightning.fabric.fabric"
+        ],
+        "cmd": "path"
+      }
+    ],
+    "risk_tier": "moderate",
+    "skill": "feature"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports",
+      "central"
+    ],
+    "id": "F-04",
+    "primary_module": "lightning.pytorch.callbacks.model_checkpoint",
+    "prompt": "Extend ModelCheckpoint to support a user-supplied aggregation function for monitored metrics, applied at epoch end before the save decision. I plan to modify callbacks.model_checkpoint. What is the blast radius and is it safe to add a new parameter to __init__?",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.callbacks.model_checkpoint"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.callbacks.model_checkpoint"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "central"
+      }
+    ],
+    "risk_tier": "moderate-high",
+    "skill": "feature"
+  },
+  {
+    "ground_truth_keys": [
+      "direct_imports",
+      "imported_by",
+      "coupled"
+    ],
+    "id": "F-05",
+    "primary_module": "lightning.fabric.fabric",
+    "prompt": "Add an optional timeout parameter to Fabric.barrier() so long-running distributed syncs can raise instead of hanging. The implementation lives in fabric.fabric. Before I add the parameter, I need to know how coupled fabric.fabric is and which strategies it delegates barriers to.",
+    "queries": [
+      {
+        "args": [
+          "lightning.fabric.fabric"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.fabric.fabric"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "coupled"
+      }
+    ],
+    "risk_tier": "high",
+    "skill": "feature"
+  },
+  {
+    "ground_truth_keys": [
+      "direct_imports",
+      "imported_by",
+      "central",
+      "coupled"
+    ],
+    "id": "R-01",
+    "primary_module": "lightning.pytorch.trainer.trainer",
+    "prompt": "The Trainer class in trainer.trainer has grown to 3000+ lines mixing setup, loop coordination, and configuration validation. I want to split it: one module for TrainerConfig (validation + defaults) and one for TrainerRunner (loop orchestration). Give me the full structural picture before I start.",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.trainer.trainer"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.trainer.trainer"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "central"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "coupled"
+      }
+    ],
+    "risk_tier": "very-high",
+    "skill": "refactor"
+  },
+  {
+    "ground_truth_keys": [
+      "direct_imports",
+      "imported_by",
+      "path"
+    ],
+    "id": "R-02",
+    "primary_module": "lightning.pytorch.core.module",
+    "prompt": "LightningModule in core.module inherits from 6 mixins defined across core.hooks, core.optimizer, core.saving, and core.mixins.*. I want to flatten the hierarchy to 2 mixins max. What is the full import picture and who will be affected?",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.core.module"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.core.module"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.core.module",
+          "lightning.pytorch.trainer.trainer"
+        ],
+        "cmd": "path"
+      }
+    ],
+    "risk_tier": "very-high",
+    "skill": "refactor"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports",
+      "coupled"
+    ],
+    "id": "R-03",
+    "primary_module": "lightning.fabric.utilities.cloud_io",
+    "prompt": "The fabric.utilities.cloud_io module mixes filesystem abstraction, GCS helpers, and S3 URL parsing. I want to split it into cloud_io.filesystem, cloud_io.gcs, and cloud_io.s3. Map all callers before I change any imports.",
+    "queries": [
+      {
+        "args": [
+          "lightning.fabric.utilities.cloud_io"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.fabric.utilities.cloud_io"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "coupled"
+      }
+    ],
+    "risk_tier": "moderate-high",
+    "skill": "refactor"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports",
+      "path",
+      "central"
+    ],
+    "id": "R-04",
+    "primary_module": "lightning.pytorch.accelerators.accelerator",
+    "prompt": "The accelerator selection logic is scattered across accelerators.accelerator, accelerators.cpu, accelerators.cuda, accelerators.mps, and accelerators.tpu. I want to replace the class hierarchy with a single dispatch table in accelerators.registry. Map the full coupling picture first.",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.accelerators.accelerator"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.accelerators.cuda"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.accelerators.accelerator",
+          "lightning.pytorch.trainer.trainer"
+        ],
+        "cmd": "path"
+      },
+      {
+        "args": [
+          "--top",
+          "5"
+        ],
+        "cmd": "central"
+      }
+    ],
+    "risk_tier": "moderate",
+    "skill": "refactor"
+  },
+  {
+    "ground_truth_keys": [
+      "imported_by",
+      "direct_imports"
+    ],
+    "id": "R-05",
+    "primary_module": "lightning.pytorch.loops.utilities",
+    "prompt": "The loops.utilities module has only 3 public functions all of which are called exclusively from loops.training_epoch_loop. I want to inline them and delete the utilities module. Confirm no other module imports loops.utilities before I delete it.",
+    "queries": [
+      {
+        "args": [
+          "lightning.pytorch.loops.utilities"
+        ],
+        "cmd": "rdeps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.loops.utilities"
+        ],
+        "cmd": "deps"
+      },
+      {
+        "args": [
+          "lightning.pytorch.loops.training_epoch_loop"
+        ],
+        "cmd": "deps"
+      }
+    ],
+    "risk_tier": "low",
+    "skill": "refactor"
+  }
+]

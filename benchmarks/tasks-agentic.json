@@ -1,0 +1,50 @@
+[
+  {
+    "id": "T01",
+    "primary_module": "lightning.pytorch.trainer.connectors.checkpoint_connector",
+    "prompt": "Checkpointing silently skips saving the final epoch when max_epochs is divisible by check_val_every_n_epoch. The fix changes the interface of `lightning.pytorch.trainer.connectors.checkpoint_connector`.\n\nMap the blast radius before touching anything:\n1. Which modules directly import checkpoint_connector?\n2. For each of those importers, how many other modules import it in turn? (second-order exposure)\n3. Name the top 2 most-exposed importers.\n\nProduce a ranked list of module names with importer counts. Do not implement a fix.",
+    "type": "fix"
+  },
+  {
+    "id": "T02",
+    "primary_module": "lightning.fabric.plugins.environments.slurm",
+    "prompt": "SLURM jobs get requeued twice on preemption \u2014 once by our code, once by the scheduler. The fix tightens the requeue guard in `lightning.fabric.plugins.environments.slurm`.\n\nBefore touching slurm, map the interaction risk:\n1. Which modules import slurm?\n2. Which modules import `lightning.fabric.plugins.environments.lightning`?\n3. Any module on both lists is simultaneously coupled to two environment plugins \u2014 flag it as the highest interaction risk.\n\nProduce two importer lists and call out any overlap. Do not implement a fix.",
+    "type": "fix"
+  },
+  {
+    "id": "T03",
+    "primary_module": "lightning.pytorch.callbacks.callback",
+    "prompt": "We are adding a new `on_before_predict_epoch` hook to the callback system starting from `lightning.pytorch.callbacks.callback`.\n\nBefore touching anything, understand the scope:\n1. Which modules import callback? These will all need updating.\n2. Which modules in the codebase import the most other modules (top 10 by import count)? These are the most tangled and hardest to change safely.\n3. Flag any callback importer that also appears in the top-10 most-coupled list.\n\nProduce two lists and flag the overlap. Do not implement the feature.",
+    "type": "feature"
+  },
+  {
+    "id": "T04",
+    "primary_module": "lightning.fabric.strategies.fsdp",
+    "prompt": "We are adding a new distributed strategy modelled on `lightning.fabric.strategies.fsdp`.\n\nBefore writing any code:\n1. What does fsdp itself import? These define the interfaces a new strategy must satisfy.\n2. Does `lightning.fabric.fabric` eventually depend on fsdp \u2014 directly or through intermediaries? Trace the dependency chain to find out.\n3. Which modules import fsdp? These callers must stay compatible with any new strategy.\n\nProduce a deps list, the dependency chain (or 'no dependency found'), and a callers list. Do not implement the strategy.",
+    "type": "feature"
+  },
+  {
+    "id": "T05",
+    "primary_module": "lightning.pytorch.utilities.rank_zero",
+    "prompt": "We want to move `lightning.pytorch.utilities.rank_zero` into a standalone package.\n\nBefore starting, assess the scope:\n1. List every module that imports rank_zero \u2014 these all need import path updates.\n2. Which modules are imported by the most other modules in the codebase (top 10)? These are the highest blast-radius targets.\n3. Flag any rank_zero caller that also appears in the top-10 most-imported list \u2014 updating those carries amplified downstream risk.\n4. Report the total count of direct callers.\n\nProduce the full caller list, the top-10 list, the flagged overlap, and the count. Do not implement the refactor.",
+    "type": "refactor"
+  },
+  {
+    "id": "T06",
+    "primary_module": "lightning.fabric.utilities.cloud_io",
+    "prompt": "We are refactoring `lightning.fabric.utilities.cloud_io` to support async I/O, which will change its call interface.\n\nBefore changing anything:\n1. Which modules import cloud_io? These must all be updated.\n2. Does `lightning.pytorch.trainer.trainer` eventually depend on cloud_io \u2014 directly or through intermediaries? Trace the chain; if yes, trainer must be included in the refactor scope.\n3. Of cloud_io's direct callers, rank the top 3 by how many modules import them \u2014 those are the highest-risk callers to update.\n\nProduce the caller list, the dependency chain (or 'no dependency'), and the top-3 risk ranking. Do not implement the refactor.",
+    "type": "refactor"
+  },
+  {
+    "id": "T07",
+    "primary_module": "lightning.fabric.strategies.fsdp",
+    "prompt": "Review `lightning.fabric.strategies.fsdp` before merging a change to its API surface.\n\nQuantify the risk using the import graph:\n1. Which modules import fsdp?\n2. How many modules does fsdp itself import? A high number means more ways it can break.\n3. How does fsdp rank among the most widely imported modules in the codebase \u2014 is it in the top 10?\n4. Of fsdp's direct callers, which 3 are themselves most widely imported, and why does that make them the highest regression risk?\n\nProduce importer list, fsdp dep count, centrality rank, and top-3 risk assessment. Do not approve or reject the change.",
+    "type": "review"
+  },
+  {
+    "id": "T08",
+    "primary_module": "lightning.pytorch.callbacks.model_checkpoint",
+    "prompt": "Review `lightning.pytorch.callbacks.model_checkpoint` before changing when and where it decides to save.\n\nMap the impact using the import graph:\n1. Which modules import model_checkpoint?\n2. Which modules does model_checkpoint itself import?\n3. Are there any modules on both lists? Mutual coupling is the highest entanglement risk.\n4. Does `lightning.pytorch.trainer.trainer` eventually reach model_checkpoint \u2014 directly or through intermediaries? Trace the chain.\n\nProduce rdeps list, deps list, any mutual coupling, and the dependency chain. Do not implement any change.",
+    "type": "review"
+  }
+]
