@@ -149,18 +149,18 @@ Specialist roles with deep domain knowledge — requested by name, or auto-selec
 
 | Agent                  | Claude [plugins] | Codex | Purpose                                                       |
 | ---------------------- | ---------------- | ----- | ------------------------------------------------------------- |
-| **doc-scribe**         | foundry          | ✓     | Google/Napoleon docstrings, Sphinx/mkdocs, API references     |
-| **linting-expert**     | foundry          | ✓     | ruff, mypy, pre-commit, type annotations                      |
-| **perf-optimizer**     | foundry          | —     | Profile-first CPU/GPU/memory/I/O, torch.compile               |
-| **qa-specialist**      | foundry          | ✓     | pytest, hypothesis, mutation testing, ML test patterns        |
-| **self-mentor**        | foundry          | ✓     | Config quality review, duplication detection, cross-ref audit |
-| **solution-architect** | foundry          | ✓     | System design, ADRs, API surface, migration plans             |
-| **sw-engineer**        | foundry          | ✓     | Architecture, implementation, SOLID principles, type safety   |
-| **web-explorer**       | foundry          | ✓     | API version comparison, migration guides, PyPI tracking       |
-| **ci-guardian**        | oss              | ✓     | GitHub Actions, test matrices, flaky test detection, caching  |
-| **shepherd**           | oss              | ✓     | Issue triage, PR review, SemVer, releases, trusted publishing |
-| **data-steward**       | research         | ✓     | Dataset versioning, split validation, leakage detection       |
-| **scientist**          | research         | —     | Paper analysis, hypothesis generation, experiment design      |
+| **doc-scribe**         | 🟠 foundry       | ✓     | Google/Napoleon docstrings, Sphinx/mkdocs, API references     |
+| **linting-expert**     | 🟠 foundry       | ✓     | ruff, mypy, pre-commit, type annotations                      |
+| **perf-optimizer**     | 🟠 foundry       | —     | Profile-first CPU/GPU/memory/I/O, torch.compile               |
+| **qa-specialist**      | 🟠 foundry       | ✓     | pytest, hypothesis, mutation testing, ML test patterns        |
+| **self-mentor**        | 🟠 foundry       | ✓     | Config quality review, duplication detection, cross-ref audit |
+| **solution-architect** | 🟠 foundry       | ✓     | System design, ADRs, API surface, migration plans             |
+| **sw-engineer**        | 🟠 foundry       | ✓     | Architecture, implementation, SOLID principles, type safety   |
+| **web-explorer**       | 🟠 foundry       | ✓     | API version comparison, migration guides, PyPI tracking       |
+| **ci-guardian**        | 🟢 oss           | ✓     | GitHub Actions, test matrices, flaky test detection, caching  |
+| **shepherd**           | 🟢 oss           | ✓     | Issue triage, PR review, SemVer, releases, trusted publishing |
+| **data-steward**       | 🟣 research      | ✓     | Dataset versioning, split validation, leakage detection       |
+| **scientist**          | 🟣 research      | —     | Paper analysis, hypothesis generation, experiment design      |
 
 ## 🤖 Claude Code
 
@@ -172,30 +172,30 @@ Skills are multi-agent workflows invoked via slash commands. Each skill composes
 
 After running `/foundry:init link`, foundry skills are available without a prefix. OSS, develop, and research skills always use their plugin prefix.
 
-| Skill               | Plugin   | What It Does                                                                                                                                                           |
-| ------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `/brainstorm`       | foundry  | `/brainstorm <idea>` — clarifying questions → approaches → spec → self-mentor review → approval gate; `breakdown <spec>` — ordered task table with per-task skill tags |
-| `/manage`           | foundry  | Create, update, delete agents/skills/rules; manage `settings.json` permissions; auto type-detection and cross-ref propagation                                          |
-| `/investigate`      | foundry  | Systematic diagnosis for unknown failures — env, tools, hooks, CI divergence; ranks hypotheses and hands off to the right skill                                        |
-| `/session`          | foundry  | Parking lot for diverging ideas — auto-parks unanswered questions and deferred threads; `resume` shows pending, `archive` closes, `summary` digests the session        |
-| `/audit`            | foundry  | Config audit: broken refs, inventory drift, docs freshness; `fix [high\|medium\|all]` auto-fixes by severity; `upgrade` applies docs-sourced improvements              |
-| `/calibrate`        | foundry  | Synthetic benchmarks measuring recall vs confidence bias                                                                                                               |
-| `/distill`          | foundry  | Suggest new agents/skills, prune memory, consolidate lessons into rules                                                                                                |
-| `/develop:plan`     | develop  | Scope analysis and implementation planning without code changes                                                                                                        |
-| `/develop:feature`  | develop  | TDD-first feature implementation: codebase analysis, demo test, TDD loop, docs, review                                                                                 |
-| `/develop:fix`      | develop  | Reproduce-first bug fixes: regression test, minimal fix, quality stack                                                                                                 |
-| `/develop:debug`    | develop  | Systematic debugging for known test failures                                                                                                                           |
-| `/develop:refactor` | develop  | Test-first refactors with scope analysis                                                                                                                               |
-| `/develop:review`   | develop  | Six-agent parallel review of local files or current git diff; no GitHub PR needed                                                                                      |
-| `/oss:analyse`      | oss      | GitHub thread analysis; `health` = repo overview + duplicate issue clustering                                                                                          |
-| `/oss:review`       | oss      | Tiered parallel review of GitHub PRs; `--reply` drafts welcoming contributor comments                                                                                  |
-| `/oss:resolve`      | oss      | OSS fast-close: resolving conflicts + applying review comments via codex-plugin-cc; three source modes: `pr`, `report`, `pr + report`                                  |
-| `/oss:release`      | oss      | SemVer-disciplined release pipeline: notes, changelog with deprecation tracking, migration guides, full prepare pipeline                                               |
-| `/research:topic`   | research | SOTA literature research with codebase-mapped implementation plan                                                                                                      |
-| `/research:plan`    | research | Config wizard: profile-first bottleneck discovery → `program.md`                                                                                                       |
-| `/research:judge`   | research | Research-supervisor review of experimental methodology (APPROVED/NEEDS-REVISION/BLOCKED)                                                                               |
-| `/research:run`     | research | Metric-driven iteration loop; `--resume` continues after crash; `--team` for parallel exploration; `--colab` for GPU workloads                                         |
-| `/research:sweep`   | research | Non-interactive pipeline: auto-plan → judge gate → run                                                                                                                 |
+| Skill                  | What It Does                                                                                                                                                           |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🟠 `/brainstorm`       | `/brainstorm <idea>` — clarifying questions → approaches → spec → self-mentor review → approval gate; `breakdown <spec>` — ordered task table with per-task skill tags |
+| 🟠 `/manage`           | Create, update, delete agents/skills/rules; manage `settings.json` permissions; auto type-detection and cross-ref propagation                                          |
+| 🟠 `/investigate`      | Systematic diagnosis for unknown failures — env, tools, hooks, CI divergence; ranks hypotheses and hands off to the right skill                                        |
+| 🟠 `/session`          | Parking lot for diverging ideas — auto-parks unanswered questions and deferred threads; `resume` shows pending, `archive` closes, `summary` digests the session        |
+| 🟠 `/audit`            | Config audit: broken refs, inventory drift, docs freshness; `fix [high\|medium\|all]` auto-fixes by severity; `upgrade` applies docs-sourced improvements              |
+| 🟠 `/calibrate`        | Synthetic benchmarks measuring recall vs confidence bias                                                                                                               |
+| 🟠 `/distill`          | Suggest new agents/skills, prune memory, consolidate lessons into rules                                                                                                |
+| 🔵 `/develop:plan`     | Scope analysis and implementation planning without code changes                                                                                                        |
+| 🔵 `/develop:feature`  | TDD-first feature implementation: codebase analysis, demo test, TDD loop, docs, review                                                                                 |
+| 🔵 `/develop:fix`      | Reproduce-first bug fixes: regression test, minimal fix, quality stack                                                                                                 |
+| 🔵 `/develop:debug`    | Systematic debugging for known test failures                                                                                                                           |
+| 🔵 `/develop:refactor` | Test-first refactors with scope analysis                                                                                                                               |
+| 🔵 `/develop:review`   | Six-agent parallel review of local files or current git diff; no GitHub PR needed                                                                                      |
+| 🟢 `/oss:analyse`      | GitHub thread analysis; `health` = repo overview + duplicate issue clustering                                                                                          |
+| 🟢 `/oss:review`       | Tiered parallel review of GitHub PRs; `--reply` drafts welcoming contributor comments                                                                                  |
+| 🟢 `/oss:resolve`      | OSS fast-close: resolving conflicts + applying review comments via codex-plugin-cc; three source modes: `pr`, `report`, `pr + report`                                  |
+| 🟢 `/oss:release`      | SemVer-disciplined release pipeline: notes, changelog with deprecation tracking, migration guides, full prepare pipeline                                               |
+| 🟣 `/research:topic`   | SOTA literature research with codebase-mapped implementation plan                                                                                                      |
+| 🟣 `/research:plan`    | Config wizard: profile-first bottleneck discovery → `program.md`                                                                                                       |
+| 🟣 `/research:judge`   | Research-supervisor review of experimental methodology (APPROVED/NEEDS-REVISION/BLOCKED)                                                                               |
+| 🟣 `/research:run`     | Metric-driven iteration loop; `--resume` continues after crash; `--team` for parallel exploration; `--colab` for GPU workloads                                         |
+| 🟣 `/research:sweep`   | Non-interactive pipeline: auto-plan → judge gate → run                                                                                                                 |
 
 → Full command reference, orchestration flows, rules (13 auto-loaded rule files), architecture internals, status line — see [`.claude/README.md` → Skills](.claude/README.md#-skills)
 

@@ -430,7 +430,25 @@ grep -n "<broken-name>" <fixed-file>
 # Flag any < 0.7 for targeted re-run
 ```
 
-If re-audit surfaces new issues, loop back to Step 8 for those findings only (max 2 re-audit cycles — escalate to user if still unresolved).
+**Convergence loop**: if the re-audit surfaces new fixable findings at the active fix level, loop back to Step 8 with those findings. Repeat until:
+
+- Zero fixable findings remain (convergence achieved) → mark fix pass complete, or
+- Hard limit: **5 total fix passes** (including the initial Step 8 pass) — if still not converged, surface all remaining fixable findings to the user with a `⚠ CONVERGENCE LIMIT` warning explaining which issues resisted fixing.
+
+Track pass count with a counter initialized to 1 at the first Step 8 execution. Increment before each re-entry into Step 8. Never suppress findings to make the counter appear clean.
+
+The audit-fix sub-agent (when used) must also apply this loop internally — its prompt should instruct it to keep spawning fix agents and re-audit agents until clean or 5-pass limit reached.
+
+**Cross-file re-validation**: after per-file re-audit completes for this pass, re-run the subset of system-wide checks (Step 4) that are sensitive to the files modified in this pass:
+
+- Check 1 (inventory drift) — if any agent or skill file was modified
+- Check 2 (README vs disk) — if any agent or skill was added, renamed, or deleted
+- Check 14 (orphaned follow-up references) — if any skill file was modified
+- Check 17 (cross-file content duplication) — if two or more files were modified
+- Check 25 (implicit agent references) — if any agent or skill file was modified
+- Check 27 (cross-plugin shared-file ref integrity) — if any skill file was modified
+
+Write cross-file re-validation findings to `<RUN_DIR>/crossfile-revalidation-pass<N>.md` where N is the current pass count. Include any new findings in the convergence loop input for the next Step 8 iteration.
 
 ## Step 11: Final report
 
@@ -455,25 +473,41 @@ Output the complete audit summary: List each audited file by name in the `### Fi
 | medium | N | N | 0 |
 | low | N | N (fix all only) | N |
 
+**Fix convergence**: Converged in N pass(es) — 0 fixable findings remain.
+```
+
+Or if limit hit:
+
+```
+**Fix convergence**: ⚠ CONVERGENCE LIMIT reached (5 passes) — N fixable findings remain (see Remaining section).
+```
+
+(Omit the fix convergence line for report-only runs — only shown when a fix level was passed.)
+
 ### Fixes Applied
-| File | Change |
-|---|---|
+
+| File          | Change                                            |
+| ------------- | ------------------------------------------------- |
 | agents/foo.md | Replaced broken ref `old-agent` → `correct-agent` |
 
 ### Remaining (low/nits — auto-fixed only with 'fix all'; otherwise manual review optional)
+
 - [low findings that were not auto-fixed]
 - [any infinite loops flagged for user decision]
 
 ### Agent Confidence
-| File | Score | Label | Gaps |
-|------|-------|-------|------|
-| agents/foo.md | 0.92 | high | — |
-| skills/bar/SKILL.md | 0.64 | ⚠ low | no runtime data for bash validation |
+
+| File                | Score | Label | Gaps                                |
+| ------------------- | ----- | ----- | ----------------------------------- |
+| agents/foo.md       | 0.92  | high  | —                                   |
+| skills/bar/SKILL.md | 0.64  | ⚠ low | no runtime data for bash validation |
 
 Low-confidence files re-audited: N | Still uncertain after retry: N (see gaps above)
 
 ### Next Step
+
 Run `/foundry:init` to propagate clean config to ~/.claude/
+
 ```
 
 ## Mode: upgrade
@@ -495,7 +529,7 @@ Read and execute `plugins/foundry/skills/audit/modes/upgrade.md`.
 - **Report before fix**: never silently mutate files — always present the findings report first (Step 7), then fix
 - **settings.json is hands-off**: missing permissions are always reported, never auto-edited — structural JSON edits risk breaking Claude Code's config loading
 - **Dead loops need human judgment**: a cycle in follow-up chains might be intentional (e.g., refactor → review → fix → refactor) — flag and explain, don't auto-remove
-- **Max 2 re-audit cycles**: if fixes don't converge after 2 loops, surface the remaining issues to the user rather than spinning
+- **Convergence loop replaces cycle cap**: the fix loop runs until zero fixable findings remain or the 5-pass hard limit is hit — see Step 10 for the full protocol
 - **Relationship to self-mentor**: `foundry:self-mentor` is a single-file reactive audit; `/audit` is the system-wide sweep that runs foundry:self-mentor at scale and adds cross-file checks
 - `general-purpose` is a built-in Claude Code agent type (no `.claude/agents/general-purpose.md` file needed); no custom system prompt, all tools available.
 - **Paths must be portable**: `.claude/` for project-relative paths, `~/` or `$HOME/` for home paths — never a literal `/Users/<name>/` or `/home/<name>/` path (shown here as anti-examples only); this rule applies to ALL config files including `settings.json`
@@ -515,3 +549,4 @@ Read and execute `plugins/foundry/skills/audit/modes/upgrade.md`.
   - Audit Check 22 found stale domain table entry → remove it from `calibrate/modes/skills.md`
 
 </notes>
+```
