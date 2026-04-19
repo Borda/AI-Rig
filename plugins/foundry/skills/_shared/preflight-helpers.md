@@ -1,6 +1,8 @@
+**Re: Compress preflight helpers doc to caveman format**
+
 # Preflight Helpers
 
-TTL-based binary availability caching for skill pre-flight checks. Results are cached for 4 hours (14400 seconds) per binary name under `.claude/state/preflight/`. Avoids repeated `command -v` calls across checks within the same session.
+TTL binary availability cache for skill pre-flight checks. Results cached 4 hours (14400 sec) per binary under `.claude/state/preflight/`. Skips repeated `command -v` calls within session.
 
 ## Functions
 
@@ -18,11 +20,11 @@ preflight_pass() {
 }
 ```
 
-Cache files are written to `.claude/state/preflight/<binary>.ok` and contain a Unix timestamp. The 4-hour TTL check handles staleness — no manual cleanup needed.
+Cache files at `.claude/state/preflight/<binary>.ok` hold Unix timestamp. 4-hour TTL handles staleness — no cleanup needed.
 
 ## Usage
 
-Check a binary and optionally skip a step if it is unavailable:
+Check binary, skip step if unavailable:
 
 ```bash
 if preflight_ok jq; then
@@ -36,7 +38,7 @@ else
 fi
 ```
 
-Warning-only form (absence is non-fatal):
+Warning-only (absence non-fatal):
 
 ```bash
 if ! preflight_ok git && ! command -v git &>/dev/null; then
@@ -46,7 +48,7 @@ else
 fi
 ```
 
-Combined check-and-run pattern (inline pass on first use):
+Combined check-and-run (inline pass on first use):
 
 ```bash
 if (preflight_ok pre-commit || { command -v pre-commit &>/dev/null && preflight_pass pre-commit; }) &&
@@ -57,20 +59,20 @@ fi
 
 ## Key Registry
 
-| Key          | Check                                                                                     | Used by                |
-| ------------ | ----------------------------------------------------------------------------------------- | ---------------------- |
-| `git`        | `command -v git` — git on PATH                                                            | `audit`                |
-| `codex`      | `[ -n "$CLAUDE_PLUGIN_DATA" ] && echo "$CLAUDE_PLUGIN_DATA" \| grep 'codex-openai-codex'` | `resolve`, `calibrate` |
-| `gh`         | `which gh` — GitHub CLI on PATH                                                           | `resolve`              |
-| `jq`         | `command -v jq` — jq on PATH                                                              | `audit`                |
-| `pre-commit` | `command -v pre-commit` — pre-commit on PATH                                              | `audit`                |
+| Key | Check | Used by |
+| --- | --- | --- |
+| `git` | `command -v git` — git on PATH | `audit` |
+| `codex` | `[ -n "$CLAUDE_PLUGIN_DATA" ] && [[ "$CLAUDE_PLUGIN_DATA" == *codex-openai-codex* ]]` | `resolve`, `calibrate` |
+| `gh` | `which gh` — GitHub CLI on PATH | `resolve` |
+| `jq` | `command -v jq` — jq on PATH | `audit` |
+| `pre-commit` | `command -v pre-commit` — pre-commit on PATH | `audit` |
 
-**Update this table** when adding a new cacheable check to any skill.
+**Update table** when adding new cacheable check to any skill.
 
 ## What NOT to Cache
 
-- `gh auth status` — validates token against GitHub API; token can expire
+- `gh auth status` — validates token against GitHub; token can expire
 - `git status --porcelain` — live working-tree state, changes constantly
-- `git rev-parse --abbrev-ref HEAD` — branch can change during a session
+- `git rev-parse --abbrev-ref HEAD` — branch can change mid-session
 - Any `metric_cmd` or `guard_cmd` output — depends on current code state
-- Network reachability checks of any kind
+- Network reachability checks

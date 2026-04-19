@@ -1,8 +1,10 @@
+**Re: Compress quality-stack.md to caveman format**
+
 # Shared Quality Stack
 
 Used by develop mode skills (feature, fix, refactor, debug). Invoked via `Read(".claude/skills/_shared/quality-stack.md")`.
 
-Skip the branch safety guard in `plan` mode — plan makes no code changes.
+Skip branch safety guard in `plan` mode — plan makes no code changes.
 
 ## Branch Safety Guard
 
@@ -15,7 +17,7 @@ if [ "$CURRENT_BRANCH" = "$DEFAULT_BRANCH" ] || [ "$CURRENT_BRANCH" = "main" ] |
 fi
 ```
 
-If the guard fires: stop, report the branch name, and ask the user to create a feature branch.
+Guard fires: stop, report branch name, ask user create feature branch.
 
 ## Quality Stack
 
@@ -36,45 +38,45 @@ uv run pytest <test_dir> -v --tb=short -q  # timeout: 600000
 uv run pytest --doctest-modules <target_module> -v 2>&1 | tail -20  # timeout: 600000
 ```
 
-Spawn a **foundry:linting-expert** agent if mypy or ruff issues require non-trivial fixes.
+Spawn **foundry:linting-expert** agent if mypy or ruff issues need non-trivial fixes.
 
 ## Codex Pre-pass
 
-Mandatory after the quality stack completes. Gracefully degrades if Codex is unavailable.
+Mandatory after quality stack. Degrades gracefully if Codex unavailable.
 
-Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass on the changes.
+Read `.claude/skills/_shared/codex-prepass.md` and run Codex pre-pass on changes.
 
 ### Codex pre-pass: additional inline steps (step 1 is in the shared file)
 
-2. **Collect findings**: build `CODEX_FINDINGS` — a bullet list of every flagged issue from the `codex:review` output. If nothing was found or the step was skipped, set `CODEX_FINDINGS=""`. The review is read-only — no working-tree changes are made.
-3. **Actor context**: note whether Codex was involved (found real issues that were acted on). Pass this as context when committing — `git-commit.md` decides the trailers.
+2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `codex:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only — no working-tree changes.
+3. **Actor context**: note whether Codex involved (found real issues acted on). Pass as context when committing — `git-commit.md` decides trailers.
 
-Include a `### Codex Pre-pass` section in the final report:
+Include `### Codex Pre-pass` section in final report:
 
-- Available + findings: list what Codex flagged (these become the `CODEX_FINDINGS` seed)
+- Available + findings: list what Codex flagged (become `CODEX_FINDINGS` seed)
 - Available + no issues: "Codex pre-pass: no issues found"
 - Skipped (unavailable): "codex plugin (openai-codex) not installed — pre-pass skipped"
 
 ## Progressive Review Loop
 
-Maximum 3 cycles. Applied after the quality stack.
+Max 3 cycles. Applied after quality stack.
 
 **Cycle 1: Full review**
 
-- Invoke `/oss:review` for a full multi-agent code review. If `CODEX_FINDINGS` is non-empty, prepend it to the review brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS"
+- Invoke `/oss:review` for full multi-agent code review. `CODEX_FINDINGS` non-empty → prepend to review brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS"
 - Capture review state: `{agents_with_findings, unresolved_findings, files_reviewed}`
-- If clean (no critical/high findings): skip to report
+- Clean (no critical/high findings): skip to report
 
 **Cycle 2: Targeted re-check**
 
 - Fix critical/high findings from Cycle 1
 - Re-run quality stack on modified files only
-- Set up a run directory for file-based handoff: `RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"`
-- For each agent type in `agents_with_findings`: spawn that agent directly (not `/oss:review`) with a focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
+- Set up run dir for file-based handoff: `RUN_DIR=".developments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"; mkdir -p "$RUN_DIR"`
+- For each agent type in `agents_with_findings`: spawn directly (not `/oss:review`) with focused prompt scoped to modified files + prior findings. Each agent prompt must end with: "Write your full findings to `$RUN_DIR/<agent-name>.md` using the Write tool. Return ONLY a compact JSON envelope: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.N,\"summary\":\"<agent-name>: N critical, N high\"}`"
 
-Replace bare agent names in spawn prompts with their `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
+Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
 
-**Health monitoring** (CLAUDE.md SS8): after spawning, create a checkpoint:
+**Health monitoring** (CLAUDE.md SS8): after spawning, create checkpoint:
 
 ```bash
 DEVELOP_CHECKPOINT="/tmp/develop-check-$(date +%s)" # timeout: 5000
@@ -88,21 +90,21 @@ COUNT=$(find "$RUN_DIR" -newer "$DEVELOP_CHECKPOINT" -type f | wc -l) # timeout:
 touch "$DEVELOP_CHECKPOINT"                                           # refresh — next poll detects only new writes, not old ones  # timeout: 5000
 ```
 
-`COUNT == 0` -> stalled; `COUNT > 0` -> alive. Hard cutoff: 15 min with COUNT == 0 -> timed out.
+`COUNT == 0` → stalled; `COUNT > 0` → alive. Hard cutoff: 15 min COUNT == 0 → timed out.
 
-- Skip agents that were clean in Cycle 1
-- Collect envelopes to update review state (do not read the full finding files into context — check envelopes to determine if critical/high remain)
+- Skip agents clean in Cycle 1
+- Collect envelopes to update review state (don't read full finding files into context — check envelopes to determine if critical/high remain)
 
 **Cycle 3: Minimal verification**
 
 - Fix remaining critical/high findings
 - Re-run quality stack only (no agents)
-- If clean: proceed to report
-- If still failing: stop and present findings to user — do not loop further
+- Clean: proceed to report
+- Still failing: stop, present findings to user — no further looping
 
 **Context optimization between cycles**:
 
-- If context usage is high, write review state to `.claude/state/develop-review-state.md` before any compaction:
+- Context usage high → write review state to `.claude/state/develop-review-state.md` before compaction:
   ```
   # Develop Review State
   cycle: <N>
@@ -111,13 +113,13 @@ touch "$DEVELOP_CHECKPOINT"                                           # refresh 
   files_modified: [list]
   agents_with_issues: [list]
   ```
-- After compaction, read it back to resume at the correct cycle
-- Delete the file when the review loop completes
+- After compaction, read back to resume at correct cycle
+- Delete file when review loop completes
 
 ## Codex Mechanical Delegation
 
-Read `.claude/skills/_shared/codex-delegation.md` and apply the delegation criteria. Delegate mechanical follow-up tasks to Codex when an accurate, specific brief can be written.
+Read `.claude/skills/_shared/codex-delegation.md` and apply delegation criteria. Delegate mechanical follow-up tasks to Codex when accurate specific brief writable.
 
-This step is distinct from the Codex pre-pass above — the pre-pass checks the implementation diff for correctness; mechanical delegation outsources low-level follow-up work (scaffolding, boilerplate, migration scripts, etc.) after the review loop closes.
+Distinct from Codex pre-pass above — pre-pass checks implementation diff for correctness; mechanical delegation outsources low-level follow-up work (scaffolding, boilerplate, migration scripts, etc.) after review loop closes.
 
-Only include a `### Codex Delegation` section in the final report when tasks were actually delegated — omit entirely if nothing was delegated.
+Include `### Codex Delegation` section in final report only when tasks actually delegated — omit entirely if nothing delegated.

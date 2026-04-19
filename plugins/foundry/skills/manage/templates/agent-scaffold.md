@@ -21,11 +21,11 @@ name / description / tools / model / color (frontmatter)
 
 **Content rules:** `<role>` and `<workflow>` use normal tags; all other sections use `\<escaped>` tags. Generate real domain content (80-120 lines total).
 
-**Tool selection**: match tools precisely to the domain — do not pad the list. Guidelines by role type:
+**Tool selection**: match tools precisely to domain — no padding. Guidelines by role:
 
-- Analysis / read-only agents (e.g., `solution-architect`, `doc-scribe`): start with `Read, Grep, Glob`; add `WebFetch`/`WebSearch` only if the domain involves fetching external docs or URLs; add `Write` only if the agent creates output files
-- Code execution agents (e.g., `linting-expert`, `perf-optimizer`, `ci-guardian`): include `Bash`; add `Write`/`Edit` only if the agent modifies code
-- Skills that orchestrate agent subagents (e.g., `review`, `feature`, `audit`): include `Agent` in `allowed-tools`
+- Analysis/read-only agents (e.g., `solution-architect`, `doc-scribe`): start `Read, Grep, Glob`; add `WebFetch`/`WebSearch` only if domain fetches external docs/URLs; add `Write` only if agent creates output files
+- Code execution agents (e.g., `linting-expert`, `perf-optimizer`, `ci-guardian`): include `Bash`; add `Write`/`Edit` only if agent modifies code
+- Skills orchestrating subagents (e.g., `review`, `feature`, `audit`): include `Agent` in `allowed-tools`
 - Web-research agents (e.g., `web-explorer`, `scientist`): include `WebFetch` and/or `WebSearch`
 
-Remove any tool that serves no purpose for the declared domain. A minimal, precise list is safer and clearer than a maximal one.
+Drop any tool serving no purpose for declared domain. Minimal precise list beats maximal one.

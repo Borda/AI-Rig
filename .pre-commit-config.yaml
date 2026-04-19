@@ -86,7 +86,8 @@ repos:
     rev: 1.0.0
     hooks:
       - id: mdformat
-        name: 📝 mdformat
+        name: 📝 mdformat (general)
+        exclude: ^plugins/(?!.*README\.md$)
         args: ["--number", "--wrap=no"]
         additional_dependencies:
           - mdformat-gfm
@@ -96,7 +97,6 @@ repos:
           - mdformat-beautysh
           - mdformat-admon
           - mdformat-web
-
   - repo: https://github.com/lycheeverse/lychee.git
     rev: lychee-v0.23.0
     hooks:
@@ -116,6 +116,53 @@ repos:
         entry: node --check
         files: ^\.claude/hooks/.*\.js$|^\.codex/hooks/.*\.js$
         types: [javascript]
+
+      - id: trim-plugin-tables
+        name: ✂️ trim plugin table padding
+        language: system
+        entry: python3
+        args:
+          - "-c"
+          - |
+            import re, sys
+
+            fence = re.compile(r'^\s*(```|~~~)')
+            table = re.compile(r'^(\s*(?:>\s*)?)\|(.*)\|\s*$')
+            sep = re.compile(r':?-{3,}:?')
+
+            def emit(prefix, raw, end):
+                cells = [c.strip() for c in raw.split('|')]
+                rows = []; row = []
+                for c in cells:
+                    if c == '' and row:
+                        rows.append(row); row = []
+                    elif c != '':
+                        row.append(c)
+                if row: rows.append(row)
+                lines = []
+                for r in rows or [cells]:
+                    if all(sep.fullmatch(c or '') for c in r):
+                        r = [(':' if c.startswith(':') else '') + '---' + (':' if c.endswith(':') else '') for c in r]
+                    lines.append(f"{prefix}| {' | '.join(r)} |{end}")
+                if len(lines) > 1 and not end: lines[-1] = lines[-1].removesuffix('\n')
+                return ''.join(lines)
+
+            changed = False
+            for f in sys.argv[1:]:
+                old = open(f).read().splitlines(True); out = []; code = False
+                for ln in old:
+                    if fence.match(ln):
+                        code = not code; out.append(ln); continue
+                    end = '\n' if ln.endswith('\n') else ''; body = ln[:-1] if end else ln
+                    m = None if code else table.match(body)
+                    nl = emit(m.group(1), m.group(2), end) if m else ln
+                    if nl != ln: changed = True
+                    out.append(nl)
+                open(f, 'w').write(''.join(out))
+            sys.exit(1 if changed else 0)
+        files: ^plugins/.*\.md$
+        exclude: (?:^|/)README\.md$
+        types: [markdown]
 
       - id: no-hardcoded-user-paths
         name: 🚫 No hardcoded user paths

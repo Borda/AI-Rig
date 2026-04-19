@@ -158,7 +158,7 @@ Locate, evaluate, and trim the project memory file.
 ```bash
 # timeout: 3000
 PROJECT="$(git rev-parse --show-toplevel)"
-MEMORY_FILE="$HOME/.claude/projects/$(echo "$PROJECT" | sed 's|[/.]|-|g')/memory/MEMORY.md"
+MEMORY_FILE="$HOME/.claude/projects/$(echo "$PROJECT" | sed 's|[/.]|-|g' | sed 's|^-||')/memory/MEMORY.md"
 echo "Memory file located."
 ```
 
@@ -194,18 +194,7 @@ Read accumulated lessons and feedback, then identify patterns that should be pro
 
 Find and read all source material in parallel:
 
-```bash
-# timeout: 5000
-# .notes/lessons.md (if it exists)
-ls .notes/lessons.md 2>/dev/null && echo "found" || echo "not found"
-
-# Memory feedback files
-PROJECT="$(git rev-parse --show-toplevel)"
-MEMORY_DIR="$HOME/.claude/projects/$(echo "$PROJECT" | sed 's|[/.]|-|g')/memory" # slug derivation: git rev-parse --show-toplevel | sed 's|[/.]|-|g'
-ls "$MEMORY_DIR"/feedback_*.md 2>/dev/null || echo "no feedback files"
-```
-
-Read each found file with the Read tool. Also read `.claude/rules/` (Glob `rules/*.md`, path `.claude/`) to understand what's already captured as a rule.
+Use Read tool on `.notes/lessons.md` (skip if file not found). Derive MEMORY_DIR via canonical snippet from `<constants>`, then use Glob tool with pattern `feedback_*.md` in MEMORY_DIR to list feedback files; read each with Read tool. Also read `.claude/rules/` (Glob `rules/*.md`, path `.claude/`) to understand what's already captured as a rule.
 
 **Step L2: Cluster and classify**
 
@@ -220,13 +209,13 @@ Group all lessons/feedback entries by domain. Use model reasoning to identify cl
 
 For each lesson entry, classify its disposition:
 
-| Disposition         | Meaning                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------ |
-| `→ rule`            | Recurring enough to warrant a standalone `.claude/rules/<name>.md` file              |
-| `→ agent update`    | Specific to one agent's instructions — edit that agent's `.md` file                  |
-| `→ skill update`    | Specific to one skill's workflow — edit that skill's `SKILL.md`                      |
+| Disposition | Meaning |
+| --- | --- |
+| `→ rule` | Recurring enough to warrant a standalone `.claude/rules/<name>.md` file |
+| `→ agent update` | Specific to one agent's instructions — edit that agent's `.md` file |
+| `→ skill update` | Specific to one skill's workflow — edit that skill's `SKILL.md` |
 | `→ already covered` | Already present verbatim (or near-verbatim) in an existing rule, agent, or CLAUDE.md |
-| `→ too narrow`      | One-off, project-specific, or not generalizable — keep in memory only                |
+| `→ too narrow` | One-off, project-specific, or not generalizable — keep in memory only |
 
 Thresholds:
 
@@ -355,6 +344,6 @@ End your response with a `## Confidence` block per CLAUDE.md output standards.
   - Suggestion to enhance existing → edit the agent/skill directly, then `/foundry:init`
   - `lessons` proposals applied → `/foundry:init` to propagate; `/audit rules` to verify new rule files are structurally sound
 
-- **OpenSpace integration**: when OpenSpace MCP is active (`~/.claude/openspace/skills.db` exists), distill detects evolved skill variants by diffing `~/.claude/skills/` against `.claude/skills/`. Graduation = manual `cp -r ~/.claude/skills/<name> .claude/skills/<name>` + git commit; discard evolved variants that don't meet quality bar. If `docs/specs/2026-03-31-openspace-mcp-integration.md` exists (Borda.local project), see it for the full graduation flow.
+- **OpenSpace integration**: when OpenSpace MCP is active (`~/.claude/openspace/skills.db` exists), distill detects evolved skill variants by diffing `~/.claude/skills/` against `.claude/skills/`. Graduation = manual `cp -r ~/.claude/skills/<name> .claude/skills/<name>` + git commit; discard evolved variants that don't meet quality bar.
 
 </notes>

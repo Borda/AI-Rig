@@ -10,9 +10,9 @@ model: opus
 
 <objective>
 
-Research the literature on an AI/ML topic and return actionable findings: what SOTA methods exist, which fits best for the current use case, and a concrete implementation plan. This skill is an orchestrator — it gathers codebase context, delegates literature search and analysis to the researcher agent, and packages results into a structured report.
+Research AI/ML topic literature. Return actionable findings: SOTA methods, best fit, concrete implementation plan. Skill = orchestrator — gathers codebase context, delegates literature search to researcher agent, packages results into structured report.
 
-This skill is NOT for deep single-paper analysis or experiment design — use the `research:scientist` agent directly for hypothesis generation, ablation design, and experiment validation.
+NOT for deep single-paper analysis or experiment design — use `research:scientist` directly for hypothesis generation, ablation design, experiment validation.
 
 </objective>
 
@@ -20,8 +20,8 @@ This skill is NOT for deep single-paper analysis or experiment design — use th
 
 - **$ARGUMENTS**: one of:
   - `<topic>` — topic, method name, or problem description (e.g. "object detection for small objects", "efficient transformers", "self-supervised pretraining for medical images")
-  - `plan` — produce a phased implementation plan from the most recent research output (auto-detected from `.temp/`)
-  - `plan <path-to-output.md>` — produce a plan from a specific existing research output file
+  - `plan` — produce phased implementation plan from most recent research output (auto-detected from `.temp/`)
+  - `plan <path-to-output.md>` — produce plan from specific existing research output file
   - `--team` — multi-agent mode; spawns 2–3 researcher teammates for topics with 3+ competing method families and no SOTA consensus; ~7× token cost vs single-agent mode
 
 </inputs>
@@ -36,29 +36,29 @@ HARD_CUTOFF: 900   # 15 min — if researcher does not return, surface partial r
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, and report generation. Mark in_progress/completed throughout.
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation. Mark in_progress/completed throughout.
 
 ## Step 1: Understand the codebase context
 
-Before searching, read the current project to extract constraints:
+Read current project before searching, extract constraints:
 
-- Framework in use (PyTorch, JAX, TensorFlow, scikit-learn)?
-- Task being solved (classification, detection, generation, regression)?
+- Framework (PyTorch, JAX, TensorFlow, scikit-learn)?
+- Task (classification, detection, generation, regression)?
 - Constraints (latency, memory, dataset size, compute budget)?
 
 ## Step 2: Research & codebase check (run in parallel)
 
 ### 2a: Spawn researcher agent (issue with 2b simultaneously in one response)
 
-Task the researcher with a single objective: find the top 5 papers for `$ARGUMENTS`, produce a comparison table (method, key idea, benchmark results, compute, code availability), and recommend the single best method given the codebase constraints in Step 1 — with a brief implementation plan. The agent's own workflow handles the research and experiment design details.
+Call `Agent(subagent_type="research:scientist", prompt=...)`. Task researcher: find top 5 papers for `$ARGUMENTS`, produce comparison table (method, key idea, benchmark results, compute, code availability), recommend single best method given codebase constraints from Step 1 — with brief implementation plan. Agent's own workflow handles research and experiment design details.
 
-Use this prompt scaffold (adapt the constraints from Step 1):
+Use this prompt scaffold (adapt constraints from Step 1):
 
-Note: pre-compute output paths before spawning — the orchestrator must extract the branch and evaluate date expressions, then substitute concrete paths into all spawn prompts:
+Note: pre-compute output paths before spawning — orchestrator must extract branch and evaluate date expressions, then substitute concrete paths into all spawn prompts:
 
 ```bash
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main') # timeout: 3000
@@ -76,13 +76,13 @@ Then return ONLY a compact JSON envelope on your final line — nothing else aft
 {"status":"done","papers":N,"recommendation":"<method name>","file":".temp/output-research-agent-$BRANCH-$DATE.md","confidence":0.N}
 ```
 
-**Health monitoring** — the Agent tool is synchronous; Claude awaits the researcher response natively (no Bash checkpoint available in this skill). If researcher does not return within `$HARD_CUTOFF` seconds (~15 min), use the Read tool to surface any partial results already written to `.temp/` and continue with what was found; mark timed-out agents with ⏱ in the report. # Agent calls are synchronous — timeout is handled by Claude Code's native call timeout; no manual extension possible.
+**Health monitoring** — Agent tool synchronous; Claude awaits researcher response natively (no Bash checkpoint available). If researcher doesn't return within `$HARD_CUTOFF` seconds (~15 min), use Read tool to surface partial results from `.temp/`, continue with what found; mark timed-out agents with ⏱ in report.
 
-**If the Agent tool is unavailable** (running as a subagent where nested agent spawning is blocked), skip the Agent call and conduct the research inline: use WebSearch and WebFetch to find the top 5 papers, then synthesize the comparison table yourself. Notify the user: "Note: researcher agent could not be spawned in this context — conducting research inline."
+**If Agent tool unavailable** (running as subagent where nested spawning blocked), skip Agent call, conduct research inline: use WebSearch and WebFetch to find top 5 papers, synthesize comparison table yourself. Notify user: "Note: researcher agent could not be spawned in this context — conducting research inline."
 
 ### 2b: Check for existing implementations (main context)
 
-Use the Grep tool to search the codebase for any existing related code:
+Use Grep tool to search codebase for existing related code:
 
 - Pattern: `$ARGUMENTS` (literal)
 - Glob: `**/*.py`
@@ -129,12 +129,14 @@ Use the Grep tool to search the codebase for any existing related code:
 <!-- One row per spawned agent; team mode: 2–3 rows -->
 | Agent | Score | Gaps |
 |---|---|---|
-| researcher | [score] | [gaps] |
+| researcher-1 | [score] | [gaps] |
+| researcher-2 | [score] | [gaps] |
+| researcher-3 _(team mode only)_ | [score] | [gaps] |
 ```
 
-Write the full report to `.temp/output-research-$BRANCH-$DATE.md` using the Write tool — **do not print the full report to terminal**.
+Write full report to `.temp/output-research-$BRANCH-$DATE.md` using Write tool — **do not print full report to terminal**.
 
-Then print a compact terminal summary:
+Print compact terminal summary:
 
 ```
 ---
@@ -148,31 +150,31 @@ Confidence:  [aggregate score] — [key gaps]
 ---
 ```
 
-End your response with a `## Confidence` block per CLAUDE.md output standards.
+End response with `## Confidence` block per CLAUDE.md output standards.
 
 ## Team Mode
 
-Use when the topic warrants exploring multiple competing method families with adversarial cross-evaluation.
+Use when topic warrants exploring multiple competing method families with adversarial cross-evaluation.
 
-When to trigger: 3+ distinct method families exist for the topic AND the field has no clear leading method (benchmark spread \<5% between top methods, or no SOTA consensus in the past 12 months). Skip for topics with a clear dominant approach — the default single researcher is sufficient.
+Trigger when: 3+ distinct method families exist AND field has no clear leading method (benchmark spread \<5% between top methods, or no SOTA consensus past 12 months). Skip for topics with clear dominant approach — default single researcher sufficient.
 
-**Workflow with team:**
+**Workflow:**
 
 1. Lead completes Step 1 (codebase context) as normal
-2. Spawn 2–3 **researcher** teammates, each assigned a distinct method cluster
+2. Spawn 2–3 **researcher** teammates, each assigned distinct method cluster
 3. Broadcast constraints to all: `broadcast {topic: <topic>, constraints: <framework/compute/dataset from Step 1>}`
-4. Each teammate researches independently, reports with `deltaT# HOOK:verify` (AgentSpeak v2 completion signal — see TEAM_PROTOCOL.md) and a compressed comparison table
+4. Each teammate researches independently, reports with `deltaT# HOOK:verify` (AgentSpeak v2 completion signal — see TEAM_PROTOCOL.md) and compressed comparison table
 5. Lead routes key findings from one researcher to others for cross-challenge: `@AR2: AR1 found [finding] — does it hold under [condition]?`
-6. Lead synthesizes into the Step 3 report, noting where researchers agreed or diverged
+6. Lead synthesizes into Step 3 report, noting where researchers agreed or diverged
 
-**Note on CLAUDE.md §8 (background agent monitoring)**: Team mode spawns in-process teammates via TeamCreate — not background agents writing to a run directory. In-process teammates send TeammateIdle notifications on completion, which serve as synchronous completion signals. The file-activity polling protocol (§8) does not apply here; TeammateIdle is the equivalent liveness signal.
+**Note on CLAUDE.md §8 (background agent monitoring)**: Team mode spawns in-process teammates via TeamCreate — not background agents writing to run directory. In-process teammates send TeammateIdle notifications on completion — synchronous completion signals. File-activity polling protocol (§8) doesn't apply; TeammateIdle is equivalent liveness signal.
 
 **Spawn prompt template:**
 
 ```
 # Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts
 You are an researcher teammate researching: [topic].
-Read ~/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
+Read $HOME/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your cluster: [method family N] (e.g., "attention-free architectures" vs "linear attention variants").
 Research the top 3 methods in your cluster: comparison table + recommendation given constraints.
 Write your full findings (comparison table, analysis, Confidence block) to `.temp/output-research-<teammate-name>-$BRANCH-<date>.md` using the Write tool.
@@ -181,30 +183,30 @@ Compact Instructions: preserve paper titles, benchmarks, code links. Discard pro
 Task tracking: call TaskUpdate(in_progress) when you start your assigned task; call TaskUpdate(completed) when done, before sending your delta message.
 ```
 
-Lead synthesizes by reading teammate file paths from their delta messages. Pre-compute: `SPAWN_BRANCH="$(git branch --show-current 2>/dev/null | tr "/" "-" || echo "main")"` `SPAWN_DATE="$(date -u +%Y-%m-%d)"`. For 3 teammates, spawn a consolidator researcher agent: "Read the research files at [paths from deltas]. Synthesize into the Step 3 unified report structure. Write to `.temp/output-research-$SPAWN_BRANCH-$SPAWN_DATE.md`. Return ONLY: `papers=N best_method=<name> confidence=0.N file=<path>`"
+Lead synthesizes by reading teammate file paths from delta messages. Pre-compute: `SPAWN_BRANCH="$(git branch --show-current 2>/dev/null | tr "/" "-" || echo "main")"` `SPAWN_DATE="$(date -u +%Y-%m-%d)"`. For 3 teammates, spawn consolidator researcher agent: "Read the research files at [paths from deltas]. Synthesize into the Step 3 unified report structure. Write to `.temp/output-research-$SPAWN_BRANCH-$SPAWN_DATE.md`. Return ONLY: `papers=N best_method=<name> confidence=0.N file=<path>`"
 
 ## Plan Mode
 
-Produce a sequenced, dependency-ordered implementation plan from SOTA research findings, mapped against the current codebase. Use after a research run has identified a recommended method and you need a phased plan before starting `/develop:feature`.
+Produce sequenced, dependency-ordered implementation plan from SOTA research findings, mapped against current codebase. Use after research run identified recommended method and need phased plan before `/develop:feature`.
 
-**Input detection** (parse the argument after `plan`):
+**Input detection** (parse argument after `plan`):
 
-- No argument → **auto-detect**: use Glob (pattern `**/output-research-*.md`, path `.temp/`) to find recent research outputs; exclude any path containing `-plan-` or `-codebase-`; sort by modification time descending; pick the most recent. Print `→ Using: <path>` to terminal before proceeding. If no file found, stop with: "No recent research output found — run `/research <topic>` first."
-- Ends in `.md` → treat as path to an existing research output file; skip to Step R1-B
+- No argument → **auto-detect**: use Glob (pattern `**/output-research-*.md`, path `.temp/`) to find recent research outputs; exclude paths containing `-plan-` or `-codebase-`; sort by modification time descending; pick most recent. Print `→ Using: <path>` before proceeding. If no file found, stop: "No recent research output found — run `/research <topic>` first."
+- Ends in `.md` → treat as path to existing research output file; skip to Step R1-B
 
 ### Step R1: Gather research findings
 
-**R1-A — From fresh research**: After Steps 1–3 complete, read the generated `.temp/output-research-<date>.md`. Extract: Recommendation section, Implementation Plan, Key Hyperparameters, Gotchas, and Integration with Current Codebase.
+**R1-A — From fresh research**: After Steps 1–3 complete, read generated `.temp/output-research-<date>.md`. Extract: Recommendation section, Implementation Plan, Key Hyperparameters, Gotchas, Integration with Current Codebase.
 
-**R1-B — From existing output**: Read the file at the given path directly. Extract the same sections.
+**R1-B — From existing output**: Read file at given path directly. Extract same sections.
 
-**Validation**: the file must contain a clear **Recommendation** section naming a specific method. If missing or ambiguous, stop and report: "Research output does not contain a clear method recommendation — run `/research <topic>` first, then pass the output path."
+**Validation**: file must contain clear **Recommendation** section naming specific method. If missing or ambiguous, stop: "Research output does not contain a clear method recommendation — run `/research <topic>` first, then pass the output path."
 
-Before spawning in Steps R2–R3, pre-compute the output path components: `YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)` `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` <!-- same pattern as Step 2a date/branch block -->
+Before spawning in Steps R2–R3, pre-compute output path components: `YYYY=$(date +%Y); MM=$(date +%m); DATE=$(date +%Y-%m-%d)` `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` <!-- same pattern as Step 2a date/branch block -->
 
 ### Step R2: Codebase analysis
 
-Spawn a **solution-architect** agent with this prompt:
+Call `Agent(subagent_type="foundry:solution-architect", prompt=...)`:
 
 ```
 Read the research findings file at <path from R1>.
@@ -222,7 +224,7 @@ Return ONLY a compact JSON envelope on your final line — nothing else after it
 
 ### Step R3: Synthesize plan
 
-Read both files (research findings from R1 + codebase analysis from R2). Produce a phased plan and write it to `.temp/output-research-plan-$BRANCH-$DATE.md`:
+Read both files (research findings from R1 + codebase analysis from R2). Produce phased plan, write to `.temp/output-research-plan-$BRANCH-$DATE.md`:
 
 ```
 ## Implementation Roadmap: [method name]
@@ -262,7 +264,7 @@ Topic: [original $ARGUMENTS]
 - Full plan approved → create `.plans/active/todo_<method>.md` with phases as task groups
 ```
 
-Print a compact terminal summary:
+Print compact terminal summary:
 
 ```
 ---
@@ -279,13 +281,13 @@ Confidence:  [score] — [key gaps]
 
 <notes>
 
-- This skill orchestrates — it gathers context and delegates research to `research:scientist` and codebase mapping to `foundry:solution-architect` (plan mode). For direct hypothesis/experiment work, use the `research:scientist` agent directly.
-- **Team Mode dependency**: `--team` mode requires `~/.claude/TEAM_PROTOCOL.md` to exist — each teammate spawn prompt includes `Read ~/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2`; verify the file is present before launching team mode.
-- **Link integrity**: All URLs cited in the research report must be fetched and verified before inclusion. Use WebFetch to confirm each URL exists and says what you claim.
+- Skill orchestrates — gathers context, delegates research to `research:scientist` and codebase mapping to `foundry:solution-architect` (plan mode). For direct hypothesis/experiment work, use `research:scientist` directly.
+- **Team Mode dependency**: `--team` requires `~/.claude/TEAM_PROTOCOL.md` to exist — each teammate spawn prompt includes `Read $HOME/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2`; verify file present before launching team mode.
+- **Link integrity**: All URLs cited in research report must be fetched and verified before inclusion. Use WebFetch to confirm each URL exists and says what you claim.
 - Follow-up chains:
-  - Research recommends a method for implementation → `/research:plan` to produce a sequenced plan (auto-detects latest output), then `/develop:feature` for TDD-first implementation
-  - Research integrates into existing code → `/develop:refactor` first to prepare the module, then `/develop:feature`
-  - Research reveals security concerns with a dependency → run `pip-audit` or `uv run pip-audit` for a Common Vulnerabilities and Exposures (CVE) scan
+  - Research recommends method → `/research:plan` for sequenced plan (auto-detects latest output), then `/develop:feature` for TDD-first implementation
+  - Research integrates into existing code → `/develop:refactor` first to prepare module, then `/develop:feature`
+  - Research reveals security concerns with dependency → run `pip-audit` or `uv run pip-audit` for Common Vulnerabilities and Exposures (CVE) scan
   - Plan approved → create `.plans/active/todo_<method>.md` with phases as task groups; start with `/develop:feature <first task from Phase 1>`
 
 </notes>

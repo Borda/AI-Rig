@@ -1,19 +1,21 @@
+**Re: Compress worktree protocol markdown to caveman format**
+
 # Worktree Protocol
 
-Conventions for any skill or agent that runs commands inside a git worktree.
+Conventions for skills/agents running commands inside git worktree.
 
 ## Bash command pattern — two calls, not one
 
-Claude Code's permission matcher checks the **first token** of a Bash command. A compound command like:
+Claude Code permission matcher checks **first token** of Bash command. Compound command like:
 
 ```bash
 # BAD — first token is "cd"; "uv run:*" permission never fires
 cd /path/to/worktree && uv run python -c "..."
 ```
 
-…does not match `Bash(uv run:*)` even if that pattern is in the allowlist, causing an unexpected permission prompt.
+…not match `Bash(uv run:*)` even if pattern in allowlist. Causes unexpected permission prompt.
 
-Use **two separate Bash calls** instead. The shell's working directory persists between calls:
+Use **two separate Bash calls**. Shell CWD persists between calls:
 
 ```bash
 # Call 1 — sets CWD; matches Bash(cd:*)
@@ -23,18 +25,18 @@ cd /path/to/worktree
 uv run python -c "..."
 ```
 
-This applies to every command run "in" a worktree from the lead's context: `uv run`, `python`, `pytest`, `git`, etc.
+Applies to every command run "in" worktree from lead's context: `uv run`, `python`, `pytest`, `git`, etc.
 
 ## Running commands from inside a worktree agent
 
-The cleanest alternative: spawn an agent with `isolation: "worktree"`. That agent's CWD is the worktree root, so all its Bash calls use clean first-token patterns with no `cd` prefix needed.
+Cleanest alternative: spawn agent with `isolation: "worktree"`. Agent CWD = worktree root. All Bash calls use clean first-token patterns, no `cd` prefix needed.
 
 ```
 Agent(subagent_type="foundry:sw-engineer", isolation="worktree", prompt="...")
 ```
 
-Reserve `cd /worktree && cmd` (even split across two calls) for cases where the lead must run a quick one-off check in the worktree without spawning a full agent.
+Reserve `cd /worktree && cmd` (split across two calls) for lead running quick one-off check without spawning full agent.
 
 ## Settings in worktrees
 
-Worktrees created via `isolation: "worktree"` land under `.claude/worktrees/<id>/`. Because the worktree contains a full project checkout (including `.claude/`), Claude Code finds the project's `settings.local.json` at `worktree/.claude/settings.local.json`. **This is a snapshot from worktree-creation time** — permissions added to the main project after the worktree was created are not automatically reflected. If a worktree agent hits unexpected permission prompts, check whether the main project's `settings.local.json` has been updated since the worktree was created.
+Worktrees via `isolation: "worktree"` land under `.claude/worktrees/<id>/`. Worktree has full project checkout (including `.claude/`), so Claude Code finds `settings.local.json` at `worktree/.claude/settings.local.json`. **Snapshot from worktree-creation time** — permissions added to main project after worktree created not reflected. Worktree agent hits unexpected permission prompts → check if main project's `settings.local.json` updated since worktree created.

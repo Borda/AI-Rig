@@ -8,7 +8,7 @@ model: opus
 
 <objective>
 
-Prepare release communication based on what changed. The output format adapts to the audience and context — user-facing release notes, a CHANGELOG entry, an internal release summary, or a migration guide for breaking changes.
+Prepare release communication from what changed. Output adapts to audience — user-facing notes, CHANGELOG entry, internal summary, or migration guide.
 
 </objective>
 
@@ -16,44 +16,44 @@ Prepare release communication based on what changed. The output format adapts to
 
 Mode comes **first**; range or version follows:
 
-| Invocation                       | Arguments                                    | Writes to disk                                                                              |
-| -------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `/release notes [range]`         | optional git range (default: last-tag..HEAD) | `PUBLIC-NOTES.md`                                                                           |
-| `/release changelog [range]`     | optional git range                           | Prepends `CHANGELOG.md`                                                                     |
-| `/release summary [range]`       | optional git range                           | `.temp/output-release-summary-<branch>-<date>.md`                                           |
-| `/release migration <from> <to>` | two version tags, e.g. `v1.2 v2.0`           | Terminal only                                                                               |
-| `/release prepare <version>`     | version to stamp, e.g. `v1.3.0`              | All artifacts: audit → `PUBLIC-NOTES.md` + `CHANGELOG.md` + summary + migration if breaking |
-| `/release audit [version]`       | optional target version                      | Terminal readiness report                                                                   |
+| Invocation | Arguments | Writes to disk |
+| --- | --- | --- |
+| `/release notes [range]` | optional git range (default: last-tag..HEAD) | `PUBLIC-NOTES.md` |
+| `/release changelog [range]` | optional git range | Prepends `CHANGELOG.md` |
+| `/release summary [range]` | optional git range | `.temp/output-release-summary-<branch>-<date>.md` |
+| `/release migration <from> <to>` | two version tags, e.g. `v1.2 v2.0` | Terminal only |
+| `/release prepare <version>` | version to stamp, e.g. `v1.3.0` | All artifacts: audit → `PUBLIC-NOTES.md` + `CHANGELOG.md` + summary + migration if breaking |
+| `/release audit [version]` | optional target version | Terminal readiness report |
 
-If no mode is given, defaults to `notes`. `prepare` is the full release pipeline — it runs audit first, then generates all artifacts for the version; use it when you are ready to cut a release rather than drafting individual documents.
+No mode given → defaults to `notes`. `prepare` = full pipeline — runs audit first, then all artifacts; use when cutting release, not drafting.
 
 </inputs>
 
 <workflow>
 
-**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+**Task hygiene**: Call `TaskList` before creating tasks. Per found task:
 
-- status `completed` if the work is clearly done
-- status `deleted` if orphaned / no longer relevant
-- keep `in_progress` only if genuinely continuing
+- `completed` if work clearly done
+- `deleted` if orphaned / irrelevant
+- `in_progress` only if genuinely continuing
 
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create a new task.
+**Task tracking**: per CLAUDE.md, TaskCreate for each major phase. Mark in_progress/completed throughout. On retry or scope change, new task.
 
 ## Mode Detection
 
-Parse `$ARGUMENTS` by the first token:
+Parse `$ARGUMENTS` by first token:
 
 ```bash
 read FIRST REST <<<"$ARGUMENTS"
 ```
 
-| First token                     | Mode      | Routing                                                                                                                                |
-| ------------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `prepare`                       | prepare   | Skip to **Mode: prepare**                                                                                                              |
-| `audit`                         | audit     | Skip to **Mode: audit**                                                                                                                |
-| `migration`                     | migration | `read MIGRATION_FROM MIGRATION_TO <<< "$REST"`, set `RANGE="$MIGRATION_FROM..$MIGRATION_TO"`, continue Steps 1–5 with migration format |
-| `notes`, `changelog`, `summary` | as named  | Set `RANGE="$REST"` (empty = default); continue Steps 1–5                                                                              |
-| *(none or bare range)*          | notes     | Set `RANGE="$ARGUMENTS"`; continue Steps 1–5                                                                                           |
+| First token | Mode | Routing |
+| --- | --- | --- |
+| `prepare` | prepare | Skip to **Mode: prepare** |
+| `audit` | audit | Skip to **Mode: audit** |
+| `migration` | migration | `read MIGRATION_FROM MIGRATION_TO <<< "$REST"`, set `RANGE="$MIGRATION_FROM..$MIGRATION_TO"`, continue Steps 1–5 with migration format |
+| `notes`, `changelog`, `summary` | as named | Set `RANGE="$REST"` (empty = default); continue Steps 1–5 |
+| *(none or bare range)* | notes | Set `RANGE="$ARGUMENTS"`; continue Steps 1–5 |
 
 ## Step 1: Gather changes
 
@@ -73,59 +73,62 @@ git log $RANGE --no-merges --format="--- %H%n%B" # timeout: 3000
 git diff --stat $(echo "$RANGE" | sed 's/\.\./\ /') # timeout: 3000
 
 # PR titles, bodies, and labels for merged PRs (richer context than commits)
-TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')
+TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | { read -r _ _ val; echo "${val:-main}"; })
 gh pr list --state merged --base "${TRUNK:-main}" --limit 100 \  # timeout: 15000
 --json number,title,body,labels,mergedAt,author 2>/dev/null
 ```
 
-Cross-reference commit bodies against Pull Request (PR) descriptions — the canonical source of truth for *why* a change was made. If a commit footer contains `BREAKING CHANGE:`, it is a breaking change regardless of how it was labelled in the PR.
+Cross-reference commit bodies against Pull Request (PR) descriptions — canonical source of truth for *why* change was made. `BREAKING CHANGE:` footer = breaking change regardless of PR label.
 
 ## Step 2: Classify each change
 
 Section order (fixed — never reorder): 🚀 Added → ⚠️ Breaking Changes → 🌱 Changed → 🗑️ Deprecated → ❌ Removed → 🔧 Fixed
 
-| Category             | Output section         | What goes here                                                                                                                                                                       |
-| -------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **New Features**     | 🚀 Added               | User-visible additions                                                                                                                                                               |
-| **Breaking Changes** | ⚠️ Breaking Changes    | Existing code **stops working immediately** after upgrade — API removed, signature changed incompatibly, behavior changed with no fallback. Must be 100% certain it no longer works. |
-| **Improvements**     | 🚀 Added or 🌱 Changed | Enhancements to existing behavior                                                                                                                                                    |
-| **Performance**      | 🚀 Added or 🔧 Fixed   | Speed or memory improvements                                                                                                                                                         |
-| **Deprecations**     | 🗑️ Deprecated          | Old API **still works** this release but is scheduled for removal — emits a warning, replacement exists                                                                              |
-| **Removals**         | ❌ Removed             | Previously deprecated API now gone (this is what becomes a Breaking Change in the next cycle)                                                                                        |
-| **Bug Fixes**        | 🔧 Fixed               | Correctness fixes                                                                                                                                                                    |
-| **Internal**         | *(omit)*               | Refactors, CI/tooling, deps, code cleanup, developer-facing housekeeping — omit unless directly user-impacting                                                                       |
+| Category | Output section | What goes here |
+| --- | --- | --- |
+| **New Features** | 🚀 Added | User-visible additions |
+| **Breaking Changes** | ⚠️ Breaking Changes | Existing code **stops working immediately** after upgrade — API removed, signature changed incompatibly, behavior changed with no fallback. Must be 100% certain it no longer works. |
+| **Improvements** | 🚀 Added or 🌱 Changed | Enhancements to existing behavior |
+| **Performance** | 🚀 Added or 🔧 Fixed | Speed or memory improvements |
+| **Deprecations** | 🗑️ Deprecated | Old API **still works** this release but is scheduled for removal — emits a warning, replacement exists |
+| **Removals** | ❌ Removed | Previously deprecated API now gone (this is what becomes a Breaking Change in the next cycle) |
+| **Bug Fixes** | 🔧 Fixed | Correctness fixes |
+| **Internal** | *(omit)* | Refactors, CI/tooling, deps, code cleanup, developer-facing housekeeping — omit unless directly user-impacting |
 
-**Breaking vs Deprecated**: if the old call still works (even with a warning), it is **Deprecated** — never Breaking Changes. Breaking Changes are strictly for changes where upgrading causes immediate failures with no compatibility period.
+**Breaking vs Deprecated**: old call still works (even with warning) → Deprecated, never Breaking. Breaking = upgrade causes immediate failures, no compat period.
 
-Filter out: merge commits, minor dep bumps, CI/tooling config, comment typos, internal refactors, code cleanup, internal-only dependency bumps, developer-facing housekeeping, and any change with no user-visible impact. **Never include internal staff names or internal maintenance details in public-facing output** (release notes, changelogs, migration guides). Always include: any breaking change, any behavior change, any new API surface.
+Filter out: merge commits, minor dep bumps, CI/tooling config, comment typos, internal refactors, code cleanup, internal-only dep bumps, developer housekeeping, no-user-impact changes. **Never include internal staff names or internal maintenance details in public-facing output.** Always include: breaking changes, behavior changes, new API surface.
 
 ## Step 3: Explore interesting changes
 
-For the top 3–5 most significant classified changes (features, breaking changes, major behaviour changes), read the actual diff or changed files:
+For top 3–5 most significant changes (features, breaking, major behavior), read actual diff or changed files:
 
 ```bash
 git diff $RANGE -- <file>    # timeout: 3000
 git show <commit>:<file>     # timeout: 3000
 ```
 
-Goal: understand what the change actually does at the implementation level — new APIs, new parameters, new behaviour — so notes and changelog describe real functionality, not just commit subject lines.
+Goal: understand what change actually does at implementation level — new APIs, parameters, behavior — so notes describe real functionality, not just commit subjects.
 
-Skip this for trivial changes (typos, dep bumps, CI config).
+Skip for trivial changes (typos, dep bumps, CI config).
 
 ## Step 4: Choose output format
 
-Pre-flight — verify all templates are present before proceeding:
+Pre-flight — verify all templates present before proceeding:
 
 ```bash
+# Resolve skill directory portably — works in developer repo and after plugin install
+SKILL_DIR="$(find ~/.claude/plugins -path "*/oss/skills/release" -type d 2>/dev/null | head -1)"
+[ -z "$SKILL_DIR" ] && SKILL_DIR="plugins/oss/skills/release"
 for tmpl in PUBLIC-NOTES.tmpl.md CHANGELOG.tmpl.md SUMMARY.tmpl.md MIGRATION.tmpl.md; do # timeout: 5000
-    [ -f "plugins/oss/skills/release/templates/$tmpl" ] || {
+    [ -f "$SKILL_DIR/templates/$tmpl" ] || {
         echo "Missing template: $tmpl — aborting"
         exit 1
     }
 done
 ```
 
-Before writing, fetch the last 2–3 releases from the repo to check for project-specific formatting conventions:
+Before writing, fetch last 2–3 releases to check project-specific formatting conventions:
 
 ```bash
 gh release list --limit 3                                                  # timeout: 30000
@@ -133,33 +136,33 @@ LATEST_TAG=$(gh release list --limit 1 --json tagName --jq '.[0].tagName') # tim
 gh release view "$LATEST_TAG"                                              # timeout: 15000
 ```
 
-If the existing releases deviate significantly from the templates below (e.g., no emoji sections, different heading levels, prose-style entries), match their style. The templates below are the default — project conventions take precedence.
+Existing releases deviate from templates → match their style. Templates below = default; project conventions take precedence.
 
 ### Notes — user-facing, public (`notes`)
 
-Omit any section that has no content.
+Omit sections with no content.
 
-For `notes` mode: first produce a CHANGELOG-format classification (Step 2 output in changelog structure). Then derive the user-facing notes FROM that classification, expanding interesting features with implementation insights from Step 3. The changelog classification is a working document — do not write it to disk in `notes` mode, but use it as the structural backbone for the notes.
+For `notes` mode: first produce CHANGELOG-format classification (Step 2 output). Derive user-facing notes FROM that classification, expanding interesting features with Step 3 insights. Classification = working document — don't write to disk in `notes` mode, use as structural backbone.
 
-Read the PUBLIC-NOTES template from plugins/oss/skills/release/templates/PUBLIC-NOTES.tmpl.md and use it as the format for the notes output.
+Read PUBLIC-NOTES template from $SKILL_DIR/templates/PUBLIC-NOTES.tmpl.md and use as format.
 
 ### CHANGELOG Entry (`changelog`)
 
-Read the CHANGELOG entry template from plugins/oss/skills/release/templates/CHANGELOG.tmpl.md and use it as the format.
+Read CHANGELOG entry template from $SKILL_DIR/templates/CHANGELOG.tmpl.md and use as format.
 
 ### Internal Release Summary (`summary`)
 
-Read the internal release summary template from plugins/oss/skills/release/templates/SUMMARY.tmpl.md and use it as the format.
+Read internal release summary template from $SKILL_DIR/templates/SUMMARY.tmpl.md and use as format.
 
 ### Migration Guide (`migration`)
 
-Read the migration guide template from plugins/oss/skills/release/templates/MIGRATION.tmpl.md and use it as the format.
+Read migration guide template from $SKILL_DIR/templates/MIGRATION.tmpl.md and use as format.
 
 ## Step 5: Writing guidelines
 
-Read the writing guidelines from plugins/oss/skills/release/guidelines/writing-rules.md and follow them.
+Read writing guidelines from $SKILL_DIR/guidelines/writing-rules.md and follow them.
 
-After applying the guidelines above to polish the output, for `notes` and `changelog` modes dispatch shepherd for public-facing voice and tone review before writing to disk:
+After polishing, for `notes` and `changelog` modes dispatch shepherd for public-facing voice/tone review before writing to disk:
 
 ```bash
 # Pre-compute shepherd run dir (file-handoff protocol)
@@ -172,24 +175,24 @@ mkdir -p "$SHEPHERD_DIR"
 Agent(subagent_type="oss:shepherd", prompt="Review the draft release content at <$SHEPHERD_DIR/draft.md> for public-facing voice and tone. Apply shepherd voice guidelines: human and direct, no internal jargon, no staff names, no internal maintenance details. Write the revised content to <$SHEPHERD_DIR/shepherd-revised.md>. Return ONLY: {\"status\":\"done\",\"changes\":N,\"file\":\"<$SHEPHERD_DIR/shepherd-revised.md>\"}")
 ```
 
-Read `$SHEPHERD_DIR/shepherd-revised.md` and use it as the final content for writing to disk. For `summary` and `migration` modes, shepherd is not dispatched — proceed directly to writing.
+Read `$SHEPHERD_DIR/shepherd-revised.md` → use as final content for disk write. For `summary` and `migration` modes, skip shepherd, write directly.
 
 Write to disk per mode:
 
-- **`notes`**: write to `PUBLIC-NOTES.md` at the repo root. Notify: `→ written to PUBLIC-NOTES.md`
-- **`changelog`**: prepend the entry to `CHANGELOG.md` after the `# Changelog` heading (create the file with that heading if it does not exist). Notify: `→ prepended to CHANGELOG.md`
-- **`summary`**: extract branch first — `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` — then save to `.temp/output-release-summary-$BRANCH-$(date +%Y-%m-%d).md`. Notify: `→ saved to .temp/output-release-summary-<branch>-<date>.md`
+- **`notes`**: write to `PUBLIC-NOTES.md` at repo root. Notify: `→ written to PUBLIC-NOTES.md`
+- **`changelog`**: prepend entry to `CHANGELOG.md` after `# Changelog` heading (create file with that heading if missing). Notify: `→ prepended to CHANGELOG.md`
+- **`summary`**: extract branch — `BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')` — save to `.temp/output-release-summary-$BRANCH-$(date +%Y-%m-%d).md`. Notify: `→ saved to .temp/output-release-summary-<branch>-<date>.md`
 - **`migration`**: print to terminal only
 
 ## Step 6: Publish (after writing notes)
 
-**Human gate** — stop here and hand off to the user: the GitHub release must be created with project-level tooling (e.g. `gh release create`). Refer to the project's CLAUDE.md or `shepherd` agent (see `<release_checklist>` section) for the exact command.
+**Human gate** — stop and hand off to user: GitHub release must be created with project-level tooling (e.g. `gh release create`). See project's CLAUDE.md or `shepherd` agent (`<release_checklist>` section) for exact command.
 
 ## Mode: prepare
 
 **Trigger**: `/release prepare <version>` (e.g., `prepare v1.3.0` or `prepare 1.3.0`)
 
-**Purpose**: Full release preparation pipeline — audit readiness first, then generate and write all artifacts. Use this when cutting a release; use individual modes (`notes`, `changelog`, `summary`) for drafting.
+**Purpose**: Full release pipeline — audit first, then generate all artifacts. Use when cutting release; use individual modes for drafting.
 
 ```bash
 VERSION="${REST%% *}"
@@ -201,17 +204,17 @@ RANGE="$LAST_TAG..HEAD"
 
 ### Phase 1: Readiness audit
 
-Run all checks from **Mode: audit** with `$VERSION` as the target. Present the readiness table.
+Run all checks from **Mode: audit** with `$VERSION` as target. Present readiness table.
 
-**If verdict is BLOCKED**: stop here. List the blockers and instruct the user to resolve them before re-running `/release prepare $VERSION`. Do not write any artifacts.
+**If verdict is BLOCKED**: stop. List blockers, instruct user to resolve before re-running `/release prepare $VERSION`. Write no artifacts.
 
-**If verdict is READY or NEEDS ATTENTION**: surface any warnings, then continue to Phase 2.
+**If verdict is READY or NEEDS ATTENTION**: surface warnings, continue to Phase 2.
 
 ### Phase 2: Gather and classify changes
 
-Run **Steps 1–2 (main workflow Step 1: Gather changes, Step 2: Classify each change)** to gather and classify all commits in `$RANGE`.
+Run **Steps 1–2** to gather and classify all commits in `$RANGE`.
 
-Note whether any **Breaking Changes** were classified — this gates Phase 3d.
+Note whether **Breaking Changes** classified — gates Phase 3d.
 
 ### Phase 3: Write all artifacts
 
@@ -224,11 +227,11 @@ Write each artifact in sequence:
 
 **a. `releases/$VERSION/PUBLIC-NOTES.md`** — user-facing notes (Step 3 `notes` format). Shepherd voice review applies per Step 5.
 
-**b. `CHANGELOG.md`** — prepend entry stamped `$VERSION — $DATE` (Step 3 `changelog` format) to the root `CHANGELOG.md`. This file is cumulative — it is not versioned per release. Create it with a `# Changelog` header if it does not exist.
+**b. `CHANGELOG.md`** — prepend entry stamped `$VERSION — $DATE` (Step 3 `changelog` format) to root `CHANGELOG.md`. Cumulative file — not versioned per release. Create with `# Changelog` header if missing.
 
 **c. `releases/$VERSION/SUMMARY.md`** — internal summary (Step 3 `summary` format).
 
-**d. `releases/$VERSION/MIGRATION.md`** — always written. If breaking changes were classified in Phase 2, use the Step 3 `migration` format. If no breaking changes, write a single line: `No breaking changes in this release.`
+**d. `releases/$VERSION/MIGRATION.md`** — always written. Breaking changes classified → use Step 3 `migration` format. No breaking changes → single line: `No breaking changes in this release.`
 
 ### Output
 
@@ -256,31 +259,31 @@ Write each artifact in sequence:
 
 **Trigger**: `/release audit [version]`
 
-**Purpose**: Pre-release readiness check — surfaces outstanding work, alignment gaps, and blocking issues before cutting a release.
+**Purpose**: Pre-release readiness check — surfaces outstanding work, alignment gaps, and blockers before cutting release.
 
-Read and execute all checks from `plugins/oss/skills/release/templates/audit-checks.md`. Checks cover: version consistency across manifests, docs/CHANGELOG alignment, open blocking issues, dependency CVE scan, and unreleased commits since last tag.
+Read and execute all checks from `$SKILL_DIR/templates/audit-checks.md`. Checks cover: version consistency across manifests, docs/CHANGELOG alignment, open blocking issues, dependency CVE scan, unreleased commits since last tag.
 
-After the readiness table, if any issues were found, append a **Findings summary** table with one row per issue:
+After readiness table, if issues found, append **Findings summary** table with one row per issue:
 
-| #   | Issue           | Location          | Severity                 |
-| --- | --------------- | ----------------- | ------------------------ |
-| 1   | <what is wrong> | <section or file> | critical/high/medium/low |
+| # | Issue | Location | Severity |
+| --- | --- | --- | --- |
+| 1 | <what is wrong> | <section or file> | critical/high/medium/low |
 
-This ensures every finding has an explicit location reference, severity label, and action — matching the structured output format used by `notes` and `changelog` modes.
+Ensures every finding has explicit location, severity, and action — matching structured output format of `notes` and `changelog` modes.
 
-End your response with a `## Confidence` block per CLAUDE.md output standards.
+End response with `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 
 <notes>
 
-- Filter noise (CI config, dep bumps, typos) unless they are user-impacting
-- **Public-facing content policy**: release notes, changelogs, and migration guides must contain only user-visible changes, fixes, and improvements. Never include: internal staff names, internal maintenance details, internal refactors, CI/tooling-only changes, internal-only dependency bumps, code cleanup, or developer-facing housekeeping with no user-visible impact.
-- Public-facing output (release notes, changelogs, migration guides) is co-authored with `shepherd` — follow its `<voice>` guidelines for human, direct tone
+- Filter noise (CI config, dep bumps, typos) unless user-impacting
+- **Public-facing content policy**: release notes, changelogs, migration guides = user-visible changes only. Never include: internal staff names, internal maintenance, internal refactors, CI/tooling changes, internal dep bumps, code cleanup, developer housekeeping with no user impact.
+- Public-facing output co-authored with `shepherd` — follow its `<voice>` guidelines for human, direct tone
 - Follow-up chains:
-  - Readiness check → `/release prepare <version>` runs a built-in audit first; use standalone `/release audit [version]` only when you want a readiness check without cutting the release
-  - Release includes breaking changes → `/oss:analyse` for downstream ecosystem impact assessment
-  - Notes/changelog written → See Step 5 for the release-create gate (`gh release create` must be run by the user via project tooling)
-  - `migration` content written → add to project docs and link from the CHANGELOG entry
+  - Readiness check → `/release prepare <version>` runs built-in audit first; use standalone `/release audit [version]` only for readiness check without cutting release
+  - Release includes breaking changes → `/oss:analyse` for downstream ecosystem impact
+  - Notes/changelog written → see Step 5 for release-create gate (`gh release create` must be user-run via project tooling)
+  - `migration` content written → add to project docs and link from CHANGELOG entry
 
 </notes>

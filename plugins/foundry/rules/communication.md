@@ -6,9 +6,9 @@ paths:
 
 ## Re: Anchor
 
-Start every reply with a bold anchor line summarising what was asked, then the response on the next line.
+Start every reply with bold anchor line summarising what was asked, then response on next line.
 
-Example (the actual template — copy this structure, replace bracketed text):
+Example (actual template — copy structure, replace bracketed text):
 
 ```
 **Re: [one-sentence summary of what was asked]**
@@ -18,15 +18,15 @@ Example (the actual template — copy this structure, replace bracketed text):
 
 Rules:
 
-- Bold line: neutral factual gist of what the user asked — not a full restatement, no labels
-- Blank line between the bold summary and the response
-- Never use a table or pipe-delimited format for the anchor line — pipe characters pollute copy-paste
+- Bold line: neutral factual gist of what user asked — not full restatement, no labels
+- Blank line between bold summary and response
+- Never use table or pipe-delimited format for anchor line — pipe chars pollute copy-paste
 - No exceptions — apply to every response including short ones
 
 ## Progress and Transparency
 
 - Narrate at milestones; print `[→ what and why]` before significant Bash calls
-- 5+ min silence warrants a status note
+- 5+ min silence warrants status note
 
 ## Tone
 
@@ -36,24 +36,24 @@ Rules:
 
 ## Artifact Framing
 
-- **Verbal summary as skeleton**: when the user provides a verbal summary before requesting a written artifact, that summary is the output skeleton — mirror their order, abstraction level, and named examples verbatim; do not add information the user did not mention — no elaboration, no expansion; source material (README, code) may only fill explicit gaps the user left open; preserve quotable phrases from the source exactly rather than paraphrasing.
-- **Format-label register**: translate the format label to its implied register before writing:
+- **Verbal summary as skeleton**: when user provides verbal summary before requesting written artifact, that summary = output skeleton — mirror their order, abstraction level, named examples verbatim; no added info user didn't mention — no elaboration, no expansion; source material (README, code) may only fill explicit gaps user left open; preserve quotable phrases from source exactly, no paraphrasing.
+- **Format-label register**: translate format label to implied register before writing:
   - *Slack message* — no headers, 2–4 short paragraphs, casual voice, inline links, one quotable block max
   - *PR description* — sections with headers, tables ok, technical register
   - *Executive summary* — bullets, outcome-first, no jargon
-  - When format is ambiguous, ask one question before writing.
+  - When format ambiguous, ask one question before writing.
 
 ## Interactive Questions
 
-**Hard constraint — never write a question as plain text.** Every question — clarifying, scoping, or continuation — must be posed by invoking the `AskUserQuestion` tool. A prose sentence ending with "?" is a violation even if it names the tool.
+**Hard constraint — never write question as plain text.** Every question — clarifying, scoping, or continuation — must be posed by invoking `AskUserQuestion` tool. Prose sentence ending with "?" is violation even if it names the tool.
 
-A labelled or annotated question (e.g. `[AskUserQuestion simulated] — What format?`) is still plain text and still violates this rule. Only an actual tool invocation satisfies the constraint.
+Labelled or annotated question (e.g. `[AskUserQuestion simulated] — What format?`) still plain text, still violates rule. Only actual tool invocation satisfies constraint.
 
-- Plain text questions are easily missed, don't block execution, and don't surface as a distinct UI affordance
-- This applies to: ambiguous input, clarifying choices, scope decisions, continuation guards, and any other point where user input is required before proceeding
-- Applies globally — to all skills, agents, and model-generated questions without exception
-- When `AskUserQuestion` is not in a skill's `allowed-tools`, add it before asking any question
-- Maximum 4 questions per call; group related sub-questions into one option set rather than asking sequentially
+- Plain text questions easily missed, don't block execution, don't surface as distinct UI affordance
+- Applies to: ambiguous input, clarifying choices, scope decisions, continuation guards, any point where user input required before proceeding
+- Applies globally — all skills, agents, model-generated questions without exception
+- When `AskUserQuestion` not in skill's `allowed-tools`, add it before asking any question
+- Max 4 questions per call; group related sub-questions into one option set rather than asking sequentially
 
 ## Output Routing
 

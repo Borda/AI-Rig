@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-Research-supervisor review of `program.md` — validates experimental methodology and emits an APPROVED / NEEDS-REVISION / BLOCKED verdict before the expensive run loop. Read-only; never modifies code or state.
+Research-supervisor review of `program.md` — validates experimental methodology, emits APPROVED / NEEDS-REVISION / BLOCKED verdict before expensive run loop. Read-only; never modifies code or state.
 
 NOT for: running experiments (use `/research:run`); designing hypotheses (use `research:scientist` agent); config quality (`/audit`).
 
@@ -19,25 +19,25 @@ NOT for: running experiments (use `/research:run`); designing hypotheses (use `r
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `Glob(pattern="foundry*", path="$HOME/.claude/plugins/cache/")` returning results = installed. If check fails, proceed as if foundry available — common case; only fall back if agent dispatch explicitly fails.
 
-When foundry is **not** installed, substitute `foundry:solution-architect` with `general-purpose` and prepend the role description:
+When foundry **not** installed, substitute `foundry:solution-architect` with `general-purpose`, prepend role description:
 
-| foundry agent                | Fallback          | Model      | Role description prefix                                                                                                                                         |
-| ---------------------------- | ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
 | `foundry:solution-architect` | `general-purpose` | `opusplan` | `You are a system design specialist. Evaluate architectural trade-offs, assess scope coverage, and identify missing dependencies. Output structured JSON only.` |
 
-`research:scientist` is in the same plugin as this skill — no fallback needed if the research plugin is installed.
+`research:scientist` in same plugin as this skill — no fallback needed if research plugin installed.
 
 ## --team flag (committee mode)
 
-If `--team` is present in arguments: after emitting the verdict (Step J5/J6), read `${CLAUDE_SKILL_DIR}/../run/modes/team.md` Phase A (hypothesis generation only). Spawn 2–3 reviewers using the team protocol to independently audit the methodology — majority rules on the verdict. This is the "committee" review mode.
+If `--team` present in arguments: after verdict (Step J5/J6), read `${CLAUDE_SKILL_DIR}/../run/modes/team.md` Phase A (hypothesis generation only). Spawn 2–3 reviewers via team protocol to independently audit methodology — majority rules on verdict. This = "committee" review mode.
 
 # Judge Mode (Steps J1–J6)
 
 Triggered by `judge` or `judge <file.md>`.
 
-**Task tracking**: create tasks for J1, J2, J3, J4, J5, J6 at the start of judge mode — before any tool calls.
+**Task tracking**: create tasks for J1, J2, J3, J4, J5, J6 at start — before any tool calls.
 
 ## Step J1: Locate and parse program.md
 
@@ -51,47 +51,47 @@ Triggered by `judge` or `judge <file.md>`.
    No program.md found. Run /research:plan <goal> first, or provide a path: /research:judge <path.md>
    ```
 
-**Parsing** — use the program-file section-parsing rules from Step R1 in `${CLAUDE_SKILL_DIR}/../run/SKILL.md` (find `## <Section>` headings, extract first fenced code block, parse as `key: value` lines, warn on unrecognized keys). The `--skip-validation` flag and `colab_hw` are judge-specific and extracted independently — they are not part of R1.
+**Parsing** — use program-file section-parsing rules from Step R1 in `${CLAUDE_SKILL_DIR}/../run/SKILL.md` (find `## <Section>` headings, extract first fenced code block, parse as `key: value` lines, warn on unrecognized keys). `--skip-validation` flag and `colab_hw` are judge-specific, extracted independently — not part of R1.
 
-**Placeholder substitution** — after parsing, apply the same substitution step as R1: resolve all `{field_name}` tokens in `metric_cmd` and `guard_cmd` using the corresponding field from `## Config`, falling back to any declared default for that field. Since judge has no `clarification_prompt`, skip the clarification-override step.
+**Placeholder substitution** — after parsing, apply same substitution step as R1: resolve all `{field_name}` tokens in `metric_cmd` and `guard_cmd` using corresponding field from `## Config`, falling back to declared default. No `clarification_prompt` in judge — skip clarification-override step.
 
-Extract a `<program_title>` from the `# Program: <title>` line for use in reports (fall back to `# Campaign: <title>` for legacy files).
+Extract `<program_title>` from `# Program: <title>` line for reports (fall back to `# Campaign: <title>` for legacy files).
 
 ## Step J2: Completeness audit
 
-Check each of the 11 items below. Produce a findings list with severity. Each finding has: `id`, `check`, `status` (pass/fail/warn), `severity`, `detail`.
+Check each of 11 items. Produce findings list with severity. Each finding has: `id`, `check`, `status` (pass/fail/warn), `severity`, `detail`.
 
-| ID  | Check                                                        | Severity if failing | Description                                                                                                                                                                                                                                                       |
-| --- | ------------------------------------------------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| C1  | `## Goal` present and non-empty                              | critical            | Campaign cannot run without a goal                                                                                                                                                                                                                                |
-| C2  | `## Metric` has `command` field                              | critical            | No metric = no feedback loop                                                                                                                                                                                                                                      |
-| C3  | `## Metric` has `direction` field (higher/lower)             | critical            | Cannot decide keep/revert without direction                                                                                                                                                                                                                       |
-| C4  | `## Guard` has `command` field                               | critical            | Without guard, regressions go undetected                                                                                                                                                                                                                          |
-| C5  | `scope_files` present in `## Config`                         | high                | Without scope, ideation agent modifies arbitrary files                                                                                                                                                                                                            |
-| C6  | Each `scope_files` path exists on disk (glob match)          | high                | Non-matching patterns mean ideation agent has nothing to work with. If filesystem is unavailable, flag as `warn` unless the path name explicitly signals non-existence (e.g., `nonexistent`, `placeholder`, `todo`, `legacy_v1`, `deprecated`, `old`, `removed`). |
-| C7  | `target` set in `## Metric`                                  | medium              | Without target, campaign runs to max_iterations — may waste compute                                                                                                                                                                                               |
-| C8  | `max_iterations` in bounds (1–50)                            | medium              | Missing defaults to 20 (acceptable); >50 violates SKILL.md constants                                                                                                                                                                                              |
-| C9  | `agent_strategy` is valid (`auto`/`perf`/`code`/`ml`/`arch`) | medium              | Invalid value silently falls back to `auto`                                                                                                                                                                                                                       |
-| C10 | `compute` is valid (`local`/`colab`/`docker`)                | low                 | Invalid defaults to `local`                                                                                                                                                                                                                                       |
-| C11 | `colab_hw` valid (if present)                                | low                 | `colab_hw` absent OR is one of `H100, L4, T4, A100` — fail detail: `"colab_hw '<value>' is not in known set {H100, L4, T4, A100} — may cause GPU identity check failure in run mode"`                                                                             |
-| C12 | `## Notes` section present                                   | low                 | Notes are optional but improve ideation quality                                                                                                                                                                                                                   |
+| ID | Check | Severity if failing | Description |
+| --- | --- | --- | --- |
+| C1 | `## Goal` present and non-empty | critical | Campaign cannot run without a goal |
+| C2 | `## Metric` has `command` field | critical | No metric = no feedback loop |
+| C3 | `## Metric` has `direction` field (higher/lower) | critical | Cannot decide keep/revert without direction |
+| C4 | `## Guard` has `command` field | critical | Without guard, regressions go undetected |
+| C5 | `scope_files` present in `## Config` | high | Without scope, ideation agent modifies arbitrary files |
+| C6 | Each `scope_files` path exists on disk (glob match) | high | Non-matching patterns mean ideation agent has nothing to work with. If filesystem is unavailable, flag as `warn` unless the path name explicitly signals non-existence (e.g., `nonexistent`, `placeholder`, `todo`, `legacy_v1`, `deprecated`, `old`, `removed`). |
+| C7 | `target` set in `## Metric` | medium | Without target, campaign runs to max_iterations — may waste compute |
+| C8 | `max_iterations` in bounds (1–50) | medium | Missing defaults to 20 (acceptable); >50 violates SKILL.md constants |
+| C9 | `agent_strategy` is valid (`auto`/`perf`/`code`/`ml`/`arch`) | medium | Invalid value silently falls back to `auto` |
+| C10 | `compute` is valid (`local`/`colab`/`docker`) | low | Invalid defaults to `local` |
+| C11 | `colab_hw` valid (if present) | low | `colab_hw` absent OR is one of `H100, L4, T4, A100` — fail detail: `"colab_hw '<value>' is not in known set {H100, L4, T4, A100} — may cause GPU identity check failure in run mode"` |
+| C12 | `## Notes` section present | low | Notes are optional but improve ideation quality |
 
-**Severity summary**: count findings at each severity level. Any critical finding means the verdict cannot be APPROVED.
+**Severity summary**: count findings per severity level. Any critical finding = verdict cannot be APPROVED.
 
-**Placeholder token check (C2, C4 sub-rule)** — after confirming the `command` field is present in `## Metric` (C2) and `## Guard` (C4), scan each command for `{...}` tokens. For each token, verify the corresponding field name exists in `## Config` (any value, including a declared default). A token with no matching `## Config` field is unresolvable — add a `high` finding for that check. Do not flag `{field_name}` tokens as malformed syntax; they are structurally valid when resolvable.
+**Placeholder token check (C2, C4 sub-rule)** — after confirming `command` field present in `## Metric` (C2) and `## Guard` (C4), scan each command for `{...}` tokens. For each token, verify corresponding field name exists in `## Config` (any value, including declared default). Token with no matching `## Config` field = unresolvable — add `high` finding. Do not flag `{field_name}` tokens as malformed; they're valid when resolvable.
 
-**Command feasibility**: J2 validates command fields statically (presence, format). Actual executability is deferred to J4. If `--skip-validation` is passed, J4 is skipped and command feasibility remains unverified — report in the judge output as "validation skipped — commands unverified."
+**Command feasibility**: J2 validates command fields statically (presence, format). Actual executability deferred to J4. If `--skip-validation` passed, J4 skipped, command feasibility unverified — report in judge output as "validation skipped — commands unverified."
 
 ## Step J3: Methodology review
 
-Pre-compute the run directory before spawning:
+Pre-compute run directory before spawning:
 
 ```bash
 RUN_DIR=".experiments/judge-$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 mkdir -p "$RUN_DIR"
 ```
 
-Spawn a `foundry:solution-architect` agent using `Agent(subagent_type="foundry:solution-architect", prompt="...")` (uses `opusplan` for high reasoning quality) with this prompt:
+Spawn `foundry:solution-architect` agent via `Agent(subagent_type="foundry:solution-architect", prompt="...")` (uses `opusplan` for high reasoning quality) with this prompt:
 
 ```
 Act as a research supervisor reviewing a PhD student's experimental protocol.
@@ -129,11 +129,11 @@ touch "$CHECKPOINT"
 
 Poll every 5 min: `find <RUN_DIR> -newer "$CHECKPOINT" -type f | wc -l` — new files = alive; zero = stalled.
 
-- **Hard cutoff: 15 min** of no file activity → timed out
+- **Hard cutoff: 15 min** no file activity → timed out
 - **One extension (+5 min)**: if `tail -20 <RUN_DIR>/methodology.md` shows active progress (partial content written), grant one extension; second stall = hard cutoff
-- **On timeout**: read `tail -100 <RUN_DIR>/methodology.md`; if file missing or empty, set `methodology_rating = "timed_out"` and continue to J6 verdict with that value. Surface with ⏱ in the report.
+- **On timeout**: read `tail -100 <RUN_DIR>/methodology.md`; if file missing or empty, set `methodology_rating = "timed_out"`, continue to J6 with that value. Surface with ⏱ in report.
 
-**Scientist health monitoring** — poll `<RUN_DIR>/scientific-review.md` on the same 5-min cadence:
+**Scientist health monitoring** — poll `<RUN_DIR>/scientific-review.md` on same 5-min cadence:
 
 ```bash
 LAUNCH_AT_SCI=$(date +%s)
@@ -143,16 +143,16 @@ touch "$CHECKPOINT_SCI"
 
 Poll every 5 min: `find <RUN_DIR> -name "scientific-review.md" -newer "$CHECKPOINT_SCI" | wc -l` — file present = alive; zero = stalled.
 
-- **Hard cutoff: 15 min** of no file activity → timed out
-- **On timeout**: set `scientific_rating = "timed_out"` and continue to J6; surface with ⏱ in the Scientific Rigor section.
+- **Hard cutoff: 15 min** no file activity → timed out
+- **On timeout**: set `scientific_rating = "timed_out"`, continue to J6; surface with ⏱ in Scientific Rigor section.
 
-Use `methodology_rating` from the returned envelope for verdict computation in J6:
+Use `methodology_rating` from returned envelope for verdict computation in J6:
 
 - `sound` → supports APPROVED
 - `needs-refinement` → supports NEEDS-REVISION
 - `fundamentally-flawed` → supports BLOCKED
 
-Also spawn `research:scientist` in parallel using `Agent(subagent_type="research:scientist", prompt="...")` (dispatch both in a single response at the start of J3) to review scientific rigor:
+Also spawn `research:scientist` in parallel via `Agent(subagent_type="research:scientist", prompt="...")` (dispatch both in single response at start of J3) to review scientific rigor:
 
 ```
 Act as an ML research peer reviewer assessing experimental protocol rigor.
@@ -169,33 +169,33 @@ Write findings to `<RUN_DIR>/scientific-review.md`.
 Return ONLY: {"status":"done","scientific_rating":"sound|needs-refinement|fundamentally-flawed","issues":N,"file":"<RUN_DIR>/scientific-review.md","confidence":0.N,"summary":"<one-line>"}
 ```
 
-Use `scientific_rating` as **advisory** input in the J6 report under a **Scientific Rigor** section — it informs but does not override the verdict. Exception: `scientific_rating = "fundamentally-flawed"` elevates the verdict to BLOCKED with a note to redesign the hypothesis.
+Use `scientific_rating` as **advisory** input in J6 report under **Scientific Rigor** section — informs but does not override verdict. Exception: `scientific_rating = "fundamentally-flawed"` elevates verdict to BLOCKED with note to redesign hypothesis.
 
 ## Step J4: Local validation
 
-> Skip this step if `--skip-validation` flag is present in the arguments.
+> Skip if `--skip-validation` flag present in arguments.
 
-Execute each command once to verify they work. These are **non-blocking** — failures become `critical` findings, not hard stops.
+Execute each command once to verify. **Non-blocking** — failures become `critical` findings, not hard stops.
 
-**Substitution invariant** — `metric_cmd` and `guard_cmd` were fully resolved in J1. No literal `{...}` tokens should remain at this point. If any `{field_name}` token is still present in either command, add a `critical` finding: "Unresolved placeholder `{field_name}` in `<metric_cmd|guard_cmd>` — substitution failed in J1" and skip execution of that command.
+**Substitution invariant** — `metric_cmd` and `guard_cmd` fully resolved in J1. No literal `{...}` tokens should remain. If any `{field_name}` token still present, add `critical` finding: "Unresolved placeholder `{field_name}` in `<metric_cmd|guard_cmd>` — substitution failed in J1" and skip execution of that command.
 
 ```bash
 # Metric validation — captures baseline value
-timeout 120 <metric_cmd >2 >&1
+<metric_cmd 2>&1  # timeout: 360000
 ```
 
-Parse stdout for a float value. If found, record as `baseline_value`. If not found or command exits non-zero: add critical finding: "Metric command failed or produced no numeric output".
+Parse stdout for float value. If found, record as `baseline_value`. If not found or command exits non-zero: add critical finding: "Metric command failed or produced no numeric output".
 
 ```bash
 # Guard validation
-timeout 120 <guard_cmd>
+<guard_cmd  # timeout: 360000
 ```
 
 If guard exits non-zero: add critical finding: "Guard command exited non-zero (exit <code>): \<first 3 lines of output>".
 
-Record validation results for the J6 report.
+Record validation results for J6 report.
 
-**Note**: J4 executes commands on the current machine. For cross-machine workflows (e.g., planning locally, campaigning on GPU), pass `--skip-validation` to skip this step.
+**Note**: J4 executes on current machine. For cross-machine workflows (e.g., plan locally, campaign on GPU), pass `--skip-validation`.
 
 ## Step J5: Codex adversarial review
 
@@ -205,13 +205,13 @@ Check Codex availability:
 claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'
 ```
 
-**If available**: invoke adversarial review focused on the specific gaps found in J2 and J3. Construct a focus string from the top 3 critical/high findings. Example (replace `<top finding N>` with actual findings from J2/J3):
+**If available**: invoke adversarial review focused on specific gaps found in J2 and J3. Construct focus string from top 3 critical/high findings. Example (replace `<top finding N>` with actual findings from J2/J3):
 
 ```
 Agent(subagent_type="codex:codex-rescue", prompt="Adversarial review of run program: check <top finding 1>, <top finding 2>, and <top finding 3> in the program.md. Read-only: do not apply fixes.")
 ```
 
-Incorporate Codex findings into the overall findings list with `source: "codex"`.
+Incorporate Codex findings into overall findings list with `source: "codex"`.
 
 **If unavailable**: print one line and continue:
 
@@ -225,12 +225,12 @@ note: codex plugin not installed — skipping adversarial review (Claude-only ju
 
 Evaluate top-to-bottom; **first match wins**. BLOCKED always takes precedence — do not continue to subsequent rows once matched.
 
-| Condition                                                                                                                                                                                               | Verdict        |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
-| any critical OR methodology_rating = `fundamentally-flawed` OR scientific_rating = `fundamentally-flawed` (note: `timed_out` does **not** trigger BLOCKED — it maps to NEEDS-REVISION via the next row) | BLOCKED        |
-| J3 agent timed out (`methodology_rating` = `timed_out` or null)                                                                                                                                         | NEEDS-REVISION |
-| 0 critical AND (high > 0 OR methodology_rating = `needs-refinement`)                                                                                                                                    | NEEDS-REVISION |
-| 0 critical AND 0 high AND methodology_rating = `sound`                                                                                                                                                  | APPROVED       |
+| Condition | Verdict |
+| --- | --- |
+| any critical OR methodology_rating = `fundamentally-flawed` OR scientific_rating = `fundamentally-flawed` (note: `timed_out` does **not** trigger BLOCKED — it maps to NEEDS-REVISION via the next row) | BLOCKED |
+| J3 agent timed out (`methodology_rating` = `timed_out` or null) | NEEDS-REVISION |
+| 0 critical AND (high > 0 OR methodology_rating = `needs-refinement`) | NEEDS-REVISION |
+| 0 critical AND 0 high AND methodology_rating = `sound` | APPROVED |
 
 **Pre-compute**:
 
@@ -322,11 +322,11 @@ Next: fix protocol, re-run /research:judge <path>      [NEEDS-REVISION or BLOCKE
 
 ## Notes
 
-- Judge is read-only — it never modifies code, commits, or writes to `.experiments/state/`
-- The `.experiments/judge-<timestamp>/` run directory stores the methodology review agent's full output for later reference
-- Validation commands execute on the current machine — use `--skip-validation` for cross-machine workflows
-- Verdict is deterministic (finding counts + methodology_rating); it is not inferred from prose
-- Re-run judge after editing `program.md` to confirm fixes resolved the flagged items
-- Judge run directories do not write `result.jsonl` — they are exempt from the automated 30-day TTL cleanup (exempt per `.claude/rules/artifact-lifecycle.md` TTL policy — no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/judge-*/`)
+- Judge read-only — never modifies code, commits, or writes to `.experiments/state/`
+- `.experiments/judge-<timestamp>/` stores methodology review agent's full output for reference
+- Validation commands execute on current machine — use `--skip-validation` for cross-machine workflows
+- Verdict deterministic (finding counts + methodology_rating); not inferred from prose
+- Re-run judge after editing `program.md` to confirm fixes resolved flagged items
+- Judge run directories don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (exempt per `.claude/rules/artifact-lifecycle.md` TTL policy — no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/judge-*/`)
 
 </workflow>

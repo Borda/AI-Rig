@@ -6,15 +6,15 @@ paths:
 
 ## Before Editing
 
-- **Enter plan mode first** — triggers Opus via `opusplan` for best reasoning on configuration changes. **No exceptions**: typo fixes, single-step edits, and "quick" changes all require plan mode. The global "non-trivial task (3+ steps)" threshold does NOT apply here — any edit to `.claude/` is treated as non-trivial.
+- **Enter plan mode first** — triggers Opus via `opusplan`. **No exceptions**: typo fixes, single-step edits, "quick" changes all need plan mode. Global "3+ steps" threshold NOT apply here — any `.claude/` edit = non-trivial.
 
 ## After Any Change
 
-1. **Cross-references** — if a name or capability changes, update every file that mentions it
-2. **Auto-memory MEMORY.md** — keep the agents/skills roster in sync with disk (not stored under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '-' | tr '.' '-')/memory/MEMORY.md`)
-3. **`README.md`** — verify agent/skill tables, Status Line, and Config Sync sections
-4. **`settings.json` permissions** — IF this change introduces any new `gh`, `bash`, or `WebFetch` call (directly or in a step/workflow you are adding), you MUST add a matching allow rule before marking the task complete. Check: scan the diff for any new CLI invocations before ticking this off.
-5. **`</workflow>` tags** — mode sections must sit inside the block; closing tag after the last mode, before `<notes>`
+1. **Cross-references** — name or capability changes → update every file mentioning it
+2. **Auto-memory MEMORY.md** — keep agents/skills roster in sync with disk (not under `.claude/`; path injected at session start — derive with `~/.claude/projects/$(git rev-parse --show-toplevel 2>/dev/null | tr '/' '-' | tr '.' '-')/memory/MEMORY.md`)
+3. **`README.md`** — verify agent/skill tables, Status Line, Config Sync sections
+4. **`settings.json` permissions** — new `gh`, `bash`, or `WebFetch` call → add matching allow rule before marking complete. Scan diff for new CLI invocations.
+5. **`</workflow>` tags** — mode sections sit inside block; closing tag after last mode, before `<notes>`
 6. **Step numbering** — renumber sequentially after adding/removing steps
 
 ## Path Rules (foundry-infra)
@@ -24,33 +24,33 @@ paths:
 ## Worktrees
 
 - Worktrees land under `.claude/worktrees/<id>/`
-- Permissions in `settings.local.json` are snapshotted at worktree-creation time — not updated retroactively
-- Alternative for worktree commands: spawn an agent with `isolation: "worktree"` — its CWD is the worktree root automatically
+- Permissions in `settings.local.json` snapshotted at worktree-creation — not updated retroactively
+- Alternative: spawn agent with `isolation: "worktree"` — CWD auto-set to worktree root
 
 ## Agent/Skill File XML Tag Conventions
 
-- **Structural tags** (`<role>`, `<workflow>`, `<notes>`): unescaped — the primary Claude Code-parsed sections
-- **Non-structural section tags** (e.g. `\<antipatterns_to_flag>`, `\<toolchain>`, `\<core_principles>`): backslash-escaped — internal organisation that Claude Code does not parse as metadata
-- When adding a new section tag: use `\<tag>` for any subsection inside `<role>` or `<workflow>`; leave the three structural tags unescaped
+- **Structural tags** (`<role>`, `<workflow>`, `<notes>`): unescaped — primary Claude Code-parsed sections
+- **Non-structural section tags** (e.g. `\<antipatterns_to_flag>`, `\<toolchain>`, `\<core_principles>`): backslash-escaped — internal org, Claude Code ignores
+- New section tag: use `\<tag>` for subsections inside `<role>` or `<workflow>`; leave three structural tags unescaped
 
 ## Distribution
 
 - Source of truth: `plugins/foundry/` (rules, agents, skills, hooks, CLAUDE.md, TEAM_PROTOCOL.md, permissions-guide.md)
-- `.claude/` entries are symlinks into the plugin — edit the plugin files, not the symlinks
+- `.claude/` entries = symlinks into plugin — edit plugin files, not symlinks
 - Rules distribute to `~/.claude/rules/` via `/foundry:init`
-- `permissions-guide.md` is project-only reference — symlinked from `.claude/`, not copied to `~/.claude/`
-- `settings.local.json` is never distributed; `CLAUDE.md` is NOT distributed (reserved file — user owns `~/.claude/CLAUDE.md`); `TEAM_PROTOCOL.md` IS distributed via `/foundry:init`
+- `permissions-guide.md` = project-only reference — symlinked from `.claude/`, not copied to `~/.claude/`
+- `settings.local.json` never distributed; `CLAUDE.md` NOT distributed (reserved — user owns `~/.claude/CLAUDE.md`); `TEAM_PROTOCOL.md` IS distributed via `/foundry:init`
 
 ## Log File TTL
 
-| Location          | TTL     | Condition                                                                                           |
-| ----------------- | ------- | --------------------------------------------------------------------------------------------------- |
-| `~/.claude/logs/` | forever | hook audit logs (invocations, compactions, timings) — global across all projects; rotate at 10 MB   |
-| `.claude/logs/`   | forever | skill-specific logs (calibrations, session-archive, audit-errors) — project-scoped; rotate at 10 MB |
+| Location | TTL | Condition |
+| --- | --- | --- |
+| `~/.claude/logs/` | forever | hook audit logs (invocations, compactions, timings) — global across all projects; rotate at 10 MB |
+| `.claude/logs/` | forever | skill-specific logs (calibrations, session-archive, audit-errors) — project-scoped; rotate at 10 MB |
 
 ## Cleanup Hook (SessionEnd)
 
-The `SessionEnd` hook runs this cleanup automatically:
+`SessionEnd` hook runs cleanup automatically:
 
 ```bash
 # Delete completed skill runs older than 30 days
@@ -64,7 +64,7 @@ find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs rm -f
 
 ## Settings.json Allow Entries
 
-The deterministic dot-prefixed paths allow precise allow rules (keep in sync with `settings.json` — `/audit` Check 6 detects drift):
+Dot-prefixed paths enable precise allow rules (keep in sync with `settings.json` — `/foundry:audit` Check 6 detects drift):
 
 ```text
 "Bash(mkdir -p .cache/*)",

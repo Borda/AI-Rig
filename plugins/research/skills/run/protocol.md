@@ -18,26 +18,26 @@ Every `--researcher` run writes to `.experiments/<run-id>/`:
 
 ## hypotheses.jsonl Schema
 
-One JSON object per line. Field groups are written by separate agents in two passes:
+One JSON obj per line. Two-pass write by separate agents:
 
 **Pass 1 — researcher (oracle):**
 
-| Field            | Type    | Description                                                                                                                    |
-| ---------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `hypothesis`     | `str`   | What to test — concrete, implementable change                                                                                  |
-| `rationale`      | `str`   | Literature or experiment grounding for the hypothesis                                                                          |
-| `confidence`     | `float` | Oracle confidence [0–1]; entries < 0.7 are deprioritized to end of queue                                                       |
-| `expected_delta` | `str`   | Expected metric change (e.g. `"+1–3% val_loss"`)                                                                               |
-| `priority`       | `int`   | Execution order (1 = highest); journal-sourced entries use lower values than oracle entries                                    |
-| `source`         | `str`   | `"oracle"` for researcher entries; `"journal"` for journal-sourced entries; `"team"` for team-mode hypothesis agents (Phase A) |
+| Field | Type | Description |
+| --- | --- | --- |
+| `hypothesis` | `str` | What to test — concrete, implementable change |
+| `rationale` | `str` | Literature or experiment grounding for the hypothesis |
+| `confidence` | `float` | Oracle confidence [0–1]; entries < 0.7 are deprioritized to end of queue |
+| `expected_delta` | `str` | Expected metric change (e.g. `"+1–3% val_loss"`) |
+| `priority` | `int` | Execution order (1 = highest); journal-sourced entries use lower values than oracle entries |
+| `source` | `str` | `"oracle"` for researcher entries; `"journal"` for journal-sourced entries; `"team"` for team-mode hypothesis agents (Phase A) |
 
-**Pass 2 — solution-architect (feasibility filter):** annotates in place, preserving order
+**Pass 2 — solution-architect (feasibility filter):** annotates in place, preserves order
 
-| Field              | Type          | Description                                                             |
-| ------------------ | ------------- | ----------------------------------------------------------------------- |
-| `feasible`         | `bool`        | `true` if the codebase supports the change with reasonable effort       |
-| `blocker`          | `str \| null` | Required if `feasible: false`; names the specific architectural blocker |
-| `codebase_mapping` | `str`         | Files, classes, or functions that would need to change                  |
+| Field | Type | Description |
+| --- | --- | --- |
+| `feasible` | `bool` | `true` if the codebase supports the change with reasonable effort |
+| `blocker` | `str \ | null` | Required if `feasible: false`; names the specific architectural blocker |
+| `codebase_mapping` | `str` | Files, classes, or functions that would need to change |
 
 **Minimal valid oracle entry (before feasibility pass):**
 
@@ -64,15 +64,15 @@ One JSON object per line. Field groups are written by separate agents in two pas
 
 ## Feasibility Filter Rules
 
-- `feasible: false` entries are skipped in campaign execution; they remain in the file for audit purposes
-- `confidence < 0.7` entries are moved to the end of the queue — not removed
-- Move low-confidence entries by assigning a `priority` value higher than the maximum priority in the current queue; do not reorder lines in the file (preserve JSONL append order for audit purposes).
-- Solution-architect must **preserve hypothesis order** when annotating; do not re-rank
-- `blocker` is required when `feasible: false` — a blank or null blocker on a false entry is a schema violation
+- `feasible: false` entries skipped in execution; remain for audit
+- `confidence < 0.7` → end of queue, not removed
+- Move low-confidence: assign `priority` > max in queue; don't reorder lines (preserve JSONL append order for audit)
+- Solution-architect must **preserve hypothesis order** when annotating; no re-rank
+- `blocker` required when `feasible: false` — blank/null blocker on false entry = schema violation
 
 ## checkpoint.json Schema
 
-Written after every iteration; used by `--resume` to skip completed iterations:
+Written after every iteration; `--resume` uses to skip completed:
 
 ```json
 {
@@ -84,23 +84,23 @@ Written after every iteration; used by `--resume` to skip completed iterations:
 }
 ```
 
-| Field           | Type    | Values                                      |
-| --------------- | ------- | ------------------------------------------- |
-| `iteration`     | `int`   | 1-indexed; monotonically increasing         |
-| `hypothesis_id` | `int`   | 0-indexed position in `hypotheses.jsonl`    |
+| Field | Type | Values |
+| --- | --- | --- |
+| `iteration` | `int` | 1-indexed; monotonically increasing |
+| `hypothesis_id` | `int` | 0-indexed position in `hypotheses.jsonl` |
 | `metric_before` | `float` | Metric value before applying the hypothesis |
-| `metric_after`  | `float` | Metric value after applying the hypothesis  |
-| `status`        | `str`   | `"passed"` or `"rolled_back"`               |
+| `metric_after` | `float` | Metric value after applying the hypothesis |
+| `status` | `str` | `"passed"` or `"rolled_back"` |
 
-- A completed iteration already in `checkpoint.json` is idempotent — skip it, do not re-run
-- A `status: "rolled_back"` entry must still be written — partial results are still audit data
-- A `status: "rolled_back"` iteration is also idempotent — skip it on `--resume` just as a `passed` iteration would be skipped; only hypotheses with no checkpoint entry at all should be executed.
+- Completed iteration in `checkpoint.json` = idempotent — skip, don't re-run
+- `status: "rolled_back"` must still write — partial results = audit data
+- `status: "rolled_back"` = idempotent on `--resume` same as `passed`; only hypotheses with no checkpoint entry execute
 
 ## journal.md Entry Format
 
-Active when `--journal` flag is set. Appended after EVERY iteration (kept and reverted). Location: `<RUN_DIR>/journal.md`. Never overwrite — always append.
+Active with `--journal`. Appended after EVERY iteration (kept and reverted). Location: `<RUN_DIR>/journal.md`. Never overwrite — always append.
 
-Each entry follows this exact structure:
+Each entry:
 
 ```markdown
 ## Iteration N — YYYY-MM-DD
@@ -117,39 +117,39 @@ Each entry follows this exact structure:
 
 Rules:
 
-- `Avoid repeating: yes` signals the ideation agent in Phase 2 to skip similar approaches (same file, same technique, same abstraction)
-- `Pattern` emerges after 3+ entries — synthesize what is / isn't working across the run
-- At exactly iteration 3, Pattern is required if a cross-iteration trend is observable. Write "n/a" only if fewer than 3 entries exist — not as a placeholder when entries exist but no trend is apparent; if no trend is yet visible at 3+ entries, write "insufficient signal — no consistent pattern across N iterations".
-- Do NOT use threshold filtering — all iterations are recorded regardless of delta magnitude
-- `Why kept / why reverted` must be substantive — not "it worked" or "it failed"; name the specific mechanism or failure mode
+- `Avoid repeating: yes` → Phase 2 ideation skips similar approaches (same file, technique, abstraction)
+- `Pattern` emerges after 3+ entries — synthesize what works/doesn't across run
+- At iteration 3, Pattern required if trend observable. Write "n/a" only if \<3 entries — not placeholder when entries exist but no trend; if no trend at 3+ entries, write "insufficient signal — no consistent pattern across N iterations"
+- No threshold filtering — all iterations recorded regardless of delta
+- `Why kept / why reverted` must be substantive — not "it worked"/"it failed"; name mechanism or failure mode
 
-> **Note**: The per-run `diary.md` (`.experiments/state/<run-id>/diary.md`) written by Phase 7a of the campaign loop is a separate, always-active record of all iterations. The `journal.md` written by `--journal` is a structured learning log in the research/architect run directory (`.experiments/<run-id>/`), distinct from the state diary.
+> **Note**: `diary.md` (`.experiments/state/<run-id>/diary.md`) = Phase 7a always-active iteration record. `journal.md` via `--journal` = structured learning log in `.experiments/<run-id>/`, distinct from state diary.
 
 ## Journal-Sourced Hypothesis Rules
 
-- Never execute a journal-sourced hypothesis without a feasibility annotation — `feasible` must be present before it enters the campaign loop
-- Journal hypotheses inherit the same JSONL schema as oracle hypotheses; `source: "journal"` is the only distinguishing field
-- Priority assignment: `priority` must be numerically higher (lower priority) than all existing oracle entries so journal hypotheses run after the original queue is exhausted
+- Never execute journal hypothesis without feasibility annotation — `feasible` required before campaign loop
+- Journal hypotheses inherit oracle JSONL schema; `source: "journal"` only distinguishing field
+- `priority` must be numerically higher than all oracle entries — journal hypotheses run after queue exhausted
 
 ## Team Mode Extensions
 
-When `--team` is active, hypothesis agents in Phase A produce entries with `source: "team"` and three additional fields that are **required** (not merely allowed):
+`--team` active: Phase A hypothesis agents produce `source: "team"` entries with 3 **required** additional fields:
 
-| Field          | Type  | Description                                                                                                                                                |
-| -------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `axis`         | `str` | The optimization axis the hypothesis belongs to (e.g., `"model architecture"`)                                                                             |
-| `agent_type`   | `str` | Specialist agent type to use for implementation (e.g., `"perf-optimizer"`, `"researcher"`)                                                                 |
+| Field | Type | Description |
+| --- | --- | --- |
+| `axis` | `str` | The optimization axis the hypothesis belongs to (e.g., `"model architecture"`) |
+| `agent_type` | `str` | Specialist agent type to use for implementation (e.g., `"perf-optimizer"`, `"researcher"`) |
 | `change_scope` | `str` | Estimated blast radius: `"small"` (1–2 files), `"medium"` (3–5 files), `"large"` (6+ files or architectural) (primary Phase B sort key — small runs first) |
 
-A team-mode entry missing any of these three fields is a schema violation analogous to a missing `blocker` on an infeasible entry.
+Team entry missing any of 3 fields = schema violation (like missing `blocker` on infeasible entry).
 
-**Backfill rule** (for R0 `--researcher`/`--architect` entries merged into a team queue): see Phase A Step 5 in `./modes/team.md` for the full backfill logic.
+**Backfill rule** (R0 `--researcher`/`--architect` entries merged into team queue): see Phase A Step 5 in `./modes/team.md`.
 
 **Team-mode output files** (in `<RUN_DIR>/`, alongside `hypotheses.jsonl`):
 
-| File                                | Written by     | Description                                                          |
-| ----------------------------------- | -------------- | -------------------------------------------------------------------- |
-| `hypotheses-<axis-slug>.jsonl`      | Phase A agents | Per-axis raw hypothesis output; merged into queue in Phase B         |
-| `hypothesis-analyst-<axis-slug>.md` | Phase A agents | Full analysis and Confidence block (file-handoff protocol)           |
-| `team-queue.jsonl`                  | Phase B lead   | Final ordered execution queue (post-sort, post-user-gate)            |
-| `team-results.jsonl`                | Phase C lead   | Per-hypothesis outcome log (kept/reverted, metric delta, commit SHA) |
+| File | Written by | Description |
+| --- | --- | --- |
+| `hypotheses-<axis-slug>.jsonl` | Phase A agents | Per-axis raw hypothesis output; merged into queue in Phase B |
+| `hypothesis-analyst-<axis-slug>.md` | Phase A agents | Full analysis and Confidence block (file-handoff protocol) |
+| `team-queue.jsonl` | Phase B lead | Final ordered execution queue (post-sort, post-user-gate) |
+| `team-results.jsonl` | Phase C lead | Per-hypothesis outcome log (kept/reverted, metric delta, commit SHA) |

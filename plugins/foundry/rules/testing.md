@@ -7,26 +7,26 @@ paths:
 
 ## Adding Tests — Process
 
-**For new features, use the test-first approach** — see TDD section below.
+**New features: test-first** — see TDD below.
 
-1. Check all existing tests for the relevant scope first
-2. Investigate if adding parametrization to existing tests (with minimal body changes) is sufficient
-3. Only then create completely new test functions/cases
+1. Check existing tests for relevant scope first
+2. Investigate if parametrizing existing tests (minimal body changes) suffices
+3. Only then create new test functions/cases
 
 ## What to Test — Priority Order
 
-1. **Function goals / docs / intended user application** — tests that verify the contract and normal use
+1. **Function goals / docs / intended user application** — verify contract and normal use
 2. **Edge cases** — boundary values, empty inputs, extreme sizes, unusual combinations
-3. **Exception handling** — only after the above are covered; don't lead with error-path tests
-   - When adding exception-handling tests, include at least one contract/normal-use test in the same commit or point to an existing test that covers the contract — do not submit error-path-only test files.
+3. **Exception handling** — only after above; don't lead with error-path tests
+   - When adding exception-handling tests, include at least one contract/normal-use test in same commit or point to existing — no error-path-only test files.
 
 ## Test Structure
 
-- **Arrange-Act-Assert (AAA)**: one setup block, one `act`, one assertion group per test — never a second `act` in the same test
+- **Arrange-Act-Assert (AAA)**: one setup block, one `act`, one assertion group per test — never second `act` in same test
 - Each test validates exactly one scenario
-- No `if`/`for` logic in test bodies; exception: a list-comprehension or generator expression used solely to build `@pytest.mark.parametrize` arguments, provided it spans fewer than 30% of the lines in the `parametrize` decorator call.
-- Parametrize aggressively — 3+ test functions with the same structure → `@pytest.mark.parametrize`
-- Group topic-related tests into a class; class name carries unit (and optionally condition) so method names describe the expected outcome only
+- No `if`/`for` logic in test bodies; exception: list-comprehension or generator used solely to build `@pytest.mark.parametrize` args, spanning fewer than 30% of lines in `parametrize` decorator call
+- Parametrize aggressively — 3+ test functions with same structure → `@pytest.mark.parametrize`
+- Group topic-related tests into class; class name carries unit (and optionally condition) so method names describe expected outcome only
 
 ## File Layout
 
@@ -34,37 +34,30 @@ Mirror `src/` layout in `tests/unit/`: `src/foo/bar.py` → `tests/unit/foo/test
 
 ## Seeding / Randomness
 
-- Never seed RNG anywhere except inside an `autouse=True` fixture — not in test bodies, not at module level, not in non-autouse fixtures
-- If the fixture is needed project-wide, place it in `tests/conftest.py` — do not duplicate it per file. Per-file placement is acceptable only when a specific file needs a different seed strategy.
-- Use a pytest fixture that resets all RNG sources: `torch.manual_seed`, `numpy.random.seed`, `random.seed`, `torch.cuda.manual_seed_all`
-- Fixture should use `autouse=True`
+- Never seed RNG except inside `autouse=True` fixture — not in test bodies, module level, or non-autouse fixtures
+- If fixture needed project-wide, place in `tests/conftest.py` — don't duplicate per file. Per-file placement only when file needs different seed strategy.
+- Use pytest fixture resetting all RNG sources: `torch.manual_seed`, `numpy.random.seed`, `random.seed`, `torch.cuda.manual_seed_all`
+- Fixture must use `autouse=True`
 
 ```python
 @pytest.fixture(autouse=True)
 def reset_random_seeds():
     """Ensure reproducible random state for every test."""
     import random
-
     random.seed(42)
     try:
-        import numpy as np
-
-        np.random.seed(42)
+        import numpy as np; np.random.seed(42)
     except ImportError:
         pass
     try:
-        # ML stack: conditionally reset torch RNG — fixture works without it
-        import torch
-
-        torch.manual_seed(42)
-        torch.cuda.manual_seed_all(42)
+        import torch; torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     except ImportError:
         pass
 ```
 
 ## CUDA Skip Pattern
 
-Use the decorator form, not inline `if`:
+Use decorator form, not inline `if`:
 
 ```python
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -73,28 +66,28 @@ def test_cuda_inference(): ...
 
 ## Docstrings
 
-- Every test function/method needs at least a one-line docstring (max 120 chars)
-- Complex tests: include the scenario the test is supposed to cover
+- Every test function/method needs at least one-line docstring (max 120 chars)
+- Complex tests: include scenario being covered
 - Module-level docstrings required
 
 ## Helpers in Tests
 
-- If a helper has no shared logic across cases, split it into separate dedicated functions rather than a single branching helper
+- Helper with no shared logic across cases → split into separate dedicated functions, not single branching helper
 - Shared logic only → shared function
 
 ## TDD for New Features
 
-For new features, follow Test-Driven Development — write tests before implementation; tests define the contract.
+Write tests before implementation; tests define contract.
 
 ## Doctests
 
-Doctests live in **source files** (`src/**/*.py`), not in test files — they are part of the module's documentation, not the test suite. Run them with:
+Doctests live in **source files** (`src/**/*.py`), not test files — part of module docs, not test suite. Run with:
 
 ```bash
 python -m pytest --doctest-modules src/
 ```
 
-Do not rely on `tests/**/*.py` globs to pick up doctests — they will be missed. Add `--doctest-modules src/` explicitly to the pytest invocation or to `pyproject.toml`:
+Don't rely on `tests/**/*.py` globs for doctests — missed. Add `--doctest-modules src/` explicitly to pytest invocation or `pyproject.toml`:
 
 ```toml
 [tool.pytest.ini_options]

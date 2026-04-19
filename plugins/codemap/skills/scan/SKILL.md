@@ -4,16 +4,15 @@ description: Scan the Python codebase and build a structural JSON index (import 
 argument-hint: [--root <path>]
 effort: medium
 allowed-tools: Bash
-disable-model-invocation: false
 ---
 
 <objective>
 
-**Python only** — uses `ast.parse` to extract the import graph across all `.py` files; non-Python files are not indexed. Writes `.cache/scan/<project>.json`. No external dependencies required.
+**Python only** — uses `ast.parse` to extract import graph across all `.py` files; non-Python files not indexed. Writes `.cache/scan/<project>.json`. No external deps required.
 
-Agents and develop skills query this index via `scan-query` to understand module dependencies, blast radius, and coupling before editing code.
+Agents and develop skills query index via `scan-query` to understand module dependencies, blast radius, coupling before editing code.
 
-NOT for: querying an existing index (use `/codemap:query`).
+NOT for: querying existing index (use `/codemap:query`).
 
 </objective>
 
@@ -26,14 +25,14 @@ NOT for: querying an existing index (use `/codemap:query`).
 ${CLAUDE_PLUGIN_ROOT}/bin/scan-index
 ```
 
-If `--root` was passed as an argument, forward it:
+If `--root` passed as argument, forward it:
 
 ```bash
 # timeout: 360000
 ${CLAUDE_PLUGIN_ROOT}/bin/scan-index --root <path>
 ```
 
-The scanner writes to `.cache/scan/<project>.json` and prints a summary line:
+Scanner writes to `.cache/scan/<project>.json` and prints summary line:
 
 ```
 [codemap] ✓ .cache/scan/<project>.json
@@ -42,7 +41,7 @@ The scanner writes to `.cache/scan/<project>.json` and prints a summary line:
 
 ## Step 2: Report
 
-After the scan completes, read the index and report a compact summary:
+After scan completes, read index and report compact summary:
 
 ```bash
 # Note: $(...) inside the double-quoted python3 -c "..." string is shell-expanded before Python sees it.
@@ -61,7 +60,7 @@ for m in top:
 "
 ```
 
-If degraded files exist: list them with their reason. Do not treat degraded files as a failure — the index is still useful.
+Degraded files exist: list with reason. Not failure — index still useful.
 
 ## Step 3: Suggest next step
 

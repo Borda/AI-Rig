@@ -8,27 +8,27 @@ allowed-tools: Read, Edit, Bash, Agent, TaskCreate, TaskUpdate, AskUserQuestion
 
 <objective>
 
-OSS maintainer fast-close workflow. Given a PR number, three phases fire automatically:
+OSS maintainer fast-close workflow. PR number → three phases fire automatically:
 
-1. **PR intelligence** — synthesize contribution motivation from the PR body, linked issues, and full discussion thread; classify every comment into action items
-2. **Conflict resolution** — check out the PR branch (fork-aware), merge `BASE_REF` into it, resolve conflicts semantically with the contributor's intent as the priority lens
-3. **Action item implementation** — implement each action item as a separate commit attributed to the review comment, then push back to the contributor's fork
+1. **PR intelligence** — synthesize motivation from PR body, linked issues, thread; classify comments into action items
+2. **Conflict resolution** — checkout PR branch (fork-aware), merge `BASE_REF`, resolve conflicts with contributor intent as priority lens
+3. **Action item implementation** — implement each item as separate commit attributed to review comment, push to contributor's fork
 
-The result: a conflict-free, review-addressed PR branch pushed to the fork, ready for the maintainer to merge on GitHub — all without touching the GitHub UI.
+Result: conflict-free PR branch pushed to fork, ready to merge — no GitHub UI.
 
-**Core invariant — transparent and reversible**: every action produces a visible, named git object (merge commit, fix commit) that can be inspected and reverted individually. This is why all conflict resolution goes forward via `git merge` (creates a new commit with two parents) and never via `git rebase` (rewrites SHA history, destroys the ability to revert or cherry-pick individual steps). Each action item becomes its own commit for the same reason — granular revert is always possible.
+**Core invariant — transparent and reversible**: every action = visible named git object. Use `git merge` (new commit, two parents), never `git rebase` (rewrites SHA, kills revert/cherry-pick). Each action item = own commit — granular revert always possible.
 
-When given bare comment text, skip straight to Codex dispatch (Step 12).
+Bare comment text → skip to Codex dispatch (Step 12).
 
 </objective>
 
 <inputs>
 
 - **$ARGUMENTS**: one of:
-  - Omitted → **review-handoff mode**: auto-detect PR from the most recent `.temp/output-review-*.md` file
-  - A PR number (e.g. `42`) or GitHub PR URL → **pr mode**
-  - `report` (bare word) → **report mode**: use latest review report findings as action items; no GitHub re-fetch
-  - `42 report` or `<URL> report` → **pr + report mode**: aggregate live GitHub comments + review report findings, deduplicated in one pass
+  - Omitted → **review-handoff mode**: auto-detect PR from most recent `.temp/output-review-*.md`
+  - PR number (e.g. `42`) or GitHub PR URL → **pr mode**
+  - `report` (bare word) → **report mode**: latest review findings as action items; no GitHub re-fetch
+  - `42 report` or `<URL> report` → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass
   - Bare review comment text → **comment dispatch mode** (jumps to Step 12)
 
 </inputs>
@@ -37,23 +37,23 @@ When given bare comment text, skip straight to Codex dispatch (Step 12).
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails or you are uncertain, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). On fail or uncertainty, assume foundry available — common case; fall back only if agent dispatch fails.
 
-When foundry is **not** installed, substitute `foundry:X` references with `general-purpose` and prepend the role description plus `model: <model>` to the spawn call:
+Foundry **not** installed: substitute `foundry:X` with `general-purpose`, prepend role description + `model: <model>`:
 
-| foundry agent            | Fallback          | Model   | Role description prefix                                                                                                     |
-| ------------------------ | ----------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`    | `general-purpose` | `opus`  | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.`           |
-| `foundry:qa-specialist`  | `general-purpose` | `opus`  | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.`              |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
+| `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
+| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 | `foundry:linting-expert` | `general-purpose` | `haiku` | `You are a static analysis specialist. Fix ruff/mypy violations, add missing type annotations, configure pre-commit hooks.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works but produces lower-quality output.
+Skills with `--team`: fallback agents work but lower quality.
 
-**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
+**Task hygiene**: Before creating tasks, call `TaskList`. For each task:
 
-- status `completed` if the work is clearly done
-- status `deleted` if orphaned / no longer relevant
-- keep `in_progress` only if genuinely continuing
+- `completed` if done
+- `deleted` if orphaned/irrelevant
+- `in_progress` only if genuinely continuing
 
 ## Step 1: Pre-flight
 
@@ -112,9 +112,9 @@ if [ -n "$UPSTREAM" ]; then
 fi
 ```
 
-If gh is missing or not authenticated: stop (error printed above)
+If gh missing or not authenticated: stop (error printed above).
 
-If codex is missing: set `CODEX_AVAILABLE=false` and continue — Steps 3–7 (intelligence + conflict resolution) work without Codex; Step 8 (action items) will be skipped with a notice: `⚠ codex not found — skipping action items. Install: npm install -g @openai/codex`
+Codex missing: set `CODEX_AVAILABLE=false`, continue — Steps 3–7 work without Codex; Step 8 skipped with notice: `⚠ codex not found — skipping action items. Install: npm install -g @openai/codex`
 
 ### Review-handoff auto-detect (when $ARGUMENTS is empty)
 
@@ -130,20 +130,20 @@ fi
 echo "→ Using: $REVIEW_FILE"
 ```
 
-Read `$REVIEW_FILE` with the Read tool. Extract the PR number from the header line:
+Read `$REVIEW_FILE`. Extract PR number from header:
 
-- Pattern: `## Code Review: PR #<N>` or `## Code Review: <N>` (where N is a number)
+- Pattern: `## Code Review: PR #<N>` or `## Code Review: <N>`
 - Grep: `grep -oE '(PR #|#)?[0-9]+' "$REVIEW_FILE" | head -1 | grep -oE '[0-9]+'`
 
-If a PR number is found, set `$ARGUMENTS = <extracted number>` and proceed in PR mode (Step 2 onwards). Print: `→ Resolved PR #<N> from review output.`
+PR found → set `$ARGUMENTS = <N>`, proceed PR mode. Print: `→ Resolved PR #<N> from review output.`
 
-If no PR number is extractable (review was run on a local path, not a PR), print: "Review output does not reference a PR — provide a PR number explicitly: `/resolve <PR#>`" and exit 1.
+No PR number extractable → print: "Review output does not reference a PR — provide a PR number explicitly: `/resolve <PR#>`" and exit 1.
 
 Parse $ARGUMENTS:
 
-- If it matches `<number> report` or `<URL> report` (number/URL followed by the word `report`) → **pr + report mode**: strip `report` suffix, set PR# from the remaining token; also find the latest review report using `ls -t .temp/output-review-*.md 2>/dev/null | head -1`; if no report found print a warning but continue in pr mode
-- If it equals the bare word `report` → **report mode**: find the latest review report using `ls -t .temp/output-review-*.md 2>/dev/null | head -1`; if no report found stop with: "No review report found in .temp/ — run /review \<PR#> first, or provide a PR number"; extract PR# from header if present
-- If it is a number or matches a GitHub PR URL pattern → **pr mode** (continue from Step 2)
+- Matches `<number> report` or `<URL> report` → **pr + report mode**: strip `report` suffix, set PR# from remaining token; find latest review report via `ls -t .temp/output-review-*.md 2>/dev/null | head -1`; no report found → warn but continue in pr mode
+- Equals bare word `report` → **report mode**: find latest review report via `ls -t .temp/output-review-*.md 2>/dev/null | head -1`; no report found → stop with: "No review report found in .temp/ — run /review \<PR#> first, or provide a PR number"; extract PR# from header if present
+- Number or GitHub PR URL → **pr mode** (continue Step 2)
 - Otherwise → **comment dispatch mode** (jump to Step 12)
 
 ## Step 2: Create initial task
@@ -156,7 +156,7 @@ TaskCreate(
 )
 ```
 
-Mark it `in_progress` immediately:
+Mark `in_progress` immediately:
 
 ```
 TaskUpdate(task_id=<task_id_from_above>, status="in_progress")
@@ -183,31 +183,25 @@ Report : Read <path to report file>
 Building action items…
 ```
 
-Read the review report file. Parse structured findings from each `###` section header (`### [blocking] Critical`, `### Architecture & Quality`, `### Test Coverage Gaps`, `### Performance Concerns`, `### Documentation Gaps`, `### Static Analysis`, `### API Design`, `### Codex Co-Review`). Skip `### OSS Checks`, `### Recommended Next Steps`, `### Review Confidence`, and `### Issue Root Cause Alignment`.
+Read report. Parse findings from each `###` header (`### [blocking] Critical`, `### Architecture & Quality`, `### Test Coverage Gaps`, `### Performance Concerns`, `### Documentation Gaps`, `### Static Analysis`, `### API Design`, `### Codex Co-Review`). Skip `### OSS Checks`, `### Recommended Next Steps`, `### Review Confidence`, `### Issue Root Cause Alignment`.
 
-Map each finding bullet to the action item schema:
+Map each finding to action item schema:
 
-| Severity in report       | `type`                                 |
-| ------------------------ | -------------------------------------- |
-| CRITICAL or `[blocking]` | `[req]`                                |
-| HIGH                     | `[req]`                                |
-| MEDIUM                   | `[suggest]`                            |
-| LOW                      | `[suggest]` (omit if total items > 10) |
+| Severity in report | `type` |
+| --- | --- |
+| CRITICAL or `[blocking]` | `[req]` |
+| HIGH | `[req]` |
+| MEDIUM | `[suggest]` |
+| LOW | `[suggest]` (omit if total items > 10) |
 
-- `author`: the section owner agent (e.g., `foundry:sw-engineer` for Architecture, `foundry:qa-specialist` for Test Coverage)
-- `file` / `line`: extract from `file:line` notation in the finding bullet; leave blank if absent
-- `full_comment_text`: the full finding bullet text
-- All items carry the tag `[report]` as a prefix to `type` (e.g., `[report][req]`, `[report][suggest]`)
+- `author`: section owner agent (e.g., `foundry:sw-engineer` for Architecture, `foundry:qa-specialist` for Test Coverage)
+- `file`/`line`: extract from `file:line` notation; blank if absent
+- `full_comment_text`: full finding bullet
+- All items get `[report]` prefix on `type` (e.g., `[report][req]`, `[report][suggest]`)
 
-If PR# was found in the report header (`## Code Review: PR #<N>` or similar):
+PR# found in report header → set `$ARGUMENTS = <N>`, go to Step 4; skip Step 3b entirely. After checkout, skip to Step 8 with report-derived action items.
 
-- Set `$ARGUMENTS = <N>` and proceed to Step 4 (checkout); skip Step 3b (PR intelligence) entirely
-- After checkout, skip directly to Step 8 with the report-derived action item list
-
-If no PR# was found in the header:
-
-- Skip Step 3b and Step 4 entirely; work on the current branch as-is
-- Skip directly to Step 8 with the report-derived action item list
+No PR# in header → skip Steps 3b and 4; work on current branch as-is. Skip to Step 8 with report-derived action items.
 
 ## Step 3b: PR intelligence
 
@@ -223,12 +217,12 @@ Extract and record:
 - `HEAD_REF` — source branch name (`.headRefName`)
 - `BASE_REF` — target branch name (`.baseRefName`, e.g. `main`, `develop`)
 - `PR_AUTHOR` — contributor's GitHub login (`.author.login`)
-- `HEAD_REPO_OWNER` — owner of the fork/head repository (`.headRepositoryOwner.login`)
-- `BASE_REPO_OWNER` — owner of the base repository; extract from `.url` via `split("/")[3]` or run `gh repo view --json owner -q .owner.login` in the project root
-- `IS_FORK` — use `.isCrossRepository` directly (`true` = fork PR, `false` = same-repo branch)
-- `CLOSING_ISSUES` — list of linked issue numbers (`.closingIssuesReferences[].number`)
+- `HEAD_REPO_OWNER` — owner of fork/head repo (`.headRepositoryOwner.login`)
+- `BASE_REPO_OWNER` — owner of base repo; from `.url` via `split("/")[3]` or `gh repo view --json owner -q .owner.login`
+- `IS_FORK` — `.isCrossRepository` (`true` = fork PR, `false` = same-repo branch)
+- `CLOSING_ISSUES` — linked issue numbers (`.closingIssuesReferences[].number`)
 
-Fetch the full discussion:
+Fetch full discussion:
 
 ```bash
 gh pr view <PR# >--comments                        # PR-level comments + timeline
@@ -236,7 +230,7 @@ gh api repos/{owner}/{repo}/pulls/ <PR# >/reviews  # formal reviews (Approve / R
 gh api repos/{owner}/{repo}/pulls/ <PR# >/comments # inline code comments with file + line
 ```
 
-If `CLOSING_ISSUES` is non-empty, fetch each linked issue for motivation context:
+Non-empty `CLOSING_ISSUES` → fetch each linked issue:
 
 ```bash
 gh issue view title,body <issue# >--json
@@ -244,32 +238,32 @@ gh issue view title,body <issue# >--json
 
 ### Synthesize contribution motivation
 
-Read the PR title, PR body, linked issue descriptions, and commit messages together. Produce a 2–3 sentence paragraph:
+Read PR title, body, linked issues, commits. Produce 2–3 sentence paragraph:
 
-- What problem or gap the contributor is solving (from linked issues or PR description)
-- Why they chose this particular approach (from the PR body, any design notes in commits)
-- What the expected user-visible outcome is
+- What problem/gap contributor is solving (linked issues or PR description)
+- Why they chose this approach (PR body, design notes in commits)
+- Expected user-visible outcome
 
-This motivation summary is the **priority lens for conflict resolution** in Step 7 — it tells you whose logic should win when both sides touched the same area.
+Motivation = **priority lens for conflict resolution** in Step 7 — whose logic wins when both sides touched same area.
 
 ### Classify action items
 
-Read every comment, review, and inline code comment. Classify each:
+Read every comment, review, inline code comment. Classify:
 
-| Code            | Meaning                                                                                        |
-| --------------- | ---------------------------------------------------------------------------------------------- |
-| `[req]`         | Change **required** before merge — requested by a reviewer with write access or the maintainer |
-| `[suggest]`     | Improvement suggested — nice-to-have, non-blocking                                             |
-| `[question]`    | Open question that needs an answer before deciding what code to write                          |
-| `[done]`        | A subsequent commit or reply already addressed this — skip                                     |
-| `[info]`        | Praise, acknowledgement, emoji-only — skip                                                     |
-| `[self-review]` | Finding from the `/oss:review` report — not a GitHub commenter; author = agent name            |
+| Code | Meaning |
+| --- | --- |
+| `[req]` | Change **required** before merge — requested by a reviewer with write access or the maintainer |
+| `[suggest]` | Improvement suggested — nice-to-have, non-blocking |
+| `[question]` | Open question that needs an answer before deciding what code to write |
+| `[done]` | A subsequent commit or reply already addressed this — skip |
+| `[info]` | Praise, acknowledgement, emoji-only — skip |
+| `[self-review]` | Finding from the `/oss:review` report — not a GitHub commenter; author = agent name |
 
 Build `ACTION_ITEMS`: `[{id, type, author, summary, file, line, full_comment_text}]`
 
 ### Sources confirmation
 
-Print right before the action item table:
+Print right before action item table:
 
 ```
 ## Resolve — sources
@@ -282,7 +276,7 @@ Report : not used
 Building action items…
 ```
 
-Print the action item table:
+Print action item table:
 
 ```
 ### Action Items — PR #<number>
@@ -294,9 +288,9 @@ Print the action item table:
 | [question] | @reviewer | pending | why not use X instead? | — |
 ```
 
-> **Guard**: if `[req]` items > 15, print the full list and use `AskUserQuestion` to ask which subset to implement, listing up to 4 grouped options drawn from the items table (mark the first/smallest group as "(Recommended)"), before continuing.
+> **Guard**: `[req]` items > 15 → print list, `AskUserQuestion` for subset (up to 4 grouped options, first = "(Recommended)") before continuing.
 
-Answer any `[question]` items that can be resolved from reading the code — if the answer is clear, reclassify to `[req]` or `[suggest]`; if it requires maintainer judgement, surface and pause. A question answered by the **contributor** (not the maintainer) is not automatically closed — if the contributor's answer reveals a known limitation or deferred work (e.g., "currently per-process, Redis is a follow-up"), keep it as `[question]` and surface it for the maintainer to explicitly accept or reject before proceeding.
+Answer `[question]` items resolvable from code — clear answer → reclassify `[req]`/`[suggest]`; maintainer judgement needed → surface and pause. Contributor answer ≠ auto-close — answer revealing known limitation/deferred work → keep `[question]`, surface for maintainer to accept/reject.
 
 ## Step 3c: Merge report findings (pr + report mode only)
 
@@ -304,20 +298,19 @@ Answer any `[question]` items that can be resolved from reading the code — if 
 
 When mode == **pr + report**:
 
-Find and read the latest review report (`ls -t .temp/output-review-*.md 2>/dev/null | head -1`). Parse structured findings using the same logic as Step 3a (report mode) above.
+Find + read latest review report (`ls -t .temp/output-review-*.md 2>/dev/null | head -1`). Parse findings same as Step 3a.
 
 **Deduplication**:
 
-- For each report finding, check if a GitHub action item already targets the same `file:line`:
-  - **Match found** → drop the report item; annotate the GitHub item's summary with `(also flagged by /review)`
-  - **Semantic match** (same file, no exact line, similar description) → drop the report item; same annotation
-  - **No match** → append the report finding to the action item list as a `[report]` item
+- Report finding matches GitHub item at same `file:line` → drop report item; annotate GitHub item with `(also flagged by /review)`
+- Semantic match (same file, no exact line, similar description) → drop report item; same annotation
+- No match → append report finding as `[report]` item
 
-**Re-prefix GitHub items**: once deduplication is complete, add `[gh]` as a source prefix to all GitHub-sourced items — `[req]` → `[gh][req]`, `[suggest]` → `[gh][suggest]`, `[question]` → `[gh][question]`. This matches the `[report]` source prefix and makes source unambiguous in the merged table. This re-prefixing applies only in `pr + report` mode; single-source `pr` mode items remain plain `[req]`/`[suggest]`.
+**Re-prefix GitHub items** once deduplication done: `[req]` → `[gh][req]`, `[suggest]` → `[gh][suggest]`, `[question]` → `[gh][question]`. Only in `pr + report` mode; single-source `pr` items stay plain.
 
 ### Sources confirmation
 
-Print right before the merge summary and action item table:
+Print right before merge summary and action item table:
 
 ```
 ## Resolve — sources
@@ -330,7 +323,7 @@ Report : Read <path to report file>
 Building action items…
 ```
 
-**Result**: a single merged `ACTION_ITEMS` list. GitHub-sourced items appear first (maintaining `[gh][req]`/`[gh][suggest]` order), followed by surviving `[report]` items. Print a merge summary before the action item table:
+Result: single merged `ACTION_ITEMS`. GitHub items first (`[gh][req]`/`[gh][suggest]`), then `[report]` items. Print merge summary before table:
 
 ```
 Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
@@ -338,13 +331,13 @@ Report merged: <N> findings from /review · <M> deduplicated against GitHub comm
 
 ## Step 3d: Create per-item tasks
 
-Mark the Step 2 task `completed`:
+Mark Step 2 task `completed`:
 
 ```
 TaskUpdate(task_id=<step2_task_id>, status="completed")
 ```
 
-For each item in `ACTION_ITEMS` create a task:
+For each item in `ACTION_ITEMS` create task:
 
 ```
 TaskCreate(
@@ -354,11 +347,11 @@ TaskCreate(
 )
 ```
 
-- `<type>` — the item's type code: `req`, `suggest`, `question`, `done`, `info`, `self-review`, `report-req`, `report-suggest`, etc.
-- `<summary>` — the item's `summary` field (truncated to 80 chars if needed)
-- Skip items with type `[done]` and `[info]` — no task needed for already-done or praise items
+- `<type>` — item's type code: `req`, `suggest`, `question`, `done`, `info`, `self-review`, `report-req`, `report-suggest`, etc.
+- `<summary>` — item's `summary` field (truncate to 80 chars if needed)
+- Skip `[done]`/`[info]` items — no task needed.
 
-Store the returned task ID alongside each `ACTION_ITEMS` entry as `task_id`.
+Store returned task ID in each `ACTION_ITEMS` entry as `task_id`.
 
 ## Step 4: Checkout PR branch
 
@@ -367,14 +360,14 @@ SAVED_BRANCH=$(git rev-parse --abbrev-ref HEAD)  # timeout: 3000
 gh pr checkout <PR#>   # fetches HEAD_REF; for forks, adds the contributor's remote + sets up tracking  # timeout: 15000
 ```
 
-`gh pr checkout` handles forks automatically — it adds a remote named after the contributor's GitHub login and configures tracking. Verify:
+`gh pr checkout` auto-handles forks — adds contributor's remote, configures tracking. Verify:
 
 ```bash
 git remote -v | grep -v fetch | grep -v push | head -10 # timeout: 3000
 git status                                              # confirm we are on HEAD_REF  # timeout: 3000
 ```
 
-Record `FORK_REMOTE`: for fork PRs it is the contributor's login (e.g. `alice`); for same-repo PRs it is `origin`. The push command in Step 9 is always `git push` (tracking is configured correctly by `gh pr checkout`).
+`FORK_REMOTE`: contributor login (e.g. `alice`) for forks, `origin` for same-repo. Push always `git push` — tracking configured by `gh pr checkout`.
 
 ## Step 5: Conflict detection
 
@@ -384,20 +377,18 @@ MERGE_HEAD_FILE="$(git rev-parse --git-dir)/MERGE_HEAD" # timeout: 3000
 test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 ```
 
-**Case A — MERGING state** (`MERGE_HEAD` present — a previous `git merge` left markers in the PR branch):
-
-Work directly with the existing markers. Skip to Step 6, substep 6c.
+**Case A — MERGING** (`MERGE_HEAD` present — prior `git merge` left markers): work with existing markers. Skip to Step 6, substep 6c.
 
 **Case B — not MERGING**:
 
-Merge `BASE_REF` into the PR branch (this updates the PR with the latest base changes — the merge direction is BASE → HEAD_REF, not the reverse):
+Merge `BASE_REF` into PR branch (BASE → HEAD_REF, not reverse):
 
 ```bash
 git fetch origin "$BASE_REF"                     # ensure origin/$BASE_REF is current  # timeout: 6000
 git merge "origin/$BASE_REF" --no-commit --no-ff # timeout: 6000
 ```
 
-Check for conflicted files:
+Check conflicted files:
 
 ```bash
 git diff --name-only --diff-filter=U # timeout: 3000
@@ -405,7 +396,7 @@ git diff --name-only --diff-filter=U # timeout: 3000
 
 ### 5a: Create per-conflict tasks
 
-For each conflicted file returned above, create a task **before touching any file**:
+For each conflicted file, create task **before touching any file**:
 
 ```
 TaskCreate(
@@ -415,7 +406,7 @@ TaskCreate(
 )
 ```
 
-Store the returned task ID alongside each file path as `conflict_task_id`. Print the conflict task table so it is immediately visible in the task feed:
+Store returned task ID alongside each file path as `conflict_task_id`. Print conflict task table:
 
 ```
 ### Merge Conflicts — PR #<number>
@@ -426,23 +417,23 @@ Store the returned task ID alongside each file path as `conflict_task_id`. Print
 | config.yaml | #<task_id> | pending |
 ```
 
-> **Invariant**: every conflict task must reach `completed` (in Step 7b) before Step 8 begins. Creating them upfront — while the diff is still small — keeps each conflict scoped and independently reversible.
+> **Invariant**: all conflict tasks `completed` before Step 8. Upfront creation keeps each conflict scoped and independently reversible.
 
-If no conflicts → complete the merge and skip to Step 8:
+No conflicts → complete merge, skip to Step 8:
 
 ```bash
 git merge --continue --no-edit
 ```
 
-Report a clean merge, skip Steps 6–7, continue from Step 8.
+Report clean merge, skip Steps 6–7, continue Step 8.
 
-If more than 20 conflicted files → abort and stop:
+More than 20 conflicted files → abort and stop:
 
 ```bash
 git merge --abort
 ```
 
-Report the count and file list; use `AskUserQuestion` to ask whether to continue or re-scope, with options: "Continue (Recommended)" (proceed with all conflicted files), "Re-scope" (abort and narrow the merge target).
+Report count + file list; `AskUserQuestion` with options: "Continue (Recommended)" (all conflicted files), "Re-scope" (abort, narrow merge target).
 
 ## Step 6: Distill conflict context
 
@@ -450,7 +441,7 @@ Run before touching any conflict markers.
 
 ### 6a: Source-branch intent
 
-Use the contribution motivation from Step 3b as the primary lens. Additionally:
+Use Step 3b motivation as primary lens. Additionally:
 
 ```bash
 MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF") # timeout: 3000
@@ -458,7 +449,7 @@ git log $MERGE_BASE..$HEAD_REF --oneline --no-merges        # timeout: 3000
 git diff $MERGE_BASE $HEAD_REF --stat                       # timeout: 3000
 ```
 
-One-sentence summary: which files/modules this PR owns and what it changes about them.
+One-sentence summary: which files/modules PR owns and what it changes.
 
 ### 6b: Target-branch drift (the "surprises")
 
@@ -468,18 +459,18 @@ SOURCE_LAST_TIME=$(git log "$HEAD_REF" -1 --format="%ci")      # timeout: 3000
 git log origin/$BASE_REF --after="$SOURCE_LAST_TIME" --oneline # commits the contributor never saw  # timeout: 3000
 ```
 
-One-sentence summary: what independent changes landed on base after the contributor's last commit — these must be preserved unconditionally.
+One-sentence summary: independent base changes after contributor's last commit — preserve unconditionally.
 
 ## Step 7: Resolve per conflicted file
 
-Delegate per-file conflict edits to `foundry:sw-engineer`. Build the spawn prompt with all three context sources, then check the result before completing the merge.
+Delegate per-file conflict edits to `foundry:sw-engineer`. Build spawn prompt from all three context sources, check result before completing merge.
 
 ### 7a: Spawn sw-engineer
 
-Spawn `foundry:sw-engineer` with this prompt (fill in the bracketed sections from the steps indicated):
+Spawn `foundry:sw-engineer` (fill brackets from indicated steps):
 
 ```
-Agent(foundry:sw-engineer, prompt="
+Agent(subagent_type="foundry:sw-engineer", prompt="
 You are resolving merge conflicts in a checked-out PR branch.
 
 ## Conflicted files
@@ -510,13 +501,13 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 ")
 ```
 
-> **Health monitoring**: Agent call is synchronous; Claude awaits response natively. If no response within ~15 min, surface partial results with ⏱ and proceed to merge with whatever files were staged.
+> **Health monitoring**: synchronous; Claude awaits natively. No response ~15 min → surface partial results ⏱, proceed with staged files.
 
 ### 7b: Verify and complete merge
 
-Parse the JSON envelope returned by sw-engineer. Check that `resolved == staged` — if they differ, surface the discrepancy before proceeding (a mismatch means at least one file was resolved but not staged, which would leave the merge incomplete).
+Parse JSON from sw-engineer. Check `resolved == staged` — mismatch = file resolved but not staged → surface before proceeding.
 
-Complete the merge:
+Complete merge:
 
 ```bash
 git merge --continue --no-edit # timeout: 3000
@@ -543,13 +534,13 @@ for each (filepath, conflict_task_id) pair from Step 5a: TaskUpdate(task_id=\<co
 
 ## Step 8: Implement action items
 
-If `CODEX_AVAILABLE=false`: mark all items `⚠ skipped — codex not installed` and skip to Step 9.
+If `CODEX_AVAILABLE=false`: mark all items `⚠ skipped — codex not installed`, skip to Step 9.
 
-> **Conflict gate**: before processing any action item, verify every conflict task from Step 5a is `completed`. If any conflict task is still `pending` or `in_progress`, stop — surface the list and wait for the user to resolve before continuing. Action items applied on top of unresolved conflicts compound the diff and make the collision harder to untangle.
+> **Conflict gate**: verify all Step 5a conflict tasks `completed` before any action item. Still `pending`/`in_progress` → stop, surface list, wait. Items on unresolved conflicts compound diff.
 
-Process `[req]` items first, then `[suggest]` items. **Each item gets its own commit.**
+Process `[req]` items first, then `[suggest]`. **Each item gets its own commit.**
 
-> **Guard**: process at most 10 items, then pause and use `AskUserQuestion` to ask whether to continue with the remaining items, with options: "Continue (Recommended)" (process next batch of items), "Stop here" (finish report with items processed so far).
+> **Guard**: process at most 10 items, then pause and `AskUserQuestion` to continue with remaining items, with options: "Continue (Recommended)" (next batch), "Stop here" (report with items processed so far).
 
 For each action item:
 
@@ -561,7 +552,7 @@ test -z "$(git status --porcelain)" || { echo "⚠ dirty tree before item #<id> 
 git diff HEAD --stat  # timeout: 3000
 ```
 
-Mark the item's task in_progress:
+Mark item's task in_progress:
 
 ```
 TaskUpdate(task_id=<item.task_id>, status="in_progress")
@@ -575,7 +566,7 @@ Agent(subagent_type="codex:codex-rescue", prompt="Apply this review feedback to 
 git diff HEAD --stat  # timeout: 3000
 ```
 
-If code changed → commit:
+Code changed → commit:
 
 ```bash
 # Prerequisite: working tree must be clean before Step 7 Codex calls; verify with git diff --stat HEAD before proceeding.
@@ -597,11 +588,11 @@ EOF
 )"
 ```
 
-If no code changed (already done or non-actionable) → record Codex's reason; do NOT create an empty commit.
+No code changed (already done or non-actionable) → record Codex's reason; do NOT create empty commit.
 
 Record per-item: `committed <SHA>` or `skipped — <Codex reason>`.
 
-Mark the item's task completed:
+Mark item's task completed:
 
 ```
 TaskUpdate(task_id=<item.task_id>, status="completed")
@@ -614,19 +605,19 @@ RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 mkdir -p "$RUN_DIR" # timeout: 5000
 ```
 
-Spawn both agents in parallel:
+Spawn both in parallel:
 
 ```
-Agent(foundry:linting-expert): "Review all files changed in the current branch since origin/<BASE_REF>. List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
+Agent(subagent_type="foundry:linting-expert", prompt="Review all files changed in the current branch since origin/<BASE_REF>. List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
 
-Agent(foundry:qa-specialist, maxTurns: 15): "Review all files changed in the current branch since origin/<BASE_REF> for correctness, edge cases, and regressions. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
+Agent(subagent_type="foundry:qa-specialist", maxTurns=15, prompt="Review all files changed in the current branch since origin/<BASE_REF> for correctness, edge cases, and regressions. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
 ```
 
-> **Health monitoring**: Agent calls are synchronous; Claude awaits responses natively. If no response within ~15 min, surface partial results from `$RUN_DIR` with ⏱.
+> **Health monitoring**: synchronous. No response ~15 min → surface partial results from `$RUN_DIR` ⏱.
 
 Wait for both. Then:
 
-- If `linting-expert` made file changes → commit them:
+- `linting-expert` made file changes → commit:
 
 ```bash
 git add $(git diff HEAD --name-only)                          # timeout: 3000
@@ -639,12 +630,12 @@ EOF
 )"  # timeout: 3000
 ```
 
-- If `foundry:qa-specialist` reports **blocking** issues → fix each one (via Codex if `CODEX_AVAILABLE=true`, otherwise inline edit), then re-run foundry:qa-specialist once to confirm resolution; if issues remain after one fix pass, surface them in the final report and continue (do not loop indefinitely)
-- Warnings (non-blocking) → record in the final report; do not block push
+- Blocking issues from `foundry:qa-specialist` → fix (via Codex or inline edit), re-run qa-specialist once to confirm; issues after one pass → surface in report, continue (no infinite loop)
+- Warnings (non-blocking) → record in report; do not block push
 
 ## Step 10: Push
 
-*Skip this step entirely when in report mode with no PR# (variables `$FORK_REMOTE`, `$HEAD_REF`, `$BASE_REF` were never set — there is no fork branch to push to; the workflow ends at Step 11).*
+*Skip when report mode with no PR# (`$FORK_REMOTE`, `$HEAD_REF`, `$BASE_REF` unset — no fork branch; workflow ends at Step 11).*
 
 ```bash
 # Ensure fork remote is present (gh pr checkout may not have added it for all setups)
@@ -665,23 +656,23 @@ git push # timeout: 30000
 # gh pr checkout configured tracking to the fork branch — git push targets it automatically
 ```
 
-If push is rejected (fork protection or stale tracking):
+Push rejected (fork protection or stale tracking):
 
 ```bash
 git push "$FORK_REMOTE" HEAD:"$HEAD_REF" # timeout: 30000
 ```
 
-Verify the push reached GitHub:
+Verify push reached GitHub:
 
 ```bash
 gh pr view headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' <PR# >--json # timeout: 6000
 ```
 
-Confirm the latest commit headlines match what was just committed.
+Confirm latest commit headlines match what was just committed.
 
 ## Step 11: Final report
 
-Mark any remaining open action item tasks `completed`. All per-item tasks should already be completed by Step 8; this is a safety close for items skipped (guard paused, question items, codex-not-available).
+Mark remaining open tasks `completed`. Per-item tasks should be done by Step 8; this closes items skipped (guard paused, question items, codex-not-available).
 
 Then print:
 
@@ -727,28 +718,28 @@ Read and execute `plugins/oss/skills/resolve/modes/comment-dispatch.md`.
 
 <notes>
 
-- **Pre-flight git pull** — Step 1 fetches the current branch's remote tracking ref and pulls if the remote is ahead; the common 1-local-ahead / 1-remote-ahead divergence merges cleanly without user intervention; if `git pull` has conflicts the skill exits with a clear message to resolve manually first — this prevents `git merge --continue` being called with no in-progress merge
-- **Branch safety** — `gh pr checkout <PR#>` always switches to the PR's HEAD branch, never to `main`/`master`; all commits land on the PR branch by design. Never push directly to the default branch — if for any reason the PR branch turns out to be the default branch, abort and surface the issue to the user
-- **OSS fork support** — `gh pr checkout <PR#>` works identically for same-repo branches and forks; for forks it adds the contributor's remote (named after their login) and configures tracking; plain `git push` then targets the fork branch correctly with no manual remote setup
-- **Merge direction** — the skill merges `origin/BASE_REF` INTO `HEAD_REF` (updating the PR branch), NOT the reverse; this preserves the PR branch as the source of truth and keeps the GitHub merge clean; the maintainer still clicks Merge (or runs `gh pr merge`) after reviewing
-- **Never rebase** — all conflict resolution uses `git merge`; rebase rewrites commit SHAs and breaks cherry-pick / revert; Step 5 uses `git merge --continue --no-edit` to complete a merge after conflict resolution
-- **Contribution motivation before code** — Step 3a must happen before any file is read or edited; it provides the "whose intent wins" lens for conflict decisions; reading the PR body and linked issues often reveals design constraints that are invisible from git diff alone
-- **Separate commits per action item** — each `[req]` and `[suggest]` item must produce exactly one atomic commit; the `[resolve #N]` tag in the message lets `git log --grep='resolve #3'` find the exact commit for any action item; this makes the history reviewable, the diff bisectable, and each change independently revertable; an empty commit is never created when Codex makes no changes
-- **`[question]` items** — answer inline in the resolve report only (never post to the PR); then reclassify before implementing; never silently implement a response to an unanswered question
-- **Case A (already MERGING)** — if a prior `git merge origin/$BASE_REF` left markers, the skill skips Steps 5 detection and 6 context-distill, jumps directly to Step 7a (resolve per file), uses the existing markers; no new merge is started
-- **Push verification** — always confirm via `gh pr view --json commits` that new commits appear on GitHub before reporting success; exit code 0 from `git push` is necessary but not sufficient (branch protection rules can silently reject)
-- **`gh pr merge` flags**: `--merge` preserves all commits and history; `--squash` collapses to one (loses individual action-item commits); never suggest `--rebase` (rewrites SHAs); default recommendation is `--merge` unless project convention says otherwise
-- **Escape hatch**: `git merge --abort` undoes the entire conflict state and returns the PR branch to pre-merge state; use `git push --force-with-lease` (never plain `--force`) as an escape hatch — only when the user explicitly requests it — if push is rejected after local amending
-- **Codex agent health**: `Agent(subagent_type="codex:codex-rescue", ...)` calls are background agents subject to CLAUDE.md §8 health monitoring — 15-min hard cutoff, ⏱ marker on timeout; surface partial results via `tail -100` on the output file if the agent stalls
-- **Worktree cleanup safety net**: `SessionEnd` hook runs `git worktree prune` — catches any orphaned worktrees from prior sessions
-- **Mode routing and source-selection logic**: see Steps 3a–3c and `<inputs>` for full mode definitions, source routing, and action-item derivation per mode.
-- **`[gh]` items** (pr + report mode only): commit messages use: `[resolve #<id>] @<reviewer> (gh):` — same as plain `[req]`/`[suggest]` in pr mode, plus the `(gh)` source annotation.
-- **`[report]` items**: commit messages for these items should attribute the finding to the agent, not a GitHub commenter: `[resolve #<id>] /review finding by <agent-name> (report: <report-path>):` — this distinguishes automated findings from human reviewer requests in git history.
-- **Sources block**: always printed after mode resolution and before any GitHub API calls — gives the user a clear "abort if wrong source" moment with zero cost.
-- **Step 7 delegation** — Step 7 delegates per-file conflict edits to `foundry:sw-engineer`; resolve owns workflow orchestration and context (conflict list, motivation, merge-base log, diff stat); sw-engineer owns code-level semantic resolution (Read → Edit → stage); resolve retains the conflict report block and the `git merge --continue` call.
+- **Pre-flight git pull** — Step 1 fetches remote tracking ref, pulls if ahead; 1-local/1-remote divergence merges clean; `git pull` conflicts → exit with message to resolve manually — prevents `git merge --continue` with no in-progress merge
+- **Branch safety** — `gh pr checkout <PR#>` always lands on PR's HEAD, never `main`/`master`. Never push to default branch — if PR branch = default branch, abort and surface.
+- **OSS fork support** — `gh pr checkout <PR#>` works same for branches + forks; forks get contributor remote + tracking; plain `git push` targets fork branch automatically.
+- **Merge direction** — `origin/BASE_REF` INTO `HEAD_REF` (not reverse); PR branch = source of truth; maintainer still clicks Merge.
+- **Never rebase** — use `git merge`; rebase rewrites SHAs, breaks cherry-pick/revert; Step 5 uses `git merge --continue --no-edit`.
+- **Contribution motivation before code** — Step 3a before any file read/edit; provides "whose intent wins" lens; PR body + linked issues reveal constraints invisible in git diff.
+- **Separate commits per action item** — each `[req]`/`[suggest]` = one atomic commit; `[resolve #N]` tag = `git log --grep` findable; history reviewable, diff bisectable, changes independently revertable; no empty commits.
+- **`[question]` items** — answer inline in resolve report only (never post to PR); reclassify before implementing; never silently implement unanswered question.
+- **Case A (already MERGING)** — prior `git merge` left markers → skip Steps 5 detection + 6 context-distill, jump to Step 7a; no new merge.
+- **Push verification** — confirm via `gh pr view --json commits` before reporting success; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
+- **`gh pr merge` flags**: `--merge` = preserves all commits; `--squash` = collapses (loses action-item commits); never `--rebase` (rewrites SHAs); default `--merge`.
+- **Escape hatch**: `git merge --abort` = undo all conflict state; `git push --force-with-lease` (never plain `--force`) only when user explicitly requests — if push rejected after local amend.
+- **Codex agent health**: subject to CLAUDE.md §8 — 15-min cutoff, ⏱ on timeout; partial results via `tail -100` on output file.
+- **Worktree cleanup safety net**: `SessionEnd` runs `git worktree prune` — catches orphaned worktrees.
+- **Mode routing**: see Steps 3a–3c and `<inputs>` for mode definitions, source routing, action-item derivation.
+- **`[gh]` items** (pr + report mode only): commit messages use: `[resolve #<id>] @<reviewer> (gh):` — same as plain `[req]`/`[suggest]` in pr mode, plus `(gh)` source annotation.
+- **`[report]` items**: attribute to agent, not GitHub commenter — distinguishes automated findings in git history. Format: `[resolve #<id>] /review finding by <agent-name> (report: <report-path>):`
+- **Sources block**: print after mode resolution, before GitHub API calls — "abort if wrong source" moment.
+- **Step 7 delegation** — resolve owns orchestration + context; sw-engineer owns code-level resolution (Read → Edit → stage); resolve retains conflict report + `git merge --continue`.
 - Follow-up chains:
-  - After push → never approve or comment on the PR; the maintainer reviews the pushed commits and clicks Merge on GitHub
-  - For `[question]` items left unanswered → record rationale in the resolve report only; do NOT post to the PR
-  - After merge → linked issues close automatically when the PR is merged, provided the PR body contains `Closes #<issue#>` or `Fixes #<issue#>`; if `CLOSING_ISSUES` were found in Step 3b but the PR body lacks those keywords, add them to the PR description: `gh pr edit <PR#> --body "$(gh pr view <PR#> --json body -q .body)\n\nCloses #<issue#>"`
+  - After push → never approve/comment on PR; maintainer reviews + clicks Merge.
+  - Unanswered `[question]` items → record in resolve report only; do NOT post to PR.
+  - After merge → linked issues close if PR body has `Closes #<issue#>`/`Fixes #<issue#>`; if `CLOSING_ISSUES` found in Step 3b but body lacks keywords, add: `gh pr edit <PR#> --body "$(gh pr view <PR#> --json body -q .body)\n\nCloses #<issue#>"`
 
 </notes>

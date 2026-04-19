@@ -1,11 +1,13 @@
-Delegate only small, bounded tasks that require reading and understanding the code — not tasks a single command can handle. Good fits:
+**Re: Compress markdown to caveman format**
 
-- **Small coding**: 1–3 functions, self-contained, no architectural decisions
-- **Small tests**: 1–3 test cases for a specific, well-specified function or behaviour
-- **Complex linting**: ruff or mypy violations that require non-trivial code changes (not auto-fixable with `--fix`)
-- **Typing/mypy resolution**: type annotation fixes that require understanding the function contract
+Delegate only small, bounded tasks needing code read — not single-command tasks. Good fits:
 
-For each qualifying task, read the target code, form an accurate brief, then spawn:
+- **Small coding**: 1–3 functions, self-contained, no arch decisions
+- **Small tests**: 1–3 test cases for specific, well-specified function/behaviour
+- **Complex linting**: ruff or mypy violations needing non-trivial code changes (not auto-fixable with `--fix`)
+- **Typing/mypy resolution**: type annotation fixes needing function contract understanding
+
+For each qualifying task, read target code, form accurate brief, spawn:
 
 ```
 Agent(
@@ -14,10 +16,10 @@ Agent(
 )
 ```
 
-The plugin agent writes directly to the working tree. Inspect changes via `git diff HEAD` after it returns. If the plugin is unavailable it reports gracefully — do not block on this step.
+Plugin agent writes direct to working tree. Inspect via `git diff HEAD` after return. If plugin unavailable it reports gracefully — don't block.
 
-**Do not delegate to Codex:**
+**Don't delegate to Codex:**
 
-- Any task where you cannot write a precise description without guessing
-- Anything executable as a single shell command (e.g. `ruff check --fix`, `pytest tests/foo.py`) — run it directly
-- Formatting-only changes (black, isort, trailing whitespace) already handled by `pre-commit` — run `pre-commit` instead
+- Task where precise description requires guessing
+- Anything executable as single shell command (e.g. `ruff check --fix`, `pytest tests/foo.py`) — run direct
+- Formatting-only changes (black, isort, trailing whitespace) handled by `pre-commit` — run `pre-commit` instead

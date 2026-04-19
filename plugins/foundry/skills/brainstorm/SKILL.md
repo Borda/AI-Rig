@@ -9,27 +9,27 @@ effort: high
 
 <objective>
 
-Turn an unformed idea into a branching exploration tree, then distill that tree into a spec. Idea mode is pure divergence — you grow a tree of directions, deepen promising branches, prune others, and save the result. Nothing is forced to converge prematurely. Run `breakdown` on the tree when ready: it asks distillation questions and writes the spec section-by-section.
+Turn unformed idea into branching exploration tree, then distill into spec. Idea mode = pure divergence — grow tree of directions, deepen promising branches, prune others, save result. No premature convergence. Run `breakdown` on tree when ready: asks distillation questions, writes spec section-by-section.
 
 </objective>
 
 <inputs>
 
-- **$ARGUMENTS**: required — a fuzzy idea, goal, or feature request in any form; a single sentence is enough
+- **$ARGUMENTS**: required — fuzzy idea, goal, or feature request in any form; one sentence enough
 
 Examples:
 
 - `/brainstorm I want users to be able to export results as CSV`
 
-- **`--tight`** — reduced-ceremony mode: cap clarifying questions at 5 (not 10), cap tree operations at 5 (not 10), require only 1 closed branch (not 2) before saving. Good for well-scoped ideas where the problem is already understood.
+- **`--tight`** — reduced-ceremony mode: cap clarifying questions at 5 (not 10), cap tree operations at 5 (not 10), require only 1 closed branch (not 2) before saving. Good for well-scoped ideas where problem already understood.
 
-- **`--deep`** — extended-ceremony mode: cap clarifying questions at 15, cap tree operations at 15, require 3+ closed branches before saving. Good for genuinely ambiguous problems where more exploration is valuable.
+- **`--deep`** — extended-ceremony mode: cap clarifying questions at 15, cap tree operations at 15, require 3+ closed branches before saving. Good for genuinely ambiguous problems where more exploration valuable.
 
 - Default (no flag): behaviour unchanged — 10/10/2 bounds.
 
-- **`--type <type>`** — optional type hint for idea mode. One of: `application` (app/service with users/endpoints), `workflow` (automation, pipeline, script), `utility` (helper library, tool, CLI), `config` (`.claude/` agents/skills/rules), `research` (investigation, survey, experiment design). Affects Step 1 scan patterns and Step 2 question framing. Omit if unsure — the skill works without it.
+- **`--type <type>`** — optional type hint for idea mode. One of: `application` (app/service with users/endpoints), `workflow` (automation, pipeline, script), `utility` (helper library, tool, CLI), `config` (`.claude/` agents/skills/rules), `research` (investigation, survey, experiment design). Affects Step 1 scan patterns and Step 2 question framing. Omit if unsure — skill works without it.
 
-- **`breakdown <tree-or-spec-file>`** — breakdown mode: read an already-saved tree (`Status: tree`) or spec (`Status: draft`). For a tree: ask distillation questions and write the spec section-by-section. For a spec: scan for blocking open questions then generate an ordered action plan. Skips Steps 1–6 entirely.
+- **`breakdown <tree-or-spec-file>`** — breakdown mode: read already-saved tree (`Status: tree`) or spec (`Status: draft`). For tree: ask distillation questions, write spec section-by-section. For spec: scan for blocking open questions then generate ordered action plan. Skips Steps 1–6 entirely.
 
 </inputs>
 
@@ -37,11 +37,11 @@ Examples:
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps (context scan, clarifying questions, build tree, save tree, tree review, present + gate). Then print a session plan to the user:
+**Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps (context scan, clarifying questions, build tree, save tree, tree review, present + gate). Then print session plan to user:
 
 > **Brainstorming: \<goal from $ARGUMENTS>** Plan: context scan → clarifying questions → build tree → save tree doc → review → approval gate. Starting with a codebase scan...
 
@@ -49,11 +49,11 @@ Examples:
 
 Gather project context before asking anything:
 
-- Read `README.md` and any relevant files under `docs/`
-- Grep for keywords from `$ARGUMENTS` across `src/` or the project root
+- Read `README.md` and relevant files under `docs/`
+- Grep for keywords from `$ARGUMENTS` across `src/` or project root
 - Identify: related code that already exists, stated non-goals in docs, prior design decisions
 
-**Type-aware scan patterns** (when `--type` is declared):
+**Type-aware scan patterns** (when `--type` declared):
 
 - `application`: look for existing routes, controllers, components, API endpoints, auth middleware
 - `workflow`: look for existing scripts, pipelines, CI configs, scheduled jobs, automation files
@@ -61,37 +61,37 @@ Gather project context before asking anything:
 - `config`: look for `.claude/` agents, skills, rules, and `settings.json` entries
 - `research`: look for existing notes, benchmarks, prior experiment results, and related papers/tickets
 
-When no `--type` is declared, perform the generic scan as before.
+When no `--type` declared, perform generic scan as before.
 
-Goal: understand constraints so questions are targeted, not generic. If the idea already exists or is clearly out of scope, say so immediately and stop.
+Goal: understand constraints so questions targeted, not generic. If idea already exists or clearly out of scope, say so immediately and stop.
 
 ## Step 2: Clarifying questions
 
-Use `AskUserQuestion` for every clarifying question — this renders an interactive prompt inline, not plain text.
+Use `AskUserQuestion` for every clarifying question — renders interactive prompt inline, not plain text.
 
 Rules:
 
-- Ask **one question at a time** — call `AskUserQuestion` once, wait for the answer, then decide whether another question is needed
-- Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so the user can reply with just "a", "b", or "c"; mark the option you recommend with **★** (e.g., `a) Option A ★ recommended`) so the user has a sensible default
-- Maximum **10 questions** (5 in `--tight` mode, 15 in `--deep` mode) — after the limit, proceed to Step 3 with what you have
-- After question 3 (and on every subsequent question), always include an **escape hatch option**: `x) Enough questions — let's start building the tree` so the user can move on if the problem is already well-defined
+- Ask **one question at a time** — call `AskUserQuestion` once, wait for answer, then decide if another question needed
+- Always use **multiple-choice** options in `AskUserQuestion`: list lettered choices so user can reply with just "a", "b", or "c"; mark recommended option with **★** (e.g., `a) Option A ★ recommended`) so user has sensible default
+- Maximum **10 questions** (5 in `--tight` mode, 15 in `--deep` mode) — after limit, proceed to Step 3 with what you have
+- After question 3 (and every subsequent question), always include **escape hatch option**: `x) Enough questions — let's start building the tree` so user can move on if problem already well-defined
 - No solution proposals during this step — only gather information
-- After each answer, briefly restate the updated problem understanding in 1–2 sentences before asking the next question or proceeding — a simple acknowledgment ("Got it", "Understood") does not count; the restatement must name what is now known about the problem (e.g., "So the goal is X and the constraint is Y.")
-- After the restatement, add the skill's own perspective in a blockquote labelled **Skill's read:** — 1–2 sentences on what direction(s) this answer opens up, what it makes more or less likely, or what tension it surfaces. This is an active hypothesis, not a neutral summary (e.g., `> **Skill's read:** This makes me think the core challenge is X, which points toward approaches like Y`). Write it as the skill speaking.
+- After each answer, briefly restate updated problem understanding in 1–2 sentences before asking next question or proceeding — simple acknowledgment ("Got it", "Understood") does not count; restatement must name what is now known about problem (e.g., "So the goal is X and the constraint is Y.")
+- After restatement, add skill's own perspective in blockquote labelled **Skill's read:** — 1–2 sentences on what directions this answer opens up, what it makes more or less likely, or what tension it surfaces. Active hypothesis, not neutral summary (e.g., `> **Skill's read:** This makes me think the core challenge is X, which points toward approaches like Y`). Write as skill speaking.
 
-**Gate**: do not proceed to Step 3 until the problem is well-defined or the maximum question count is reached. Aim for at least 3 questions to build enough context for a rich tree.
+**Gate**: do not proceed to Step 3 until problem well-defined or maximum question count reached. Aim for at least 3 questions to build enough context for rich tree.
 
-**Type-aware question framing** (when `--type` is declared): lead with type-appropriate questions first:
+**Type-aware question framing** (when `--type` declared): lead with type-appropriate questions first:
 
 - `application`: ask about users (who uses it?), scale, and integration points before general questions
 - `workflow`: ask about triggers (what starts it?), inputs, outputs, and failure handling first
 - `utility`: ask about callers (who uses this library/tool?), interface shape, and scope of responsibility
-- `config`: ask whether this targets an existing agent/skill or is new, and what gap it fills in the current setup
-- `research`: ask about the hypothesis or question being investigated, and what constitutes a useful finding
+- `config`: ask whether this targets existing agent/skill or is new, and what gap it fills in current setup
+- `research`: ask about hypothesis or question being investigated, and what constitutes useful finding
 
 ## Step 3: Build the tree
 
-This step is the full creative session — grow, deepen, and prune a tree of directions. The tree is the output; convergence happens later in `breakdown`. Runs as a loop of **tree operations**.
+Full creative session — grow, deepen, and prune tree of directions. Tree is output; convergence happens later in `breakdown`. Runs as loop of **tree operations**.
 
 ### Seeding the tree
 
@@ -99,28 +99,28 @@ Present **3–5 initial branches** (top-level directions). For each include:
 
 - **Name**: short label
 - **Core idea**: 2–3 sentences — what makes this branch distinct
-- **Tension it resolves**: which aspect of the problem does this branch prioritise?
-- **What it trades away**: what gets harder or is left unsolved?
-- **Skill's lean**: a short honest opinion — what makes this branch interesting or worth exploring, and any reservation the skill has about it (e.g., "Interesting because it sidesteps the auth problem entirely, but risky if the data model isn't flexible.")
+- **Tension it resolves**: which aspect of problem this branch prioritises
+- **What it trades away**: what gets harder or left unsolved
+- **Skill's lean**: short honest opinion — what makes branch interesting or worth exploring, and any reservation skill has about it (e.g., "Interesting because it sidesteps the auth problem entirely, but risky if the data model isn't flexible.")
 
-After presenting all initial branches, write an **Opening framing** paragraph (2–3 sentences) sharing the skill's initial read on the problem space: what it sees as the core tension, which branch(es) it finds most promising and why, and one thing it's uncertain about. This is not a recommendation to converge — divergence is still the goal — but an honest perspective to spark reaction.
+After presenting all initial branches, write **Opening framing** paragraph (2–3 sentences) sharing skill's initial read on problem space: what it sees as core tension, which branch(es) it finds most promising and why, and one thing it's uncertain about. Not recommendation to converge — divergence still goal — but honest perspective to spark reaction.
 
 Then call `AskUserQuestion` with one letter per branch (labelled by name), plus:
 
 - f) None of these — describe what you're thinking
 - g) Add more initial branches — I want more angles
 
-On **(f)**: ask what direction the user is thinking, then generate 2–3 new branches incorporating it. On **(g)**: generate 2–3 fresh branches with genuinely different framing.
+On **(f)**: ask what direction user is thinking, then generate 2–3 new branches incorporating it. On **(g)**: generate 2–3 fresh branches with genuinely different framing.
 
-User may select **1–3 branches** to mark as initial focus. All other branches start as [open] too — they are not closed yet, just not the initial focus.
+User may select **1–3 branches** to mark as initial focus. All other branches start as [open] too — not closed yet, just not initial focus.
 
 ### Tree operations loop
 
-After seeding, enter the operations loop. Each iteration:
+After seeding, enter operations loop. Each iteration:
 
-1. Show the current **tree summary** (see format below)
-2. Write a **Skill's moment** — 2–3 sentences of the skill's current read: which open branches look most interesting and why, what the closed branches revealed about the problem, and what the skill would explore next if it had a vote. Make it specific to the current tree state (refer to actual branch names by their labels in the tree). This gives the user something to react to before choosing an operation.
-3. Call `AskUserQuestion` with the available operations:
+1. Show current **tree summary** (see format below)
+2. Write **Skill's moment** — 2–3 sentences of skill's current read: which open branches look most interesting and why, what closed branches revealed about problem, and what skill would explore next if it had a vote. Make specific to current tree state (refer to actual branch names by their labels). Gives user something to react to before choosing operation.
+3. Call `AskUserQuestion` with available operations:
    - a) Deepen a branch — add sub-branches to [branch name]
    - b) Close a branch — mark [branch name] as closed with a reason
    - c) Merge two branches — combine [branch name] + [branch name]
@@ -130,16 +130,16 @@ After seeding, enter the operations loop. Each iteration:
 
 **Operations**:
 
-- **Deepen**: generate 2–3 sub-branches under the named branch. Sub-branches use the same format as top-level branches. Ask which one(s) to focus on. After executing, write 1–2 sentences reacting to what deepening this branch opens up — what new tensions or opportunities the sub-branches reveal.
-- **Close**: mark the named branch as ⛔ (closed) with the user's reason shown after `—`. Add a one-line entry to the pruning log. Ask if the reason captures it correctly before proceeding. After executing, write 1–2 sentences reacting to what closing this branch reveals — what it tells us about where the exploration is actually headed.
-- **Merge**: synthesise two named branches into a single hybrid branch; present the merged description; mark the original two as 🔗 with `[merged -> <number>: <new-branch-name>]` immediately in the tree summary shown after the merge, and in all subsequent tree summaries. After executing, write 1–2 sentences on what the merge suggests about where the idea is heading — what the synthesis makes clearer or harder.
-- **Add**: generate 1–2 fresh top-level branches with directions not yet represented in the tree. After executing, write 1–2 sentences on why this new angle matters — what gap it fills or what it challenges in the existing branches.
-- **Reopen**: change ⛔ (closed) to 💭 (open) on the named branch; note the re-opening reason. After executing, write 1–2 sentences on what reopening this branch might change — what it puts back on the table.
-- **Ready**: exit the loop, proceed to Step 4.
+- **Deepen**: generate 2–3 sub-branches under named branch. Sub-branches use same format as top-level branches. Ask which one(s) to focus on. After executing, write 1–2 sentences reacting to what deepening this branch opens up — what new tensions or opportunities sub-branches reveal.
+- **Close**: mark named branch as ⛔ (closed) with user's reason shown after `—`. Add one-line entry to pruning log. Ask if reason captures it correctly before proceeding. After executing, write 1–2 sentences reacting to what closing this branch reveals — what it tells us about where exploration is actually headed.
+- **Merge**: synthesise two named branches into single hybrid branch; present merged description; mark originals as 🔗 with `[merged -> <number>: <new-branch-name>]` immediately in tree summary shown after merge, and in all subsequent tree summaries. After executing, write 1–2 sentences on what merge suggests about where idea is heading — what synthesis makes clearer or harder.
+- **Add**: generate 1–2 fresh top-level branches with directions not yet represented in tree. After executing, write 1–2 sentences on why new angle matters — what gap it fills or what it challenges in existing branches.
+- **Reopen**: change ⛔ (closed) to 💭 (open) on named branch; note re-opening reason. After executing, write 1–2 sentences on what reopening this branch might change — what it puts back on table.
+- **Ready**: exit loop, proceed to Step 4.
 
 ### Tree summary format
 
-Always show the tree summary **before** calling `AskUserQuestion`:
+Always show tree summary **before** calling `AskUserQuestion`:
 
 ```
 Tree: <title>
@@ -156,17 +156,17 @@ Open: N · Closed: N · Merged: N
 Legend: ▶️ active focus · 💭 open · ⛔ closed · 🔗 merged
 ```
 
-Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches indented one level per depth. Sub-branches use hierarchical dot notation: branch 2 splits into 2.1, 2.2, …; those can further split into 2.1.1, 2.1.2, … Prefix each branch with its status emoji: ▶️ for the branch currently being operated on (most recently deepened, or selected as initial focus during seeding), 💭 for all other open branches, ⛔ for closed branches (show reason after `—`), 🔗 for merged branches (show merge target as `[merged -> <number>: <new-branch-name>]`). The legend line is always the last line.
+Use `├─`, `│  ├─`, `└─` for tree rendering. Show sub-branches indented one level per depth. Sub-branches use hierarchical dot notation: branch 2 splits into 2.1, 2.2, …; those split further into 2.1.1, 2.1.2, … Prefix each branch with status emoji: ▶️ for branch currently operated on (most recently deepened, or selected as initial focus during seeding), 💭 for all other open branches, ⛔ for closed branches (show reason after `—`), 🔗 for merged branches (show merge target as `[merged -> <number>: <new-branch-name>]`). Legend line always last.
 
 ### Loop bounds
 
-- Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (a round = one operation)
-- After the limit: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
-- **Gate**: do not proceed to Step 4 until the user selects "Ready" or the max is reached with at least 2 closed branches (1 in `--tight`, 3 in `--deep`); if fewer than the required closed branches exist, prompt: "The tree has few closed branches — consider closing 1–2 that are clearly not the right direction before saving."
+- Maximum **10 operations** (5 in `--tight` mode, 15 in `--deep` mode) (round = one operation)
+- After limit: show tree state, call `AskUserQuestion` with: a) Save tree as-is ★ recommended / b) Do 2 more operations then save
+- **Gate**: do not proceed to Step 4 until user selects "Ready" or max reached with at least 2 closed branches (1 in `--tight`, 3 in `--deep`); if fewer than required closed branches exist, prompt: "The tree has few closed branches — consider closing 1–2 that are clearly not the right direction before saving."
 
 ## Step 4: Save tree
 
-Assemble the tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using the Write tool (creates the directory if absent). The slug is derived from the title (kebab-case, max 5 words). If a file already exists at the target path (e.g., same day, same slug after a restart), append a counter suffix (`-2`, `-3`, etc.) rather than overwriting.
+Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using Write tool (creates directory if absent). Slug derived from title (kebab-case, max 5 words). If file already exists at target path (e.g., same day, same slug after restart), append counter suffix (`-2`, `-3`, etc.) rather than overwriting.
 
 ```markdown
 # <title>
@@ -207,11 +207,11 @@ Assemble the tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` usi
 [Unanswered questions, untested combinations, and constraints that surfaced during Step 3. Each thread is a one-line bullet.]
 ```
 
-**Gate**: do not proceed to Step 5 until the file is written and the path is confirmed.
+**Gate**: do not proceed to Step 5 until file written and path confirmed.
 
 ## Step 5: Tree review
 
-Before spawning, pre-compute the output path:
+Before spawning, pre-compute output path:
 
 ```bash
 # timeout: 3000
@@ -219,7 +219,7 @@ BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')
 OUTPUT_PATH=".temp/output-brainstorm-review-$BRANCH-$(date +%Y-%m-%d).md"
 ```
 
-Spawn **foundry:self-mentor** with a tree-focused prompt (inject the pre-computed `$OUTPUT_PATH` in place of `<output-path>`):
+Spawn **foundry:self-mentor** with tree-focused prompt (inject pre-computed `$OUTPUT_PATH` in place of `<output-path>`):
 
 ```
 Read .plans/blueprint/<tree-file>. Audit for tree quality only (do NOT audit `.claude/` config files — scope is the brainstorm tree only):
@@ -232,31 +232,31 @@ Write your full findings to <output-path> using the Write tool.
 Return ONLY a compact JSON envelope: {"status":"done","findings":N,"file":"<path>","confidence":0.N,"summary":"<one-line>"}
 ```
 
-**Passive health monitoring**: the Agent tool is synchronous — Claude awaits self-mentor's response natively. If self-mentor does not return within 15 min, surface any partial output already written to `.temp/` with a ⏱ marker and continue to Step 6 with an incomplete review noted.
+**Passive health monitoring**: Agent tool is synchronous — Claude awaits self-mentor's response natively. If self-mentor does not return within 15 min, surface any partial output already written to `.temp/` with ⏱ marker and continue to Step 6 with incomplete review noted.
 
 > Note: synchronous Agent calls do not support mid-call extensions per CLAUDE.md §8 — simplified monitoring is intentional for synchronous spawns.
 
-If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles). After 2 cycles with remaining findings, surface unresolved issues to the user and proceed to Step 6 anyway.
+If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles). After 2 cycles with remaining findings, surface unresolved issues to user and proceed to Step 6 anyway.
 
-**Gate**: do not proceed to Step 6 until `findings == 0` or 2 revision cycles are exhausted.
+**Gate**: do not proceed to Step 6 until `findings == 0` or 2 revision cycles exhausted.
 
 ## Step 6: Present and gate
 
-Show the tree file path and a compact tree summary (same format as Step 3). Then call `AskUserQuestion` with:
+Show tree file path and compact tree summary (same format as Step 3). Then call `AskUserQuestion` with:
 
 - (a) Tree looks good — ready to distill ★ recommended
 - (b) Needs more exploration — [describe what to add or close]
 - (c) Start over — back to clarifying questions
 
-**Gate**: do not exit until the user approves. On (b): return to Step 3 with the existing tree state — add the requested branches or close the specified ones, then loop back to Step 5. Use a reduced cap of **3 additional operations** for this re-entry (not a fresh full budget reset); the cap resets only at the start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles — after 3 (b) responses with no convergence, surface unresolved concerns to user and stop.)
+**Gate**: do not exit until user approves. On (b): return to Step 3 with existing tree state — add requested branches or close specified ones, then loop back to Step 5. Use reduced cap of **3 additional operations** for this re-entry (not fresh full budget reset); cap resets only at start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles — after 3 (b) responses with no convergence, surface unresolved concerns to user and stop.)
 
-On approval, suggest: `/brainstorm breakdown .plans/blueprint/<file>` to distill the tree into a spec.
+On approval, suggest: `/brainstorm breakdown .plans/blueprint/<file>` to distill tree into spec.
 
 ## Mode: Breakdown
 
-Triggered when `$ARGUMENTS` starts with `breakdown ` followed by a file path.
+Triggered when `$ARGUMENTS` starts with `breakdown ` followed by file path.
 
-Read the file at the given path. Check the `**Status**:` field:
+Read file at given path. Check `**Status**:` field:
 
 - `Status: tree` → **Distillation mode** (Steps D1–D4 below)
 - `Status: draft` → **Action plan mode** (Steps B1–B3 below)
@@ -267,25 +267,26 @@ ______________________________________________________________________
 
 #### Step D1: Present tree summary
 
-Read all open branches from the file. Show the compact tree summary (same format as Step 3) and a one-sentence description of each open branch. State the count of open and closed branches.
+Read all open branches from file. Show compact tree summary (same format as Step 3) and one-sentence description of each open branch. State count of open and closed branches.
 
 #### Step D2: Distillation questions
 
-Ask up to **5 distillation questions**, one at a time via `AskUserQuestion`, to narrow the open branches into a single direction:
+Ask up to **5 distillation questions**, one at a time via `AskUserQuestion`, to narrow open branches into single direction:
 
-Start with these (adapt based on the tree content):
+Start with these (adapt based on tree content):
 
-1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as a lettered option
+1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as lettered option
 2. "Should any of the remaining open branches be combined with the chosen direction, or are they separate concerns?"
-3. "What is the single most important success criterion for this idea?" 4–5. Ask additional questions based on gaps in the open threads section or unresolved tensions between branches
+3. "What is the single most important success criterion for this idea?"
+4–5. Ask additional questions based on gaps in open threads section or unresolved tensions between branches
 
-After the questions, briefly restate the distilled direction in 2–3 sentences — the synthesis of what was just decided.
+After questions, briefly restate distilled direction in 2–3 sentences — synthesis of what was just decided.
 
 #### Step D3: Write spec
 
-Build the spec section by section, showing each section inline and asking for feedback before moving on. Write nothing to disk until the full draft is assembled.
+Build spec section by section, showing each section inline and asking for feedback before moving on. Write nothing to disk until full draft assembled.
 
-For each section, write it inline then call `AskUserQuestion`:
+For each section, write inline then call `AskUserQuestion`:
 
 - a) Looks good — next section ★ recommended
 - b) Change this — [describe what to revise]
@@ -295,35 +296,35 @@ On **(b)**: revise inline, show updated version, re-offer. Max 2 revisions per s
 
 **Sections**:
 
-**Section 1 — Goal** (1 paragraph: what problem this solves and for whom) Derive from the distilled direction from D2. Reference the open branches that fed into it.
+**Section 1 — Goal** (1 paragraph: what problem this solves and for whom) Derive from distilled direction from D2. Reference open branches that fed into it.
 
-**Section 2 — Non-goals** (explicit list) Derive from closed branches and the open branches not chosen in D2.
+**Section 2 — Non-goals** (explicit list) Derive from closed branches and open branches not chosen in D2.
 
-**Section 3 — Proposed design** (the distilled direction with enough detail to implement) Break into sub-points. Describe *what*, not *how*. If the direction is a merge of multiple open branches, name each part.
+**Section 3 — Proposed design** (distilled direction with enough detail to implement) Break into sub-points. Describe *what*, not *how*. If direction is merge of multiple open branches, name each part.
 
-**Section 4 — Open questions** (unresolved decisions) Seed from the "Open threads" section of the tree. For each, note blocking vs non-blocking and a recommended default if possible.
+**Section 4 — Open questions** (unresolved decisions) Seed from "Open threads" section of tree. For each, note blocking vs non-blocking and recommended default if possible.
 
-**Section 5 — Success criteria** (observable, testable outcomes) Include the criterion identified in D2 question 3. Each criterion must be concrete enough to write a pass/fail check.
+**Section 5 — Success criteria** (observable, testable outcomes) Include criterion identified in D2 question 3. Each criterion must be concrete enough to write pass/fail check.
 
-**Section 6 — Exploration notes** (summary of closed branches and why) Draw from the Pruning log in the tree. This is context for future readers — what was considered and rejected.
+**Section 6 — Exploration notes** (summary of closed branches and why) Draw from Pruning log in tree. Context for future readers — what was considered and rejected.
 
-**Gate**: do not write to disk until all 6 sections are drafted and individually approved.
+**Gate**: do not write to disk until all 6 sections drafted and individually approved.
 
 **Graduation checklist** — verify before writing to disk:
 
 - [ ] Goal (Section 1) is concrete and names who benefits
 - [ ] Proposed design (Section 3) has at least 3 distinct sub-points
 - [ ] Success criteria (Section 5) are observable/testable — not vague ("it works") but checkable ("running X produces Y")
-- [ ] At least one non-goal is stated (Section 2 is not empty)
+- [ ] At least one non-goal stated (Section 2 not empty)
 
 If any item fails, call `AskUserQuestion` with:
 
-- a) Revise the failing section(s) now — return to that section in D3 ★ recommended
-- b) Proceed anyway — I accept the spec may be underspecified
+- a) Revise failing section(s) now — return to that section in D3 ★ recommended
+- b) Proceed anyway — I accept spec may be underspecified
 
-On **(a)**: jump back to the failing section in D3 (max 1 extra revision per section). On **(b)**: proceed to write.
+On **(a)**: jump back to failing section in D3 (max 1 extra revision per section). On **(b)**: proceed to write.
 
-After all sections approved: write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` (new file; use the tree's slug with a `-spec` suffix if writing alongside the tree):
+After all sections approved: write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` (new file; use tree's slug with `-spec` suffix if writing alongside tree):
 
 ```markdown
 # <title>
@@ -352,10 +353,10 @@ After all sections approved: write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` (n
 
 #### Step D4: Suggest next step
 
-After writing the spec, suggest:
+After writing spec, suggest:
 
 - **Spec targets `.claude/` config**: `/manage update <name> .plans/blueprint/<spec-file>` or `/manage create <type> <name> "description"`
-- **Spec targets application code or mixed changes**: `/brainstorm breakdown .plans/blueprint/<spec-file>` to generate the action plan
+- **Spec targets application code or mixed changes**: `/brainstorm breakdown .plans/blueprint/<spec-file>` to generate action plan
 
 ______________________________________________________________________
 
@@ -363,20 +364,20 @@ ______________________________________________________________________
 
 #### Step B1: Scan for blocking open questions
 
-Read the spec's "Open questions" section. For each question, determine whether it is **blocking** (no recommended option stated and the answer is genuinely unknown) or **non-blocking** (spec states a recommended option or the answer is inferable).
+Read spec's "Open questions" section. For each question, determine whether **blocking** (no recommended option stated, answer genuinely unknown) or **non-blocking** (spec states recommended option or answer inferable).
 
-For each blocking question: call `AskUserQuestion` — one at a time, in order. Non-blocking questions go into the plan table footnote.
+For each blocking question: call `AskUserQuestion` — one at a time, in order. Non-blocking questions go into plan table footnote.
 
 #### Step B2: Generate the action plan
 
-1. Parse the spec into discrete action items from "Proposed design" and "Success criteria"
-2. For each item, write a ready-to-run invocation:
+1. Parse spec into discrete action items from "Proposed design" and "Success criteria"
+2. For each item, write ready-to-run invocation:
    - `.claude/` config change → `/manage create <type> <name> "description"` or `/manage update <name> <spec-file>`
    - System install or shell setup → full shell command
    - Application code change → `/develop:feature "<goal>"` or `/develop:fix "<symptom>"`
    - Documentation → `/develop:feature "<doc goal>"`
    - Verification/testing → `/develop:feature "<test goal>"` or manual check command
-3. Output an ordered task table:
+3. Output ordered task table:
 
 ```
 ## Action Plan: <spec title>
@@ -399,23 +400,23 @@ Call `AskUserQuestion` with:
 - (b) Copy plan and pass to another agent
 - (c) Revise spec first
 
-On **(a)**: proceed immediately with the invocation from task 1. On **(b)**: output the plan table as a clean markdown block, then stop. On **(c)**: stop and tell the user to revise the spec and re-run `/brainstorm breakdown <spec>`.
+On **(a)**: proceed immediately with invocation from task 1. On **(b)**: output plan table as clean markdown block, then stop. On **(c)**: stop and tell user to revise spec and re-run `/brainstorm breakdown <spec>`.
 
-End with a `## Confidence` block per CLAUDE.md output standards.
+End with `## Confidence` block per CLAUDE.md output standards.
 
 </workflow>
 
 <notes>
 
-- **No code at any point** — this skill produces tree documents and specs only; implementation is out of scope
-- **`disable-model-invocation: true`** — the skill is conversational; the parent model drives all steps turn by turn
-- **self-mentor scope in Step 5** — the spawn prompt must constrain scope to tree quality explicitly; do not let it audit `.claude/` config files
-- **.plans/blueprint/ directory** — created if absent; filenames use `YYYY-MM-DD-<kebab-slug>.md` format; tree files use the base slug; spec files append `-spec` to the slug to avoid collision
+- **No code at any point** — skill produces tree documents and specs only; implementation out of scope
+- **`disable-model-invocation: true`** — skill is conversational; parent model drives all steps turn by turn
+- **self-mentor scope in Step 5** — spawn prompt must constrain scope to tree quality explicitly; do not let it audit `.claude/` config files
+- **.plans/blueprint/ directory** — created if absent; filenames use `YYYY-MM-DD-<kebab-slug>.md` format; tree files use base slug; spec files append `-spec` to slug to avoid collision
 - **Status field**: tree documents use `Status: tree`; spec documents use `Status: draft`; breakdown auto-detects which path to take
 - **Breakdown heading convention**: distillation mode uses D-prefix steps (D1–D4); action plan mode uses B-prefix steps (B1–B3)
-- **Exploration notes in spec**: Section 6 is derived from the tree's Pruning log — it is intentional context for future readers and should not be removed by self-mentor review
+- **Exploration notes in spec**: Section 6 derived from tree's Pruning log — intentional context for future readers; do not remove in self-mentor review
 - **Interaction budget**: idea mode — worst case: 13 (`--tight`) / 23 (default) / 33 (`--deep`) questions + operations + 3 approval cycles; breakdown distillation — max 5 questions + 6 section drafts ≈ 11; typical sessions use ~8–15 total AskUserQuestion calls across both
-- **Flag modes**: `--tight` / `--deep` scale question and operation caps (5/15 vs default 10); `--type` enables type-aware scan and question framing in Steps 1–2; these flags apply to idea mode only and are ignored in breakdown
-- **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown .plans/blueprint/<spec-file>` for the action plan
+- **Flag modes**: `--tight` / `--deep` scale question and operation caps (5/15 vs default 10); `--type` enables type-aware scan and question framing in Steps 1–2; flags apply to idea mode only, ignored in breakdown
+- **Follow-up**: after spec approval in distillation mode → if targeting `.claude/` config: `/manage update <name> <spec-file>`; for application or mixed changes: `/brainstorm breakdown .plans/blueprint/<spec-file>` for action plan
 
 </notes>

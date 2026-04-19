@@ -1,3 +1,5 @@
+**Re: Compress markdown to caveman format**
+
 ```bash
 TARGET=$(echo "$ARGUMENTS" | awk '{print $2}') # optional target version
 LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
@@ -53,9 +55,9 @@ git diff $RANGE --name-only
 git diff $RANGE --name-only | grep -iE 'readme|\.md$|docs/' || echo "no docs changed"
 ```
 
-Read `README.md` and verify: install/usage examples match current API, version references are not pinned to old releases, any deprecated APIs mentioned are still present (or have deprecation notes). If `docs/` exists, spot-check recently changed public API sections against the docs.
+Read `README.md`, verify: install/usage examples match current API, version refs not pinned to old releases, deprecated APIs still present or have deprecation notes. If `docs/` exists, spot-check changed public API sections.
 
-Check `CHANGELOG.md`: does it have an `[Unreleased]` entry or a section for `$TARGET` covering commits in `$RANGE`?
+Check `CHANGELOG.md`: has `[Unreleased]` entry or `$TARGET` section covering `$RANGE` commits?
 
 ### Check 5: Version consistency
 
@@ -64,7 +66,7 @@ grep -rn '__version__\|^version\s*=' --include="*.py" --include="*.toml" \
     --include="*.cfg" --include="*.json" . 2>/dev/null | grep -v ".git" | head -15
 ```
 
-All declarations must agree. If `$TARGET` was given, verify it matches (or flag it needs bumping).
+All declarations must agree. If `$TARGET` given, verify match or flag needs bumping.
 
 ### Check 6: Critical code signals
 
@@ -80,7 +82,7 @@ python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"dependenci
 
 ### Output
 
-Print a readiness report:
+Print readiness report:
 
 ```
 ## Release Readiness — [repo] [version or "next release"]

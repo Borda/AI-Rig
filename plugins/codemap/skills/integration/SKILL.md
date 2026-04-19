@@ -9,12 +9,12 @@ model: opus
 
 <objective>
 
-Two modes in one skill — run sequentially: `init` to set up, `check` to verify.
+Two modes, run sequentially: `init` to set up, `check` to verify.
 
-- **`check`** — fast diagnostic: finds `scan-query`, verifies the index exists and is fresh, runs a smoke test, and audits which skill files have the injection block. Prints `✓`/`✗`/`⚠` per check with one-line remediation hints. Pure bash — no model reasoning needed for the happy path.
-- **`init`** — interactive onboarding: builds the index if missing, discovers all installed skills and agents, scores them by how much codemap would help, presents a recommendation table, asks which to wire in, and inserts the correct injection block into each selected file.
+- **`check`** — fast diagnostic: finds `scan-query`, verifies index exists and fresh, runs smoke test, audits which skill files have injection block. Prints `✓`/`✗`/`⚠` per check with one-line remediation hints. Pure bash — no model reasoning needed for happy path.
+- **`init`** — interactive onboarding: builds index if missing, discovers all installed skills and agents, scores by how much codemap would help, presents recommendation table, asks which to wire in, inserts correct injection block into each selected file.
 
-NOT for: building or rebuilding the index (use `/codemap:scan`); running a structural query (use `/codemap:query`).
+NOT for: building or rebuilding index (use `/codemap:scan`); running structural query (use `/codemap:query`).
 
 </objective>
 
@@ -32,7 +32,7 @@ NOT for: building or rebuilding the index (use `/codemap:scan`); running a struc
 
 Parse `$ARGUMENTS` (case-insensitive):
 
-- Starts with `check` or is empty → run **check mode** (Steps C1–C5)
+- Starts with `check` or empty → run **check mode** (Steps C1–C5)
 - Starts with `init` → run **init mode** (Steps I0–I6)
 - Anything else → print: `Usage: /codemap:integration check | init [--approve]` and stop.
 
@@ -152,7 +152,7 @@ ______________________________________________________________________
 
 ### I0 — Detect --approve
 
-Parse `$ARGUMENTS` for `--approve` (case-insensitive). If found, set `APPROVE_ALL=true` — every `AskUserQuestion` below is skipped and the ★ recommended option is applied automatically. Print `[--approve] applying recommended options` in place of each question.
+Parse `$ARGUMENTS` for `--approve` (case-insensitive). If found, set `APPROVE_ALL=true` — skip every `AskUserQuestion` below and auto-apply ★ recommended option. Print `[--approve] applying recommended options` in place of each question.
 
 ### I1 — Verify or build the index
 
@@ -163,7 +163,7 @@ PROJ=${GIT_ROOT:+$(basename "$GIT_ROOT")}; PROJ=${PROJ:-$(basename "$PWD")}
 INDEX=".cache/scan/${PROJ}.json"
 ```
 
-If index exists: report it and proceed. If missing:
+Index exists: report and proceed. Index missing:
 
 Use `AskUserQuestion` to present (unless `APPROVE_ALL=true`, then auto-select a):
 
@@ -174,14 +174,14 @@ a) Build now ★ — scans all .py files via ast.parse (Python only), <60s on mo
 b) Skip — I'll run /codemap:scan later (recommendations will be generic, no module-count weighting)
 ```
 
-If **a** (or auto-approved): run the scanner:
+If **a** (or auto-approved): run scanner:
 
 ```bash
 # timeout: 360000
 ${CLAUDE_PLUGIN_ROOT}/bin/scan-index
 ```
 
-Report the result (module count, degraded count). If **b**: note "Proceeding without index — recommendations are based on skill purpose only, not module count."
+Report result (module count, degraded count). If **b**: note "Proceeding without index — recommendations based on skill purpose only, not module count."
 
 ### I2 — Discover installed skills and agents
 
@@ -190,9 +190,9 @@ Read `~/.claude/plugins/installed_plugins.json` to find all installed plugins. F
 - `skills/*/SKILL.md` — skill files
 - `agents/*.md` — agent files
 
-For each file: extract from frontmatter: `name`, `description`, `allowed-tools` (skills) or `description` body (agents). Extract the first sentence of the `<objective>` section.
+For each file: extract from frontmatter: `name`, `description`, `allowed-tools` (skills) or `description` body (agents). Extract first sentence of `<objective>` section.
 
-Flag which files already have the injection block:
+Flag which files already have injection block:
 
 ```bash
 # timeout: 10000
@@ -203,20 +203,20 @@ Build two lists: `ALREADY_INJECTED` and `CANDIDATES` (not yet injected).
 
 ### I3 — Score and rank candidates
 
-For each candidate skill/agent, classify by value tier using its `<objective>` text and `allowed-tools`:
+For each candidate skill/agent, classify by value tier using `<objective>` text and `allowed-tools`:
 
-| Tier       | Signal                                                                                                                              | Recommendation                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| **High**   | `allowed-tools` includes `Edit` or `Write`; `<objective>` mentions spawning `sw-engineer` or `qa-specialist`; performs code changes | "Strongly recommend — agent starts with blast-radius context"     |
-| **Medium** | analysis or planning skills; spawns read-only agents; multi-file review without edits                                               | "Moderate value — centrality context speeds structural decisions" |
-| **Low**    | documentation, release, communication; no code traversal                                                                            | "Low value — structural context unlikely to help"                 |
-| **Skip**   | config-only, single-file, non-Python purpose (e.g. shell, YAML, JS)                                                                 | "Skip — not applicable for Python import graphs"                  |
+| Tier | Signal | Recommendation |
+| --- | --- | --- |
+| **High** | `allowed-tools` includes `Edit` or `Write`; `<objective>` mentions spawning `sw-engineer` or `qa-specialist`; performs code changes | "Strongly recommend — agent starts with blast-radius context" |
+| **Medium** | analysis or planning skills; spawns read-only agents; multi-file review without edits | "Moderate value — centrality context speeds structural decisions" |
+| **Low** | documentation, release, communication; no code traversal | "Low value — structural context unlikely to help" |
+| **Skip** | config-only, single-file, non-Python purpose (e.g. shell, YAML, JS) | "Skip — not applicable for Python import graphs" |
 
-If index was built and `total_modules < 20`: downgrade all tiers by one level (small project = less value from structural context).
+If index built and `total_modules < 20`: downgrade all tiers one level (small project = less value from structural context).
 
 ### I4 — Present recommendations and ask user
 
-Print a candidate table:
+Print candidate table:
 
 ```
 Codemap injection candidates for: $PROJ
@@ -226,7 +226,7 @@ Codemap injection candidates for: $PROJ
   ✓       develop:fix          HIGH    spawns sw-engineer — already integrated
   ✓       develop:feature      HIGH    spawns sw-engineer — already integrated
   a)      research:plan        MEDIUM  plans experiments; reads code structure
-  b)      foundry:calibrate    MEDIUM  runs test agents against the codebase
+  b)      foundry:calibrate    MEDIUM  benchmarks agent recall against config files (meta-skill, not code-editing)
   —       foundry:doc-scribe   LOW     writes docstrings; skip
   —       oss:release          SKIP    release/comms; skip
 ```
@@ -241,9 +241,9 @@ Reply with letters (e.g. "a b"), "all" (all High+Medium), or "none".
 
 ### I5 — Wire in the injection block
 
-For each selected file, determine the insertion point and content:
+For each selected file, determine insertion point and content:
 
-**For SKILL.md files** — find the step that first spawns an agent. Insert the hardened soft-check block immediately before it, with a blank line before and after:
+**For SKILL.md files** — find step that first spawns agent. Insert hardened soft-check block immediately before it, blank line before and after:
 
 ```bash
 # Structural context (codemap — Python projects only, silent skip if absent)
@@ -254,14 +254,14 @@ fi
 # If results returned: prepend a ## Structural Context (codemap) block to the agent spawn prompt.
 ```
 
-For skills where a target module can be derived from `$ARGUMENTS` (refactor, fix with module path, review), also add after `central`:
+For skills where target module can be derived from `$ARGUMENTS` (refactor, fix with module path, review), also add after `central`:
 
 ```bash
 scan-query rdeps "$TARGET_MODULE" 2>/dev/null  # timeout: 5000
 scan-query deps  "$TARGET_MODULE" 2>/dev/null  # timeout: 5000
 ```
 
-**For agent `.md` files** — append to the last workflow instruction paragraph, before any closing section or final notes:
+**For agent `.md` files** — append to last workflow instruction paragraph, before closing section or final notes:
 
 ```markdown
 **Structural context (codemap — Python projects only)**: if `.cache/scan/<project>.json` exists, run `scan-query central --top 5` (and `scan-query rdeps <target_module>` when a target is known) **before** any Glob/Grep exploration for structural information. Skip silently if the index is absent.

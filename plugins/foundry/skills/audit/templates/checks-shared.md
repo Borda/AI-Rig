@@ -1,3 +1,5 @@
+**Re: Compress markdown to caveman format**
+
 # Shared Checks (all scopes) — 17, 21, 4, 5, 9, 16, 15
 
 ______________________________________________________________________
@@ -66,7 +68,7 @@ if [ "$violations" -eq 0 ]; then
 fi
 ````
 
-**Severity**: **medium** — heading jumps impair navigation. Fix: insert missing intermediate heading level, or demote/promote the offending heading. **Report only** — never auto-fix.
+**Severity**: **medium** — heading jumps impair navigation. Fix: insert missing intermediate heading level, or demote/promote offending heading. **Report only** — never auto-fix.
 
 ______________________________________________________________________
 
@@ -78,15 +80,15 @@ ______________________________________________________________________
 
 ## Check 15 — Hardcoded user paths
 
-Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`) to flag non-portable paths in agent and skill files. Then run a second Grep directly on `.claude/settings.json` with the same pattern to catch absolute hook paths in the settings file.
+Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`) to flag non-portable paths in agent and skill files. Run second Grep on `.claude/settings.json` with same pattern to catch absolute hook paths.
 
-**Important**: run this check on every file regardless of whether critical or high findings were already found — path portability issues are orthogonal to other severity classes and must not be deprioritized due to presence of more serious findings in the same file.
+**Important**: run on every file regardless of prior critical/high findings — path portability orthogonal to other severity classes, must not deprioritize.
 
 ______________________________________________________________________
 
 ## Check 16 — Example value vs. token cost
 
-First, detect whether the project has local context files:
+First, detect whether project has local context files:
 
 ```bash
 for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do # timeout: 5000
@@ -94,7 +96,7 @@ for f in AGENTS.md CONTRIBUTING.md .claude/CLAUDE.md; do # timeout: 5000
 done
 ```
 
-Then scan agent and skill files for inline examples:
+Scan agent and skill files for inline examples:
 
 ````bash
 for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
@@ -104,10 +106,10 @@ for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
 done
 ````
 
-Using model reasoning, classify each example block:
+Classify each example block via model reasoning:
 
-- **High-value**: non-obvious pattern, nuanced judgment, or output-format spec that prose cannot convey → keep
-- **Low-value**: restates prose, trivial, or superseded by project-local docs → **low** finding: suggest removing or replacing with a pointer to the local doc
+- **High-value**: non-obvious pattern, nuanced judgment, or output-format spec prose can't convey → keep
+- **Low-value**: restates prose, trivial, or superseded by project-local docs → **low** finding: suggest removing or replacing with pointer to local doc
 
 Report per-file: `N examples total, K high-value, M low-value (est. ~X tokens wasted)`.
 
@@ -129,22 +131,22 @@ for f in .claude/agents/*.md; do
 done
 ```
 
-Using model reasoning, compare the workflow body of each file against all others in its class. For each pair:
+Via model reasoning, compare workflow body of each file against all others in its class. Per pair:
 
-1. Count steps in each file: N_A and N_B
-2. Find the longest consecutive run of substantially similar steps: N_run
+1. Count steps: N_A and N_B
+2. Find longest consecutive run of substantially similar steps: N_run
 3. Compute run fraction: `max(N_run / N_A, N_run / N_B)`
 4. Flag if run fraction ≥ 0.4 (40%)
 
-Scattered similarity does **not** count — only a contiguous block triggers this check. **Severity**: **medium** — report only, never auto-fix.
+Scattered similarity doesn't count — only contiguous block triggers. **Severity**: **medium** — report only, never auto-fix.
 
-For agent pairs flagged here, name the canonical owner of the duplicated content. If there is no clear canonical owner because both files are effectively describing the same role, route the pair back to Check 20 as a `merge-prune` candidate instead of leaving the duplication judgement ambiguous.
+For flagged agent pairs, name canonical owner of duplicated content. If no clear owner because both files describe same role, route pair to Check 20 as `merge-prune` candidate instead of leaving duplication ambiguous.
 
 ______________________________________________________________________
 
 ## Check 18 — Rules integrity and efficiency
 
-Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory does not exist or is empty.
+Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory absent or empty.
 
 **18a — Inventory vs MEMORY.md**:
 
@@ -152,7 +154,7 @@ Four sub-checks covering `.claude/rules/`. Skip if `rules/` directory does not e
 ls .claude/rules/*.md 2>/dev/null | xargs -I{} basename {} .md | sort # timeout: 5000
 ```
 
-Rules on disk but absent from MEMORY.md roster → **medium**. Rules in MEMORY.md but absent on disk → **medium**.
+Rules on disk absent from MEMORY.md → **medium**. Rules in MEMORY.md absent on disk → **medium**.
 
 **18b — Frontmatter completeness**:
 
@@ -165,14 +167,14 @@ done
 
 Missing `description:` → **high**. Malformed `paths:` → **high**.
 
-**18c — Redundancy check**: For each rule file, identify 2–3 most specific directive phrases. Grep those phrases verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. If exact phrase exists in ≥2 locations outside the rule file → **medium** (distillation incomplete).
+**18c — Redundancy check**: Per rule file, identify 2–3 most specific directive phrases. Grep verbatim in `.claude/CLAUDE.md` and `.claude/agents/*.md`. Exact phrase in ≥2 locations outside rule file → **medium** (distillation incomplete).
 
 ```bash
 grep -l "Never switch to NumPy" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null # timeout: 5000
 grep -l "never git add" .claude/agents/*.md .claude/CLAUDE.md 2>/dev/null         # timeout: 5000
 ```
 
-**18d — Cross-reference integrity**: Grep agent files, skill files, and CLAUDE.md for references to `.claude/rules/<name>.md` patterns. Verify each referenced filename exists on disk → missing file → **high**.
+**18d — Cross-reference integrity**: Grep agent files, skill files, CLAUDE.md for `.claude/rules/<name>.md` patterns. Verify each referenced filename exists on disk → missing → **high**.
 
 ```bash
 grep -rh '\.claude/rules/[a-z_-]*\.md' .claude/agents/ .claude/skills/ .claude/CLAUDE.md 2>/dev/null |
@@ -185,9 +187,9 @@ ______________________________________________________________________
 
 ## Check 25 — Implicit agent references (missing plugin prefix)
 
-All agent dispatch calls must use the fully-qualified plugin-prefixed form (`foundry:sw-engineer`, `oss:shepherd`, etc.). Bare names like `sw-engineer` are ambiguous: they rely on `~/.claude/agents/` symlinks being present and break if the symlinks are stale, missing, or point to a different plugin's agent.
+All agent dispatch calls must use fully-qualified plugin-prefixed form (`foundry:sw-engineer`, `oss:shepherd`, etc.). Bare names like `sw-engineer` ambiguous: rely on `~/.claude/agents/` symlinks being present, break if symlinks stale, missing, or pointing to wrong plugin.
 
-Scan agent files, skill files, and CLAUDE.md for `subagent_type=` patterns:
+Scan agent files, skill files, CLAUDE.md for `subagent_type=` patterns:
 
 ```bash
 printf "=== Check 25: Implicit agent references ===\n"
@@ -200,24 +202,46 @@ grep -v '"general-purpose"\|"Explore"\|"Plan"\|"claude-code-guide"\|"statusline-
 
 Exempt built-in types (no plugin prefix required): `general-purpose`, `Explore`, `Plan`, `claude-code-guide`, `statusline-setup`.
 
-Every non-exempt bare name is a **high** finding:
+Every non-exempt bare name = **high** finding:
 
 ```
 [high] Implicit agent reference: subagent_type="<name>" in <file>
 fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 ```
 
-**Report only** — do not auto-fix; the correct prefix depends on which plugin owns the agent.
+**Report only** — no auto-fix; correct prefix depends on which plugin owns agent.
+
+______________________________________________________________________
+
+## Check 29 — LLM context minimality (verbosity)
+
+Every token in agent, skill, rule file = inference cost on every invocation. Check each file semantically minimal — all information retained, zero redundant wording.
+
+**Scan targets**: `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/rules/*.md`.
+
+Via model reasoning, apply four criteria per file:
+
+**1 — Within-file repetition**: same rule or instruction appears in two sections. Sub-bullet fully restates parent with no additive content. Workflow step re-explains constraint already defined in preamble or `<notes>`.
+
+**2 — Prose inflation**: filler preambles ("Note that", "It is important to", "Please be aware", "Keep in mind") — flag phrase; substantive content survives without it. Unconditional rule hedged with "might", "could potentially", "in some cases" where rule is absolute. Opening sentence of section paraphrases heading with no additive content.
+
+**3 — Restatement of obvious consequence**: "Do X" immediately followed by "Failing to do X causes Y" where Y self-evident from X alone.
+
+**4 — Information gap test (mandatory before flagging any candidate)**: "If this text removed, can reader reconstruct from remaining content?" YES = safe to flag. NO = not a finding — content load-bearing even if verbose. Always skip: code blocks, inline examples (covered by Check 16), cross-reference tables, numbered lists where order carries meaning.
+
+Per finding: location (section heading + approx line range) · pattern type (repetition / prose-inflation / obvious-consequence) · estimated token savings (small <20 / medium 20–80 / large >80) · proposed shorter form or "remove entirely".
+
+**Severity**: **medium** — total savings >= medium across >= 2 distinct locations. **low** — isolated small savings only. **Report only** — never auto-fix; minimization risks removing load-bearing nuance.
 
 ______________________________________________________________________
 
 ## Check 26 — Symbol and shortcut consistency
 
-Three sub-checks for within-file consistency of emoji symbols, slash-command notation, and legend alignment.
+Three sub-checks for within-file consistency of emoji symbols, slash-command notation, legend alignment.
 
 **26a — Emoji/symbol consistency within files**
 
-For each agent or skill file, extract lines containing emoji characters and the concept label they annotate. Group by concept label. Flag any concept that is represented by more than one distinct emoji within the same file.
+Per agent or skill file, extract lines with emoji and annotated concept label. Group by concept. Flag concepts with more than one distinct emoji in same file.
 
 ````bash
 printf "=== Check 26a: Emoji/symbol consistency ===\n"
@@ -228,13 +252,13 @@ for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
 done
 ````
 
-Using model reasoning, review the output: identify concept labels (e.g., "closed", "open", "active focus", "merged") that appear with two or more distinct symbols within the same file. Example: a file that marks a branch as 🔴 (closed) in one section and ⛔ closed in another is a violation.
+Via model reasoning, identify concept labels (e.g., "closed", "open", "active focus", "merged") appearing with two+ distinct symbols in same file. Example: file marks branch 🔴 (closed) in one section and ⛔ closed in another = violation.
 
-Flag each inconsistency: `[medium] Inconsistent symbol for "<concept>" in <file>: <symbol-A> (line N) vs <symbol-B> (line M)`
+Flag: `[medium] Inconsistent symbol for "<concept>" in <file>: <symbol-A> (line N) vs <symbol-B> (line M)`
 
 **26b — Slash command notation consistency**
 
-Directive references to other skills (e.g., "run → /audit fix", "suggested next: /brainstorm breakdown") must use the `/name` form. Prose mentions (e.g., "the audit skill", "this brainstorm session") may omit the slash. Flag files where the same directive context mixes `` `/name` `` and `` `name` `` forms.
+Directive references to other skills (e.g., "run → /audit fix") must use `/name` form. Prose mentions (e.g., "the audit skill") may omit slash. Flag files mixing `` `/name` `` and `` `name` `` in same directive context.
 
 ```bash
 printf "=== Check 26b: Slash command notation ===\n"
@@ -245,23 +269,23 @@ for f in .claude/agents/*.md .claude/skills/*/SKILL.md; do # timeout: 5000
 done
 ```
 
-Using model reasoning: if the same skill is referenced in directive context with both `/name` and bare `name` forms in the same file → **low** finding.
+Via model reasoning: same skill referenced with both `/name` and bare `name` in directive context in same file → **low** finding.
 
 **26c — Legend ↔ body symbol alignment**
 
-When a file defines a legend or key (any line matching `Legend:` followed by symbol/concept pairs), every body use of a concept must match the legend symbol exactly.
+When file defines legend (any line matching `Legend:` followed by symbol/concept pairs), every body use of concept must match legend symbol exactly.
 
 ```bash
 printf "=== Check 26c: Legend/key alignment ===\n"
 grep -n 'Legend:\|^Key:' .claude/agents/*.md .claude/skills/*/SKILL.md 2>/dev/null || true # timeout: 5000
 ```
 
-Using model reasoning: extract each (symbol, concept) pair from the legend. For each concept, scan the file body outside code fences for uses of a different symbol. Flag mismatches: `Legend defines <concept> as <symbol-A> but body uses <symbol-B> at line N`.
+Via model reasoning: extract (symbol, concept) pairs from legend. Per concept, scan file body outside code fences for different symbol. Flag: `Legend defines <concept> as <symbol-A> but body uses <symbol-B> at line N`.
 
-**Report only** — never auto-fix; symbol choices may be intentional or constrained by existing documentation.
+**Report only** — never auto-fix; symbol choices may be intentional or constrained by existing docs.
 
-| Sub-check                                        | Severity | Auto-fix |
-| ------------------------------------------------ | -------- | -------- |
-| 26a — same concept, different symbols            | medium   | no       |
-| 26b — directive notation mixed `/name` vs `name` | low      | no       |
-| 26c — body symbol contradicts legend             | medium   | no       |
+| Sub-check | Severity | Auto-fix |
+| --- | --- | --- |
+| 26a — same concept, different symbols | medium | no |
+| 26b — directive notation mixed `/name` vs `name` | low | no |
+| 26c — body symbol contradicts legend | medium | no |

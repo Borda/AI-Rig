@@ -1,3 +1,5 @@
+**Re: Compress skill template instructions into caveman format**
+
 **Skill template** — write to `SKILLS_DIR/<name>/SKILL.md`:
 
 ```
@@ -10,4 +12,4 @@ name / description / argument-hint / disable-model-invocation: true / allowed-to
 <notes> — operational caveats
 ```
 
-**Content rules:** No backslash escaping in skills (all normal XML tags). Start the `<workflow>` body with a `**Task hygiene**` preamble (call `TaskList`, triage found tasks by status) followed by `**Task tracking**:` for how TaskCreate is used in this skill. Generate real steps (40-60 lines total). Default `allowed-tools` to `Read, Bash, Grep, Glob, TaskCreate, TaskUpdate` unless writing files is needed; add `Agent` only if the skill spawns subagents. Only add `Write`/`Edit` if the skill creates or modifies files; only add `WebFetch`/`WebSearch` if the skill fetches external docs. Do not list tools the workflow never uses — unused declared tools inflate the permission surface needlessly.
+**Content rules:** No backslash escaping in skills (all normal XML tags). Start `<workflow>` body with `**Task hygiene**` preamble (call `TaskList`, triage found tasks by status) then `**Task tracking**:` for how `TaskCreate` used. Generate real steps (40-60 lines total). Default `allowed-tools` to `Read, Bash, Grep, Glob, TaskCreate, TaskUpdate` unless writing files needed; add `Agent` only if skill spawns subagents. Add `Write`/`Edit` only if skill creates/modifies files; add `WebFetch`/`WebSearch` only if skill fetches external docs. Don't list unused tools — inflates permission surface.

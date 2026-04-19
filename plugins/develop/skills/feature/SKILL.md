@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-TDD-first feature development. Crystallise the API as a demo use-case test, drive implementation to pass it, then close quality gaps with review, documentation, and the quality stack.
+TDD-first feature development. Crystallise API as demo use-case test, drive implementation to pass it, close quality gaps with review, docs, quality stack.
 
 NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/manage`).
 
@@ -21,35 +21,35 @@ NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/manage
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails or you are uncertain, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If check fails or uncertain, proceed as if foundry available — it is common case; only fall back if agent dispatch explicitly fails.
 
-When foundry is **not** installed, substitute `foundry:X` references with `general-purpose` and prepend the role description plus `model: <model>` to the spawn call:
+When foundry **not** installed, substitute `foundry:X` references with `general-purpose` and prepend role description plus `model: <model>` to spawn call:
 
-| foundry agent           | Fallback          | Model    | Role description prefix                                                                                           |
-| ----------------------- | ----------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`   | `general-purpose` | `opus`   | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
-| `foundry:qa-specialist` | `general-purpose` | `opus`   | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.`    |
-| `foundry:doc-scribe`    | `general-purpose` | `sonnet` | `You are a documentation specialist. Write Google-style docstrings and keep README content accurate and concise.` |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
+| `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
+| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
+| `foundry:doc-scribe` | `general-purpose` | `sonnet` | `You are a documentation specialist. Write Google-style docstrings and keep README content accurate and concise.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works but produces lower-quality output.
+Skills with `--team` mode: team spawning with fallback agents still works but lower-quality output.
 
 ## Anti-Rationalizations
 
-| Temptation                                                           | Reality                                                                                      |
-| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| "The feature is clear — I can skip the demo and go straight to code" | Without a crystallized API contract, implementation drifts. The demo is the spec.            |
-| "I know this library — no need to check docs"                        | Training data contains deprecated patterns. One fetch prevents hours of rework.              |
-| "I'll write tests after the implementation is stable"                | Tests drive design. Writing them first reveals API problems before they are baked in.        |
-| "The existing suite still passes — the feature is good"              | The existing suite doesn't cover the new feature. The demo and edge-case tests do.           |
-| "Step 1 analysis is unnecessary for a small addition"                | Scope analysis reveals reuse opportunities and blast radius. Small additions regularly grow. |
+| Temptation | Reality |
+| --- | --- |
+| "The feature is clear — I can skip the demo and go straight to code" | Without a crystallized API contract, implementation drifts. The demo is the spec. |
+| "I know this library — no need to check docs" | Training data contains deprecated patterns. One fetch prevents hours of rework. |
+| "I'll write tests after the implementation is stable" | Tests drive design. Writing them first reveals API problems before they are baked in. |
+| "The existing suite still passes — the feature is good" | The existing suite doesn't cover the new feature. The demo and edge-case tests do. |
+| "Step 1 analysis is unnecessary for a small addition" | Scope analysis reveals reuse opportunities and blast radius. Small additions regularly grow. |
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: immediately after Step 1 (scope is known), create TaskCreate entries for all steps of this workflow before doing any other work. Mark each step in_progress when starting it, completed when done.
+**Task tracking**: immediately after Step 1 (scope known), create TaskCreate entries for all steps before any other work. Mark each step in_progress when starting, completed when done.
 
 # Feature Mode
 
@@ -62,7 +62,7 @@ Gather full context before writing any code:
 gh issue view <number >--comments
 ```
 
-If a free-text description was provided: use the Grep tool (pattern `<keyword>`, glob `**/*.py`, path `src/`) to search for related code before spawning the analysis agent.
+If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/*.py`, path `src/`) to search related code before spawning analysis agent.
 
 **Structural context** (codemap, if installed) — soft PATH check, silently skip if `scan-query` not found:
 
@@ -73,31 +73,31 @@ if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; t
 fi
 ```
 
-If results are returned: prepend a `## Structural Context (codemap)` block to the foundry:sw-engineer spawn prompt with the hotspot JSON. This gives the analysis agent immediate complexity awareness without cold Glob/Grep exploration. If `scan-query` is not found or index is missing: proceed silently — do not mention codemap to the user.
+If results returned: prepend `## Structural Context (codemap)` block to foundry:sw-engineer spawn prompt with hotspot JSON. Gives analysis agent immediate complexity awareness without cold Glob/Grep exploration. If `scan-query` not found or index missing: proceed silently — don't mention codemap to user.
 
-Spawn a **foundry:sw-engineer** agent to analyse the codebase and produce:
+Spawn **foundry:sw-engineer** agent to analyse codebase and produce:
 
-- **Purpose**: what problem does this feature solve, and for which users?
-- **Scope**: which files and modules are likely to change (entry points, data models, tests)?
-- **Compatibility**: does the feature touch public API? Will it require deprecation? Does it need backward-compat shims?
-- **Reuse opportunities**: existing utilities, base classes, patterns, or abstractions that the new code can extend rather than duplicate
-- **Risks**: edge cases, performance implications, or integration points that need careful handling
-- **Scope challenge**: Is this the right problem? Are there simpler alternatives? What already exists that could be extended instead of built from scratch?
-- **Complexity smell**: If the proposed change touches 8+ files or introduces 2+ new classes/modules, flag it explicitly — the scope may need narrowing before proceeding
+- **Purpose**: what problem does feature solve, and for which users?
+- **Scope**: which files and modules likely change (entry points, data models, tests)?
+- **Compatibility**: does feature touch public API? Require deprecation? Need backward-compat shims?
+- **Reuse opportunities**: existing utilities, base classes, patterns, abstractions new code can extend instead of duplicate
+- **Risks**: edge cases, performance implications, integration points needing careful handling
+- **Scope challenge**: Right problem? Simpler alternatives? What already exists that could extend instead of build from scratch?
+- **Complexity smell**: If proposed change touches 8+ files or introduces 2+ new classes/modules, flag explicitly — scope may need narrowing before proceeding
 
-**Gate**: If complexity smell was flagged, present the scope concern to the user before proceeding to Step 2.
+**Gate**: If complexity smell flagged, present scope concern to user before proceeding to Step 2.
 
-Present the analysis summary before proceeding.
+Present analysis summary before proceeding.
 
 ## Step 1.5: Source verification (when using external APIs or version-sensitive libraries)
 
-Skip if the feature calls no external library APIs — no new framework features, no third-party SDK methods, and no stdlib functions that changed in a recent Python version.
+Skip if feature calls no external library APIs — no new framework features, no third-party SDK methods, no stdlib functions changed in recent Python version.
 
-**Trigger**: the feature calls an external library API — a new framework feature, a third-party SDK method, or a stdlib function that has changed in a recent Python version.
+**Trigger**: feature calls external library API — new framework feature, third-party SDK method, or stdlib function changed in recent Python version.
 
 **DETECT → FETCH → CITE pipeline:**
 
-1. **DETECT** — read `pyproject.toml` or `requirements*.txt` for the exact version and output:
+1. **DETECT** — read `pyproject.toml` or `requirements*.txt` for exact version and output:
 
    ```
    STACK DETECTED:
@@ -105,16 +105,16 @@ Skip if the feature calls no external library APIs — no new framework features
    → Fetching official docs for the relevant API.
    ```
 
-2. **FETCH** — use WebFetch to retrieve the **specific relevant docs page** (not the homepage). Source priority: official docs > official changelog/migration guide > web standards (MDN). Never cite Stack Overflow, blog posts, or AI training data.
+2. **FETCH** — use WebFetch to retrieve **specific relevant docs page** (not homepage). Source priority: official docs > official changelog/migration guide > web standards (MDN). Never cite Stack Overflow, blog posts, or AI training data.
 
-3. **CITE** — when implementing, embed a comment with the source URL and the key quoted passage:
+3. **CITE** — when implementing, embed comment with source URL and key quoted passage:
 
    ```python
    # Docs: https://docs.example.com/v2/api/method
    # "The recommended pattern for X is Y" (v2.1 docs)
    ```
 
-4. **Conflict** — if docs describe a pattern that conflicts with how the codebase currently uses the library:
+4. **Conflict** — if docs describe pattern conflicting with how codebase currently uses library:
 
    ```
    CONFLICT DETECTED:
@@ -128,16 +128,16 @@ Skip if the feature calls no external library APIs — no new framework features
 
 ## Step 2: Write a demo use-case
 
-Before crystallising the API, surface any non-obvious design decisions:
+Before crystallising API, surface non-obvious design decisions:
 
 > ASSUMPTIONS I'M MAKING:
 >
 > 1. [assumption about API shape, e.g. "returning a list not a generator"]
 > 2. [assumption about caller context, e.g. "called once per batch, not per item"] → Correct me now or I'll proceed with these.
 
-Do not proceed to the demo if any assumption would materially change the API shape.
+Don't proceed to demo if any assumption would materially change API shape.
 
-Crystallise the intended API contract before any implementation exists. Choose the form based on scope:
+Crystallise intended API contract before any implementation. Choose form based on scope:
 
 **Unit function / simple API** -> inline doctest:
 
@@ -161,13 +161,13 @@ result = model.predict_batch(["hello", "world"])
 print(result)  # expected: [label, label]
 ```
 
-The example script captures what the feature should feel like to use. It becomes a formal pytest test once the implementation is complete and the API is stable (end of Step 3).
+Example script captures what feature should feel like to use. Becomes formal pytest test once implementation complete and API stable (end of Step 3).
 
 Both forms must:
 
-- Use the **exact API** the feature will expose (function name, signature, return type)
-- Show the happy-path end-to-end flow a user would first reach for
-- **Fail or error** against current code (the feature doesn't exist yet)
+- Use **exact API** feature will expose (function name, signature, return type)
+- Show happy-path end-to-end flow user would first reach for
+- **Fail or error** against current code (feature doesn't exist yet)
 
 ```bash
 # Doctest form: confirm it fails
@@ -177,38 +177,38 @@ python -m pytest --doctest-modules src/ -v <module >.py 2>&1 | tail -10
 python examples/demo_ <feature >.py 2>&1 | tail -5
 ```
 
-**Gate**: demo must fail or error. If it passes, the feature may already exist — revisit Step 1.
+**Gate**: demo must fail or error. If passes, feature may already exist — revisit Step 1.
 
 ### Review: Validate the demo
 
-Before proceeding to implementation, critically evaluate the demo itself:
+Before proceeding to implementation, critically evaluate demo:
 
-1. **Goal alignment**: does this demo address the user's stated goal, or does it solve a related but slightly different problem?
-2. **API design**: is the proposed API minimal? Does it follow existing conventions in the codebase (naming, parameter order, return types)?
-3. **Missing scenarios**: are there obvious happy-path variants or important failure modes the demo doesn't cover?
-4. **Testability**: can this demo be automatically verified — not just `print`-and-inspect?
+1. **Goal alignment**: does demo address user's stated goal, or slightly different problem?
+2. **API design**: is proposed API minimal? Follows existing codebase conventions (naming, parameter order, return types)?
+3. **Missing scenarios**: obvious happy-path variants or important failure modes demo doesn't cover?
+4. **Testability**: can demo be automatically verified — not just `print`-and-inspect?
 
-If any issue is found: revise the demo and re-run the gate. Do not proceed to Step 3 with a flawed API contract — the entire TDD loop is anchored to this.
+If issue found: revise demo and re-run gate. Don't proceed to Step 3 with flawed API contract — entire TDD loop anchored to this.
 
 ## Step 3: TDD implementation loop
 
-Drive the implementation by making tests pass, one cycle at a time:
+Drive implementation by making tests pass, one cycle at a time:
 
 ```bash
 # Baseline: confirm existing suite is green before adding any new code
 python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
 ```
 
-**Gate**: all existing tests must pass before proceeding. If any fail, stop — do not add new code on a broken baseline. Use `/develop:fix` to address pre-existing failures first, then return here.
+**Gate**: all existing tests must pass before proceeding. If any fail, stop — don't add new code on broken baseline. Use `/develop:fix` to address pre-existing failures first, then return here.
 
-Start from the Step 2 demo — it is already failing and becomes the first target. For each piece of functionality:
+Start from Step 2 demo — already failing, becomes first target. For each piece of functionality:
 
-1. **Target the demo or write the next focused test** — first iteration uses the Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
-2. **Run the existing suite — confirm all pass**:
+1. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
+2. **Run existing suite — confirm all pass**:
    ```bash
    python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
    ```
-3. **Run the new demo/test — confirm it fails**:
+3. **Run new demo/test — confirm it fails**:
    ```bash
    # doctest form
    python -m pytest --doctest-modules src/ -v --tb=short <module >.py 2>&1 | tail -10
@@ -217,74 +217,74 @@ Start from the Step 2 demo — it is already failing and becomes the first targe
    # script form
    python examples/demo_ <feature >.py 2>&1 | tail -5
    ```
-4. **Implement the minimal code** (spawn **foundry:sw-engineer** agent for non-trivial logic):
+4. **Implement minimal code** (spawn **foundry:sw-engineer** agent for non-trivial logic):
    - Reuse or extend existing code identified in Step 1 — prefer subclassing or composing over parallel reimplementation
-   - Match the project's existing patterns (naming, error handling, type annotations)
-5. **Run the demo/test — confirm it passes**
-6. **Run the full suite** to catch regressions:
+   - Match project's existing patterns (naming, error handling, type annotations)
+5. **Run demo/test — confirm it passes**
+6. **Run full suite** to catch regressions:
    ```bash
    python -m pytest --tb=short -q <target_test_dir >-v
    ```
-7. If regressions appear: fix them before moving on — never carry forward a broken suite
+7. If regressions appear: fix before moving on — never carry forward broken suite
 
-Repeat until all feature tests pass and the Step 2 demo passes.
+Repeat until all feature tests pass and Step 2 demo passes.
 
-If Step 2 produced an example script: promote it into a formal pytest test now that the API is stable. Delete the script once the test is in place.
+If Step 2 produced example script: promote into formal pytest test now that API is stable. Delete script once test in place.
 
 ## Step 4: Review and close gaps
 
-Full review of the implementation. This is a **loop** — review -> fix -> re-review until only nits remain. Maximum 3 cycles.
+Full review of implementation. **Loop** — review -> fix -> re-review until only nits remain. Maximum 3 cycles.
 
 **Each cycle:**
 
-**5-axis quality scan** — before the full criteria evaluation, assess the implementation on each axis:
+**5-axis quality scan** — before full criteria evaluation, assess implementation on each axis:
 
-- **Correctness**: does it match the exact API from Step 2? Edge cases and error paths covered?
-- **Readability**: can another engineer understand the feature without reading the issue or demo?
-- **Architecture**: does it fit established patterns? Is the abstraction level appropriate?
-- **Security**: if the feature touches input handling, auth, or data storage — are those paths hardened?
-- **Performance**: any N+1 patterns, unbounded collections, or unnecessary computation introduced?
+- **Correctness**: matches exact API from Step 2? Edge cases and error paths covered?
+- **Readability**: can another engineer understand feature without reading issue or demo?
+- **Architecture**: fits established patterns? Abstraction level appropriate?
+- **Security**: if feature touches input handling, auth, or data storage — are those paths hardened?
+- **Performance**: N+1 patterns, unbounded collections, unnecessary computation introduced?
 
-Use this scan to prioritize which criteria below get deepest scrutiny.
+Use scan to prioritize which criteria below get deepest scrutiny.
 
 1. Evaluate against all criteria:
 
-   - **API match**: implementation matches the exact API from Step 2 (name, signature, return type)
+   - **API match**: implementation matches exact API from Step 2 (name, signature, return type)
    - **Scope discipline**: only Step-1-identified files changed; no drive-by fixes or unrelated edits
-   - **Edge cases**: error paths, boundary inputs, None/empty handling are exercised by tests
+   - **Edge cases**: error paths, boundary inputs, None/empty handling exercised by tests
    - **Test quality**: tests verify behavior (not implementation internals); parametrized where inputs vary
-   - **Simplicity**: no dead code, no unnecessary abstractions, no over-engineering
+   - **Simplicity**: no dead code, unnecessary abstractions, over-engineering
 
-2. For every gap found: implement the fix immediately — add missing tests, remove dead code, revert out-of-scope edits. Return to Step 3 for any substantive implementation gap that needs a new TDD cycle.
+2. For every gap found: implement fix immediately — add missing tests, remove dead code, revert out-of-scope edits. Return to Step 3 for substantive implementation gap needing new TDD cycle.
 
-3. Re-run the full suite to confirm nothing regressed:
+3. Re-run full suite to confirm nothing regressed:
 
    ```bash
    python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
    ```
 
-4. **If only nits remain** (style, cosmetic naming, minor formatting): document in Follow-up and exit the loop.
+4. **If only nits remain** (style, cosmetic naming, minor formatting): document in Follow-up and exit loop.
 
-5. **If substantive gaps remain**: start the next cycle (max 3 total).
+5. **If substantive gaps remain**: start next cycle (max 3 total).
 
-**After 3 cycles**: if substantive issues remain, stop — surface them to the user before proceeding to Step 5.
+**After 3 cycles**: if substantive issues remain, stop — surface to user before proceeding to Step 5.
 
 ## Step 5: Documentation
 
-Spawn a **foundry:doc-scribe** agent to update all affected documentation:
+Spawn **foundry:doc-scribe** agent to update all affected docs:
 
 - Add or update **docstrings** on new/modified functions and classes (Google style — Napoleon)
-- Update the module-level docstring if the feature adds a significant capability
-- Add the demo from Step 2 as a doctest if not already embedded
-- Update `CHANGELOG.md` with a one-line entry under `Unreleased`
-- If the feature changes a public API: update `README.md` usage examples
+- Update module-level docstring if feature adds significant capability
+- Add demo from Step 2 as doctest if not already embedded
+- Update `CHANGELOG.md` with one-line entry under `Unreleased`
+- If feature changes public API: update `README.md` usage examples
 
 ```bash
 # Verify doctests pass after doc updates
 python -m pytest --doctest-modules <target_module >-v 2>&1 | tail -20
 ```
 
-Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 
@@ -325,9 +325,9 @@ Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Gua
 
 ## Team Assignments
 
-**When to use team mode**: feature spans 3+ modules, OR changes a public API, OR involves auth/payment/data scope.
+**When to use team mode**: feature spans 3+ modules, OR changes public API, OR involves auth/payment/data scope.
 
-- **Teammate 1 (foundry:sw-engineer, model=opus)**: implements the feature (Steps 2-3)
+- **Teammate 1 (foundry:sw-engineer, model=opus)**: implements feature (Steps 2-3)
 - **Teammate 2 (foundry:qa-specialist, model=opus)**: writes TDD tests in parallel + security checks for auth/payment/data scope
 - **Teammate 3 (foundry:doc-scribe, model=sonnet)**: prepares documentation structure in parallel (Step 5)
 

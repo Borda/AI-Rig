@@ -8,9 +8,9 @@ effort: high
 
 <objective>
 
-Diagnose unknown failures of any kind: broken local setup, environment mismatch, tool misbehavior, hook problems, CI vs local divergence, permission errors, and runtime anomalies. Gathers signals broadly, eliminates hypotheses systematically, and reports a confirmed root cause with a recommended next skill to engage. Does NOT fix — diagnosis only.
+Diagnose unknown failures: broken local setup, environment mismatch, tool misbehavior, hook problems, CI vs local divergence, permission errors, runtime anomalies. Gather signals broadly, eliminate hypotheses systematically, report confirmed root cause + recommended next skill. No fixes — diagnosis only.
 
-NOT for: known Python test failures with a traceback (use `/develop:debug`); `.claude/` config quality sweep (use `/audit`).
+NOT for: known Python test failures with traceback (use `/develop:debug`); `.claude/` config quality sweep (use `/audit`).
 
 </objective>
 
@@ -23,7 +23,7 @@ NOT for: known Python test failures with a traceback (use `/develop:debug`); `.c
   - `"CI fails but passes locally"`
   - `"uv run pytest can't find conftest.py"`
 
-If $ARGUMENTS is empty or too vague, use AskUserQuestion: "What exactly is failing or behaving unexpectedly? Include the command and any error output you can share."
+If $ARGUMENTS empty or too vague, use AskUserQuestion: "What exactly is failing or behaving unexpectedly? Include the command and any error output you can share."
 
 </inputs>
 
@@ -31,7 +31,7 @@ If $ARGUMENTS is empty or too vague, use AskUserQuestion: "What exactly is faili
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
@@ -41,9 +41,9 @@ If $ARGUMENTS is empty or too vague, use AskUserQuestion: "What exactly is faili
 
 From $ARGUMENTS extract:
 
-- **What**: the specific failure or anomaly
+- **What**: specific failure or anomaly
 - **Where**: local / CI / both; which tool or command; which skill or hook if applicable
-- **When**: started recently (after a change) or was always broken; intermittent or consistent
+- **When**: started recently (after change) or always broken; intermittent or consistent
 
 ## Step 2: Gather signals
 
@@ -71,57 +71,57 @@ git diff HEAD~3..HEAD --stat # timeout: 3000
 
 **Config state** (when symptom involves Claude Code, hooks, or skills):
 
-Use Read to check `.claude/settings.json` and `~/.claude/settings.json` — look for hook registrations, allow entries relevant to the failing command, and `enabledMcpjsonServers`.
+Use Read to check `.claude/settings.json` and `~/.claude/settings.json` — look for hook registrations, allow entries relevant to failing command, and `enabledMcpjsonServers`.
 
-**Logs** (when symptom involves a skill run, background agent, or hook):
+**Logs** (when symptom involves skill run, background agent, or hook):
 
-Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.claude/logs/`, `/tmp/`, or relevant `_<skill>/` run dirs. Read the last 50 lines of any relevant log file.
+Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.claude/logs/`, `/tmp/`, or relevant `_<skill>/` run dirs. Read last 50 lines of any relevant log file.
 
-Capture all output before proceeding to Step 3.
+Capture all output before Step 3.
 
 ## Step 3: Rank hypotheses
 
-List candidate root causes ranked by probability, drawing only from the evidence gathered:
+List candidate root causes ranked by probability, drawing only from gathered evidence:
 
 | Rank | Hypothesis | Supporting evidence | Ruling-out test |
-| ---- | ---------- | ------------------- | --------------- |
-| 1    | …          | …                   | …               |
-| 2    | …          | …                   | …               |
-| 3    | …          | …                   | …               |
+| --- | --- | --- | --- |
+| 1 | … | … | … |
+| 2 | … | … | … |
+| 3 | … | … | … |
 
-Common categories to consider:
+Common categories:
 
 - **Environment mismatch** — tool version differs; wrong virtualenv active; PATH missing entry
 - **Missing dependency** — binary not on PATH; package not installed; module import fails
 - **Config / permission error** — settings.json allow entry missing; hook path wrong; settings.local.json override
 - **State pollution** — stale lock file, leftover tmp artifact, or cached state conflicts with current run
-- **Recent change regression** — a git commit or config edit introduced the issue (check `git log`)
-- **Sync drift** — project `.claude/` and `~/.claude/` diverged; compare them manually or run `/audit setup` (covers drift detection)
+- **Recent change regression** — git commit or config edit introduced issue (check `git log`)
+- **Sync drift** — project `.claude/` and `~/.claude/` diverged; compare manually or run `/audit setup`
 - **External service** — network unavailable, API rate-limited, or remote tool unreachable
 
 ## Step 4: Auxiliary review (optional)
 
-If the `codex` plugin is available AND the top hypothesis has weak or circumstantial evidence (no direct confirming signal), request an adversarial review of the hypothesis set:
+If `codex` plugin available AND top hypothesis has weak/circumstantial evidence (no direct confirming signal), request adversarial review:
 
 ```
 Agent(subagent_type="codex:codex-rescue", prompt="Adversarial review of hypothesis quality: [provide symptom, signals, and hypothesis table]. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only.")
 ```
 
-Provide Codex with: the symptom (Step 1 output), key signals gathered (Step 2), and the ranked hypothesis table (Step 3). Ask it to: identify any blindspots not in the table, challenge the top hypothesis, and surface alternative root causes.
+Provide Codex: symptom (Step 1), key signals (Step 2), ranked hypothesis table (Step 3). Ask it to: identify blindspots not in table, challenge top hypothesis, surface alternative root causes.
 
-- Incorporate any alternative hypotheses Codex surfaces as new rows in the Step 3 table
-- Re-rank if Codex provides stronger evidence for a lower-ranked candidate
-- If Codex identifies a category not in the common list, add it
+- Add any Codex alternative hypotheses as new rows in Step 3 table
+- Re-rank if Codex provides stronger evidence for lower-ranked candidate
+- If Codex identifies category not in common list, add it
 
-**Skip this step when**:
+**Skip when**:
 
 - Top hypothesis already has strong direct evidence (confidence clearly high)
-- `codex` plugin is not available (`claude plugin list` shows no `codex@openai-codex`)
-- User requested speed or `/investigate --fast` was specified
+- `codex` plugin not available (`claude plugin list` shows no `codex@openai-codex`)
+- User requested speed or `/investigate --fast` specified
 
 ## Step 5: Probe top hypotheses
 
-Design one targeted test per hypothesis that gives a clear confirm/rule-out signal. Run independent probes in parallel.
+One targeted test per hypothesis — clear confirm/rule-out signal. Run independent probes in parallel.
 
 ```bash
 # Example probes — adapt to the actual symptom
@@ -139,9 +139,9 @@ ls -la ~/.claude/hooks/
 diff <(jq -S . .claude/settings.json) <(jq -S . ~/.claude/settings.json) | head -40
 ```
 
-For each probe result: mark **Confirmed**, **Ruled out**, or **Inconclusive**.
+Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**.
 
-Stop when one hypothesis is confirmed with clear evidence, or all top-3 are ruled out (expand to lower-ranked candidates).
+Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (expand to lower-ranked candidates).
 
 ## Step 6: Report findings
 
@@ -165,17 +165,17 @@ Stop when one hypothesis is confirmed with clear evidence, or all top-3 are rule
   - Further investigation needed: <what additional info would resolve it>
 ```
 
-End with a `## Confidence` block per output standards.
+End with `## Confidence` block per output standards.
 
 </workflow>
 
 <notes>
 
-- **Diagnosis only** — never apply fixes in this skill; hand off cleanly with a specific recommended action
-- **Scope vs `/develop:debug`**: `/develop:debug` requires a known test failure and runs a TDD fix loop. `/investigate` is for "something is wrong, I don't know what" — the cause may not be in application code at all
-- **Scope vs `/audit`**: `/audit` is a scheduled quality sweep of `.claude/` config. `/investigate` is triggered by a live failure; the two can complement each other (investigate finds a config symptom → audit confirms the structural issue)
-- **Broad first**: always complete Step 2 signal gathering before hypothesising — premature anchoring is the most common investigation failure
-- **Parallel probes**: run independent probes in a single response to avoid serial latency
-- **Inconclusiveness is a valid outcome**: report what was ruled out and exactly what information would close the remaining gap — don't fabricate a root cause to appear decisive
+- **Diagnosis only** — never apply fixes; hand off with specific recommended action
+- **Scope vs `/develop:debug`**: `/develop:debug` needs known test failure, runs TDD fix loop. `/investigate` = "something wrong, don't know what" — cause may not be in application code
+- **Scope vs `/audit`**: `/audit` = scheduled quality sweep of `.claude/`. `/investigate` = triggered by live failure; two complement each other (investigate finds config symptom → audit confirms structural issue)
+- **Broad first**: always complete Step 2 before hypothesising — premature anchoring = most common investigation failure
+- **Parallel probes**: run independent probes in single response to avoid serial latency
+- **Inconclusiveness valid**: report what ruled out and what info would close remaining gap — don't fabricate root cause to appear decisive
 
 </notes>

@@ -1,14 +1,16 @@
+**Re: Compress markdown to caveman format**
+
 # Comment Dispatch — oss:resolve independent entry point
 
-Reached when `$ARGUMENTS` is bare comment text (not a PR number or URL). This file is read and executed by `/oss:resolve` Step 12.
+Reached when `$ARGUMENTS` = bare comment text (not PR number or URL). File read + executed by `/oss:resolve` Step 12.
 
 ______________________________________________________________________
 
 ## Step 12: Comment dispatch + Codex review loop
 
-Reached when $ARGUMENTS is bare comment text (not a PR number or URL).
+Reached when $ARGUMENTS = bare comment text (not PR number or URL).
 
-Create a task:
+Create task:
 
 ```
 TaskCreate(
@@ -18,7 +20,7 @@ TaskCreate(
 )
 ```
 
-If `CODEX_AVAILABLE=false`: stop with `⚠ codex plugin not found — install: /plugin marketplace add openai/codex-plugin-cc && /plugin install codex@openai-codex && /reload-plugins`, mark the task completed:
+If `CODEX_AVAILABLE=false`: stop with `⚠ codex plugin not found — install: /plugin marketplace add openai/codex-plugin-cc && /plugin install codex@openai-codex && /reload-plugins`, mark task completed:
 
 ```
 TaskUpdate(task_id=<task_id_from_above>, status="completed")
@@ -32,7 +34,7 @@ and stop.
 Agent(subagent_type="codex:codex-rescue", prompt="Apply this review comment to the codebase. If the change is already present, or the comment has no actionable code change, make no changes and briefly explain why. Comment: $ARGUMENTS")
 ```
 
-Record the initial dispatch outcome (code changed or no change + reason).
+Record initial dispatch outcome (code changed or no change + reason).
 
 ### 12b: Codex review loop (max 5 passes)
 
@@ -40,7 +42,7 @@ Record the initial dispatch outcome (code changed or no change + reason).
 git diff HEAD --stat # timeout: 3000 — confirm there are changes to review
 ```
 
-If no changes: skip the loop; set `CODEX_REVIEW_FINDINGS=""`.
+No changes: skip loop; set `CODEX_REVIEW_FINDINGS=""`.
 
 Otherwise:
 
@@ -66,7 +68,7 @@ if REVIEW_PASS == 5 and ISSUES_FOUND > 0:
 
 ### 12c: Lint and QA gate
 
-If code was changed (dispatch or review loop produced commits):
+If code changed (dispatch or review loop produced commits):
 
 ```bash
 RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
@@ -81,9 +83,9 @@ Agent(foundry:linting-expert): "Review all files changed in HEAD (git diff HEAD~
 Agent(foundry:qa-specialist, maxTurns: 15): "Review all files changed in the most recent commits for correctness, edge cases, and regressions. Flag any blocking issues. Write your full findings to $RUN_DIR/qa-specialist-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
 ```
 
-> **Health monitoring**: Agent calls are synchronous; Claude awaits responses natively. If no response within ~15 min, surface partial results from `$RUN_DIR` with ⏱.
+> **Health monitoring**: Agent calls synchronous; Claude awaits natively. No response within ~15 min → surface partial results from `$RUN_DIR` with ⏱.
 
-- If `linting-expert` made changes → commit:
+- `linting-expert` made changes → commit:
 
 ```bash
 git add $(git diff HEAD --name-only)                          # timeout: 3000
@@ -96,9 +98,9 @@ EOF
 )"  # timeout: 3000
 ```
 
-- If `foundry:qa-specialist` reports blocking issues → fix inline, then re-run once; surface any unresolved issues in the report
+- `foundry:qa-specialist` reports blocking issues → fix inline, re-run once; surface unresolved issues in report
 
-Mark the task `completed`:
+Mark task `completed`:
 
 ```
 TaskUpdate(task_id=<task_id_from_above>, status="completed")

@@ -81,13 +81,13 @@ printf "${GRN}✓${NC}: Check 23 scan complete\n"
 
 After the scan, apply model reasoning to each match — exclude cases where the shell command is genuinely necessary. Flag only where the native tool is a direct drop-in replacement.
 
-| Shell command                      | Preferred native tool | Severity |
-| ---------------------------------- | --------------------- | -------- |
-| `cat <file>`                       | Read tool             | medium   |
-| `grep`/`rg` for content search     | Grep tool             | medium   |
-| `find`/`ls` for file listing       | Glob tool             | medium   |
-| `echo … >` / `tee` to write a file | Write tool            | medium   |
-| `sed`/`awk` for text substitution  | Edit tool             | medium   |
+| Shell command | Preferred native tool | Severity |
+| --- | --- | --- |
+| `cat <file>` | Read tool | medium |
+| `grep`/`rg` for content search | Grep tool | medium |
+| `find`/`ls` for file listing | Glob tool | medium |
+| `echo … >` / `tee` to write a file | Write tool | medium |
+| `sed`/`awk` for text substitution | Edit tool | medium |
 
 **Report only** — never auto-fix; some Bash invocations in example/illustration code blocks are intentional.
 
@@ -118,9 +118,9 @@ Collect all unique (source-file, skill-reference, trailing-argument) triples. RE
 
 **Step 2 — Resolve each reference (Check 24a)**:
 
-| Reference form | Resolution                                                                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/name`        | Glob `.claude/skills/name/SKILL.md` — must exist                                                                                           |
+| Reference form | Resolution |
+| --- | --- |
+| `/name` | Glob `.claude/skills/name/SKILL.md` — must exist |
 | `/plugin:name` | Glob `plugins/plugin/skills/name/SKILL.md` — must exist; if no `plugins/` dir, note "installed plugin — cannot verify statically" and skip |
 
 Missing target → **[high]**: `Sequence reference /<name> in <file> resolves to no installed skill`
@@ -134,10 +134,10 @@ For references with a trailing argument token (e.g., `fix` in `/audit fix`, `bre
 
 **Report only** — do not auto-fix; sequence intent requires human judgment.
 
-| Sub-check                                | Severity | Auto-fix |
-| ---------------------------------------- | -------- | -------- |
-| 24a — target skill not on disk           | high     | no       |
-| 24b — argument absent from argument-hint | medium   | no       |
+| Sub-check | Severity | Auto-fix |
+| --- | --- | --- |
+| 24a — target skill not on disk | high | no |
+| 24b — argument absent from argument-hint | medium | no |
 
 ______________________________________________________________________
 
@@ -196,11 +196,11 @@ done
 
 **Report only** — do not auto-fix; resolution requires deciding whether to inline content or move the file to `foundry/_shared/`.
 
-| Sub-check                                                    | Severity | Auto-fix |
-| ------------------------------------------------------------ | -------- | -------- |
-| 27a — file absent from foundry's \_shared/                   | high     | no       |
-| 27b — catch-22 (fallback file needs foundry to reach)        | critical | no       |
-| 27c — plugin-local \_shared/ file referenced but not mounted | medium   | no       |
+| Sub-check | Severity | Auto-fix |
+| --- | --- | --- |
+| 27a — file absent from foundry's \_shared/ | high | no |
+| 27b — catch-22 (fallback file needs foundry to reach) | critical | no |
+| 27c — plugin-local \_shared/ file referenced but not mounted | medium | no |
 
 ______________________________________________________________________
 
@@ -250,7 +250,7 @@ Partially covered → **[medium] 28b**: `<plugin>/<skill>: fallback section pres
 
 **Report only** — fixing requires adding an Agent Resolution section with fallback substitutes for each cross-plugin dependency; the pattern in `develop:plan` (Agent Resolution table with `foundry agent | Fallback | Model | Role description prefix`) is the reference implementation.
 
-| Sub-check                                    | Condition | Severity | Auto-fix |
-| -------------------------------------------- | --------- | -------- | -------- |
-| 28a — no fallback for cross-plugin dispatch  | high      | no       |          |
-| 28b — fallback present but agent not covered | medium    | no       |          |
+| Sub-check | Condition | Severity | Auto-fix |
+| --- | --- | --- | --- |
+| 28a — no fallback for cross-plugin dispatch | high | no |
+| 28b — fallback present but agent not covered | medium | no |

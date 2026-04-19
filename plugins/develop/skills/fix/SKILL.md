@@ -9,9 +9,9 @@ disable-model-invocation: true
 
 <objective>
 
-Reproduce-first bug resolution. Capture the bug in a failing regression test, apply the minimal fix, then verify via quality stack and review loop.
+Reproduce-first bug resolution. Capture bug in failing regression test, apply minimal fix, verify via quality stack and review loop.
 
-NOT for: unknown failures without a traceback (use `/foundry:investigate`); `.claude/` config issues (use `/audit`).
+NOT for: unknown failures without traceback (use `/foundry:investigate`); `.claude/` config issues (use `/audit`).
 
 </objective>
 
@@ -21,47 +21,47 @@ NOT for: unknown failures without a traceback (use `/foundry:investigate`); `.cl
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails or you are uncertain, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If check fails or uncertain, proceed as if foundry available — common case; only fall back if agent dispatch explicitly fails.
 
-When foundry is **not** installed, substitute `foundry:X` references with `general-purpose` and prepend the role description plus `model: <model>` to the spawn call:
+When foundry **not** installed, substitute `foundry:X` with `general-purpose`, prepend role description plus `model: <model>`:
 
-| foundry agent           | Fallback          | Model  | Role description prefix                                                                                           |
-| ----------------------- | ----------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`   | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
-| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.`    |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
+| `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
+| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works but produces lower-quality output.
+Skills with `--team` mode: team spawning with fallback agents works but lower-quality output.
 
 ## Anti-Rationalizations
 
-| Temptation                                                 | Reality                                                                                               |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| "I already know the root cause from the symptom"           | Assumptions without verification produce fixes for the wrong bug. Read the code path first.           |
-| "The regression test can wait — I'll add it after the fix" | A fix without a failing test is unverifiable. The test is the proof the bug existed.                  |
-| "I'll clean up nearby code while I'm here"                 | Scope creep produces side effects and obscures the actual fix. Touch only the root cause.             |
-| "The targeted test passes — that's sufficient"             | The targeted test shows the bug is fixed; the full suite shows nothing else broke. Both are required. |
-| "The fix is obvious — Step 1 analysis is overkill"         | Obvious causes are often symptoms. Analysis reveals the actual root cause and blast radius.           |
+| Temptation | Reality |
+| --- | --- |
+| "I already know the root cause from the symptom" | Assumptions without verification produce fixes for the wrong bug. Read the code path first. |
+| "The regression test can wait — I'll add it after the fix" | A fix without a failing test is unverifiable. The test is the proof the bug existed. |
+| "I'll clean up nearby code while I'm here" | Scope creep produces side effects and obscures the actual fix. Touch only the root cause. |
+| "The targeted test passes — that's sufficient" | The targeted test shows the bug is fixed; the full suite shows nothing else broke. Both are required. |
+| "The fix is obvious — Step 1 analysis is overkill" | Obvious causes are often symptoms. Analysis reveals the actual root cause and blast radius. |
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: immediately after Step 1 (scope is known), create TaskCreate entries for all steps of this workflow before doing any other work. Mark each step in_progress when starting it, completed when done.
+**Task tracking**: immediately after Step 1 (scope known), TaskCreate for all steps before any other work. Mark each step in_progress when starting, completed when done.
 
 # Fix Mode
 
 ## Step 1: Understand the problem
 
-Gather all available context about the bug:
+Gather all available context about bug:
 
 ```bash
 # If issue number: fetch the full issue with comments
 gh issue view <number >--comments
 ```
 
-If an error message or pattern was provided: use the Grep tool (pattern `<error_pattern>`, path `.`) to search the codebase for the failing code path.
+If error message or pattern provided: use Grep tool (pattern `<error_pattern>`, path `.`) to search codebase for failing code path.
 
 ```bash
 # If failing test: run it to capture the exact failure
@@ -77,26 +77,26 @@ if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; t
 fi
 ```
 
-If results are returned: prepend a `## Structural Context (codemap)` block to the foundry:sw-engineer spawn prompt with the hotspot JSON. If `scan-query` is not found or index is missing: proceed silently — do not mention codemap to the user.
+If results returned: prepend `## Structural Context (codemap)` block to foundry:sw-engineer spawn prompt with hotspot JSON. If `scan-query` not found or index missing: proceed silently — do not mention codemap to user.
 
-Spawn a **foundry:sw-engineer** agent to analyze the failing code path and identify:
+Spawn **foundry:sw-engineer** agent to analyze failing code path and identify:
 
-- The root cause (not just the symptom)
-- The minimal code surface that needs to change
-- Any related code that might be affected by the fix
+- Root cause (not just symptom)
+- Minimal code surface needing change
+- Related code possibly affected by fix
 
-If the root cause is not definitively established after analysis, surface assumptions before proceeding:
+If root cause not definitively established after analysis, surface assumptions before proceeding:
 
 > ASSUMPTIONS I'M MAKING:
 >
 > 1. [assumption about root cause]
 > 2. [assumption about affected scope] → Correct me now or I'll proceed with these.
 
-**Scope gate**: if the root cause spans 3+ modules, flag the complexity smell. Use `AskUserQuestion` to present the scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
+**Scope gate**: if root cause spans 3+ modules, flag complexity smell. Use `AskUserQuestion` to present scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
 ## Step 2: Reproduce the bug
 
-Create or identify a test that demonstrates the failure:
+Create or identify test demonstrating failure:
 
 ```bash
 # If a failing test already exists — run it to confirm it fails
@@ -105,81 +105,81 @@ python -m pytest --tb=short <test_file >:: <test_name >-v
 # If no test exists — write a regression test that captures the bug
 ```
 
-Spawn a **foundry:qa-specialist** agent to write the regression test if one doesn't exist:
+Spawn **foundry:qa-specialist** agent to write regression test if none exists:
 
-- The test must **fail** against the current code (proving the bug exists)
-- Use `pytest.mark.parametrize` if the bug affects multiple input patterns
-- Keep the test minimal — exercise exactly the broken behavior
-- Add a brief comment linking to the issue if applicable (e.g., `# Regression test for #123`)
+- Test must **fail** against current code (proving bug exists)
+- Use `pytest.mark.parametrize` if bug affects multiple input patterns
+- Keep test minimal — exercise exactly broken behavior
+- Add brief comment linking to issue if applicable (e.g., `# Regression test for #123`)
 
-**Gate**: the regression test must fail before proceeding. If it passes, the bug isn't properly captured — revisit Step 1.
+**Gate**: regression test must fail before proceeding. If passes, bug not properly captured — revisit Step 1.
 
 ### Review: Validate the reproduction
 
-Before applying any fix, critically evaluate the regression test itself:
+Before applying fix, critically evaluate regression test:
 
-1. **Correct failure mode**: does the test fail for the right reason (the actual bug), not because of a setup issue?
-2. **Isolation**: does the test exercise exactly the broken behavior, or does it inadvertently test too broadly?
-3. **Minimal reproduction**: is this the smallest test that demonstrates the failure?
-4. **Parametrization**: if the bug manifests across multiple input patterns, are the key variants covered?
+1. **Correct failure mode**: fails for right reason (actual bug), not setup issue?
+2. **Isolation**: exercises exactly broken behavior, not too broadly?
+3. **Minimal reproduction**: smallest test demonstrating failure?
+4. **Parametrization**: key variants covered if bug spans multiple input patterns?
 
-If any issue is found: revise the regression test before applying the fix. A flawed reproduction means the fix will be validated against the wrong criteria.
+If any issue found: revise regression test before applying fix. Flawed reproduction = fix validated against wrong criteria.
 
 ## Step 3: Apply the fix
 
-Make the minimal change to fix the root cause:
+Make minimal change to fix root cause:
 
-1. Edit only the code necessary to resolve the bug
-2. Run the regression test to confirm it now passes:
+1. Edit only code necessary to resolve bug
+2. Run regression test to confirm now passes:
    ```bash
    python -m pytest --tb=short <test_file >:: <test_name >-v
    ```
-3. Run the full test suite for the affected module:
+3. Run full test suite for affected module:
    ```bash
    python -m pytest --tb=short <test_dir >-v
    ```
-4. If any existing tests break: the fix has side effects — reconsider the approach
+4. If existing tests break: fix has side effects — reconsider approach
 
 ## Step 4: Review and close gaps
 
-Full review of the fix. This is a **loop** — review -> fix -> re-review until only nits remain. Maximum 3 cycles.
+Full review of fix. **Loop** — review -> fix -> re-review until only nits remain. Max 3 cycles.
 
 **Each cycle:**
 
-**5-axis quality scan** — before the full criteria evaluation, assess the fix on each axis:
+**5-axis quality scan** — before full criteria evaluation, assess fix on each axis:
 
-- **Correctness**: does the fix address the root cause (not the symptom)? Edge cases covered?
-- **Readability**: is the fix comprehensible without surrounding bug context?
-- **Architecture**: does it fit existing patterns? Any new coupling introduced?
-- **Security**: does the bug path touch input handling, auth, or data? If yes, is that addressed?
-- **Performance**: does the fix introduce any loops, queries, or calls in a hot path?
+- **Correctness**: addresses root cause (not symptom)? Edge cases covered?
+- **Readability**: comprehensible without surrounding bug context?
+- **Architecture**: fits existing patterns? New coupling introduced?
+- **Security**: bug path touch input handling, auth, or data? If yes, addressed?
+- **Performance**: fix introduce loops, queries, or calls in hot path?
 
-Use this scan to prioritize which criteria below get deepest scrutiny.
+Use scan to prioritize which criteria below get deepest scrutiny.
 
 1. Evaluate against all criteria:
 
-   - **Root cause**: fix addresses the actual root cause, not just the symptom
-   - **Minimality**: smallest change that resolves the bug; no collateral edits
-   - **Regression test quality**: test precisely isolates the bug (fails before fix, passes after)
+   - **Root cause**: fix addresses actual root cause, not just symptom
+   - **Minimality**: smallest change resolving bug; no collateral edits
+   - **Regression test quality**: test precisely isolates bug (fails before fix, passes after)
    - **Side effects**: full suite passes without new failures or unexpected warnings
 
-2. For every gap found: implement the fix immediately — tighten the patch, remove collateral edits, adjust the test. Return to Step 3 for any gap that requires re-examining the fix approach.
+2. For every gap found: implement fix immediately — tighten patch, remove collateral edits, adjust test. Return to Step 3 for any gap requiring re-examining fix approach.
 
-3. Re-run the test suite:
+3. Re-run test suite:
 
    ```bash
    python -m pytest --tb=short -q <test_dir >-v 2>&1 | tail -20
    ```
 
-4. **Adjacent bugs** (observation only): scan for similar patterns in the codebase; document in Follow-up — do not fix here to avoid scope creep.
+4. **Adjacent bugs** (observation only): scan for similar patterns; document in Follow-up — do not fix here, avoids scope creep.
 
-5. **If only nits remain**: document in Follow-up and exit the loop.
+5. **Only nits remain**: document in Follow-up, exit loop.
 
-6. **If substantive gaps remain**: start the next cycle (max 3 total).
+6. **Substantive gaps remain**: start next cycle (max 3 total).
 
-**After 3 cycles**: if substantive issues remain, stop — surface them to the user before proceeding.
+**After 3 cycles**: if substantive issues remain, stop — surface to user before proceeding.
 
-Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 
@@ -219,12 +219,12 @@ Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Gua
 
 **When to use team mode**: root cause unclear after Step 1, OR bug spans 3+ modules.
 
-- **Teammate 1-3 (foundry:sw-engineer x 2-3, model=opus)**: each investigates a distinct root-cause hypothesis independently
+- **Teammate 1-3 (foundry:sw-engineer x 2-3, model=opus)**: each investigates distinct root-cause hypothesis independently
 
 **Coordination:**
 
 1. Lead broadcasts current evidence: `{bug: <description>, traceback: <key lines>}`
-2. Each teammate investigates independently — claims a hypothesis
+2. Each teammate investigates independently — claims hypothesis
 3. Lead facilitates cross-challenge between competing analyses
 4. Lead synthesizes consensus root cause, then proceeds with Steps 2-4 (regression test, fix, review loop) alone
 

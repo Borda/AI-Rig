@@ -10,16 +10,16 @@ context: fork
 
 <objective>
 
-Track open-loop ideas, deferred questions, and diverging threads that arise during a session — without losing them to context compaction or session end. Provides three on-demand commands (`resume`, `archive`, `summary`) and a behavioral parking rule that writes `session-open-*.md` memory files automatically as items arise.
+Track open-loop ideas, deferred questions, diverging threads — without losing to context compaction or session end. Three on-demand commands (`resume`, `archive`, `summary`) plus behavioral parking rule that writes `session-open-*.md` memory files as items arise.
 
 </objective>
 
 <inputs>
 
 - **$ARGUMENTS**: required. Three modes:
-  - `resume` (alias: `pending`) — list all open `session-open-*.md` memory files for this project, grouped by age; items ≥ 14 days get `⚠ stale` prefix; items ≥ 30 days are silently deleted before listing
-  - `archive <partial-text>` — fuzzy-match a parked item by name or content, delete its memory file, and append an audit entry to `.claude/logs/session-archive.jsonl`
-  - `summary` — compact session digest: completed tasks, parked items, and recent git commits since session start; follows output-routing rule (≤10 lines → terminal; longer → `.temp/output-session-summary-<date>.md`)
+  - `resume` (alias: `pending`) — list all open `session-open-*.md` memory files for this project, grouped by age; items ≥ 14 days get `⚠ stale` prefix; items ≥ 30 days deleted silently before listing
+  - `archive <partial-text>` — fuzzy-match parked item by name or content, delete memory file, append audit entry to `.claude/logs/session-archive.jsonl`
+  - `summary` — compact session digest: completed tasks, parked items, recent git commits since session start; follows output-routing rule (≤10 lines → terminal; longer → `.temp/output-session-summary-<date>.md`)
 
 </inputs>
 
@@ -44,7 +44,7 @@ Track open-loop ideas, deferred questions, and diverging threads that arise duri
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
@@ -52,7 +52,7 @@ Track open-loop ideas, deferred questions, and diverging threads that arise duri
 
 ### Step 1: Resolve the memory directory
 
-Derive MEMORY_DIR using the canonical snippet from `<constants>`.
+Derive MEMORY_DIR using canonical snippet from `<constants>`.
 
 ```bash
 # Use canonical MEMORY_DIR from <constants>
@@ -72,9 +72,9 @@ echo "cleanup done"
 
 ### Step 3: Collect remaining items and compute age
 
-Use Glob with pattern `session-open-*.md` in the memory directory. For each file found, read it with the Read tool to extract the `name` and `description` frontmatter fields and the item body.
+Use Glob with pattern `session-open-*.md` in memory directory. For each file, read with Read tool to extract `name` and `description` frontmatter fields and item body.
 
-Compute age in days for each file:
+Compute age in days per file:
 
 ```bash
 # MEMORY_DIR derived in Step 1 — reuse that value
@@ -89,7 +89,7 @@ done
 
 ### Step 4: Render grouped list
 
-Group items by age bucket:
+Group by age bucket:
 
 - **This session** — files modified today (age = 0)
 - **Earlier (`<date>`)** — files modified on prior dates, grouped by modification date
@@ -117,26 +117,17 @@ If no files exist, print: `No pending session items.`
 
 ### Step 1: Locate the memory directory and list candidates
 
-Derive MEMORY_DIR using the canonical snippet from `<constants>`, then list candidates:
-
-```bash
-PROJECT="$(git rev-parse --show-toplevel)"
-SLUG="$(echo "$PROJECT" | sed 's|[/.]|-|g' | sed 's|^-||')"
-MEMORY_DIR="$HOME/.claude/projects/$SLUG/memory/"
-ls "$MEMORY_DIR"/session-open-*.md 2>/dev/null || echo "none"
-```
+Derive MEMORY_DIR using canonical snippet from `<constants>`. Use Glob tool with pattern `session-open-*.md` in MEMORY_DIR to list candidates.
 
 ### Step 2: Fuzzy-match the target item
 
 Extract `<partial-text>` from `$ARGUMENTS` (everything after `archive `).
 
-Use Grep with the partial text against the memory directory, pattern `session-open-*.md`. Also match against file basenames. Select the best match — if ambiguous (2+ equally close matches), list them and ask the user to disambiguate before proceeding.
+Use Grep with partial text against memory directory, pattern `session-open-*.md`. Also match against file basenames. Select best match — if ambiguous (2+ equally close matches), list them and ask user to disambiguate before proceeding.
 
-Read the matched file with the Read tool to extract its `name` field.
+Read matched file with Read tool to extract its `name` field.
 
 ### Step 3: Delete the memory file
-
-Use Bash to remove the matched file:
 
 ```bash
 rm "$MEMORY_DIR/session-open-<matched-slug>-<date>.md"
@@ -145,17 +136,13 @@ echo "deleted"
 
 ### Step 4: Append audit entry to resolution log
 
-Ensure the log directory exists:
+Ensure log directory exists:
 
 ```bash
 mkdir -p .claude/logs # timeout: 5000
 ```
 
-Append a one-line JSON entry using Write/Edit — or Bash:
-
-```bash
-echo "{\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"item\":\"<name>\",\"action\":\"archived\"}" >>.claude/logs/session-archive.jsonl # timeout: 5000
-```
+Append one-line JSON entry using the Edit tool: read `.claude/logs/session-archive.jsonl` (or create with Write if absent), append a new line: `{"ts":"<ISO8601-UTC>","item":"<name>","action":"archived"}`
 
 ### Step 5: Confirm to user
 
@@ -169,16 +156,9 @@ Call TaskList (or use TaskCreate/TaskUpdate context) to get tasks with status `c
 
 ### Step 2: Collect parked items
 
-Derive MEMORY_DIR using the canonical snippet from `<constants>`, then list parked files:
+Derive MEMORY_DIR using canonical snippet from `<constants>`, then list parked files:
 
-```bash
-PROJECT="$(git rev-parse --show-toplevel)"
-SLUG="$(echo "$PROJECT" | sed 's|[/.]|-|g' | sed 's|^-||')"
-MEMORY_DIR="$HOME/.claude/projects/$SLUG/memory/"
-ls "$MEMORY_DIR"/session-open-*.md 2>/dev/null || echo "none"
-```
-
-Read each file with the Read tool for its `name` and `description`.
+Derive MEMORY_DIR using canonical snippet from `<constants>`. Use Glob tool with pattern `session-open-*.md` in MEMORY_DIR to list candidates. Read each matched file with Read tool for `name` and `description`.
 
 ### Step 3: Collect recent git commits
 
@@ -186,7 +166,7 @@ Read each file with the Read tool for its `name` and `description`.
 git log --oneline --since="$(date -u -d '8 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-8H '+%Y-%m-%dT%H:%M:%SZ')" 2>/dev/null | head -20 # timeout: 3000
 ```
 
-If the date flag syntax fails on the current platform, fall back to:
+If date flag syntax fails, fall back to:
 
 ```bash
 git log --oneline -15 # timeout: 3000
@@ -202,7 +182,7 @@ Filter entries with `ts` matching today's date.
 
 ### Step 5: Compose and route the digest
 
-Draft the digest:
+Draft digest:
 
 ```
 ## Session Summary — <date>
@@ -221,7 +201,7 @@ Draft the digest:
 - <hash> <message>
 ```
 
-Apply output-routing rule: if the digest is ≤ 10 lines, print to terminal only. If longer:
+Output-routing rule: ≤ 10 lines → terminal only. If longer:
 
 ```bash
 mkdir -p .temp/
@@ -234,7 +214,7 @@ if [ -f "$OUTPUT" ]; then
 fi
 ```
 
-Write to `$OUTPUT` and print a compact terminal summary with `→ file`.
+Write to `$OUTPUT`, print compact terminal summary with `→ file`.
 
 </workflow>
 
@@ -244,15 +224,15 @@ Write to `$OUTPUT` and print a compact terminal summary with `→ file`.
 
 During any session, Claude proactively parks open-loop items to project-scoped memory as they arise:
 
-| Item type                      | Trigger                                                                                | Entry format                                                |
-| ------------------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Unanswered clarifying question | User sends a new top-level request before answering Claude's prior clarifying question | `"User raised: <idea>. Pending: <question asked>."`         |
-| Deferred exploration           | "let's come back to that", "park this for later", idea mentioned but not pursued       | `"Deferred: <idea>. Context: <one sentence why deferred>."` |
-| Diverging idea mid-task        | New feature/design idea mentioned while solving something else                         | `"Side idea: <idea>. Raised while: <what we were doing>."`  |
+| Item type | Trigger | Entry format |
+| --- | --- | --- |
+| Unanswered clarifying question | User sends a new top-level request before answering Claude's prior clarifying question | `"User raised: <idea>. Pending: <question asked>."` |
+| Deferred exploration | "let's come back to that", "park this for later", idea mentioned but not pursued | `"Deferred: <idea>. Context: <one sentence why deferred>."` |
+| Diverging idea mid-task | New feature/design idea mentioned while solving something else | `"Side idea: <idea>. Raised while: <what we were doing>."` |
 
-**Topic-shift detection rule**: trigger is strictly behavioural — user submits a new top-level request without answering Claude's prior question (not a follow-up or clarification). No semantic similarity scoring.
+**Topic-shift detection rule**: trigger strictly behavioural — user submits new top-level request without answering Claude's prior question (not follow-up or clarification). No semantic similarity scoring.
 
-**File format**: each parked item is a standard memory file:
+**File format**: each parked item = standard memory file:
 
 ```
 ---
@@ -269,16 +249,16 @@ type: project
 
 Written to: `~/.claude/projects/<project-slug>/memory/session-open-<slug>-<YYYY-MM-DD>.md`
 
-Derive the project slug via: `git rev-parse --show-toplevel | sed 's|[/.]|-|g' | sed 's/^-//'`
+Derive project slug via: `git rev-parse --show-toplevel | sed 's|[/.]|-|g' | sed 's/^-//'`
 
-**Memory pollution guard**: before parking a new item, count existing `session-open-*.md` files. If the count is ≥ 10, surface the full list and ask the user to archive some entries before writing a new one.
+**Memory pollution guard**: before parking new item, count existing `session-open-*.md` files. If count ≥ 10, surface full list and ask user to archive some before writing new one.
 
-**TTL policy**: items ≥ 14 days listed with `⚠ stale`. Items ≥ 30 days deleted silently during `resume` and during `SessionEnd` cleanup. TTL thresholds are fixed global values — not configurable.
+**TTL policy**: items ≥ 14 days listed with `⚠ stale`. Items ≥ 30 days deleted silently during `resume` and `SessionEnd` cleanup. TTL thresholds fixed global values — not configurable.
 
-**Session-start behavior**: open-loop items are NOT surfaced automatically at session start. They appear only when `/session resume` is explicitly invoked. Do not add a session-start hygiene step for this in CLAUDE.md.
+**Session-start behavior**: open-loop items NOT surfaced automatically at session start. Appear only when `/session resume` explicitly invoked. Do not add session-start hygiene step for this in CLAUDE.md.
 
-**Resolution log**: `.claude/logs/session-archive.jsonl` is project-local and append-only. It stays in the git-tracked project directory as an audit trail; it is separate from the home-scoped memory files intentionally.
+**Resolution log**: `.claude/logs/session-archive.jsonl` is project-local, append-only. Stays in git-tracked project directory as audit trail; separate from home-scoped memory files intentionally.
 
-**Scope**: parked ideas are scoped to the current project only — they do not appear across projects. Memory isolation is enforced by the per-project slug directory under `~/.claude/projects/`.
+**Scope**: parked ideas scoped to current project only — don't appear across projects. Memory isolation enforced by per-project slug directory under `~/.claude/projects/`.
 
 </notes>

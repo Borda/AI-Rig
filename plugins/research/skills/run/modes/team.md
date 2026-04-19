@@ -1,3 +1,5 @@
+**Re: Compress markdown to caveman format**
+
 <!-- Team mode include: loaded by research:run when --team flag is set -->
 
 <!-- Implements one mode extension: Team Mode (--team flag, Phases A–D) -->
@@ -6,9 +8,9 @@
 
 ## Team Mode (`--team`)
 
-**When to trigger**: goal spans multiple optimization axes (e.g., "improve training speed" = model architecture + data pipeline + compute efficiency), OR user explicitly passes `--team`.
+**When to trigger**: goal spans multiple optimization axes (e.g., "improve training speed" = model architecture + data pipeline + compute efficiency), OR user passes `--team`.
 
-**Architecture**: two-phase pipeline — parallel hypothesis generation (read-only, no code changes) followed by sequential implementation on the live codebase ordered from minimal to largest change scope. This eliminates cross-axis conflicts: no worktrees, no cherry-picking; every implementation step sees the cumulative state of all prior kept changes.
+**Architecture**: two-phase pipeline — parallel hypothesis generation (read-only, no code changes) then sequential implementation on live codebase ordered minimal→largest change scope. No cross-axis conflicts: no worktrees, no cherry-picking; each implementation step sees cumulative state of all prior kept changes.
 
 **Team Mode directory layout**:
 
@@ -21,24 +23,24 @@
 
 1. Lead completes Steps R1–R4 (config, preconditions, baseline) solo.
 
-2. Lead identifies 2–3 distinct optimization axes from the goal + codebase analysis. Example for "reduce training time": model architecture · data pipeline · compute efficiency.
+2. Lead identifies 2–3 distinct optimization axes from goal + codebase analysis. Example for "reduce training time": model architecture · data pipeline · compute efficiency.
 
-3. Lead creates the run output directory:
+3. Lead creates run output directory:
 
    ```bash
    RUN_DIR=".experiments/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
    mkdir -p "$RUN_DIR"
    ```
 
-   Store `RUN_DIR` as a run-level variable — do not re-evaluate `date` at later phases. All references to `<RUN_DIR>` in Phases B, C, and D use this same value.
+   Store `RUN_DIR` as run-level variable — do not re-evaluate `date` at later phases. All `<RUN_DIR>` refs in Phases B, C, D use same value.
 
-   Write `phase: "A"` to `state.json` immediately after creating `RUN_DIR` — this makes Phase A resume reachable:
+   Write `phase: "A"` to `state.json` immediately after creating `RUN_DIR` — enables Phase A resume:
 
    ```
    {"team_mode": {"phase": "A", "run_dir": "<RUN_DIR>"}}
    ```
 
-4. Spawn 2–3 hypothesis agents in parallel (reasoning agents at `opus` per CLAUDE.md §Agent Teams). **No worktrees** — agents perform read-only analysis only. Each agent is assigned one axis and a matching specialist type (same `agent_strategy` mapping from SKILL.md constants).
+4. Spawn 2–3 hypothesis agents in parallel (reasoning agents at `opus` per CLAUDE.md §Agent Teams). **No worktrees** — read-only analysis only. Each agent gets one axis + matching specialist type (same `agent_strategy` mapping from SKILL.md constants).
 
    Each hypothesis agent's spawn prompt:
 
@@ -80,7 +82,7 @@
    Call TaskUpdate(in_progress) when starting; TaskUpdate(completed) when done.
    ```
 
-**Health monitoring** (CLAUDE.md §8): after spawning all agents in step 4, create a checkpoint:
+**Health monitoring** (CLAUDE.md §8): after spawning all agents in step 4, create checkpoint:
 
 ```bash
 LAUNCH_AT=$(date +%s)
@@ -90,29 +92,29 @@ touch "$CHECKPOINT"
 
 Poll every 5 min: `find $RUN_DIR -newer "$CHECKPOINT" -type f | wc -l` — new files = alive; zero = stalled.
 
-- **Hard cutoff: 15 min** of no file activity → timed out
-- **One extension (+5 min)**: if `tail -20 <output_file>` shows active progress, grant one extension; second stall = hard cutoff
-- **On timeout**: read partial output from `<RUN_DIR>/hypotheses-<axis-slug>.jsonl`; surface with ⏱ in Phase D report — never silently omit a timed-out agent
+- **Hard cutoff: 15 min** no file activity → timed out
+- **One extension (+5 min)**: `tail -20 <output_file>` shows active progress → grant one; second stall = hard cutoff
+- **On timeout**: read partial output from `<RUN_DIR>/hypotheses-<axis-slug>.jsonl`; surface with ⏱ in Phase D report — never silently omit timed-out agent
 
-5. Collect compact JSON envelopes from all hypothesis agents. Do not read the `.md` analysis files into lead context directly — they are inputs to Phase B queue assembly only.
+5. Collect compact JSON envelopes from all hypothesis agents. Do not read `.md` analysis files into lead context — inputs to Phase B queue assembly only.
 
-   **`--researcher` / `--architect` interaction**: if R0 pre-phase ran before Team Mode, the R0 hypotheses in `<RUN_DIR>/hypotheses.jsonl` are included in Phase B queue assembly alongside the axis hypotheses. R0 entries lacking `axis`/`agent_type`/`change_scope` are backfilled: `axis: "cross-cutting"`, `agent_type` inferred from `source` field, `change_scope` inferred from `codebase_mapping` length (1–2 targets = small, 3–5 = medium, 6+ = large).
+   **`--researcher` / `--architect` interaction**: if R0 pre-phase ran before Team Mode, R0 hypotheses in `<RUN_DIR>/hypotheses.jsonl` included in Phase B queue assembly alongside axis hypotheses. R0 entries lacking `axis`/`agent_type`/`change_scope` backfilled: `axis: "cross-cutting"`, `agent_type` inferred from `source` field, `change_scope` inferred from `codebase_mapping` length (1–2 targets = small, 3–5 = medium, 6+ = large).
 
 ### Phase B: Queue Assembly + User Gate
 
 1. Read all `<RUN_DIR>/hypotheses-*.jsonl` files (and `<RUN_DIR>/hypotheses.jsonl` if present from R0).
 
-2. Filter: exclude entries with `feasible: false` (retain in file for audit). Move entries with `confidence < 0.7` to end of queue.
+2. Filter: exclude `feasible: false` (retain in file for audit). Move `confidence < 0.7` entries to queue end.
 
-3. Sort the combined queue:
+3. Sort combined queue:
 
    - Primary: `change_scope` ascending — `small` first, then `medium`, then `large`
-   - Secondary: `expected_delta` descending within scope tier (parse the delta string to extract numeric midpoint, e.g., "+1–3%" → 2.0; if `expected_delta` cannot be parsed to a numeric value, treat it as 0 — sort to end of scope tier)
+   - Secondary: `expected_delta` descending within scope tier (parse delta string to extract numeric midpoint, e.g., "+1–3%" → 2.0; unparsable → treat as 0, sort to end of scope tier)
    - Tertiary (tiebreaker): `confidence` descending
 
-4. Assign sequential `queue_position` (1-indexed) to each entry in sorted order.
+4. Assign sequential `queue_position` (1-indexed) in sorted order.
 
-5. Print the queue as a formatted table:
+5. Print queue as formatted table:
 
    ```
    ┌────┬──────────────────────────────────┬────────────────────┬────────┬───────────────┬──────────┬────────────┐
@@ -126,13 +128,13 @@ Poll every 5 min: `find $RUN_DIR -newer "$CHECKPOINT" -type f | wc -l` — new f
    Total: N hypotheses (N small, N medium, N large) across N axes
    ```
 
-Before presenting the user gate, update `state.json` `team_mode.phase` to `"B"` — ensures resume can re-display the queue if interrupted:
+Before user gate, update `state.json` `team_mode.phase` to `"B"` — enables resume re-display of queue if interrupted:
 
 ```
 {"team_mode": {"phase": "B", "run_dir": "<RUN_DIR>"}}
 ```
 
-6. Present the user gate using `AskUserQuestion`:
+6. Present user gate via `AskUserQuestion`:
 
    ```
    Proceed with implementation?
@@ -143,9 +145,9 @@ Before presenting the user gate, update `state.json` `team_mode.phase` to `"B"` 
 
    - (a) proceeds with full queue
    - (b) filters to selected entries, preserving sort order
-   - (c) stops; write partial report noting that hypotheses were generated but not tested
+   - (c) stops; write partial report noting hypotheses generated but not tested
 
-7. Write the final ordered queue to `<RUN_DIR>/team-queue.jsonl` (one JSON object per line, in execution order). Add `team_mode` to `state.json`:
+7. Write final ordered queue to `<RUN_DIR>/team-queue.jsonl` (one JSON object per line, execution order). Add `team_mode` to `state.json`:
 
    ```
    {
@@ -161,11 +163,11 @@ Before presenting the user gate, update `state.json` `team_mode.phase` to `"B"` 
 
 ### Phase C: Sequential Implementation + Guard
 
-For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (in sorted order, 1-indexed as M of N):
+For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as M of N):
 
 1. **Print header**: `[→ Team Hyp M/N · axis: <axis> · scope: <change_scope> · "<hypothesis short>"]`
 
-2. **Spawn specialist agent** matching `agent_type` from the hypothesis. **On the real codebase** — no worktree. The spawn prompt follows the R5 Phase 2 ideation template with the hypothesis pre-specified:
+2. **Spawn specialist agent** matching `agent_type` from hypothesis. **On real codebase** — no worktree. Spawn prompt follows R5 Phase 2 ideation template with hypothesis pre-specified:
 
    ```
    Goal: <goal>
@@ -185,7 +187,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (in sorted order, 1-indexed 
    Return ONLY: {"description":"...","files_modified":[...],"scripts":[],"confidence":0.N}
    ```
 
-3. **Run R5 Phases 3–7a identically** (verify changed files → commit → run metric → run guard → keep/rework/rollback → write diary entry). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (stuck detection, diminishing returns, context compaction). Phase C does not duplicate this logic — it uses the same per-phase steps with the hypothesis-driven ideation output from step 2.
+3. **Run R5 Phases 3–7a identically** (verify changed files → commit → run metric → run guard → keep/rework/rollback → write diary entry). Phase 8 writes to `experiments.jsonl` and `state.json` as in standard mode; Phase 9 progress checks apply as in standard mode (stuck detection, diminishing returns, context compaction). Phase C does not duplicate this logic — uses same per-phase steps with hypothesis-driven ideation output from step 2.
 
 4. **Log outcome** to `<RUN_DIR>/team-results.jsonl` (append, one line per hypothesis):
 
@@ -205,7 +207,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (in sorted order, 1-indexed 
    }
    ```
 
-5. **If kept**: update the running current metric value for the next hypothesis. Each subsequent hypothesis sees the cumulative state of all prior kept changes.
+5. **If kept**: update running current metric value for next hypothesis. Each subsequent hypothesis sees cumulative state of all prior kept changes.
 
 6. Update `state.json` `team_mode.current_hypothesis` after each hypothesis (enables resume).
 
@@ -213,11 +215,11 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (in sorted order, 1-indexed 
 
 ### Phase D: Consolidated Report
 
-After all hypotheses are processed (or the user stops early with Ctrl-C / user abort):
+After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 
 1. Read `<RUN_DIR>/team-results.jsonl`.
 
-2. Write the full report to `.temp/output-optimize-team-<branch>-<YYYY-MM-DD>.md`:
+2. Write full report to `.temp/output-optimize-team-<branch>-<YYYY-MM-DD>.md`:
 
    ```markdown
    ## Team Run: <goal>
@@ -263,7 +265,7 @@ After all hypotheses are processed (or the user stops early with Ctrl-C / user a
 
 4. No teammates to shut down — hypothesis agents completed in Phase A; Phase C implementation agents are one-shot spawns.
 
-**CLAUDE.md §8**: Health monitoring for Phase A is described in the Health monitoring block above (after step 4). Phase C implementation agents are standard single-iteration spawns — same timeouts as R5.
+**CLAUDE.md §8**: Phase A health monitoring described in block above (after step 4). Phase C implementation agents are standard single-iteration spawns — same timeouts as R5.
 
 **Resume support**: `resume` mode reads `state.json.team_mode` to determine phase:
 

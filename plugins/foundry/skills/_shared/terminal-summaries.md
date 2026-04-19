@@ -1,6 +1,8 @@
+**Re: Compress markdown into caveman format**
+
 # Compact Terminal Summary Templates
 
-Shared compact terminal summary templates for `/analyse` and `/oss:review`. All templates follow the same pattern: `---` delimiters, entity identifier line, key-value fields, `→ saved to [skill-specific path]`.
+Shared compact terminal summary templates for `/analyse` and `/oss:review`. All templates: `---` delimiters, entity identifier line, key-value fields, `→ saved to [skill-specific path]`.
 
 ## PR Summary
 
@@ -18,14 +20,14 @@ Suggestions: 1. [most important action]
 ---
 ```
 
-Replace `[entity-line]` with the skill-specific identifier, e.g.:
+Replace `[entity-line]` with skill-specific identifier:
 
 - `/analyse` PR mode: `PR #[number] — [title]`
 - `/oss:review`: `Review — [target]`
 
 ## Extended Fields (review only)
 
-When using the **PR Summary** template in `/oss:review`, **omit the `Suggestions:` field** from the base template — `Recommendation:` below replaces it. Insert these fields after `Blockers:` and before `→ saved to`:
+In `/oss:review` **PR Summary**: **omit `Suggestions:` field** — `Recommendation:` replaces it. Insert after `Blockers:`, before `→ saved to`:
 
 ```
 Recommendation:

@@ -8,17 +8,17 @@ effort: low
 
 <objective>
 
-Query the codemap structural index for import-graph analysis. **Python projects only** — the index covers `.py` files; queries on non-Python projects will return empty or error. `scan-query` is available on PATH (installed by `/codemap:scan`).
+Query codemap structural index for import-graph analysis. **Python projects only** — index covers `.py` files; queries on non-Python projects return empty or error. `scan-query` on PATH (installed by `/codemap:scan`).
 
 Queries:
 
 - `central [--top N]` — most-imported modules (highest blast radius, default top 10)
 - `coupled [--top N]` — modules with most imports (highest coupling, default top 10)
-- `deps <module>` — what does this module import?
-- `rdeps <module>` — what imports this module?
+- `deps <module>` — what module imports
+- `rdeps <module>` — what imports module
 - `path <from> <to>` — shortest import path between two modules
 
-NOT for: building or rebuilding the index (use `/codemap:scan`).
+NOT for: building or rebuilding index (use `/codemap:scan`).
 
 </objective>
 
@@ -26,33 +26,33 @@ NOT for: building or rebuilding the index (use `/codemap:scan`).
 
 ## Step 1: Run the query
 
-Run `scan-query` via Bash with the appropriate arguments:
+Run `scan-query` via Bash:
 
 ```bash
 # timeout: 20000
 scan-query <QUERY_ARGS>
 ```
 
-Replace `<QUERY_ARGS>` with the appropriate command:
+Replace `<QUERY_ARGS>`:
 
-| Goal                          | Command            |
-| ----------------------------- | ------------------ |
-| what imports X (reverse deps) | `rdeps <module>`   |
-| what X imports (direct deps)  | `deps <module>`    |
-| most-imported modules         | `central --top 10` |
-| most-coupled modules          | `coupled --top 10` |
-| path between A and B          | `path <from> <to>` |
+| Goal | Command |
+| --- | --- |
+| what imports X (reverse deps) | `rdeps <module>` |
+| what X imports (direct deps) | `deps <module>` |
+| most-imported modules | `central --top 10` |
+| most-coupled modules | `coupled --top 10` |
+| path between A and B | `path <from> <to>` |
 
-`scan-query` is on PATH and locates the index automatically via git root — no setup required. If the index is missing it prints a clear error.
+`scan-query` on PATH, locates index via git root — no setup. Missing index prints clear error.
 
 ## Step 2: Format and return
 
-For `rdeps` / `deps`: list the modules, one per line.
+`rdeps` / `deps`: list modules, one per line.
 
-For `central` / `coupled`: list top modules by count with a brief note.
+`central` / `coupled`: list top modules by count with brief note.
 
-For `path`: show the import chain as `A → B → C → D`.
+`path`: show chain as `A → B → C → D`.
 
-If the result is `{"error": "..."}`: surface the error and suggest re-running `/codemap:scan`.
+`{"error": "..."}`: surface error, suggest re-running `/codemap:scan`.
 
 </workflow>

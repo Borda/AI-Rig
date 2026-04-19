@@ -1,18 +1,20 @@
+**Re: Compress setup-checks markdown to caveman format**
+
 # Setup Checks — 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
 
 ______________________________________________________________________
 
 ## Check 1 — Inventory drift (MEMORY.md vs disk)
 
-Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames and sort, then write to `/tmp/agents_disk.txt` via Bash:
+Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames, sort, write to `/tmp/agents_disk.txt` via Bash:
 
 ```bash
 ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.md$//' | sort >/tmp/agents_disk.txt || true # timeout: 5000
 ```
 
-Read the `- Agents:` and `- Skills:` roster lines from the MEMORY.md content injected in the conversation context (available as auto-memory at session start). Do not attempt to Grep a file path — the MEMORY.md is not stored under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
+Read `- Agents:` and `- Skills:` roster lines from MEMORY.md content injected in conversation context (available as auto-memory at session start). Do not Grep a file path — MEMORY.md not stored under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
 
-**macOS caution**: BSD grep treats arguments starting with `-` as option flags. If constructing a bash comparison from the MEMORY.md roster via grep, always use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'` rather than `grep '- Agents:'` — the latter exits 2 on macOS and silently produces an empty result. The safest approach is to use the Read tool (not grep) for MEMORY.md as the instruction above states.
+**macOS caution**: BSD grep treats arguments starting with `-` as option flags. When constructing bash comparison from MEMORY.md roster via grep, always use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'` not `grep '- Agents:'` — latter exits 2 on macOS, silently produces empty result. Safest: use Read tool (not grep) for MEMORY.md as stated above.
 
 ______________________________________________________________________
 
@@ -30,7 +32,7 @@ ______________________________________________________________________
 
 ## Check 4 — permissions-guide.md drift
 
-Every allow entry must appear in the guide, and vice versa.
+Every allow entry must appear in guide, and vice versa.
 
 ```bash
 RED='\033[1;31m'; YEL='\033[1;33m'; GRN='\033[0;32m'; NC='\033[0m'
@@ -61,15 +63,15 @@ ______________________________________________________________________
 
 ## Check 5 — Permission safety audit
 
-Every `allow` entry must be non-destructive, reversible, and local-only.
+Every `allow` entry must be non-destructive, reversible, local-only.
 
-Read `.claude/settings.json` using the Read tool and extract the `permissions.allow` list. For each entry, use model reasoning to evaluate it against three criteria:
+Read `.claude/settings.json` with Read tool, extract `permissions.allow` list. For each entry, use model reasoning to evaluate against three criteria:
 
-- **Non-destructive**: does not permanently delete or overwrite data (no `rm -rf`, `git push --force`, `DROP TABLE`)
-- **Reversible**: effect can be undone without data loss (local file edits, test runs, read-only queries)
-- **Local-only**: does not affect systems outside the working directory or send data to external services
+- **Non-destructive**: no permanent delete/overwrite (no `rm -rf`, `git push --force`, `DROP TABLE`)
+- **Reversible**: effect undoable without data loss (local file edits, test runs, read-only queries)
+- **Local-only**: no effect outside working directory, no external data transmission
 
-Flag destructive patterns as **critical** (auto-approved destructive commands are always a breaking safety failure). Flag external-state mutations as **high** and raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
+Flag destructive patterns as **critical** (auto-approved destructive commands always breaking safety failure). Flag external-state mutations as **high**, raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
 
 ______________________________________________________________________
 
@@ -96,15 +98,15 @@ else
 fi
 ```
 
-**Severity**: **low** per stale entry. Fix: remove the stale entry from `settings.json` (report only — `settings.json` is never auto-edited per audit policy).
+**Severity**: **low** per stale entry. Fix: remove stale entry from `settings.json` (report only — `settings.json` never auto-edited per audit policy).
 
-**Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p .reports/audit/*)`) that do not appear verbatim in config files — they are exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file.
+**Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p .reports/audit/*)`) that don't appear verbatim in config files — exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file.
 
 ______________________________________________________________________
 
 ## Check 7 — codex plugin integration check
 
-Skip if codex (openai-codex) plugin is not installed.
+Skip if codex (openai-codex) plugin not installed.
 
 ```bash
 RED='\033[1;31m'
@@ -129,7 +131,7 @@ ______________________________________________________________________
 
 ## Check 8 — foundry plugin correctness
 
-Verify the repo's `foundry` plugin structure at `plugins/foundry/`. Skip if `plugins/foundry/` does not exist.
+Verify repo's `foundry` plugin structure at `plugins/foundry/`. Skip if `plugins/foundry/` not found.
 
 ```bash
 RED='\033[1;31m'
@@ -317,7 +319,7 @@ else
 fi
 ```
 
-**Severity**: manifest missing or invalid JSON → **critical**; broken symlink, hooks.json invalid, or `claude plugin validate` fails → **high**; .js file not a symlink → **medium**; 8f permissions-allow.json entries missing from settings.json → **medium**; settings.json entries missing from permissions-allow.json → **low**; setup-foundry SKILL.md missing → **high**; missing required keyword coverage → **medium**. **Report only** — never auto-fix.
+**Severity**: manifest missing/invalid JSON → **critical**; broken symlink, hooks.json invalid, or `claude plugin validate` fails → **high**; .js file not symlink → **medium**; 8f permissions-allow.json entries missing from settings.json → **medium**; settings.json entries missing from permissions-allow.json → **low**; setup-foundry SKILL.md missing → **high**; missing required keyword coverage → **medium**. **Report only** — never auto-fix.
 
 ______________________________________________________________________
 
@@ -332,18 +334,18 @@ for f in .claude/agents/*.md; do # timeout: 5000
 done
 ```
 
-Using model reasoning, cross-reference each extracted color name against the `COLOR_MAP` keys in `.claude/hooks/statusline.js`. Flag:
+Using model reasoning, cross-reference each extracted color name against `COLOR_MAP` keys in `.claude/hooks/statusline.js`. Flag:
 
-- Color declared in agent frontmatter but **not a key in `COLOR_MAP`** → **medium** (agent will appear uncolored)
-- Color in `COLOR_MAP` that is **not declared by any agent** → **low** (dead mapping, no functional impact)
+- Color in agent frontmatter but **not a key in `COLOR_MAP`** → **medium** (agent appears uncolored)
+- Color in `COLOR_MAP` not declared by any agent → **low** (dead mapping, no functional impact)
 
 ______________________________________________________________________
 
 ## Check 10 — RTK hook alignment
 
-Verify that the prefix list in `.claude/hooks/rtk-rewrite.js` (`RTK_PREFIXES` array) is consistent with the commands the installed RTK binary actually supports.
+Verify prefix list in `.claude/hooks/rtk-rewrite.js` (`RTK_PREFIXES` array) consistent with commands installed RTK binary supports.
 
-Skip this check if RTK is not installed (`rtk --version` fails) or if `.claude/hooks/rtk-rewrite.js` does not exist.
+Skip if RTK not installed (`rtk --version` fails) or `.claude/hooks/rtk-rewrite.js` not found.
 
 ```bash
 YEL='\033[1;33m'
@@ -412,9 +414,9 @@ ______________________________________________________________________
 
 ## Check 11 — Memory health (MEMORY.md noise accumulation)
 
-MEMORY.md has a 200-line truncation limit. Three sub-checks:
+MEMORY.md has 200-line truncation limit. Three sub-checks:
 
-**11a — Duplicate with CLAUDE.md**: Read both MEMORY.md and CLAUDE.md. For each section in MEMORY.md, check whether the same rule or directive exists verbatim or near-verbatim in CLAUDE.md. Flag duplicates as **low**.
+**11a — Duplicate with CLAUDE.md**: Read both MEMORY.md and CLAUDE.md. For each MEMORY.md section, check if same rule or directive exists verbatim or near-verbatim in CLAUDE.md. Flag duplicates as **low**.
 
 **11b — Stale version pins**:
 
@@ -438,4 +440,4 @@ else
 fi
 ```
 
-All three sub-checks produce only **low** findings — auto-fixed under `/audit fix all`. Fix action: remove duplicate section, drop version pin, delete absorbed feedback file.
+All three sub-checks produce only **low** findings — auto-fixed under `/audit fix all`. Fix: remove duplicate section, drop version pin, delete absorbed feedback file.

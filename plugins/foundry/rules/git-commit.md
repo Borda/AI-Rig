@@ -6,9 +6,9 @@ paths:
 
 ## Commit Message Format
 
-- First line: short TLDR subject in imperative mood, ≤50 chars — name up to 3 most significant changes/additions/removals only (prefer user-visible impact as the tie-breaker when significance is comparable)
+- First line: short TLDR subject in imperative mood, ≤50 chars — name up to 3 most significant changes/additions/removals only (prefer user-visible impact as tie-breaker when significance comparable)
 
-- Blank line, then bullet list — one bullet per logical change; include extended description of the top changes plus all other notable changes; skip typos, linting, and whitespace-only edits; if all changes are skip-worthy, omit the bullet list entirely and use a subject-only commit. In a subject-only commit, still include the co-author block separated by a blank line and ---:
+- Blank line, then bullet list — one bullet per logical change; include extended description of top changes plus all other notable changes; skip typos, linting, whitespace-only edits; if all changes skip-worthy, omit bullet list entirely and use subject-only commit. Subject-only commit still include co-author block separated by blank line and ---:
 
   ```
   Fix typo in config key name
@@ -17,27 +17,27 @@ paths:
   Co-authored-by: Claude Code <noreply@anthropic.com>
   ```
 
-- No line wrapping — each bullet is a single long line
+- No line wrapping — each bullet single long line
 
 ## Gathering Diff Context
 
-Before writing a commit message, always run these three commands in parallel:
+Before writing commit message, always run these three commands in parallel:
 
 - `git status` — identify staged new files (`A` prefix) and unstaged changes
 - `git diff HEAD` — **not** bare `git diff`; bare `git diff` shows only unstaged changes and misses staged new files entirely; `git diff HEAD` captures both staged and unstaged changes vs HEAD
-- `git log --oneline -5` — reference the repo's existing commit style
+- `git log --oneline -5` — reference repo's existing commit style
 
-**Truncated diff — mandatory follow-up**: when `git diff HEAD` output is large and the Bash tool saves it to a file (showing only a 2 KB preview), **read the saved file completely before writing the commit**. Do not write from the preview alone — the most significant changes are often past the truncation point. Also run `git diff --stat HEAD` (always fits in context) to get a complete file-by-file change map; use the stat output to identify which files changed most and whether any were missed in the preview.
+**Truncated diff — mandatory follow-up**: when `git diff HEAD` output large and Bash tool saves to file (showing only 2 KB preview), **read saved file completely before writing commit**. Don't write from preview alone — most significant changes often past truncation point. Also run `git diff --stat HEAD` (always fits in context) for complete file-by-file change map; use stat output to identify which files changed most and whether any missed in preview.
 
-**Ranking rule — diff first, recency last**: rank significance across the full diff before writing the title. Conversational recency bias (the last thing worked on in the session) must not dominate. The title must reflect the most significant change in the diff, not the most recent one.
+**Ranking rule — diff first, recency last**: rank significance across full diff before writing title. Conversational recency bias must not dominate. Title must reflect most significant change in diff, not most recent one.
 
-**New files are always significant**: any file marked `A` in `git status` must be explicitly mentioned in the commit bullet list, regardless of line count. New files represent added capability, not just changed lines.
+**New files are always significant**: any file marked `A` in `git status` must be explicitly mentioned in commit bullet list, regardless of line count. New files represent added capability, not just changed lines.
 
-**Semantic novelty beats diff verbosity**: when ranking significance, a new capability, new interface, or new script outranks a verbose-but-routine config edit even if the config diff has more lines. Ask "what would a reviewer need to know first?" — that is the most significant change.
+**Semantic novelty beats diff verbosity**: when ranking significance, new capability/interface/script outranks verbose-but-routine config edit even if config diff has more lines. Ask "what would reviewer need to know first?" — that most significant change.
 
 ## Co-authors
 
-Separate the co-author block from the bullet list with `---`:
+Separate co-author block from bullet list with `---`:
 
 ```
 - last bullet
@@ -47,36 +47,36 @@ Co-authored-by: Claude Code <noreply@anthropic.com>
 ```
 
 - Claude: `Co-authored-by: Claude Code <noreply@anthropic.com>`
-- Codex (if it contributed anything — code, review, diagnosis, analysis, architectural guidance, or “here’s what needs fixing and why”): `Co-authored-by: OpenAI Codex <codex@openai.com>`
+- Codex (if contributed anything — code, review, diagnosis, analysis, architectural guidance, or "here's what needs fixing and why"): `Co-authored-by: OpenAI Codex <codex@openai.com>`
 
-**Codex intellectual contributions count**: Codex earns a trailer whenever it shaped the outcome — even if Claude wrote the final code. Examples: Codex identified the root cause, Codex suggested the approach, Codex returned a review comment that led to the change. The test: “would this commit exist in its current form without Codex’s input?” — if yes, include the trailer.
+**Codex intellectual contributions count**: Codex earns trailer whenever it shaped outcome — even if Claude wrote final code. Examples: Codex identified root cause, Codex suggested approach, Codex returned review comment that led to change. Test: "would this commit exist in current form without Codex's input?" — if yes, include trailer.
 
-The co-author trailer is added to every commit produced by Claude Code — it is not conditional on the user explicitly mentioning Claude's involvement.
+Co-author trailer added to every commit produced by Claude Code — not conditional on user explicitly mentioning Claude's involvement.
 
-**Skill commit templates — trailers are not optional**: when a skill or workflow step provides a `git commit -m "..."` template (heredoc or one-liner), the template is a **message body scaffold only**. The `---` separator and co-author block must always be appended regardless of whether the template shows them:
+**Skill commit templates — trailers not optional**: when skill or workflow step provides `git commit -m "..."` template (heredoc or one-liner), template is **message body scaffold only**. `---` separator and co-author block must always be appended regardless of whether template shows them:
 
-- **Heredoc** (`cat <<'EOF' ... EOF`): insert the `---` block and trailers before the closing `EOF`
-- **One-liner `-m "string"`**: convert to a heredoc — one-liners cannot carry multi-line trailers
+- **Heredoc** (`cat <<'EOF' ... EOF`): insert `---` block and trailers before closing `EOF`
+- **One-liner `-m "string"`**: convert to heredoc — one-liners cannot carry multi-line trailers
 
-Never skip trailers because a skill template omits them.
+Never skip trailers because skill template omits them.
 
 ## Branch Safety
 
-- **Never commit to main/master** — check current branch first; if on default branch → warn and stop, ask user to create a feature branch
-- `/develop` Step 0 enforces this with a hard abort
+- **Never commit to main/master** — check current branch first; if on default branch → warn and stop, ask user to create feature branch
+- `develop:fix` Step 0 enforces this with hard abort
 
 ## Staging and Hooks
 
 - Never `git add -A` or `git add .` — always stage specific files by name
-- Never `--no-verify` — if pre-commit blocks, fix the underlying issue
+- Never `--no-verify` — if pre-commit blocks, fix underlying issue
 - Never `--no-gpg-sign` unless user explicitly requests it
 
 ## Push Safety
 
 - **Never push without explicit user confirmation** — always ask before any `git push`, including branch pushes, PR pushes, and release tags
-- Authorization is scoped: "commit this" does not authorize "push this"; ask separately for every push
-- Applies inside skill workflows too — if a skill (e.g. `/resolve`) includes a push step, treat it as "propose and confirm", not "auto-execute"; stop after committing, report what is ready to push, and wait for the user to say push
-- Never push in autonomous bug fixing or as a "final step" without being explicitly asked in that message
+- Authorization scoped: "commit this" does not authorize "push this"; ask separately for every push
+- Applies inside skill workflows too — if skill (e.g. `/resolve`) includes push step, treat as "propose and confirm", not "auto-execute"; stop after committing, report what ready to push, wait for user to say push
+- Never push in autonomous bug fixing or as "final step" without being explicitly asked in that message
 - Never force-push (`--force`, `--force-with-lease`) to main/master; never force-push without explicit user instruction even on feature branches
 
 ## History Safety

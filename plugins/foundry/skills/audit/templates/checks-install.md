@@ -1,12 +1,14 @@
+**Re: Compress install-checks markdown to caveman format**
+
 # Install Checks — I1, I2, I3
 
-These checks validate the user's post-install state in `~/.claude/`. They operate on the home directory, not the project `.claude/`. Run via `/foundry:audit setup` (or `/audit setup` after `foundry:init link`).
+Checks validate post-install state in `~/.claude/`. Operate on home dir, not project `.claude/`. Run via `/foundry:audit setup` (or `/audit setup` after `foundry:init link`).
 
 ______________________________________________________________________
 
 ## Check I1 — Plugin cache intact
 
-Verify the foundry plugin is installed and its cache directory is accessible.
+Verify foundry plugin installed and cache dir accessible.
 
 ```bash
 RED='\033[1;31m'
@@ -42,7 +44,7 @@ ______________________________________________________________________
 
 ## Check I2 — Settings merge complete
 
-Verify `foundry:init` was run: `~/.claude/settings.json` has the required entries and no stale hooks block.
+Verify `foundry:init` ran: `~/.claude/settings.json` has required entries, no stale hooks block.
 
 ```bash
 RED='\033[1;31m'
@@ -98,13 +100,13 @@ else
 fi
 ```
 
-**Severity**: missing entry or stale hooks block → **medium** per sub-check (non-blocking but degrades functionality). Fix: re-run `/foundry:init` — it is idempotent.
+**Severity**: missing entry or stale hooks block → **medium** per sub-check (non-blocking, degrades functionality). Fix: re-run `/foundry:init` — idempotent.
 
 ______________________________________________________________________
 
 ## Check I3 — Link health (conditional)
 
-Only runs if `~/.claude/agents/` or `~/.claude/skills/` contain symlinks pointing to a plugin cache path. Checks for staleness — symlinks break silently after a plugin version upgrade changes the cache path.
+Runs only if `~/.claude/agents/` or `~/.claude/skills/` contain symlinks pointing to plugin cache path. Checks staleness — symlinks break silently after plugin version upgrade changes cache path.
 
 ```bash
 RED='\033[1;31m'
@@ -148,4 +150,4 @@ else
 fi
 ```
 
-**Severity**: broken symlinks → **high** (agents/skills silently unavailable at root namespace). Fix: re-run `/foundry:init link` — it detects and replaces stale symlinks.
+**Severity**: broken symlinks → **high** (agents/skills silently unavailable at root namespace). Fix: re-run `/foundry:init link` — detects and replaces stale symlinks.

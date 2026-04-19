@@ -9,7 +9,7 @@ disable-model-invocation: true
 
 <objective>
 
-Test-first refactoring. Audit test coverage, add characterization tests if missing, then apply changes with a safety net.
+Test-first refactoring. Audit coverage, add characterization tests if missing, apply changes with safety net.
 
 NOT for: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); `.claude/` config changes (use `/manage`).
 
@@ -21,32 +21,32 @@ NOT for: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); 
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails or you are uncertain, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If check fails or uncertain, proceed as if foundry available — common case; fall back only if agent dispatch explicitly fails.
 
-When foundry is **not** installed, substitute `foundry:X` references with `general-purpose` and prepend the role description plus `model: <model>` to the spawn call:
+When foundry **not** installed, substitute `foundry:X` with `general-purpose`, prepend role description plus `model: <model>` to spawn call:
 
-| foundry agent           | Fallback          | Model  | Role description prefix                                                                                           |
-| ----------------------- | ----------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`   | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
-| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.`    |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
+| `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
+| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works but produces lower-quality output.
+Skills with `--team` mode: team spawning with fallback agents still works but lower-quality output.
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
-- status `completed` if the work is clearly done
+- status `completed` if work clearly done
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: immediately after Step 1 (scope is known), create TaskCreate entries for all steps of this workflow before doing any other work. Mark each step in_progress when starting it, completed when done.
+**Task tracking**: immediately after Step 1 (scope known), TaskCreate all steps before any other work. Mark each step in_progress when starting, completed when done.
 
 # Refactor Mode
 
 ## Step 1: Scope and understand
 
-Read the target code and build a mental model before touching anything.
+Read target code, build mental model before touching anything.
 
-If `<target>` is a directory: use the Glob tool (pattern `**/*.py`, path `<target>`) to enumerate Python files.
+If `<target>` is directory: use Glob tool (pattern `**/*.py`, path `<target>`) to enumerate Python files.
 
 ```bash
 # Measure current state
@@ -62,23 +62,23 @@ if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; t
 fi
 ```
 
-If results are returned: prepend a `## Structural Context (codemap)` block to the foundry:sw-engineer spawn prompt with the hotspot JSON. Additionally, if the target maps to a module in the index, also include `scan-query deps <target_module>` (what the target imports — coupling) and `scan-query rdeps <target_module>` (what imports the target — blast radius of API changes). Derive `<target_module>` from the target path: strip the project root prefix, replace `/` with `.`, drop the `.py` extension. If `scan-query` is not found or index is missing: proceed silently — do not mention codemap to the user.
+If results returned: prepend `## Structural Context (codemap)` block to foundry:sw-engineer spawn prompt with hotspot JSON. If target maps to module in index, also include `scan-query deps <target_module>` (coupling) and `scan-query rdeps <target_module>` (blast radius). Derive `<target_module>` from target path: strip project root prefix, replace `/` with `.`, drop `.py` extension. If `scan-query` not found or index missing: proceed silently — don't mention codemap to user.
 
-Spawn a **foundry:sw-engineer** agent to analyze the code and identify:
+Spawn **foundry:sw-engineer** agent to analyze code and identify:
 
-- Public API surface (functions, classes, methods that external code calls)
+- Public API surface (functions, classes, methods external code calls)
 - Internal complexity hotspots (cyclomatic complexity, deep nesting, long functions)
-- Code smells relevant to the stated goal
+- Code smells relevant to stated goal
 - Dependencies and coupling between modules
-- **Complexity smell**: Directory or cross-module scope — flag it; consider team mode
+- **Complexity smell**: directory or cross-module scope — flag it; consider team mode
 
-**Scope gate**: if the target is directory-wide scope (10+ files) regardless of goal, flag the complexity smell. Use `AskUserQuestion` to present the scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
+**Scope gate**: if target is directory-wide scope (10+ files) regardless of goal, flag complexity smell. Use `AskUserQuestion` with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
 ## Step 2: Audit test coverage
 
-Find existing tests for the target code:
+Find existing tests for target code:
 
-Use the Glob tool (pattern `**/test_*.py` or `**/*_test.py`) to find candidates, then the Grep tool (pattern `<module_name>`, output mode `files_with_matches`) to narrow to those that reference the target.
+Use Glob tool (pattern `**/test_*.py` or `**/*_test.py`), then Grep tool (pattern `<module_name>`, output mode `files_with_matches`) to narrow to those referencing target.
 
 ```bash
 # Check coverage
@@ -86,28 +86,28 @@ python -m pytest --co -q 2>/dev/null | grep -i "<module_name>" || echo "No tests
 python -m pytest --cov= -q <target_module >--cov-report=term-missing 2>/dev/null
 ```
 
-Classify each public function/method as:
+Classify each public function/method:
 
-- **Covered**: has at least one test exercising happy path and one edge case
-- **Partially covered**: has a test but missing edge cases or failure paths
-- **Uncovered**: no test at all
+- **Covered**: at least one test for happy path + one edge case
+- **Partially covered**: test exists but missing edge cases or failure paths
+- **Uncovered**: no test
 
 ### Review: Validate the coverage audit
 
-Before writing characterization tests, critically evaluate the audit output itself:
+Before writing characterization tests, critically evaluate audit output:
 
-1. **Completeness**: were all public functions, methods, and classes identified — including those with complex call paths?
-2. **Classification accuracy**: is each item correctly classified? Partially-covered functions are frequently misclassified as covered.
-3. **Refactor relevance**: are the uncovered/partial items in the code paths the refactoring will actually touch?
-4. **Hidden dependencies**: are there integration points or cross-module calls the audit may have missed?
+1. **Completeness**: all public functions, methods, classes identified — including complex call paths?
+2. **Classification accuracy**: each item correctly classified? Partial-covered often misclassified as covered.
+3. **Refactor relevance**: uncovered/partial items in code paths refactoring will touch?
+4. **Hidden dependencies**: integration points or cross-module calls audit may have missed?
 
-If the audit seems incomplete: re-examine before proceeding to Step 3. Gaps in the safety net discovered mid-refactoring (Step 4) are costly.
+If audit incomplete: re-examine before Step 3. Gaps found mid-refactoring (Step 4) costly.
 
 ## Step 3: Add characterization tests (if needed)
 
-For every **uncovered** or **partially covered** public API, spawn a **foundry:qa-specialist** agent to generate characterization tests:
+For every **uncovered** or **partially covered** public API, spawn **foundry:qa-specialist** to generate characterization tests:
 
-- Import the function, call it with representative inputs, assert the **current** output
+- Import function, call with representative inputs, assert **current** output
 - Use `pytest.mark.parametrize` for multiple input/output pairs
 - Name tests `test_<function>_characterization_*`
 
@@ -116,21 +116,21 @@ For every **uncovered** or **partially covered** public API, spawn a **foundry:q
 python -m pytest <test_file >-v
 ```
 
-**Gate**: all characterization tests must pass before proceeding. If any fail, fix the test, not the code.
+**Gate**: all characterization tests must pass before proceeding. If any fail, fix test — not code.
 
 ## Step 4: Refactor with safety net
 
 For each change:
 
-1. Make one focused change (single responsibility per edit)
-2. Run the test suite:
+1. One focused change (single responsibility per edit)
+2. Run test suite:
    ```bash
    python -m pytest --tb=short <test_files >-v
    ```
-3. If tests pass: proceed to the next change
-4. If tests fail: revert and try a different approach
+3. Tests pass: proceed to next change
+4. Tests fail: revert, try different approach
 
-**Safety break**: max 5 change-test cycles per session. After 5, stop and report which succeeded, which broke, and what remains.
+**Safety break**: max 5 change-test cycles per session. After 5, stop — report what succeeded, what broke, what remains.
 
 **Refactoring categories:**
 
@@ -142,35 +142,35 @@ For each change:
 
 ## Step 5: Review and close gaps
 
-Read `.claude/skills/_shared/codex-prepass.md` and run the Codex pre-pass before cycle 1.
+Read `.claude/skills/_shared/codex-prepass.md`, run Codex pre-pass before cycle 1.
 
-Full review of the refactored code. This is a **loop** — review -> targeted refactoring (return to Step 4) -> re-review until only nits remain. Maximum 3 outer cycles. (Step 4's "max 5 change-test cycles" bound applies within each individual pass through Step 4, independently of this outer loop.)
+Full review of refactored code. **Loop** — review -> targeted refactoring (return to Step 4) -> re-review until only nits remain. Max 3 outer cycles. (Step 4's "max 5 change-test cycles" bound applies within each pass through Step 4, independent of outer loop.)
 
 **Each cycle:**
 
 1. Evaluate against all criteria:
 
    - **Behavior preservation**: all characterization tests and pre-existing tests pass with identical outputs
-   - **Goal achieved**: the stated refactoring goal was actually accomplished (not just partially)
+   - **Goal achieved**: stated refactoring goal actually accomplished (not just partial)
    - **No new smells**: no new coupling, complexity, or duplication introduced
    - **API surface**: no unintended public API changes (signature, return type, raised exceptions)
-   - **Dead code**: any code that became unreachable after the refactor was removed
+   - **Dead code**: unreachable code after refactor was removed
 
-2. For every gap found: return to Step 4 and apply a targeted fix — one focused change per gap.
+2. For every gap: return to Step 4, apply targeted fix — one focused change per gap.
 
-3. Re-run the full test suite:
+3. Re-run full test suite:
 
    ```bash
    python -m pytest --tb=short <test_files >-v 2>&1 | tail -20
    ```
 
-4. **If only nits remain** (variable naming, comment clarity, minor formatting): document in Follow-up and exit the loop.
+4. **Only nits remain** (variable naming, comment clarity, minor formatting): document in Follow-up, exit loop.
 
-5. **If substantive gaps remain**: start the next cycle (max 3 total).
+5. **Substantive gaps remain**: start next cycle (max 3 total).
 
-**After 3 cycles**: if substantive issues remain, stop — surface them to the user before proceeding.
+**After 3 cycles**: substantive issues remain → stop, surface to user.
 
-Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 
@@ -204,17 +204,17 @@ Read `.claude/skills/_shared/quality-stack.md` and execute the Branch Safety Gua
 
 ## Team Assignments
 
-**When to use team mode**: target is a directory OR cross-module scope.
+**When to use team mode**: target is directory OR cross-module scope.
 
-- **Teammate 1 (foundry:sw-engineer, model=opus)**: performs the refactoring (Step 4)
+- **Teammate 1 (foundry:sw-engineer, model=opus)**: performs refactoring (Step 4)
 - **Teammate 2 (foundry:qa-specialist, model=opus)**: writes characterization tests (Step 3) in parallel
 
 **Coordination:**
 
 1. Lead broadcasts Step 1+2 analysis: `{target: <path>, coverage: <summary>, goal: <stated goal>}`
-2. QA writes characterization tests while SW prepares the refactoring plan
-3. **File locking**: teammates coordinate via TEAM_PROTOCOL.md to avoid editing the same file simultaneously
-4. Lead synthesizes outputs and runs quality stack
+2. QA writes characterization tests while SW prepares refactoring plan
+3. **File locking**: teammates coordinate via TEAM_PROTOCOL.md to avoid editing same file simultaneously
+4. Lead synthesizes outputs, runs quality stack
 
 **Spawn prompt template:**
 

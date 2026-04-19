@@ -1,23 +1,25 @@
+**Re: Compress thread analysis mode markdown to caveman format**
+
 # Mode: Thread Analysis (Issue, Discussion, or PR)
 
-All three are GitHub conversation threads — same analysis structure, different API fetch. `TYPE` is set by auto-detection in SKILL.md (`issue`, `discussion`, or `pr`). `NUMBER` = the item number (strip `discussion ` prefix if present).
+All three = GitHub conversation threads — same analysis structure, different API fetch. `TYPE` set by auto-detection in SKILL.md (`issue`, `discussion`, or `pr`). `NUMBER` = item number (strip `discussion ` prefix if present).
 
 ## Agent Resolution
 
-> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If the check fails or you are uncertain, proceed as if foundry is available — it is the common case; only fall back if an agent dispatch explicitly fails.
+> **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If check fails or uncertain, proceed as if foundry available — common case; fall back only if agent dispatch explicitly fails.
 
-When foundry is **not** installed, substitute `foundry:X` references with `general-purpose` and prepend the role description plus `model: <model>` to the spawn call:
+When foundry **not** installed, substitute `foundry:X` with `general-purpose`, prepend role description plus `model: <model>` to spawn call:
 
-| foundry agent           | Fallback          | Model  | Role description prefix                                                                                           |
-| ----------------------- | ----------------- | ------ | ----------------------------------------------------------------------------------------------------------------- |
-| `foundry:sw-engineer`   | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
-| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.`    |
+| foundry agent | Fallback | Model | Role description prefix |
+| --- | --- | --- | --- |
+| `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
+| `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works but produces lower-quality output.
+Skills with `--team` mode: team spawning with fallback agents still works but lower-quality output.
 
-**Cache check first**: if `$CACHE_FILE` exists — this variable is set by the parent `analyse/SKILL.md` Cache layer; see that file for the keying convention — read `item` and `comments` from it — skip the primary fetch. Still run wide-net searches (never cached). For PRs: `gh pr checks` and `gh pr diff` are never cached — always live.
+**Cache check first**: if `$CACHE_FILE` exists — set by parent `analyse/SKILL.md` Cache layer; see that file for keying convention — read `item` and `comments` from it — skip primary fetch. Still run wide-net searches (never cached). For PRs: `gh pr checks` and `gh pr diff` never cached — always live.
 
-If cache miss, run all fetches in parallel:
+On cache miss, run all fetches in parallel:
 
 ```bash
 # --- run these in parallel ---
@@ -81,41 +83,41 @@ jq --arg q "$TITLE" --argjson self $NUMBER '
 
 ## Reproduction Check
 
-Run immediately after the data fetch, before producing the report. Applies to **issues and discussions only** (skip for PRs — the Completeness checklist covers reproduction intent).
+Run immediately after data fetch, before producing report. Applies to **issues and discussions only** (skip for PRs — Completeness checklist covers reproduction intent).
 
 ### Step R1: Detect reproducible example
 
-Scan the thread body and all comments for any of:
+Scan thread body and all comments for any of:
 
 - `Steps to Reproduce`, `Minimal Reproduction`, `MRE`, `Repro`, or similar section headings
-- Fenced code blocks containing executable code (Python, shell, YAML, etc.)
+- Fenced code blocks with executable code (Python, shell, YAML, etc.)
 - Explicit input → output examples or stack traces with triggering call sites
 - Attached config files or test scripts
 
-Set `HAS_REPRO=true` if any of the above is found; `HAS_REPRO=false` otherwise.
+Set `HAS_REPRO=true` if any found; `HAS_REPRO=false` otherwise.
 
 ### Step R2: Sensitive pattern scan
 
-Scan body and all comments for sensitive patterns. **Flag presence only — never include actual values in the report.**
+Scan body and all comments for sensitive patterns. **Flag presence only — never include actual values in report.**
 
-| Pattern class                | Signals to detect                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Credentials / tokens         | `sk-`, `ghp_`, `Bearer `, PEM block headers, hex strings > 40 chars assigned to `key`/`token`/`secret`                  |
-| PII in sample data           | Email addresses, phone numbers, full names embedded in data payloads                                                    |
-| Internal infrastructure      | Private domain names (`.internal`, `.corp`, non-public TLDs), S3/GCS bucket paths with internal prefixes, database DSNs |
-| Model / experiment internals | Private checkpoint paths, internal model registry URLs, internal W&B run IDs                                            |
+| Pattern class | Signals to detect |
+| --- | --- |
+| Credentials / tokens | `sk-`, `ghp_`, `Bearer `, PEM block headers, hex strings > 40 chars assigned to `key`/`token`/`secret` |
+| PII in sample data | Email addresses, phone numbers, full names embedded in data payloads |
+| Internal infrastructure | Private domain names (`.internal`, `.corp`, non-public TLDs), S3/GCS bucket paths with internal prefixes, database DSNs |
+| Model / experiment internals | Private checkpoint paths, internal model registry URLs, internal W&B run IDs |
 
 Set `SENSITIVE_FLAGS=()` array; add one entry per class found (e.g., `"credentials"`, `"pii"`, `"internal_infra"`, `"model_internals"`).
 
 ### Step R3: Spawn agent (only when `HAS_REPRO=true`)
 
-Extract the minimal reproduction code or steps from the thread. Choose the agent based on content:
+Extract minimal reproduction code or steps from thread. Choose agent by content:
 
 - Code uses pytest / unittest / Python testing patterns → `foundry:qa-specialist`
 - General Python / CLI / config reproduction → `foundry:sw-engineer`
 - Language ambiguous or no code → `foundry:sw-engineer`
 
-Spawn the chosen agent with this prompt (all context must be self-contained — this runs in a forked context):
+Spawn chosen agent with this prompt (all context must be self-contained — runs in forked context):
 
 ```
 Attempt to reproduce the issue in GitHub #<NUMBER>.
@@ -134,11 +136,11 @@ Return ONLY a compact JSON envelope — nothing else:
 {"status":"reproduced|not_reproduced|partial|missing_context","confidence":0.N,"notes":"<one observation max 15 words>","missing":"<what is missing, or null>"}
 ```
 
-Collect the JSON envelope. `REPRO_STATUS` = `status` field.
+Collect JSON envelope. `REPRO_STATUS` = `status` field.
 
 ### Step R4: Build the Reproduction block
 
-Populate the `## Reproduction` block defined at the top of the `Produce:` template below, then include it at the start of the report file.
+Populate `## Reproduction` block defined at top of `Produce:` template below, include at start of report file.
 
 Status mapping: `reproduced` → ✅ · `not_reproduced` → ❌ · `partial` → ⚠ · `missing_context` → ⚠ (add missing detail) · `HAS_REPRO=false` → 🔍 No Example Provided · PR → ⏭ Skipped
 
@@ -241,8 +243,8 @@ _Legend: ✅ present · ⚠️ partial · ❌ missing · 🔵 N/A_
 [Critical / High / Medium / Low] — [rationale]  ← omit for discussions
 ````
 
-Run `mkdir -p .reports/analyse/thread` then write the full report to `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md` using the Write tool — **do not print the full analysis to terminal**.
+Run `mkdir -p .reports/analyse/thread` then write full report to `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md` using Write tool — **do not print full analysis to terminal**.
 
-Read the compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use the **Issue Summary** template. Replace `[skill-specific path]` with `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md`, ensuring the block opens with `---` on its own line, the entity line follows on the next line, the `→ saved to <path>` line is present at the end, and the block closes with `---` on its own line after it. After printing to the terminal, also prepend the same compact block to the top of the report file using the Edit tool — insert it at line 1 so the file begins with the compact summary followed by a blank line, then the existing `## Thread #[number]:` content.
+Read compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use **Issue Summary** template. Replace `[skill-specific path]` with `.reports/analyse/thread/output-analyse-thread-$NUMBER-$(date +%Y-%m-%d).md`, ensure block opens with `---` on own line, entity line follows next line, `→ saved to <path>` line present at end, block closes with `---` on own line after it. After printing to terminal, also prepend same compact block to top of report file using Edit tool — insert at line 1 so file begins with compact summary followed by blank line, then existing `## Thread #[number]:` content.
 
-**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip the Confidence block here — it is emitted in SKILL.md Step 6 after the reply, or as the last step of SKILL.md if not in reply mode. Proceed **immediately** to the "Draft contributor reply" section in SKILL.md (Step 7). Your response is not complete until you have spawned shepherd and written the reply file.
+**⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip Confidence block here — emitted in SKILL.md Step 6 after reply, or as last step of SKILL.md if not in reply mode. Proceed **immediately** to "Draft contributor reply" section in SKILL.md (Step 7). Response not complete until shepherd spawned and reply file written.
