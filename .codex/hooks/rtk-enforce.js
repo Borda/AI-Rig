@@ -80,17 +80,9 @@ process.stdin.on("end", () => {
       process.exit(0);
     }
 
-    // Codex PreToolUse currently cannot rewrite updatedInput in place.
-    // We deny once with a deterministic rerun instruction.
-    process.stdout.write(
-      JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason: `Route through RTK for token efficiency: rtk ${cmd}`,
-        },
-      }),
-    );
+    // Codex PreToolUse currently cannot rewrite updatedInput in place. Denying
+    // here turns ordinary safe commands into noisy hook failures, so RTK
+    // routing is handled by agent instructions instead of enforcement.
     process.exit(0);
   } catch (_err) {
     process.exit(0);

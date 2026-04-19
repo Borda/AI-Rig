@@ -174,10 +174,11 @@ Behavior:
 
 - If `rtk` is not installed, hook is a no-op
 - If command is already `rtk ...`, hook is a no-op
-- For known RTK-eligible prefixes, hook denies once and instructs rerun as `rtk <cmd>`
+- For known RTK-eligible prefixes, agents should invoke `rtk <cmd>` directly
+- The hook is fail-open for eligible commands to avoid turning missed RTK routing into visible tool failures
 - For excluded risky patterns (for example `git push`, destructive git deletes), it passes through normal approvals unchanged
 
-Note: current Codex `PreToolUse` parsing does not apply in-place command rewrites via `updatedInput`, so deny-and-rerun is the native fallback.
+Note: current Codex `PreToolUse` parsing does not apply in-place command rewrites via `updatedInput`. RTK routing is therefore documented in `.codex/AGENTS.md` instead of enforced with deny-and-rerun.
 
 ## 🏗️ Architecture
 

@@ -66,6 +66,12 @@ Mandatory coverage: `None`, empty inputs, boundaries, negatives, ML tensors (NaN
 - Complex logic must emit logs — silent failure is forbidden
 - Cite specific files and line numbers in explanations
 
+### Shell Command Routing
+
+- Route RTK-eligible shell commands through `rtk` proactively, for example `rtk git status --short` instead of `git status --short`.
+- Do not rely on PreToolUse hooks to rewrite commands in Codex. Codex currently treats hook denials as visible tool failures, so the hook is fail-open and command routing is an agent responsibility.
+- Keep destructive or state-changing commands under normal approval rules; never use RTK routing as a reason to bypass explicit user approval.
+
 ______________________________________________________________________
 
 ## 6-Point Docstring Structure (Google / Napoleon Style)
