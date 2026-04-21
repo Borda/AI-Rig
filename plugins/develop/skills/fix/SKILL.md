@@ -3,7 +3,7 @@ name: fix
 description: Reproduce-first bug resolution — capture bug in failing regression test, apply minimal fix, run quality stack and review loop.
 argument-hint: <symptom or issue #>
 effort: medium
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskCreate, TaskUpdate, AskUserQuestion
 disable-model-invocation: true
 ---
 
@@ -50,22 +50,62 @@ Skills with `--team` mode: team spawning with fallback agents works but lower-qu
 
 **Task tracking**: immediately after Step 1 (scope known), TaskCreate for all steps before any other work. Mark each step in_progress when starting, completed when done.
 
+## Project Detection
+
+Detect test runner once at skill start:
+
+```bash
+if [ -f "uv.lock" ] || grep -q '\[tool\.uv\]' pyproject.toml 2>/dev/null; then TEST_CMD="uv run pytest"
+elif [ -f "poetry.lock" ] || grep -q '\[tool\.poetry\]' pyproject.toml 2>/dev/null; then TEST_CMD="poetry run pytest"
+elif [ -f "tox.ini" ]; then TEST_CMD="tox"
+elif [ -f "Makefile" ] && grep -q '^test:' Makefile 2>/dev/null; then TEST_CMD="make test"
+else TEST_CMD="python -m pytest"; fi
+```
+
+Use `$TEST_CMD` in place of `python -m pytest` throughout this workflow.
+
+```bash
+# Derive PYTEST_CMD for commands needing pytest-specific flags
+# (tox and make test wrap pytest but don't accept flags like --tb, ::node selectors)
+case "$TEST_CMD" in
+    tox|"make test")
+        if command -v uv >/dev/null 2>&1; then PYTEST_CMD="uv run pytest"
+        else PYTEST_CMD="python -m pytest"; fi ;;
+    *) PYTEST_CMD="$TEST_CMD" ;;
+esac
+```
+
+Use `$PYTEST_CMD` when running a single test file/node with pytest-specific flags (`--tb`, `::test_name`). Use `$TEST_CMD` for full suite runs.
+
+**Optional `--plan <path>`**: if `$ARGUMENTS` ends with `--plan <path>`, read the plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use these to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`.
+
+**Checkpoint init**: create `.developments/<TS>/checkpoint.md` (where `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`). After each major step (1, 2, 3, 4), append `step: N — completed`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
+
 # Fix Mode
+
+**Optional `--diagnosis <path>`**: if provided (from a preceding `/develop:debug` session), read the diagnosis file first. Skip codebase analysis — root cause, suspect files, and evidence are pre-populated. Proceed directly to Step 2 (regression test).
+
+Diagnosis file format (`.plans/active/debug_<slug>.md`):
+- Root Cause — pre-confirmed hypothesis
+- Suspect Files — files to focus on
+- Evidence — signals that confirmed the hypothesis
 
 ## Step 1: Understand the problem
 
 Gather all available context about bug:
 
+> **Argument type detection**: if `$ARGUMENTS` is a positive integer, treat as GitHub issue number and fetch with `gh issue view`. If text (contains spaces, letters, or special chars), treat as symptom description.
+
 ```bash
 # If issue number: fetch the full issue with comments
-gh issue view <number >--comments
+gh issue view <number> --comments
 ```
 
 If error message or pattern provided: use Grep tool (pattern `<error_pattern>`, path `.`) to search codebase for failing code path.
 
 ```bash
 # If failing test: run it to capture the exact failure
-python -m pytest --tb=long <test_path >-v 2>&1 | tail -40
+$PYTEST_CMD --tb=long <test_path> -v 2>&1 | tail -40
 ```
 
 **Structural context** (codemap, if installed) — soft PATH check, silently skip if `scan-query` not found:
@@ -81,16 +121,20 @@ If results returned: prepend `## Structural Context (codemap)` block to foundry:
 
 Spawn **foundry:sw-engineer** agent to analyze failing code path and identify:
 
-- Root cause (not just symptom)
-- Minimal code surface needing change
-- Related code possibly affected by fix
+- Root cause — what is wrong and why (not just the symptom)
+- Entry point to failure — which modules does the call cross?
+- State mutation — what state changed along the way?
+- Invariant violated — what condition broke at the failure point?
+- Minimal code surface needing change — exact files and functions
+- Related code possibly affected by fix — blast radius
+- Recent commits touching this path (from git log output, if provided)
 
 If root cause not definitively established after analysis, surface assumptions before proceeding:
 
 > ASSUMPTIONS I'M MAKING:
 >
 > 1. [assumption about root cause]
-> 2. [assumption about affected scope] → Correct me now or I'll proceed with these.
+> 2. [assumption about affected scope] -> Correct me now or I'll proceed with these.
 
 **Scope gate**: if root cause spans 3+ modules, flag complexity smell. Use `AskUserQuestion` to present scope concern before proceeding, with options: "Narrow scope (Recommended)" / "Proceed anyway".
 
@@ -98,9 +142,11 @@ If root cause not definitively established after analysis, surface assumptions b
 
 Create or identify test demonstrating failure:
 
+(Use Glob tool — `pattern: **/test_*.py` — to discover test directories if `<test_dir>` is unknown; check `pyproject.toml` `[tool.pytest.ini_options] testpaths` first)
+
 ```bash
 # If a failing test already exists — run it to confirm it fails
-python -m pytest --tb=short <test_file >:: <test_name >-v
+$PYTEST_CMD --tb=short <test_file>::<test_name> -v
 
 # If no test exists — write a regression test that captures the bug
 ```
@@ -112,7 +158,26 @@ Spawn **foundry:qa-specialist** agent to write regression test if none exists:
 - Keep test minimal — exercise exactly broken behavior
 - Add brief comment linking to issue if applicable (e.g., `# Regression test for #123`)
 
-**Gate**: regression test must fail before proceeding. If passes, bug not properly captured — revisit Step 1.
+Spawn with context:
+- Bug description: [symptom from $ARGUMENTS or issue]
+- Failing output: [exact error/traceback captured in Step 1]
+- Suspect files: [files identified by sw-engineer in Step 1]
+- Expected behaviour: [what should happen]
+- Actual behaviour: [what currently happens]
+- Regression test must import from `<module>`, name `test_<bug_description>_regression`
+
+**Gate**: regression test must fail before proceeding. Check exit code — do not rely on output text alone:
+
+```bash
+GATE_EXIT=$?
+if [ $GATE_EXIT -eq 0 ]; then
+    echo "GATE FAIL: test passed (exit 0) — bug not captured; revisit Step 1"
+    # Stop — do not proceed to Step 3
+fi
+echo "GATE OK: test failed as expected (exit $GATE_EXIT)"
+```
+
+If `GATE_EXIT -eq 0`: stop. The bug is not reproduced. Do not apply any fix.
 
 ### Review: Validate the reproduction
 
@@ -132,12 +197,14 @@ Make minimal change to fix root cause:
 1. Edit only code necessary to resolve bug
 2. Run regression test to confirm now passes:
    ```bash
-   python -m pytest --tb=short <test_file >:: <test_name >-v
+   $PYTEST_CMD --tb=short <test_file>::<test_name> -v
    ```
 3. Run full test suite for affected module:
    ```bash
-   python -m pytest --tb=short <test_dir >-v
+   $TEST_CMD --tb=short <test_dir> -v
    ```
+   **If `<test_dir>` does not exist or has no tests beyond the regression test**: run only the regression test (already verified in Step 2). Note in Final Report: "No pre-existing test suite found — regression test is sole verification."
+
 4. If existing tests break: fix has side effects — reconsider approach
 
 ## Step 4: Review and close gaps
@@ -168,18 +235,20 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 3. Re-run test suite:
 
    ```bash
-   python -m pytest --tb=short -q <test_dir >-v 2>&1 | tail -20
+   $TEST_CMD --tb=short <test_dir> -v 2>&1 | tail -20
    ```
 
 4. **Adjacent bugs** (observation only): scan for similar patterns; document in Follow-up — do not fix here, avoids scope creep.
 
-5. **Only nits remain**: document in Follow-up, exit loop.
+5. **Objective convergence check**: if findings this cycle are identical to the previous cycle (same locations, same issues), declare convergence and exit — further cycles will not resolve the issue; surface to user instead.
 
-6. **Substantive gaps remain**: start next cycle (max 3 total).
+6. **Only nits remain**: document in Follow-up, exit loop.
+
+7. **Substantive gaps remain**: start next cycle (max 3 total).
 
 **After 3 cycles**: if substantive issues remain, stop — surface to user before proceeding.
 
-Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Read `.claude/skills/_shared/quality-stack.md` (if file not found -> skip quality stack entirely, note "foundry plugin not installed — quality stack skipped" in Final Report) and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 
@@ -210,7 +279,7 @@ Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, 
 - [if no test runner: `rm <test_file>` — no test suite will re-execute it; it served the gate, now expendable]
 
 ## Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8 ⚠]
+**Score**: 0.N — [high >=0.9 | moderate 0.8-0.9 | low <0.8]
 **Gaps**: [e.g., could not reproduce locally, partial traceback only, fix not runtime-tested]
 **Refinements**: N passes.
 ```

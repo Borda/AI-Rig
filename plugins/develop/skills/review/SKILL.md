@@ -2,7 +2,7 @@
 name: review
 description: Multi-agent code review of local files, directories, or the current git diff covering architecture, tests, performance, docs, lint, security, and API design.
 argument-hint: '[file|dir]'
-allowed-tools: Read, Write, Edit, Bash, Grep, Agent, TaskCreate, TaskUpdate
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
 context: fork
 model: opus
 effort: high
@@ -11,6 +11,8 @@ effort: high
 <objective>
 
 Comprehensive code review of local files or working-tree diff. Spawn specialized sub-agents in parallel, consolidate findings into structured feedback with severity levels.
+
+NOT for: GitHub PR review (use `/oss:review <PR#>`); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/manage` or `/audit`).
 
 </objective>
 
@@ -34,7 +36,7 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 <!-- Structural pattern shared with oss:review — coordinate changes between develop:review and oss:review when modifying agent spawn logic, file-handoff protocol, or consolidation steps -->
 
-<!-- Agent Resolution: identical across all develop skills -->
+<!-- Agent Resolution: skill-specific subset — update only agents used by this skill -->
 
 ## Agent Resolution
 
@@ -50,8 +52,6 @@ Foundry **not** installed → substitute `foundry:X` with `general-purpose`, pre
 | `foundry:doc-scribe` | `general-purpose` | `sonnet` | `You are a documentation specialist. Write Google-style docstrings and keep README content accurate and concise.` |
 | `foundry:linting-expert` | `general-purpose` | `haiku` | `You are a static analysis specialist. Fix ruff/mypy violations, add missing type annotations, configure pre-commit hooks.` |
 | `foundry:solution-architect` | `general-purpose` | `opus` | `You are a system design specialist. Produce ADRs, interface specs, and API contracts — read code, produce specs only.` |
-
-Skills with `--team` mode: team spawning with fallback agents works but produces lower-quality output.
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
@@ -71,10 +71,18 @@ if [ -n "$ARGUMENTS" ]; then
 else
     # No argument — review current working-tree diff vs HEAD
     git diff HEAD --name-only  # timeout: 3000
+    TARGET="working-tree diff ($(git diff HEAD --name-only 2>/dev/null | grep '\.py$' | wc -l | tr -d ' ') Python files)"  # timeout: 3000
 fi
 ```
 
 Filter to Python files only. No Python files found → report "no Python files to review" and stop.
+
+**Non-Python impact check**: after filtering to Python files, scan diff for high-impact non-Python changes and warn in report header:
+- `pyproject.toml`, `setup.cfg`, `requirements*.txt` → "⚠ dependency changes detected — not reviewed; verify Python imports still resolve"
+- `Dockerfile`, `docker-compose*.yml` → "⚠ container config changes detected — not reviewed"
+- `*.yaml`, `*.toml`, `*.json` in config directories → "⚠ config changes detected — not reviewed"
+
+These are not reviewed (out of scope) but must be flagged — a dependency removal can silently break reviewed Python code.
 
 ### Scope pre-check
 
@@ -96,6 +104,9 @@ Use classification to skip optional agents:
 PROJ=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null) || PROJ=$(basename "$PWD")
 if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; then
     CHANGED_MODS=$(git diff HEAD --name-only | grep '\.py$' | sed 's|^src/||;s|\.py$||;s|/|.|g' | grep -v '__init__$')  # timeout: 3000
+    # Note: this derivation assumes src-layout (files under src/). Files outside src/ (e.g.
+    # scripts/, tools/) produce module names that may not be valid importable modules.
+    # scan-query will return empty for these — not an error, just no structural context.
     scan-query central --top 5 2>/dev/null  # timeout: 5000
     for mod in $CHANGED_MODS; do scan-query rdeps "$mod" 2>/dev/null; done  # timeout: 5000
 fi
@@ -141,16 +152,26 @@ After Codex writes `$RUN_DIR/codex.md`, extract compact seed list (≤10 items, 
 
 Replace `$RUN_DIR` in spawn prompt below with actual path from Step 2.
 
-Resolve oss:review checklist path (version-agnostic):
+Resolve develop:review checklist path (version-agnostic):
 
 ```bash
-OSS_ROOT=$(jq -r 'to_entries[] | select(.key | test("oss@")) | .value.installPath' ~/.claude/plugins/installed_plugins.json 2>/dev/null | head -1)  # timeout: 5000
-REVIEW_CHECKLIST="${OSS_ROOT}/skills/review/checklist.md"
-if [ ! -f "$REVIEW_CHECKLIST" ]; then
-    echo "⚠ oss:review checklist not found at $REVIEW_CHECKLIST — Agent 1 will skip checklist patterns; continuing without it"  # timeout: 5000
+# Guard: jq required for checklist path resolution
+if ! command -v jq >/dev/null 2>&1; then
+    echo "⚠ jq not available — oss:review checklist path resolution skipped; Agent 1 will proceed without checklist"
     REVIEW_CHECKLIST=""
-else
-    echo "Checklist: $REVIEW_CHECKLIST"
+fi
+```
+
+```bash
+if command -v jq >/dev/null 2>&1; then
+    OSS_ROOT=$(jq -r 'to_entries[] | select(.key | test("oss@")) | .value.installPath' ~/.claude/plugins/installed_plugins.json 2>/dev/null | head -1)  # timeout: 5000
+    REVIEW_CHECKLIST="${OSS_ROOT}/skills/review/checklist.md"
+    if [ ! -f "$REVIEW_CHECKLIST" ]; then
+        echo "⚠ oss:review checklist not found at $REVIEW_CHECKLIST — Agent 1 will skip checklist patterns; continuing without it"
+        REVIEW_CHECKLIST=""
+    else
+        echo "Checklist: $REVIEW_CHECKLIST"
+    fi
 fi
 ```
 
@@ -160,7 +181,7 @@ Replace `$REVIEW_CHECKLIST` in Agent 1 and consolidator spawn prompts below with
 
 Launch agents simultaneously with Agent tool (security augmentation folded into Agent 1 — not separate spawn; Agent 6 optional). Every agent prompt must end with:
 
-> "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:perf-optimizer`, `foundry:doc-scribe`, `foundry:linting-expert`, `foundry:solution-architect`. Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88}`"
+> "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `sw-engineer`, `qa-specialist`, `perf-optimizer`, `doc-scribe`, `linting-expert`, `solution-architect`. Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2,\"low\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88}`"
 
 **Agent 1 — foundry:sw-engineer**: Review architecture, SOLID adherence, type safety, error handling, code structure. Check Python anti-patterns (bare `except:`, `import *`, mutable defaults). Flag blocking issues vs suggestions.
 
@@ -199,7 +220,9 @@ Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIG
 
 **Agent 6 — foundry:solution-architect (optional, for changes touching public API boundaries)**: Target touches `__init__.py` exports, adds/modifies Protocols or ABCs, changes module structure, or introduces new public classes → evaluate API design quality, coupling impact, backward compatibility. Skip for internal implementation changes.
 
-**Health monitoring** (CLAUDE.md §8): Agent calls synchronous — Claude awaits each response natively; no Bash checkpoint polling available. Agent doesn't return within `$HARD_CUTOFF` seconds → use Read tool to surface partial results in `$RUN_DIR`, continue with what found; mark timed-out agents with ⏱ in final report. Grant one `$EXTENSION` if output file tail explains delay. Never silently omit timed-out agents.
+**Health monitoring**: Agent calls are synchronous — the framework awaits each response natively. No Bash checkpoint polling is possible during an active Agent call. The `$HARD_CUTOFF` and `$EXTENSION` constants document the intended timeout behavior for the framework, not for active polling.
+
+If an agent does not return within `$HARD_CUTOFF` seconds: use the Read tool on `$RUN_DIR/<agent-name>.md` to surface any partial results written so far. Mark timed-out agents with ⏱ in the final report. Grant one `$EXTENSION` if the output file tail explains the delay. Never silently omit timed-out agents.
 
 ## Step 4: Cross-validate critical/blocking findings
 
@@ -273,6 +296,8 @@ After parsing confidence scores: any agent scored < 0.7 → prepend **⚠ LOW CO
 
 Read compact terminal summary template from `.claude/skills/_shared/terminal-summaries.md` — use **PR Summary** template. Replace `[entity-line]` with `Review — [target]`, replace `[skill-specific path]` with `.temp/output-review-$BRANCH-$DATE.md`. Print block to terminal.
 
+Note: the PR Summary template includes a `CI:` field — for local file review (no CI pipeline), populate with local test suite pass/fail status, or omit the field entirely.
+
 After printing to terminal, prepend same compact block to top of report file using Edit tool.
 
 ## Step 6: Delegate implementation follow-up (optional)
@@ -309,5 +334,6 @@ End response with `## Confidence` block per CLAUDE.md output standards.
   - Security findings in auth/input/deps → run `pip-audit` for dependency CVEs; address OWASP issues inline via `/develop:fix`
   - Mechanical issues beyond Step 5 findings → `/codex:codex-rescue <task>` to delegate
   - Contributor-facing review of GitHub PR → use `/oss:review <PR#>` instead
+- **Parallel agent cleanup**: after all 6 sub-agents complete, review `TaskList` — delete any tasks created by sub-agents (not by the lead orchestrator). Sub-agent task creation is unintended and can leave zombie tasks.
 
 </notes>

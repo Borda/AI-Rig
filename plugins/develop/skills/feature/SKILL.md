@@ -3,7 +3,7 @@ name: feature
 description: TDD-first feature development — crystallise API as a demo test, drive implementation to pass it, run quality stack and progressive review loop.
 argument-hint: <goal>
 effort: high
-allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch
 disable-model-invocation: true
 ---
 
@@ -17,7 +17,7 @@ NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/manage
 
 <workflow>
 
-<!-- Agent Resolution: identical across all develop skills -->
+<!-- Agent Resolution: skill-specific subset — update only agents used by this skill -->
 
 ## Agent Resolution
 
@@ -30,6 +30,7 @@ When foundry **not** installed, substitute `foundry:X` references with `general-
 | `foundry:sw-engineer` | `general-purpose` | `opus` | `You are a senior Python software engineer. Write production-quality, type-safe code following SOLID principles.` |
 | `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 | `foundry:doc-scribe` | `general-purpose` | `sonnet` | `You are a documentation specialist. Write Google-style docstrings and keep README content accurate and concise.` |
+| `foundry:linting-expert` | `general-purpose` | `haiku` | `You are a static analysis specialist. Fix ruff/mypy violations, add missing type annotations, configure pre-commit hooks.` |
 
 Skills with `--team` mode: team spawning with fallback agents still works but lower-quality output.
 
@@ -51,6 +52,35 @@ Skills with `--team` mode: team spawning with fallback agents still works but lo
 
 **Task tracking**: immediately after Step 1 (scope known), create TaskCreate entries for all steps before any other work. Mark each step in_progress when starting, completed when done.
 
+## Project Detection
+
+Detect test runner once at skill start — before any `pytest` invocation:
+
+```bash
+if [ -f "uv.lock" ] || grep -q '\[tool\.uv\]' pyproject.toml 2>/dev/null; then TEST_CMD="uv run pytest"
+elif [ -f "poetry.lock" ] || grep -q '\[tool\.poetry\]' pyproject.toml 2>/dev/null; then TEST_CMD="poetry run pytest"
+elif [ -f "tox.ini" ]; then TEST_CMD="tox"
+elif [ -f "Makefile" ] && grep -q '^test:' Makefile 2>/dev/null; then TEST_CMD="make test"
+else TEST_CMD="python -m pytest"; fi
+```
+
+Use `$TEST_CMD` in place of `python -m pytest` throughout this workflow.
+
+```bash
+# Derive PYTEST_CMD for commands needing pytest-specific flags
+# (tox and make test wrap pytest but don't accept pytest flags like --tb, --co, ::node, --doctest-modules)
+case "$TEST_CMD" in
+    tox|"make test")
+        if command -v uv >/dev/null 2>&1; then PYTEST_CMD="uv run pytest"
+        else PYTEST_CMD="python -m pytest"; fi ;;
+    *) PYTEST_CMD="$TEST_CMD" ;;
+esac
+```
+
+**Optional `--plan <path>`**: if `$ARGUMENTS` ends with `--plan <path>`, read the plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use these to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`.
+
+**Checkpoint init**: create `.developments/<TS>/checkpoint.md` (where `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`). After each major step (1, 2, 3, 4, 5), append `step: N — completed` to this file. On skill start, check for an existing `.developments/*/checkpoint.md` — if found, offer to resume from the last completed step.
+
 # Feature Mode
 
 ## Step 1: Understand purpose and scope
@@ -59,10 +89,10 @@ Gather full context before writing any code:
 
 ```bash
 # If issue number: fetch the full issue with comments
-gh issue view <number >--comments
+gh issue view <number> --comments
 ```
 
-If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/*.py`, path `src/`) to search related code before spawning analysis agent.
+If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/*.py`) to search related code. Path hint: use `src/` if that directory exists, otherwise search from project root (`.`).
 
 **Structural context** (codemap, if installed) — soft PATH check, silently skip if `scan-query` not found:
 
@@ -107,6 +137,8 @@ Skip if feature calls no external library APIs — no new framework features, no
 
 2. **FETCH** — use WebFetch to retrieve **specific relevant docs page** (not homepage). Source priority: official docs > official changelog/migration guide > web standards (MDN). Never cite Stack Overflow, blog posts, or AI training data.
 
+   If WebFetch fails (network unavailable, site down): skip source verification entirely. Proceed to Step 2. Note in Final Report: "Source verification skipped — WebFetch unavailable."
+
 3. **CITE** — when implementing, embed comment with source URL and key quoted passage:
 
    ```python
@@ -139,6 +171,8 @@ Don't proceed to demo if any assumption would materially change API shape.
 
 Crystallise intended API contract before any implementation. Choose form based on scope:
 
+> **Choosing demo form**: use inline doctest for simple functions/methods with minimal setup; use example script for features requiring external state, multiple steps, or side effects.
+
 **Unit function / simple API** -> inline doctest:
 
 ```python
@@ -151,6 +185,10 @@ def predict(self, x: Tensor) -> Tensor:
 ```
 
 **Complex feature** (setup required, side effects, multi-step flow) -> minimal example script:
+
+```bash
+mkdir -p examples/
+```
 
 ```python
 # examples/demo_<feature>.py  — throwaway script, run manually
@@ -171,13 +209,25 @@ Both forms must:
 
 ```bash
 # Doctest form: confirm it fails
-python -m pytest --doctest-modules src/ -v <module >.py 2>&1 | tail -10
+$PYTEST_CMD --doctest-modules <module>.py -v 2>&1 | tail -10
 
 # Script form: confirm it errors (ImportError, AttributeError, NotImplementedError)
-python examples/demo_ <feature >.py 2>&1 | tail -5
+python examples/demo_<feature>.py 2>&1 | tail -5
 ```
 
-**Gate**: demo must fail or error. If passes, feature may already exist — revisit Step 1.
+**Gate**: demo must fail or error. Check exit code — do not rely on output text alone:
+
+```bash
+# Exit code must be non-zero (failure expected)
+GATE_EXIT=${PIPESTATUS[0]}
+if [ $GATE_EXIT -eq 0 ]; then
+    echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
+    # Stop — do not proceed to Step 3
+fi
+echo "✓ GATE OK: demo failed as expected (exit $GATE_EXIT)"
+```
+
+If `GATE_EXIT -eq 0`: stop. Do not proceed. Revisit Step 1 — feature may already be implemented or test is wrong.
 
 ### Review: Validate the demo
 
@@ -196,26 +246,30 @@ Drive implementation by making tests pass, one cycle at a time:
 
 ```bash
 # Baseline: confirm existing suite is green before adding any new code
-python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
+$TEST_CMD --tb=short <target_test_dir> -v 2>&1 | tail -20
 ```
 
 **Gate**: all existing tests must pass before proceeding. If any fail, stop — don't add new code on broken baseline. Use `/develop:fix` to address pre-existing failures first, then return here.
+
+> **Note on exit code 5**: `pytest` returns exit code 5 when no tests are collected. Exit code 5 is acceptable here — it means no pre-existing tests exist yet, which is a valid baseline for a new feature. Proceed with TDD loop. Only exit codes 1, 2, 3, 4 indicate actual test failures.
+
+(Use the Glob tool — `pattern: **/test_*.py` — to discover test directories if `<target_test_dir>` is unknown; check `pyproject.toml` `[tool.pytest.ini_options] testpaths` first)
 
 Start from Step 2 demo — already failing, becomes first target. For each piece of functionality:
 
 1. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
 2. **Run existing suite — confirm all pass**:
    ```bash
-   python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
+   $TEST_CMD --tb=short <target_test_dir> -v 2>&1 | tail -20
    ```
 3. **Run new demo/test — confirm it fails**:
    ```bash
    # doctest form
-   python -m pytest --doctest-modules src/ -v --tb=short <module >.py 2>&1 | tail -10
+   $PYTEST_CMD --doctest-modules <module>.py -v --tb=short 2>&1 | tail -10
    # pytest form
-   python -m pytest --tb=short <test_file >:: <test_name >-v
+   $PYTEST_CMD --tb=short <test_file>::<test_name> -v
    # script form
-   python examples/demo_ <feature >.py 2>&1 | tail -5
+   python examples/demo_<feature>.py 2>&1 | tail -5
    ```
 4. **Implement minimal code** (spawn **foundry:sw-engineer** agent for non-trivial logic):
    - Reuse or extend existing code identified in Step 1 — prefer subclassing or composing over parallel reimplementation
@@ -223,7 +277,7 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 5. **Run demo/test — confirm it passes**
 6. **Run full suite** to catch regressions:
    ```bash
-   python -m pytest --tb=short -q <target_test_dir >-v
+   $TEST_CMD --tb=short <target_test_dir> -v
    ```
 7. If regressions appear: fix before moving on — never carry forward broken suite
 
@@ -260,14 +314,35 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 3. Re-run full suite to confirm nothing regressed:
 
    ```bash
-   python -m pytest --tb=short -q <target_test_dir >-v 2>&1 | tail -20
+   $TEST_CMD --tb=short <target_test_dir> -v 2>&1 | tail -20
    ```
+
+   > **Objective convergence check**: if the set of findings in this cycle is identical to the previous cycle (same locations, same issues), declare convergence and exit loop — further cycles will not resolve the issue; surface to user.
 
 4. **If only nits remain** (style, cosmetic naming, minor formatting): document in Follow-up and exit loop.
 
 5. **If substantive gaps remain**: start next cycle (max 3 total).
 
 **After 3 cycles**: if substantive issues remain, stop — surface to user before proceeding to Step 5.
+
+When stopping with unresolved issues, use this report variant instead of the standard Final Report:
+
+```
+## Feature Report: <feature name> [INCOMPLETE]
+
+### Status
+Implementation incomplete — stopped after 3 review cycles.
+
+### Remaining Issues
+- [list each unresolved substantive gap]
+
+### What Works
+- [completed parts, passing tests]
+
+### Recommended Next Steps
+1. [most actionable next step to unblock]
+2. [second step]
+```
 
 ## Step 5: Documentation
 
@@ -279,12 +354,20 @@ Spawn **foundry:doc-scribe** agent to update all affected docs:
 - Update `CHANGELOG.md` with one-line entry under `Unreleased`
 - If feature changes public API: update `README.md` usage examples
 
+Spawn with context:
+- Affected files: [list from Step 1 scope analysis]
+- New/modified public API: [function names, signatures from Step 3]
+- Demo location: [Step 2 demo file path and function name]
+- CHANGELOG entry: [one-line description of the feature]
+
+Agent must Read each affected source file before writing docstrings — do not write placeholder content.
+
 ```bash
 # Verify doctests pass after doc updates
-python -m pytest --doctest-modules <target_module >-v 2>&1 | tail -20
+$PYTEST_CMD --doctest-modules <target_module> -v 2>&1 | tail -20
 ```
 
-Read `.claude/skills/_shared/quality-stack.md` and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Read `.claude/skills/_shared/quality-stack.md` (if file not found → skip quality stack entirely, note "foundry plugin not installed — quality stack skipped" in Final Report) and execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 

@@ -3,7 +3,7 @@ name: plan
 description: Analysis-only planning — classify and scope a task without writing code; outputs a structured plan to .plans/active/.
 argument-hint: <goal>
 effort: medium
-allowed-tools: Read, Write, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch
+allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch
 disable-model-invocation: true
 ---
 
@@ -18,6 +18,7 @@ NOT for: writing code/tests (use develop mode); `.claude/` config changes (use `
 <workflow>
 
 ## Agent Resolution
+<!-- Agent Resolution: skill-specific subset — update only agents used by this skill -->
 
 > **Foundry plugin check**: run `ls ~/.claude/plugins/cache/ 2>/dev/null | grep -q foundry` (exit 0 = installed). If check fails or uncertain, proceed as if foundry available — common case; fall back only if agent dispatch explicitly fails.
 
@@ -29,7 +30,7 @@ When foundry **not** installed, substitute `foundry:X` with `general-purpose`, p
 | `foundry:qa-specialist` | `general-purpose` | `opus` | `You are a QA specialist. Write deterministic, parametrized pytest tests covering edge cases and regressions.` |
 | `foundry:linting-expert` | `general-purpose` | `haiku` | `You are a static analysis specialist. Fix ruff/mypy violations, add missing type annotations, configure pre-commit hooks.` |
 
-Skills with `--team` mode: team spawning with fallback agents still works, lower-quality output.
+**Checkpoint**: plan is single-pass — `.plans/active/<slug>` file existence serves as implicit resume signal. No `.developments/` checkpoint needed; if skill interrupted, re-run `/develop:plan` to regenerate (plan makes no code changes).
 
 **Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
 
@@ -38,6 +39,14 @@ Skills with `--team` mode: team spawning with fallback agents still works, lower
 - keep `in_progress` only if genuinely continuing
 
 **Task tracking**: immediately after Step 1 (scope known), TaskCreate all steps before any other work. Mark each step in_progress when starting, completed when done.
+
+## Anti-Rationalizations
+
+| Temptation | Reality |
+| --- | --- |
+| "The plan is obvious — no need for agent feasibility review" | Feasibility review catches domain-specific blockers (missing test infrastructure, incompatible library constraints, API changes) that seem obvious in hindsight. |
+| "Codex design review is optional for small tasks" | Small tasks regularly reveal large hidden dependencies. Codex catches architectural anti-patterns before they are baked into an implementation plan. |
+| "I can scope this during implementation — no need to plan first" | Scope discovered during implementation inflates PRs and obscures intent. Plan mode exists to prevent exactly this. |
 
 # Plan Mode
 
@@ -123,6 +132,12 @@ Each agent receives only plan file path and role — no conversation history, no
 
 > "Read `<PLAN_FILE>`. Review the plan from your perspective as `<ROLE>`. Flag any domain-specific concerns, risks, or blockers you see. Can you execute your part autonomously without further user input? Return only: `{\"a\":\"<ROLE>\",\"ok\":true|false,\"blockers\":[\"...\"],\"q\":[\"...\"],\"concerns\":[\"...\"]}`"
 
+**Parse-failure handling**: agent responses may not be valid JSON (especially fallback `general-purpose` agents that wrap JSON in prose). Before processing:
+
+1. Attempt to extract JSON object using pattern `\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}` from response
+2. If extraction succeeds: use extracted object
+3. If extraction fails entirely: treat response as `{"a":"<ROLE>","ok":false,"blockers":["agent returned non-JSON response"],"q":[],"concerns":[]}` and enter resolution loop with re-query
+
 Agents return inline (verdicts ~150 bytes — no file handoff). Collect all results:
 
 - All `ok: true`, empty `blockers`, `q`, `concerns` -> note `✓ agents ready` in final output and proceed
@@ -133,9 +148,15 @@ Agents return inline (verdicts ~150 bytes — no file handoff). Collect all resu
 
 For each blocker or open question:
 
-1. **Attempt autonomous resolution** — search codebase, read relevant files, re-read goal. Search web for similar issues and established patterns (e.g. known library constraints, common implementation trade-offs) — use WebFetch. If answer determinable from any source, update `<PLAN_FILE>` and mark item resolved.
+1. **Attempt autonomous resolution** — search codebase, read relevant files, re-read goal. Fetch primary-source documentation for relevant issues (official docs, RFCs, library changelogs, migration guides) via WebFetch — known URLs only; WebFetch fetches a specific URL, it does not search. If answer determinable from any source, update `<PLAN_FILE>` and mark item resolved.
 2. **Re-query raising agent** — send only resolved item: `{"a":"<ROLE>","resolved":"<item>","answer":"<resolution>"}`. If agent returns `ok: true` -> resolved; remove from blockers list.
 3. After all resolvable items cleared, re-check: if all agents `ok: true` -> `✓ agents ready`.
+
+**Plan file coherence**: after the resolution loop exits (regardless of outcome), annotate `<PLAN_FILE>`:
+- Each resolved blocker: add `(resolved ✓)` inline
+- Each unresolved blocker: add `(unresolved — requires user input)`
+- Update the Brief (once it exists): note "N of M blockers resolved autonomously; N require user input"
+This ensures the plan file is coherent even after partial resolution.
 
 **Escalate to user only what cannot be resolved autonomously** — blocker requires user input when: depends on business decision, undocumented external constraint, missing credential/secret, or genuine goal ambiguity with two equally valid interpretations.
 
@@ -199,6 +220,11 @@ If unresolved items escalated, print each after brief:
 ```
 
 Wait for user input before printing `-> /develop ...`.
+
+**Handoff contract**: the plan file at `<PLAN_FILE>` is consumable by downstream skills. Pass it via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. When a skill receives `--plan <path>`, it reads the plan file at Step 1 and:
+- Extracts `Classification`, `Affected files`, `Risks`, `Suggested approach` — skipping cold codebase exploration
+- Inherits agent feasibility verdicts and Codex corrections already applied
+- Uses `Suggested approach` as implementation roadmap
 
 No quality stack, no Codex pre-pass, no review loop. Exit after printing summary.
 

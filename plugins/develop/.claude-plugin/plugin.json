@@ -3,9 +3,9 @@
     "name": "Jirka",
     "url": "https://github.com/Borda/AI-Rig"
   },
-  "description": "Implementation workflow skills: feature, fix, refactor, plan, debug",
+  "description": "Implementation workflow skills: feature, fix, refactor, plan, debug, review",
   "license": "MIT",
   "name": "develop",
   "repository": "https://github.com/Borda/AI-Rig",
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
