@@ -1,3 +1,7 @@
+---
+description: Five Claude Code plugins — foundry, oss, develop, research, codemap — that enforce specialist agents, validate-first workflows, and calibrated quality gates for Python/ML OSS projects.
+---
+
 # 🤖 Borda's AI-Rig
 
 > Five plugins that turn Claude Code into a disciplined development partner
@@ -160,6 +164,38 @@ The plugins are designed to be composed. Here are three workflows that span the 
 2. `/foundry:calibrate` — benchmarks recall and confidence across all agents; surfaces where quality has drifted
 3. `/foundry:distill` — converts the week's corrections into updated agent instructions and rules
 4. Repeat — the self-improvement loop runs continuously alongside your normal workflow
+
+______________________________________________________________________
+
+## Frequently Asked Questions
+
+??? question "What is Borda's AI-Rig?"
+
+    Borda's AI-Rig is a suite of five Claude Code plugins — foundry, oss, develop, research, and codemap — that enforce specialist routing, validate-first discipline, and calibrated quality gates across the full Python/ML OSS development lifecycle. Each plugin targets a distinct part of the practitioner loop and is designed to compose with the others.
+
+??? question "How is this different from just prompting Claude?"
+
+    Without AI-Rig, one generalist model handles architecture, implementation, documentation, linting, testing, and performance with no boundary enforcement. Corrections made in one session evaporate. AI-Rig closes the feedback loop: each part of the loop has a dedicated skill backed by a calibrated specialist agent that enforces discipline at every gate and feeds corrections back into its own instructions automatically via `/foundry:distill`.
+
+??? question "What does 'validate-first' mean?"
+
+    Validate-first means you must prove you understand the problem before writing production code. `/develop:feature` requires a failing demo test before implementation. `/develop:fix` requires a failing regression test that reproduces the bug before applying any fix. If you cannot write the test, the problem is underspecified.
+
+??? question "What is calibration bias?"
+
+    Calibration bias measures the gap between an agent's stated confidence and its actual recall on synthetic test problems. A bias of +0.15 means the agent says it is 90% confident but is only right 75% of the time. `/foundry:calibrate` benchmarks this for every agent and surfaces agents that are systematically overconfident or underconfident.
+
+??? question "What is a blast-radius score?"
+
+    Blast-radius score (from the codemap plugin) measures how many modules would be affected if a given module changed. `scan-query rdeps mypackage.auth` returns every module that imports `auth`. High blast-radius modules are the riskiest to refactor — codemap surfaces these before you touch anything.
+
+??? question "Does this work without all five plugins?"
+
+    Yes. Each plugin installs independently. foundry is strongly recommended as a base since it provides the specialist agents the other plugins dispatch to. Without foundry, the other plugins fall back to a generic agent with a role-description prompt.
+
+??? question "How do I know if my agent configuration has drifted?"
+
+    Run `/foundry:audit` — it runs 29 checks across hooks, settings, agent routing, and rule files. Zero critical findings means the configuration is healthy. Run it weekly or after any Claude Code update.
 
 ______________________________________________________________________
 

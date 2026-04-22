@@ -1,16 +1,21 @@
 site_name: Borda's AI-Rig
 site_description: Claude Code plugin suite for Python/ML OSS development
-site_url: https://borda.github.io/.local/
-repo_url: https://github.com/Borda/.local
-repo_name: Borda/.local
+site_url: https://borda.github.io/AI-Rig/
+repo_url: https://github.com/Borda/AI-Rig
+repo_name: Borda/AI-Rig
 edit_uri: ""
 
 docs_dir: docs
 
-# README.md in docs/ is the repo-facing guide; exclude from site to avoid
+# NOTES.md in docs/ is the repo-facing guide; exclude from site to avoid
 # conflict with index.md (both would map to the same index.html).
 exclude_docs: |
-  README.md
+  NOTES.md
+
+copyright: "Maintained by <a href='https://github.com/Borda'>Jiri Borovec (Borda)</a>"
+
+hooks:
+  - docs/hooks.py
 
 theme:
   name: material
@@ -41,16 +46,27 @@ theme:
 extra_css:
   - stylesheets/anthropic.css
 
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Borda/AI-Rig
+
 plugins:
   - search
   - callouts
+  - git-revision-date-localized:
+      enable_creation_date: true
+      type: date
+  - social
 
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.superfences
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path:
+        - "."
   - admonition
   - pymdownx.details
   - attr_list

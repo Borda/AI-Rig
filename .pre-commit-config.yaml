@@ -87,7 +87,7 @@ repos:
     hooks:
       - id: mdformat
         name: 📝 mdformat (general)
-        exclude: ^plugins/(?!.*README\.md$)
+        exclude: ^(plugins/(?!.*README\.md$)|docs/)
         args: ["--number", "--wrap=no"]
         additional_dependencies:
           - mdformat-gfm
@@ -96,6 +96,17 @@ repos:
           - mdformat-config
           - mdformat-beautysh
           - mdformat-admon
+          - mdformat-web
+      - id: mdformat
+        name: 📝 mdformat (docs)
+        files: ^docs/
+        args: ["--number", "--wrap=no"]
+        additional_dependencies:
+          - mdformat-mkdocs
+          - mdformat-ruff
+          - mdformat-frontmatter
+          - mdformat-config
+          - mdformat-beautysh
           - mdformat-web
 
   - repo: https://github.com/lycheeverse/lychee.git

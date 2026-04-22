@@ -32,18 +32,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout (with symlinks)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           # Symlinks in docs/ point to plugins/*/README.md.
           # Default checkout preserves symlinks on Linux — no extra flag needed,
           # but stated here explicitly so the dependency is visible.
           persist-credentials: false
+          # git-revision-date plugin requires full history
+          fetch-depth: 0
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           # Pin to exact minor so the build is reproducible across runner updates.
+
+      - name: Install native imaging dependencies
+        # Material's social plugin uses CairoSVG, which needs the native Cairo
+        # shared library in addition to the Python package.
+        run: sudo apt-get update && sudo apt-get install --yes libcairo2
 
       - name: Install MkDocs dependencies
         # python -m pip ensures we use the pip that belongs to the selected Python,
@@ -53,6 +60,9 @@ jobs:
       - name: Build docs (strict — warnings are errors)
         # --strict turns every MkDocs warning into a build failure.
         # Remove --strict only if a plugin emits unavoidable warnings.
+        env:
+          # Material for MkDocs documents this opt-out for its MkDocs 2.0 notice.
+          NO_MKDOCS_2_WARNING: "1"
         run: python -m mkdocs build --strict
 
       - name: Configure GitHub Pages

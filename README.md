@@ -532,17 +532,6 @@ Without the plugin: pre-pass review is skipped gracefully (skills check with `cl
 
 </details>
 
-## 🔌 MCP Servers
-
-Two optional MCP servers are defined in `.mcp.json` (defined at the repo root; enable per-machine in `settings.local.json`). Both are **disabled by default**.
-
-| Server        | Purpose                                                                                                                                   | Enable                                       |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| **openspace** | Skill auto-evolution — reduces token consumption on repeated tasks via `execute_task`, `search_skills`, `fix_skill`, `upload_skill` tools | add `"openspace"` to `enabledMcpjsonServers` |
-| **colab-mcp** | GPU workloads via Google Colab (used by `/research:run --colab`)                                                                          | add `"colab-mcp"` to `enabledMcpjsonServers` |
-
-→ New-machine setup and full reference: [`.claude/README.md` → MCP Servers](.claude/README.md#-mcp-servers)
-
 ## 🛠 Recommended Add-ons
 
 ### Token Savings (RTK)

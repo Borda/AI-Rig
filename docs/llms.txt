@@ -1,0 +1,18 @@
+# Borda's AI-Rig
+
+> Five Claude Code plugins for Python/ML OSS development:
+> specialist agents, calibrated workflows, validate-first discipline.
+
+## Documentation
+
+- [Overview](https://borda.github.io/AI-Rig/): Plugin suite — install, quick-start, how plugins compose
+- [foundry](https://borda.github.io/AI-Rig/foundry/): Base infrastructure — 8 specialist agents, calibration, audit, self-improvement
+- [oss](https://borda.github.io/AI-Rig/oss/): OSS maintainer workflows — parallel PR review, resolve feedback, SemVer releases
+- [develop](https://borda.github.io/AI-Rig/develop/): Validate-first development — feature, fix, refactor, debug with mandatory test gates
+- [research](https://borda.github.io/AI-Rig/research/): Structured ML experiments — SOTA search, design review, automated improvement loop
+- [codemap](https://borda.github.io/AI-Rig/codemap/): Python structural indexer — import graph, blast-radius, function call graph
+
+## Optional
+
+- [GitHub Repository](https://github.com/Borda/AI-Rig): Source code and plugin files
+- [Sitemap](https://borda.github.io/AI-Rig/sitemap.xml): All pages
