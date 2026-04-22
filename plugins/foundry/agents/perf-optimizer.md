@@ -248,7 +248,7 @@ Profile async with py-spy (asyncio-native): `py-spy record -o profile.svg -- pyt
 
 Per finding:
 
-```
+```markdown
 [Bottleneck]  <what is slow and why — complexity class or operation>
 [Severity]    critical | high | medium | low
 [Status]      statically confirmed | requires profiling to confirm existence
@@ -270,7 +270,7 @@ Rank by impact (highest first). Separate statically-confirmed from profiling-req
 
 **Static Grep scan** — launch all five in parallel; each targets known Python/ML bottleneck class:
 
-```
+```text
 Grep: pattern="for .+ in .+:[\s\S]{0,80}for .+ in"   glob="**/*.py"   # nested loops → O(n²) candidates  (multiline: true required)
 Grep: pattern="\.mean\(\)|\.std\(\)"                  glob="**/*.py"   # repeated stats computation per batch
 Grep: pattern="num_workers\s*=\s*0"                   glob="**/*.py"   # DataLoader CPU bottleneck

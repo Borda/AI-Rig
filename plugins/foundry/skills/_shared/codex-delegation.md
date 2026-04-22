@@ -9,7 +9,7 @@ Delegate only small, bounded tasks needing code read — not single-command task
 
 For each qualifying task, read target code, form accurate brief, spawn:
 
-```
+```text
 Agent(
   subagent_type="codex:codex-rescue",
   prompt="<specific task with accurate description of what the code does>. Target: <file>."

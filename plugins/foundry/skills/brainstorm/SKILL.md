@@ -184,7 +184,7 @@ After seeding, enter operations loop. Each iteration:
 
 Always show tree summary **before** calling `AskUserQuestion`:
 
-```
+```text
 Tree: <title>
 ├─ ▶️ Branch 1: <name>
 │  ├─ 💭 1.1: <name>
@@ -272,7 +272,7 @@ OUTPUT_PATH=".temp/output-brainstorm-review-$BRANCH-$(date +%Y-%m-%d).md"
 
 Spawn **foundry:self-mentor** with tree-focused prompt. Substitute `$OUTPUT_PATH` value (pre-computed above) for `<output-path>` placeholder before passing the prompt — do NOT pass the literal `$OUTPUT_PATH` variable name in the prompt string:
 
-```
+```markdown
 Read .plans/blueprint/<tree-file>. Audit for tree quality only (do NOT audit `.claude/` config files — scope is the brainstorm tree only):
 - Root idea: is the original problem clearly stated in the "Root idea" section?
 - Branch depth: do open branches have enough detail (not just a name)?
@@ -441,7 +441,7 @@ For each blocking question: call `AskUserQuestion` — one at a time, in order. 
    - Verification/testing → `/develop:feature "<test goal>"` or manual check command
 3. Output ordered task table:
 
-```
+```markdown
 ## Action Plan: <spec title>
 
 Spec: <file path>

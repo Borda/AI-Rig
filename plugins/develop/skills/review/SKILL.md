@@ -241,7 +241,7 @@ Spawn **foundry:sw-engineer** consolidator with prompt:
 
 Main context receives only one-liner verdict.
 
-```
+```markdown
 ## Code Review: [target]
 
 ### [blocking] Critical (must fix before merge)

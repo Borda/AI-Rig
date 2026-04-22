@@ -70,7 +70,7 @@ Symbol names accept: bare name (`authenticate`), qualified name (`MyClass.authen
 ## Step 2: Format and return
 
 `rdeps` / `deps`: list modules, one per line — never space-separated on a single line.
-```
+```text
 myapp.api
 myapp.middleware
 myapp.tests.test_auth
@@ -88,7 +88,7 @@ NOT: `myapp.api myapp.middleware myapp.tests.test_auth`
 `find-symbol`: list matches as `module:qualified_name (type)`, one per line.
 
 `list`: list all modules as `module (path)`, one per line.
-```
+```text
 myapp.views (src/myapp/views.py)
 myapp.middleware (src/myapp/middleware.py)
 ```

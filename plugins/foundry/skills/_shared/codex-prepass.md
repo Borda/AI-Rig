@@ -14,7 +14,7 @@ git diff HEAD --stat
 
 **Run** when changes include new logic, functions, conditionals, error paths, or restructured code:
 
-```
+```text
 Agent(subagent_type="codex:codex-rescue", prompt="Review the current working-tree changes for bugs, missed edge cases, and inconsistencies. Read-only: do not apply fixes.")
 ```
 

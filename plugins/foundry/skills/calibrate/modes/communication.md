@@ -14,7 +14,7 @@ Target agent: `self-mentor`.
 
 Four subdomains — each ground truth issue must be tagged with its `subdomain` field so Phase 4 can compute per-subdomain recall:
 
-```
+```text
 handover: malformed JSON envelopes (missing summary, plain text instead of JSON,
 missing required fields, wrong status value, severity not an object);
 context-contamination: spawn prompts include full conversation history or out-of-scope details

@@ -4,7 +4,7 @@ You are routing calibration pipeline runner. Complete all phases in sequence.
 
 <!-- Substitutions: TIMESTAMP=run timestamp (YYYYMMDDTHHMMSSZ), MODE=fast|full, N=problem count (fast=5, full=10) -->
 
-```
+```text
 Mode: `<MODE>`
 Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 ```
@@ -17,7 +17,7 @@ Read all agent files matching `.claude/agents/*.md`. Per file, extract `name:` a
 
 Build roster string, one line per agent:
 
-```
+```text
 <name>: <description>
 ```
 
@@ -97,7 +97,7 @@ Verdict:
 
 Write full report to `.reports/calibrate/<TIMESTAMP>/routing/report.md`:
 
-```
+```markdown
 ## Routing Benchmark — <date> — <MODE>
 
 ### Per-Problem Results

@@ -65,7 +65,7 @@ claude plugin install research@borda-ai-rig  # ML research: topic, plan, judge, 
 
 **4. One-time settings merge** — run inside Claude Code:
 
-```
+```text
 /foundry:init link
 ```
 
@@ -109,7 +109,7 @@ Each command chains agents in a defined topology — see [Common Workflow Sequen
 
 ## 📦 What's Here
 
-```
+```text
 AI-Rig/
 ├── plugins/
 │   ├── foundry/            # Base plugin: agents, hooks, audit/manage/calibrate/brainstorm/…
@@ -212,7 +212,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Bug report → fix → validate</strong></summary>
 
-```
+```text
 /oss:analyse 42            # understand the issue, extract root cause hypotheses
 /develop:fix 42            # reproduce with test, apply targeted fix
 /oss:review                # validate the fix meets quality standards
@@ -223,7 +223,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Performance investigation → optimize → refactor</strong></summary>
 
-```
+```text
 /research:plan src/mypackage/dataloader.py      # profile-first: cProfile → pick goal → wizard
 /develop:refactor src/mypackage/dataloader.py  # extract caching layer
 /develop:review                                # review diff before commit
@@ -234,7 +234,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Code review → fix blocking issues</strong></summary>
 
-```
+```text
 /oss:review 55                                           # 7 agent dimensions + Codex co-review
 /develop:fix "race condition in cache invalidation"      # fix blocking issue from review
 /oss:review 55                                           # re-review after fix
@@ -245,7 +245,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>New feature → implement → release</strong></summary>
 
-```
+```text
 /oss:analyse 87            # understand the issue, clarify acceptance criteria
 /develop:feature 87        # codebase analysis, demo test, TDD, docs, review
 /oss:release               # generate CHANGELOG entry and release notes
@@ -256,7 +256,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>New OSS capability → research → implement → review</strong></summary>
 
-```
+```text
 /research:topic "efficient attention for long sequences"  # find SOTA methods
 /develop:feature "implement FlashAttention in encoder"    # TDD-first implementation
 /develop:review                                           # review diff before commit
@@ -268,7 +268,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Autonomous metric improvement campaign</strong></summary>
 
-```
+```text
 /research:plan "increase test coverage to 90%"      # interactive config wizard → program.md
 /research:run "increase test coverage to 90%"       # run 20-iteration loop; auto-rollback on regression
 /research:run --resume                              # resume after crash or manual stop
@@ -279,7 +279,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Fuzzy idea → spec → breakdown → implement</strong></summary>
 
-```
+```text
 /brainstorm "integrate OpenSpace MCP for skill evolution"
 # clarifying questions → 2–3 approaches → spec saved to .plans/blueprint/ → self-mentor review → approval
 
@@ -298,7 +298,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Research SOTA → optimize toward metric</strong></summary>
 
-```
+```text
 /research:topic "knowledge distillation for small models"  # find best approach
 /research:plan "improve F1 from 0.82 to 0.87"              # configure metric + guard + agent
 /research:run --team                                       # parallel exploration across axes
@@ -309,7 +309,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>Distill → create → audit → calibrate</strong></summary>
 
-```
+```text
 /distill                             # analyze work patterns, suggest new agents/skills
 /manage create agent my-agent "..."  # scaffold suggested agent
 /audit                               # verify config integrity — catch broken refs, dead loops
@@ -321,7 +321,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 <details>
 <summary><strong>PR review feedback → resolve → verify</strong></summary>
 
-```
+```text
 /oss:resolve 42   # auto-detect conflicts → resolve semantically → apply review comments via codex-plugin-cc
 /develop:review   # full quality pass on all applied changes
 ```
@@ -333,7 +333,7 @@ Skills chain naturally — the output of one becomes the input for the next.
 
 Preferred flow for maintainers responding to external contributions:
 
-```
+```text
 /oss:analyse 42 --reply      # assess PR readiness + draft contributor reply in one step
 
 # or if you need the full deep review first:
@@ -351,7 +351,7 @@ Both `--reply` flags produce the same two-part shepherd output: an overall PR co
 <details>
 <summary><strong>Agent self-improvement loop</strong></summary>
 
-```
+```text
 /distill                        # analyze work patterns, surface what agents are missing or miscalibrated
 /calibrate all fast ab apply    # benchmark all agents vs general-purpose baseline, apply improvement proposals
 /audit fix                      # structural sweep after calibrate changed instruction files
@@ -364,7 +364,7 @@ Both `--reply` flags produce the same two-part shepherd output: an overall PR co
 
 After editing agent descriptions (manually or via `/audit fix`), verify that routing accuracy hasn't degraded:
 
-```
+```text
 /audit                      # Check 20 flags description overlap pairs (static, fast)
 /calibrate routing fast     # behavioral test: generates task prompts, measures routing accuracy
 ```
@@ -376,7 +376,7 @@ Run `/calibrate routing fast` after any agent description change. Thresholds: ro
 <details>
 <summary><strong>Config maintenance — periodic health check</strong></summary>
 
-```
+```text
 /audit                 # inspect findings + docs-sourced upgrade proposals — report only, no changes
 /audit upgrade         # apply upgrade proposals: config changes verified, capability changes A/B tested
 /audit fix             # full sweep + auto-fix critical and high findings
@@ -389,7 +389,7 @@ Run `/calibrate routing fast` after any agent description change. Thresholds: ro
 
 MEMORY.md is injected into every message in every session. As it grows, so does the per-message token cost — compounding across every turn. Keep it lean.
 
-```
+```text
 /distill lessons    # promote recurring corrections into durable rules/agents/skills
 /distill prune      # trim MEMORY.md — drop entries now covered by rules, stale facts, or superseded decisions
 ```
@@ -401,7 +401,7 @@ Run after any session with significant corrections, or monthly as routine hygien
 <details>
 <summary><strong>Keep config current after Claude Code releases</strong></summary>
 
-```
+```text
 /audit                 # fetches latest Claude Code docs, surfaces applicable improvements as upgrade proposals
 /audit upgrade         # applies config proposals (correctness check) and capability proposals (calibrate A/B)
 /calibrate all fast    # re-benchmark all agents to confirm no regression from applied changes
@@ -412,7 +412,7 @@ Run after any session with significant corrections, or monthly as routine hygien
 <details>
 <summary><strong>Release preparation</strong></summary>
 
-```
+```text
 /oss:release notes v1.2.0..HEAD  # generate release notes from git history
 ```
 
@@ -490,7 +490,13 @@ Use `rsync` when you have local customizations (extra agents, personal profiles)
 
 Claude and Codex complement each other — Claude handles long-horizon reasoning, orchestration, and judgment calls; Codex handles focused, mechanical in-repo coding tasks with direct shell access.
 
-Every skill that reviews or validates code uses a three-tier pipeline: **Tier 0** (mechanical `git diff --stat` gate), **Tier 1** (codex:review pre-pass, ~60s, diff-focused), **Tier 2** (specialized Claude agents). Cheaper tiers gate the expensive ones — this keeps full agent spawns reserved for diffs that actually need them. → Full architecture with skill-tier matrix: [`.claude/README.md` → Tiered review pipeline](.claude/README.md#tiered-review-pipeline)
+Every skill that reviews or validates code uses a three-tier pipeline:
+
+- **Tier 0** (mechanical `git diff --stat` gate)
+- **Tier 1** (codex:review pre-pass, ~60s, diff-focused)
+- **Tier 2** (specialized Claude agents).
+
+Cheaper tiers gate the expensive ones — this keeps full agent spawns reserved for diffs that actually need them. → Full architecture with skill-tier matrix: [`.claude/README.md` → Tiered review pipeline](.claude/README.md#tiered-review-pipeline)
 
 **Why unbiased review matters / Real example**: Claude makes targeted changes with intentionality — it has a mental model of which files are "in scope". Codex has no such context: it reads the diff and the codebase independently. During one session, Claude applied a docstring-style mandate across 6 files and scored its own confidence at 0.88. The Codex pre-pass then found `skills/develop/modes/feature.md` still referencing the old style — a direct miss. The union of both passes is more complete than either alone.
 

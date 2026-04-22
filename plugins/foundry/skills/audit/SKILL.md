@@ -331,7 +331,7 @@ Read and follow the cross-validation protocol from `.claude/skills/_shared/cross
 
 Output a structured audit report before fixing anything:
 
-```
+```markdown
 ## Audit Report — .claude/ config
 
 ### Scope
@@ -401,7 +401,7 @@ Each subagent prompt template: Read the fix prompt template from .claude/skills/
 
 When the finding count exceeds 10 or `fix all` was passed, spawn a dedicated **audit-fix** sub-agent that handles all of Steps 8–10 in isolation:
 
-```
+```markdown
 Read `<RUN_DIR>/summary.jsonl` — this is the findings list (one JSON object per line).
 Read `.claude/skills/audit/templates/fix-prompt.md` for the per-file fix prompt template.
 For each unique file in the findings list, spawn one fix agent (foundry:self-mentor for .md files, foundry:sw-engineer for .js/.py files) with all findings for that file batched into a single prompt.
@@ -483,7 +483,7 @@ Write cross-file re-validation findings to `<RUN_DIR>/crossfile-revalidation-pas
 
 Output the complete audit summary: List each audited file by name in the `### Files Audited` section — names are drawn from the Step 2 inventory; counts alone are insufficient.
 
-```
+```markdown
 ## Audit Complete — .claude/ config
 
 ### Files Audited
@@ -507,13 +507,13 @@ Output the complete audit summary: List each audited file by name in the `### Fi
 
 Or if limit hit:
 
-```
+```markdown
 **Fix convergence**: ⚠ CONVERGENCE LIMIT reached (5 passes) — N fixable findings remain (see Remaining section).
 ```
 
 (Omit the fix convergence line for report-only runs — only shown when a fix level was passed.)
 
-```
+```markdown
 ### Fixes Applied
 
 | File | Change |

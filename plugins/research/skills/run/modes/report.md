@@ -33,7 +33,7 @@ Contains report structure and terminal summary format.
 
 ## Terminal summary format
 
-```
+```text
 ---
 Run — <goal>
 Iterations: <total>  Kept: <kept>  Reverted: <reverted>

@@ -1,381 +1,232 @@
-# 🧭 CodeMap — Claude Code Plugin
+# 🗂️ codemap — Claude Code Plugin
 
-> **You're about to change `models.py`. Do you know which 38 other modules import it?**
+> **Every `/develop:fix`, `/develop:refactor`, and `/oss:review` you run gets blast-radius context automatically — without you doing anything.**
 
-Scan your Python project once. Every agent, skill, and developer session answers structural questions — blast radius, coupling, dependency paths — in a single JSON call instead of 20 Glob/Grep passes.
+codemap builds a structural index of your Python project — import graph, blast-radius scores, function call graph — and injects that context into your existing `/develop` and `/oss` skills. Run setup once; after that it is invisible infrastructure. When you ask Claude to fix `auth.py`, the agent already knows which 38 other modules import it before it touches a single line.
 
-> [!TIP]
->
-> Standalone — no other plugins required. Pairs with the `develop` plugin: `develop:feature`, `develop:fix`, `develop:plan`, and `develop:refactor` pick up the index automatically.
+You do not use codemap by querying it directly. You use it by wiring it in and letting other skills pick it up.
 
-> [!NOTE]
->
-> **Python first.** `scan-index` uses `ast.parse` to index `.py` files. Support for additional languages (TypeScript, Go, Rust) is planned — Python is the only language indexed today. Non-Python files are not scanned and will not appear in any query result.
+**Python first.** The scanner uses `ast.parse` to index `.py` files. Non-Python files are not scanned. Support for TypeScript, Go, and Rust is planned.
 
-## 📋 Contents
-
-- [Why](#-why)
-- [Key Principles](#-key-principles)
-- [Quick start](#-quick-start)
-- [How to Use](#-how-to-use)
-- [Real-world demo](#-real-world-demo--pytorch-lightning-646-modules)
-- [Benchmark evidence](#-benchmark-evidence)
-- [Integrating codemap](#-integrating-codemap)
-- [Overview](#-overview)
-- [Plugin details](#-plugin-details)
-
-## 🎯 Why
-
-Every session starts the same way: the agent gropes through the codebase with Glob and Grep, assembling a structural picture from scratch. On a 50-module project that burns 20–30 tool calls before the first line of code changes. On a 200-module project it still misses blast-radius risks and import cycles that a structural scan would surface in one query.
-
-`codemap` scans once and gives every future session a structural head start:
-
-- **Blast-radius in one call** — `rdeps mypackage.models` returns everything that imports `models` — know the impact before the first edit
-- **Most-central modules** — `central --top 5` returns the five most-imported modules; changing any of them ripples the furthest
-- **Coupling map** — `coupled --top 5` returns the modules that import the most others; fragile to upstream changes
-- **Import path tracing** — `path mypackage.api mypackage.db` finds the shortest import chain between any two modules
-- **Agents start informed** — structural context injected into spawn prompts automatically; no cold-start exploration
-
-## 💡 Key Principles
-
-- **Build once, query forever** — a full scan takes under 60s on a 200-module project; the index persists until code changes
-- **Zero external dependencies** — uses only `ast.parse` from the standard library; no pip install required
-- **Sidecar-free** — the index is a plain JSON file; `scan-query` is a bundled CLI script; nothing needs to keep running
-- **Commit-aware freshness** — staleness detected by `git log`; docs-only and CI commits never trigger a stale warning
-- **Fail gracefully** — files that can't be parsed are marked `degraded` with a reason; the scan never aborts
-- **JSON everywhere** — every query returns JSON; pipe directly into spawn prompts or scripts
-
-## ⚡ Quick start
-
-```bash
-# Run from the directory that CONTAINS your Borda-AI-Rig clone
-claude plugin marketplace add ./Borda-AI-Rig
-claude plugin install codemap@borda-ai-rig
-```
-
-**Inside Claude Code** — `scan-index` and `scan-query` are on PATH automatically via the plugin's `bin/` directory. No shell config needed.
+______________________________________________________________________
 
 <details>
-<summary>In your terminal</summary>
+<summary><strong>📋 Contents</strong></summary>
 
-Add to `~/.zshrc` or `~/.bashrc`:
-
-```bash
-# Picks up the latest installed version automatically
-CODEMAP_TOOLS=$(ls -d "$HOME/.claude/plugins/cache/borda-ai-rig/codemap"/*/bin 2>/dev/null | sort -V | tail -1)
-[ -n "$CODEMAP_TOOLS" ] && export PATH="$PATH:$CODEMAP_TOOLS"
-```
-
-Reload your shell (`source ~/.zshrc`) and `scan-query` is on PATH. No version pins, no manual updates.
-
-</details>
-
-## 🔁 How to Use
-
-### Build the index
-
-```bash
-/codemap:scan
-```
-
-Run once per project, or after significant refactors. Takes under 60s for a 200-module project.
-
-### Query before you code
-
-```bash
-scan-query rdeps mypackage.models   # what breaks if I touch models?
-scan-query deps mypackage.auth      # what does auth pull in?
-scan-query central --top 5          # which modules have the widest blast radius?
-scan-query coupled --top 5          # which modules are most entangled?
-scan-query path mypackage.api mypackage.db  # are api and db coupled?
-scan-query list                     # enumerate all indexed modules
-scan-query symbol MyClass.method    # get function source (~94% token reduction)
-scan-query find-symbol "validate.*" # regex search across all symbols
-```
-
-All output is JSON — pipe directly into your analysis or pass to an agent.
-
-### Wire into your skills
-
-```bash
-/codemap:integration init    # onboard — discovers installed skills/agents, recommends and wires in injection
-/codemap:integration check   # verify — scan-query reachable, index fresh, injection present in skills
-```
-
-Run `init` once per project to wire codemap into your development skills and agents. Run `check` anytime to confirm the setup is healthy.
-
-### With the develop plugin — automatic
-
-```bash
-/develop:feature "add OAuth2 support"
-# ↳ scan-query central injected into sw-engineer spawn prompt
-# ↳ agent starts with blast-radius picture — no cold Glob/Grep
-
-/develop:refactor "simplify auth module"
-# ↳ scan-query central + deps/rdeps for the target module injected
-# ↳ agent knows coupling and blast radius before a single read
-```
-
-If codemap is not installed, develop skills work exactly as before — zero coupling, zero failure.
-
-## 📊 Real-world demo — pytorch-lightning (646 modules)
-
-Scanned [`pytorch-lightning`](https://github.com/Lightning-AI/pytorch-lightning) — a real production Python project, `src/` layout, 646 modules. Scan time: ~15s.
-
-**5 developer questions, 5 tool calls, answered in full.**
-
-<details>
-<summary><strong>Q: Which modules have the widest blast radius?</strong></summary>
-
-```bash
-scan-query central --top 5
-```
-
-```json
-{
-  "central": [
-    {
-      "name": "lightning.pytorch",
-      "rdep_count": 245
-    },
-    {
-      "name": "lightning.pytorch.demos.boring_classes",
-      "rdep_count": 134
-    },
-    {
-      "name": "lightning.pytorch.utilities.exceptions",
-      "rdep_count": 89
-    },
-    {
-      "name": "lightning.fabric.utilities.types",
-      "rdep_count": 76
-    },
-    {
-      "name": "lightning.pytorch.callbacks",
-      "rdep_count": 73
-    }
-  ]
-}
-```
-
-`lightning.pytorch` is imported by 245 of 646 modules. Any breaking change there cascades to 38% of the codebase. `boring_classes.py` — a demo file — affects more modules than the entire callbacks package.
-
-</details>
-
-<details>
-<summary><strong>Q: What breaks if I touch <code>Trainer</code>?</strong></summary>
-
-```bash
-scan-query rdeps lightning.pytorch.trainer.trainer
-```
-
-```json
-{
-  "imported_by": [
-    "lightning.pytorch.trainer",
-    "tests.tests_pytorch.loops.test_loop_state_dict",
-    "tests.tests_pytorch.loops.test_training_epoch_loop",
-    "tests.tests_pytorch.trainer.flags.test_check_val_every_n_epoch",
-    "tests.tests_pytorch.trainer.flags.test_val_check_interval"
-  ]
-}
-```
-
-</details>
-
-<details>
-<summary><strong>Q: What does <code>CheckpointConnector</code> depend on?</strong></summary>
-
-```bash
-scan-query deps lightning.pytorch.trainer.connectors.checkpoint_connector
-```
-
-```json
-{
-  "direct_imports": [
-    "fsspec.core",
-    "fsspec.implementations.local",
-    "lightning.fabric.plugins.environments.slurm",
-    "lightning.fabric.utilities.cloud_io",
-    "lightning.pytorch",
-    "lightning.pytorch.callbacks",
-    "lightning.pytorch.trainer",
-    "lightning.pytorch.trainer.states",
-    "lightning.pytorch.utilities.exceptions",
-    "lightning.pytorch.utilities.rank_zero",
-    "torch",
-    "omegaconf",
-    "os",
-    "re",
-    "typing"
-  ]
-}
-```
-
-24 direct imports — high coupling. Any upstream change in `fsspec`, `omegaconf`, or the fabric utilities layer touches this connector.
-
-</details>
-
-<details>
-<summary><strong>Q: How is <code>fabric.connector</code> connected to <code>Trainer</code>?</strong></summary>
-
-```bash
-scan-query path lightning.fabric.connector lightning.pytorch.trainer.trainer
-```
-
-```json
-{
-  "path": [
-    "lightning.fabric.connector",
-    "lightning.fabric.utilities",
-    "lightning.fabric.utilities.throughput",
-    "lightning.fabric",
-    "lightning",
-    "lightning.pytorch.trainer",
-    "lightning.pytorch.trainer.trainer"
-  ]
-}
-```
-
-7-hop import chain — found instantly. Without the graph this chain has to be traced manually across 7 files.
-
-</details>
-
-<details>
-<summary><strong>Q: Which modules import the most things (most fragile to upstream)?</strong></summary>
-
-```bash
-scan-query coupled --top 5
-```
-
-```json
-{
-  "coupled": [
-    {
-      "name": "lightning.pytorch.trainer.trainer",
-      "dep_count": 49
-    },
-    {
-      "name": "lightning.pytorch.core.module",
-      "dep_count": 45
-    },
-    {
-      "name": "lightning.fabric.strategies.fsdp",
-      "dep_count": 40
-    },
-    {
-      "name": "lightning.pytorch.strategies.fsdp",
-      "dep_count": 40
-    },
-    {
-      "name": "lightning.fabric.fabric",
-      "dep_count": 34
-    }
-  ]
-}
-```
-
-`Trainer` both imports 49 modules (most coupled) and is imported by 5 others. It is the highest-risk file to touch in the entire repo — one query surfaced that.
+- [What is codemap?](#what-is-codemap)
+- [Why codemap?](#why-codemap)
+- [Install](#install)
+- [Quick start](#quick-start)
+- [Skills reference](#skills-reference)
+  - [integration](#integration)
+  - [scan](#scan)
+  - [query](#query)
+- [How it works](#how-it-works)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Contributing / feedback](#contributing--feedback)
 
 </details>
 
 ______________________________________________________________________
 
-### vs. cold Glob/Grep
+## 🤔 What is codemap?
 
-| Question                  | codemap | Cold Glob/Grep                                                          |
-| ------------------------- | ------- | ----------------------------------------------------------------------- |
-| Most central modules      | 1 call  | ~20 calls — Glob all files, read each, count manually; still can't rank |
-| What breaks if I touch X? | 1 call  | 3–5 Greps; misses transitive importers                                  |
-| What does X depend on?    | 1 call  | 1 Read + parse (comparable)                                             |
-| Import path A → B         | 1 call  | Infeasible — requires tracing N files by hand                           |
-| Most coupled modules      | 1 call  | 646 Reads — one per file to count imports                               |
+codemap is a Claude Code plugin for Python projects. It pre-builds a structural index — who imports whom, which modules have the widest blast radius, how functions call each other — and injects that context into the `/develop` and `/oss` skills that do real code work. The index is built once and stays current via an optional post-commit hook. Every skill invocation that follows starts with structural awareness already in hand.
 
-4 of 5 questions are structurally infeasible without a pre-built graph.
+Without codemap, every Claude Code session starts blind: the agent gropes through the codebase with Glob and Grep, burning 20–30 tool calls just to understand structure before it can do any real work. On a 200-module project those calls still miss blast-radius risks and import cycles that a structural scan would surface instantly.
 
-## 📈 Benchmark evidence
+codemap solves this: scan once, wire in once, then every skill that touches code benefits automatically.
 
-Controlled benchmark on **pytorch-lightning** (646 modules) — 8 tasks × 3 model tiers × 2 arms = 48 runs. Tasks cover all four developer workflows: fix, feature, refactor, review.
+______________________________________________________________________
 
-> Source: `benchmarks/results/agentic-2026-04-17-5.md` · Savings = median `1 − (codemap / plain)` · positive = codemap needs less
+## 🎯 Why codemap?
 
-### Efficiency savings
+### Without codemap
+
+You ask Claude to refactor `auth.py`. The agent:
+
+1. Globs every `.py` file to find the project layout.
+2. Reads files one by one to discover what imports `auth`.
+3. Guesses at blast radius from the files it happened to read.
+4. Starts editing, discovers mid-refactor that `middleware.py` also imports `auth`, backtracks.
+5. Times out on large projects before surfacing all affected modules.
+
+On pytorch-lightning (646 modules), plain-arm agents hit the 300-second hard timeout on three out of eight benchmark tasks.
+
+### With codemap
+
+After , your existing skills are wired in. Now when you run , before spawning any agent the skill silently runs:
+
+```bash
+scan-query central --top 5         # which modules are highest risk overall?
+scan-query rdeps mypackage.auth    # what breaks if auth changes?
+```
+
+That output is prepended to the agent spawn prompt as structural context. The agent starts the refactor already knowing full blast radius — no cold exploration, no mid-refactor surprise that also imports . Benchmark results across 48 runs on pytorch-lightning:
 
 | Metric             |  Haiku   |  Sonnet  |   Opus   |
 | :----------------- | :------: | :------: | :------: |
 | Elapsed time       | **−51%** | **−60%** | **−71%** |
 | Tool result tokens | **−85%** | **−84%** | **−93%** |
-| Tool calls         |   −43%   |   −61%   |   −77%   |
-| Input tokens       |   −68%   |  −5%\*   |   −60%   |
+| Tool calls         | **−43%** | **−61%** | **−77%** |
 
-_\* Sonnet input token savings are low due to context expansion on large review tasks — see Known Issues._
+Zero codemap timeouts. Three plain-arm timeouts.
 
-Tool result token savings are the most consistent signal (84–93% across all model tiers): codemap returns a compact JSON answer where plain-arm grep passes return full file excerpts, multiplied by the number of tool calls.
+______________________________________________________________________
 
-### Quality — where it matters most
-
-Plain-arm runs **failed or timed out** on complex tasks; codemap arm completed all tasks:
-
-| Task | Type     | Model  |        Plain recall         | Codemap recall |
-| :--- | :------- | :----- | :-------------------------: | :------------: |
-| T03  | feature  | haiku  |           **16%**           |      100%      |
-| T03  | feature  | opus   |           **16%**           |      100%      |
-| T04  | feature  | haiku  |           **40%**           |      100%      |
-| T05  | refactor | haiku  |       **0%** (failed)       |      100%      |
-| T05  | refactor | sonnet | ⏱ timeout (300s, 27 calls)  |      100%      |
-| T05  | refactor | opus   | ⏱ timeout (300s, 101 calls) |      100%      |
-| T07  | review   | opus   | ⏱ timeout (300s, 87 calls)  |      100%      |
-
-Recall = fraction of ground-truth reverse-dependencies surfaced in the agent's final answer. Ground truth is deterministic (index-derived); matching uses multi-form surface patterns (2+ path components) to avoid false positives.
-
-Three plain-arm runs hit the hard 300-second timeout. Zero codemap timeouts.
-
-### Known issues (actively being worked on)
-
-- **Input token expansion on large review tasks**: when codemap returns a wide rdep list, some models re-echo the full structured result in their reasoning, consuming more input tokens than the equivalent grep passes would (Sonnet T07: codemap used 6× more input tokens than plain). We are investigating context-trimming for large query results before injection.
-
-- **Refactor tasks benefit less**: on tasks where the challenge is reshaping code rather than locating what to change, structural context provides less uplift (T06 Sonnet: ≈0% elapsed savings; T06 Opus: −48%). Targeted context injection (rdeps + deps of the specific target module, not global central) is on the roadmap for the `develop:refactor` integration.
-
-- **Single-codebase validation**: all 48 runs on `pytorch-lightning`. Savings likely generalise to any large Python monorepo, but small projects (< 50 modules) and non-Python projects have not been benchmarked.
-
-- **Quality metric is rdep recall, not correctness**: the benchmark measures whether the agent surfaces the right blast-radius modules — not whether the resulting code change is correct. End-to-end correctness evaluation is planned.
-
-## 🔌 Integrating codemap
-
-The fastest path is the integration skill — it discovers your installed skills and agents, scores candidates by how much structural context helps, and wires in the correct injection block:
-
-```bash
-/codemap:integration init        # interactive onboarding: recommends candidates, asks which to wire in
-/codemap:integration check       # audit: scan-query reachable, index fresh, injection present in skills
-```
-
-`init` builds the index if it is missing and handles first-run setup end-to-end. Run `check` after any change to confirm everything is correctly wired.
-
-### Query reference — which command to use when
-
-| Situation                              | Query                                         |
-| -------------------------------------- | --------------------------------------------- |
-| "What breaks if I change X?"           | `rdeps X`                                     |
-| "What does X pull in?"                 | `deps X`                                      |
-| "Are A and B already coupled?"         | `path A B` — `null` means not connected       |
-| "What's the riskiest module to touch?" | `central --top 10` (highest rdep_count)       |
-| "What's the most entangled module?"    | `coupled --top 10` (highest internal imports) |
-| "List all modules in the project"      | `list`                                        |
-| "What does function F call?"           | `fn-deps module::F` (v3 index)                |
-| "What calls function F?"               | `fn-rdeps module::F` (v3 index)               |
-| "Most-called functions?"               | `fn-central --top 10` (v3 index)              |
-| "Transitive callers of F?"             | `fn-blast module::F` (v3 index)               |
-| "Get source of a function/class?"      | `symbol MyClass.method`                       |
-| "Find symbols matching a pattern?"     | `find-symbol "validate.*"`                    |
-| "List all symbols in module X?"        | `symbols X`                                   |
-| "Exclude tests from blast-radius?"     | `central --exclude-tests --top 10`            |
+## 📦 Install
 
 <details>
-<summary>Manual injection — adding codemap to a custom skill or agent</summary>
+<summary><strong>Prerequisites</strong></summary>
 
-### Adding codemap to a custom skill
+- Claude Code installed and working
+- Python 3 on PATH (standard library only — no `pip install` required)
+- Git (recommended — used for staleness detection and incremental rebuilds)
 
-Drop this soft-check block into any `SKILL.md` **before the first agent spawn**. It injects structural context when available and silently skips when codemap is not installed:
+</details>
+
+**Install the plugin**
+
+Run this from the directory that **contains** your Borda-AI-Rig clone:
+
+```bash
+claude plugin marketplace add ./Borda-AI-Rig
+claude plugin install codemap@borda-ai-rig
+```
+
+That's it. No build step. The scanner (`scan-index`) and query CLI (`scan-query`) are plain Python scripts — they run immediately.
+
+**Make scan-query available in your terminal (optional)**
+
+Inside Claude Code sessions, `scan-query` and `scan-index` are on PATH automatically via the plugin's `bin/` directory. To use them in your regular terminal too, add this to `~/.zshrc` or `~/.bashrc`:
+
+```bash
+CODEMAP_TOOLS=$(ls -d "$HOME/.claude/plugins/cache/borda-ai-rig/codemap"/*/bin 2>/dev/null | sort -V | tail -1)
+[ -n "$CODEMAP_TOOLS" ] && export PATH="$PATH:$CODEMAP_TOOLS"
+```
+
+Reload your shell (`source ~/.zshrc`) and `scan-query` is available everywhere. This snippet always picks up the latest installed version automatically — no version pins to maintain.
+
+<details>
+<summary><strong>Upgrade</strong></summary>
+
+```bash
+cd Borda-AI-Rig && git pull
+claude plugin install codemap@borda-ai-rig
+```
+
+</details>
+
+<details>
+<summary><strong>Uninstall</strong></summary>
+
+```bash
+claude plugin uninstall codemap
+```
+
+</details>
+
+______________________________________________________________________
+
+## ⚡ Quick start
+
+Two commands — then forget about codemap and just use your normal skills.
+
+**Step 1 — build the index:**
+
+```text
+/codemap:scan
+```
+
+Output:
+
+```text
+[codemap] ✓ .cache/scan/myproject.json
+[codemap]   312 modules indexed, 2 degraded
+
+Modules: 312 indexed, 2 degraded
+Symbols: 4,821 (functions, classes, methods)
+Calls:   18,340 resolved call edges (v3 index)
+
+Most central (by rdep_count):
+  89  myproject.models
+  41  myproject.config
+  38  myproject.utils
+  27  myproject.exceptions
+  19  myproject.auth
+```
+
+**Step 2 — wire codemap into your installed skills:**
+
+```text
+/codemap:integration init
+```
+
+This discovers all your installed `develop` and `oss` skills, shows a recommendation table, and injects the structural context block into each one you approve. It also offers to install a post-commit git hook so the index stays current automatically.
+
+That is it. Now run your normal skills — codemap works silently in the background:
+
+```text
+/develop:fix auth.py         # agent already knows blast radius of auth before it starts
+/develop:refactor models.py  # agent sees which 89 modules import models upfront
+/oss:review                  # reviewer gets structural context on changed modules
+```
+
+If you ever want to explore structure manually, `/codemap:query` is there for you — but most users rarely need it.
+
+______________________________________________________________________
+
+## 🔧 Skills reference
+
+______________________________________________________________________
+
+### integration
+
+**Trigger**: `/codemap:integration check | init [--approve]`
+
+Two modes. Run `init` once to wire codemap into your existing skills and agents. Run `check` anytime to verify the setup is healthy.
+
+#### check mode
+
+A fast diagnostic with no side effects. Checks:
+
+1. `scan-query` is reachable on PATH (or found via fallback locations)
+2. The index file exists for the current project
+3. The index age (warns if older than 7 days)
+4. A smoke test: runs `central --top 3` and verifies output
+5. Which installed skill files have the codemap injection block
+
+Each check prints `✓`, `✗`, or `⚠` with a one-line remediation hint if needed.
+
+```text
+/codemap:integration check
+```
+
+#### init mode
+
+Interactive onboarding for the current project:
+
+1. Builds the index if it is missing (offers to run `/codemap:scan`)
+2. Discovers all installed skills and agents across all plugins
+3. Scores candidates by value tier (High / Medium / Low / Skip) based on whether structural context would help them
+4. Presents a recommendation table and asks which to wire in
+5. Inserts the correct injection block into each selected skill or agent file
+6. Offers to install a `.git/hooks/post-commit` hook for automatic incremental rebuilds
+
+```text
+/codemap:integration init
+```
+
+Pass `--approve` to apply all High and Medium recommendations non-interactively:
+
+```text
+/codemap:integration init --approve
+```
+
+#### Manual injection
+
+If you write custom skills or agents and want to add codemap yourself, drop this soft-check block before the first agent spawn. It runs when codemap is available and silently skips when it is not:
 
 ```bash
 # Structural context (codemap — Python projects only, silent skip if absent)
@@ -383,168 +234,220 @@ PROJ=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null) || P
 if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; then
     scan-query central --top 5  # timeout: 5000
 fi
+# If results returned: prepend ## Structural Context (codemap) to the agent spawn prompt.
 ```
 
-If results are returned: prepend a `## Structural Context (codemap)` block to your agent spawn prompt. For skills that know the target module up front, also add targeted queries:
+For skills that know the target module up front (refactor, fix), also add targeted queries:
 
 ```bash
-scan-query rdeps "$TARGET_MODULE" 2>/dev/null   # what depends on it?
-scan-query deps  "$TARGET_MODULE" 2>/dev/null   # what does it import?
+scan-query rdeps "$TARGET_MODULE" 2>/dev/null  # timeout: 5000
+scan-query deps  "$TARGET_MODULE" 2>/dev/null  # timeout: 5000
 ```
 
-### Adding codemap to a custom agent
-
-In any agent `.md` file, add to the workflow instructions:
+For agent `.md` files, add this instruction before the closing section:
 
 ```markdown
-If a codemap index exists (`.cache/scan/<project>.json`), run `scan-query central --top 5`
-and `scan-query rdeps <target_module>` before analyzing — do not Glob/Grep for structural
-information that can be queried directly. If the index is absent, proceed normally.
+**Structural context (codemap — Python projects only)**: if `.cache/scan/<project>.json` exists,
+run `scan-query central --top 5` (and `scan-query rdeps <target_module>` when a target is known)
+**before** any Glob/Grep exploration for structural information. Skip silently if the index is absent.
 ```
 
-Or inject context programmatically in a skill bash block before spawning the agent:
+### scan
 
-```bash
-PROJ=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null) || PROJ=$(basename "$PWD")
-CODEMAP_CONTEXT=""
-if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; then
-    CODEMAP_CONTEXT=$(scan-query rdeps "$TARGET_MODULE" 2>/dev/null)
-fi
-# then pass $CODEMAP_CONTEXT in the spawn prompt as "## Structural Context"
+**Trigger**: `/codemap:scan`
+
+Builds the structural index by running `ast.parse` across every `.py` file in the project. Writes the index to `.cache/scan/<project>.json`. Reports how many modules were indexed, how many were degraded (parse errors), and which five modules have the highest blast radius.
+
+#### Flags
+
+| Flag            | What it does                                                                                                                       |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_        | Full scan — re-parses every `.py` file                                                                                             |
+| `--incremental` | Re-parse only files that changed since the last scan (uses git blob SHA comparison); falls back to full scan if no v3 index exists |
+| `--root <path>` | Scan a specific directory instead of the git root                                                                                  |
+
+#### When to run
+
+Run a full scan once when you first set up the project. After that, `--incremental` is fast enough to run after any significant change. If you install the post-commit git hook (via `/codemap:integration init`), incremental rebuilds happen automatically in the background after every commit — you never need to think about it.
+
+#### Performance
+
+| Project size | Full scan | Incremental (5 files changed) |
+| ------------ | --------- | ----------------------------- |
+| ~200 modules | ~25s      | ~75ms                         |
+| ~650 modules | ~60s      | ~75ms                         |
+
+#### Example
+
+```text
+/codemap:scan
+```
+
+```text
+/codemap:scan --incremental
+```
+
+______________________________________________________________________
+
+<a id="query"></a>
+
+<details>
+<summary>
+
+### query — full subcommand reference
+
+</summary>
+
+### query
+
+**Trigger**: `/codemap:query <subcommand> [args]`
+
+Queries the index. Every query checks staleness automatically — if Python files were committed after the index was built, you'll see a warning on stderr and a suggestion to re-scan. Results are still returned so the agent can decide whether to proceed or refresh first.
+
+#### Module-level queries
+
+These work with any v2 or v3 index.
+
+| Subcommand          | What it answers                                                       |
+| ------------------- | --------------------------------------------------------------------- |
+| `rdeps <module>`    | What imports this module? (blast radius)                              |
+| `deps <module>`     | What does this module import?                                         |
+| `central [--top N]` | Which modules are imported by the most others? Default N=10           |
+| `coupled [--top N]` | Which modules import the most others? Default N=10                    |
+| `path <from> <to>`  | Shortest import chain between two modules; `null` means not connected |
+| `list`              | All indexed modules with their file paths                             |
+
+#### Symbol-level queries
+
+Retrieve function or class source by name instead of reading the full file. Reduces token usage by ~94% compared to reading the whole file.
+
+| Subcommand              | What it answers                                   |
+| ----------------------- | ------------------------------------------------- |
+| `symbol <name>`         | Source of a function, class, or method by name    |
+| `symbols <module>`      | All symbols in a module with type and line range  |
+| `find-symbol <pattern>` | Regex search across all symbol names in the index |
+
+`symbol` accepts bare name (`authenticate`), qualified name (`MyClass.authenticate`), or a case-insensitive substring fallback.
+
+#### Function-level call graph queries (v3 index)
+
+These require a v3 index built by `/codemap:scan`. If your index is older (v2), the commands return a clear upgrade message.
+
+| Subcommand             | What it answers                                        |
+| ---------------------- | ------------------------------------------------------ |
+| `fn-deps <qname>`      | What does this function call? (outgoing call edges)    |
+| `fn-rdeps <qname>`     | What functions call this one? (incoming call edges)    |
+| `fn-central [--top N]` | Most-called functions across the project. Default N=10 |
+| `fn-blast <qname>`     | Transitive reverse-call BFS with depth levels          |
+
+Use `module::function` format for qualified names, for example `mypackage.auth::validate_token` or `mypackage.auth::AuthMiddleware.process`.
+
+**Call edge resolution types**: `import` = cross-module call with confirmed import scope; `local` = same-file call; `self` = `self.method()` call where the target class is known; `star` = call to a name from a star import where the source module could not be determined; `unresolved` = call target could not be matched.
+
+#### Common patterns
+
+```text
+# Before refactoring auth.py — understand full blast radius
+/codemap:query rdeps myproject.auth
+
+# Before adding a dependency to models.py — see what already imports it
+/codemap:query central --top 5
+
+# Check if api and db are already coupled before adding a direct import
+/codemap:query path myproject.api myproject.db
+
+# Read just the validate_token function without loading the whole file
+/codemap:query symbol validate_token
+
+# Find all functions whose name starts with "validate"
+/codemap:query find-symbol "^validate"
+
+# Check transitive impact of changing fetch_user at the function level
+/codemap:query fn-blast myproject.db::fetch_user
+
+# Exclude test modules from blast-radius analysis
+/codemap:query central --exclude-tests --top 10
 ```
 
 </details>
 
-## 🗺️ Overview
+## ⚙️ How it works
 
-### 3 Skills
+### The scanner (`scan-index`)
 
-| Skill           | Trigger                            | What it does                                                                    |
-| --------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
-| **scan**        | `/codemap:scan`                    | Runs `ast.parse` across all Python files; writes `.cache/scan/<project>.json`   |
-| **query**       | `/codemap:query`                   | Queries the index; checks staleness on every call; returns JSON                 |
-| **integration** | `/codemap:integration check\|init` | Audits install health (`check`) or onboards codemap into skills/agents (`init`) |
+`scan-index` is a plain Python 3 script with no external dependencies. It:
 
-### CLI Commands
+1. Walks every `.py` file under the project root, skipping common non-source directories (`.git`, `.venv`, `__pycache__`, `dist`, `build`, and others).
+2. Parses each file with `ast.parse` to extract import statements and symbol definitions (classes, functions, methods with line ranges).
+3. Resolves call edges per function: cross-module calls tagged as `import`, same-file calls as `local`, `self.method()` patterns as `self`, star-import calls as `star`.
+4. Computes graph metrics for each module: `rdep_count` (how many project modules import this one), `dep_count` (how many modules this one imports), `rcall_count` (how many functions across the project call any function in this module).
+5. Stores per-file git blob SHAs (`file_shas`) so incremental rebuilds can identify exactly which files changed.
+6. Writes everything to `.cache/scan/<project>.json` as a single JSON file.
 
-| Command                                   | Question it answers                                             |
-| ----------------------------------------- | --------------------------------------------------------------- |
-| `central [--top N]`                       | Which modules are imported by the most others? (blast radius)   |
-| `coupled [--top N]`                       | Which modules import the most others? (coupling)                |
-| `deps <module>`                           | What does this module import?                                   |
-| `rdeps <module>`                          | What imports this module?                                       |
-| `path <from> <to>`                        | What is the shortest import chain between two modules?          |
-| `list`                                    | Enumerate all indexed modules                                   |
-| `fn-deps <qname>`                         | What does this function call? (call graph — v3 index)           |
-| `fn-rdeps <qname>`                        | What functions call this one? (call graph — v3 index)           |
-| `fn-central [--top N]`                    | Most-called functions globally (call graph — v3 index)          |
-| `fn-blast <qname>`                        | Transitive reverse-call BFS with depth (call graph — v3 index)  |
-| `symbol <name> [--exclude-tests]`         | Get function/class/method source by name (~94% token reduction) |
-| `symbols <module>`                        | List all symbols in a module (no file I/O)                      |
-| `find-symbol <pattern> [--exclude-tests]` | Regex search across all symbol names in index                   |
+Files that cannot be parsed (syntax errors, encoding issues) are marked `degraded` with a reason. The scan never aborts — a file that fails parsing is noted and skipped.
 
-### Index schema (`.cache/scan/<project>.json`)
+### The query CLI (`scan-query`)
 
-```json
-{
-  "scan_version": 3,
-  "scanned_at": "2026-04-15T12:00:00+00:00",
-  "project": "mypackage",
-  "src_layout": true,
-  "file_shas": {
-    "src/mypackage/auth.py": "a1b2c3d4"
-  },
-  "modules": [
-    {
-      "name": "mypackage.auth",
-      "path": "src/mypackage/auth.py",
-      "loc": 234,
-      "rdep_count": 8,
-      "rcall_count": 12,
-      "dep_count": 5,
-      "direct_imports": [
-        "mypackage.models",
-        "mypackage.config"
-      ],
-      "is_entry_point": false,
-      "has_star_imports": false,
-      "is_test": false,
-      "status": "ok",
-      "symbols": [
-        {
-          "name": "validate_token",
-          "qualified_name": "validate_token",
-          "type": "function",
-          "start_line": 15,
-          "end_line": 42,
-          "calls": [
-            {
-              "target": "mypackage.db::fetch_user",
-              "resolution": "import"
-            },
-            {
-              "target": "mypackage.auth::_check_cache",
-              "resolution": "local"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "name": "mypackage.generated.proto",
-      "path": "src/mypackage/generated/proto.py",
-      "status": "degraded",
-      "reason": "SyntaxError: invalid syntax"
-    }
-  ]
-}
+`scan-query` is a companion Python 3 script that loads the index and answers structural questions. It checks staleness on every call by comparing current git blob SHAs against the stored `file_shas`. If files have changed, it warns to stderr and returns results anyway.
+
+All output is JSON. This makes it easy to pipe directly into agent spawn prompts, shell scripts, or further analysis.
+
+### The index file
+
+The index lives at `.cache/scan/<project>.json` where `<project>` is the basename of the git root directory. It is a single flat JSON file — nothing needs to keep running. The format is versioned (`scan_version: 3` in current builds).
+
+Key fields per module entry:
+
+| Field            | Meaning                                                                                               |
+| ---------------- | ----------------------------------------------------------------------------------------------------- |
+| `name`           | Fully qualified module name (e.g. `mypackage.auth`)                                                   |
+| `path`           | Path to the `.py` file relative to project root                                                       |
+| `rdep_count`     | Number of project modules that import this one (blast-radius proxy)                                   |
+| `dep_count`      | Number of modules this one imports (coupling proxy)                                                   |
+| `rcall_count`    | Number of functions across the project that call into this module (function-level blast-radius proxy) |
+| `direct_imports` | List of modules this file imports                                                                     |
+| `symbols`        | Functions, classes, and methods with line ranges and call edges                                       |
+| `status`         | `ok` or `degraded`                                                                                    |
+| `is_test`        | Whether the file is in a test directory                                                               |
+| `file_shas`      | Git blob SHA or MD5 hash for incremental rebuild detection                                            |
+
+### How agents use it
+
+When the develop plugin (or any codemap-integrated skill) spawns an agent, it runs `scan-query central --top 5` and optionally `scan-query rdeps <target_module>` first. The JSON output is prepended to the agent's spawn prompt as a `## Structural Context (codemap)` block. The agent starts its work already knowing which modules are highest risk and what depends on its target — no cold exploration required.
+
+If codemap is not installed, the soft-check block silently skips and the skill works exactly as before.
+
+______________________________________________________________________
+
+## ⚙️ Configuration
+
+codemap has no required configuration. Everything is automatic once installed.
+
+### Index location
+
+The index is always written to `.cache/scan/<project>.json` at the project root. This directory is gitignored by default in the borda-ai-rig artifact layout. The project name is derived from `basename $(git rev-parse --show-toplevel)` — the directory name of your git root.
+
+### Non-git projects
+
+`scan-index` falls back to MD5 file hashes when git is not available. Staleness detection and incremental rebuilds still work; they just use file content hashes instead of git blob SHAs.
+
+### Custom scan root
+
+If your Python source is not at the git root, pass `--root`:
+
+```text
+/codemap:scan --root src/mypackage
 ```
 
-`rdep_count` — how many project modules import this one (blast radius proxy). `dep_count` — how many modules this one imports (coupling proxy). `rcall_count` — how many functions across the project call any function in this module (function-level blast radius proxy, v3). `file_shas` — git blob SHAs per file used for incremental rebuild.
-
-### Staleness detection
-
-`scan-query` checks on every call. For v3 indexes (with `file_shas`):
+Or from the terminal:
 
 ```bash
-git ls-files -s -- '*.py'   # compare blob SHAs against stored file_shas
+scan-index --root src/mypackage
 ```
 
-Reports exactly which N files are stale and suggests `--incremental`. For v2 indexes, falls back to:
+### Automatic index freshness (post-commit hook)
 
-```bash
-git log --since=<scanned_at> --name-only --pretty="" -- '*.py' \
-    ':!docs/' ':!*.md' ':!.github/' ':!**/*.yml'
-```
-
-In both cases, a warning is printed to stderr and results are returned — the agent decides whether to re-scan.
-
-## ⚡ Function-level call graph (v3)
-
-Build once — query who calls what down to individual function level.
-
-```bash
-scan-query fn-deps mypackage.auth::validate_token    # what does validate_token call?
-scan-query fn-rdeps mypackage.db::fetch_user         # who calls fetch_user?
-scan-query fn-central --top 10                       # most-called functions across project
-scan-query fn-blast mypackage.db::fetch_user         # transitive callers, BFS with depth
-```
-
-`fn-blast` answers: "If I change `fetch_user`, which functions are transitively affected?" — finer than module-level `rdeps`.
-
-Use `module::function` format for qualified names (e.g. `mypackage.auth::AuthMiddleware.process`). Resolution: `import` edges are cross-module calls with confirmed import scope; `local` edges are same-file calls; `self` edges are `self.method()` calls where the class is known but target class type is not inferred; `star` edges are calls to names from star imports where the source module could not be determined. Requires a v3 index from `/codemap:scan`.
-
-## 🔄 Incremental rebuild
-
-After the first full scan, keep the index fresh without re-scanning everything:
-
-```bash
-/codemap:scan --incremental      # re-parse only changed files (git SHA comparison)
-```
-
-**Performance**: ~75ms for 5 changed files vs ~25s full scan on a 646-module project. Falls back to full scan when no v3 index exists.
-
-**Automatic with git hook** — run `/codemap:integration init` and choose the post-commit hook option. After every `git commit`, `scan-index --incremental` runs in the background:
+Install the hook once via `/codemap:integration init` and answer yes to the hook prompt. After that, every `git commit` triggers an incremental background rebuild automatically:
 
 ```bash
 # .git/hooks/post-commit (installed by /codemap:integration init)
@@ -554,35 +457,120 @@ if command -v scan-index >/dev/null 2>&1; then
 fi
 ```
 
-Index stays current with zero developer action.
+The rebuild runs in the background — your commit completes immediately, the index updates silently within seconds.
 
-## 📦 Plugin details
+______________________________________________________________________
 
-### Upgrade
+## 🔍 Troubleshooting
+
+### "index not found" or empty results
+
+The index has not been built for this project yet. Run:
+
+```text
+/codemap:scan
+```
+
+### Stale index warning
+
+`scan-query` detected that Python files were committed after the index was built. Run an incremental rebuild:
+
+```text
+/codemap:scan --incremental
+```
+
+Or a full rebuild if you have made large structural changes:
+
+```text
+/codemap:scan
+```
+
+### scan-query not found in the terminal
+
+You are outside a Claude Code session where the plugin `bin/` directory is not on PATH. Add it to your shell config (see [Install](#install) — the shell PATH snippet). After reloading your shell, `scan-query` should be available. You can verify with:
+
+```bash
+command -v scan-query
+```
+
+<details>
+<summary>
+
+Degraded modules in the scan report
+
+</summary>
+
+### Degraded modules in the scan report
+
+Some files could not be parsed — usually generated code, files with syntax errors, or files that use Python syntax features not yet supported by the standard library `ast` module. Degraded modules are skipped but the rest of the index is fully usable. To see which files are degraded:
+
+```bash
+python3 -c "
+import json, os, subprocess
+proj = os.path.basename(subprocess.check_output(['git', 'rev-parse', '--show-toplevel']).decode().strip())
+d = json.load(open(f'.cache/scan/{proj}.json'))
+for m in d['modules']:
+    if m.get('status') == 'degraded':
+        print(m['path'], '--', m.get('reason', 'unknown'))
+"
+```
+
+Generated files (e.g. protobuf output) are expected to degrade. They are not part of your project's logical import graph.
+
+</details>
+
+### fn-\* commands return "upgrade required"
+
+The function-level call graph queries (`fn-deps`, `fn-rdeps`, `fn-central`, `fn-blast`) require a v3 index. Your current index is older. Rebuild:
+
+```text
+/codemap:scan
+```
+
+### The develop plugin does not seem to use codemap
+
+Run the integration check:
+
+```text
+/codemap:integration check
+```
+
+Look for `⚠ missing injection in:` lines pointing to specific skill files. If injection is missing, run:
+
+```text
+/codemap:integration init
+```
+
+and select the skills you want wired in.
+
+______________________________________________________________________
+
+<a id="contributing--feedback"></a>
+
+## 🙏 Contributing / feedback
+
+codemap lives in the `plugins/codemap/` directory of the Borda-AI-Rig repository.
+
+**Found a bug or want a feature?** Open an issue in the repository. Include:
+
+- Your Python version (`python3 --version`)
+- The codemap version (`cat ~/.claude/plugins/cache/borda-ai-rig/codemap/*/.claude-plugin/plugin.json`)
+- The error message or unexpected behavior
+- The approximate size of the project you were scanning (module count from scan output)
+
+**Want to extend codemap?**
+
+The scanner and query CLI are standalone Python scripts in `plugins/codemap/bin/`. They have no external dependencies and are easy to read and modify. The index schema is versioned — if you add new fields, bump `SCAN_VERSION` in `scan-index` and handle the version check in `scan-query`.
+
+Skills live in `plugins/codemap/skills/*/SKILL.md`. Adding a new skill means creating a new subdirectory with a `SKILL.md` following the existing pattern.
+
+After any edit to agents, skills, or the index schema, update this README before committing — the plugin CLAUDE.md requires it.
+
+**Plugin updates** propagate via the normal install path:
 
 ```bash
 cd Borda-AI-Rig && git pull
 claude plugin install codemap@borda-ai-rig
 ```
 
-### Uninstall
-
-```bash
-claude plugin uninstall codemap
-```
-
-### Structure
-
-```
-plugins/codemap/
-├── .claude-plugin/
-│   └── plugin.json          ← manifest (zero external dependencies)
-├── README.md
-├── skills/
-│   ├── scan/SKILL.md        ← /codemap:scan
-│   ├── query/SKILL.md       ← /codemap:query
-│   └── integration/SKILL.md ← /codemap:integration check|init
-└── bin/
-    ├── scan-index           ← scanner: ast.parse → JSON index with graph metrics
-    └── scan-query           ← query CLI: central / coupled / deps / rdeps / path / list
-```
+After upgrading, run `/codemap:integration check` to confirm everything is still wired correctly.

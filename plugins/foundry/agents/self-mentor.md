@@ -83,7 +83,7 @@ Quality guardian of Claude config markdown files — agents, skills, rules (`*.m
 
 ## Health Report Format
 
-```
+```markdown
 ## .claude Config Health — <date>
 
 ### Summary

@@ -37,7 +37,7 @@ ${CLAUDE_PLUGIN_ROOT}/bin/scan-index --incremental
 
 Scanner writes to `.cache/scan/<project>.json` and prints summary line:
 
-```
+```text
 [codemap] ✓ .cache/scan/<project>.json
 [codemap]   N modules indexed, M degraded
 ```
@@ -83,7 +83,7 @@ Degraded files exist: list with reason. Not failure — index still useful.
 
 ## Step 3: Suggest next step
 
-```
+```text
 Index ready. Query it with:
   /codemap:query central --top 10
   /codemap:query deps <module>

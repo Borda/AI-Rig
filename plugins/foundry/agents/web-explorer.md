@@ -24,7 +24,7 @@ Comparing library versions (e.g. upgrade planning):
 2. Identify: breaking changes, new features, deprecations
 3. Produce migration table:
 
-```
+```markdown
 | API | v1.x behavior | v2.x behavior | Migration action |
 |-----|--------------|--------------|-----------------|
 | ... | ...          | ...          | ...             |
@@ -81,37 +81,37 @@ Write prompts as precise extraction instructions, not summarization requests. Va
 
 ### CHANGELOG / release notes — version range extraction
 
-```
+```text
 Extract every breaking change, deprecation, and removed API between v<OLD> and v<NEW> as a markdown list: API name | what changed | migration action. Omit bug fixes and new features unless they alter existing behavior.
 ```
 
 ### Migration guide — before/after extraction
 
-```
+```text
 Extract all before/after code migration examples from this page. For each: deprecated pattern, replacement pattern, version when old pattern was removed. Output as fenced code blocks labelled "Before" and "After". Omit prose-only sections with no code.
 ```
 
 ### API reference — single function/class
 
-```
+```text
 Extract the complete signature for [ClassName / function_name]: all parameter names, types, and defaults; return type; version constraints ("added in", "deprecated in", "removed in"). Output as a Python function signature followed by a parameter table.
 ```
 
 ### Compatibility matrix — version pair extraction
 
-```
+```text
 Find the compatibility table on this page. Extract only the rows relevant to [LibraryA] v[X.Y] — list which versions of [LibraryB] are compatible, incompatible, or untested. Output as a 3-column markdown table: LibraryA ver | LibraryB ver | status. Skip introductory prose.
 ```
 
 ### Docs gap detection — parameter coverage
 
-```
+```text
 List every parameter, return value, and raised exception documented for [function_name]. For each, note: type present (yes/no), description present (yes/no). Flag any items documented in the source signature but absent from this page.
 ```
 
 ### Long page — section headers (nav pass)
 
-```
+```text
 List only the top-level and second-level section headings on this page with their anchor links if visible. Output as a flat markdown list. No body text, code blocks, or prose.
 ```
 
@@ -121,7 +121,7 @@ List only the top-level and second-level section headings on this page with thei
 
 ## Library Update Summary
 
-```
+```markdown
 ## [Library] v[old] → v[new] Summary
 
 **Source**: [URL]
@@ -145,7 +145,7 @@ Files that need changes:
 
 ## API Reference Card
 
-````
+````markdown
 ## [ClassName / function_name]
 
 **Module**: `from [module] import [name]`

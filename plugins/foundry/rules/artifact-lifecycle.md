@@ -8,7 +8,7 @@ paths:
 
 All runtime artifacts live at **project root**, not inside `.claude/`. Skill output dirs use dot-prefix (`.reports/`, `.temp/`, `.plans/`, etc.) — signals ephemeral.
 
-```
+```text
 .plans/
   blueprint/             ← /brainstorm spec and tree files  (was .brainstorming/)
   active/                ← todo_*.md, plan_*.md

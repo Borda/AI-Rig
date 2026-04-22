@@ -245,7 +245,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found → skip quali
 
 ## Final Report
 
-```
+```markdown
 ## Refactor Report: <target>
 
 ### Goal
@@ -289,7 +289,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found → skip quali
 
 **Spawn prompt template:**
 
-```
+```markdown
 You are a [foundry:sw-engineer|foundry:qa-specialist] teammate refactoring: [target].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2. Apply file locking protocol for concurrent edits.
 Your task: [refactoring steps 4 | characterization tests step 3].

@@ -293,7 +293,7 @@ Apply only if it does not require discarding local changes. If it conflicts with
 
 **Naming convention:**
 
-```
+```text
 <from-role>→<to-role>-<unix-timestamp>.patch
 ```
 

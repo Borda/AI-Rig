@@ -146,7 +146,7 @@ Parse $ARGUMENTS:
 
 ## Step 2: Create initial task
 
-```
+```text
 TaskCreate(
   subject="Resolve PR #<number> — gather action items",
   description="Fetch PR thread, linked issues, and/or review report; classify all comments into ACTION_ITEMS",
@@ -156,7 +156,7 @@ TaskCreate(
 
 Mark `in_progress` immediately:
 
-```
+```text
 TaskUpdate(task_id=<task_id_from_above>, status="in_progress")
 ```
 
@@ -170,7 +170,7 @@ When mode == **report**:
 
 Print before parsing findings:
 
-```
+```markdown
 ## Resolve — sources
 
 Mode   : report
@@ -263,7 +263,7 @@ Build `ACTION_ITEMS`: `[{id, type, author, summary, file, line, full_comment_tex
 
 Print right before action item table:
 
-```
+```markdown
 ## Resolve — sources
 
 Mode   : pr
@@ -276,7 +276,7 @@ Building action items…
 
 Print action item table:
 
-```
+```markdown
 ### Action Items — PR #<number>
 
 | Type | Author | Status | Summary | File:Line |
@@ -310,7 +310,7 @@ Find + read latest review report (`ls -t .temp/output-review-*.md 2>/dev/null | 
 
 Print right before merge summary and action item table:
 
-```
+```markdown
 ## Resolve — sources
 
 Mode   : pr + report
@@ -323,7 +323,7 @@ Building action items…
 
 Result: single merged `ACTION_ITEMS`. GitHub items first (`[gh][req]`/`[gh][suggest]`), then `[report]` items. Print merge summary before table:
 
-```
+```text
 Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
 ```
 
@@ -331,13 +331,13 @@ Report merged: <N> findings from /review · <M> deduplicated against GitHub comm
 
 Mark Step 2 task `completed`:
 
-```
+```text
 TaskUpdate(task_id=<step2_task_id>, status="completed")
 ```
 
 For each item in `ACTION_ITEMS` create task:
 
-```
+```text
 TaskCreate(
   subject="[<type>] <summary> — PR #<number>",
   description="Author: @<author> | File: <file:line or '—'> | <full_comment_text>",
@@ -396,7 +396,7 @@ git diff --name-only --diff-filter=U # timeout: 3000
 
 For each conflicted file, create task **before touching any file**:
 
-```
+```text
 TaskCreate(
   subject="Resolve conflict: <filepath> — PR #<number>",
   description="Merge conflict in <filepath> from merging origin/<BASE_REF> into <HEAD_REF>. Must be completed before action-item implementation begins.",
@@ -406,7 +406,7 @@ TaskCreate(
 
 Store returned task ID alongside each file path as `conflict_task_id`. Print conflict task table:
 
-```
+```markdown
 ### Merge Conflicts — PR #<number>
 
 | File | Task | Status |
@@ -467,7 +467,7 @@ Delegate per-file conflict edits to `foundry:sw-engineer`. Build spawn prompt fr
 
 Spawn `foundry:sw-engineer` (fill brackets from indicated steps):
 
-```
+```markdown
 Agent(subagent_type="foundry:sw-engineer", prompt="
 You are resolving merge conflicts in a checked-out PR branch.
 
@@ -513,7 +513,7 @@ git merge --continue --no-edit # timeout: 3000
 
 Print conflict report:
 
-```
+```markdown
 ### Conflict Resolution
 
 | File | Strategy | Notes |
@@ -526,7 +526,7 @@ Print conflict report:
 
 Mark all conflict tasks completed:
 
-```
+```text
 for each (filepath, conflict_task_id) pair from Step 5a: TaskUpdate(task_id=\<conflict_task_id>, status="completed")
 ```
 
@@ -558,7 +558,7 @@ git diff HEAD --stat  # timeout: 3000
 
 Mark item's task in_progress:
 
-```
+```text
 TaskUpdate(task_id=<item.task_id>, status="in_progress")
 ```
 
@@ -598,7 +598,7 @@ Record per-item: `committed <SHA>` or `skipped — <Codex reason>`.
 
 Mark item's task completed:
 
-```
+```text
 TaskUpdate(task_id=<item.task_id>, status="completed")
 ```
 
@@ -611,7 +611,7 @@ mkdir -p "$RUN_DIR" # timeout: 5000
 
 Spawn both in parallel:
 
-```
+```text
 Agent(subagent_type="foundry:linting-expert", prompt="Review all files changed in the current branch since origin/<BASE_REF>. List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
 
 Agent(subagent_type="foundry:qa-specialist", maxTurns=15, prompt="Review all files changed in the current branch since origin/<BASE_REF> for correctness, edge cases, and regressions. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
@@ -686,7 +686,7 @@ Mark remaining open tasks `completed`. Per-item tasks should be done by Step 8; 
 
 Then print:
 
-```
+```markdown
 ## Resolve Report — PR #<number>
 
 ### Contribution

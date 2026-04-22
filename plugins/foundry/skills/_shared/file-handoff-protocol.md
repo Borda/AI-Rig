@@ -54,7 +54,7 @@ Add task-specific keys (e.g. `"papers":5` for research, `"verdict":"approve"` fo
 
 ## Consolidator prompt template
 
-```
+```text
 Read all finding files in `<RUN_DIR>/`. Apply the consolidation rules from <checklist path>.
 Write the consolidated report to `<output path>` using the Write tool.
 Return ONLY a compact JSON envelope on your final line — nothing else after it:

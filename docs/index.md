@@ -1,18 +1,96 @@
-# Borda's AI-Rig
+# 🤖 Borda's AI-Rig
 
-Claude Code is a capable generalist, but serious Python/ML OSS work demands more than a generalist can deliver: it needs an agent that enforces your SemVer, benchmarks its own accuracy drift, validates a feature with a demo test before writing production code, and reviews a PR through six specialist lenses in a single command. This suite exists because that gap is real and the workarounds — copy-pasted prompts, ad-hoc review checklists, hoping the model remembers your conventions — don't scale. What you get by reading further is a set of five composable plugins, each targeting one hard part of the practitioner's loop, that turn Claude Code from a smart REPL into a disciplined development partner.
+> Five plugins that turn Claude Code into a disciplined development partner
 
-## Plugins
+Claude Code is a capable generalist. Serious Python and ML OSS work needs something more: an agent that enforces your SemVer, benchmarks its own accuracy drift, validates a feature with a demo test before writing production code, and reviews a PR through six specialist lenses in one command. This suite exists because that gap is real, and the usual workarounds — copy-pasted prompts, ad-hoc checklists, hoping the model remembers your conventions — do not scale.
 
-| Plugin                  | Key goal                                       | What it does                                                                                                                                                                                                                                       |
-| ----------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Foundry](foundry.md)   | **Sustainable AI-assisted dev infrastructure** | Packages the scaffolding that keeps specialised agents reliable over time: 8 domain agents, config lifecycle tools, quality gates (lint-on-save, teammate output quality), and a self-improvement loop via `/audit`, `/calibrate`, and `/distill`. |
-| [OSS](oss.md)           | **Remove the maintainer context-switch tax**   | Runs parallel 6-agent review in one command, routes a Codex pre-pass to filter trivial PRs, crafts contributor-facing replies in your project's voice, and drives a SemVer-disciplined release pipeline with changelog and migration guides.       |
-| [Develop](develop.md)   | **Proof before production code**               | Enforces a validation gate at every development mode — demo test before feature, regression test before fix, characterisation test before refactor — so no production code lands without evidence it solves the right problem.                     |
-| [Research](research.md) | **Structured methodology for ML improvement**  | Closes the loop that causes most ML experiments to fail silently: SOTA literature search feeds a judge gate, which gates an auto-rollback run, with an optional team mode that exercises parallel hypotheses simultaneously.                       |
-| [Codemap](codemap.md)   | **Instant structural answers, zero groping**   | Scans the import graph once and answers blast-radius, coupling, and dependency-path questions in a single JSON call — replacing the 20–30 Glob/Grep calls that otherwise open every session on a large codebase.                                   |
+Five composable plugins. Each one targets a hard part of the practitioner loop. Together they cover the full cycle from idea to shipped release.
 
-## Install
+______________________________________________________________________
+
+## 🤔 Why this exists
+
+**Before**: one generalist handles architecture, implementation, documentation, linting, testing, and performance with no boundary enforcement between them. Corrections made in one session evaporate. ML experiments run without a judge gate and silently fail to improve anything. PR reviews miss security issues because no one ran the right checklist. Releases get wrong SemVer because nobody counted the breaking changes.
+
+**After**: each part of the loop has a dedicated skill backed by a calibrated specialist agent. The agents know your conventions, enforce discipline at every gate, and feed corrections back into their own instructions. The feedback loop is closed.
+
+______________________________________________________________________
+
+## 🔌 The five plugins
+
+### 🏭 foundry — base infrastructure
+
+foundry is the foundation the other plugins build on. It packages eight non-overlapping specialist agents — software engineer, QA specialist, performance optimizer, solution architect, doc scribe, linting expert, web explorer, and self mentor — along with the lifecycle tools that keep them reliable over time. Without foundry, every other plugin falls back to a generic agent with a role-description prompt. With it, every dispatch lands on a calibrated specialist.
+
+**Best for:**
+
+- Keeping agent configuration healthy: `/foundry:audit` catches config drift before it becomes a debugging session
+- Measuring accuracy: `/foundry:calibrate` benchmarks recall versus stated confidence so you know exactly where agents fall short
+- Closing the self-improvement loop: `/foundry:distill` converts accumulated corrections into durable rule updates
+
+[Full documentation →](foundry.md)
+
+______________________________________________________________________
+
+### 🌱 oss — open-source maintainer workflows
+
+oss removes the context-switch tax of maintaining a public project. Four slash-command skills cover the recurring expensive parts of the maintainer loop — issue triage, PR review, resolving feedback, and releasing — backed by two specialist agents that own contributor communication and CI health.
+
+**Best for:**
+
+- Reviewing PRs fast: `/oss:review` runs a Codex pre-pass in ~60 seconds, then fans six specialist agents across architecture, tests, performance, docs, linting, and security in parallel
+- Closing review feedback completely: `/oss:resolve` reads live PR comments, deduplicates across sources, resolves conflicts semantically, and tags every fix so you can trace it
+- Shipping releases correctly: `oss:shepherd` enforces SemVer, writes the changelog, generates migration guides for breaking changes, and runs a readiness audit before any tag lands
+
+[Full documentation →](oss.md)
+
+______________________________________________________________________
+
+### 🛠️ develop — validate-first implementation
+
+develop enforces a single discipline across the full implementation lifecycle: prove you understand the problem before you touch production code. Six structured workflows — plan, feature, fix, refactor, debug, review — each have explicit validation gates that prevent moving forward on shaky ground.
+
+**Best for:**
+
+- Building features safely: `/develop:feature` requires a failing demo test before any implementation — if you cannot write the test, the feature is underspecified
+- Fixing bugs correctly: `/develop:fix` requires a failing regression test that reproduces the bug — you cannot verify the fix until you can reproduce the failure
+- Refactoring without breakage: `/develop:refactor` audits coverage and locks in characterization tests before moving a single line
+
+[Full documentation →](develop.md)
+
+______________________________________________________________________
+
+### 🔬 research — structured ML improvement
+
+research turns the messy, iterative cycle of ML improvement into a structured pipeline. You start with evidence from the literature, write a machine-readable experiment spec, get a methodology review before spending any GPU time, and run an automated improvement loop that commits every change atomically and rolls back anything that regresses your target metric.
+
+**Best for:**
+
+- Grounding experiments in the literature: `/research:topic` runs a SOTA search before you write a single line of code
+- Catching flawed designs early: `/research:judge` reviews the experiment spec for methodology problems — in minutes, not after 20 GPU-hours
+- Automated improvement loops: `/research:run` proposes changes, commits them, measures the metric, and rolls back regressions without you watching
+
+[Full documentation →](research.md)
+
+______________________________________________________________________
+
+### 🗂️ codemap — instant structural answers
+
+codemap scans your Python project once and builds a structural index — an import graph with blast-radius metrics, symbol locations, and a function-level call graph. Every Claude Code session that follows can answer structural questions in a single tool call instead of 20 Glob/Grep passes. On pytorch-lightning (646 modules), plain-arm agents hit the 300-second timeout on three out of eight benchmark tasks; with codemap, zero timeouts.
+
+**Best for:**
+
+- Knowing blast radius before refactoring: `scan-query rdeps mypackage.auth` returns every module that imports `auth` instantly
+- Identifying coupling hotspots: `scan-query central --top 5` surfaces the five modules with the widest blast radius
+- Eliminating cold-start exploration: agents start every session with full structural context, not a Glob/Grep marathon
+
+[Full documentation →](codemap.md)
+
+______________________________________________________________________
+
+## 📦 Install everything
+
+Run from the directory that **contains** your `Borda-AI-Rig` clone (not from inside it):
 
 ```bash
 claude plugin marketplace add ./Borda-AI-Rig
@@ -23,8 +101,72 @@ claude plugin install research@borda-ai-rig
 claude plugin install codemap@borda-ai-rig
 ```
 
-Post-install setup:
+One-time setup — run inside Claude Code after installing:
 
-```
+```text
 /foundry:init
 ```
+
+This merges settings, symlinks rule files, and confirms everything is wired correctly. It is idempotent — safe to re-run after any upgrade.
+
+Verify the installation worked:
+
+```text
+/foundry:audit setup
+```
+
+Zero critical findings means you are ready.
+
+______________________________________________________________________
+
+## 🧭 Where to start
+
+| If you want to…                                 | Start with                                                    |
+| ----------------------------------------------- | ------------------------------------------------------------- |
+| Set up the agent team and verify configuration  | `/foundry:audit setup` then `/foundry:calibrate routing fast` |
+| Review a PR with expert coverage                | `/oss:review`                                                 |
+| Build a new feature with a validation gate      | `/develop:feature`                                            |
+| Fix a bug and prove the fix                     | `/develop:fix`                                                |
+| Run a structured ML experiment                  | `/research:plan` then `/research:judge` then `/research:run`  |
+| Cut a release with correct SemVer and changelog | `/oss:release`                                                |
+| Understand blast radius before a refactor       | `/codemap:scan` then `scan-query rdeps <module>`              |
+| Measure whether agents are drifting in accuracy | `/foundry:calibrate`                                          |
+
+______________________________________________________________________
+
+## 🔗 How the plugins work together
+
+The plugins are designed to be composed. Here are three workflows that span the full suite:
+
+**Research → Develop → OSS: shipping an ML improvement**
+
+1. `/research:topic` — search the literature and identify the promising approach
+2. `/research:plan` + `/research:judge` — write the experiment spec and get methodology review
+3. `/research:run` — automated improvement loop with metric tracking and auto-rollback
+4. `/develop:feature` — implement the winning approach with a demo test gate
+5. `/oss:review` — six-agent parallel review before the PR merges
+6. `/oss:release` — SemVer-correct release with changelog and migration guide
+
+**Codemap → Develop → OSS: safe refactoring**
+
+1. `/codemap:scan` — build the structural index
+2. `scan-query central --top 5` — identify the riskiest modules to touch
+3. `/develop:refactor` — lock in characterization tests, then refactor with full blast-radius awareness
+4. `/oss:resolve` — close any review feedback in one pass before merge
+
+**Foundry → everything else: keeping the system honest**
+
+1. `/foundry:audit` — weekly config health check; catches drift in hooks, settings, and agent routing
+2. `/foundry:calibrate` — benchmarks recall and confidence across all agents; surfaces where quality has drifted
+3. `/foundry:distill` — converts the week's corrections into updated agent instructions and rules
+4. Repeat — the self-improvement loop runs continuously alongside your normal workflow
+
+______________________________________________________________________
+
+## 🤝 Contributing
+
+The agent and skill source lives in `plugins/` — one directory per plugin, each with its own `skills/`, `agents/`, and `rules/` subdirectories. If you find a gap in agent behavior, the right fix is usually a targeted edit to the agent's instruction file, not a new skill. If you find a workflow that should be a skill, open an issue describing the before/after and the command you wish existed.
+
+The `foundry` plugin's self-improvement loop (`/foundry:distill`) is specifically designed to absorb corrections: run it after a session where you caught the agent doing something wrong and it will propose instruction updates automatically.
+
+We are glad you are here.

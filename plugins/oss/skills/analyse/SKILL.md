@@ -180,7 +180,7 @@ Report at `$REPORT_FILE` guaranteed to exist — either reused via fast-path (St
 
 Print compact terminal summary:
 
-```
+```markdown
   Reply — N sentences  |  resolved: yes|no|partial
   [analysis refreshed — new activity since last report]  ← only if drift detected
 

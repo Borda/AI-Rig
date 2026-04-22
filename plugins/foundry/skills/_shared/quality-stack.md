@@ -162,7 +162,7 @@ Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: 
 **Context optimization between cycles**:
 
 - Context usage high → write review state to `.claude/state/develop-review-state.md` before compaction:
-  ```
+  ```markdown
   # Develop Review State
   cycle: <N>
   resolved: [list]

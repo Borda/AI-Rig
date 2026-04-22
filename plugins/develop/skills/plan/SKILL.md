@@ -171,7 +171,7 @@ Do not escalate: items resolvable from codebase, items that are risks (not block
 
 Compose brief — compact human-readable plan summary after all agent input incorporated:
 
-```
+```markdown
 <One-sentence summary of what the plan achieves and the main approach.>
 
 Classification : <feature|fix|refactor>
@@ -202,7 +202,7 @@ Co-review corrections applied (<N> agents, omit table if none):
 
 **Print to terminal**:
 
-```
+```text
 Plan -> <PLAN_FILE>
 
 <brief content exactly as written to the file>
@@ -212,7 +212,7 @@ Plan -> <PLAN_FILE>
 
 If unresolved items escalated, print each after brief:
 
-```
+```text
 ⚠ Issue: <one sentence>
   Alternatives: (a) ... (b) ... (c) ...
   Recommendation: <option> — <reason>
@@ -229,7 +229,7 @@ No quality stack, no Codex pre-pass, no review loop. Exit after printing summary
 
 End the plan document with:
 
-```
+```markdown
 ## Confidence
 **Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8 ⚠]
 **Gaps**:

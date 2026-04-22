@@ -10,7 +10,7 @@ Start every reply with bold anchor line summarising what was asked, then respons
 
 Example (actual template — copy structure, replace bracketed text):
 
-```
+```markdown
 **Re: [one-sentence summary of what was asked]**
 
 [full response here]

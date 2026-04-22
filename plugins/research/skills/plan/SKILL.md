@@ -57,7 +57,7 @@ time python3 "$ARGUMENTS"  # timeout: 60000
 
 Present top 5 bottleneck functions. Ask:
 
-```
+```markdown
 Top bottleneck functions:
 1. <function> — <cumtime>s (<percentage>%)
 2. <function> — <cumtime>s (<percentage>%)
@@ -83,7 +83,7 @@ Set as `<goal>`, proceed to P-P1.
 
 **Scope guard (first action)**: Before scanning, check `<goal>` is optimization goal. Input clearly not optimization goal (code question, regex/algo explanation, debug question, or any prompt without measurable improvement target) → print:
 
-```
+```text
 Warning: This input does not look like an optimization goal.
 /research:plan expects: "Reduce X" / "Increase Y" / "Improve Z metric".
 Use /research for explanatory questions.
@@ -103,7 +103,7 @@ Parse `<goal>`. Scan codebase to detect:
 
 Present config as code block for review. Include:
 
-```
+```yaml
 metric_cmd:      [command that prints a single numeric result]
 metric_direction: higher | lower
 guard_cmd:       [command that must pass (exit 0) on every kept commit]
@@ -121,25 +121,25 @@ After user confirms, run expert agent review before writing `program.md`. Dispat
 
 **Always** — spawn architect to validate scope coverage:
 
-```
+```text
 Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed research experiment scope.\n\nGoal: <goal>\nScope files: <scope_files>\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"confidence\":0.N}")
 ```
 
 **If `agent_strategy = ml` or goal contains ML keywords (accuracy, loss, model, training, inference, classification, regression)** — also spawn research:scientist:
 
-```
+```text
 Agent(subagent_type="research:scientist", prompt="Review a proposed ML experiment configuration.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nAgent strategy: <agent_strategy>\n\nCheck: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type?\n\nReturn ONLY: {\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"confidence\":0.N}")
 ```
 
 **If `agent_strategy = perf` or goal contains performance keywords (latency, throughput, wall-clock, speed, memory, FPS)** — also spawn perf:
 
-```
+```text
 Agent(subagent_type="foundry:perf-optimizer", prompt="Review a proposed performance experiment configuration.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\n\nCheck: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce?\n\nReturn ONLY: {\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"confidence\":0.N}")
 ```
 
 Print advisory block below config:
 
-```
+```text
 Advisory review:
   architect: <gaps or "scope looks complete">
   scientist:  <issues or "hypothesis is well-formed">   [only if dispatched]
@@ -163,19 +163,19 @@ Write file using canonical template, pre-populated from wizard findings:
 <one-paragraph description of what to improve and why>
 
 ## Metric
-```
+```yaml
 command: <metric_cmd from wizard>
 direction: higher | lower
 target: <optional numeric goal — campaign stops when crossed>
 ```
 
 ## Guard
-```
+```yaml
 command: <guard_cmd from wizard>
 ```
 
 ## Config
-```
+```yaml
 max_iterations: 20
 agent_strategy: auto | perf | code | ml | arch
 scope_files:
@@ -191,7 +191,7 @@ sandbox_network: none | bridge
 
 Print:
 
-```
+```text
 ✓ Program saved to program.md
 
 Next steps:

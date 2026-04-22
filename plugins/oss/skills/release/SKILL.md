@@ -172,7 +172,7 @@ mkdir -p "$SHEPHERD_DIR"
 # Write the generated draft content to: $SHEPHERD_DIR/draft.md before dispatching
 ```
 
-```
+```text
 Agent(subagent_type="oss:shepherd", prompt="Review the draft release content at <$SHEPHERD_DIR/draft.md> for public-facing voice and tone. Apply shepherd voice guidelines: human and direct, no internal jargon, no staff names, no internal maintenance details. Write the revised content to <$SHEPHERD_DIR/shepherd-revised.md>. Return ONLY: {\"status\":\"done\",\"changes\":N,\"file\":\"<$SHEPHERD_DIR/shepherd-revised.md>\"}")
 ```
 
@@ -239,7 +239,7 @@ Write each artifact in sequence:
 
 ### Output
 
-```
+```markdown
 ## Release prepare: $VERSION
 
 ### Audit

@@ -24,7 +24,7 @@ assert train_patients.isdisjoint(test_patients), "PATIENT LEAK DETECTED"
 
 Checklist for medical imaging datasets:
 
-```
+```markdown
 [ ] Splits are by patient/subject ID, never by image/slice
 [ ] DICOM metadata checked for hidden identifiers (StudyInstanceUID links images)
 [ ] Multi-site data: stratify by site to avoid site-specific bias

@@ -255,7 +255,7 @@ ruff `UP` rules (pyupgrade) auto-flag old-style annotations — enable `UP` and 
 
 Per violation:
 
-```
+```text
 <rule-id>  <file>:<line>  <short description>
            Before: <the problematic line>
            After:  <the fix>
@@ -279,7 +279,7 @@ For targeted reviews, scope primary findings to requested categories; list other
 
 For general reviews, apply same discipline: report direct violations (parameter annotations, return types, unused imports, type errors) as primary (ANN001 missing param annotation, ANN201/ANN202 missing return, unannotated public API); report inferred-scope findings (instance variable `var-annotated`, `__init__ -> None`, Callable precision, `no-untyped-def` for `__init__`) in clearly labelled secondary block:
 
-```
+```text
 > Additional findings (inferred scope — valid but beyond direct callsite analysis):
 ```
 

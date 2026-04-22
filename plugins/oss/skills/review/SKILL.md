@@ -291,7 +291,7 @@ Spawn a **foundry:sw-engineer** consolidator agent with this prompt:
 
 Main context receives only the one-liner verdict. Proceed with that summary for terminal output.
 
-```
+```markdown
 ## Code Review: [target]
 
 ### [blocking] Critical (must fix before merge)
@@ -405,7 +405,7 @@ Call `Agent(subagent_type="oss:shepherd", prompt=...)` with:
 
 Print compact terminal summary:
 
-```
+```text
   Part 1  — reply summary (complete standalone)
   Part 2  — N inline suggestions
 

@@ -31,7 +31,7 @@ Applies to every command run "in" worktree from lead's context: `uv run`, `pytho
 
 Cleanest alternative: spawn agent with `isolation: "worktree"`. Agent CWD = worktree root. All Bash calls use clean first-token patterns, no `cd` prefix needed.
 
-```
+```text
 Agent(subagent_type="foundry:sw-engineer", isolation="worktree", prompt="...")
 ```
 

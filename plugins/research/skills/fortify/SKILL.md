@@ -17,7 +17,7 @@ NOT for: running the initial optimization loop (use `/research:run`); validating
 
 <constants>
 
-```
+```yaml
 MAX_ABLATION_CANDIDATES:  8 (ceiling — scientist produces 3–8; --max-ablations caps further)
 METRIC_TIMEOUT_MS:        360000 (6 min — same as run SKILL.md)
 GUARD_TIMEOUT_MS:         360000
@@ -57,13 +57,13 @@ Triggered by `fortify` or `fortify <run-id|program.md>`.
 2. Explicit `<program.md>` argument → scan `.experiments/state/*/state.json` for matching `program_file`, pick latest with `status: completed` or `status: goal-achieved`
 3. No argument → scan `.experiments/state/`, pick latest with `status: completed` or `status: goal-achieved`
 4. None found → stop:
-   ```
+   ```text
    fortify: No completed run found. Run /research:run first.
    ```
 
 **Guard: judge approval required.** Scan `.experiments/judge-*/` directories. For each, check if `methodology.md` references the same `program_file`. If no directory with an APPROVED verdict found:
 
-```
+```text
 fortify: BLOCKED — no APPROVED judge verdict found for this program.
 Ablation studies require an approved baseline. Run: /research:judge <program.md>
 ```
@@ -91,7 +91,7 @@ Gather two inputs for the scientist:
 
 Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")` with health monitoring (15-min cutoff, one 5-min extension — same pattern as judge J3):
 
-```
+```markdown
 Act as an ML ablation study designer.
 
 Read:
@@ -245,7 +245,7 @@ Sort by importance descending. Write ranked results to `$FORTIFY_DIR/importance-
 
 **Sanity check**: compare `full` variant metric against `best_metric` from `state.json`. If divergence exceeds 2%:
 
-```
+```text
 Warning: Sanity check failed: full-variant metric=<X> differs from best_metric=<Y> by <Z>%. Results may be unreliable (non-deterministic metric or environment change).
 ```
 
@@ -257,7 +257,7 @@ Skip entirely if no `--venue` flag. Supported venues: `CVPR`, `NeurIPS`, `ICML`,
 
 Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")` with health monitoring (same 15-min cutoff, one 5-min extension):
 
-```
+```markdown
 Act as a peer reviewer for <venue>.
 
 Read:
@@ -332,7 +332,7 @@ Full artifacts: <FORTIFY_DIR>/
 
 Print compact terminal summary:
 
-```
+```text
 ---
 Fortify — <goal>
 Source run:   <run-id>
@@ -349,7 +349,7 @@ Next: simplify model by removing marginal components, re-run /research:run
 
 If `--skip-run` was used (early exit at F2): replace ablation lines with:
 
-```
+```text
 ---
 Fortify — <goal> (--skip-run)
 Source run:   <run-id>

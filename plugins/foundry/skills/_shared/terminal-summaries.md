@@ -6,7 +6,7 @@ Shared compact terminal summary templates for `/analyse` and `/oss:review`. All 
 
 ## PR Summary
 
-```
+```text
 ---
 [entity-line]
 Verdict:     [🟢 Approve / 🟡 Minor Suggestions / 🟠 Request Changes / 🔴 Block] — [one sentence]
@@ -29,7 +29,7 @@ Replace `[entity-line]` with skill-specific identifier:
 
 In `/oss:review` **PR Summary**: **omit `Suggestions:` field** — `Recommendation:` replaces it. Insert after `Blockers:`, before `→ saved to`:
 
-```
+```text
 Recommendation:
   1. [most important action for the author]
   2. [second action if needed]
@@ -40,7 +40,7 @@ Confidence:  [aggregate score] — [key gaps]
 
 ## Issue Summary
 
-```
+```text
 ---
 Issue #[number] — [title]
 Priority:    [Critical / High / Medium / Low]
@@ -52,7 +52,7 @@ Action:      [most important next step — e.g. "apply fix in foo.py:42", "close
 
 ## Discussion Summary
 
-```
+```text
 ---
 Discussion #[number] — [title]
 Category:    [category name]
@@ -66,7 +66,7 @@ Action:      [most useful next step — e.g. "mark answered", "convert to issue"
 
 ## Repo Health Summary
 
-```
+```text
 ---
 Repo Health — [repo]
 Issues:      [N open] ([N stale], [N needs triage])
@@ -78,7 +78,7 @@ Top action:  [single most urgent recommendation]
 
 ## Duplicate Detection Summary
 
-```
+```text
 ---
 Duplicates — "[keyword]"
 Groups:      [N groups found]
@@ -90,7 +90,7 @@ Top action:  [single most impactful triage step]
 
 ## Contributor Activity Summary
 
-```
+```text
 ---
 Contributors — [repo]
 Top:         @[handle] ([N] commits in 90d)
@@ -103,7 +103,7 @@ Top action:  [single most urgent recommendation]
 
 ## Ecosystem Impact Summary
 
-```
+```text
 ---
 Ecosystem Impact — [change description]
 Consumers:   [N known downstream users of changed API]

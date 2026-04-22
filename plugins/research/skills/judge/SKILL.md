@@ -47,7 +47,7 @@ Triggered by `judge` or `judge <file.md>`.
 2. Auto-detect: `program.md` at project root
 3. Latest state: scan `.experiments/state/*/state.json` for most recent with `status: running` and non-null `program_file` field
 4. If nothing found: stop with error:
-   ```
+   ```text
    No program.md found. Run /research:plan <goal> first, or provide a path: /research:judge <path.md>
    ```
 
@@ -93,7 +93,7 @@ mkdir -p "$RUN_DIR"                                                # timeout: 50
 
 Spawn `foundry:solution-architect` agent via `Agent(subagent_type="foundry:solution-architect", prompt="...")` (uses `opusplan` for high reasoning quality) with this prompt:
 
-```
+```markdown
 Act as a research supervisor reviewing a PhD student's experimental protocol.
 Your job is NOT to predict whether the experiment will succeed — it is to judge whether the experimental design is methodologically sound and whether the student should be allowed to proceed.
 
@@ -154,7 +154,7 @@ Use `methodology_rating` from returned envelope for verdict computation in J6:
 
 Also spawn `research:scientist` in parallel via `Agent(subagent_type="research:scientist", prompt="...")` (dispatch both in single response at start of J3) to review scientific rigor:
 
-```
+```markdown
 Act as an ML research peer reviewer assessing experimental protocol rigor.
 
 Read the campaign program file at <path_to_program.md>.
@@ -207,7 +207,7 @@ claude plugin list 2>/dev/null | grep -q 'codex@openai-codex'
 
 **If available**: invoke adversarial review focused on specific gaps found in J2 and J3. Construct focus string from top 3 critical/high findings. Example (replace `<top finding N>` with actual findings from J2/J3):
 
-```
+```text
 Agent(subagent_type="codex:codex-rescue", prompt="Adversarial review of run program: check <top finding 1>, <top finding 2>, and <top finding 3> in the program.md. Read-only: do not apply fixes.")
 ```
 
@@ -215,7 +215,7 @@ Incorporate Codex findings into overall findings list with `source: "codex"`.
 
 **If unavailable**: print one line and continue:
 
-```
+```text
 note: codex plugin not installed — skipping adversarial review (Claude-only judge)
 ```
 
@@ -304,7 +304,7 @@ Read full review: `<RUN_DIR>/scientific-review.md`
 
 **Terminal summary** (compact):
 
-```
+```text
 ---
 Judge — <program_title>
 Verdict:      APPROVED | NEEDS-REVISION | BLOCKED

@@ -104,7 +104,7 @@ Common categories:
 
 If `$CODEX_AVAILABLE` is `true` (from Step 2) AND top hypothesis has weak/circumstantial evidence (no direct confirming signal), request adversarial review:
 
-```
+```text
 Agent(subagent_type="codex:codex-rescue", prompt="Adversarial review of hypothesis quality: [provide symptom, signals, and hypothesis table]. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only.")
 ```
 
@@ -146,7 +146,7 @@ Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (
 
 ## Step 6: Report findings
 
-```
+```markdown
 ## Investigation: <symptom>
 
 **Root cause**: <confirmed cause, or "inconclusive — suspects narrowed to X, Y">

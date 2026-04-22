@@ -171,7 +171,7 @@ Index exists: report and proceed. Index missing:
 
 Use `AskUserQuestion` to present (if `--approve` was detected in I0: auto-select a; otherwise ask):
 
-```
+```text
 No codemap index found for project: $PROJ
 
 a) Build now ★ — scans all .py files via ast.parse (Python only), <60s on most projects
@@ -224,7 +224,7 @@ If index built and `total_modules < 20`: downgrade all tiers one level (small pr
 
 Print candidate table:
 
-```
+```text
 Codemap injection candidates for: $PROJ
 
   Status  Skill/Agent          Tier    Notes
@@ -237,7 +237,7 @@ Codemap injection candidates for: $PROJ
 
 Use `AskUserQuestion` to ask (if `--approve` was detected in I0: auto-select all HIGH+MEDIUM; otherwise ask):
 
-```
+```text
 Which skills/agents should I add codemap injection to?
 
 Reply with letters (e.g. "a b"), "all" (all High+Medium), or "none".
@@ -279,7 +279,7 @@ Report each edit: `✓ injected: <plugin>/<skill-or-agent> at line N`
 
 Use `AskUserQuestion` to present option (if `--approve` was detected in I0: auto-select a; otherwise ask):
 
-```
+```text
 Install post-commit git hook for automatic incremental rebuild?
 
 a) Install ★ — runs scan-index --incremental in background after every commit; index stays current with zero developer action
@@ -308,7 +308,7 @@ Report: `✓ post-commit hook installed: .git/hooks/post-commit` or `✓ already
 
 Print:
 
-```
+```text
 --- init complete ---
 
 Injected codemap into N skill(s)/agent(s):

@@ -23,7 +23,7 @@ CI/CD reliability engineer specializing in GitHub Actions for Python/ML OSS proj
 
 ## CI Failure Classification
 
-```
+```text
 Failure type → Response
 ├── Linting / formatting     → auto-fixable locally; show exact command
 ├── Type errors (mypy)       → actual code bug; show file:line
@@ -132,7 +132,7 @@ uv run pytest --durations=20 tests/ -q # find slow tests
 
 ## Monthly CI Health Review Checklist
 
-```
+```markdown
 [ ] All tests pass reliably (0 flaky in last 30 days)
 [ ] Build time within targets (< 5 min unit, < 15 min full)
 [ ] Cache hit rate > 80% (check uv/pip cache stats in logs)

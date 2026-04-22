@@ -66,7 +66,7 @@ Re-run `/foundry:init` after any plugin upgrade — rule symlinks point to versi
 
 `plugins/foundry/` is the **source of truth** for all foundry configuration. The Claude Code plugin system natively exposes agents and skills; `/foundry:init` symlinks rules and `TEAM_PROTOCOL.md` into `~/.claude/` so they load on every session.
 
-```
+```text
 plugins/foundry/           ← source of truth
     rules/*.md             ←── symlinked ──→  ~/.claude/rules/*.md          (init: ln -sf)
     TEAM_PROTOCOL.md       ←── symlinked ──→  ~/.claude/TEAM_PROTOCOL.md    (init: ln -sf)
@@ -91,7 +91,7 @@ plugins/foundry/           ← source of truth
 
 ## 📦 Plugin Architecture
 
-```
+```text
    ╔══════════════════════════════════╗
    ║  🟠 foundry  [OPTIONAL]          ║
    ╟────────────────────┬─────────────╢
@@ -223,7 +223,7 @@ Each skill follows a defined topology for how it composes agents:
 <details>
 <summary><strong>`/oss:review`</strong> — parallel fan-out, then consolidation</summary>
 
-```
+```text
 Tier 0: git diff --stat (mechanical gate — skips trivial diffs)
 Tier 1: Codex pre-pass (independent diff review, ~60s)
 Tier 2: 6 parallel agents — sw-engineer, qa-specialist, perf-optimizer,
@@ -237,7 +237,7 @@ Tier 2: 6 parallel agents — sw-engineer, qa-specialist, perf-optimizer,
 <details>
 <summary><strong>`/develop:feature`</strong> — sequential with inner loops</summary>
 
-```
+```text
 Step 1: sw-engineer (codebase analysis)
 Step 2: sw-engineer (demo test — TDD contract)
 Step 2 review: in-context validation gate
@@ -252,7 +252,7 @@ Quality stack: linting-expert → qa-specialist → Codex pre-pass
 <details>
 <summary><strong>`/develop:fix`</strong> — reproduce-first</summary>
 
-```
+```text
 Step 1: sw-engineer (root cause analysis)
 Step 2: sw-engineer (regression test that fails)
 Step 2 review: in-context validation gate
@@ -266,7 +266,7 @@ Quality stack: linting-expert → qa-specialist → Codex pre-pass
 <details>
 <summary><strong>`/develop:refactor`</strong> — test-first</summary>
 
-```
+```text
 Step 1: sw-engineer + linting-expert (coverage audit, parallel)
 Step 2: qa-specialist (characterization tests)
 Step 2 review: in-context validation gate
@@ -280,7 +280,7 @@ Quality stack: linting-expert → qa-specialist → Codex pre-pass
 <details>
 <summary><strong>`/research:topic`</strong> — research-first</summary>
 
-```
+```text
 web-explorer (fetch current papers/docs) → scientist (deep analysis, writes to file)
 → consolidator reads findings → implementation plan
 (--team: multiple scientist instances on competing method families)
@@ -291,7 +291,7 @@ web-explorer (fetch current papers/docs) → scientist (deep analysis, writes to
 <details>
 <summary><strong>`/brainstorm`</strong> — conversational spec, then task breakdown</summary>
 
-```
+```text
 idea mode:
   Step 1: context scan (Read README, Grep keywords)
   Step 2: AskUserQuestion (clarify, one at a time, max 10)
@@ -312,7 +312,7 @@ breakdown mode (triggered by "breakdown <tree-or-spec>"):
 <details>
 <summary><strong>`/audit`</strong> — self-mentor per file, then consolidation</summary>
 
-```
+```text
 per-config-file: self-mentor (reads file, writes findings to /tmp/audit-<ts>/<file>.md)
 → consolidator reads all finding files → ranked report with upgrade proposals
 (upgrade mode: web-explorer fetches latest Claude Code docs first)
@@ -707,7 +707,7 @@ Agent Teams is Claude Code's experimental multi-agent feature. Teams are always 
 
 **State files layout:**
 
-```
+```markdown
 /tmp/claude-state-<session>/
 ├── agents/<id>.json        # one per active subagent (created at start, deleted at stop)
 ├── codex/<id>.json         # one per active codex plugin session
@@ -761,7 +761,7 @@ Output: JSON with token usage by model (input/output/cache), tool call counts, t
 
 A lightweight hook (`hooks/statusline.js`) adds a persistent two-row status bar to every Claude Code session:
 
-```
+```text
 Row 1:  claude-sonnet-4-6 │ Borda.AI-Rig │ Pro ~$1.20 │ ████░░░░░░ 38% │ 💬
 Row 2:  🕵 2 agents (self-mentor, sw-engineer) │ 🤖 codex-rescue │ 🔧 Bash ×3 · Edit · Read ×12
 ```
@@ -830,7 +830,7 @@ Skills check availability at runtime: `claude plugin list 2>/dev/null | grep -q 
 
 Runtime artifacts live at the project root in dot-prefixed dirs — separate from versioned config in `.claude/`. The dot-prefix signals "generated output, not source".
 
-```
+```text
 .plans/blueprint/        ← /brainstorm spec and tree files
 .plans/active/           ← todo_*.md, plan_*.md
 .plans/closed/           ← completed plans

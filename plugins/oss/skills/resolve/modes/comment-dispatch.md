@@ -12,7 +12,7 @@ Reached when $ARGUMENTS = bare comment text (not PR number or URL).
 
 Create task:
 
-```
+```text
 TaskCreate(
   subject="Resolve: <60-char summary of $ARGUMENTS>",
   description="<full $ARGUMENTS>",
@@ -22,7 +22,7 @@ TaskCreate(
 
 If `CODEX_AVAILABLE=false`: stop with `⚠ codex plugin not found — install: /plugin marketplace add openai/codex-plugin-cc && /plugin install codex@openai-codex && /reload-plugins`, mark task completed:
 
-```
+```text
 TaskUpdate(task_id=<task_id_from_above>, status="completed")
 ```
 
@@ -81,7 +81,7 @@ mkdir -p "$RUN_DIR" # timeout: 5000
 
 Spawn both agents in parallel:
 
-```
+```text
 Agent(foundry:linting-expert): "Review all files changed in HEAD (git diff HEAD~N..HEAD where N = number of commits just made). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
 
 Agent(foundry:qa-specialist, maxTurns: 15): "Review all files changed in the most recent commits for correctness, edge cases, and regressions. Flag any blocking issues. Write your full findings to $RUN_DIR/qa-specialist-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
@@ -112,13 +112,13 @@ rm -f /tmp/claude-commit-authorized  # timeout: 3000
 
 Mark task `completed`:
 
-```
+```text
 TaskUpdate(task_id=<task_id_from_above>, status="completed")
 ```
 
 Then print:
 
-```
+```markdown
 ## Resolve Report
 
 **Verdict**: ✓ resolved | ⊘ no change — <Codex's reason>

@@ -38,7 +38,7 @@ Triggered by `retro`, `retro <run-id>`, or `retro <run-id> --compare <run-id-2>`
 1. Explicit `<run-id>` argument → read `.experiments/state/<run-id>/`
 2. No argument → scan `.experiments/state/`, pick latest dir where `state.json` has `status: completed` or `status: goal-achieved`
 3. None found → stop with error:
-   ```
+   ```text
    No completed run found. Run /research:run first, or provide: /research:retro <run-id>
    ```
 
@@ -149,7 +149,7 @@ touch /tmp/retro-check-$LAUNCH_AT
 
 Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")`:
 
-```
+```markdown
 Act as a research retrospective analyst.
 
 Read:
@@ -258,7 +258,7 @@ Next hypotheses queue: <RUN_DIR>/hypotheses.jsonl
 
 Print compact summary to terminal only — do NOT repeat full report:
 
-```
+```text
 ---
 Retro — <goal>
 Run:           <run-id> (<total> iterations, <kept> kept)

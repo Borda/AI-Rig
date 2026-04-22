@@ -20,7 +20,7 @@ gh api "search/code" --field "q=mypackage repo:conda-forge/*-feedstock filename:
 
 Produce:
 
-```
+```markdown
 ## Ecosystem Impact: [change description]
 
 ### Downstream Consumers Found

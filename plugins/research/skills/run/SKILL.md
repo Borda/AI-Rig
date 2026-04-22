@@ -19,7 +19,7 @@ NOT for: methodology validation before run (use `/research:judge`); hypothesis g
 
 Campaign mode only:
 
-```
+```yaml
 MAX_ITERATIONS:             20 (ceiling: 50 — never exceed without explicit user override)
 STUCK_THRESHOLD:            5 consecutive discards → escalation
 GUARD_REWORK_MAX:           2 attempts before revert
@@ -107,7 +107,7 @@ Read `${CLAUDE_SKILL_DIR}/modes/hypothesis-pipeline.md`
 
 After clarification extraction, remaining non-flag tokens (not starting `--`) are unrecognized. For each, print:
 
-```
+```markdown
 ⚠ Unrecognized argument "<token>" — ignored.
   Known positional args: <program.md path> [clarification]
   Known flags: --team, --colab[=HW], --codex, --compute=local|colab|docker, --docker, --researcher, --architect, --journal, --hypothesis <path>
@@ -136,7 +136,7 @@ Warn on unrecognized tokens, continue.
 
 Generate `run-id` = `$(date +%Y%m%d-%H%M%S)`. Create run directory:
 
-```
+```text
 .experiments/state/<run-id>/
   state.json         ← iteration count, best metric, status
   experiments.jsonl  ← one line per iteration
@@ -268,7 +268,7 @@ For each iteration `i` from 1 to `max_iterations`:
 
 Print iteration header, update R5 task:
 
-```
+```text
 [→ Iter N/max_iterations — best so far: <best_metric> (Δ<best_delta_pct>% vs baseline)]
 ```
 
@@ -293,7 +293,7 @@ If `--journal` active and `<RUN_DIR>/journal.md` has 1+ entries: append last 5 e
 
 Spawn selected specialist agent (`maxTurns: 15`) with this prompt (adapt as needed):
 
-```
+```markdown
 Goal: <goal>
 Run clarification: <clarification_prompt>  ← omit this line entirely if clarification_prompt is null
 Colab hardware: <colab_hw>  ← omit this line entirely if colab_hw is null; include to let the agent tailor code to the specific GPU architecture (e.g., bf16/flash-attention on H100, standard fp16 on T4/L4)
@@ -342,7 +342,7 @@ Skip if `sandbox_mode = "local"` (Phase 2 already applied changes).
 
 Spawn same specialist agent (R3), `maxTurns: 10`:
 
-```
+```text
 Read the proposed change in `.experiments/state/<run-id>/ideation-<i>.md`.
 Apply the proposed change to the source files.
 Use Write and Edit tools ONLY — no Bash execution on the codebase files.
@@ -356,7 +356,7 @@ Return ONLY: {"files_modified":[...]}
 
 Print:
 
-```
+```text
 [→ Iter N/max · Phase 2c: Codex co-pilot — running]
 ```
 
@@ -369,7 +369,7 @@ Run Phase 2c **every iteration** when `--codex` active. Codex runs second pass, 
 
 Run Codex ideation:
 
-```
+```text
 Agent(
   subagent_type="codex:codex-rescue",
   prompt="Goal: <goal>. Run clarification: <clarification_prompt>  ← omit this clause entirely if clarification_prompt is null. Current metric: <metric_key>=<current_value> (baseline: <baseline>, direction: <higher|lower>). Scope files: <scope_files>. Read context from .experiments/state/<run-id>/context-<i>.md. Starting state: Claude's change was [kept|reverted|no-op]. [If kept: try to improve further from the current state. If reverted/no-op: propose a fresh approach.] Propose and implement ONE atomic optimization change most likely to improve the metric without breaking <guard_cmd>. Write your full reasoning to .experiments/state/<run-id>/codex-ideation-<i>.md."
@@ -505,7 +505,7 @@ Update `state.json`: `iteration = i`, `status = running`.
 
 Print iteration summary:
 
-```
+```text
 [✓ Iter N/max — <kept|reverted|no-op|...> · metric=<value> (Δ<delta>%) · agent=<agent_type>]
 ```
 
@@ -550,7 +550,7 @@ Triggered by `resume` or `resume <file.md>`.
 1. Read `state.json`. Restore `clarification_prompt` and `colab_hw` from it (may be null).
 2. **Re-parse program file**: if `program_file` non-null, re-read/re-parse (R1 rules), update config. Applies edits made between runs. Note: edits during active loop take effect only on next `resume`.
 3. **Validate `experiments.jsonl`**: read last line, parse as JSON. If truncated or invalid:
-   ```
+   ```text
    ⚠ experiments.jsonl last line appears corrupt (truncated or invalid JSON).
    Offer to truncate the corrupt entry (y/n)?
    ```
@@ -588,7 +588,7 @@ ______________________________________________________________________
 
 If Colab MCP unavailable at R2, print:
 
-```
+```markdown
 ⚠ Colab MCP not available. To enable:
   1. Add "colab-mcp" to enabledMcpjsonServers in settings.local.json
   2. Open a Colab notebook and connect the runtime

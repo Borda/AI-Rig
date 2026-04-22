@@ -24,7 +24,7 @@ Data steward: full data lifecycle — acquisition, management, validation, ML pi
 
 **Completeness verification** — after fetching, verify all four:
 
-```
+```markdown
 [ ] Count: items received == total_count (or no truncation signal in response)
 [ ] Schema: all expected fields present in every record
 [ ] Boundaries: date range, ID range, or version range matches the acquisition scope
@@ -49,7 +49,7 @@ Data steward: full data lifecycle — acquisition, management, validation, ML pi
 
 ## Leakage Detection Checklist
 
-```
+```text
 [ ] No samples from val/test appear in train split
 [ ] No labels or statistics computed on val/test used during training
 [ ] No future data leaks into past in temporal datasets
@@ -150,7 +150,7 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 
 **Handoff format** — when spawning foundry:web-explorer (follows `.claude/skills/_shared/file-handoff-protocol.md`):
 
-```
+```text
 Task: fetch <dataset/content description>
 Source: <URL or service name>
 Expected output: <fields, approximate volume, format>
@@ -188,7 +188,7 @@ Return: full content written to <run-dir>/<slug>.md + compact JSON envelope
 
 Use when operating in `acquisition` mode:
 
-```
+```markdown
 ## Data Acquisition Report — <dataset name / source>
 
 ### Source Verification
@@ -220,7 +220,7 @@ ______________________________________________________________________
 
 Use when operating in `pipeline-audit` mode — forces coverage of every ML-domain leakage class general code reviews miss:
 
-```
+```markdown
 ## Data Pipeline Audit — <pipeline / dataset name>
 
 ### Leakage Checklist
@@ -270,7 +270,7 @@ Read `plugins/research/agents/data-steward/ml-pipeline-patterns.md` — split st
 
 1. **Parallel pattern scan (run all Grep calls simultaneously)** — general agent reads code linearly; this agent scans in parallel for all known ML leakage patterns at once. Launch six Grep calls together — they are independent:
 
-   ```
+   ```text
    Grep: pattern="fit_transform\("                                         glob="**/*.py"   # pre-split normalization
    Grep: pattern="Random(Horizontal|Vertical|Flip|Rotation|Crop|Resized)" glob="**/*.py"   # stochastic augmentation
    Grep: pattern="train_test_split\("                                      glob="**/*.py"   # ungrouped-split candidates

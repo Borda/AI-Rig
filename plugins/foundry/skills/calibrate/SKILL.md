@@ -166,7 +166,7 @@ After all pipeline subagents complete or time out: mark "Calibrate agents", "Cal
 
 Print combined benchmark report:
 
-```
+```markdown
 ## Calibrate — <date> — <MODE>
 
 | Target           | Recall | SevAcc | Fmt  | Confidence | Bias    | F1   | Scope | Verdict    | Top Gap              |
@@ -179,7 +179,7 @@ Print combined benchmark report:
 
 **If AB mode**, add `ΔRecall`, `ΔSevAcc`, `ΔFmt`, `ΔTokens`, and `AB Verdict` columns after F1. ΔTokens = token_ratio − 1.0 (negative = specialist more concise).
 
-```
+```markdown
 | Target      | Recall | SevAcc | Fmt  | Bias    | F1   | ΔRecall | ΔSevAcc | ΔFmt  | ΔTokens | Scope | AB Verdict |
 |-------------|--------|--------|------|---------|------|---------|---------|-------|---------|-------|------------|
 | sw-engineer | 0.83   | 0.91   | 0.87 | +0.02 ✓ | 0.81 | +0.05 ~ | +0.12 ✓ | +0.15 ✓ | −0.18 ✓ | 0 ✓ | marginal ~ |
@@ -195,7 +195,7 @@ After table, print full content of each `proposal.md` for targets where `propose
 
 If `apply` **not** set, print:
 
-```
+```text
 → Review proposals above, then run `/calibrate <targets> [fast|full] apply` to apply them.
 → Proposals saved to: .reports/calibrate/<TIMESTAMP>/<TARGET>/proposal.md
 ```
@@ -271,7 +271,7 @@ ______________________________________________________________________
 
 After all subagents complete, collect JSON results and print final summary:
 
-```
+```markdown
 ## Fix Apply — <date>
 
 | Target      | File                          | Applied | Skipped |

@@ -216,7 +216,7 @@ Exempt built-in types (no plugin prefix required): `general-purpose`, `Explore`,
 
 Every non-exempt bare name = **high** finding:
 
-```
+```text
 [high] Implicit agent reference: subagent_type="<name>" in <file>
 fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 ```

@@ -87,7 +87,7 @@ dev = ["pytest", "ruff", "mypy"]
 
 ## src Layout (mandatory for libraries)
 
-```
+```text
 mypackage/
 ├── src/
 │   └── mypackage/

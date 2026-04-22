@@ -110,7 +110,7 @@ Step catches non-obvious causes — ordering dependency, environment-specific st
 
 State root cause hypothesis explicitly before writing any code:
 
-```
+```text
 Root cause: <one sentence — what is wrong and why>
 Evidence for: [signals that support this]
 Evidence against: [anything that contradicts or remains unexplained]
@@ -132,7 +132,7 @@ Root cause confirmed. Transition to fix mode with diagnosis as input — fix's S
 
 Emit handoff block:
 
-```
+```text
 Root cause: <confirmed hypothesis from Step 3>
 Suspect file(s): <files identified in Steps 1-2>
 Evidence: <key signals that confirmed the hypothesis>
@@ -170,7 +170,7 @@ Hand off: `-> /develop:fix --diagnosis $DIAG_FILE` from Step 2 (regression test)
 
 After root cause confirmed and handoff to `/develop:fix` complete, emit terminal summary:
 
-```
+```markdown
 Root Cause: <one sentence>
 File(s): <suspect files>
 Evidence: <key signals>
@@ -198,7 +198,7 @@ Evidence: <key signals>
 
 **Spawn prompt template:**
 
-```
+```markdown
 You are a foundry:sw-engineer teammate debugging: [symptom].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your hypothesis: [hypothesis N]. Investigate ONLY this root cause.

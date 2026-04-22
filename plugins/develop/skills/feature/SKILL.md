@@ -103,7 +103,7 @@ Skip if feature calls no external library APIs — no new framework features, no
 
 1. **DETECT** — read `pyproject.toml` or `requirements*.txt` for exact version and output:
 
-   ```
+   ```markdown
    STACK DETECTED:
    - <library> <exact-version> (from pyproject.toml)
    → Fetching official docs for the relevant API.
@@ -122,7 +122,7 @@ Skip if feature calls no external library APIs — no new framework features, no
 
 4. **Conflict** — if docs describe pattern conflicting with how codebase currently uses library:
 
-   ```
+   ```text
    CONFLICT DETECTED:
    Existing code uses <old pattern>.
    <library> <version> docs recommend <new pattern> for this use case.
@@ -301,7 +301,7 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 When stopping with unresolved issues, use this report variant instead of the standard Final Report:
 
-```
+```markdown
 ## Feature Report: <feature name> [INCOMPLETE]
 
 ### Status
@@ -345,7 +345,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found → skip quali
 
 ## Final Report
 
-```
+```markdown
 ## Feature Report: <feature name>
 
 ### Purpose
@@ -397,7 +397,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found → skip quali
 
 **Spawn prompt template:**
 
-```
+```markdown
 You are a [role] teammate implementing: [feature].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your task: [specific responsibility].

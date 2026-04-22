@@ -94,7 +94,7 @@ Thresholds for recommendation:
 
 Before recommending anything, run through both the overlap check and the anti-pattern checklist:
 
-```
+```markdown
 For each candidate agent/skill:
 - Does any existing agent cover >50% of its scope? → enhance existing instead
 - Is the name/description confusingly similar to an existing one? → rename existing
@@ -108,7 +108,7 @@ Anti-pattern checklist — reject the candidate if any apply:
 
 ## Step 5: Report
 
-```
+```markdown
 ## Agent/Skill Suggestions
 
 ### Existing Coverage (no gaps found)
@@ -170,7 +170,7 @@ Apply changes with the Edit tool — targeted replacements for trimmed sections,
 
 Print a compact summary:
 
-```
+```text
 Pruned MEMORY.md — <date>
   Dropped: N sections — [names]
   Trimmed: N sections — [names]
@@ -221,7 +221,7 @@ Thresholds:
 
 Produce a structured proposal table. Do not apply anything yet — report first.
 
-````
+````markdown
 ## Lessons Distillation Proposals
 
 ### Summary
@@ -243,7 +243,7 @@ Produce a structured proposal table. Do not apply anything yet — report first.
 **Cluster**: [domain]
 **Lessons consolidated**: [list lesson IDs, e.g., L1, L3, L7]
 **Draft content**:
-```
+```markdown
 
 ______________________________________________________________________
 
@@ -292,7 +292,7 @@ After applying:
 1. Run cross-reference checks — use Grep to verify new rule files are referenced from `CLAUDE.md` or the agent files that govern them (any rule with project-wide applicability should appear as a `See .claude/rules/<name>.md` reference in `CLAUDE.md`; agent-scoped rules should appear in the relevant agent file)
 2. Print a compact apply summary:
 
-```
+```text
 Applied N changes — <date>
   New rules:      N files — [names]
   Agent updates:  N files — [names]
@@ -304,7 +304,7 @@ Applied N changes — <date>
 
 **Step L5: Self-mentor review** — after applying changes, dispatch self-mentor to audit the created and modified config files:
 
-```
+```text
 Agent(subagent_type="foundry:self-mentor", prompt="Review the following Claude config files just created or modified by /distill:lessons: <list new rule files and updated agent/skill files from Step L4>. Check: (1) quality — rules are concrete, not vague; (2) duplication — no overlap with existing files; (3) NOT-for boundary clarity; (4) structural consistency. Return a prioritized report of issues; note advisory vs. blocking.")
 ```
 

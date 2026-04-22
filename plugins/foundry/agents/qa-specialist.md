@@ -45,7 +45,7 @@ For every function or component, consider:
 
 ## Test Organization
 
-```
+```text
 tests/unit/          # fast, isolated, no I/O, mocked dependencies
 tests/integration/   # real dependencies, real I/O, slower
 tests/e2e/           # full system, real environment

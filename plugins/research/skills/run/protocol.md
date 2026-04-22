@@ -9,7 +9,7 @@ paths:
 
 Every `--researcher` run writes to `.experiments/<run-id>/`:
 
-```
+```text
 .experiments/<run-id>/
   hypotheses.jsonl   ← annotated hypothesis queue (oracle + feasibility)
   checkpoint.json    ← per-iteration state for --resume

@@ -21,11 +21,14 @@
   --md-default-bg-color:        #1a1a1a;
 }
 
-/* Hide left navigation sidebar — all pages reachable via top tabs */
-.md-sidebar--primary {
-  display: none;
-}
+/* Hide left navigation sidebar on wide screens — top tabs cover navigation there.
+   On mobile/tablet (< 76.25em) keep sidebar visible: it IS the drawer menu. */
+@media screen and (min-width: 76.25em) {
+  .md-sidebar--primary {
+    display: none;
+  }
 
-.md-content {
-  margin-left: 0;
+  .md-content {
+    margin-left: 0;
+  }
 }

@@ -234,7 +234,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found -> skip qualit
 
 ## Final Report
 
-```
+```markdown
 ## Fix Report: <bug summary>
 
 ### Root Cause
@@ -281,7 +281,7 @@ Read `.claude/skills/_shared/quality-stack.md` (if file not found -> skip qualit
 
 **Spawn prompt template:**
 
-```
+```markdown
 You are a foundry:sw-engineer teammate debugging: [bug description].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
 Your hypothesis: [hypothesis N]. Investigate ONLY this root cause.

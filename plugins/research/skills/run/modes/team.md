@@ -36,7 +36,7 @@
 
    Write `phase: "A"` to `state.json` immediately after creating `RUN_DIR` — enables Phase A resume:
 
-   ```
+   ```json
    {"team_mode": {"phase": "A", "run_dir": "<RUN_DIR>"}}
    ```
 
@@ -44,7 +44,7 @@
 
    Each hypothesis agent's spawn prompt:
 
-   ```
+   ```markdown
    Read ~/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2.
    You are a hypothesis analyst. Your axis: <axis description>.
    Agent type: <agent type>.
@@ -116,7 +116,7 @@ Poll every 5 min: `find $RUN_DIR -newer "$CHECKPOINT" -type f | wc -l` — new f
 
 5. Print queue as formatted table:
 
-   ```
+   ```text
    ┌────┬──────────────────────────────────┬────────────────────┬────────┬───────────────┬──────────┬────────────┐
    │ #  │ Hypothesis                       │ Axis               │ Scope  │ Expected Δ    │ Conf.    │ Agent      │
    ├────┼──────────────────────────────────┼────────────────────┼────────┼───────────────┼──────────┼────────────┤
@@ -130,13 +130,13 @@ Poll every 5 min: `find $RUN_DIR -newer "$CHECKPOINT" -type f | wc -l` — new f
 
 Before user gate, update `state.json` `team_mode.phase` to `"B"` — enables resume re-display of queue if interrupted:
 
-```
+```json
 {"team_mode": {"phase": "B", "run_dir": "<RUN_DIR>"}}
 ```
 
 6. Present user gate via `AskUserQuestion`:
 
-   ```
+   ```text
    Proceed with implementation?
      (a) Run all N hypotheses in order shown
      (b) Select specific hypotheses (enter numbers, e.g. "1,3,5-7")
@@ -149,7 +149,7 @@ Before user gate, update `state.json` `team_mode.phase` to `"B"` — enables res
 
 7. Write final ordered queue to `<RUN_DIR>/team-queue.jsonl` (one JSON object per line, execution order). Add `team_mode` to `state.json`:
 
-   ```
+   ```text
    {
      "team_mode": {
        "axes": ["<axis-1>", "<axis-2>"],
@@ -169,7 +169,7 @@ For each hypothesis in `<RUN_DIR>/team-queue.jsonl` (sorted order, 1-indexed as 
 
 2. **Spawn specialist agent** matching `agent_type` from hypothesis. **On real codebase** — no worktree. Spawn prompt follows R5 Phase 2 ideation template with hypothesis pre-specified:
 
-   ```
+   ```markdown
    Goal: <goal>
    Run clarification: <clarification_prompt>  ← omit if null
    Current metric: <metric_cmd key> = <current_value> (baseline: <baseline>, direction: <higher|lower>)
@@ -252,7 +252,7 @@ After all hypotheses processed (or user stops early with Ctrl-C / user abort):
 
 3. Print compact terminal summary:
 
-   ```
+   ```text
    ---
    Team Run — <goal>
    Hypotheses tested: <total>  Kept: <kept>  Reverted: <reverted>

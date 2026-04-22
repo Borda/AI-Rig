@@ -10,7 +10,7 @@ paths:
 
 - Blank line, then bullet list — one bullet per logical change; include extended description of top changes plus all other notable changes; skip typos, linting, whitespace-only edits; if all changes skip-worthy, omit bullet list entirely and use subject-only commit. Subject-only commit still include co-author block separated by blank line and ---:
 
-  ```
+  ```markdown
   Fix typo in config key name
 
   ---
@@ -39,7 +39,7 @@ Before writing commit message, always run these three commands in parallel:
 
 Separate co-author block from bullet list with `---`:
 
-```
+```markdown
 - last bullet
 
 ---

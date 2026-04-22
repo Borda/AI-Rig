@@ -67,7 +67,7 @@ DATE=$(date +%Y-%m-%d)
 
 **Note**: Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts.
 
-```
+```text
 Research the literature on: <$ARGUMENTS>
 Codebase constraints: <framework, Python version, compute budget, existing dependencies from Step 1>
 Deliver: comparison table (method, key idea, benchmarks, compute, code available), recommendation for best method, a 3-step implementation plan for this codebase, key hyperparameters (name, typical range, what it controls) for the recommended method, and common gotchas (failure modes and how to avoid them).
@@ -91,7 +91,7 @@ Use Grep tool to search codebase for existing related code:
 
 ## Step 3: Report
 
-```
+```markdown
 ## Research: $ARGUMENTS
 
 ### SOTA Overview
@@ -138,7 +138,7 @@ Write full report to `.temp/output-research-$BRANCH-$DATE.md` using Write tool �
 
 Print compact terminal summary:
 
-```
+```text
 ---
 Research — [topic]
 SOTA:        [1–2 sentence summary of current landscape]
@@ -171,7 +171,7 @@ Trigger when: 3+ distinct method families exist AND field has no clear leading m
 
 **Spawn prompt template:**
 
-```
+```markdown
 # Substitute pre-computed values — do not pass raw $(date) expressions into spawn prompts
 You are an researcher teammate researching: [topic].
 Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
@@ -208,7 +208,7 @@ Before spawning in Steps P2–P3, pre-compute output path components: `YYYY=$(da
 
 Call `Agent(subagent_type="foundry:solution-architect", prompt=...)`:
 
-```
+```markdown
 Read the research findings file at <path from P1>.
 Analyze the current codebase to map the recommended method against existing code:
 1. Identify all files and modules relevant to the recommended method's domain
@@ -226,7 +226,7 @@ Return ONLY a compact JSON envelope on your final line — nothing else after it
 
 Read both files (research findings from P1 + codebase analysis from P2). Produce phased plan, write to `.temp/output-research-plan-$BRANCH-$DATE.md`:
 
-```
+```markdown
 ## Implementation Roadmap: [method name]
 Topic: [original $ARGUMENTS]
 
@@ -266,7 +266,7 @@ Topic: [original $ARGUMENTS]
 
 Print compact terminal summary:
 
-```
+```text
 ---
 Research Plan — [method name]
 Phases:      [N] phases, [M] tasks total

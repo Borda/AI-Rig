@@ -185,7 +185,7 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
 
 4. Spawn **foundry:self-mentor** subagent to generate and write agent file:
 
-```
+```markdown
 Read the agent scaffold template at `.claude/skills/manage/templates/agent-scaffold.md`.
 Also read the schema file at the path returned in the step 1 JSON to incorporate any new frontmatter fields.
 Create `.claude/agents/<name>.md` with:
@@ -218,7 +218,7 @@ Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confi
 
 2. Spawn **foundry:self-mentor** subagent to create directory and generate skill file:
 
-```
+```markdown
 Run: `mkdir -p .claude/skills/<name>` using the Bash tool.
 Read the skill scaffold template at `.claude/skills/manage/templates/skill-scaffold.md`.
 Also read the schema file at the path returned in the step 1 JSON to incorporate any new frontmatter fields.
@@ -286,7 +286,7 @@ rm -r .claude/skills/<name>  # timeout: 5000
    - Spec file path → Read spec file; use content as directive
 2. Spawn **foundry:self-mentor** subagent:
 
-```
+```markdown
 Read `.claude/agents/<name>.md`.
 Apply this change: <directive>
 Rules:
@@ -305,7 +305,7 @@ Use `description_changed` from returned JSON to decide whether Steps 5–7 need 
 1. Determine change directive (same as Content-Edit Agent).
 2. Spawn **foundry:self-mentor** subagent:
 
-```
+```markdown
 Read `.claude/skills/<name>/SKILL.md`.
 Apply this change: <directive>
 Rules:
@@ -378,7 +378,7 @@ Hook files are JavaScript — delegate to **foundry:sw-engineer** (not foundry:s
 1. Determine change directive (same as Content-Edit Agent).
 2. Spawn **foundry:sw-engineer** subagent:
 
-```
+```markdown
 Read `.claude/hooks/<name>.js`.
 Apply the hook authoring standards from the `\<hook_authoring>` section in your agent definition — file-header structure, exit code semantics, stdin pattern, and anti-patterns.
 Apply this change: <directive>
@@ -434,7 +434,7 @@ with open('.claude/settings.json', 'w') as f:
 
 3. Update `permissions-guide.md` — append new row to end of correct section (before its trailing `---` separator). New row format:
 
-```
+```markdown
 | `<rule>` | <description> | <use case> |
 ```
 
@@ -488,7 +488,7 @@ Use Grep to find all references:
 
 **For update (rename):** Count files grep returns. **≤ 3 files**: apply inline with Edit tool. **> 3 files**: spawn **foundry:self-mentor** subagent:
 
-```
+```text
 Apply these cross-reference updates (<old-name> → <new-name>):
 <list each file path with the required substitution>
 Use the Edit tool for each file (replace_all: true where appropriate).
@@ -562,7 +562,7 @@ For **create** and **update (rename)**: verify tool efficiency — cross-check a
 
 Run `/audit` to validate created/modified files. **Skip if invoked with `--skip-audit` or if current `manage` operation runs inside an `audit fix` loop** — outer audit covers it.
 
-```
+```text
 /audit
 ```
 

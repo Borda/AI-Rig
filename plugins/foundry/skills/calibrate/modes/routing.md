@@ -20,7 +20,7 @@ Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
 When target is `routing`, replace standard combined report table with:
 
-```
+```markdown
 ## Routing Calibration — <date> — <MODE>
 
 | Metric           | Value      | Status |

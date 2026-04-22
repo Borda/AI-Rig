@@ -2,7 +2,7 @@
 
 **Skill template** — write to `SKILLS_DIR/<name>/SKILL.md`:
 
-```
+```markdown
 ---
 name / description / argument-hint / disable-model-invocation: true / allowed-tools (frontmatter)
 ---

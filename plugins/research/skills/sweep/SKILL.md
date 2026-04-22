@@ -46,7 +46,7 @@ Extract flags:
 
 If `<goal>` missing or empty, stop:
 
-```
+```text
 ⚠ sweep requires a goal prompt.
 Usage: /research:sweep "goal description" [--flags]
 ```
@@ -62,7 +62,7 @@ Run plan mode steps P-P2 and P-P3 from `plugins/research/skills/plan/SKILL.md` (
 
 Print on completion:
 
-```
+```text
 sweep: plan → <output path> ✓
 ```
 
@@ -104,7 +104,7 @@ Repeat up to `MAX_REFINE` times:
 
 Follow-up hint (blocked or unresolved):
 
-```
+```text
 Fix the issues above in <program path>, then:
   /research:judge <program path>          ← re-validate
   /research:run <program path>            ← run when approved
@@ -126,7 +126,7 @@ Run Default Mode (R1–R7 from `plugins/research/skills/run/SKILL.md`) against p
 
 On completion, standard R6 terminal summary printed. Also prepend:
 
-```
+```text
 sweep: complete — plan → judge → run pipeline finished
 ```
 

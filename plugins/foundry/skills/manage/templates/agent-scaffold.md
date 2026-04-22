@@ -1,6 +1,6 @@
 **Agent template** — write to `AGENTS_DIR/<name>.md`:
 
-```
+```markdown
 ---
 name / description / tools / model / color (frontmatter)
 ---

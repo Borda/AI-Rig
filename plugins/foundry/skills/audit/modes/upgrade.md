@@ -83,7 +83,7 @@ Mark "A/B test capability proposals" completed.
 
 ### Phase 5: Report and sync
 
-```
+```markdown
 ## Upgrade Complete — <date>
 
 ### Gate

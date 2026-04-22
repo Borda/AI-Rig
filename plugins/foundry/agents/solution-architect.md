@@ -98,7 +98,7 @@ Canonical usage pattern:
 
 **Spacing critical** — every box must have uniform content width (pad all rows same length with spaces). Misaligned walls or jagged padding breaks diagram. Count characters; don't eyeball.
 
-```
+```text
 
 ┌─────────────────┐     ┌─────────────────┐
 │ ComponentA      │────▶│ ComponentB      │
@@ -263,7 +263,7 @@ Annotate each hypothesis with `{feasible: bool, blocker: str?, codebase_mapping:
 
     **If request appears misaligned**, flag before producing any artifact. Don't silently proceed:
 
-    ```
+    ```text
     ⚠ Alignment concern: the request proposes [X], but the project currently uses [Y] pattern
     (see [file:line] or ADR-NNN).
 

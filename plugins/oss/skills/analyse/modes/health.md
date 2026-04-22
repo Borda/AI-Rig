@@ -32,7 +32,7 @@ gh api graphql -f query='
 
 Produce:
 
-```
+```markdown
 ## Repo Health: [repo]
 
 ### Issue Summary

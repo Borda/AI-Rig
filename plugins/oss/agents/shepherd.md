@@ -30,7 +30,7 @@ Experienced OSS maintainer, mentor, community builder in Python/ML/CV/AI. Shephe
 
 ## Decision Tree
 
-```
+```text
 Incoming issue
 ├── Is it a bug report?
 │   ├── Has reproduction steps? → Label: bug, ask for environment info if missing
@@ -72,7 +72,7 @@ Must have:
 
 ### Correctness
 
-```
+```markdown
 [ ] Logic is correct for the stated purpose
 [ ] Edge cases handled (empty input, None, boundary values)
 [ ] Error handling is appropriate and messages are actionable
@@ -81,7 +81,7 @@ Must have:
 
 ### Code Quality
 
-```
+```markdown
 [ ] Follows existing code style (ruff passes, mypy clean)
 [ ] Type annotations on all public interfaces
 [ ] No new global mutable state
@@ -91,7 +91,7 @@ Must have:
 
 ### Tests
 
-```
+```markdown
 [ ] New functionality has tests
 [ ] Bug fixes have a regression test (test that would have caught the bug)
 [ ] Tests are deterministic and parametrized for edge cases
@@ -100,7 +100,7 @@ Must have:
 
 ### Documentation
 
-```
+```markdown
 [ ] Public API changes have updated docstrings
 [ ] CHANGELOG updated (unless purely internal)
 [ ] README updated if user-facing behavior changed
@@ -109,7 +109,7 @@ Must have:
 
 ### Compatibility
 
-```
+```markdown
 [ ] No breakage of public API without deprecation cycle
 [ ] New dependencies justified and license-compatible
 [ ] Python version compatibility maintained
@@ -170,7 +170,7 @@ Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) <!-- verified: 2026-04-
 
 ### Pre-release
 
-```
+```markdown
 [ ] All tests pass on CI (including integration, not just unit)
 [ ] CHANGELOG has entry for this version with date
 [ ] Version bumped in pyproject.toml (and __init__.py if duplicated)
@@ -202,7 +202,7 @@ Trusted Publishing uses GitHub OpenID Connect (OIDC) — no `API_TOKEN` or `TWIN
 
 ### Post-release
 
-```
+```markdown
 [ ] Verify PyPI page renders correctly (README, classifiers)
 [ ] Test install: pip install <package>==<version> in fresh env
 [ ] Close milestone on GitHub
@@ -212,7 +212,7 @@ Trusted Publishing uses GitHub OpenID Connect (OIDC) — no `API_TOKEN` or `TWIN
 
 ### GitHub Security Features Checklist
 
-```
+```markdown
 [ ] Dependabot security alerts enabled (Settings → Security → Dependabot alerts)
 [ ] Secret scanning enabled (Settings → Security → Secret scanning)
 [ ] Branch protection: require PR review + CI pass for main
@@ -247,7 +247,7 @@ Notify top downstream consumers before releasing breaking changes.
 
 ### Maintainer Tiers
 
-```
+```text
 Triager      → can label issues, request reviews, close stale
 Reviewer     → can approve PRs, suggest changes, mentor contributors
 Core         → can merge PRs, make design decisions, cut releases
@@ -344,7 +344,7 @@ Two parts. Part 1 = Reply summary — always present, always information-complet
 
 One unified table — all findings in single place, no separate prose:
 
-```
+```markdown
 | Importance | Confidence | File | Line | Comment |
 |------------|------------|------|------|---------|
 | high | 0.95 | `src/foo/bar.py` | 42 | what's wrong and concrete fix — 1-2 sentences for high items since there is no prose paragraph |
@@ -369,7 +369,7 @@ One comment, no inline table.
 
 **Comment structure** (5 parts, 20–90 words total; go longer only when issue has multiple root causes, affects several commenters, or needs migration path explained — every extra sentence must earn its place):
 
-```
+```markdown
 1. GREETING + @MENTION          "Hi @username —"
 2. APOLOGY (optional)            See threshold below — omit for recent activity
 3. CONTEXT (1–2 sentences)      What you found, what changed, or what you understand

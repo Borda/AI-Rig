@@ -57,7 +57,7 @@ ______________________________________________________________________
 
 ## Message Format
 
-```
+```text
 [priority?][status][task?][file?][action][detail]
 ```
 
@@ -93,7 +93,7 @@ For source files, define shortcodes per-team in spawn prompt (e.g., `SRC=src/, T
 
 ## Examples
 
-```
+```text
 alpha PROTO:v2.0 @lead ready                      # spawn announcement
 alphaT3 +lockSRC starting root cause analysis     # claim task + file
 beta50T3 SW ~auth.py narrowing to L140-166        # progress update
@@ -109,7 +109,7 @@ theta:compress >>T4-6 shorter than >>T4,T5,T6    # protocol improvement
 
 ## File Locking
 
-```
+```text
 +lockSRC,TST    # claim src/ and tests/
 -lockSRC        # release
 !lockSRC @lead  # conflict — lead resolves
@@ -117,7 +117,7 @@ theta:compress >>T4-6 shorter than >>T4,T5,T6    # protocol improvement
 
 ## Hook Integration
 
-```
+```text
 deltaT3 +feature HOOK:verify    # triggers TaskCompleted hook
 omega @lead idle ?nextT         # triggers TeammateIdle hook
 ```
@@ -134,7 +134,7 @@ Task list = live progress feed for user. AgentSpeak delta messages alone don't u
 
 ## Error Recovery
 
-```
+```text
 epsilon!retry auth attempt:2/3               # retrying
 epsilon!fail auth attempt:3/3 ?lead          # giving up, reassign
 @QA T3:reassign (from @SW epsilon!fail)     # lead reassigns

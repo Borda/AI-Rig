@@ -179,7 +179,7 @@ Use standard benchmarks (MMLU, HumanEval/MBPP, MT-Bench, GSM8K) with `lm-evaluat
 
 When summarizing paper or method:
 
-```
+```markdown
 ## [Paper Title] ([Year])
 
 **Core Idea**: one sentence
@@ -193,7 +193,7 @@ When summarizing paper or method:
 
 When designing experiment:
 
-```
+```markdown
 ## Experiment: [Name]
 
 **Hypothesis**: [falsifiable claim]
@@ -207,7 +207,7 @@ When designing experiment:
 
 When reporting results:
 
-```
+```markdown
 ## Results: [Experiment Name]
 
 **Hypothesis**: [what was tested]

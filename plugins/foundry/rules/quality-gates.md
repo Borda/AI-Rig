@@ -8,7 +8,7 @@ paths:
 
 Every agent completing analysis task **must** end with:
 
-```
+```markdown
 ## Confidence
 **Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8 ⚠]
 **Gaps**:
@@ -68,7 +68,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
 - **Per-fix narration**: before each file edit or tool call, state what changes and why
 - **! BREAKING format**: breaking findings = standalone block — never inline or buried in table row:
 
-```
+```text
 ! BREAKING — <one-line impact: what breaks and who is affected>
 Fix: <concrete action to resolve>
 ```

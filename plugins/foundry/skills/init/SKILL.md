@@ -214,7 +214,7 @@ If `APPROVE_ALL=true`: print `[--approve] auto-accepting: replace all symlink co
 
 Otherwise, use `AskUserQuestion`:
 
-```
+```markdown
 These entries in ~/.claude/ would be replaced with symlinks to the foundry plugin:
   - <name>  (<current state>)
   - …

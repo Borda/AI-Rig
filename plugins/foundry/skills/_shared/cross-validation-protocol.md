@@ -4,7 +4,7 @@ For any finding classified as `CRITICAL` or `[blocking]`, spawn second independe
 
 Use same agent type that raised finding (see skill-specific note for exact verifier):
 
-```
+```text
 Independently review <file or scope> for the following specific issue: "<finding description>".
 Do NOT read any prior output from another agent reviewing this file.
 Confirm: is this a real critical/blocking issue, a false positive, or something lower severity?

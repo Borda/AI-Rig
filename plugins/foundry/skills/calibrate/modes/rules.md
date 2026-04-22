@@ -73,7 +73,7 @@ Each pipeline subagent handles all five phases internally (problem generation �
 
 When target is `rules`, replace standard combined report table with:
 
-```
+```markdown
 ## Rules Calibration — <date> — <MODE>
 
 | Rule file              | Adherence | Outcome | Trig R | Trig P | Verdict          |

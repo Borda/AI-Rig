@@ -84,7 +84,7 @@ python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"dependenci
 
 Print readiness report:
 
-```
+```markdown
 ## Release Readiness — [repo] [version or "next release"]
 Date: [date] | Range: [last-tag]..HEAD ([N] commits)
 

@@ -118,7 +118,7 @@ Extract minimal reproduction code or steps from thread. Choose agent by content:
 
 Spawn chosen agent with this prompt (all context must be self-contained — runs in forked context):
 
-```
+```markdown
 Attempt to reproduce the issue in GitHub #<NUMBER>.
 
 Extracted reproduction steps/code from the thread:
@@ -145,7 +145,7 @@ Status mapping: `reproduced` → ✅ · `not_reproduced` → ❌ · `partial` �
 
 Produce:
 
-````
+````markdown
 ## Reproduction
 
 **Status**: [✅ Reproduced | ❌ Could Not Reproduce | ⚠ Partial | 🔍 No Example Provided | ⏭ Skipped (PR)]

@@ -81,7 +81,7 @@ Poll every 5 min: `find $RUN_DIR -newer "$CHECKPOINT" -type f | wc -l` (`timeout
 
 **Scientist prompt**:
 
-```
+```markdown
 Act as an ML reproducibility auditor verifying implementation fidelity against a published paper.
 
 Paper: <title> (<year>) by <authors>
@@ -139,7 +139,7 @@ Post-process envelope from scientist:
 
 **Strict mode**: if `--strict` flag AND any HIGH severity mismatches exist in dimension F (formula) or E (eval):
 
-```
+```text
 ! BREAKING — HIGH severity mismatch in critical dimension (F or E). Fix before running experiments.
 ```
 
@@ -204,7 +204,7 @@ Full audit: <RUN_DIR>/audit-raw.md
 
 ## Step V6: Terminal summary
 
-```
+```text
 ---
 Verify — <paper title>
 Fidelity:    HIGH | MODERATE | LOW (<score>)  [or: TIMED OUT]

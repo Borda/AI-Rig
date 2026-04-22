@@ -10,7 +10,7 @@ mkdir -p .reports/calibrate/ <TIMESTAMP >/rules/ <RULE_BASENAME >/
 
 **Rule under test** (loaded as context for all Phase 2 agents):
 
-```
+```text
 <RULE_CONTENT>
 ```
 
@@ -82,7 +82,7 @@ Each subagent receives this prompt (substitute `<PROBLEM_ID>`, `<TASK_PROMPT>`, 
 
 You are a general-purpose coding assistant. The following rule is in effect — apply it in your response:
 
-```
+```text
 <RULE_CONTENT>
 ```
 
@@ -172,7 +172,7 @@ Compute aggregates from `scores.json`:
 
 Write full report to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/report.md`:
 
-```
+```markdown
 ## Rules Benchmark — <RULE_BASENAME> — <date>
 Mode: <MODE> | Directives: D | Adherence tasks: D×N | Trigger tests: T (or 0 if global rule)
 

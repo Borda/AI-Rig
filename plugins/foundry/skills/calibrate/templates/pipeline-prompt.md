@@ -195,7 +195,7 @@ For each problem, spawn one Codex scoring subagent using **Agent tool** — neve
 
 Agent(subagent_type="codex:codex-rescue", prompt="You are scoring a calibration response against ground truth.
 
-```
+```text
 Problem ID: \<PROBLEM_ID>
 Ground truth (JSON array): \<GROUND_TRUTH_JSON>
 ```
@@ -206,7 +206,7 @@ For each ground truth issue: mark true if response identified same issue type at
 
 For out-of-scope problems (ground_truth is []): set recall=null, all reported findings are FPs, set severity_accuracy=null, format_score=null.
 
-```
+```text
 Severity accuracy: for found issues, check severity match (allow +-1 tier; tiers: critical>high>medium>low).
 Format score: for found issues, check for all three of: location reference, severity label, fix suggestion.
 ```
@@ -281,7 +281,7 @@ Verdict:
 
 Write full report to `.reports/calibrate/<TIMESTAMP>/<TARGET>/report.md` using this structure:
 
-```
+```markdown
 ## Benchmark Report — <TARGET> — <date>
 Mode: <MODE> | Problems: <N> (in-scope) + 1 (out-of-scope) | Total known issues: M
 Source: dual (claude+codex) | Scorer: dual | Scorer agreement: X.XX [consistent ≥0.85 / moderate 0.70–0.85 / divergent ⚠ <0.70]

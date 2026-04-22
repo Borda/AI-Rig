@@ -98,7 +98,7 @@ Apply `⚠ stale` prefix to items with age ≥ 14 days.
 
 Print in this format:
 
-```
+```markdown
 ## Session Pending — <today's date>
 
 ### This session
@@ -184,7 +184,7 @@ Filter entries with `ts` matching today's date.
 
 Draft digest:
 
-```
+```markdown
 ## Session Summary — <date>
 
 ### Completed
@@ -234,7 +234,7 @@ During any session, Claude proactively parks open-loop items to project-scoped m
 
 **File format**: each parked item = standard memory file:
 
-```
+```markdown
 ---
 name: <short slug>
 description: <one-line summary of the parked item>
