@@ -50,7 +50,7 @@ Add task-specific keys (e.g. `"papers":5` for research, `"verdict":"approve"` fo
 
 - **4+ agent files** → mandatory consolidator; reads all files, writes final report
 - **2–3 agent files** → orchestrator may read directly **only if** total expected content \<2K tokens
-- Consolidator type: same domain as lead reviewer (e.g. `sw-engineer` for code review, `curator` for config audit)
+- Consolidator type: same domain as lead reviewer (e.g. `foundry:sw-engineer` for code review, `foundry:curator` for config audit)
 
 ## Consolidator prompt template
 
@@ -95,4 +95,4 @@ Orchestrator handling by status:
 
 `/calibrate` = canonical example of file-based handoff at scale — agents write to `/tmp/calibrate-<id>/`; orchestrator collects one-line summaries; consolidation post-collection without flooding main context.
 
-See also `/audit` Step 3 (`curator` agents per file → `<RUN_DIR>/<file-basename>.md`) and `/oss:review` Step 3–6.
+See also `/audit` Step 3 (`foundry:curator` agents per file → `<RUN_DIR>/<file-basename>.md`) and `/oss:review` Step 3–6.

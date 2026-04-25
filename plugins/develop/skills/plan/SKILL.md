@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Analysis-only mode. Produces structured plan, no code. Use to understand scope, risks, effort before `/develop:feature`, `/develop:fix`, `/develop:refactor`.
 
-NOT for: writing code/tests (use develop mode); `.claude/` config changes (use `/manage`).
+NOT for: writing code/tests (use develop mode); `.claude/` config changes (use `/foundry:manage`).
 
 </objective>
 
@@ -47,7 +47,7 @@ Read `$_DEV_SHARED/agent-resolution.md`. Contains: foundry check + fallback tabl
 | "Codex design review is optional for small tasks" | Small tasks regularly reveal large hidden dependencies. Codex catches architectural anti-patterns before they are baked into an implementation plan. |
 | "I can scope this during implementation — no need to plan first" | Scope discovered during implementation inflates PRs and obscures intent. Plan mode exists to prevent exactly this. |
 
-# Plan Mode
+## Plan Mode
 
 ## Flag parsing
 

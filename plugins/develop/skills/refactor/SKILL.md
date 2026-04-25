@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Test-first refactoring. Audit coverage, add characterization tests if missing, apply changes with safety net.
 
-NOT for: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); `.claude/` config changes (use `/manage`).
+NOT for: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); `.claude/` config changes (use `/foundry:manage`).
 
 </objective>
 
@@ -60,7 +60,7 @@ Read `$_DEV_SHARED/runner-detection.md` — sets `$TEST_CMD` (full suite) and `$
 
 **Checkpoint init**: create `.developments/<TS>/checkpoint.md` (where `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`). After each major step (1, 2, 3, 4, 5), append `step: N — completed`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
 
-# Refactor Mode
+## Refactor Mode
 
 ## Flag parsing
 

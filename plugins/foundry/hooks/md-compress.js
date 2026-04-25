@@ -10,9 +10,10 @@
 //        to a single blank line (identical rendering in all markdown parsers).
 //     3. Trailing whitespace: strips trailing spaces on every non-fence line
 //        (double-space <br> markers are not used in .claude/ config files).
-//   Compressed content is written to a stable temp file keyed by a SHA-256
-//   hash of the source path. The temp file is reused when its mtime is newer
-//   than the source, avoiding redundant I/O for repeated reads in a session.
+//   Compressed content is written back to the actual source file in-place.
+//   This preserves Claude Code's Edit tool read-tracking (which keys on
+//   file_path) — no temp-file redirect, no path mismatch.
+//   Source files get whitespace-normalized during session (lossless).
 //
 // HOW IT WORKS
 //   1. Parse stdin JSON for tool_name and tool_input.
@@ -21,21 +22,19 @@
 //   4. Walk lines, tracking fenced code block state (``` / ~~~).
 //   5. Outside a fence: strip trailing whitespace, compress table padding,
 //      and track consecutive blank lines — flush only one blank per run.
-//   6. Derive stable temp path: /tmp/cc-md-compact-<sha256[:12]>.md
-//   7. Reuse cached temp file if newer than source (mtime check).
-//   8. Write compressed content and emit hookSpecificOutput with
-//      permissionDecision:"allow" and updatedInput (temp path replaces
-//      file_path; offset/limit/pages preserved verbatim).
+//   6. Compare compressed output to original content.
+//   7. If identical (already compressed or no wasteful whitespace), exit 0
+//      as passthrough — no file write, no updatedInput needed.
+//   8. Write compressed content to actual source path; keep file_path
+//      unchanged in updatedInput so Edit tool read-tracking is satisfied.
 //
 // EXIT CODES
-//   0  passthrough (non-.md file, read error, or successful rewrite)
+//   0  passthrough (non-.md file, read error, no-op, or successful rewrite)
 
 "use strict";
 
 const fs = require("fs");
-const crypto = require("crypto");
 const path = require("path");
-const os = require("os");
 
 /**
  * Compress markdown content:
@@ -128,12 +127,10 @@ process.stdin.on("end", () => {
     // Resolve absolute path
     const absPath = path.resolve(filePath);
 
-    // Read source file and its mtime
+    // Read source file
     let content;
-    let sourceMtime;
     try {
       content = fs.readFileSync(absPath, "utf8");
-      sourceMtime = fs.statSync(absPath).mtimeMs;
     } catch (_) {
       process.exit(0); // unreadable — pass through unchanged
     }
@@ -142,39 +139,30 @@ process.stdin.on("end", () => {
       process.exit(0); // empty — nothing to compress
     }
 
-    // Derive stable temp path from a hash of the absolute source path
-    const hash = crypto.createHash("sha256").update(absPath).digest("hex").slice(0, 12);
-    const tempPath = path.join(os.tmpdir(), `cc-md-compact-${hash}.md`);
+    // Compress
+    const compressed = compressMarkdown(content);
 
-    // Reuse cached temp file when it is newer than the source
-    try {
-      const tempMtime = fs.statSync(tempPath).mtimeMs;
-      if (tempMtime > sourceMtime) {
-        process.stdout.write(
-          JSON.stringify({
-            hookSpecificOutput: {
-              hookEventName: "PreToolUse",
-              permissionDecision: "allow",
-              updatedInput: { ...input, file_path: tempPath },
-            },
-          }),
-        );
-        process.exit(0);
-      }
-    } catch (_) {
-      // temp file absent — compress and write below
+    // If content unchanged after compression, passthrough — no write needed.
+    // This also handles repeated reads: once compressed, subsequent reads
+    // produce identical output and skip the write naturally.
+    if (compressed === content) {
+      process.exit(0);
     }
 
-    // Compress and write temp file
-    const compressed = compressMarkdown(content);
-    fs.writeFileSync(tempPath, compressed, "utf8");
+    // Write compressed content back to actual source path (in-place).
+    // Claude reads compressed content from actual path; Edit tool tracks
+    // the same path — no mismatch.
+    fs.writeFileSync(absPath, compressed, "utf8");
 
+    // Emit updatedInput with original file_path unchanged.
+    // updatedInput signals to Claude Code that input was rewritten;
+    // file_path stays the same so Edit read-tracking is satisfied.
     process.stdout.write(
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "PreToolUse",
           permissionDecision: "allow",
-          updatedInput: { ...input, file_path: tempPath },
+          updatedInput: input,
         },
       }),
     );

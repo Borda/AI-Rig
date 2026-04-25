@@ -342,8 +342,6 @@ Read file at given path. Check `**Status**:` field:
 - `Status: tree` → **Distillation mode** (Steps D1–D4 below)
 - `Status: draft` → **Action plan mode** (Steps B1–B3 below)
 
-______________________________________________________________________
-
 ### Distillation mode (Status: tree)
 
 #### Step D1: Present tree summary
@@ -438,8 +436,6 @@ After writing spec, suggest:
 
 - **Spec targets `.claude/` config**: `/manage update <name> .plans/blueprint/<spec-file>` or `/manage create <type> <name> "description"`
 - **Spec targets application code or mixed changes**: `/brainstorm breakdown .plans/blueprint/<spec-file>` to generate action plan
-
-______________________________________________________________________
 
 ### Action plan mode (Status: draft)
 

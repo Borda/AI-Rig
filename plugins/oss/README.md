@@ -47,7 +47,7 @@ Maintaining an open-source project means juggling three competing demands: revie
 
 **Review feedback gets applied completely.** `/oss:resolve` closes the gap between "reviewer said X" and "X is in the code." It reads live PR comments, a saved review report, or both, deduplicates across sources, resolves conflicts semantically (not by picking a side mechanically), and implements everything in batches with `[resolve #N]` tags so you can trace each fix.
 
-**Releases go out correctly.** `shepherd` enforces SemVer before any tag lands. It writes the changelog with deprecation tracking, generates migration guides for breaking changes, and runs a readiness audit. No accidental major bumps. No forgotten changelog entries.
+**Releases go out correctly.** `oss:shepherd` enforces SemVer before any tag lands. It writes the changelog with deprecation tracking, generates migration guides for breaking changes, and runs a readiness audit. No accidental major bumps. No forgotten changelog entries.
 
 **Triage is fast and structured.** `/oss:analyse health` gives you a repo overview with duplicate issue clustering and stale PR detection every morning. Drilling into a specific thread gives you a structured summary you can act on immediately.
 

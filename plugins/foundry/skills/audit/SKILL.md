@@ -183,7 +183,7 @@ echo "Run dir: $RUN_DIR"
 
 Spawn **foundry:curator** agents in batches of up to 10 files per agent (default) — or one batch for all files if scope ≤5 files. The spawn prompt for each agent must:
 
-1. Include the content from `.claude/skills/audit/templates/curator-prompt.md`
+1. Include the content from `$AUDIT_TPL/curator-prompt.md`
 2. Include the disk inventory from Step 2 (agent/skill list for cross-reference validation)
 3. End with:
 
@@ -277,7 +277,7 @@ Do not leave overlap findings as vague "potential duplication" notes. The audit 
 | I1 | Plugin cache intact | high | setup | foundry in ~/.claude/plugins/installed_plugins.json; installPath exists |
 | I2 | Settings merge complete | medium | setup | statusLine, permissions.allow, enabledPlugins.codex in ~/.claude/settings.json |
 | I3 | Link health (conditional) | high | setup | Symlinks in ~/.claude/rules/ and ~/.claude/TEAM_PROTOCOL.md resolve; fix: /foundry:init |
-| 12 | File length | medium | all | Agents ~4 k tokens (≈300 lines), skills ~8 k tokens (≈600 lines), rules ~2.5 k tokens (≈200 lines); estimated via wc -c / 4; short lines preferred; report only — fix = remove content, never collapse lines |
+| 12 | File length | medium | all | Agents ≈300 lines, skills ≈600 lines, rules ≈200 lines; report only — fix = remove content, never collapse lines |
 | 13 | Heading hierarchy continuity | medium | all | Heading level jumps >1 (e.g. ## to ####) |
 | 14 | Orphaned follow-up references | medium | agents/skills | Skill-name refs in SKILL.md vs disk inventory |
 | 15 | Hardcoded user paths | high | agents/skills | /Users/ and /home/ in config files + settings.json |
@@ -290,12 +290,12 @@ Do not leave overlap findings as vague "potential duplication" notes. The audit 
 | 22 | Calibration coverage gap | medium/low | agents/skills | Unregistered calibratable skills/agents; stale domain table entries |
 | 23 | Bash misuse / native tool substitution | medium | agents/skills | cat/grep/find/echo>/sed replaceable by native tools |
 | 24 | Skill sequence compatibility | high/medium | skills | 24a target skill not on disk; 24b argument absent from argument-hint; scans skills, agents, READMEs |
-| 25 | Implicit agent references | high | agents/skills | subagent_type without plugin prefix (e.g. "sw-engineer" instead of "foundry:sw-engineer"); exempt: built-in types |
+| 25 | Implicit agent references | high | agents/skills | subagent_type without plugin prefix; exempt: built-in types |
 | 26 | Symbol and shortcut consistency | medium/low | agents/skills | 26a same-concept emoji conflict, 26b slash notation mixed, 26c body contradicts legend |
 | 27 | Cross-plugin shared-file ref integrity | critical/high/med | skills | 27a absent from foundry/\_shared/; 27b catch-22 (fallback needs foundry); 27c plugin-local \_shared/ unmounted |
 | 28 | Cross-plugin agent dispatch fallback | high/medium | skills | 28a no fallback for cross-plugin dispatch; 28b fallback present but incomplete |
 | 29 | LLM context minimality | medium/low | agents/skills/rules | Within-file repetition, prose inflation, obvious-consequence restatement — report only |
-| 30 | Config token overhead | medium/low | setup | 30a total always-loaded config (CLAUDE.md + global + rules/) > 100 KB; 30b single rules file > 10 KB; rules/ loads entirely at session start — agents/skills are lazy-loaded |
+| 30 | Config token overhead | medium/low | setup | 30a CLAUDE.md + global + rules/ > 100 KB; 30b single rules file > 10 KB |
 
 ### Claude Code docs freshness (within Step 4)
 
@@ -318,7 +318,7 @@ After all checks complete: collect all `⚠` lines, write the full details to `$
 
 **Delegate aggregation to a consolidator agent** to avoid flooding the main context with all agent findings. Spawn a **foundry:curator** consolidator agent with this prompt:
 
-> "Read all finding files in `<RUN_DIR>/` (\*.md files from Steps 3–4, including `docs-freshness.md` if present). Apply the severity classification from `.claude/skills/audit/severity-table.md`. Antipatterns that indicate severity under-classification are also in that file. Group all findings by severity (critical, high, medium, low). Apply the one-finding-per-issue rule: when a single location has multiple distinct problems at different severities, emit one finding entry per problem. Write the aggregated severity table to `<RUN_DIR>/aggregate.md` using the Write tool. Also write `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one line per finding: `{"file":"<basename>","sev":"high|medium|low","id":"H1","one_line":"<finding description>"}`. This file is what the orchestrator will read; aggregate.md is for human review only. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/aggregate.md\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"N findings total: C critical, H high, M medium, L low\"}`"
+> "Read all finding files in `<RUN_DIR>/` (\*.md files from Steps 3–4, including `docs-freshness.md` if present). Apply the severity classification from `$AUDIT_TPL/severity-table.md`. Antipatterns that indicate severity under-classification are also in that file. Group all findings by severity (critical, high, medium, low). Apply the one-finding-per-issue rule: when a single location has multiple distinct problems at different severities, emit one finding entry per problem. Write the aggregated severity table to `<RUN_DIR>/aggregate.md` using the Write tool. Also write `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one line per finding: `{"file":"<basename>","sev":"high|medium|low","id":"H1","one_line":"<finding description>"}`. This file is what the orchestrator will read; aggregate.md is for human review only. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/aggregate.md\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"N findings total: C critical, H high, M medium, L low\"}`"
 
 Main context receives only that one-liner. The orchestrator MUST NOT read `aggregate.md` in full — it is 200–600 lines and would overflow context on large audits. Instead, use `$RUN_DIR/summary.jsonl` for all dispatch decisions in Steps 7 and 8.
 
@@ -330,46 +330,27 @@ Read and follow the cross-validation protocol from `.claude/skills/_shared/cross
 
 ## Step 7: Report findings
 
-Output a structured audit report before fixing anything:
+Emit report (omit Upgrade Proposals section if none passed genuine-value filter):
 
 ```markdown
-## Audit Report — .claude/ config
-
-### Scope
-- Agents audited: N
-- Skills audited: N
-- Rules audited: N
-- System-wide checks: inventory drift, README sync, permissions, infinite loops, hardcoded paths, CLAUDE.md consistency, docs freshness, permissions-guide drift, model tier appropriateness, agent color drift, RTK hook alignment, memory health, agent routing alignment, codex plugin integration check, rules integrity, cross-file content duplication, file length, Bash misuse / native tool substitution, stale allow entries, calibration coverage gap, heading hierarchy continuity, skill sequence compatibility, LLM context minimality
+## Audit Report
 
 ### Findings by Severity
-
-#### Critical (N)
+#### Critical (N) | High (N) | Medium (N) | Low (N)
 | File | Line | Issue | Category |
 |---|---|---|---|
 | agents/foo.md | 42 | References `bar-agent` which does not exist on disk | broken cross-ref |
 
-#### High (N)
-...
-
-#### Medium (N)
-...
-
-#### Low (N) — auto-fixed only with 'fix all'; otherwise reported only
-...
-
 ### Summary
-- Total findings: N (C critical, H high, M medium, L low)
-- Auto-fix eligible: N per fix level — `fix high`: C+H | `fix medium`: C+H+M | `fix all`: C+H+M+L
+- Total: N (C critical, H high, M medium, L low)
+- Auto-fix eligible: `fix high`: C+H | `fix medium`: C+H+M | `fix all`: C+H+M+L
 
 ### Upgrade Proposals (N — run `/audit upgrade` to apply)
 | # | Feature | Type | Rationale |
 |---|---------|------|-----------|
-| 1 | ... | config | ... |
-
-(omit this section entirely if no proposals passed the genuine-value filter)
 ```
 
-If no fix level was passed, stop here and present the report.
+No fix level passed → stop here.
 
 ## Step 8: Delegate fixes to subagents
 

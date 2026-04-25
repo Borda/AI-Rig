@@ -4,8 +4,6 @@ Annotated companion to `.claude-plugin/permissions-allow.json` (allow list) and 
 
 **Destructive and remote-mutating operations are explicitly denied** — see the Deny List section below. Deny rules are evaluated before allow rules; a matching deny always blocks execution regardless of any allow entry. `git push` and `git remote` are not denied — they prompt for approval.
 
-______________________________________________________________________
-
 ## Deny List — always blocked
 
 ### Git — destructive local ops
@@ -80,8 +78,6 @@ ______________________________________________________________________
 | `Bash(gh repo create:*)` | Create a new repository | Irreversible; visible external action    |
 | `Bash(gh repo fork:*)`   | Fork a repository       | Creates external repo; requires approval |
 
-______________________________________________________________________
-
 ## Built-in tool permissions
 
 These entries pre-authorize `Read`, `Glob`, `Grep`, and `Write` on directories that skills and teammates access frequently as part of their own configuration or runtime state. Without them, agents are prompted to confirm accessing their own config files or writing output to skill run dirs.
@@ -103,15 +99,11 @@ These entries pre-authorize `Read`, `Glob`, `Grep`, and `Write` on directories t
 | `Glob(~/.claude/**)`    | Glob-match files in home `.claude/` directory | `/foundry:init link` checks for existing symlinks/files before linking; `/investigate` probes verify agent/skill/config files exist in `~/.claude/`; scoped to `.claude/` only to avoid broad home-dir timeout |
 | `Read(~/.claude/**)`    | Read files in home `.claude/` directory       | `/foundry:init` reads `~/.claude/settings.json` for merging; `/investigate` probes read `~/.claude/settings.json` during environment checks                                                                    |
 
-______________________________________________________________________
-
 ## Web
 
 | Permission  | Description                            | Typical use case                                                          |
 | ----------- | -------------------------------------- | ------------------------------------------------------------------------- |
 | `WebSearch` | Search the web for current information | Fetch current docs, CVE advisories, package release notes, ecosystem news |
-
-______________________________________________________________________
 
 ## Shell utilities
 
@@ -173,8 +165,6 @@ ______________________________________________________________________
 | `Bash(node --check:*)`                | Validate Node.js script syntax without running      | `/audit upgrade` correctness check for hook JS files after applying config changes                        |
 | `Bash(cd:*)`                          | Directory navigation                                | Change working directory before running commands in a subdirectory (split from compound cd&&cmd patterns) |
 
-______________________________________________________________________
-
 ## GitHub CLI — primarily read-only
 
 | Permission                | Description                                    | Typical use case                                                            |
@@ -196,8 +186,6 @@ ______________________________________________________________________
 | `Bash(gh api repos/*)`    | GitHub REST API calls for repo resources       | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
 | `Bash(gh api search/*)`   | GitHub REST API search endpoint                | `/resolve` searches for downstream usage of changed APIs                    |
 
-______________________________________________________________________
-
 ## Git — read-only
 
 | Permission              | Description                                          | Typical use case                                                                        |
@@ -215,8 +203,6 @@ ______________________________________________________________________
 | `Bash(git tag:*)`       | List or inspect local tags                           | Find the latest release tag without pushing                                             |
 | `Bash(git status:*)`    | Show working-tree state: staged, unstaged, untracked | Pre-commit check, verifying clean state before a release                                |
 
-______________________________________________________________________
-
 ## Git — local write
 
 | Permission               | Description                                                         | Typical use case                                                                                                                                          |
@@ -230,8 +216,6 @@ ______________________________________________________________________
 | `Bash(git checkout:*)`   | Switch branches or restore individual files from a ref              | Switch to a feature branch; restore a file to HEAD state                                                                                                  |
 | `Bash(git stash:*)`      | Shelve uncommitted changes temporarily                              | Save work in progress before pulling or switching context                                                                                                 |
 | `Bash(git apply:*)`      | Apply a patch file to the working tree                              | Apply a generated diff or a contributor's patch                                                                                                           |
-
-______________________________________________________________________
 
 ## Python toolchain
 
@@ -262,16 +246,12 @@ ______________________________________________________________________
 | `Bash(uv pip check:*)`              | Verify package compatibility in uv environment  | Detect dependency conflicts without installing anything                 |
 | `Bash(uv tree:*)`                   | Show dependency tree for the project            | Visualize transitive deps; identify why a package is installed          |
 
-______________________________________________________________________
-
 ## macOS / ecosystem
 
 | Permission       | Description                | Typical use case                                                                |
 | ---------------- | -------------------------- | ------------------------------------------------------------------------------- |
 | `Bash(claude:*)` | Invoke the Claude Code CLI | SessionStart hook runs `claude auth status` to cache plan info                  |
 | `Bash(node:*)`   | Run Node.js scripts        | Hooks (`task-log.js`, `statusline.js`) are Node scripts executed by Claude Code |
-
-______________________________________________________________________
 
 ## WebFetch — allowed domains
 
@@ -296,8 +276,6 @@ ______________________________________________________________________
 | `WebFetch(domain:hr.linkedin.com)`           | LinkedIn profile pages                   | Release contributor lookup: confirm a contributor's real name via their profile (see `oss/release/guidelines/writing-rules.md`) |
 | `WebFetch(domain:scholar.google.com)`        | Google Scholar academic search           | `scientist` and `/research` find papers and citation counts                                                                     |
 
-______________________________________________________________________
-
 ## Skills — pre-approved invocations
 
 Only skills that are invoked **programmatically** (by another skill, hook, or automated workflow) need a `Skill()` entry. Skills invoked directly by the user (`/audit`, `/oss:review`, `/develop:feature`, etc.) never need pre-authorization — the user's own invocation is the approval. Adding all 14 skills to the allow list would be noise.
@@ -305,8 +283,6 @@ Only skills that are invoked **programmatically** (by another skill, hook, or au
 | Permission         | Description                                        | Why programmatic (not user-invoked)                                                                      |
 | ------------------ | -------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `Skill(calibrate)` | Invoke the `/calibrate` skill without confirmation | Post-fix quality gate in `/develop` and CLAUDE.md self-improvement loop; runs without user at the prompt |
-
-______________________________________________________________________
 
 ## Top-level `settings.json` keys
 

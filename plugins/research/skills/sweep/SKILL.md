@@ -40,7 +40,7 @@ Extract flags:
 - `--team` — passed through to run
 - `--codex` — passed through to run
 - `--researcher` — passed through to run; combine with `--architect` for dual-agent SOTA + architectural hypothesis pipeline (`--journal` and `--hypothesis` not available in sweep mode)
-- `--architect` — passed through to run; enables architectural hypothesis pass via `solution-architect`
+- `--architect` — passed through to run; enables architectural hypothesis pass via `foundry:solution-architect`
 - `--skip-validation` — passed to judge step (S3)
 - `--out <path>` — optional: write program.md to this path instead of project root
 

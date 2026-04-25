@@ -2,8 +2,6 @@
 
 # Setup Checks — 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
 
-______________________________________________________________________
-
 ## Check 1 — Inventory drift (MEMORY.md vs disk)
 
 Use Glob (`agents/*.md`, path `.claude/`) to list agent files; extract basenames, sort, write to `/tmp/agents_disk.txt` via Bash:
@@ -16,19 +14,13 @@ Read `- Agents:` and `- Skills:` roster lines from MEMORY.md content injected in
 
 **macOS caution**: BSD grep treats arguments starting with `-` as option flags. When constructing bash comparison from MEMORY.md roster via grep, always use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'` not `grep '- Agents:'` — latter exits 2 on macOS, silently produces empty result. Safest: use Read tool (not grep) for MEMORY.md as stated above.
 
-______________________________________________________________________
-
 ## Check 2 — README vs disk
 
 Use Grep tool (pattern `^\| \*\*`, file `README.md`, output mode `content`) to extract agent/skill table rows.
 
-______________________________________________________________________
-
 ## Check 3 — settings.json permissions
 
 Use Grep tool (pattern `gh |python -m|ruff|mypy|pytest`, glob `skills/*/SKILL.md`, path `.claude/`, output mode `content`) to collect bash commands used in skills.
-
-______________________________________________________________________
 
 ## Check 4 — permissions-guide.md drift
 
@@ -59,8 +51,6 @@ else
 fi
 ```
 
-______________________________________________________________________
-
 ## Check 5 — Permission safety audit
 
 Every `allow` entry must be non-destructive, reversible, local-only.
@@ -72,8 +62,6 @@ Read `.claude/settings.json` with Read tool, extract `permissions.allow` list. F
 - **Local-only**: no effect outside working directory, no external data transmission
 
 Flag destructive patterns as **critical** (auto-approved destructive commands always breaking safety failure). Flag external-state mutations as **high**, raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
-
-______________________________________________________________________
 
 ## Check 6 — Stale settings.json allow entries
 
@@ -102,8 +90,6 @@ fi
 
 **Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p .reports/audit/*)`) that don't appear verbatim in config files — exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file.
 
-______________________________________________________________________
-
 ## Check 7 — codex plugin integration check
 
 Skip if codex (openai-codex) plugin not installed.
@@ -126,8 +112,6 @@ fi
 
 - Plugin installed but **disabled** → **medium** (fix: `claude plugin enable codex@openai-codex` + `/reload-plugins`)
 - Plugin present but dispatches fail → **high** (verify with `/calibrate skills`)
-
-______________________________________________________________________
 
 ## Check 8 — foundry plugin correctness
 
@@ -269,7 +253,6 @@ else
         fi
     fi
 
-
     # 8f — permissions-allow.json vs settings.json drift (skipped on marketplace install if no .claude/)
     PERM_JSON="$PLUGIN_DIR/.claude-plugin/permissions-allow.json"
     if [ ! -f "$PERM_JSON" ]; then
@@ -336,8 +319,6 @@ fi
 
 **Severity**: manifest missing/invalid JSON → **critical**; broken symlink, hooks.json invalid, hooks.json references missing file, or `claude plugin validate` fails → **high**; .js plugin file is symlink (not real file) → **medium**; 8f permissions-allow.json entries missing from settings.json → **medium**; settings.json entries missing from permissions-allow.json → **low**; setup-foundry SKILL.md missing → **high**; missing required keyword coverage → **medium**. **Report only** — never auto-fix.
 
-______________________________________________________________________
-
 ## Check 9 — Agent color drift (statusline COLOR_MAP vs frontmatter)
 
 ```bash
@@ -353,8 +334,6 @@ Using model reasoning, cross-reference each extracted color name against `COLOR_
 
 - Color in agent frontmatter but **not a key in `COLOR_MAP`** → **medium** (agent appears uncolored)
 - Color in `COLOR_MAP` not declared by any agent → **low** (dead mapping, no functional impact)
-
-______________________________________________________________________
 
 ## Check 10 — RTK hook alignment
 
@@ -425,8 +404,6 @@ fi
 
 Severity: invalid prefix entries = **high**; missing filterable commands = **medium**. **Report only** — never auto-fix.
 
-______________________________________________________________________
-
 ## Check 11 — Memory health (MEMORY.md noise accumulation)
 
 MEMORY.md has 200-line truncation limit. Three sub-checks:
@@ -456,8 +433,6 @@ fi
 ```
 
 All three sub-checks produce only **low** findings — auto-fixed under `/audit fix all`. Fix: remove duplicate section, drop version pin, delete absorbed feedback file.
-
-______________________________________________________________________
 
 ## Check 30 — Config token overhead
 

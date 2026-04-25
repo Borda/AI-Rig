@@ -627,7 +627,7 @@ Agent(subagent_type="foundry:qa-specialist", maxTurns=15, prompt="Review all fil
 
 Wait for both. Then:
 
-- `linting-expert` made file changes → commit:
+- `foundry:linting-expert` made file changes → commit:
 
 ```bash
 git add $(git diff HEAD --name-only)                          # timeout: 3000
@@ -725,8 +725,6 @@ Then print:
 **Gaps**: [e.g. conflict strategy ambiguity, action items skipped at guard, Codex partial completion]
 **Refinements**: N passes. — omit if 0 passes
 ```
-
-______________________________________________________________________
 
 ## Step 12: Comment dispatch + Codex review loop
 

@@ -8,8 +8,6 @@ AgentSpeak v2 compressed inter-agent messaging for Claude Code Agent Teams. ~60%
 - **Rule 2**: Declare version at spawn: `alpha PROTO:v2.0 @lead ready`
 - **Rule 3**: Two teammates NEVER edit same file simultaneously — use file locking.
 
-______________________________________________________________________
-
 ## Status Codes
 
 | Code | Meaning | Use when |
@@ -142,7 +140,7 @@ epsilon!fail auth attempt:3/3 ?lead          # giving up, reassign
 
 ## Security in QA
 
-`qa-specialist` auto-includes OWASP Top 10 — see `<teammate_mode>` section in qa-specialist agent for full scope and severity rules. No separate security agent.
+`foundry:qa-specialist` auto-includes OWASP Top 10 — see `<teammate_mode>` section in qa-specialist agent for full scope and severity rules. No separate security agent.
 
 ## Result Return Protocol
 

@@ -58,7 +58,7 @@ git log --oneline -50
 git log --name-only --pretty="" -30 | sort | uniq -c | sort -rn | head -20
 
 # Commit message patterns — what verbs appear most?
-git log --oneline -100 | awk '{print $2}' | sort | uniq -c | sort -rn | head -15
+git log --oneline -100 | cut -d' ' -f2 | sort | uniq -c | sort -rn | head -15
 ```
 
 Then use the Glob tool (pattern `todo_*.md`, path `.plans/active/`) to list active task files; read each with the Read tool. Also read `.notes/lessons.md` (if it exists) for task history and conversation hints.
@@ -245,8 +245,6 @@ Produce a structured proposal table. Do not apply anything yet — report first.
 **Lessons consolidated**: [list lesson IDs, e.g., L1, L3, L7]
 **Draft content**:
 ```markdown
-
-______________________________________________________________________
 
 ## description: [one-line]
 
@@ -463,6 +461,5 @@ Print changed files. Run `git diff HEAD -- <files>` and show output. Surface unr
   - Suggestion accepted for new agent/skill → `/manage create` to scaffold and register it
   - Suggestion to enhance existing → edit the agent/skill directly, then `/foundry:init`
   - `lessons` proposals applied → `/foundry:init` to propagate; `/audit rules` to verify new rule files are structurally sound
-
 
 </notes>

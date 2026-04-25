@@ -48,7 +48,7 @@ Just fix it — use logs, errors, failing tests; no hand-holding, including CI
 
 ### 8. Background Agent Health Monitoring
 
-Any orchestrator spawning background agents writing to run directory **must** monitor them — `/calibrate` is canonical; skills customize defaults via `<constants>` block.
+Any orchestrator spawning background agents writing to run directory **must** monitor them — `/foundry:calibrate` is canonical; skills customize defaults via `<constants>` block.
 
 **Protocol**:
 
@@ -74,9 +74,9 @@ Operations in `settings.json` are pre-approved — execute directly. Operation n
 
 Teams always user-invoked:
 
-- **Models**: lead = session model; reasoning teammates (sw-engineer, qa-specialist, perf-optimizer, scientist) = `opus`; execution teammates (doc-scribe, linting-expert, ci-guardian, data-steward, web-explorer) = `sonnet`; max 3–5
+- **Models**: lead = session model; reasoning teammates (foundry:sw-engineer, foundry:qa-specialist, foundry:perf-optimizer, research:scientist) = `opus`; execution teammates (foundry:doc-scribe, foundry:linting-expert, oss:ci-guardian, research:data-steward, foundry:web-explorer) = `sonnet`; max 3–5
 - **Protocol**: every spawn prompt must include `Read ~/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2`; preserve file paths, errors, test results, task IDs; discard verbose output
-- **Security**: `qa-specialist` auto-includes OWASP Top 10 — no separate security agent
+- **Security**: `foundry:qa-specialist` auto-includes OWASP Top 10 — no separate security agent
 - **File-based handoff applies in teams**: teammates writing parallel analysis still follow §2 file-handoff protocol — compact JSON envelope back to lead, full output to file
 
 ## Task Management

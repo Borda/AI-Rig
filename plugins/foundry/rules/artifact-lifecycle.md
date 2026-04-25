@@ -22,7 +22,7 @@ Skill output dirs use dot-prefix (`.reports/`, `.temp/`, `.plans/`, etc.) — si
   review/                ← /oss:review or /develop:review skill runs
   analyse/               ← /oss:analyse skill (thread, ecosystem, health subdirs)
 .experiments/            ← /research:run (run mode)
-.developments/           ← /develop:review-cycle runs
+.developments/           ← /develop:feature, /develop:fix, /develop:refactor runs
 .cache/
   gh/                    ← shared GitHub API response cache (cross-skill)
 .temp/                   ← quality-gates prose output (cross-cutting)

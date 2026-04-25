@@ -14,8 +14,6 @@ mkdir -p .reports/calibrate/ <TIMESTAMP >/rules/ <RULE_BASENAME >/
 <RULE_CONTENT>
 ```
 
-______________________________________________________________________
-
 ### Phase 1 — Extract directives and generate problems
 
 **Step 1a — Extract directives**: identify 2–3 key directives from the rule content above. A key directive is a specific, action-prescribing sentence in imperative mood with a concrete, observable required behaviour (e.g. `"Never use git add -A"`, `"Always append a Legend block after any results table"`). Skip section headers, explanatory prose, and context-setting sentences.
@@ -64,8 +62,6 @@ Problem format:
 
 Write all problems to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/problems.json` as a JSON array.
 
-______________________________________________________________________
-
 ### Phase 2 — Run tasks (parallel)
 
 Create a checkpoint:
@@ -97,8 +93,6 @@ Write your complete response to `<RUN_DIR>/response-<PROBLEM_ID>.md` using the W
 **Context discipline**: subagents write to disk and return a single-line acknowledgment. The pipeline agent must NOT accumulate their full analyses in its context — scorers read from disk in Phase 3. Receiving only `Wrote: <PROBLEM_ID>` per agent is correct and expected.
 
 **Phase timeout**: every 5 min run `find .reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/ -newer /tmp/calibrate-rules-<TIMESTAMP>-<RULE_BASENAME> -name "response-*.md" | wc -l` — new files = alive; zero = stalled. Hard cutoff: 15 min of no new files → mark remaining as `{"timed_out": true}` in scores.json; grant one +5 min extension if the last response file shows active content.
-
-______________________________________________________________________
 
 ### Phase 3 — Score (parallel scorer subagents)
 
@@ -145,8 +139,6 @@ Return ONLY this JSON (no prose): `{"problem_id":"<PROBLEM_ID>","type":"trigger"
 <!-- END SPAWN PROMPT -->
 
 Collect all scorer compact JSONs. Write to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/scores.json` as a JSON array.
-
-______________________________________________________________________
 
 ### Phase 4 — Aggregate and write report
 
@@ -215,11 +207,9 @@ Write result JSONL to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/resu
 
 Use `null` for `trigger_recall`/`trigger_precision` when `IS_PATH_SCOPED` is `false`.
 
-______________________________________________________________________
-
 ### Phase 5 — Propose wording improvements
 
-Spawn a **curator** subagent using the Agent tool. Pass only file paths — do NOT paste file contents into the prompt:
+Spawn a **foundry:curator** subagent using the Agent tool. Pass only file paths — do NOT paste file contents into the prompt:
 
 > Read these files using the Read tool:
 >
@@ -241,8 +231,6 @@ Spawn a **curator** subagent using the Agent tool. Pass only file paths — do N
 > ```
 >
 > Write to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_BASENAME>/proposal.md`. End with a `## Confidence` block per CLAUDE.md output standards.
-
-______________________________________________________________________
 
 ### Return value
 

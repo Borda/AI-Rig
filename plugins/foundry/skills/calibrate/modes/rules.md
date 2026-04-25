@@ -7,8 +7,6 @@ Diff between ORIGINAL and COMPRESSED legend line inside the fenced block:
 
 Here is the fixed compressed file:
 
-______________________________________________________________________
-
 **Re: Compress markdown to caveman format**
 
 <!-- Step 1 in SKILL.md dispatches to this mode file. Steps here continue from Step 2. -->

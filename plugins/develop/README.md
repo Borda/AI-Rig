@@ -199,10 +199,10 @@ ______________________________________________________________________
 
 **Flags**:
 
-| Flag            | Description                                                                                                                                                        |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--plan <path>` | Read classification, scope, and approach from an existing plan file                                                                                                |
-| `--team`        | Spawn parallel `sw-engineer` + `qa-specialist` + `doc-scribe` teammates. Use when feature spans 3+ modules, changes public API, or touches auth/payment/data scope |
+| Flag            | Description                                                                                                                                                                                |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--plan <path>` | Read classification, scope, and approach from an existing plan file                                                                                                                        |
+| `--team`        | Spawn parallel `foundry:sw-engineer` + `foundry:qa-specialist` + `foundry:doc-scribe` teammates. Use when feature spans 3+ modules, changes public API, or touches auth/payment/data scope |
 
 **Workflow**:
 
@@ -221,7 +221,7 @@ ______________________________________________________________________
 /develop:feature "add CSV export to the results API" --plan .plans/active/plan_add-csv-export-results-api.md
 ```
 
-**Team mode coordination**: Lead broadcasts Step 1 analysis. `qa-specialist` challenges the API design before implementation starts. `sw-engineer` implements while `qa-specialist` writes TDD tests in parallel. `doc-scribe` prepares documentation structure concurrently.
+**Team mode coordination**: Lead broadcasts Step 1 analysis. `foundry:qa-specialist` challenges the API design before implementation starts. `foundry:sw-engineer` implements while `foundry:qa-specialist` writes TDD tests in parallel. `foundry:doc-scribe` prepares documentation structure concurrently.
 
 ______________________________________________________________________
 
@@ -231,7 +231,7 @@ ______________________________________________________________________
 
 **When to use**: fixing a known bug with a traceback, failing test, or GitHub issue.
 
-**Not for**: unknown failures without a traceback or reproduction path — use `/foundry:investigate` for triage; `.claude/` config issues — use `/audit`.
+**Not for**: unknown failures without a traceback or reproduction path — use `/foundry:investigate` for triage; `.claude/` config issues — use `/foundry:audit`.
 
 **Invocation**:
 
@@ -245,11 +245,11 @@ ______________________________________________________________________
 
 **Flags**:
 
-| Flag                 | Description                                                                                         |
-| -------------------- | --------------------------------------------------------------------------------------------------- |
-| `--plan <path>`      | Read scope and approach from an existing plan file                                                  |
-| `--diagnosis <path>` | Read confirmed root cause from a `/develop:debug` output file; skips Step 1 analysis entirely       |
-| `--team`             | Spawn 2-3 `sw-engineer` teammates each investigating a distinct root-cause hypothesis independently |
+| Flag                 | Description                                                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `--plan <path>`      | Read scope and approach from an existing plan file                                                          |
+| `--diagnosis <path>` | Read confirmed root cause from a `/develop:debug` output file; skips Step 1 analysis entirely               |
+| `--team`             | Spawn 2-3 `foundry:sw-engineer` teammates each investigating a distinct root-cause hypothesis independently |
 
 **Workflow**:
 
@@ -291,15 +291,15 @@ ______________________________________________________________________
 ```text
 /develop:refactor "<target file or directory> <goal>"
 /develop:refactor "<goal>" --plan <path>
-/develop:refactor "<goal>" --team            # parallel: sw-engineer refactors + qa-specialist writes tests simultaneously
+/develop:refactor "<goal>" --team            # parallel: foundry:sw-engineer refactors + foundry:qa-specialist writes tests simultaneously
 ```
 
 **Flags**:
 
-| Flag            | Description                                                                                                                                          |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--plan <path>` | Read scope and approach from an existing plan file                                                                                                   |
-| `--team`        | Spawn `sw-engineer` (refactoring) and `qa-specialist` (characterization tests) in parallel. Use when target is a directory or spans multiple modules |
+| Flag            | Description                                                                                                                                                          |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--plan <path>` | Read scope and approach from an existing plan file                                                                                                                   |
+| `--team`        | Spawn `foundry:sw-engineer` (refactoring) and `foundry:qa-specialist` (characterization tests) in parallel. Use when target is a directory or spans multiple modules |
 
 **Workflow**:
 
@@ -335,7 +335,7 @@ ______________________________________________________________________
 
 **When to use**: when you have a symptom but not a confirmed root cause; when a bug is mysterious enough to warrant structured investigation before fixing.
 
-**Not for**: production incidents without local reproduction — use `/foundry:investigate`; `.claude/` config issues — use `/audit`.
+**Not for**: production incidents without local reproduction — use `/foundry:investigate`; `.claude/` config issues — use `/foundry:audit`.
 
 **Invocation**:
 
@@ -347,9 +347,9 @@ ______________________________________________________________________
 
 **Flags**:
 
-| Flag     | Description                                                                                                                                                                              |
-| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--team` | Spawn 2-3 `sw-engineer` teammates, each investigating a distinct root-cause hypothesis independently. Use when root cause is unclear after initial analysis, or failure spans 3+ modules |
+| Flag     | Description                                                                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--team` | Spawn 2-3 `foundry:sw-engineer` teammates, each investigating a distinct root-cause hypothesis independently. Use when root cause is unclear after initial analysis, or failure spans 3+ modules |
 
 **Workflow**:
 
@@ -393,7 +393,7 @@ ______________________________________________________________________
 
 **Workflow**:
 
-1. **Identify scope**: collects Python files from the path or `git diff HEAD`. Classifies the diff as FIX / REFACTOR / FEATURE / MIXED — skips optional agents for smaller diffs (e.g., FIX skips `perf-optimizer` and `solution-architect`).
+1. **Identify scope**: collects Python files from the path or `git diff HEAD`. Classifies the diff as FIX / REFACTOR / FEATURE / MIXED — skips optional agents for smaller diffs (e.g., FIX skips `foundry:perf-optimizer` and `foundry:solution-architect`).
 2. **Codex co-review** (if `codex` plugin installed): adversarial diff review to seed a pre-flagged issues list for the specialist agents.
 3. **Six parallel agents** (file-based handoff — each writes findings to `.reports/review/<timestamp>/`):
    - `foundry:sw-engineer`: architecture, SOLID adherence, type safety, error handling, Python anti-patterns, security for touched auth/input/data paths

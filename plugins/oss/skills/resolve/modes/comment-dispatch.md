@@ -4,8 +4,6 @@
 
 Reached when `$ARGUMENTS` = bare comment text (not PR number or URL). File read + executed by `/oss:resolve` Step 12.
 
-______________________________________________________________________
-
 ## Step 12: Comment dispatch + Codex review loop
 
 Reached when $ARGUMENTS = bare comment text (not PR number or URL).
@@ -72,43 +70,7 @@ if REVIEW_PASS == 5 and ISSUES_FOUND > 0:
 
 ### 12c: Lint and QA gate
 
-If code changed (dispatch or review loop produced commits):
-
-```bash
-RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-mkdir -p "$RUN_DIR" # timeout: 5000
-```
-
-Spawn both agents in parallel:
-
-```text
-Agent(foundry:linting-expert): "Review all files changed in HEAD (git diff HEAD~N..HEAD where N = number of commits just made). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}."
-
-Agent(foundry:qa-specialist, maxTurns: 15): "Review all files changed in the most recent commits for correctness, edge cases, and regressions. Flag any blocking issues. Write your full findings to $RUN_DIR/qa-specialist-step12c.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}."
-```
-
-> **Health monitoring**: Agent calls synchronous; Claude awaits natively. No response within ~15 min → surface partial results from `$RUN_DIR` with ⏱.
-
-- `linting-expert` made changes → commit:
-
-```bash
-git add $(git diff HEAD --name-only)                          # timeout: 3000
-git commit -m "$(cat <<'EOF'
-lint: auto-fix violations after resolve cycle
-
----
-Co-authored-by: Claude Code <noreply@anthropic.com>
-EOF
-)"  # timeout: 3000
-```
-
-Revoke commit authorization:
-
-```bash
-rm -f /tmp/claude-commit-authorized  # timeout: 3000
-```
-
-- `foundry:qa-specialist` reports blocking issues → fix inline, re-run once; surface unresolved issues in report
+If code changed: apply the **Step 9 lint and QA gate pattern** from the main resolve workflow — same parallel spawn of `foundry:linting-expert` + `foundry:qa-specialist`, commit lint fixes, surface blocking QA issues. Use `$RUN_DIR/linting-expert-step12c.md` and `$RUN_DIR/qa-specialist-step12c.md` as output paths. Revoke commit authorization after gate completes.
 
 Mark task `completed`:
 

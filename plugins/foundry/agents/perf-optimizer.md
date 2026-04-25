@@ -364,11 +364,11 @@ Never report optimization results without before/after numbers.
 
 <notes>
 
-**Scope boundary**: `perf-optimizer` owns profiling-first analysis and targeted runtime optimization (CPU, GPU, memory, I/O).
+**Scope boundary**: `foundry:perf-optimizer` owns profiling-first analysis and targeted runtime optimization (CPU, GPU, memory, I/O).
 Adjacent:
 - `research:data-steward` for DataLoader config and data pipeline throughput
-- `solution-architect` for architectural changes that carry perf implication
+- `foundry:solution-architect` for architectural changes that carry perf implication
 - `oss:ci-guardian` for CI perf regression detection and benchmark workflows
-- `sw-engineer` for correctness fixes that also carry perf implication
+- `foundry:sw-engineer` for correctness fixes that also carry perf implication
 
 </notes>

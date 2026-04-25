@@ -12,7 +12,7 @@ effort: high
 
 Comprehensive code review of local files or working-tree diff. Spawn specialized sub-agents in parallel, consolidate findings into structured feedback with severity levels.
 
-NOT for: GitHub PR review (use `/oss:review <PR#>`); GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>`); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/manage` or `/audit`).
+NOT for: GitHub PR review (use `/oss:review <PR#>`); GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>`); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/foundry:manage` or `/foundry:audit`).
 
 </objective>
 

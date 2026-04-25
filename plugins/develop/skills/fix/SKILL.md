@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Reproduce-first bug resolution. Capture bug in failing regression test, apply minimal fix, verify via quality stack and review loop.
 
-NOT for: unknown failures without traceback (use `/foundry:investigate`); `.claude/` config issues (use `/audit`).
+NOT for: unknown failures without traceback (use `/foundry:investigate`); `.claude/` config issues (use `/foundry:audit`).
 
 </objective>
 
@@ -55,15 +55,16 @@ Read `$_DEV_SHARED/runner-detection.md` — sets `$TEST_CMD` (full suite) and `$
 
 ```bash
 # Extract --plan path from arguments
-PLAN_FILE=$(echo "$ARGUMENTS" | sed 's/.*--plan //' | awk '{print $1}')
-[ -z "$PLAN_FILE" ] && PLAN_FILE=""
+PLAN_FILE="${ARGUMENTS##*--plan }"
+PLAN_FILE="${PLAN_FILE%% *}"
+[ "$PLAN_FILE" = "$ARGUMENTS" ] && PLAN_FILE=""
 ```
 
 If `PLAN_FILE` is set: Read `$PLAN_FILE`, extract `Affected files`, `Risks`, `Suggested approach` — use these to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`).
 
 **Checkpoint init**: create `.developments/<TS>/checkpoint.md` (where `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`). After each major step (1, 2, 3, 4), append `step: N — completed`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
 
-# Fix Mode
+## Fix Mode
 
 **Optional `--diagnosis <path>`**: if provided (from a preceding `/develop:debug` session), read the diagnosis file first. Skip codebase analysis — root cause, suspect files, and evidence are pre-populated. Proceed directly to Step 2 (regression test).
 

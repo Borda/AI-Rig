@@ -21,7 +21,7 @@
 - Well-scoped modules (≤5 public APIs): max 1 style item per section
 - Target: GT+2 findings total per module — 10 nits obscure 2 critical fixes
 - Pre-flight: before writing any section, count total findings; if count exceeds CRITICAL/HIGH plus 2, drop lowest-severity first; depth over breadth
-- Annotation completeness: if ≥1 HIGH/CRITICAL present, omit ALL LOW type annotation and docstring nits — handled by `linting-expert` or pre-commit hooks
+- Annotation completeness: if ≥1 HIGH/CRITICAL present, omit ALL LOW type annotation and docstring nits — handled by `foundry:linting-expert` or pre-commit hooks
 - Cap each non-critical section at 5 items; note "N additional lower-priority findings omitted" if more found
 
 ## Actionable Findings Format

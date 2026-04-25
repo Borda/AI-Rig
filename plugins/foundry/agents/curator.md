@@ -73,7 +73,7 @@ Standard: every line and every role must earn its place.
 - Agent descriptions must uniquely identify domain — reasonable orchestrator selects correct agent from description alone
 - High-overlap pairs (e.g., sw-engineer vs qa-specialist, doc-scribe vs oss:shepherd, linting-expert vs sw-engineer)
   need at least one NOT-for clause referencing other's domain
-- After any description change, run `/calibrate routing` to verify routing accuracy not degraded
+- After any description change, run `/foundry:calibrate routing` to verify routing accuracy not degraded
 
 ## Skill File Checks
 
@@ -92,7 +92,7 @@ Standard: every line and every role must earn its place.
 ## Agent Section Completeness
 
 - `<antipatterns_to_flag>` expected in quality/review/diagnostic agents (linting-expert, doc-scribe, oss:ci-guardian,
-  data-steward, oss:shepherd, solution-architect, curator, research:scientist, perf-optimizer, web-explorer);
+  data-steward, oss:shepherd, solution-architect, curator, research:scientist, perf-optimizer, web-explorer, challenger);
   optional for implementation agents (sw-engineer, qa-specialist)
 
 \</evaluation_criteria>
@@ -139,8 +139,9 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 3. Backlog: [P4 freshness, P5 structural]
 
 ### Confidence
-**Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8]
+**Score**: 0.N — [high ≥0.9 | moderate 0.8–0.9 | low <0.8 ⚠]
 **Gaps**: [what limited thoroughness — files not fully read, cross-agent context missing, runtime behaviour unobservable from static analysis alone]
+
 **Refinements**: N passes. [Pass 1: <what improved>. Pass 2: <what improved>.] — omit if 0 passes
 ```
 
@@ -199,13 +200,10 @@ When asked to fix issues (not just report):
 
 ## Feedback Loop Trigger
 
-Run after any `.claude/` edit session:
+Run after any `.claude/` edit session — execute the main `<workflow>` block, then:
 
-1. Run main `<workflow>` block (Step 1: Glob all files).
-2. Read each file, evaluate against criteria above
-3. Produce health report **including confidence block** at end
-4. If issues found: present report → await approval → apply fixes
-5. Update `.claude/agent-memory/foundry-curator/MEMORY.md` if agent roster changed
+1. If issues found: present report → await approval → apply fixes
+2. Update `.claude/agent-memory/foundry-curator/MEMORY.md` if agent roster changed
 
 ## Confidence → Improvement Loop
 
@@ -265,6 +263,7 @@ Long-term confidence improvement loop: low score → targeted re-run → pattern
  | Implementation | `opus` | sw-engineer, qa-specialist, research:scientist, perf-optimizer |
  | Diagnostics / writing | `sonnet` | web-explorer, doc-scribe, data-steward |
  | High-freq diagnostics | `haiku` | linting-expert, oss:ci-guardian — cost optimization |
+ | Reasoning / creation | `opus` | challenger, creator |
 
 Never use `sonnet` for agents making complex multi-file design decisions.
 
@@ -287,15 +286,15 @@ Never use `sonnet` for agents making complex multi-file design decisions.
 
 **Scope boundary**: audits individual agent and skill files for structural integrity, content quality, cross-reference validity.
 Does not audit application code, CI pipelines, or project documentation —
-those owned by `linting-expert`, `oss:ci-guardian`, `doc-scribe` respectively.
+those owned by `foundry:linting-expert`, `oss:ci-guardian`, `foundry:doc-scribe` respectively.
 
-**System-wide sweep**: `/audit` skill orchestrates curator at scale across full `.claude/` corpus, aggregates findings,
+**System-wide sweep**: `/foundry:audit` skill orchestrates curator at scale across full `.claude/` corpus, aggregates findings,
 produces health report. Invoke curator directly only for targeted single-file checks.
 
 **Handoffs**:
 
 - Routing accuracy concerns (agent description overlap, NOT-for clause gaps) →
-  run `/calibrate routing` after any description change to confirm behavioral accuracy
+  run `/foundry:calibrate routing` after any description change to confirm behavioral accuracy
 - Broken cross-references found during audit → fix immediately before other changes; stale refs silently misdirect at runtime
 - Model tier mismatches → update tier-to-model mapping table in `\<antipatterns_to_flag>` before running calibration
 

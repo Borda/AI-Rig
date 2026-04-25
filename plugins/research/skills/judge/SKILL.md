@@ -320,7 +320,9 @@ Next: /research:run <path>                         [APPROVED]
 Next: fix protocol, re-run /research:judge <path>      [NEEDS-REVISION or BLOCKED]
 ```
 
-## Notes
+</workflow>
+
+<notes>
 
 - Judge read-only — never modifies code, commits, or writes to `.experiments/state/`
 - `.experiments/judge-<timestamp>/` stores methodology review agent's full output for reference
@@ -329,4 +331,4 @@ Next: fix protocol, re-run /research:judge <path>      [NEEDS-REVISION or BLOCKE
 - Re-run judge after editing `program.md` to confirm fixes resolved flagged items
 - Judge run directories don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (exempt per `.claude/rules/artifact-lifecycle.md` TTL policy — no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/judge-*/`)
 
-</workflow>
+</notes>

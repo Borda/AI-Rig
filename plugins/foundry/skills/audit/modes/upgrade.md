@@ -4,8 +4,6 @@
 
 Triggered by `/audit upgrade`. Read+executed by `/audit` when `upgrade` arg present.
 
-______________________________________________________________________
-
 ## Mode: upgrade
 
 **Trigger**: `/audit upgrade`

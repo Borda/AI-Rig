@@ -2,8 +2,6 @@
 
 # Shared Checks (all scopes) — 17, 21, 4, 5, 9, 16, 15
 
-______________________________________________________________________
-
 ## Check 12 — File length (context budget risk)
 
 Thresholds: agents > 300 lines (~4 k tokens) · skill SKILL.md > 600 lines (~8 k tokens) · rules > 200 lines (~2.5 k tokens).
@@ -47,8 +45,6 @@ done
 
 **Severity**: **medium** — report only, never auto-fix. When flagging, remind the fixer: only content removal or distillation counts; collapsing lines is not acceptable.
 
-______________________________________________________________________
-
 ## Check 13 — Markdown heading hierarchy continuity
 
 ````bash
@@ -82,21 +78,15 @@ fi
 
 **Severity**: **medium** — heading jumps impair navigation. Fix: insert missing intermediate heading level, or demote/promote offending heading. **Report only** — never auto-fix.
 
-______________________________________________________________________
-
 ## Check 14 — Orphaned follow-up references
 
 → Subsumed by Check 24 (skill sequence compatibility in `checks-skills.md`). Check 24 covers reference existence (24a), argument plausibility (24b), and cycle detection (24c) for all documented follow-up chains. Run Check 24 instead.
-
-______________________________________________________________________
 
 ## Check 15 — Hardcoded user paths
 
 Use Grep tool (pattern `/Users/|/home/`, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`) to flag non-portable paths in agent and skill files. Run second Grep on `.claude/settings.json` with same pattern to catch absolute hook paths.
 
 **Important**: run on every file regardless of prior critical/high findings — path portability orthogonal to other severity classes, must not deprioritize.
-
-______________________________________________________________________
 
 ## Check 16 — Example value vs. token cost
 
@@ -125,8 +115,6 @@ Classify each example block via model reasoning:
 
 Report per-file: `N examples total, K high-value, M low-value (est. ~X tokens wasted)`.
 
-______________________________________________________________________
-
 ## Check 17 — Cross-file content duplication (>40% consecutive step overlap)
 
 ```bash
@@ -153,8 +141,6 @@ Via model reasoning, compare workflow body of each file against all others in it
 Scattered similarity doesn't count — only contiguous block triggers. **Severity**: **medium** — report only, never auto-fix.
 
 For flagged agent pairs, name canonical owner of duplicated content. If no clear owner because both files describe same role, route pair to Check 20 as `merge-prune` candidate instead of leaving duplication ambiguous.
-
-______________________________________________________________________
 
 ## Check 18 — Rules integrity and efficiency
 
@@ -195,8 +181,6 @@ grep -o 'rules/[a-z_-]*\.md' | sort -u # timeout: 5000
 
 Severity: 18b = **high**; 18a/18c/18d = **medium**.
 
-______________________________________________________________________
-
 ## Check 25 — Implicit agent references (missing plugin prefix)
 
 All agent dispatch calls must use fully-qualified plugin-prefixed form (`foundry:sw-engineer`, `oss:shepherd`, etc.). Bare names like `sw-engineer` ambiguous: rely on `~/.claude/agents/` symlinks being present, break if symlinks stale, missing, or pointing to wrong plugin.
@@ -225,8 +209,6 @@ fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 
 > **Related**: Check 28 (in `checks-skills.md`) covers cross-plugin fallback coverage — dispatched agent exists but no fallback when that plugin is absent. Check 25 and Check 28 address different failure modes; run both.
 
-______________________________________________________________________
-
 ## Check 29 — LLM context minimality (verbosity)
 
 Every token in agent, skill, rule file = inference cost on every invocation. Check each file semantically minimal — all information retained, zero redundant wording.
@@ -246,8 +228,6 @@ Via model reasoning, apply four criteria per file:
 Per finding: location (section heading + approx line range) · pattern type (repetition / prose-inflation / obvious-consequence) · estimated token savings (small <20 / medium 20–80 / large >80) · proposed shorter form or "remove entirely".
 
 **Severity**: **medium** — total savings >= medium across >= 2 distinct locations. **low** — isolated small savings only. **Report only** — never auto-fix; minimization risks removing load-bearing nuance.
-
-______________________________________________________________________
 
 ## Check 26 — Symbol and shortcut consistency
 

@@ -4,8 +4,6 @@
 
 Checks validate post-install state in `~/.claude/`. Operate on home dir, not project `.claude/`. Run via `/foundry:audit setup` (or `/audit setup` after `foundry:init link`).
 
-______________________________________________________________________
-
 ## Check I1 — Plugin cache intact
 
 Verify foundry plugin installed and cache dir accessible.
@@ -39,8 +37,6 @@ fi
 ```
 
 **Severity**: missing/broken cache → **high** (plugin non-functional).
-
-______________________________________________________________________
 
 ## Check I2 — Settings merge complete
 
@@ -101,8 +97,6 @@ fi
 ```
 
 **Severity**: missing entry or stale hooks block → **medium** per sub-check (non-blocking, degrades functionality). Fix: re-run `/foundry:init` — idempotent.
-
-______________________________________________________________________
 
 ## Check I3 — Link health (conditional)
 

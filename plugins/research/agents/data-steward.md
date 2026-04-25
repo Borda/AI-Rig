@@ -212,8 +212,6 @@ Coverage: [percentage or "complete"]
 - **DVC hash**: [if tracked]
 ```
 
-______________________________________________________________________
-
 ### Data Pipeline Audit Report
 
 Use when operating in `pipeline-audit` mode — forces coverage of every ML-domain leakage class general code reviews miss:
@@ -310,7 +308,7 @@ Read `plugins/research/agents/data-steward/ml-pipeline-patterns.md` — split st
 - Confirmed leakage or split contamination → `foundry:sw-engineer` to fix pipeline
 - Resolved class imbalance → `research:scientist` for experiment design (oversampling vs loss weighting vs curriculum)
 - DataLoader bottleneck → `foundry:perf-optimizer` for profiling and Input/Output (I/O) fixes
-- Dataset versioning or DVC setup needed → `oss:shepherd` for tooling decisions
+- Dataset versioning or DVC setup needed → `foundry:sw-engineer` for tooling decisions
 - Dataset URL unknown or requires web discovery → `foundry:web-explorer` for URL/content discovery; data-steward validates result
 - Dataset acquired and validated → return to `research:scientist` with dataset card + Acquisition Report
 

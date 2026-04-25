@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 TDD-first feature development. Crystallise API as demo use-case test, drive implementation to pass it, close quality gaps with review, docs, quality stack.
 
-NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/manage`).
+NOT for: bug fixes (use `/develop:fix`); `.claude/` config changes (use `/foundry:manage`).
 
 </objective>
 
@@ -55,7 +55,7 @@ Read `$_DEV_SHARED/runner-detection.md` — sets `$TEST_CMD` (full suite) and `$
 
 **Checkpoint init**: create `.developments/<TS>/checkpoint.md` (where `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`). After each major step (1, 2, 3, 4, 5), append `step: N — completed` to this file. On skill start, check for an existing `.developments/*/checkpoint.md` — if found, offer to resume from the last completed step.
 
-# Feature Mode
+## Feature Mode
 
 ## Flag parsing
 

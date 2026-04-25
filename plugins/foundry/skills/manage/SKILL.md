@@ -1,6 +1,6 @@
 ---
 name: manage
-description: Create, update, or delete agents, skills, rules, and hooks with full cross-reference propagation. Non-trivial writes (agent/skill content-edits and creates) are delegated to foundry:curator subagents; hook content-edits are delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates and handles MEMORY.md, README, audit, and the final report. Also manages settings.json permissions atomically with permissions-guide.md.
+description: Create, update, or delete agents, skills, rules, and hooks with full cross-reference propagation. Trivial edits (typos, small fixes ≤10 words) applied inline without agent; `.md` content-edits delegated to foundry:curator; code file edits (`.js`, `.py`, `.ts`) delegated to foundry:sw-engineer; large cross-ref fan-outs (> 3 files) also delegate. The parent orchestrates MEMORY.md, README, audit, calibration, and the final report. Also manages settings.json permissions atomically with permissions-guide.md.
 argument-hint: create <agent|skill|rule> <name> "desc" | update <name> [new-name|"change"|spec.md] | delete <name> | add perm <rule> "desc" "use-case" | remove perm <rule>
 disable-model-invocation: true
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (agent/skill edits → foundry:curator; hook edits → foundry:sw-engineer; rule edits inline), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
+Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation with rich domain content, atomic renames with cross-ref propagation, content editing (trivial edits inline; `.md` files → foundry:curator; code files `*.js`/`*.py`/`*.ts` → foundry:sw-engineer; rule edits inline), clean deletion with broken-ref cleanup. Keeps MEMORY.md inventory in sync with disk.
 
 </objective>
 
@@ -20,8 +20,8 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
   - `create skill <name> "description"` — create new skill with workflow scaffold
   - `create rule <name> "description"` — create new rule file with frontmatter and sections
   - `update <name> <new-name>` — rename; type auto-detected from disk
-  - `update <name> "change description"` — content-edit; agent/skill → foundry:curator, hook → foundry:sw-engineer, rule → inline
-  - `update <name> <spec-file.md>` — content-edit from spec file; agent/skill → foundry:curator, hook → foundry:sw-engineer, rule → inline
+  - `update <name> "change description"` — content-edit; trivial → inline, `.md` → foundry:curator, code → foundry:sw-engineer, rule → inline
+  - `update <name> <spec-file.md>` — content-edit from spec file; trivial → inline, `.md` → foundry:curator, code → foundry:sw-engineer, rule → inline
   - `delete <name>` — delete; type auto-detected from disk (agents, skills, rules, hooks); asks user if ambiguous
   - `add perm <rule> "description" "use case"` — add permission to settings.json allow list and permissions-guide.md
   - `remove perm <rule>` — remove permission from settings.json allow list and permissions-guide.md
@@ -39,8 +39,8 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 **Update second-argument discrimination**:
 
 - Two bare kebab-case args (second arg no spaces, no `.md` extension) → **rename mode**
-- One name + quoted string → **content-edit mode** (agent/skill: foundry:curator; hook: foundry:sw-engineer; rule: inline)
-- One name + path ending in `.md` → **content-edit mode** (agent/skill: foundry:curator; hook: foundry:sw-engineer; rule: inline)
+- One name + quoted string → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
+- One name + path ending in `.md` → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
 
 **Examples:**
 
@@ -72,13 +72,7 @@ Maintain colors manually — add new agent colors here when creating agents; thi
 
 <workflow>
 
-**Task hygiene**: Before creating tasks, call `TaskList`. For each found task:
-
-- status `completed` if work clearly done
-- status `deleted` if orphaned / no longer relevant
-- keep `in_progress` only if genuinely continuing
-
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase. Mark in_progress/completed throughout. On loop retry or scope change, create new task.
+**Task hygiene**: call `TaskList` first; close orphaned tasks. **Task tracking**: create tasks for each major phase; mark in_progress/completed throughout.
 
 ## Step 1: Parse and validate
 
@@ -129,11 +123,28 @@ python3 -c "import json,sys; d=json.load(open('.claude/settings.json')); sys.exi
 
 If validation fails, report error and stop.
 
+**Edit complexity classification** (content-edit mode only):
+
+```bash
+# Classify directive as trivial vs substantive
+EDIT_TRIVIAL=false
+if [[ "$MODE" == "content-edit" ]]; then
+  WORD_COUNT=$(echo "$DIRECTIVE" | wc -w)
+  if [[ "$WORD_COUNT" -le 10 ]]; then
+    echo "$DIRECTIVE" | grep -qiE '(typo|spelling|rename .+ to .+|change .+ to .+|replace .+ with .+|fix (a |the )?(typo|bug|error)|add missing|remove (the |a )?[a-z]+|correct)' \
+      && EDIT_TRIVIAL=true
+  fi
+fi
+```
+
+Trivial = directive ≤10 words AND matches a simple-change pattern. Trivial edits: apply inline with Edit tool — no agent spawn.
+
 **Step skip rules**:
 
 - **Perm operations**: skip Steps 2, 3, 5, 6, 7, 8, 9 — go Step 1 → Step 4 → Step 10
 - **Hook operations**: skip Steps 2, 3, 6 (no color inventory, no MEMORY.md roster entry, no README table row); in Steps 5 and 7 skip cross-ref propagation (hook filenames not referenced from agent/skill markdown) — go Step 1 → Step 4 → Step 9 → Step 10
 - **Content-edit operations**: skip Step 2 (entity already exists); skip Step 3 color inventory (no create); in Steps 5–7 only update cross-refs and README if name or description changed
+- **Trivial content-edits**: additionally skip Steps 6–7 (no roster/description change possible); proceed Step 1 → Step 4 → Step 8 → Step 10
 
 ## Step 2: Overlap review (create only)
 
@@ -278,6 +289,25 @@ rm .claude/agents/<name>.md # timeout: 5000
 ```bash
 rm -r .claude/skills/<name>  # timeout: 5000
 ```
+
+### Dispatch: Content-Edit
+
+Before executing a type-specific content-edit mode, determine approach:
+
+**File-type → agent routing:**
+
+| File extension | Agent |
+| --- | --- |
+| `.md` (agents, skills, SKILL.md) | `foundry:curator` |
+| `.js`, `.py`, `.ts`, `.sh` (code) | `foundry:sw-engineer` |
+| Rule `.md` (under `rules/`) | inline Edit — no agent |
+
+**If `EDIT_TRIVIAL=true`** (classified in Step 1):
+1. Read file using Read tool
+2. Apply directive directly using Edit tool — no agent spawn
+3. Proceed to Step 8; skip Steps 5–7 unless name or description changed in the edit
+
+**If `EDIT_TRIVIAL=false`**: proceed to type-specific mode below for full agent-delegated edit.
 
 ### Mode: Content-Edit Agent
 
@@ -558,7 +588,7 @@ Add rules to on-disk inventory check: Glob (`rules/*.md`, path `.claude/`), extr
 
 For **create** and **update (rename)**: verify tool efficiency — cross-check agent/skill's declared tools (`tools:` or `allowed-tools:`) against tool names in workflow body. Declared tool not referenced anywhere → flag as cleanup candidate in Step 10 report (report only — do not block operation).
 
-## Step 9: Audit
+## Step 9: Audit and calibrate
 
 Run `/audit` to validate created/modified files. **Skip if invoked with `--skip-audit` or if current `manage` operation runs inside an `audit fix` loop** — outer audit covers it.
 
@@ -574,16 +604,29 @@ For targeted check of only affected file, spawn **foundry:curator** directly:
 
 Include audit findings in final report. Do not proceed to sync if any `critical` findings remain.
 
-## Step 10: Summary report
+**Calibration** — for agent/skill create or non-trivial content-edit, run `/calibrate <name>` after audit passes — mandatory, not optional:
 
-Output structured report:
+```text
+/calibrate <name>
+```
+
+Then run `/calibrate routing fast` to confirm overall routing accuracy unaffected:
+
+```text
+/calibrate routing fast
+```
+
+Skip calibration for: trivial edits, renames, deletes, rule operations, perm operations.
+
+## Step 10: Summary report
 
 - **Operation**: what was done (create/update/delete + type + name, or add/remove perm + rule)
 - **Files Changed**: table of file paths and actions (created/renamed/deleted/cross-ref updated/appended/removed)
 - **Cross-References**: count of files updated, broken refs cleaned (n/a for perm operations)
 - **Current Roster**: agents (N) and skills (N) with comma-separated names (n/a for perm operations)
 - **Audit Result**: audit findings (pass / issues found) (n/a for perm operations)
-- **Follow-up**: for `create` or `update` of agent/skill run `/calibrate <name>` to baseline or verify recall and calibration; for **agent or skill** create/update/delete also run `/calibrate routing fast` — any roster or description change affects routing; for perm operations confirm both `settings.json` and `permissions-guide.md` updated
+- **Calibration Result**: recall score and routing accuracy from Step 9 (n/a for trivial edits, renames, deletes, perms)
+- **Follow-up**: perm ops → confirm both `settings.json` and `permissions-guide.md` updated; run `/foundry:init` to sync `~/.claude/`
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -591,25 +634,17 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 
 <notes>
 
-- **Atomic updates**: always write-before-delete to prevent data loss on interruption
-- **Perm operations are dual-file**: `add perm` and `remove perm` MUST update both `settings.json` and `permissions-guide.md` — never update one without other
-- **settings.json format**: Python json.load/json.dump with indent=2 is safe editing path — avoids fragile sed/awk surgery on JSON; output format (2-space indent, no trailing commas) matches existing file style
-- **No auto-edit for agent/skill/rule operations**: this skill only mentions when new permissions might be needed — does not mutate settings.json for those operations
-- **README.md tables**: Step 7 updates agent/skill tables in `README.md` and rules table in `.claude/README.md` — keep row format consistent with existing rows
-- **Color pool**: AVAILABLE_COLORS provides unused colors for new agents; if exhausted, reuse colors with note
-- **Cross-ref grep is broad**: searches bare kebab-case names across all markdown files — catches backtick references, prose mentions, spawn directives, inventory lists
-- **MEMORY.md inventory**: always regenerated from disk, never manually calculated — prevents drift
-- **Rule files have no `name:` frontmatter** — filename IS identifier. Renames only change file on disk and update cross-references; no frontmatter `name:` field to update.
-- **Non-trivial write delegation** — agent/skill content-edits and creates delegated to `foundry:curator` subagents to prevent main-context inflation (200–600 line files). Rule content-edits stay inline (≤ 80 lines). Cross-ref propagation (Step 5) delegates to `foundry:curator` when > 3 files need updating. Subagent returns compact JSON envelope; parent handles MEMORY.md (Step 6), README (Step 7), audit (Step 9), final report.
-- **Type auto-detection**: `update` and `delete` search all four dirs in parallel (agents, skills, rules, hooks); name is unique identifier. Two entities share name (rare) → `AskUserQuestion` resolves.
-- **Content-edit vs rename discrimination**: bare kebab-case second arg = rename; quoted string or `.md` path = content-edit. Unambiguous — names never contain spaces or end in `.md`.
+- **Atomic updates**: write-before-delete prevents data loss on interruption; perm ops must update both `settings.json` and `permissions-guide.md`
+- **settings.json format**: json.load/json.dump with indent=2 — avoids fragile sed/awk on JSON
+- **Write delegation by file type**: `.md` (agents, skills) → `foundry:curator`; code (`.js`, `.py`, `.ts`, `.sh`) → `foundry:sw-engineer`; rule edits and trivial edits (≤10-word simple-change directive) → inline Edit, no agent; cross-ref fan-out >3 files → `foundry:curator`
+- **README.md tables**: agent/skill tables in project `README.md`; rules table in `.claude/README.md` — keep row format consistent with existing rows
+- **No auto-edit for agent/skill/rule operations**: this skill does not mutate settings.json for non-perm operations
+- **Rule files have no `name:` frontmatter** — filename is identifier; renames update file + cross-refs only
+- **Color pool**: AVAILABLE_COLORS lists unused colors; if exhausted, reuse with note
+- **MEMORY.md inventory**: always regenerated from disk — prevents drift
 - Follow-up chains:
-  - After any create/update/delete → `/audit` to verify config integrity
-  - After creating new agent/skill → `/oss:review` to validate generated content quality; for trigger accuracy testing run `/calibrate routing fast`
-  - After updating agent instructions (especially `\<antipatterns_to_flag>`) → `/calibrate <agent>` to measure recall and calibration improvement
-  - **After any agent create/update/delete or content-edit changing description** → `/calibrate routing fast` to confirm routing accuracy unaffected
-  - After `add perm`/`remove perm` → confirm both `settings.json` and `permissions-guide.md` updated; run `/foundry:init` to refresh `~/.claude/` settings
-  - Recommended sequence for agent operations: `/manage <op>` → `/audit` → `/calibrate <name>` (quality) → `/calibrate routing fast` (routing)
-  - Recommended sequence for skill/rule operations: `/manage <op>` → `/audit` → `/calibrate <name>` (quality) → `/calibrate routing fast` (if roster changed)
+  - create or non-trivial update of agent/skill → `/audit` → `/calibrate <name>` (mandatory) → `/calibrate routing fast`
+  - trivial update or rename or delete → `/audit` → `/calibrate routing fast` (if description changed)
+  - add/remove perm → confirm both files updated; run `/foundry:init`
 
 </notes>

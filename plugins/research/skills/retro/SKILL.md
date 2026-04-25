@@ -23,7 +23,7 @@ NOT for: running experiments (use `/research:run`); designing experiments (use `
 
 `research:scientist` in same plugin as this skill — no fallback needed if research plugin installed.
 
-# Retro Mode (Steps T1–T7)
+## Retro Mode (Steps T1–T7)
 
 Triggered by `retro`, `retro <run-id>`, or `retro <run-id> --compare <run-id-2>`.
 
@@ -273,7 +273,10 @@ Next: /research:run <program.md> --hypothesis <RUN_DIR>/hypotheses.jsonl
      /research:fortify <commit>    ← stress-test top hypothesis before full re-run
 ```
 
-## Notes
+
+</workflow>
+
+<notes>
 
 - Retro is read-only — never modifies code, commits, or writes to `.experiments/state/<run-id>/`
 - `.experiments/retro-<timestamp>/` stores analysis scripts, intermediate JSON, scientist output, and hypotheses.jsonl
@@ -283,4 +286,4 @@ Next: /research:run <program.md> --hypothesis <RUN_DIR>/hypotheses.jsonl
 - Dead iteration threshold (`--threshold`) should match the metric's noise floor — default 0.001 works for normalized metrics; adjust for raw values (e.g. `--threshold 0.1` for loss values in the hundreds)
 - Statistical tests assume metric values are independent samples — if iterations are highly correlated (e.g. cumulative optimization), note this limitation in the report
 
-</workflow>
+</notes>

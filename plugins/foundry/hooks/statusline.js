@@ -102,6 +102,7 @@ process.stdin.on("end", () => {
     // Agent color names (from color: frontmatter) → ANSI escape codes
     const COLOR_MAP = {
       blue: "\x1b[34m",
+      red: "\x1b[31m", // used by foundry:challenger
       cyan: "\x1b[36m",
       green: "\x1b[32m",
       indigo: "\x1b[34m", // closest ANSI to indigo — reserved (no agent declares this color)

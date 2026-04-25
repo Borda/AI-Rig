@@ -1,5 +1,5 @@
 ---
-name: sw-engineer
+name: foundry-sw-engineer
 description: Senior software engineer for writing and refactoring Python code. Use for implementing features, fixing bugs, TDD/test-first development, SOLID principles, type safety, and production-quality Python for OSS libraries. NOT for writing docstrings or docs content (use foundry:doc-scribe), configuring ruff/mypy/pre-commit (use foundry:linting-expert), system design decisions (use foundry:solution-architect), test quality analysis or writing standalone test suites or coverage analysis (use foundry:qa-specialist), performance profiling and optimization (use foundry:perf-optimizer), implementing methods from ML papers / designing ML experiments (use research:scientist), or editing .claude/ config files — agents, skills, hooks, settings, CLAUDE.md (use foundry:curator).
 tools: Read, Write, Edit, Bash, Grep, Glob, TaskCreate, TaskUpdate
 maxTurns: 80
@@ -286,7 +286,7 @@ automatic call delegation.
 
 \<hook_authoring>
 
-Hook files (`*.js` — `hooks/` in plugin, symlinked at `.claude/hooks/`) exclusively authored by `sw-engineer`.
+Hook files (`*.js` — `hooks/` in plugin, symlinked at `.claude/hooks/`) exclusively authored by `foundry:sw-engineer`.
 curator owns `.md` config files (agents, skills, rules); hook code ownership lives here.
 
 ## File Header Structure
@@ -382,10 +382,10 @@ Never emit to stdout from logging hook; unexpected output can interfere with Cla
 **pre-commit versioning**: when creating `.pre-commit-config.yaml` from scratch for actual use, run `pre-commit autoupdate` immediately
 — never hand-write version strings. Full versioning protocol in `foundry:linting-expert`'s `\<pre_commit_versioning>` section.
 
-**Scope boundary**: `sw-engineer` owns implementation correctness, type safety, SOLID structure, and test-driven development.
+**Scope boundary**: `foundry:sw-engineer` owns implementation correctness, type safety, SOLID structure, and test-driven development.
 Adjacent concerns:
 - `foundry:linting-expert` for ruff/mypy rule configuration, pre-commit setup, and **mandatory final code validation before handover**
-- `qa-specialist` for **mandatory test coverage and edge-case review before handover to user**
+- `foundry:qa-specialist` for **mandatory test coverage and edge-case review before handover to user**
 - `foundry:solution-architect` for API surface design, ADRs, and breaking-change strategy
 - `foundry:perf-optimizer` for profiling-first performance work
 

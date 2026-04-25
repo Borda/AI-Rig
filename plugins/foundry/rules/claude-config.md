@@ -53,3 +53,21 @@ cd /path || uv run pytest tests/
 - Applies to every command, not just worktrees
 
 Working directory persists between Bash calls — two sequential calls equivalent.
+
+## List Range Label Discipline
+
+When editing a file that contains lettered or numbered list range labels (e.g. `**Close-scenario archetypes (A–G):**`):
+
+- After any edit that adds or removes list items, update **all** range labels in the file — not just the section edited
+- Non-contiguous letter ranges: use explicit form `A–C, F–G`, not `A–G`, when items are missing
+- Scan the entire file after edits to catch stale range labels elsewhere
+
+## Ask Before Acting on Unknown Cause
+
+When a user asks "why" about something that happened (deleted content, unexpected state, missing items) and the cause is unknown:
+
+- **Never act** — do not restore, revert, or modify anything
+- State clearly that the cause is unknown and why (e.g. "pre-session change not made by me")
+- Ask the user what they want done before taking any action
+
+Restoring without being asked = overstepping. The user asking "why" is a question, not a request to fix.

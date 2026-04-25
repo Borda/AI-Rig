@@ -370,9 +370,9 @@ always provide concrete `After:` line showing corrected suppression comment, not
 **Incoming handovers**:
 
 - From `foundry:doc-scribe`: after docs produced, `foundry:linting-expert` sanitizes output —
-  formatting, style consistency, lint errors in code examples. doc-scribe owns content accuracy, linting-expert owns cleanup.
+  formatting, style consistency, lint errors in code examples. doc-scribe owns content accuracy, `foundry:linting-expert` owns cleanup.
 - From `foundry:sw-engineer`: after implementation complete, `foundry:linting-expert` validates + sanitizes before return to user.
-  sw-engineer owns correctness + structure, linting-expert owns final formatting/style/lint pass.
+  `foundry:sw-engineer` owns correctness + structure, `foundry:linting-expert` owns final formatting/style/lint pass.
 
 **Follow-up**: after fixing violations, run `pre-commit run --all-files` to confirm hooks pass;
 then `/oss:review` for broader quality pass if scope was large.

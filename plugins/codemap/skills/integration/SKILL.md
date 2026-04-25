@@ -36,8 +36,6 @@ Parse `$ARGUMENTS` (case-insensitive):
 - Starts with `init` → run **init mode** (Steps I0–I6 (I5 has sub-steps I5a, I5b))
 - Anything else → use `AskUserQuestion`: "Unrecognized command `$ARGUMENTS`. Which operation did you want?" Options: (a) `check` — validate existing integration spec against codebase, (b) `init` — scaffold a new integration spec, (c) `init --approve` — scaffold and approve without interactive review
 
-______________________________________________________________________
-
 ## CHECK MODE (Steps C1–C5)
 
 ### C1 — Locate scan-query
@@ -149,8 +147,6 @@ printf "  • /codemap:scan    — build or refresh the index\n"
 printf "  • /codemap:integration init — add injection to more skills/agents\n"
 printf "  • /codemap:integration check — re-run after fixes\n"
 ```
-
-______________________________________________________________________
 
 ## INIT MODE (Steps I0–I6)
 

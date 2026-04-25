@@ -8,7 +8,7 @@
 
 Handover + team protocol compliance. Included in `all`. Use explicit `communication` target to run this mode in isolation.
 
-Target agent: `curator`.
+Target agent: `foundry:curator`.
 
 ### Domain
 

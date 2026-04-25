@@ -2,8 +2,6 @@
 
 # Agent Checks — 8, 13
 
-______________________________________________________________________
-
 ## Check 19 — Model tier appropriateness
 
 Three capability tiers:
@@ -37,8 +35,6 @@ Use model reasoning. Classify each agent by tier from `<role>`, `description`, w
 **Important**: CLAUDE.md `## Agent Teams` specifies models for team-mode spawn — NOT mandate for agent frontmatter. Don't flag frontmatter models as violations for differing from CLAUDE.md team-mode spec.
 
 **Report only** — never auto-fix. Model assignments may be intentional trade-offs.
-
-______________________________________________________________________
 
 ## Check 20 — Agent description routing alignment
 

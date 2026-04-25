@@ -1,7 +1,5 @@
 # Skill Checks — 21, 22, 23, 24, 27, 28
 
-______________________________________________________________________
-
 ## Check 21 — Skill frontmatter conflicts
 
 `context:fork + disable-model-invocation:true` is a broken combination.
@@ -22,8 +20,6 @@ for f in .claude/skills/*/SKILL.md; do # timeout: 5000
     fi
 done
 ```
-
-______________________________________________________________________
 
 ## Check 22 — Calibration coverage gap
 
@@ -50,8 +46,6 @@ A mode is calibratable when ALL three signals are present:
 **Step 7 — Validate registered agents exist on disk**: For each registered agent in the domain table, verify it resolves to a discovered file. A bare name in the domain table (e.g. `sw-engineer`) matches `foundry:sw-engineer` when no `.claude/agents/sw-engineer.md` exists — apply model reasoning to resolve bare names against plugin-qualified discoveries. Registered agent with no matching file → **medium** (stale entry will cause calibrate to fail at runtime; remove from domain table or correct the prefix).
 
 **Step 8 — Identify unregistered agents**: For each discovered agent not represented in the domain table, apply the same three-signal calibratability test from Step 4. → Unregistered calibratable agent: **low** (add to `calibrate/modes/agents.md` domain table with an appropriate domain string).
-
-______________________________________________________________________
 
 ## Check 23 — Bash command misuse / native tool substitution
 
@@ -90,8 +84,6 @@ After the scan, apply model reasoning to each match — exclude cases where the 
 | `sed`/`awk` for text substitution | Edit tool | medium |
 
 **Report only** — never auto-fix; some Bash invocations in example/illustration code blocks are intentional.
-
-______________________________________________________________________
 
 ## Check 24 — Skill sequence compatibility
 
@@ -145,8 +137,6 @@ Build a directed graph from (source-file, skill-reference) pairs collected in St
 | 24a — target skill not on disk | high | no |
 | 24b — argument absent from argument-hint | medium | no |
 | 24c — directed cycle in follow-up chain | high | no |
-
-______________________________________________________________________
 
 ## Check 27 — Cross-plugin shared-file reference integrity
 
@@ -209,8 +199,6 @@ done
 | 27b — catch-22 (fallback file needs foundry to reach) | critical | no |
 | 27c — plugin-local \_shared/ file referenced but not mounted | medium | no |
 
-______________________________________________________________________
-
 ## Check 28 — Cross-plugin agent dispatch fallback
 
 Skills dispatching agents via `Agent(subagent_type="<plugin>:<name>", ...)` depend on that plugin being installed. When the dispatched agent belongs to a different plugin from the skill's own plugin, and no fallback is declared for the case where that plugin is absent, the skill fails at runtime.
@@ -263,8 +251,6 @@ Partially covered → **[medium] 28b**: `<plugin>/<skill>: fallback section pres
 | --- | --- | --- | --- |
 | 28a — no fallback for cross-plugin dispatch | high | no |
 | 28b — fallback present but agent not covered | medium | no |
-
-______________________________________________________________________
 
 ## Check 30 — Plugin skill bash operational correctness
 

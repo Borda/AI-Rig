@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Investigation-first debugging. Gather evidence, trace data flow, form confirmed root-cause hypothesis, write regression test, hand off to fix mode.
 
-NOT for: production incidents without local reproduction (use `/foundry:investigate` for triage); `.claude/` config issues (use `/audit`).
+NOT for: production incidents without local reproduction (use `/foundry:investigate` for triage); `.claude/` config issues (use `/foundry:audit`).
 
 </objective>
 
@@ -52,7 +52,7 @@ Read `$_DEV_SHARED/runner-detection.md` — sets `$TEST_CMD` (full suite) and `$
 
 **Checkpoint**: debug is investigation-only — no code changes. `.plans/active/debug_<slug>.md` (written in Step 4) serves as implicit session state. No `.developments/` checkpoint needed.
 
-# Debug Mode
+## Debug Mode
 
 > **Argument type detection**: if `$ARGUMENTS` is a positive integer (or prefixed with `#`, e.g. `#123`), treat as GitHub issue number and fetch with `gh issue view`. If text (contains spaces, letters, or special chars), treat as symptom description.
 

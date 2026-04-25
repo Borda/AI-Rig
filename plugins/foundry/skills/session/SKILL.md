@@ -2,7 +2,7 @@
 name: session
 description: Session parking lot — automatically parks diverging ideas and unanswered questions to project-scoped memory; /session resume shows pending items, /session archive closes them, /session summary gives a session digest
 argument-hint: resume | archive <text> | summary
-allowed-tools: Read, Write, Edit, Glob, Grep, TaskCreate, TaskUpdate, Bash
+allowed-tools: Read, Write, Edit, Glob, Grep, TaskCreate, TaskUpdate, Bash, AskUserQuestion
 effort: low
 model: sonnet
 context: fork

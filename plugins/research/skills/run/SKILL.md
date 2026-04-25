@@ -44,7 +44,6 @@ STATE_DIR:                  .experiments/state/<run-id>/  (timestamped dir per r
 | `ml` | `research:scientist` | accuracy, loss, F1, AUC, BLEU |
 | `arch` | `foundry:solution-architect` | coupling, cohesion, modularity metrics |
 
-
 **Auto-inference keyword heuristics** (when `agent_strategy: auto` or omitted; checked against `## Goal` text AND metric command):
 
 - contains `pytest`, `coverage`, `complexity` → `code` → `foundry:sw-engineer`
@@ -83,7 +82,6 @@ Triggered by `run <goal|file.md>`.
 ### Step R0: Hypothesis pre-phase (`--researcher` / `--architect`)
 
 If no `--researcher`/`--architect`, skip to R1.
-
 
 Read `${CLAUDE_SKILL_DIR}/modes/hypothesis-pipeline.md`
 
@@ -536,8 +534,6 @@ Read `${CLAUDE_SKILL_DIR}/modes/report.md`
 
 Inspect applied changes (`git diff <baseline_commit>...<best_commit> --stat`), identify tasks Codex can complete (comments on non-obvious changes, docstrings for modified functions, test coverage). Read `.claude/skills/_shared/codex-delegation.md` and apply criteria. **Prerequisite**: this file is installed by `foundry:init` from `plugins/foundry/skills/_shared/codex-delegation.md` — if not found, stop and warn: `⚠ .claude/skills/_shared/codex-delegation.md not found. Run /foundry:init to install it, then retry R7.`
 
-______________________________________________________________________
-
 ## Resume Mode
 
 Triggered by `resume` or `resume <file.md>`.
@@ -557,8 +553,6 @@ Triggered by `resume` or `resume <file.md>`.
    User confirms → remove last line. Decline → stop, let user fix.
 4. Validate git HEAD: if diverged from `state.json.best_commit` unexpectedly, warn and ask before continuing.
 5. Continue loop from `state.json.iteration + 1`. `diary.md` NOT re-initialized — entries append to existing file.
-
-______________________________________________________________________
 
 ## Colab MCP Integration (`--colab`)
 
@@ -596,14 +590,14 @@ If Colab MCP unavailable at R2, print:
 Then re-run with --colab.
 ```
 
-______________________________________________________________________
+</workflow>
 
-## Notes
+<notes>
 
 - **Commit before verify** — enables clean `git revert HEAD` if metric doesn't improve. Never verify before committing.
 - **`git revert` over `git reset --hard`** — preserves experiment history, is not in the deny list.
 - **Never `git add -A`** — always stage specific files returned by agent JSON.
-- **Never `--no-verify`** — if pre-commit hook blocks, delegate to `linting-expert` and fix.
+- **Never `--no-verify`** — if pre-commit hook blocks, delegate to `foundry:linting-expert` and fix.
 - **Guard ≠ Verify** — guard checks for regressions (tests, lint); verify checks target metric. Both must pass to keep a commit.
 - **Scope files read-only for guard/test files** — ideation agent must not modify test files or metric/guard scripts.
 - **JSONL over TSV** — richer structured fields, `jq`-parseable, no delimiter ambiguity; query with `jq -c 'select(.status == "kept")' experiments.jsonl`.
@@ -611,4 +605,4 @@ ______________________________________________________________________
 - **Safety break**: max iterations = 20; skill never exceeds MAX_ITERATIONS without user override.
 - **Explicit flags = hard requirements**: all flags (`--colab`, `--docker`, `--codex`, `--researcher`, `--architect`) must be available at R2. If unavailable, stop — never silently degrade.
 
-</workflow>
+</notes>

@@ -360,7 +360,9 @@ Components:   <N> candidates identified — ablations not executed
 Next: run /research:fortify without --skip-run to execute ablations
 ```
 
-## Notes
+</workflow>
+
+<notes>
 
 - **Worktree invariant** — cleanup (`git worktree remove --force`) must execute even if metric/guard fails. Never leave stale worktrees. Final `git worktree prune` catches any missed cleanup.
 - **Main repo never modified** — all ablation work happens in worktrees. Main working tree stays clean throughout.
@@ -374,4 +376,5 @@ Next: run /research:fortify without --skip-run to execute ablations
 - **Compute passthrough** — `--compute` and `--colab` flags pass through to metric_cmd/guard_cmd execution. Docker and Colab routing follow the same conventions as `/research:run` Phases 5–6.
 - **Revert conflicts expected** — when commits are interleaved (component A's commit touches same lines as component B's), revert may conflict. This is recorded as `revert-conflict` and reported, not treated as an error.
 
-</workflow>
+
+</notes>

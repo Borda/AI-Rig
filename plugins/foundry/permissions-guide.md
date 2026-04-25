@@ -4,8 +4,6 @@ Annotated companion to `.claude-plugin/permissions-allow.json` (allow list) and 
 
 **Destructive git commands are explicitly denied** — see the Deny List section below. Deny rules are evaluated before allow rules; a matching deny always blocks execution regardless of any allow entry. Remote-mutating operations (`git push`, `git remote`) are not denied — they prompt the user for approval.
 
-______________________________________________________________________
-
 ## Deny List — always blocked
 
 | Permission | Description | Why denied |
@@ -19,8 +17,6 @@ ______________________________________________________________________
 | `Bash(git tag -d:*)` | Delete local tag | Requires explicit user confirmation |
 | `Bash(curl -X DELETE:*)` | HTTP DELETE requests | Destructive external state mutation |
 | `Bash(curl --request DELETE:*)` | HTTP DELETE requests (alternate form) | Destructive external state mutation |
-
-______________________________________________________________________
 
 ## Built-in tool permissions
 
@@ -43,15 +39,11 @@ These entries pre-authorize `Read`, `Glob`, `Grep`, and `Write` on directories t
 | `Glob(~/.claude/**)` | Glob-match files in home `.claude/` directory | `/foundry:init link` checks for existing symlinks/files before linking; `/investigate` probes verify agent/skill/config files exist in `~/.claude/`; scoped to `.claude/` only to avoid broad home-dir timeout |
 | `Read(~/.claude/**)` | Read files in home `.claude/` directory | `/foundry:init` reads `~/.claude/settings.json` for merging; `/investigate` probes read `~/.claude/settings.json` during environment checks |
 
-______________________________________________________________________
-
 ## Web
 
 | Permission | Description | Typical use case |
 | --- | --- | --- |
 | `WebSearch` | Search the web for current information | Fetch current docs, CVE advisories, package release notes, ecosystem news |
-
-______________________________________________________________________
 
 ## Shell utilities
 
@@ -112,8 +104,6 @@ ______________________________________________________________________
 | `Bash(node --check:*)` | Validate Node.js script syntax without running | `/audit upgrade` correctness check for hook JS files after applying config changes |
 | `Bash(cd:*)` | Directory navigation | Change working directory before running commands in a subdirectory (split from compound cd&&cmd patterns) |
 
-______________________________________________________________________
-
 ## GitHub CLI — primarily read-only
 
 | Permission | Description | Typical use case |
@@ -135,8 +125,6 @@ ______________________________________________________________________
 | `Bash(gh api repos/*)` | GitHub REST API calls for repo resources | `/analyse`, `/oss:review`, `/resolve` fetch PR reviews, issue data via REST |
 | `Bash(gh api search/*)` | GitHub REST API search endpoint | `/resolve` searches for downstream usage of changed APIs |
 
-______________________________________________________________________
-
 ## Git — read-only
 
 | Permission | Description | Typical use case |
@@ -154,8 +142,6 @@ ______________________________________________________________________
 | `Bash(git tag:*)` | List or inspect local tags | Find the latest release tag without pushing |
 | `Bash(git status:*)` | Show working-tree state: staged, unstaged, untracked | Pre-commit check, verifying clean state before a release |
 
-______________________________________________________________________
-
 ## Git — local write
 
 | Permission | Description | Typical use case |
@@ -169,8 +155,6 @@ ______________________________________________________________________
 | `Bash(git checkout:*)` | Switch branches or restore individual files from a ref | Switch to a feature branch; restore a file to HEAD state |
 | `Bash(git stash:*)` | Shelve uncommitted changes temporarily | Save work in progress before pulling or switching context |
 | `Bash(git apply:*)` | Apply a patch file to the working tree | Apply a generated diff or a contributor's patch |
-
-______________________________________________________________________
 
 ## Python toolchain
 
@@ -201,16 +185,12 @@ ______________________________________________________________________
 | `Bash(uv pip check:*)` | Verify package compatibility in uv environment | Detect dependency conflicts without installing anything |
 | `Bash(uv tree:*)` | Show dependency tree for the project | Visualize transitive deps; identify why a package is installed |
 
-______________________________________________________________________
-
 ## macOS / ecosystem
 
 | Permission | Description | Typical use case |
 | --- | --- | --- |
 | `Bash(claude:*)` | Invoke the Claude Code CLI | SessionStart hook runs `claude auth status` to cache plan info |
 | `Bash(node:*)` | Run Node.js scripts | Hooks (`task-log.js`, `statusline.js`) are Node scripts executed by Claude Code |
-
-______________________________________________________________________
 
 ## WebFetch — allowed domains
 
@@ -226,16 +206,14 @@ ______________________________________________________________________
 | `WebFetch(domain:anthropic.com)` | Anthropic blog, model cards, policy docs | Research model capabilities, fetch release announcements |
 | `WebFetch(domain:docs.anthropic.com)` | Claude Code documentation | Fetch Claude Code docs; redirects to code.claude.com — both domains needed for full coverage |
 | `WebFetch(domain:code.claude.com)` | Claude Code documentation | `/audit` fetches hook, agent, and skill schemas for validation |
-| `WebFetch(domain:arxiv.org)` | ML preprints | `/research` and `scientist` fetch papers |
+| `WebFetch(domain:arxiv.org)` | ML preprints | `/research:topic` and `research:scientist` fetch papers |
 | `WebFetch(domain:developers.openai.com)` | OpenAI developer documentation | Codex CLI docs, API reference |
 | `WebFetch(domain:platform.openai.com)` | OpenAI platform and API reference | Model capabilities, pricing, endpoint docs |
 | `WebFetch(domain:openai.com)` | OpenAI blog and model release notes | Track new model releases |
 | `WebFetch(domain:www.anthropic.com)` | Anthropic main site | Research blog posts, model announcements, policy pages |
 | `WebFetch(domain:support.claude.com)` | Anthropic support and help centre | Lookup Claude feature behaviour, plan limits, billing FAQs |
 | `WebFetch(domain:hr.linkedin.com)` | LinkedIn profile pages | Release contributor lookup: confirm a contributor's real name via their profile (see `oss/release/guidelines/writing-rules.md`) |
-| `WebFetch(domain:scholar.google.com)` | Google Scholar academic search | `scientist` and `/research` find papers and citation counts |
-
-______________________________________________________________________
+| `WebFetch(domain:scholar.google.com)` | Google Scholar academic search | `research:scientist` and `/research:topic` find papers and citation counts |
 
 ## Skills — pre-approved invocations
 
@@ -244,8 +222,6 @@ Only skills that are invoked **programmatically** (by another skill, hook, or au
 | Permission | Description | Why programmatic (not user-invoked) |
 | --- | --- | --- |
 | `Skill(calibrate)` | Invoke the `/calibrate` skill without confirmation | Post-fix quality gate in `/develop` and CLAUDE.md self-improvement loop; runs without user at the prompt |
-
-______________________________________________________________________
 
 ## Top-level `settings.json` keys
 

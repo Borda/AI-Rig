@@ -7,7 +7,7 @@ allowed-tools: Read, Write, TaskCreate, TaskUpdate, AskUserQuestion
 
 <objective>
 
-Interactive intake half of a two-phase content system. Collect topic, format, audience profile, four-beat story arc, and voice/tone through structured questions; detect and refuse out-of-scope requests (FAQs, comparison tables, reference docs); surface conflicts between brief and audience needs before writing. Write the approved outline to `.plans/content/<slug>-outline.md` for `foundry:creator` to execute.
+First phase of a two-phase content system. Out-of-scope includes FAQs, comparison tables, and reference docs. Story arc is four-beat: Problem → Journey → Insight → Action.
 
 </objective>
 

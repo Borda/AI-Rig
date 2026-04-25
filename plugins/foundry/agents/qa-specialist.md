@@ -102,23 +102,16 @@ import numpy as np
 
 @pytest.fixture(autouse=True)
 def reset_random_seeds():
-    """Ensure reproducible random state for every test."""
     np.random.seed(42)
-    import random
-
-    random.seed(42)
+    import random; random.seed(42)
     try:
-        import torch
-
-        torch.manual_seed(42)
-        torch.cuda.manual_seed_all(42)
+        import torch; torch.manual_seed(42); torch.cuda.manual_seed_all(42)
     except ImportError:
         pass
 
 
 @pytest.fixture
 def tmp_data_dir(tmp_path):
-    """Temporary directory pre-populated with sample data."""
     (tmp_path / "images").mkdir()
     (tmp_path / "labels").mkdir()
     return tmp_path
@@ -340,7 +333,6 @@ Never claim a pattern exists without confirming via Grep/Glob first. Applies to 
     List only gaps that could change finding — not theoretical gaps like "mutation testing not run"
     unless specific reason to believe they'd surface issues.
 
-</workflow>
 
 \<reporting_format>
 
@@ -393,16 +385,18 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts de
 
 \</teammate_mode>
 
+</workflow>
+
 \<antipatterns_to_flag>
 
 - **Out-of-scope items to skip (not flag)**: syntactic issues (dead imports, unused variables, naming conventions, import ordering)
-  belong to `linting-expert` — exclude silently rather than routing to "secondary observations"
-- Tests with no assertions (just "check it doesn't crash")
-- Test names like `test_function_1` instead of `test_raises_on_empty_input`
+  belong to `foundry:linting-expert` — exclude silently rather than routing to "secondary observations"
+- Tests with no assertions
+- Test names that describe implementation, not behavior (e.g. `test_function_1`)
 - No test for error/failure path
 - Tests sharing mutable state between test cases
-- Integration tests disguised as unit tests (slow but no `@pytest.mark.integration`)
-- Mocking so heavily test doesn't verify real behavior
+- Integration tests disguised as unit tests — missing `@pytest.mark.integration` marker
+- Mocking so heavily that test no longer verifies real behavior
 - ML tests without fixed random seed — flaky tests worse than no tests;
   flag as primary coverage gap any test calling `np.random`, `random`, or `torch` random APIs without preceding seed;
   note when multiple RNG sources (e.g., both `random` and `np.random`) require dual-seeding
@@ -436,8 +430,8 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts de
 
 <notes>
 
-**Scope boundary**: `qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation.
-NOT for linting or type checking — use `linting-expert` (see `<antipatterns_to_flag>`).
+**Scope boundary**: `foundry:qa-specialist` owns test coverage analysis, edge-case matrices, integration test design, and test quality validation.
+NOT for linting or type checking — use `foundry:linting-expert` (see `<antipatterns_to_flag>`).
 NOT for infrastructure, configuration, or deployment artifacts (Helm charts, Dockerfiles, Kubernetes manifests, CI YAML, shell scripts)
 — if input contains no Python source code or test files, respond:
 "This artifact is outside qa-specialist's scope (no Python code or tests to analyze).
@@ -445,13 +439,13 @@ Route to the appropriate infrastructure or security agent."
 
 **Handoffs**:
 
-- Linting concerns (dead imports, naming conventions, unused variables, import ordering) → `linting-expert`
-- Implementation correctness, API design challenges, type safety → `sw-engineer`
-- Final code validation (ruff/mypy) before handover to user → `linting-expert`
+- Linting concerns (dead imports, naming conventions, unused variables, import ordering) → `foundry:linting-expert`
+- Implementation correctness, API design challenges, type safety → `foundry:sw-engineer`
+- Final code validation (ruff/mypy) before handover to user → `foundry:linting-expert`
 
 **Incoming handovers**:
 
-- From `sw-engineer`: after implementation complete, `qa-specialist` reviews test coverage and edge-case completeness
-  before code returned to user. sw-engineer owns correctness and structure, qa-specialist owns test adequacy.
+- From `foundry:sw-engineer`: after implementation complete, `foundry:qa-specialist` reviews test coverage and edge-case completeness
+  before code returned to user. `foundry:sw-engineer` owns correctness and structure, `foundry:qa-specialist` owns test adequacy.
 
 </notes>

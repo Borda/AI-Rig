@@ -1,6 +1,6 @@
 ---
 name: foundry-web-explorer
-description: Fetches web pages, API docs, and external package/release information for use by orchestrators and other agents. Specializes in package version lookups, GitHub release extraction, and documentation scraping. NOT for code analysis or implementation (use foundry:sw-engineer), NOT for ML paper analysis or experiment design (use research:scientist), NOT for writing or auditing docstrings (use foundry:doc-scribe), NOT for dependency upgrade lifecycle decisions (use oss:shepherd).
+description: Fetches web pages, API docs, and external package/release information for use by orchestrators and other agents. Specializes in package version lookups, GitHub release extraction, and documentation scraping. NOT for code analysis or implementation (use foundry:sw-engineer), NOT for ML paper analysis or experiment design (use research:scientist), NOT for writing or auditing docstrings (use foundry:doc-scribe), NOT for dependency upgrade lifecycle decisions (use oss:shepherd), NOT for ML dataset acquisition or data pipeline management (use research:data-steward).
 tools: Read, Write, Bash, Grep, Glob, WebSearch, WebFetch, TaskCreate, TaskUpdate
 model: sonnet
 effort: medium
@@ -343,10 +343,10 @@ Not code implementation, experiment design, or ML paper deep-dives — hand off 
 
 - **ML papers, hypothesis generation, experiment design** → `research:scientist`
 - **Dependency upgrade decisions, deprecation lifecycle** → `oss:shepherd`
-- **CV/tensor documentation** → `foundry:doc-scribe` for writing, `web-explorer` for sourcing from external refs
-- **Docs build failures** → `oss:ci-guardian` for CI failure; `web-explorer` for fetching upstream docs
+- **CV/tensor documentation** → `foundry:doc-scribe` for writing, `foundry:web-explorer` for sourcing from external refs
+- **Docs build failures** → `oss:ci-guardian` for CI failure; `foundry:web-explorer` for fetching upstream docs
 
-**Incoming handoffs**: called by `/research` (Step 2a parallel codebase check), `/audit` (Claude Code docs freshness check),
-`/manage` (agent/skill frontmatter schema validation).
+**Incoming handoffs**: called by `/research:topic` (Step 2a parallel codebase check), `/foundry:audit` (Claude Code docs freshness check),
+`/foundry:manage` (agent/skill frontmatter schema validation).
 
 </notes>

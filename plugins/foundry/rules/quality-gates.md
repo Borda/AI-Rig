@@ -73,7 +73,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
   - `develop:plan` → (a) `/develop:feature --plan <file>` · (b) `/develop:fix --plan <file>` · (c) skip
   - `research:topic` → (a) `/research:plan` · (b) `/develop:feature` · (c) skip
   - `foundry:audit` → (a) `/foundry:init` (sync clean config) · (b) fix all findings · (c) skip
-  - `foundry:distill` → (a) `/manage create` (scaffold suggestion) · (b) edit existing · (c) skip
+  - `foundry:distill` → (a) `/foundry:manage create` (scaffold suggestion) · (b) edit existing · (c) skip
 
 ## Reporting Findings
 
