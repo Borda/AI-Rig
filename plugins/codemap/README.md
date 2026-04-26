@@ -56,14 +56,14 @@ On pytorch-lightning (646 modules), plain-arm agents hit the 300-second hard tim
 
 ### With codemap
 
-After , your existing skills are wired in. Now when you run , before spawning any agent the skill silently runs:
+After `/codemap:integration init`, your existing skills are wired in. Now when you run `/develop:refactor auth.py`, before spawning any agent the skill silently runs:
 
 ```bash
 scan-query central --top 5         # which modules are highest risk overall?
 scan-query rdeps mypackage.auth    # what breaks if auth changes?
 ```
 
-That output is prepended to the agent spawn prompt as structural context. The agent starts the refactor already knowing full blast radius — no cold exploration, no mid-refactor surprise that also imports . Benchmark results across 48 runs on pytorch-lightning:
+That output is prepended to the agent spawn prompt as structural context. The agent starts the refactor already knowing full blast radius — no cold exploration, no mid-refactor surprise that `middleware.py` also imports `auth`. Benchmark results across 48 runs on pytorch-lightning:
 
 | Metric             |  Haiku   |  Sonnet  |   Opus   |
 | :----------------- | :------: | :------: | :------: |
@@ -115,6 +115,8 @@ Reload your shell (`source ~/.zshrc`) and `scan-query` is available everywhere. 
 cd Borda-AI-Rig && git pull
 claude plugin install codemap@borda-ai-rig
 ```
+
+After upgrading, re-run `/codemap:integration init` to re-apply injection blocks — the plugin cache is replaced on reinstall and any prior injections are lost.
 
 </details>
 
@@ -232,7 +234,7 @@ If you write custom skills or agents and want to add codemap yourself, drop this
 # Structural context (codemap — Python projects only, silent skip if absent)
 PROJ=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null) || PROJ=$(basename "$PWD")
 if command -v scan-query >/dev/null 2>&1 && [ -f ".cache/scan/${PROJ}.json" ]; then
-    scan-query central --top 5  # timeout: 5000
+    scan-query central --top 3  # timeout: 5000
 fi
 # If results returned: prepend ## Structural Context (codemap) to the agent spawn prompt.
 ```
@@ -319,15 +321,15 @@ These work with any v2 or v3 index.
 
 #### Symbol-level queries
 
-Retrieve function or class source by name instead of reading the full file. Reduces token usage by ~94% compared to reading the whole file.
+Retrieve function or class source by name instead of reading the full file — dramatically fewer tokens than reading whole files.
 
-| Subcommand              | What it answers                                   |
-| ----------------------- | ------------------------------------------------- |
-| `symbol <name>`         | Source of a function, class, or method by name    |
-| `symbols <module>`      | All symbols in a module with type and line range  |
-| `find-symbol <pattern>` | Regex search across all symbol names in the index |
+| Subcommand              | What it answers                                             |
+| ----------------------- | ----------------------------------------------------------- |
+| `symbol <name>`         | Source of a function, class, or method by name              |
+| `symbols <module>`      | All symbols in a module with type and line range            |
+| `find-symbol <pattern>` | Regex search across all symbol qualified_names in the index |
 
-`symbol` accepts bare name (`authenticate`), qualified name (`MyClass.authenticate`), or a case-insensitive substring fallback.
+`symbol` accepts bare name (`authenticate`), qualified name (`MyClass.authenticate`), or a case-insensitive substring fallback. `find-symbol` and `symbol` cap results at 20 by default — pass `--limit 0` to retrieve all matches before counting or ranking.
 
 #### Function-level call graph queries (v3 index)
 
@@ -344,6 +346,14 @@ Use `module::function` format for qualified names, for example `mypackage.auth::
 
 **Call edge resolution types**: `import` = cross-module call with confirmed import scope; `local` = same-file call; `self` = `self.method()` call where the target class is known; `star` = call to a name from a star import where the source module could not be determined; `unresolved` = call target could not be matched.
 
+#### Common flags
+
+| Flag              | Applies to                                                                       | Effect                                          |
+| ----------------- | -------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `--exclude-tests` | `rdeps`, `central`, `coupled`, `symbol`, `find-symbol`, `fn-rdeps`, `fn-central` | Drop test modules from results                  |
+| `--limit N`       | `symbol`, `find-symbol`                                                          | Max results (default 20). Use `0` for unlimited |
+| `--index <path>`  | all commands                                                                     | Explicit index file; bypasses auto-discovery    |
+
 #### Common patterns
 
 ```text
@@ -359,14 +369,17 @@ Use `module::function` format for qualified names, for example `mypackage.auth::
 # Read just the validate_token function without loading the whole file
 /codemap:query symbol validate_token
 
-# Find all functions whose name starts with "validate"
-/codemap:query find-symbol "^validate"
+# Find all functions whose name starts with "validate" (unlimited results)
+/codemap:query find-symbol "^validate" --limit 0
 
 # Check transitive impact of changing fetch_user at the function level
 /codemap:query fn-blast myproject.db::fetch_user
 
 # Exclude test modules from blast-radius analysis
 /codemap:query central --exclude-tests --top 10
+
+# Query a specific index file (monorepo with multiple projects)
+/codemap:query central --index /path/to/.cache/scan/subproject.json
 ```
 
 </details>

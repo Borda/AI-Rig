@@ -22,20 +22,16 @@ NOT for: querying existing index (use `/codemap:query`).
 
 ## Step 1: Run the scanner
 
+Parse `$ARGUMENTS` to build the invocation. Pass `--root <path>` if provided; pass `--incremental` if provided. Then run once:
+
 ```bash
 # timeout: 360000
-${CLAUDE_PLUGIN_ROOT}/bin/scan-index  # add --root <path> if provided
-```
-
-If `--incremental` passed: re-parse only files changed since last scan (git SHA comparison), then recompute global metrics. Falls back to full scan when no v3 index exists.
-
-```bash
-# timeout: 60000
+# Example with both flags: ${CLAUDE_PLUGIN_ROOT}/bin/scan-index --root /path/to/project --incremental
 # scan-index handles v2→v3 fallback internally — exits 0 on either path
-${CLAUDE_PLUGIN_ROOT}/bin/scan-index --incremental
+${CLAUDE_PLUGIN_ROOT}/bin/scan-index [--root <path>] [--incremental]
 ```
 
-Scanner writes to `.cache/scan/<project>.json` and prints summary line:
+Scanner writes to `<root>/.cache/scan/<project>.json` and prints summary line:
 
 ```text
 [codemap] ✓ .cache/scan/<project>.json
@@ -48,13 +44,23 @@ After scan completes, read index and report compact summary:
 
 ```bash
 # scan-query has no summary mode — inline script required to extract project stats from raw index JSON
+# $ARGUMENTS is shell-expanded; handles --root <path> if provided, falls back to git root or cwd
 python3 -c "
-import json, sys, subprocess, os
+import json, sys, subprocess, os, shlex
 try:
-    proj = os.path.basename(subprocess.check_output(['git','rev-parse','--show-toplevel'], stderr=subprocess.DEVNULL).decode().strip())
+    args = shlex.split('$ARGUMENTS') if '$ARGUMENTS' else []
 except Exception:
-    proj = os.path.basename(os.getcwd())
-index_path = f'.cache/scan/{proj}.json'
+    args = []
+try:
+    i = args.index('--root')
+    root = os.path.abspath(args[i + 1])
+except (ValueError, IndexError):
+    try:
+        root = subprocess.check_output(['git','rev-parse','--show-toplevel'], stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        root = os.getcwd()
+proj = os.path.basename(root)
+index_path = os.path.join(root, '.cache', 'scan', f'{proj}.json')
 try:
     with open(index_path) as f:
         d = json.load(f)

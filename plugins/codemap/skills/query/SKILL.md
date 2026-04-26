@@ -1,7 +1,7 @@
 ---
 name: query
 description: Query the codemap structural index — central, coupled, deps, rdeps, import path, symbol-level source extraction, and function-level call graph (fn-deps, fn-rdeps, fn-central, fn-blast).
-argument-hint: <central [--top N] | coupled [--top N] | deps <module> | rdeps <module> | path <from> <to> | symbol <name> | symbols <module> | find-symbol <pattern> | list | fn-deps <qname> | fn-rdeps <qname> | fn-central [--top N] | fn-blast <qname>>
+argument-hint: <central [--top N] [--exclude-tests] | coupled [--top N] [--exclude-tests] | deps <module> | rdeps <module> [--exclude-tests] | path <from> <to> | symbol <name> [--limit N] [--exclude-tests] | symbols <module> | find-symbol <pattern> [--limit N] [--exclude-tests] | list | fn-deps <qname> | fn-rdeps <qname> [--exclude-tests] | fn-central [--top N] [--exclude-tests] | fn-blast <qname>> [--index <path>]
 allowed-tools: Bash
 effort: low
 ---
@@ -67,38 +67,28 @@ Replace `<QUERY_ARGS>`:
 
 Symbol names accept: bare name (`authenticate`), qualified name (`MyClass.authenticate`), or case-insensitive substring fallback. Function qnames use `module::function` format (e.g. `mypackage.auth::validate_token`). Index must be current — re-run `/codemap:scan` if stale warning appears.
 
-## Step 2: Format and return
+## Step 2: Parse JSON output and format
 
-`rdeps` / `deps`: list modules, one per line — never space-separated on a single line.
-```text
-myapp.api
-myapp.middleware
-myapp.tests.test_auth
-```
-NOT: `myapp.api myapp.middleware myapp.tests.test_auth`
+`scan-query` always emits a JSON object — parse it before rendering. Also capture stderr: if it contains `[stale]` or `⚠ codemap index stale`, surface the warning to the user. Check `index.degraded` in the result; if `> 0`, caveat that some modules were unparsable.
 
-`central` / `coupled`: list top modules by count with brief note.
-
-`path`: show chain as `A → B → C → D`.
-
-`symbol`: print `source` field as fenced code block; include module + line range as caption.
-
-`symbols`: list as `type name (lines start–end)`, one per line.
-
-`find-symbol`: list matches as `module:qualified_name (type)`, one per line.
-
-`list`: list all modules as `module (path)`, one per line.
-```text
-myapp.views (src/myapp/views.py)
-myapp.middleware (src/myapp/middleware.py)
-```
-
-`fn-deps` / `fn-rdeps`: list as `module::function (resolution)`, one per line.
-
-`fn-central`: list as `count  module::function`, one per line.
-
-`fn-blast`: list as `depth  module::function`, one per line, sorted by depth then name.
+| Command | JSON key to use | Render as |
+| --- | --- | --- |
+| `rdeps` / `deps` | `imported_by` / `direct_imports` | list modules, one per line |
+| `central` / `coupled` | `central` / `coupled` array | list name + count with brief note |
+| `path` | `path` array (or `null`) | chain `A → B → C → D`; if `null` → "No import path found." |
+| `symbol` | `symbols[].source` | fenced code block; caption = module + line range |
+| `symbols` | `symbols` array | `type name (lines start–end)`, one per line |
+| `find-symbol` | `matches` array | `module:qualified_name (type)`, one per line |
+| `list` | `modules` array | `module (path)`, one per line |
+| `fn-deps` / `fn-rdeps` | `calls` / `called_by` | `module::function (resolution)`, one per line |
+| `fn-central` | `fn_central` array | `count  module::function`, one per line |
+| `fn-blast` | `blast_radius` array | `depth  module::function`, sorted by depth then name |
 
 `{"error": "..."}`: surface error, suggest re-running `/codemap:scan`.
+
+**Flags available on multiple commands** (`--exclude-tests`, `--limit`, `--index`):
+- `--exclude-tests` — drop test modules from results; applies to: `rdeps`, `central`, `coupled`, `symbol`, `find-symbol`, `fn-rdeps`, `fn-central`
+- `--limit N` (default 20, use `0` for all) — caps results on `symbol` and `find-symbol`; pass `--limit 0` before counting or ranking to avoid silent truncation
+- `--index <path>` — explicit index file path (bypasses auto-discovery; useful for monorepos or comparing two indexes)
 
 </workflow>

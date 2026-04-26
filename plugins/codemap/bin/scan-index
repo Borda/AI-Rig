@@ -19,23 +19,15 @@ import ast
 import builtins
 from dataclasses import dataclass
 import json
+import os
 import re
 import subprocess
 import sys
-from enum import Enum
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-class Resolution(str, Enum):
-    """Resolution kind for a call edge. Inherits str so json.dump serialises values as plain strings."""
-
-    IMPORT = "import"
-    LOCAL = "local"
-    SELF = "self"
-    BUILTIN = "builtin"
-    STAR = "star"
-    UNRESOLVED = "unresolved"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _schema import SCAN_VERSION, Resolution
 
 
 @dataclass(frozen=True)
@@ -79,8 +71,6 @@ class Symbol:
             "calls": [c.as_dict() for c in self.calls],
         }
 
-
-SCAN_VERSION = 3
 
 SKIP_DIRS = {
     ".git",
@@ -135,14 +125,17 @@ def _git_file_hashes(root: Path) -> dict[str, str]:
         root: repository root used as cwd.
     """
     output = subprocess.check_output(
-        ["git", "ls-files", "-s", "--", "*.py"], text=True, cwd=str(root), stderr=subprocess.DEVNULL
+        ["git", "ls-files", "-s", "-z", "--", "*.py"], cwd=str(root), stderr=subprocess.DEVNULL
     )
     hashes: dict[str, str] = {}
-    for line in output.strip().splitlines():
+    for entry in output.split(b"\0"):
+        line = entry.decode("utf-8", errors="replace").strip()
         if not line:
             continue
         tab_idx = line.index("\t")
-        hashes[line[tab_idx + 1 :]] = line.split()[1]
+        rel_path = line[tab_idx + 1 :]
+        sha = line.split()[1]
+        hashes[rel_path] = sha
     return hashes
 
 
@@ -156,10 +149,12 @@ def _md5_file_hashes(root: Path) -> dict[str, str]:
 
     hashes: dict[str, str] = {}
     for py_file in root.rglob("*.py"):
+        if py_file.is_symlink():
+            continue
         try:
-            hashes[str(py_file.relative_to(root))] = hashlib.md5(py_file.read_bytes()).hexdigest()
-        except OSError:
-            pass
+            hashes[py_file.relative_to(root).as_posix()] = hashlib.md5(py_file.read_bytes()).hexdigest()
+        except OSError as exc:
+            print(f"[codemap] ⚠ could not hash {py_file}: {exc} — treating as unchanged", file=sys.stderr)
     return hashes
 
 
@@ -187,6 +182,7 @@ def _detect_src_root_from_config(root: Path) -> Path | None:
     for config in (root / "pyproject.toml", root / "setup.cfg"):
         if not config.exists():
             continue
+        # Regex matches TOML/ini array syntax only; does not handle multi-line or complex TOML
         m = re.search(r"where\s*=\s*\[([^\]]+)\]", config.read_text(errors="replace"))
         if not m:
             continue
@@ -386,11 +382,13 @@ def resolve_call(
 
     Resolution order:
     1. Exact match in name_map -> "import"
-    2. Prefix match in module_map -> "import"
-    3. First component in local_names -> "local"
-    4. Starts with "self." or current_class prefix -> "self"
-    5. First component in BUILTINS -> "builtin"
-    6. Everything else -> "unresolved"
+    2. Prefix match in name_map -> "import"
+    3. Prefix match in module_map -> "import"
+    4. First component in local_names -> "local"
+    5. Starts with "self." or current_class prefix -> "self"
+    6. First component in star_imports -> "star"
+    7. First component in BUILTINS -> "builtin"
+    8. Everything else -> "unresolved"
 
     Args:
         chain: dotted call chain string (e.g. ``"pkg.db.fetch_user"``).
@@ -431,10 +429,6 @@ def resolve_call(
     if first_component in local_names:
         return CallEdge(target=f"{current_module}::{chain}", resolution=Resolution.LOCAL)
 
-    # 3.5 Star import — name may come from a star-imported module
-    if star_imports:
-        return CallEdge(target=chain, resolution=Resolution.STAR)
-
     # 4. Self / class reference
     if chain.startswith("self."):
         method_attr = chain[5:]  # strip "self."
@@ -447,11 +441,15 @@ def resolve_call(
     if current_class and chain.startswith(f"{current_class}."):
         return CallEdge(target=chain, resolution=Resolution.SELF)
 
-    # 5. Builtins
+    # 5. Star import — name may come from a star-imported module
+    if star_imports:
+        return CallEdge(target=chain, resolution=Resolution.STAR)
+
+    # 6. Builtins
     if first_component in BUILTINS:
         return CallEdge(target=chain, resolution=Resolution.BUILTIN)
 
-    # 6. Unresolved
+    # 7. Unresolved
     return CallEdge(target=chain, resolution=Resolution.UNRESOLVED)
 
 
@@ -526,7 +524,7 @@ def _extract_class_symbol(
             qualified_name=node.name,
             type="class",
             start_line=node.lineno,
-            end_line=node.end_lineno,
+            end_line=node.end_lineno or node.lineno,
             calls=class_calls,
         )
     ]
@@ -540,7 +538,7 @@ def _extract_class_symbol(
                 qualified_name=f"{node.name}.{child.name}",
                 type="method",
                 start_line=child.lineno,
-                end_line=child.end_lineno,
+                end_line=child.end_lineno or child.lineno,
                 calls=method_calls,
             )
         )
@@ -582,7 +580,7 @@ def extract_symbols(
                     qualified_name=node.name,
                     type="function",
                     start_line=node.lineno,
-                    end_line=node.end_lineno,
+                    end_line=node.end_lineno or node.lineno,
                     calls=func_calls,
                 )
             )
@@ -641,7 +639,8 @@ def _parse_file(filepath: Path, root: Path, src_root: Path) -> dict:
         imports = extract_imports(tree)
         try:
             nm, mm, star_imports = build_import_scope(tree, name)
-        except Exception:
+        except Exception as exc:
+            print(f"[codemap] ⚠ import scope build failed for {rel_path}: {exc}", file=sys.stderr)
             nm, mm, star_imports = {}, {}, []
         symbols = extract_symbols(tree, name, nm, mm, star_imports or None)
         return {
@@ -696,22 +695,27 @@ def scan(root: Path) -> dict:
     modules = []
 
     for filepath in sorted(root.rglob("*.py")):
+        if filepath.is_symlink():
+            continue
         rel = filepath.relative_to(root)
         if any(part in SKIP_DIRS for part in rel.parts):
             continue
         modules.append(_parse_file(filepath, root, src_root))
 
     seen_names: dict[str, str] = {}
+    deduped: list[dict] = []
     for m in modules:
         name = m.get("name", "")
         if name in seen_names:
             print(
-                f"[codemap] \u26a0 name collision: '{name}' found at both "
-                f"'{seen_names[name]}' and '{m['path']}' \u2014 second entry kept",
+                f"[codemap] ⚠ name collision: '{name}' found at both "
+                f"'{seen_names[name]}' and '{m['path']}' — first entry kept",
                 file=sys.stderr,
             )
         else:
             seen_names[name] = m.get("path", "")
+            deduped.append(m)
+    modules = deduped
 
     _recompute_metrics(modules)
 
@@ -768,6 +772,8 @@ def incremental_scan(root: Path, old_index: dict) -> dict:
         "scan_version": SCAN_VERSION,
         "scanned_at": datetime.now(timezone.utc).isoformat(),
         "git_sha": get_git_sha(root),
+        "project": root.name,
+        "src_layout": src_root != root,
         "file_shas": current_shas,
         "modules": modules,
     }
@@ -784,7 +790,7 @@ def _build_index(args: argparse.Namespace, root: Path, out_path: Path) -> dict:
     if args.incremental and out_path.exists():
         with out_path.open() as f:
             old_index = json.load(f)
-        if int(old_index.get("scan_version", 2)) >= 3 and old_index.get("file_shas"):
+        if int(old_index.get("scan_version", 0)) >= SCAN_VERSION and old_index.get("file_shas"):
             print(f"[codemap] Incremental scan {root} ...", file=sys.stderr)
             return incremental_scan(root, old_index)
         print("[codemap] v2 index found — falling back to full scan ...", file=sys.stderr)
