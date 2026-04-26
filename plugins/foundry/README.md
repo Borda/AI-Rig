@@ -525,6 +525,8 @@ ______________________________________________________________________
 
 **Use for**: red-teaming a plan before committing to it, challenging architectural decisions before they ship, adversarial code review on security-sensitive or irreversible operations. Attacks across 5 dimensions (Assumptions, Missing Cases, Security Risks, Architectural Concerns, Complexity Creep) then applies a mandatory refutation step to eliminate false positives.
 
+When `codex@openai-codex` plugin is installed, challenger automatically launches a parallel Codex adversarial review track (same target, `--scope auto`) and aggregates the results — findings from both tracks are reported together with convergence callouts where both flagged the same area. Pass `--no-codex` in the prompt to skip. If Codex is installed but the parallel run fails for any reason, the failure is surfaced in the report; results are never silently dropped to Claude-only.
+
 **Model**: `opus`
 
 **Not for**: designing plans or ADRs (use `foundry:solution-architect`), writing tests (use `foundry:qa-specialist`), config file quality review (use `foundry:curator`).
