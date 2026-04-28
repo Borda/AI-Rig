@@ -37,6 +37,17 @@ Use `/caveman` compression for all agent, skill, rule file edits — drop articl
   - Degrade gracefully if dependency plugin absent
   - Unchecked cross-plugin call = broken UX for users without that plugin
 
+## Fallback / Resilience Infrastructure
+
+**The self-defeating plugin trap** — hook or skill whose job is "handle plugin `foo` being absent" cannot live inside plugin `foo`. If `foo` absent, hook never runs.
+
+- **General rule: resilience code lives in the plugin whose users need protecting, not the plugin being protected against**
+- Examples: fallback for missing `foundry` agents → cannot live in `foundry`; fallback for missing `oss` agents → cannot live in `oss`; same applies to any plugin pair
+
+Correct placement: every plugin that dispatches agents from other plugins ships own fallback hook. Source of truth lives in one plugin; `sync.sh` copies to others at release.
+
+No plugin dependency system exists in Claude Code — never propose "install `foo` as prerequisite" or "register globally via `foo` init" as solution to missing-plugin resilience. Circular: requires thing that might be absent.
+
 ## README Sync
 
 **Edit agents/skills/rules/hooks → update plugin `README.md` before done.**

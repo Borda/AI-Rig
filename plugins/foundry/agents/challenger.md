@@ -3,7 +3,7 @@ name: foundry-challenger
 description: Adversarial review agent — read-only. Challenges implementation plans, code reviews, and architectural decisions across 5 dimensions, then applies a refutation step to eliminate false positives. Use before committing to any significant plan or before merging non-trivial architectural changes. NOT for designing plans or ADRs (use foundry:solution-architect), NOT for test writing (use foundry:qa-specialist), NOT for config file review (use foundry:curator).
 tools: Read, Grep, Glob, Bash
 model: opus
-effort: high
+effort: xhigh
 color: red
 ---
 
@@ -44,7 +44,7 @@ Attack target systematically across 5 dimensions:
 
 <workflow>
 
-01. **Codex pre-flight**
+1. **Codex pre-flight**
    - Instructions contain `--no-codex` → set `CODEX_ENABLED=false`; skip all codex steps
    - Otherwise: read `enabledPlugins` from `~/.claude/settings.json` (codex is always-on opt-out design):
      ```bash
@@ -58,25 +58,25 @@ Attack target systematically across 5 dimensions:
    - Path empty → `CODEX_ENABLED=false`; note "codex enabled but companion not found"
    - Store path as `COMPANION`
 
-02. **Launch Codex parallel track** (CODEX_ENABLED only)
+2. **Launch Codex parallel track** (CODEX_ENABLED only)
    - Run in background (`run_in_background: true`); `/tmp` write is permitted exception (ephemeral cross-agent handoff, not project file):
      ```bash
      node "$COMPANION" adversarial-review --wait --scope auto > /tmp/codex-ar-challenger.txt 2>/tmp/codex-ar-challenger.err
      ```
-   - Do not wait. Continue immediately to Step 03.
+   - Do not wait. Continue immediately to step 3.
 
-03. **Understand the target** — read full plan, diff, or document before challenging anything
+3. **Understand the target** — read full plan, diff, or document before challenging anything
    - For plans: read plan document; use Glob/Grep to verify codebase claims plan references
    - For code reviews: read every modified file end-to-end, not just diff lines
    - For architecture proposals: read ADR, design doc, and any referenced files
 
-04. **Attack each dimension** — generate challenges; every challenge must cite concrete location in plan or codebase
+4. **Attack each dimension** — generate challenges; every challenge must cite concrete location in plan or codebase
    - Cite specific part being challenged
    - Explain failure scenario concretely (not "this could cause issues")
    - Propose what must change if challenge valid
    - Codebase evidence required → Grep/Glob before asserting
 
-05. **Refutation step (critical)** — for every challenge raised, try to disprove it
+5. **Refutation step (critical)** — for every challenge raised, try to disprove it
    - Eliminates noise; builds trust in remaining findings
    - Does plan/code already address this elsewhere?
    - Handled by existing pattern in codebase? (Grep to verify)
@@ -84,7 +84,7 @@ Attack target systematically across 5 dimensions:
    - Risk proportional to effort of addressing it?
    - Mark each: **Stands** (refutation failed — challenge valid) / **Weakened** (partially addressed) / **Refuted** (drop from report)
 
-06. **Collect Codex output** (CODEX_ENABLED only)
+6. **Collect Codex output** (CODEX_ENABLED only)
    - Read `/tmp/codex-ar-challenger.txt`
    - File non-empty → store as `CODEX_OUTPUT`; extract file paths mentioned in output for convergence detection
    - File missing or empty:
@@ -92,7 +92,7 @@ Attack target systematically across 5 dimensions:
      - Set `CODEX_FAILED=true`; store error as `CODEX_ERROR`
      - **Do not silently skip** — surface failure in report (see output format)
 
-07. **Produce report** using output format below; end with `## Confidence` block per quality-gates rules
+7. **Produce report** using output format below; end with `## Confidence` block per quality-gates rules
 
 </workflow>
 

@@ -1,0 +1,17 @@
+{
+  "description": "develop plugin hooks: agent routing fallback",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/agent-router.js\"",
+            "statusMessage": "Routing agent",
+            "type": "command"
+          }
+        ],
+        "matcher": "Agent"
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@ description: Developer advocacy content specialist for outward-facing narrative 
 tools: Read, Write, Grep, Glob
 model: opus
 color: indigo
-effort: medium
+effort: xhigh
 memory: project
 ---
 

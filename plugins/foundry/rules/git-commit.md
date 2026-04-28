@@ -73,6 +73,7 @@ Never skip trailers because skill template omits them.
 
 - **Never commit to main/master** — check current branch first; if on default branch → warn and stop, ask user to create feature branch
 - `develop:fix` Step 0 enforces this with hard abort
+- **Explicit commit request + non-default branch → commit directly, no confirmation ask** — the branch check IS the safety gate; passing it is sufficient
 
 ## Staging and Hooks
 
