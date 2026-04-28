@@ -72,8 +72,22 @@ Never skip trailers because skill template omits them.
 ## Branch Safety
 
 - **Never commit to main/master** — check current branch first; if on default branch → warn and stop, ask user to create feature branch
-- `develop:fix` Step 0 enforces this with hard abort
-- **Explicit commit request + non-default branch → commit directly, no confirmation ask** — the branch check IS the safety gate; passing it is sufficient
+
+## Commit Gate (two-path)
+
+Before any `git commit`, resolve which path applies:
+
+**Path A — skill pre-auth** (skills that need multiple commits, e.g. `/oss:resolve`):
+- Skill computes sentinel at start: `SENTINEL="/tmp/claude-commit-auth-$(git rev-parse --show-toplevel | xargs basename | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | tr -s '-' | sed 's/-$//')-$(git branch --show-current | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | tr -s '-' | sed 's/-$//')"`
+- `touch $SENTINEL` at start of commit phase; `rm -f $SENTINEL` on finish or abort (use `trap` to guarantee cleanup)
+- While sentinel exists and is <15 min old → hook allows commit directly, no question
+- Sentinel absent, expired, or branch mismatch → hook blocks → fall through to Path B
+
+**Path B — user ad-hoc request**:
+- No auth file for current branch → invoke `AskUserQuestion` before `git commit`
+- Question must show: target branch, diff size (`N files, +A −B lines` from `git diff --stat HEAD`), draft commit message subject line
+- On user confirmation only: `touch /tmp/claude-commit-auth-<repo-slug>-<branch-slug>` → `git commit` → `rm -f /tmp/claude-commit-auth-<repo-slug>-<branch-slug>`
+- Slugs: all non-alphanumeric → `-`, lowercased, consecutive dashes squeezed, trailing dashes stripped (same algorithm as hook's `toSlug`)
 
 ## Staging and Hooks
 

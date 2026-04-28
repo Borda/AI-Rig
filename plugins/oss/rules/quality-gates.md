@@ -68,6 +68,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
   - `oss:review N` → (a) `/oss:resolve N` (fix this PR) · (b) `/oss:resolve report` (resolve from full report) · (c) `/oss:resolve N report` (fix PR + resolve from report) · (d) walk through findings · (e) skip
   - `oss:analyse N` → (a) `/develop:fix` · (b) `/develop:feature` · (c) `/oss:review N` · (d) draft reply · (e) skip
+- **Follow-up gate follow-through**: when `AskUserQuestion` returns with a skill-invocation option selected — call `Skill(skill=..., args=...)` in the same response turn; never narrate the intent as prose ("Invoke that next.", "Will now run /skill") and stop without acting
 
 ## Reporting Findings
 

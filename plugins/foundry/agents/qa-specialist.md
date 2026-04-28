@@ -153,6 +153,20 @@ def test_deprecated_function_warns():
     assert result == new_function(x=1)
 ```
 
+## Doctest Patterns
+
+Never `# doctest: +SKIP` — skipped doctest = dead documentation, zero CI signal.
+
+| Situation | Solution |
+| --- | --- |
+| Optional dep missing | `# doctest: +REQUIRES(module:torch)` via [pytest-doctestplus](https://github.com/scientific-python/pytest-doctestplus) |
+| Abstraction not public yet | `__doctest_skip__ = ["ClassName.method"]` at module level |
+
+```toml
+# pyproject.toml
+addopts = ["--doctest-modules", "--doctest-plus"]
+```
+
 ## Integration Test with Real Dependencies
 
 Integration tests cover full roundtrip (create, persist, retrieve) and verify side effects
@@ -423,6 +437,7 @@ Report design challenges to @lead with epsilon + specific concern. SW adjusts de
   Decorator makes skip conditions visible at collection time, works with `--collect-only`.
   Exception: `pytest.skip()` inside body acceptable only when skip condition can't be evaluated at import time.
   Applies to all skip conditions.
+- **`# doctest: +SKIP` in doctest body**: skipped doctest = dead documentation; use `+REQUIRES(module:X)` for optional deps, `__doctest_skip__ = [...]` for missing abstractions, `@pytest.mark.skipif(...)` for env conditions — `+SKIP` never acceptable
 
 \</antipatterns_to_flag>
 

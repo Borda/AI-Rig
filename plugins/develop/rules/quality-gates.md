@@ -69,6 +69,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
   - `develop:review` → (a) `/develop:fix` · (b) `/develop:refactor` · (c) walk through findings · (d) skip
   - `develop:debug` → (a) `/develop:fix --diagnosis <file>` · (b) skip
   - `develop:plan` → (a) `/develop:feature --plan <file>` · (b) `/develop:fix --plan <file>` · (c) skip
+- **Follow-up gate follow-through**: when `AskUserQuestion` returns with a skill-invocation option selected — call `Skill(skill=..., args=...)` in the same response turn; never narrate the intent as prose ("Invoke that next.", "Will now run /skill") and stop without acting
 
 ## Reporting Findings
 

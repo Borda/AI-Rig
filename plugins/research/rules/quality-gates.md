@@ -67,6 +67,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
 - Prose paragraphs: no hard line breaks at column width
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
   - `research:topic` → (a) `/research:plan` · (b) `/develop:feature` · (c) skip
+- **Follow-up gate follow-through**: when `AskUserQuestion` returns with a skill-invocation option selected — call `Skill(skill=..., args=...)` in the same response turn; never narrate the intent as prose ("Invoke that next.", "Will now run /skill") and stop without acting
 
 ## Reporting Findings
 

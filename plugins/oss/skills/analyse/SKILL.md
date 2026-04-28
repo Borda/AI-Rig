@@ -225,6 +225,7 @@ Read `plugins/oss/skills/analyse/modes/<mode>.md` and execute all steps defined 
 
 ### 6a — Follow-up gate
 
+<!-- AskUserQuestion IS available here — context:fork = history isolation only, not tool restriction -->
 Call `AskUserQuestion` tool — do NOT write options as plain text first. Options depend on mode:
 
 **Thread mode** (`$CLEAN_ARGS` is a number):
@@ -273,7 +274,7 @@ End response with `## Confidence` block per CLAUDE.md — always **absolute last
 - Run `gh auth status` first if commands fail; user may need to authenticate
 - For closed items, note resolution so history is useful
 - Don't post responses without explicit user instruction — only draft them
-- **Forked context**: skill runs with `context: fork` — no access to current conversation history. All required context must be in skill argument or prompt.
+- **Forked context**: skill runs with `context: fork` — no access to current conversation history. All required context must be in skill argument or prompt. Tool availability is NOT affected — `AskUserQuestion` IS callable.
 - **`--reply` drafts only** — shepherd produces a draft file; it does NOT auto-post to GitHub. User posts manually. Write access to the repo is not required to use `--reply`; it is required only if user subsequently posts the draft via `gh issue comment` or `gh pr comment`.
 - Follow-up chains:
   - Issue with confirmed bug → `/develop:fix` to diagnose, reproduce with test, apply targeted fix

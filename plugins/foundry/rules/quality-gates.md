@@ -68,6 +68,7 @@ Confidence < 0.9 and `codex` plugin available → spawn `Agent(subagent_type="co
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
   - `foundry:audit` → (a) `/foundry:init` (sync clean config) · (b) fix all findings · (c) skip
   - `foundry:distill` → (a) `/foundry:manage create` (scaffold suggestion) · (b) edit existing · (c) skip
+- **Follow-up gate follow-through**: when `AskUserQuestion` returns with a skill-invocation option selected — call `Skill(skill=..., args=...)` in the same response turn; never narrate the intent as prose ("Invoke that next.", "Will now run /skill") and stop without acting
 
 ## Reporting Findings
 
