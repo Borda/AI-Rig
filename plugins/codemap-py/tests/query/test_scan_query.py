@@ -3747,10 +3747,53 @@ def _run_batch(scan_query: Path, root: Path, index_path: Path, items: list) -> d
 
 
 class TestBatch:
-    """Run N queries in-process with one shared coverage block."""
+    """Share one process while preserving per-query coverage and failure evidence."""
+
+    @pytest.mark.parametrize("items", [[], [{"cmd": "not-a-command"}]], ids=["empty", "all-failed"])
+    def test_batch_without_coverage_has_explicit_completion(self, project, scan_query, items):
+        """Zero returned coverage blocks must not leave aggregate success ambiguous."""
+        root, index_path = project
+        batch = _run_batch(scan_query, root, index_path, items)
+        assert batch["index"] == {
+            "query_complete": not items,
+            "truncated": False,
+            "confidence": "partial" if items else "exact",
+        }
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["complete-first", "failed-first"])
+    def test_batch_keeps_each_query_completeness(self, project, scan_query, query, reverse):
+        """A complete sibling must not erase a capped result's limits or a failed query."""
+        root, index_path = project
+        items = [
+            {"cmd": "rdeps", "args": ["gamma"]},
+            {"cmd": "rdeps", "args": ["gamma", "--limit", "1"]},
+            {"cmd": "deps", "args": ["missing.module"]},
+        ]
+        if reverse:
+            items.reverse()
+        batch = _run_batch(scan_query, root, index_path, items)
+        for entry, item in zip(batch["batch"], items):
+            if item["cmd"] == "deps":
+                assert entry["ok"] is False
+                assert "error" in entry
+                continue
+            standalone = query(item["cmd"], *item["args"])
+            assert entry["result"] == standalone
+            assert entry["result"]["index"]["query_complete"] is True
+            if "--limit" in item["args"]:
+                assert entry["result"]["index"]["truncated"] is True
+                assert entry["result"]["index"]["total_available"] == 2
+                assert entry["result"]["index"]["confidence"] == "partial"
+        assert batch["index"]["query_complete"] is False
+        assert batch["index"]["truncated"] is True
+        assert batch["index"]["confidence"] == "partial"
+        assert batch["index"].get("exhaustive") is not True
+        assert "completeness_reason" not in batch["index"]
+        assert "note" not in batch["index"]
+        assert "total_available" not in batch["index"]
 
     def test_batch_matches_individual_results(self, project, scan_query, query):
-        """A batch of 4 mixed queries equals the 4 standalone results (modulo coverage dedup)."""
+        """A batch of four mixed queries preserves each complete standalone result."""
         root, index_path = project
         items = [
             {"cmd": "deps", "args": ["alpha"]},
@@ -3760,14 +3803,10 @@ class TestBatch:
         ]
         batch = _run_batch(scan_query, root, index_path, items)
         assert batch["count"] == 4
-        # Each item's payload matches its standalone form once the per-item coverage
-        # block (deduped to the batch level) is stripped from the standalone result.
         for entry, item in zip(batch["batch"], items):
             standalone = query(item["cmd"], *item["args"])
-            standalone.pop("index", None)
             assert entry["ok"] is True
             assert entry["result"] == standalone
-        # One shared coverage block for the whole batch.
         assert "index" in batch
 
     def test_batch_preserves_input_order(self, project, scan_query):
@@ -3817,6 +3856,44 @@ class TestBatch:
         )
         assert result.returncode == 2, result.stderr + result.stdout
         assert "error" in json.loads(result.stdout)
+
+    def test_batch_accepts_the_json_array_as_the_argument(self, project, scan_query):
+        """Passing the request array inline works the same as feeding it on stdin.
+
+        A caller who writes the array straight onto the command line rather than saving it to a file used to have its
+        own JSON reported as a missing filename, which reads as a broken command rather than a wrong argument form — so
+        the caller falls back to one process per query.
+        """
+        root, index_path = project
+        items = [{"cmd": "deps", "args": ["alpha"]}, {"cmd": "deps", "args": ["beta"]}]
+        result = subprocess.run(
+            [sys.executable, str(scan_query), "--index", str(index_path), "batch", json.dumps(items)],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            env={**os.environ, "CODEMAP_LOGGING": "false"},
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert [entry["result"]["module"] for entry in json.loads(result.stdout)["batch"]] == ["alpha", "beta"]
+
+    def test_batch_unreadable_path_error_names_every_accepted_form(self, project, scan_query):
+        """An unreadable path reports what batch does accept, not only the filesystem failure.
+
+        The bare errno told a caller that its argument was not a file without hinting that an inline array or stdin
+        would have been taken, leaving the working form undiscoverable from the error.
+        """
+        root, index_path = project
+        result = subprocess.run(
+            [sys.executable, str(scan_query), "--index", str(index_path), "batch", "no-such-batch-file.json"],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+            env={**os.environ, "CODEMAP_LOGGING": "false"},
+        )
+        assert result.returncode == 2, result.stderr + result.stdout
+        payload = json.loads(result.stdout)
+        assert payload["error"] == "batch input unreadable"
+        assert payload["accepts"] == "a JSON array, a path to a JSON file, or '-' for stdin"
 
 
 class TestArgvHardening:

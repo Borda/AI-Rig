@@ -3449,9 +3449,9 @@ def _check_batch(scan_query_bin: Path, root: Path, index_path: Path, cl: _Checkl
     """Record batch contract checks (N valid + 1 invalid) into *cl*.
 
     Asserts the user-visible CLI contract: exit 0 with a per-item error for the invalid
-    item, input-order preservation, a single shared coverage block, top-level ``error``
+    item, input-order preservation, a shared coverage summary, top-level ``error``
     plus ``ok:false`` on the bad item, and byte-equivalence of a batched result to its
-    standalone form (coverage block aside).
+    full standalone form, including per-item coverage metadata.
 
     Args:
         scan_query_bin: path to scan-query.
@@ -3474,9 +3474,8 @@ def _check_batch(scan_query_bin: Path, root: Path, index_path: Path, cl: _Checkl
     cl.record("invalid_item_ok_false", bad.get("ok") is False)
     cl.record("invalid_item_has_top_level_error", "error" in bad)
     cl.record("single_shared_coverage_block", "index" in batch)
-    # Byte-equivalence: a batched item's result equals its standalone form minus coverage.
+    # Byte-equivalence: batch now retains the same per-item coverage as standalone.
     standalone = _fixture_query(scan_query_bin, root, index_path, ["deps", "alpha"])
-    standalone.pop("index", None)
     batched_result = entries[0].get("result") if entries else None
     cl.record("byte_equivalent_to_standalone", batched_result == standalone)
 

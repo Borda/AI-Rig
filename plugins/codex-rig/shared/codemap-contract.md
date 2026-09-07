@@ -6,13 +6,19 @@ Protocol: `codemap-py.integration.v1`. Codex Rig is a **consumer**, never a prov
 
 ## Launcher resolution
 
-The adapter's launcher contract is explicit: when `CODEMAP_BIN` is non-empty, use that launcher first and fail closed if it cannot be executed or inspected; do not fall back to another launcher. Only when `CODEMAP_BIN` is unset or empty may the adapter resolve `codemap-py` through `PATH`. The fallback must not guess a cache version or inspect Codemap's installation internals. Managed queries use the compact public form, `query --compact ...`, and record the resolved launcher and `doctor --json` result in the persisted context evidence.
+The adapter's launcher contract is explicit: when `CODEMAP_BIN` is non-empty, use that launcher first and fail closed if it cannot be executed or inspected; do not fall back to another launcher. Only when `CODEMAP_BIN` is unset or empty may the adapter resolve `codemap-py` through `PATH`. Resolve it once at the workflow decision point and reuse the validated literal for the probe and every query. The fallback must not guess a cache version or inspect Codemap's installation internals. Managed queries use the compact public form, `query --compact ...`, and record the resolved launcher and `doctor --json` result in the persisted context evidence.
+
+## Active consumer guidance and integration metadata
+
+`shared/codemap-contract.md` is the active Codex Rig consumer contract for launcher validation, query routing, and context-artifact reuse. The provider-managed `shared/codemap-py-integration.md` file is metadata-only: its identity, protocol, and timestamp do not wire a launcher, install a provider, or prove that the active consumer can recognize Codemap. Provider integration must not borrow another plugin's shared script or edit installed caches. Audit checks provider identity and active consumer guidance reachability/content separately; missing, unreachable, or outdated guidance is a bounded source-maintenance finding (or an existing approved `plan_sync` remediation), not proof of active wiring. Matching installed bytes or native plugin listings cannot prove current-session activation, and matching source hashes alone cannot prove that the guidance is semantically current.
 
 ## Persist-once rule
 
 Each required workflow probes **once**, at its bounded decision point, and persists the result to its own run artifact (e.g. `<run-directory>/codemap-context.json`). Specialists consume that artifact from the context pack; they never re-run the adapter. Re-querying per child specialist defeats the token-saving purpose of a shared structural index and is a contract violation.
 
-If a caller already has a context artifact that answers the decision, it must reuse that artifact rather than invoke `query-code` or the adapter again. A new query is permitted only for an identified completeness gap; after a query returns `query_complete: true`, querying stops. Structural evidence comes from the compact CLI JSON, never from index/cache files or raw runtime logs.
+If a caller already has a context artifact that answers the decision, it must reuse that artifact rather than invoke `query-code` or the adapter again. A new query is permitted only for an unresolved fact or identified completeness gap; after a query returns complete and untruncated evidence, that same graph fact is settled, but sibling queries answering distinct dimensions still run when required. Structural evidence comes from the compact CLI JSON, never from index/cache files or raw runtime logs.
+
+Independent read-only queries may run concurrently as separate standalone commands only against a prepared stable index with self-heal disabled (`SCAN_NO_AUTOBUILD=1` or an equivalent frozen contract). Dependent queries wait for their inputs. Refresh, self-heal, and index writes are always serialized. There is no arbitrary total-call cap for facts required to finish; correction retries for one started query stay bounded and stop when the same correction failure recurs.
 
 Invocation:
 

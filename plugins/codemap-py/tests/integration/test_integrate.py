@@ -466,6 +466,64 @@ def test_audit_warns_on_same_version_consumer_content_drift(
     assert finding["evidence"]["consumer"] == "foundry"
 
 
+@pytest.mark.parametrize(
+    ("native_state", "expected_finding"),
+    [
+        ("matching", None),
+        ("missing", "consumer_query_guidance_missing"),
+        ("unreferenced", "consumer_query_guidance_unreachable"),
+        ("stale", "consumer_query_guidance_drift"),
+        ("source_missing", "consumer_query_guidance_missing"),
+        ("source_unreferenced", "consumer_query_guidance_unreachable"),
+        ("absent_consumer", None),
+    ],
+    ids=["matching", "missing", "unreferenced", "stale", "source-missing", "source-unreferenced", "optional-absent"],
+)
+def test_audit_checks_referenced_consumer_guidance_without_writes(
+    repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_state: str, expected_finding: str | None
+) -> None:
+    """Metadata-only integration must not hide missing or stale consumer instructions."""
+    source = repo / "plugins/codex-rig"
+    native = tmp_path / "installed-consumer"
+    _write_manifest(native, integration.Runtime.CODEX, "codex-rig", "1.0.0")
+    for plugin in (source, native):
+        (plugin / "shared").mkdir(exist_ok=True)
+        (plugin / "skills/inspect").mkdir(parents=True)
+        _seed(plugin / "shared/codemap-contract.md", "Use the verified launcher and reuse query evidence.\n")
+        _seed(plugin / "skills/inspect/SKILL.md", "Follow ../../shared/codemap-contract.md for structural queries.\n")
+    if native_state == "missing":
+        (native / "shared/codemap-contract.md").unlink()
+    elif native_state == "unreferenced":
+        _seed(native / "skills/inspect/SKILL.md", "No query guidance loaded.\n")
+    elif native_state == "stale":
+        _seed(native / "shared/codemap-contract.md", "Outdated query instructions.\n")
+    elif native_state == "source_missing":
+        (source / "shared/codemap-contract.md").unlink()
+    elif native_state == "source_unreferenced":
+        _seed(source / "skills/inspect/SKILL.md", "No query guidance loaded.\n")
+    installed = (
+        []
+        if native_state == "absent_consumer"
+        else [{"name": "codex-rig", "version": "1.0.0", "enabled": True, "source": {"path": str(native)}}]
+    )
+    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: {"installed": installed})
+    before = _tree_snapshot(repo), _tree_snapshot(native)
+
+    report = integration.build_audit_report("codex", repo / integration.PROVIDER_DIR)
+
+    guidance = report["consumers"]["codex"]["codex-rig"]["query_guidance"]
+    expected_source_state = native_state.removeprefix("source_") if native_state.startswith("source_") else "observed"
+    assert guidance["source"]["state"] == expected_source_state
+    if expected_source_state == "observed":
+        assert guidance["source"]["referenced_by"] == ["skills/inspect/SKILL.md"]
+    findings = [item for item in report["findings"] if item["code"].startswith("consumer_query_guidance_")]
+    assert [item["code"] for item in findings] == ([] if expected_finding is None else [expected_finding])
+    if expected_finding:
+        assert findings[0]["status"] == "warn"
+        assert findings[0]["evidence"]["consumer"] == "codex-rig"
+    assert (_tree_snapshot(repo), _tree_snapshot(native)) == before
+
+
 def test_audit_usage_reports_runtime_aggregates_without_raw_telemetry_payloads(repo: Path) -> None:
     """Audit exposes only per-runtime counts/timing and declares tokens unavailable instead of leaking record
     payloads."""
@@ -1364,12 +1422,15 @@ def test_win_quoting_resolve_builds_quoted_line_for_safe_argv(monkeypatch: pytes
 
 
 def test_demo_returns_evidence_confined_to_its_own_report(repo: Path) -> None:
-    """Return check + query evidence and writes only its own disposable report."""
+    """Describe structural smoke evidence without implying a paired or token experiment."""
     before = _tree_snapshot(repo)
     demo = integration.run_demo("claude", repo / integration.PROVIDER_DIR)
     assert demo["protocol"] == integration.PROTOCOL_VERSION
     assert "audit" in demo
     assert "query_evidence" in demo
+    assert demo["scope"] == "structural_smoke"
+    assert demo["comparison"] == "not_performed"
+    assert demo["token_measurement"]["status"] == "unavailable"
     assert Path(demo["report_path"]).is_file()
 
     after = _tree_snapshot(repo)

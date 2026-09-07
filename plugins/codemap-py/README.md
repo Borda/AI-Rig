@@ -93,6 +93,8 @@ Use the smallest route that answers the unresolved question:
 
 For an explicit request for structural context, query even when an edit looks small. A lifecycle boundary such as a callback, hook, cancellation path, cleanup path, or state transfer also needs source and the named test or oracle; a complete structural result does not prove runtime behavior.
 
+Resolve the installed launcher once and retain its literal for the workflow. Independent standalone read-only queries may run concurrently only against a prepared stable index with self-heal disabled (`SCAN_NO_AUTOBUILD=1`); dependent queries wait, and refresh/self-heal/index writes are serial. There is no arbitrary total-query cap for facts required to finish; only targeted correction retries are bounded and recurring correction failures stop with an explicit gap. A complete untruncated result settles its own fact, not sibling dimensions, and an independent AST/oracle read remains valid.
+
 `rdeps` and `deps` answer opposite directions. Query names and paths are relative to the project being queried, not the installed plugin. After a custom-root scan, retain the emitted index path and query with `--index <emitted-index-path> --root <same-root>`: `--root` controls path resolution only and does not select the index.
 
 `fn-rdeps` reports incoming call edges; it does not discover inheritance or same-name override relationships. Use `find-symbol '<ClassSuffix>\.<method>$' --exclude-tests --limit 0` to gather same-name override candidates, then verify ancestry and package boundaries in source.
@@ -211,21 +213,23 @@ Agentic, on the 16 shared blast-radius tasks, where both providers use the same 
 | C_strict      | Claude   | Haiku  |       16 |      18.8% (3/16) |      68.8% (11/16) | +50.0 pp (+8) |         −60% | −45% |    −46% |
 | C_strict      | Claude   | Sonnet |       15 |      53.3% (8/15) |      73.3% (11/15) | +20.0 pp (+3) |         −77% | −65% |    −82% |
 | C_strict      | Claude   | Opus   |       16 |     62.5% (10/16) |      68.8% (11/16) |  +6.2 pp (+1) |         −50% | −41% |    −73% |
-| C_strict      | Codex    | Luna   |       16 |     68.8% (11/16) |      81.2% (13/16) | +12.5 pp (+2) |         −45% |    — |    −49% |
-| C_strict      | Codex    | Terra  |       10 |      70.0% (7/10) |       80.0% (8/10) | +10.0 pp (+1) |         −14% |    — |    −27% |
-| C_strict      | Codex    | Sol    |       16 |     75.0% (12/16) |      93.8% (15/16) | +18.8 pp (+3) |         −21% |    — |    −43% |
+| C_strict      | Codex    | Luna   |       16 |     81.2% (13/16) |      87.5% (14/16) |  +6.2 pp (+1) |         −45% |    — |    −44% |
+| C_strict      | Codex    | Terra  |       16 |     75.0% (12/16) |      87.5% (14/16) | +12.5 pp (+2) |         −29% |    — |    −29% |
+| C_strict      | Codex    | Sol    |       16 |      56.2% (9/16) |      87.5% (14/16) | +31.2 pp (+5) |         −57% |    — |    −57% |
 | B_auto        | Claude   | Haiku  |       16 |      18.8% (3/16) |      68.8% (11/16) | +50.0 pp (+8) |         −70% | −51% |    −53% |
 | B_auto        | Claude   | Sonnet |       15 |      53.3% (8/15) |      86.7% (13/15) | +33.3 pp (+5) |         −72% | −56% |    −76% |
 | B_auto        | Claude   | Opus   |       16 |     62.5% (10/16) |      87.5% (14/16) | +25.0 pp (+4) |         −43% | −51% |    −77% |
-| B_auto        | Codex    | Luna   |       16 |     68.8% (11/16) |       43.8% (7/16) | −25.0 pp (−4) |         −15% |    — |    −35% |
-| B_auto        | Codex    | Terra  |       16 |     68.8% (11/16) |       31.2% (5/16) | −37.5 pp (−6) |          +7% |    — |    −32% |
-| B_auto        | Codex    | Sol    |       16 |     75.0% (12/16) |       37.5% (6/16) | −37.5 pp (−6) |         +45% |    — |    −15% |
+| B_auto        | Codex    | Luna   |       16 |     81.2% (13/16) |       50.0% (8/16) | −31.2 pp (−5) |         −17% |    — |    −35% |
+| B_auto        | Codex    | Terra  |       16 |     75.0% (12/16) |       37.5% (6/16) | −37.5 pp (−6) |         +16% |    — |    −20% |
+| B_auto        | Codex    | Sol    |       16 |      56.2% (9/16) |       31.2% (5/16) | −25.0 pp (−4) |          +1% |    — |    −31% |
 
-One row per stratum, one execution per row. `Luna` is the 2026-09-07 execution that shares the repaired answer-format prompt with `Terra` and `Sol`, which is what makes the three comparable. Two further Luna executions of the same 16 tasks exist and are deliberately not listed: the 2026-09-06 run under the earlier prompt, and an isolated-worktree re-execution against a relocated copy of the locked index. They are separate studies of one model, not repetitions, so they are neither averaged in nor shown as rivals to it; the [benchmark results](https://github.com/Borda/AI-Rig/blob/main/benchmarks/README.md#results) report both in full. `Terra` and `Sol` are the first agentic studies of the other two declared strata, run the same day — three Luna studies exist at all only because the launcher's stratum selection reached the structural lane until then, so every earlier agentic run executed the default stratum whatever was selected.
+One row per stratum, one execution per row. All three Codex rows come from a single 144-cell launch completed 2026-09-08 that ran the declared strata as sequential child studies. Six earlier Codex agentic executions of the same 16 tasks exist and are deliberately not listed — three Luna, one terra, one sol, plus the 2026-09-06 Luna run under the unrepaired prompt. They are separate studies, not repetitions, so they are neither averaged in nor shown as rivals; the [benchmark results](https://github.com/Borda/AI-Rig/blob/main/benchmarks/README.md#results) report every one of them in full.
 
-`Sol` is the strongest and cleanest strict-arm result here — fifteen of sixteen cells correct against twelve, every cell adherent, 21% fewer input tokens. `Terra` gains on the same cohort but keeps only ten pairs: its strict arm skipped the required query on six of sixteen cells, and a strict cell that explores by hand costs what a control costs, which is why its token saving is 14% rather than the 45% Luna shows on the same arm.
+**The Codex rows and the Claude rows are no longer the same experiment revision.** Three things changed on the Codex side and only there: arm order is now cyclically balanced rather than fixed lexical, the required-arm contract accepts a standalone query through the injected `CODEMAP_BIN` variable *or* the exact installed launcher (the detector previously credited only the variable form, which is what made six terra cells look non-adherent), and the frozen treatment is Codemap 0.34.0 rather than 0.33.1. Read a Claude row against a Codex row as spanning that boundary.
 
-Binary correctness is harsher than the semantic score the snapshots below report, so the large Haiku gains are movement from partially-right to exactly-right rather than from nothing. The excluded 2026-09-06 Luna study paired only 8 and 11 tasks because twelve of its cells lost the strict answer envelope — a prompt-contract defect, since fixed, which cost the four later runs zero cells and is why every Codex row here now pairs 16 except `Terra`'s strict arm. Codex remains the only row set where the optional-use arm regresses, and it now regresses in all five of its executions across all three strata — on `Sol` while reading 45% *more* input than its own baseline, with Codemap queried on every one of its sixteen cells. A command-level replay found no measurement fault behind that: the optional arm is additive, querying the index and then exploring by hand anyway, so it drags 19.0k tokens of command output into each cell against the baseline's 7.1k. The required arm does the opposite — 64% more commands than the baseline, but each returning a median 140–184 tokens against a grep's ~1,100, so it ends up reading less overall. Agentic elapsed figures are order-confounded: arms ran in fixed `A_plain` → `B_auto` → `C_strict` order with no provider cache reset. Full cohort, estimator, and caveat detail: [benchmark results](https://github.com/Borda/AI-Rig/blob/main/benchmarks/README.md#results).
+`Sol` is the widest strict-arm gap the record holds — nine of sixteen cells correct in the baseline against fourteen with the Skill, at 57% fewer input tokens — and it is wide because that stratum's baseline did badly, not because its strict arm did unusually well. The strict arm lands on exactly 14 of 16 in all three strata while the baselines read 13, 12, and 9. Baseline performance is the volatile term: the same sol stratum answered 12 of 16 in its earlier execution and 9 here, on identical tasks.
+
+Binary correctness is harsher than the semantic score the snapshots below report, so the large Haiku gains are movement from partially-right to exactly-right rather than from nothing. Every Codex row now pairs 16 of 16, with no cell dropped for a missing envelope, an incomplete answer, or a skipped required query — the first sweep in this record where the admission rule removes nothing. Codex remains the only row set where the optional-use arm regresses, and it now regresses in all eight of its executions across all three strata, converting one baseline failure across 48 optional-arm cells while losing sixteen baseline successes. Its token penalty does not reproduce (−17%, +16%, +1% here against +45% on the earlier sol run), so the accuracy direction is the finding and the token direction is not. Scored field by field, the optional arm's loss sits entirely in the two ordered/counted answers: it matches both other arms on every enumeration field (`production_importers` 0.991 against the baseline's 0.988 and the Skill arm's 1.000) and collapses on `ranking` (0.625 against 0.911 and 0.944) and `rdep_counts` (0.395 against 0.758 and 0.994). It finds who imports what as well as anyone and then ranks them worse than the arm with no tool at all — because it ranks by whatever raw reverse-dependency counts its improvised loop returns, including tests and examples, while the question asks within the production importer set. The Skill arm reads its `Need → Query` routing table before its first query; the bare-CLI arm spends its first round-trips on `--help` and `doctor` and then improvises. Having the counts without the contract that says which counts is worse than having no counts. A command-level replay of the earlier runs found no measurement fault behind the token side either: the optional arm is additive, querying the index and then exploring by hand anyway, so it drags 19.0k tokens of command output into each cell against the baseline's 7.1k. The required arm does the opposite — more commands than the baseline, but each returning a median 140–184 tokens against a grep's ~1,100, so it ends up reading less overall. Agentic elapsed figures stay cache-exposed: the Codex arm order is now balanced, the Claude one is not, and neither resets the provider cache between cells. Full cohort, estimator, and caveat detail: [benchmark results](https://github.com/Borda/AI-Rig/blob/main/benchmarks/README.md#results).
 
 <a id="codex-structural-2026-08-07"></a> <a id="claude-structural-2026-09-06"></a>
 
@@ -347,9 +351,9 @@ The integration engine is source-owned and authenticated. Its modes have distinc
 - `plan` writes an inspectable candidate and SHA-256.
 - `apply` changes only an approved managed block in checked-in consumer source.
 - `sync` installs only an approved local candidate or immutable release through the native runtime CLI.
-- `demo` records disposable evidence.
+- `demo` records audit evidence plus one representative structural smoke query; it does not claim a plain-vs-structural comparison, token savings, or current-session activation.
 
-These routes never edit installed caches directly, write global Codex instructions, publish a release, or push Git. Audit cannot claim live fresh-session activation; after a runtime sync, follow the host's fresh-session guidance.
+These routes never edit installed caches directly, write global Codex instructions, publish a release, or push Git. For Codex, `shared/codemap-py-integration.md` is metadata-only; the active consumer contract owns launcher validation, query guidance, and one-artifact reuse. Audit reports provider identity and active-guidance reachability/content separately, with static-reference limits; it cannot claim live fresh-session activation or semantic currency from hashes alone. After a runtime sync, follow the host's fresh-session guidance.
 
 Consumer integrations should treat Codemap as optional structural context. For the two currency states, choose one explicit route:
 
@@ -367,7 +371,7 @@ Both runtime rosters expose the same six capabilities; only invocation syntax an
 | `query-code`     | Read dependencies, callers, symbols, paths, quality flags, tests, or diff impact from an existing index. | Rename symbols, rebuild explicitly requested indexes, or replace source/test verification. |
 | `test-impact`    | Identify structurally affected tests and emit a pytest command; it does not execute that command.        | Prove tests pass or resolve dynamic dispatch invisible to the static graph.                |
 | `rename-refs`    | Apply or preview one Python symbol/module rename with a confirmation and re-scan verification pass.      | Guarantee dynamic, cross-repository, or inheritance references are covered.                |
-| `integration`    | Audit, plan, apply, sync, or demo the supported consumer wiring with authenticated managed blocks.       | Mutate remote services, global instructions, or an installed cache directly.               |
+| `integration`    | Audit, plan, apply, sync, or demo the supported consumer wiring and active query guidance.               | Mutate remote services, global instructions, or an installed cache directly.               |
 | `debrief-coding` | Summarize local cross-runtime Codemap telemetry, timing, completeness, and repeated-search avoidance.    | Build/query the index or validate installation health.                                     |
 
 Direction and scope rules:
@@ -392,7 +396,7 @@ Every query exposes an `index` block. Follow this sequence:
 1. Query first; do not spend a call on an unconditional pre-scan or freshness probe.
 2. Read `query_complete` as direction-scoped graph coverage, not as a promise that a bounded display list is untruncated.
 3. Inspect `confidence`, `truncated`, and `total_available`; use `--limit 0` where supported when the complete list matters.
-4. After a complete, untruncated result, do not re-query, read, or grep for the same structural fact. Source-body reads remain valid for distinct implementation or runtime details.
+4. After a complete, untruncated result, do not re-query, read, or grep for the same structural fact; sibling queries for distinct dimensions still run when required. Source-body reads remain valid for distinct implementation or runtime details and explicit independent AST/oracle work.
 5. For an incomplete or degraded result, use only a targeted fallback for the named gap (`stale`, `degraded`, `not_covered`, or similar); use `test-impact` when the open question is test choice.
 
 `stale`, degraded modules, untracked files, root mismatches, and collisions lower confidence and require source/test review.
@@ -418,16 +422,17 @@ The integration skill is a thin, source-owned adapter over `codemap-py integrate
 | `plan`  | \[`--runtime ...`\] \[`--consumers <csv>`\] \[`--source {local-candidate,release}`\] \[`--out <artifact>`\] | A reviewable plan artifact containing targets, hashes, argv, and rollback identities.      |
 | `apply` | `--plan <artifact> --approve <sha256>`                                                                      | Approved managed blocks in checked-in consumer source only.                                |
 | `sync`  | `--source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...]`                   | Approved local runtime plugin state through the native runtime CLI.                        |
-| `demo`  | \[`--runtime {claude,codex,both}`\]                                                                         | Disposable evidence under `.reports/integrate/`; no durable wiring.                        |
+| `demo`  | \[`--runtime {claude,codex,both}`\]                                                                         | Audit plus one structural smoke query; disposable evidence only.                           |
 
 `audit` has this contract:
 
 - Defaults to `both`; supports `--runtime claude|codex|both`, JSON schema 2 (`codemap-py.integration.v2`), and `--since YYYY-MM-DD`.
 - Reports `pass`, `warn`, or `fail`; exits `0`, `1`, or `2` for completed status/syntax semantics.
 - Records stable findings such as `runtime_log_isolation_bypassed`, `runtime_identity_missing`, `runtime_logs_not_observed`, `managed_block_invalid`, `split_index_roots`, `index_stale_or_unknown`, and `index_degraded`.
-- Remediation values are advisory (`plan_apply`, `plan_sync`, `provider_release_required`, `scan_codebase`, `observe_next_session`, `none`) and are never executable artifacts.
+- Remediation values are advisory (`plan_apply`, `plan_sync`, `source_maintenance`, `provider_release_required`, `scan_codebase`, `observe_next_session`, `none`) and are never executable artifacts.
 - `--runtime claude` scopes to the four Claude consumers; `--runtime codex` scopes to `codex-rig`.
 - `--approve` is valid only with `apply` or `sync`, a saved plan, and the exact SHA-256 printed for that plan.
+- Active consumer guidance is checked separately from provider metadata. Missing, unreachable, or outdated guidance is reported as source maintenance or an approved `plan_sync` action; static references prove reachability only, not semantic loading or current-session activation. Installed-byte identity and session evidence remain separate.
 
 Mutation boundaries:
 
@@ -516,7 +521,7 @@ Additional query contracts:
 | Tests and edges                | `test-impact <module[::symbol]> [--no-mocks]`, `mock-rdeps <module[::symbol]>`, `fixture-rdeps <fixture>`, `fixture-graph <test-file>`, `subprocess-deps <module>`, `subprocess-rdeps <module>` |
 | Coverage and docs              | `coverage <module[::symbol]>`, `coverage-gap [module] [--all] [--threshold P]`, `uncovered [module] [--all] [--sort loc, name, or module] [--top N]`, `undocumented [module] [--all]`           |
 | Cross-references and dead code | `xrefs <symbol-or-module> [--broken]`, `dead-symbols [--min-loc N]`, `dead-modules`                                                                                                             |
-| Composite                      | `diff-impact [--base REF] [--diff-file PATH]`, `batch [JSON-PATH or stdin]`                                                                                                                     |
+| Composite                      | `diff-impact [--base REF] [--diff-file PATH]`, `batch [JSON-ARRAY or JSON-PATH or stdin]`                                                                                                       |
 
 Every query accepts these global flags before or after the subcommand:
 
@@ -537,8 +542,8 @@ Choose direction deliberately:
 
 Batch and diff behavior:
 
-- Batch input is a JSON array of objects such as `[{"cmd":"rdeps","args":["mypackage.auth"]}]` read from a file or stdin.
-- Items execute in one process and share one coverage block; nested `batch` and `diff-impact` items are rejected.
+- Batch input is a JSON array of objects such as `[{"cmd":"rdeps","args":["mypackage.auth"]}]`, passed inline as the argument, as a path to a file holding one, or on stdin via `-` (the default).
+- Items execute in one process and share one index load/coverage process; nested `batch` and `diff-impact` items are rejected. Each item retains its own `result.index` completeness, truncation, total, and scope metadata, while per-item failures remain on that item; the top-level index is a conservative summary and cannot upgrade an item. Skills keep standalone queries as the default.
 - `diff-impact` derives changed modules, per-module reverse dependencies/coupling, function callers, and a union of affected tests from a Git ref or unified diff.
 
 Coverage metadata is intentionally dieted after the first query in a process. Keep these distinctions when interpreting results:

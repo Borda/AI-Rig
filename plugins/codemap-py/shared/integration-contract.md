@@ -31,6 +31,10 @@ Reference contract for the `codemap-py integrate <audit|plan|apply|sync|demo>` e
 
 Target names and source roots are cross-checked against both marketplace manifests and plugin manifests before any mutation. Adding a consumer requires a plan revision to this table, not a runtime-discovered extension.
 
+## Active consumer guidance versus integration metadata
+
+The Codex Rig provider target `shared/codemap-py-integration.md` is a metadata-only managed block: identity, protocol, and timestamp fields do not wire a launcher or make query guidance active. The active consumer contract is the `codex-rig` plugin's shipped `shared/codemap-contract.md` (requires the `codex-rig` plugin), whose adapter owns validated `CODEMAP_BIN`/PATH resolution, its probe, and one persisted context artifact reused by specialists. Integration audit checks provider identity and active guidance reachability/content separately; missing, unreachable, or outdated guidance is reported as a bounded source-maintenance finding or an existing approved `plan_sync` action. Managed metadata, matching installed bytes, or a native plugin listing without session provenance cannot prove active current-session wiring, and equal hashes alone cannot prove semantic currency. Provider setup never borrows another plugin's shared script or edits an installed cache.
+
 ## Managed-block marker format (source-owned consumer files)
 
 The engine owns only marked blocks and generated adapter files listed in its versioned target map (§9.3) — inside allowlisted, version-controlled consumer source files (e.g. `plugins/cc_foundry/skills/_shared/codemap-context.md`, `plugins/cc_oss/skills/_shared/codemap-gates.md`, a Codex-Rig adapter module). This replaces the removed installed-cache injection model: the marker idiom targets a checked-in source file, never an installed plugin cache path.
@@ -96,6 +100,7 @@ Marker shape (HTML-comment sentinels bound the re-injectable region; content out
 - `--runtime` selects `claude`, `codex`, or `both` (default). `--json` emits one schema-versioned report on stdout; diagnostics remain on stderr. `--since YYYY-MM-DD` bounds telemetry evidence; invalid dates and selectors exit `2`.
 - The top-level report contains `schema_version: 2`, `protocol: codemap-py.integration.v2`, `status` (`pass`, `warn`, or `fail`), `requested_runtime`, a `window`, provider/consumer and `shared_index` evidence, `runtime_logs`, `usage`, stable `findings`, and non-executable `remediation` records.
 - Provider evidence includes bounded `source_content` and `native_content` identities when those bytes are readable. A same-version content mismatch is reported as the high-severity `provider_same_version_content_drift` finding and remediates through `plan_sync`; matching versions alone are not proof of byte identity.
+- Consumer query guidance is checked separately for source and installed reachability/content. Stable findings are `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, and `consumer_query_guidance_drift`; remediation is `source_maintenance` unless the existing approved target map permits `plan_sync`. Static skill references prove reachability only, not semantic loading, self-outdated guidance, or current-session activation.
 - `session_catalog` is explicitly `unobservable` when the native plugin listing has no session catalog provenance. Audit therefore makes no claim about live fresh-session activation or current session tool discovery.
 - Codex runtime evidence includes runtime-scoped CLI and tool shards from its hook configuration, but it has no skill-start hook, so skill telemetry and some cross-layer joins may be unavailable. Missing host layers remain evidence gaps, not healthy zero usage. Usage reports per-runtime summaries and `token_measurement.status: unavailable` because the host hook contract supplies no token usage.
 - Exit `0` means completed `pass` or `warn`; exit `1` means completed `fail` or a required runtime/filesystem probe failure; exit `2` means invalid syntax, runtime, date, or selection.
@@ -104,7 +109,7 @@ Marker shape (HTML-comment sentinels bound the re-injectable region; content out
 
 ## Demo (`demo [--runtime ...]`)
 
-- Runs `audit` plus representative plain-vs-structural-context workflows; records the protocol/version/evidence used. Disposable evidence only, unless a separate approval is given for anything durable.
+- Runs `audit` plus one representative structural smoke query; records the protocol/version/evidence used. Disposable evidence only, unless a separate approval is given for anything durable. It does not claim a plain-vs-structural comparison, token savings, or current-session activation.
 
 ## State machine (journaled)
 

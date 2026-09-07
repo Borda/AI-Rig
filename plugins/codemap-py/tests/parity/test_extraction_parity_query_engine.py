@@ -536,14 +536,26 @@ class TestOldVsNewBinParity:
         _assert_golden_query_parity(old, new, case)
 
     def test_batch_matches_golden(self, old_scan_query: Path, built_project: Path) -> None:
-        """The ``batch`` composite command matches old-vs-new (stdin JSON array)."""
-        stdin = json.dumps([{"cmd": "deps", "args": ["pkg.alpha"]}, {"cmd": "symbol", "args": ["func_gamma"]}])
+        """Preserve golden graph results while validating the new per-item coverage contract."""
+        items = [{"cmd": "deps", "args": ["pkg.alpha"]}, {"cmd": "symbol", "args": ["func_gamma"]}]
+        stdin = json.dumps(items)
         old = _run_old(old_scan_query, ["batch"], built_project, stdin=stdin)
         new = _run_new_bin(["batch"], built_project, stdin=stdin)
         assert old.returncode == new.returncode
         legacy = json.loads(old.stdout)
         current = _drop_loaded_index_path(json.loads(new.stdout))
         _restore_v13_not_covered(legacy, current)
+        for entry, item in zip(current["batch"], items, strict=True):
+            standalone = _drop_loaded_index_path(
+                json.loads(_run_new_bin([item["cmd"], *item["args"]], built_project).stdout)
+            )
+            assert entry["result"].pop("index") == standalone["index"]
+        # The frozen oracle hoists the first query's coverage. That placement is
+        # intentionally replaced; the dedicated mixed-result tests pin its summary.
+        aggregate = current.pop("index")
+        legacy.pop("index")
+        assert aggregate["query_complete"] is True
+        assert aggregate["truncated"] is False
         assert current == legacy
         assert old.stderr == new.stderr
 

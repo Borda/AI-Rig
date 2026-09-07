@@ -2,6 +2,20 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.34.0
+
+- Preserve standalone coverage, completeness, truncation, and totals in each batch item's `result.index`; summarize only common fields and conservative completion at the batch level. A complete first item no longer masks partial or failed siblings.
+
+- Add read-only source/native consumer query-guidance evidence and missing, unreferenced, or drift findings to integration audit. Static references do not prove fresh-session activation; managed metadata remains separate from operational guidance.
+
+- Align both query and integration skills around once-only launcher resolution, direct known syntax, stable read-only concurrency, bounded recovery, and reuse of settled graph facts without suppressing distinct follow-up questions. Keep self-heal and writes serial.
+
+- Describe integration demo accurately as an audit plus structural smoke query, with explicit unavailable token measurement and no paired-comparison claim.
+
+- Accept the request array itself as the `query batch` argument, alongside the existing file path and `-` for stdin, and name every accepted form in the unreadable-input error instead of reporting only the filesystem failure.
+
+- Return usage and exit 0 from `index --help` when the `scan-index` launcher is absent, instead of a `missing_executable` error and exit 1 that also aborted `index --help && query --help` chains before the second command ran.
+
 ## 0.33.1
 
 - Expand Python helper and hook contracts with executable examples, document actual hook failure boundaries, and remove skipped doctest blocks. Make ordinary test helpers and fixture implementations private while preserving fixture injection names.

@@ -2,6 +2,10 @@
 
 ## 0.14.3
 
+- Align active Codemap consumer guidance with once-only launcher/context resolution, persisted evidence reuse, direct known syntax, and independent stable read-only queries. Preserve optional-provider fallback and distinguish settled graph facts from separate implementation or coverage questions.
+
+- Clarify that integration metadata is not active query policy and that static package checks do not establish live activation or token savings.
+
 - Expand Python utility and test-helper docstrings with executable examples; make ordinary test helpers and fixture implementations private while preserving pytest injection names and required interfaces. Keep docstring lines within 120 characters and regenerate package hashes for the documented payload.
 
 ## 0.14.2

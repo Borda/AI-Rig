@@ -87,6 +87,7 @@ Scripts, hooks, `bin/`, and CI steps all run on Linux, macOS, and native Windows
 
 - `pathlib`; `Path(p).is_absolute()` not `startswith("/")`; `PurePath(p).as_posix()` before hash/serialize/compare — separators change digests
 - POSIX-absolute literals unportable as fixtures: `/host/x` → `D:\host\x` on Windows
+- Serialized telemetry/provenance paths = cross-host coordinates, not local paths: preserve exact string; recognize POSIX + Windows absolute form with `PurePosixPath` + `PureWindowsPath`; never host-`Path` before exact compare; regression both forms every host
 - Byte-asserted or hashed writes: `newline="\n"` or bytes — text mode emits CRLF
 - Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP` on win32 — else child Python aborts: `_Py_HashRandomization_Init: failed to get random numbers`; temp dir via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never `/tmp`
 - CI `run:` calling `.sh` needs explicit `shell: bash` — Windows pwsh dot-sources it, exits 0, runs nothing (false green)

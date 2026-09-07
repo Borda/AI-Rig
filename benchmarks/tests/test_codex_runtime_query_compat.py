@@ -118,6 +118,9 @@ def _completed_stream(
         pytest.param("env | rg CODEMAP_BIN", False, id="environment-inspection"),
         pytest.param('"$CODEMAP_BIN" --help', False, id="launcher-inspection"),
         pytest.param("$CODEMAP_BIN query --compact rdeps pkg.core &", False, id="historical-background"),
+        pytest.param("'$CODEMAP_BIN' query --compact rdeps pkg.core", False, id="single-quoted-variable"),
+        pytest.param("'${CODEMAP_BIN}' query --compact rdeps pkg.core", False, id="single-quoted-braced-variable"),
+        pytest.param("$CODEMAP_BIN query --compact rdeps --help", False, id="subcommand-help"),
         pytest.param("$CODEMAP_BIN query --compact rdeps pkg.core\nwait", False, id="historical-newline-wait"),
         pytest.param("`$CODEMAP_BIN query --compact rdeps pkg.core`", False, id="backticks"),
         pytest.param('$("$CODEMAP_BIN" query --compact rdeps pkg.core)', False, id="historical-substitution"),
@@ -372,6 +375,200 @@ def test_historical_exact_launcher_and_compound_forms_reject_native_item_contrac
     assert not script_run_codex.runtime._is_codemap_command("$CODEMAP_BIN query --compact rdeps pkg.core; echo done")
 
 
+def test_verified_launcher_is_observed_and_requires_opt_in_for_credit(script_run_codex: Any, tmp_path: Path) -> None:
+    """A verified literal launcher is observable without rewriting historical credit."""
+    launcher = tmp_path / "runtime" / "bin" / "codemap-py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    command = f"/bin/zsh -lc '\"{launcher}\" query --compact rdeps pkg.core'"
+    stream = _completed_stream(
+        commands=[
+            {
+                "type": "command_execution",
+                "command": command,
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": '{"index":{"query_complete":true,"compact":true}}',
+            }
+        ]
+    )
+
+    replay = script_run_codex.runtime.parse_codex_jsonl(stream, launcher_path=launcher)
+    credited = script_run_codex.runtime.parse_codex_jsonl(
+        stream,
+        launcher_path=launcher,
+        allow_equivalent_launcher=True,
+    )
+
+    assert replay.codemap_observed_calls == 1
+    assert replay.codemap_observed_successful_calls == 1
+    assert replay.codemap_observed_complete_calls == 1
+    assert replay.codemap_calls == 0
+    assert credited.codemap_calls == 1
+    assert credited.codemap_compact_successful_calls == 1
+
+
+@pytest.mark.parametrize(
+    "command_template",
+    [
+        pytest.param('"{launcher}" --help', id="help-only"),
+        pytest.param('echo "{launcher}" query --compact rdeps pkg.core', id="echo-only"),
+        pytest.param('"{other}" query --compact rdeps pkg.core', id="same-basename-wrong-path"),
+    ],
+)
+def test_verified_launcher_observation_rejects_non_dedicated_or_wrong_commands(
+    script_run_codex: Any, tmp_path: Path, command_template: str
+) -> None:
+    """Only a standalone query through the verified absolute path is observed."""
+    launcher = tmp_path / "runtime" / "bin" / "codemap-py"
+    other = tmp_path / "other" / "bin" / "codemap-py"
+    for path in (launcher, other):
+        path.parent.mkdir(parents=True)
+        path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    command = command_template.format(launcher=launcher, other=other)
+
+    assert not script_run_codex.runtime._observes_compact_codemap_query(command, launcher_path=launcher)
+    assert not script_run_codex.runtime._is_codemap_command(
+        command,
+        launcher_path=launcher,
+        allow_equivalent_launcher=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "exit_code", "output", "successful", "complete"),
+    [
+        pytest.param("failed", 1, '{"error":"failed"}', 0, 0, id="failed"),
+        pytest.param("completed", 0, "{}", 0, 0, id="incomplete-json"),
+        pytest.param(
+            "completed",
+            0,
+            '{"index":{"query_complete":true,"compact":true,"truncated":true}}',
+            0,
+            0,
+            id="truncated-json",
+        ),
+    ],
+)
+def test_observed_launcher_success_and_completion_are_distinct(
+    script_run_codex: Any,
+    tmp_path: Path,
+    status: str,
+    exit_code: int,
+    output: str,
+    successful: int,
+    complete: int,
+) -> None:
+    """A completed process and a complete query result are independent evidence."""
+    launcher = tmp_path / "runtime" / "bin" / "codemap-py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    stream = _completed_stream(
+        commands=[
+            {
+                "type": "command_execution",
+                "command": f"/bin/zsh -lc '\"{launcher}\" query --compact rdeps pkg.core'",
+                "status": status,
+                "exit_code": exit_code,
+                "aggregated_output": output,
+            }
+        ]
+    )
+
+    parsed = script_run_codex.runtime.parse_codex_jsonl(stream, launcher_path=launcher)
+
+    assert parsed.codemap_observed_calls == 1
+    assert parsed.codemap_observed_successful_calls == successful
+    assert parsed.codemap_observed_complete_calls == complete
+    assert parsed.codemap_calls == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("'$CODEMAP_BIN' query --compact rdeps pkg.core", id="single-quoted-variable"),
+        pytest.param("'${CODEMAP_BIN}' query --compact rdeps pkg.core", id="single-quoted-braced-variable"),
+        pytest.param("echo ';' \"$CODEMAP_BIN\" query --compact rdeps pkg.core", id="quoted-semicolon-data"),
+        pytest.param(
+            'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+            id="reassigned-variable",
+        ),
+        pytest.param('"$CODEMAP_BIN" query --compact rdeps --help', id="subcommand-help"),
+    ],
+)
+def test_observation_rejects_unexpanded_or_mutated_launcher_commands(script_run_codex: Any, command: str) -> None:
+    """Observation requires an executable launcher token, not shell text or help."""
+    stream = _completed_stream(
+        commands=[
+            {
+                "type": "command_execution",
+                "command": command,
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": '{"index":{"query_complete":true,"compact":true}}',
+            }
+        ]
+    )
+
+    parsed = script_run_codex.runtime.parse_codex_jsonl(stream)
+
+    assert parsed.codemap_observed_calls == 0
+    assert parsed.codemap_observed_successful_calls == 0
+    assert parsed.codemap_observed_complete_calls == 0
+
+
+def test_verified_launcher_observation_survives_an_unrelated_variable_reassignment(
+    script_run_codex: Any, tmp_path: Path
+) -> None:
+    """An exact proven executable remains observable when a separate variable is changed."""
+    launcher = tmp_path / "runtime" / "bin" / "codemap-py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    stream = _completed_stream(
+        commands=[
+            {
+                "type": "command_execution",
+                "command": f'CODEMAP_BIN=/wrong/codemap-py; "{launcher}" query --compact rdeps pkg.core',
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": '{"index":{"query_complete":true,"compact":true}}',
+            }
+        ]
+    )
+
+    parsed = script_run_codex.runtime.parse_codex_jsonl(stream, launcher_path=launcher)
+
+    assert parsed.codemap_observed_calls == 1
+    assert parsed.codemap_observed_successful_calls == 1
+    assert parsed.codemap_calls == 0
+
+
+def test_variable_launcher_observation_survives_a_later_reassignment(script_run_codex: Any) -> None:
+    """A later assignment cannot retroactively change an earlier query executable."""
+    stream = _completed_stream(
+        commands=[
+            {
+                "type": "command_execution",
+                "command": '"$CODEMAP_BIN" query --compact rdeps pkg.core; CODEMAP_BIN=/wrong/codemap-py',
+                "status": "completed",
+                "exit_code": 0,
+                "aggregated_output": '{"index":{"query_complete":true,"compact":true}}',
+            }
+        ]
+    )
+
+    parsed = script_run_codex.runtime.parse_codex_jsonl(stream)
+
+    assert parsed.codemap_observed_calls == 1
+    assert parsed.codemap_observed_successful_calls == 1
+    assert parsed.codemap_calls == 0
+
+
 @pytest.mark.parametrize(
     ("command", "expected"),
     [
@@ -481,12 +678,7 @@ def test_historical_wrapped_C_delivery_rejects_native_item_contract(script_run_c
 def test_compound_compact_query_is_observed_without_receiving_canonical_credit(
     script_run_codex: Any, tmp_path: Path
 ) -> None:
-    """Expose actual Codemap use while rejecting a non-standalone credited command.
-
-    The observation protects result reporting: a model can invoke the compact
-    query after a shell probe in the same item, which is real product use but
-    must remain noncompliant with the benchmark's exact-command contract.
-    """
+    """A parsed query segment records use without satisfying standalone credit."""
     skill_path = tmp_path / "codex-skills" / "query-code" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
     skill_bytes = b"# query-code\n"
@@ -510,6 +702,8 @@ def test_compound_compact_query_is_observed_without_receiving_canonical_credit(
     )
 
     assert parsed.codemap_observed_calls == 1
+    assert parsed.codemap_observed_successful_calls == 1
+    assert parsed.codemap_observed_complete_calls == 1
     assert parsed.codemap_calls == 0
     assert parsed.codemap_skill_compact_successful_calls == 0
     assert script_run_codex._arm_compliance("C_strict", parsed) is False

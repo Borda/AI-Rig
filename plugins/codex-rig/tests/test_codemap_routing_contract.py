@@ -74,3 +74,23 @@ def test_standard_batch_skills_are_the_documented_majority_choice() -> None:
     adaptive = sorted(skill for skill, selection in documented.items() if selection.startswith("adaptive"))
 
     assert adaptive == ["implement", "investigate", "optimize"]
+
+
+def test_codemap_contract_bounds_query_execution_without_cap_or_metadata_shortcut() -> None:
+    """Keep the consumer contract explicit about stable reads, reusable evidence, and metadata limits."""
+    contract = CONTRACT_PATH.read_text(encoding="utf-8").lower()
+
+    for phrase in (
+        "resolve it once",
+        "independent read-only queries may run concurrently",
+        "prepared stable index",
+        "dependent queries wait",
+        "index writes are always serialized",
+        "no arbitrary total-call cap",
+        "correction retries",
+        "same correction failure recurs",
+        "sibling queries answering distinct dimensions",
+        "metadata-only",
+    ):
+        assert phrase in contract
+    assert "maximum three" not in contract

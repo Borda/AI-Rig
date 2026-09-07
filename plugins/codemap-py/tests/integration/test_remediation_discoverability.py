@@ -40,7 +40,11 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 #   `$CODEMAP_BIN`), a Runtime note, the 20-item result cap with `--limit 0`/`index.confidence`,
 #   the partial-routing-table pointer to `--help`, and the test-impact subcommand-vs-skill split.
 # The bound was already exceeded at 2518 bytes before that work, so it is not a fresh regression.
-_CODEX_QUERY_SKILL_MAX_BYTES = 3600
+# 3600 -> 4100: mandatory independent-read/no-self-heal execution, retained launcher
+# identity, targeted-help routing, distinct-fact settlement, and bounded correction
+# retries. Preserve prior index-root/symbol/runtime safety details; never trim them
+# merely to fit the old bound. Live token savings still require matched measurements.
+_CODEX_QUERY_SKILL_MAX_BYTES = 4100
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:
@@ -54,6 +58,17 @@ def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_comp
     )
     assert "make one query" not in skill_text
     assert "Maximum: three Codemap calls" not in skill_text
+    assert all(
+        phrase in skill_text
+        for phrase in (
+            "shell persistence",
+            "retain its literal",
+            "SCAN_NO_AUTOBUILD=1",
+            "--index <emitted-index-path> --root <same-root>",
+            "symbol <name> --with-imports",
+            "source-body implementation/runtime detail",
+        )
+    )
 
 
 @pytest.mark.parametrize(

@@ -64,11 +64,11 @@ For method changes possibly affecting overrides, use `find-symbol '<ClassSuffix>
 
 Source request naming imports: use `symbol <name> --with-imports`. `query_complete: true` confirms index coverage, not requested optional fields.
 
-Table is a routing shortlist, not the parser's full surface. If need absent, read `codemap-py query --help`; never guess subcommand. For exploratory module importer questions, `rdeps <module> --limit N` returns an explicit bounded preview of static `imported_by`; `dynamic_imported_by` and `config_refs` remain exhaustive. Default `rdeps <module>` and `rdeps <module> --limit 0` return every static importer. A truncated preview never settles exhaustive callers.
+Table is a routing shortlist, not the parser's full surface. If the operation is known but an argument is unknown, read `codemap-py query <subcommand> --help`; if the operation is unknown, read `codemap-py query --help`; never guess a subcommand. Known syntax needs no preliminary help, doctor, scan, or freshness call. For exploratory module importer questions, `rdeps <module> --limit N` returns an explicit bounded preview of static `imported_by`; `dynamic_imported_by` and `config_refs` remain exhaustive. Default `rdeps <module>` and `rdeps <module> --limit 0` return every static importer. A truncated preview never settles exhaustive callers.
 
 ## Index and completeness contract
 
-Run selected queries first; no unconditional pre-scan/freshness call. Run independent queries separately, not `batch`. Use `test-impact` for test choice, not direct test-module import.
+Resolve the installed launcher once and retain its literal in reasoning; shell variables do not persist between tool calls. Run selected queries first; no unconditional pre-scan/freshness call. Independent read-only queries may run concurrently as separate tool commands only against a prepared stable index with no self-heal (`SCAN_NO_AUTOBUILD=1`); dependent queries wait for their inputs, and refresh, self-heal, or index writes run serially. Keep independent queries standalone, not `batch`, until its per-item completeness contract is verified. Use `test-impact` for test choice, not direct test-module import.
 
 - Normal mode may perform the CLI's bounded incremental self-heal.
 - With `SCAN_NO_AUTOBUILD=1`, never run freshness query, incremental refresh, or automatic full build. Query existing index unchanged.
@@ -77,16 +77,16 @@ Run selected queries first; no unconditional pre-scan/freshness call. Run indepe
 
 Interpret `index`:
 
-- Complete, untruncated `query_complete: true` settles answered structural fact. Complete-query paths are caller-repo-relative, never Skill-relative. Do not re-query/read/grep same graph fact.
+- Complete, untruncated `query_complete: true` settles its own answered structural fact, not sibling standard queries answering other dimensions. Complete-query paths are caller-repo-relative, never Skill-relative. Do not re-query/read/grep that same graph fact.
 - Ordinary repository reads remain allowed for task-requested distinct independent AST/oracle view or source-body implementation/runtime. Label separately, never as rechecking complete Codemap result.
 - `query_complete: false`: name `completeness_reason`; use only a targeted fallback for gaps named by `degraded`, `not_covered`, `root_mismatch`, or `stale`.
 - `compact: true` changes only coverage metadata; findings/counts remain complete.
 
 Truncation ≠ incompleteness. Truncation at 20 items is a real cap, not exhaustive unless `--limit 0` (`symbol` and `find-symbol` default). `query_complete` scores graph coverage only—staleness, degraded/untracked files, root mismatch, name collisions—not cap. Thus capped `query_complete: true` is still 20-of-N; never stop before missing items.
 
-Before treating list as whole, read `index.confidence`: `"exact"` = all matches; `"partial"` = capped/stale. When capped, `index.truncated: true` + `index.total_available: <N>` give total. Before claiming complete, re-run with `--limit 0` or `--top`/`--limit` above `total_available`. Re-run is correction within three-call budget, not new question.
+Before treating list as whole, read `index.confidence`: `"exact"` = all matches; `"partial"` = capped/stale. When capped, `index.truncated: true` + `index.total_available: <N>` give total. Before claiming complete, re-run with `--limit 0` or `--top`/`--limit` above `total_available`. This is a targeted correction for that fact, not a new sibling question.
 
-Maximum three Codemap calls, including one correction to started name/argument error. `fn-blast` takes one qualified name, never `--depth`; `coupled` ≠ `central`. Never invent flags or retry completed structural query. Tool-routing failure with no CLI execution does not count. After three, report partial results + remaining caveat.
+`fn-blast` takes one qualified name, never `--depth`; `coupled` ≠ `central`. Never invent flags or retry a completed structural query. Continue distinct queries or exhaustive facts required to finish; there is no arbitrary total-call cap. For one started query, allow only bounded targeted correction retries for a syntax/argument error; if the same correction failure recurs, stop and report the failure and unfinished fact. Tool-routing failure with no CLI execution does not count.
 
 ## Render
 

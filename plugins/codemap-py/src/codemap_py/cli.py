@@ -56,6 +56,16 @@ Direct compact query examples:
 
 Run `codemap-py query --help` for every query and its arguments.
 """
+_HELP_FLAGS = frozenset({"--help", "-h"})
+_INDEX_HELP = """usage: codemap-py index [--root PATH] [args...]
+
+Build or update the structural index for a project root.
+
+  codemap-py index
+  codemap-py index --root /path/to/project
+
+Full options come from the `scan-index` launcher, which is not installed here.
+"""
 _PROBE_SNIPPET = "import sys;v=sys.version_info;print(sys.implementation.name,v.major,v.minor)"
 _NO_INTERPRETER_EXIT = 127
 _USAGE_EXIT = 2
@@ -245,6 +255,12 @@ def _run_index(rest: Sequence[str], plugin_root: Path) -> int:
     invocation into ``index_busy``.
     """
     if not (plugin_root / "bin" / "scan-index").is_file():
+        # A help request must never depend on the executable it documents. Forwarding is preferred when the
+        # launcher exists (its help is authoritative), but an absent launcher used to make `index --help`
+        # exit 1 — which also killed `index --help && query --help` chains before the second command ran.
+        if any(argument in _HELP_FLAGS for argument in rest):
+            sys.stdout.write(_INDEX_HELP)
+            return 0
         return _emit_error("missing_executable", "scan-index")
     resolved = index_paths.resolve_index()
     argv = _child_argv("scan-index", rest, plugin_root, resolved.root)

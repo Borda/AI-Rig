@@ -33,6 +33,7 @@ Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and n
 
 - `pathlib`; `Path(p).is_absolute()` not a leading-slash check; `PurePath(p).as_posix()` before hashing, serializing, or comparing a path — native separators change the digest.
 - POSIX-absolute literals are not portable fixtures: `/host/x` resolves to `D:\host\x` on Windows.
+- Serialized telemetry or provenance paths are cross-host coordinates, not local paths: preserve their exact string; recognize declared POSIX and Windows absolute forms with `PurePosixPath` and `PureWindowsPath`; never convert them through host `Path` before exact comparison. Regressions must exercise both forms on every host.
 - Byte-asserted or hashed writes use `newline="\n"` or bytes; text mode emits CRLF on Windows.
 - Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP` on win32, else the child Python aborts before running; temp dirs via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never `/tmp`.
 - A workflow `run:` step invoking `.sh` needs explicit `shell: bash` — the Windows default shell dot-sources it and exits zero, a false green.

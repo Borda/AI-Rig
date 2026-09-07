@@ -72,6 +72,18 @@ def test_manifest_is_current_and_regeneration_is_byte_stable() -> None:
     assert _run_builder("--check").returncode == 0
 
 
+@pytest.mark.parametrize("study,command_count", [("agentic", 2), ("integration", 1)])
+def test_single_model_manifest_commands_name_the_locked_model(study: str, command_count: int) -> None:
+    """Single-model approval examples must not inherit the launcher's multi-model default."""
+    builder = runpy.run_path(str(BENCHMARKS / f"build-codex-{study}-manifest.py"))
+    manifest = _load(BENCHMARKS / "manifests" / f"codex-{study}.json")
+    human = builder["_human_bytes"](manifest, "reviewed-machine-digest").decode("utf-8")
+    commands = [line for line in human.splitlines() if "bash benchmarks/run-all.sh codex --" in line]
+
+    assert len(commands) == command_count
+    assert all(f"--models={manifest['model']['name']}" in line for line in commands)
+
+
 def test_builder_stale_error_names_exact_rebuild_command(tmp_path: Path) -> None:
     """Internal check mode must identify the command that repairs generated drift."""
     builder = runpy.run_path(str(BUILDER))
@@ -105,6 +117,20 @@ def test_manifest_locks_shared_scope_and_identity() -> None:
     assert manifest["frozen_index_contract"]["raw_sha256"] == (
         "3c5840893e9c939baa61a6c5ce95994ff69ffe4a67d225aeb412c73deb61e0c1"
     )
+
+
+def test_builder_declares_reproducible_balanced_execution_order() -> None:
+    """A study must lock its arm rotation instead of silently changing execution order."""
+    builder = runpy.run_path(str(BUILDER))
+    manifest = builder["_build_manifest"]()
+    assert manifest["execution_order"] == {
+        "strategy": "cyclic-arm-order-v1",
+        "arm_cycle": list(AGENTIC_ARMS),
+        "index_basis": "locked-task-ordinal-plus-repetition-minus-one",
+    }
+    assert "three repetitions" in manifest["preregistered_scope"]["arm_order"]
+    assert "summary.json" in manifest["artifact_package"]["required_files"]
+    assert "exact installed launcher" in manifest["arms"]["C_strict"]["requirement"]
 
 
 def test_manifest_locks_the_full_shared_agentic_scope_with_one_default_repeat() -> None:
@@ -211,6 +237,7 @@ def test_manifest_has_exact_shared_scoring_and_plugin_hashes() -> None:
         "telemetry.jsonl (raw)",
         "telemetry-canonical.jsonl",
         "run-metadata.json",
+        "summary.json",
         "inputs/ (frozen input snapshot)",
         "runtime-isolation.jsonl (0600 expected/observed plugin identity evidence; may be empty)",
         "checksums.sha256",

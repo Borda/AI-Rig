@@ -29,6 +29,8 @@ Closed set: Claude `foundry`, `oss`, `develop`, `research`; Codex `codex-rig`; p
 - On later-target failure, stop; rollback only approved operations. Claim completion/rollback only after post-state hashes verify.
 - "Push" means local allowlisted source wiring plus native local runtime installation. Never `git push`, marketplace mutation, release publication, or direct installed-cache edit.
 
+The active Codex consumer contract (requires the `codex-rig` plugin) is its shipped `shared/codemap-contract.md`: its adapter validates `CODEMAP_BIN` first or PATH fallback once, runs the provider-owned probe/query surface, persists one context artifact, and lets specialists reuse that artifact. The provider-managed `codemap-py-integration.md` block is metadata-only; identity/protocol/timestamp fields do not wire the launcher or prove active guidance. Audit checks provider identity and reachable active consumer guidance separately and reports missing, unreachable, or outdated guidance as bounded source maintenance (or an existing approved `plan_sync` target). Do not borrow another plugin's shared script or edit installed caches. Distinguish installed-byte/hash evidence from current-session activation: a native listing without session provenance is not proof, and matching source hashes alone do not prove semantic currency.
+
 ## Runtime note
 
 Codex has no `bin/` PATH entry or plugin-root variable. Resolve its installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning. Codex has no `AskUserQuestion`: print plan summary and SHA-256, then wait for the next user message before `apply`/`sync`.
@@ -58,9 +60,9 @@ PLUGIN_ROOT/bin/codemap-py integrate sync --source <s> --plan <artifact> --appro
 PLUGIN_ROOT/bin/codemap-py integrate demo [--runtime <r>]
 ```
 
-`audit`: bounded read-only provider/consumer/version/content/managed-block/index/log/usage inspection. It never runs `plan`, `apply`, `sync`, index, query self-heal, native mutation, or global-instruction installation. Same-version content mismatch is high-severity drift; a native listing without provenance is `session_catalog: unobservable`. Codex has CLI/tool shards but no skill-start hook; host hooks provide no token usage, so report evidence limits, not fresh-session activation or savings. `--json` uses schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry.
+`audit`: bounded read-only provider/consumer/version/content/managed-block/index/log/usage inspection. It never runs `plan`, `apply`, `sync`, index, query self-heal, native mutation, or global-instruction installation. It checks provider identity and active consumer guidance reachability/content separately; report `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift` as source maintenance, not active wiring. Same-version content mismatch is high-severity drift; a native listing without provenance is `session_catalog: unobservable`. Codex has CLI/tool shards but no skill-start hook; host hooks provide no token usage, so report evidence limits, not fresh-session activation or token savings. `--json` uses schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry.
 
-`plan`: write only; print artifact, targets, and SHA-256. `apply`: require matching shown SHA-256 and explicit user approval. `sync`: same gate plus explicit source; give the fresh-session instruction above if applicable. `demo`: audit plus representative plain-vs-structural-context workflows; evidence is disposable unless a mutation is separately approved.
+`plan`: write only; print artifact, targets, and SHA-256. `apply`: require matching shown SHA-256 and explicit user approval. `sync`: same gate plus explicit source; give the fresh-session instruction above if applicable. `demo`: audit plus one representative structural smoke query; evidence is disposable unless a mutation is separately approved, and it makes no token-savings or current-session activation claim.
 
 ### 3. Report
 

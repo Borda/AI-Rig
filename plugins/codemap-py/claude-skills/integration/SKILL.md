@@ -39,6 +39,8 @@ Shared-engine safety invariants:
 - First-target success + second-target failure stops immediately. Rollback performs only approved-plan actions. Claim completion/rollback only after post-state hash verification.
 - "Push" means only (1) updating allowlisted version-controlled consumer source integration from `codemap-py.integration.v2`, and (2) installing/reinstalling those built plugin versions locally via native runtime CLI. Never `git push`, remote marketplace mutation, release publication, or direct installed-cache edits.
 
+Active consumer guidance is separate from provider metadata. For Codex, the `codex-rig` plugin's shipped `shared/codemap-contract.md` (requires the `codex-rig` plugin) is the active consumer contract: its adapter validates `CODEMAP_BIN` first or PATH fallback once, runs the provider-owned probe/query surface, persists one context artifact, and lets specialists reuse it. The provider-managed `codemap-py-integration.md` block is metadata-only; identity/protocol/timestamp fields do not wire a launcher or prove active guidance. Audit checks provider identity and reachable active consumer guidance separately and reports missing, unreachable, or outdated guidance as bounded source maintenance (or an existing approved `plan_sync` target). Do not borrow another plugin's shared script or edit installed caches. Installed-byte/hash evidence is separate from current-session activation; a native listing without session provenance is not proof, and matching source hashes alone do not prove semantic currency.
+
 NOT for: structural queries (use `/codemap-py:query-code`); standalone index rebuilds (use `/codemap-py:scan-codebase`).
 
 </objective>
@@ -50,7 +52,7 @@ NOT for: structural queries (use `/codemap-py:query-code`); standalone index reb
   - `plan` — persist report artifact (targets, argv, hashes, rollback identities, plan SHA-256); no mutation.
   - `apply` — atomically update current-version managed blocks in allowlisted consumer source from approved plan.
   - `sync` — install/reinstall approved targets locally via native plugin-manager CLIs.
-  - `demo` — run `audit` plus representative plain-vs-structural-context workflows; disposable evidence only.
+  - `demo` — run `audit` plus one representative structural smoke query; disposable evidence only.
 
 </inputs>
 
@@ -66,7 +68,7 @@ Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan`
 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate audit [--runtime <r>] [--json] [--since YYYY-MM-DD]  # timeout: 15000
 ```
 
-**`audit`** — bounded read-only inspection: provider/consumer versions, observed provider content identity, managed blocks, index identity, runtime-scoped logs, usage, findings. Reports `pass`, `warn`, or `fail`; never invokes `plan`, `apply`, `sync`, `index`, query self-heal, native plugin-manager mutation, or global-instruction installation. Same-version content mismatch = high-severity drift; native listing without session provenance = `session_catalog: unobservable`. Codex supplies runtime-scoped CLI/tool shards but no skill-start hook; host hooks expose no token usage. Report these evidence limits; never claim live fresh-session activation or token savings. `--json` emits schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry by date. Default text; JSON for downstream reasoning.
+**`audit`** — bounded read-only inspection: provider/consumer versions, observed provider content identity, managed blocks, active consumer guidance reachability/content, index identity, runtime-scoped logs, usage, findings. Reports `pass`, `warn`, or `fail`; never invokes `plan`, `apply`, `sync`, `index`, query self-heal, native plugin-manager mutation, or global-instruction installation. Missing, unreachable, or outdated active guidance is reported as `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift` and treated as source maintenance, not proof of active wiring. Same-version content mismatch = high-severity drift; native listing without session provenance = `session_catalog: unobservable`. Codex supplies runtime-scoped CLI/tool shards but no skill-start hook; host hooks expose no token usage. Report these evidence limits; never claim live fresh-session activation or token savings. `--json` emits schema 2 (`codemap-py.integration.v2`); `--since` filters telemetry by date. Default text; JSON for downstream reasoning.
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate plan [--runtime <r>] [--consumers <csv>] [--source <s>] [--out <artifact>]  # timeout: 15000
@@ -90,7 +92,7 @@ Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan`
 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate demo [--runtime <r>]  # timeout: 20000
 ```
 
-**`demo`** — runs `audit` + representative plain-vs-structural-context workflows; records protocol/version/evidence. Disposable unless user separately approves mutation. Evidence requires contrast between plain and structural runs; one structural query is insufficient. Print returned report path.
+**`demo`** — runs `audit` + one representative structural smoke query; records protocol/version/evidence. Disposable unless user separately approves mutation. It does not claim a plain-vs-structural comparison, token savings, or current-session activation. Print returned report path.
 
 ## Step 3: Report
 

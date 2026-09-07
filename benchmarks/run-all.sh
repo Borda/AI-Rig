@@ -9,7 +9,7 @@
 #   bash benchmarks/run-all.sh claude --agentic --dry-run  # shared 144-cell Claude agentic plan, no model
 #   bash benchmarks/run-all.sh claude --agentic --tasks=BA-02,BA-04,BA-12,BA-16 --dry-run  # selected nonpoolable Claude plan
 #   bash benchmarks/run-all.sh claude --agentic --repetitions=2 --dry-run  # scope-bound Claude repeat override
-#   bash benchmarks/run-all.sh codex --struct --dry-run  # unified 73-task/219-cell Codex plan, no model
+#   bash benchmarks/run-all.sh codex --struct --dry-run  # default Luna+Terra 73-task/438-cell Codex plans, no model
 #   bash benchmarks/run-all.sh claude --struct --models=opus,haiku  # declared tiers, restricted and reordered
 #   bash benchmarks/run-all.sh codex --struct --models=luna,terra --dry-run  # both Codex strata, one approval
 #   bash benchmarks/run-all.sh codex --struct --models=terra --dry-run  # second Codex stratum alone
@@ -32,14 +32,13 @@
 # answers to its full declared name or to its nickname — the segment after the last dash, so
 # gpt-5.6-terra is also "terra" — whenever that nickname belongs to exactly one declared stratum.
 # The selection pairs with any lane and is validated in every mode. The structural lane runs one study
-# per selected stratum; the Codex agentic lane runs one stratum per study and refuses a longer
-# selection rather than dropping it. A combined invocation runs both lanes on the one named stratum
-# and prints one token covering both.
+# per selected stratum, as does the agentic lane. Combined invocations run both lanes on the same
+# ordered selection. Codex defaults to luna,terra and prints one token covering the selected studies.
 #   bash benchmarks/run-all.sh codex --struct  # paid unified Codex task study
-#   bash benchmarks/run-all.sh codex --dry-run  # unified task + agentic Codex plans, no model
-#   bash benchmarks/run-all.sh codex   # paid unified task study, then paid agentic study
+#   bash benchmarks/run-all.sh codex --dry-run  # default Luna+Terra task + agentic Codex plans, no model
+#   bash benchmarks/run-all.sh codex   # paid Luna+Terra task studies, then paid Luna+Terra agentic studies
 #   bash benchmarks/run-all.sh codex --struct --tasks=RC,FS,FM,PT [--dry-run]  # selected stage-native task families
-#   bash benchmarks/run-all.sh codex --agentic --dry-run  # shared 48-cell agentic plan, no model
+#   bash benchmarks/run-all.sh codex --agentic --dry-run  # default Luna+Terra 96-cell agentic plans, no model
 #   bash benchmarks/run-all.sh codex --agentic --tasks=BA-02,BA-04,BA-12,BA-16 --dry-run  # selected nonpoolable Codex plan
 #   bash benchmarks/run-all.sh codex --agentic --repetitions=2 --dry-run  # scope-bound repeat override
 #   bash benchmarks/run-all.sh codex --agentic  # paid shared agentic study
@@ -98,9 +97,12 @@ CODEX_SELECTED_MODEL=""
 CODEX_SELECTED_MODELS=()
 MODELS_SELECTION=""
 PROVIDER_MODELS=()
-# Empty whenever the agentic lane runs the stratum its manifest already names, so that a run naming
-# the default and a run naming nothing stay one study with one token.
+# Empty for a scalar manifest-default stratum, preserving its manifest-bound approval identity.
 AGENTIC_MODEL=""
+AGENTIC_SELECTED_MODELS=()
+AGENTIC_SWEEP_APPROVALS=()
+AGENTIC_MODELS_RESOLVED=false
+AGENTIC_SWEEP_TOTAL_CELLS=0
 AGENTIC_TASK_IDS=()
 SHARED_STRUCTURAL_TASK_IDS=()
 CODEX_SELECTION_SCOPE_SHA=""
@@ -280,24 +282,8 @@ case "$MODE" in
       usage
       exit 2
     fi
-    # --models is perpendicular to the lane selectors rather than tied to one of them: it names which
-    # declared strata run, in whichever lanes this invocation runs, and the names are checked in every
-    # mode. The structural lane runs a selection of any length as one study per stratum; the Codex
-    # agentic lane executes one stratum per study. An agentic-only run therefore takes exactly one
-    # name and refuses a longer selection rather than dropping it — that silent drop is what once
-    # billed a third study of the manifest default to an operator who had named another stratum. A
-    # combined run keeps sweeping the structural lane over the whole selection; its agentic half runs
-    # one stratum, and the authorization block names which one instead of leaving it to be assumed.
-    if [ "$MODE" = "codex" ] && [ "$AGENTIC" = true ]; then
-      case "$MODELS_SELECTION" in
-        *,*)
-          echo "ERROR: the Codex agentic lane runs one stratum per study, so --models takes one name here." >&2
-          echo "       Run each stratum separately, or add --struct to sweep several in the structural lane." >&2
-          usage
-          exit 2
-          ;;
-      esac
-    fi
+    # --models is perpendicular to the lane selectors: each named stratum becomes one sequential
+    # study in every selected lane. The parent binds the ordered child scopes before paid execution.
     if [ "$ISOLATED" = true ] && [ -n "${REPO_OVERRIDDEN:-}" ]; then
       echo "ERROR: --isolated creates this run's own worktree, so it cannot also take REPO=$REPO." >&2
       echo "       Drop one: REPO= to run in a tree you manage, --isolated to get a private one." >&2
@@ -657,19 +643,38 @@ agentic_manifest_model() {
 
 resolve_agentic_model() {
   local default_model
+  [ "$AGENTIC_MODELS_RESOLVED" = true ] && return 0
   AGENTIC_MODEL=""
-  [ "$MODE" = "codex" ] || return 0
-  [ -n "$MODELS_SELECTION" ] || return 0
-  resolve_provider_models codex || return "$?"
-  # A multi-stratum selection reaches the structural lane only: one agentic study cannot be several
-  # strata, and an agentic-only run of that shape was already refused at parse time. What remains here
-  # is a combined run, whose agentic half keeps the manifest default and says so in its authorization.
-  [ "${#PROVIDER_MODELS[@]}" -eq 1 ] || return 0
-  default_model="$(agentic_manifest_model)" || {
-    echo "ERROR: active Codex agentic manifest has no model stratum: $AGENTIC_MANIFEST_PATH" >&2
-    return 2
-  }
-  [ "${PROVIDER_MODELS[0]}" = "$default_model" ] || AGENTIC_MODEL="${PROVIDER_MODELS[0]}"
+  AGENTIC_SELECTED_MODELS=()
+  AGENTIC_MODELS_RESOLVED=true
+  if [ -n "$MODELS_SELECTION" ]; then
+    resolve_provider_models "$MODE" || return "$?"
+    AGENTIC_SELECTED_MODELS=("${PROVIDER_MODELS[@]}")
+  elif [ "$MODE" = "codex" ]; then
+    AGENTIC_SELECTED_MODELS=("$(agentic_manifest_model)")
+  else
+    return 0
+  fi
+  if [ "$MODE" = "codex" ] && [ "${#AGENTIC_SELECTED_MODELS[@]}" -eq 1 ]; then
+    default_model="$(agentic_manifest_model)" || {
+      echo "ERROR: active Codex agentic manifest has no model stratum: $AGENTIC_MANIFEST_PATH" >&2
+      return 2
+    }
+    [ "${AGENTIC_SELECTED_MODELS[0]}" = "$default_model" ] || AGENTIC_MODEL="${AGENTIC_SELECTED_MODELS[0]}"
+  elif [ "${#AGENTIC_SELECTED_MODELS[@]}" -eq 1 ]; then
+    AGENTIC_MODEL="${AGENTIC_SELECTED_MODELS[0]}"
+  fi
+}
+
+agentic_selection_is_sweep() {
+  [ "${#AGENTIC_SELECTED_MODELS[@]}" -gt 1 ]
+}
+
+select_agentic_model() {
+  AGENTIC_MODEL="$1"
+  if [ "$MODE" = "codex" ] && [ "$AGENTIC_MODEL" = "$(agentic_manifest_model)" ]; then
+    AGENTIC_MODEL=""
+  fi
 }
 
 # One rule, four readers: the dispatch that forwards a derived scope hash, the approval hint, the
@@ -693,6 +698,9 @@ resolve_agentic_scope() {
     )
     if [ -n "$CODEX_TASKS" ]; then
       resolver+=(--tasks "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].split(",")))' "$CODEX_TASKS")")
+    fi
+    if [ -n "$AGENTIC_MODEL" ]; then
+      resolver+=(--model "$AGENTIC_MODEL")
     fi
   else
     resolver=(
@@ -741,6 +749,9 @@ configure_agentic_dispatch() {
       AGENTIC_DISPATCH_ARGS+=(--tasks "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1].split(",")))' "$CODEX_TASKS")")
     else
       AGENTIC_DISPATCH_ARGS+=(--run-all)
+    fi
+    if [ -n "$AGENTIC_MODEL" ]; then
+      AGENTIC_DISPATCH_ARGS+=(--model "$AGENTIC_MODEL")
     fi
     AGENTIC_DISPATCH_ARGS+=(--repeat "$AGENTIC_REPETITIONS")
   else
@@ -1108,8 +1119,8 @@ load_shared_structural_tasks() {
 
 # Resolve which declared model strata this invocation runs. --models never introduces a model:
 # it restricts and orders the provider's declared list, so a typo fails instead of silently running
-# an unlocked stratum. Without --models the manifest's own stratum runs alone; with it, each named
-# stratum runs as its own study under one approval that binds the ordered list.
+# an unlocked stratum. Launcher defaults are assigned before dispatch; each named stratum runs as
+# its own study under one approval that binds every resolved scope and the ordered list.
 configure_codex_model() {
   local primary
   primary="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model"]["name"])' "$MANIFEST_PATH")"
@@ -1289,31 +1300,59 @@ run_claude_structural_study() {
 claude() {
   run_claude_structural_study
   claude_agentic_preflight
-
-  section_rule "CLAUDE AGENTIC (paid model runs)"
-  resolve_agentic_scope
-  configure_agentic_dispatch
-  python3 "$AGENTIC_RUNNER" "${AGENTIC_DISPATCH_ARGS[@]}" --report
+  run_claude_agentic_study
 }
 
-run_claude_agentic_plan() {
-  resolve_agentic_scope
-  configure_agentic_dispatch
+run_claude_agentic_prepared_plan() {
+  local model_count=3
+  [ -z "$AGENTIC_MODEL" ] || model_count=1
+  resolve_agentic_scope || return "$?"
+  configure_agentic_dispatch || return "$?"
   section_rule "CLAUDE SHARED AGENTIC A/B/C PREFLIGHT (no model)"
-  echo "→ design: $AGENTIC_TOTAL_CELLS cells (${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms × 3 models; nonpoolable)"
+  echo "→ design: $AGENTIC_TOTAL_CELLS cells (${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms × $model_count models; nonpoolable)"
   echo "→ scope: $AGENTIC_SCOPE_SHA"
   python3 "$AGENTIC_RUNNER" "${AGENTIC_DISPATCH_ARGS[@]}" --dry-run
 }
 
-run_claude_agentic_study() {
-  resolve_agentic_scope
-  configure_agentic_dispatch
+run_claude_agentic_plan() {
+  local model
+  resolve_agentic_model || return "$?"
+  if ! agentic_selection_is_sweep; then
+    run_claude_agentic_prepared_plan
+    return "$?"
+  fi
+  for model in "${AGENTIC_SELECTED_MODELS[@]}"; do
+    AGENTIC_MODEL="$model"
+    run_claude_agentic_prepared_plan || return "$?"
+  done
+  AGENTIC_MODEL=""
+}
+
+run_claude_agentic_prepared_study() {
+  local model_count=3
+  [ -z "$AGENTIC_MODEL" ] || model_count=1
+  resolve_agentic_scope || return "$?"
+  configure_agentic_dispatch || return "$?"
   section_rule "CLAUDE SHARED AGENTIC A/B/C STUDY (paid model runs)"
-  echo "→ design: $AGENTIC_TOTAL_CELLS cells (${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms × 3 models; nonpoolable)"
+  echo "→ design: $AGENTIC_TOTAL_CELLS cells (${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms × $model_count models; nonpoolable)"
   echo "→ timeout: $AGENTIC_COORDINATE_TIMEOUT seconds per cell, including retries"
   echo "→ manifest: $METHODOLOGY_PATH ($(sha256_file "$METHODOLOGY_PATH"))"
   echo "→ scope: $AGENTIC_SCOPE_SHA"
   python3 "$AGENTIC_RUNNER" "${AGENTIC_DISPATCH_ARGS[@]}" --report
+}
+
+run_claude_agentic_study() {
+  local model
+  resolve_agentic_model || return "$?"
+  if ! agentic_selection_is_sweep; then
+    run_claude_agentic_prepared_study
+    return "$?"
+  fi
+  for model in "${AGENTIC_SELECTED_MODELS[@]}"; do
+    AGENTIC_MODEL="$model"
+    run_claude_agentic_prepared_study || return "$?"
+  done
+  AGENTIC_MODEL=""
 }
 
 run_claude_structural_plan() {
@@ -1429,6 +1468,14 @@ EOF
 codex_agentic_approval_hint() {
   # Callers resolve the agentic scope first: this runs inside a command
   # substitution, where any global the resolver sets would be discarded.
+  if agentic_selection_is_sweep; then
+    codex_agentic_sweep_approval
+    return 0
+  fi
+  codex_agentic_child_approval_hint
+}
+
+codex_agentic_child_approval_hint() {
   if agentic_scope_is_default; then
     sha256_file "$AGENTIC_MANIFEST_PATH"
   else
@@ -1436,9 +1483,32 @@ codex_agentic_approval_hint() {
   fi
 }
 
+codex_agentic_sweep_approval() {
+  codex_models_scope_sha "${AGENTIC_SWEEP_APPROVALS[*]}" "${AGENTIC_SELECTED_MODELS[*]}"
+}
+
+resolve_codex_agentic_sweep_scopes() {
+  local model
+  resolve_agentic_model || return "$?"
+  if ! agentic_selection_is_sweep; then
+    resolve_agentic_scope || return "$?"
+    AGENTIC_SWEEP_TOTAL_CELLS="$AGENTIC_TOTAL_CELLS"
+    return 0
+  fi
+  AGENTIC_SWEEP_APPROVALS=()
+  AGENTIC_SWEEP_TOTAL_CELLS=0
+  for model in "${AGENTIC_SELECTED_MODELS[@]}"; do
+    select_agentic_model "$model"
+    resolve_agentic_scope || return "$?"
+    AGENTIC_SWEEP_APPROVALS+=("$(codex_agentic_child_approval_hint)")
+    AGENTIC_SWEEP_TOTAL_CELLS="$((AGENTIC_SWEEP_TOTAL_CELLS + AGENTIC_TOTAL_CELLS))"
+  done
+  AGENTIC_MODEL=""
+}
+
 print_codex_agentic_paid_guidance() {
   if [ -z "$AGENTIC_SCOPE_SHA" ]; then
-    resolve_agentic_scope
+    resolve_codex_agentic_sweep_scopes
   fi
   approval_hint="$(codex_agentic_approval_hint)"
   cat >&2 <<EOF
@@ -1446,7 +1516,7 @@ print_codex_agentic_paid_guidance() {
 Review the exact no-model shared agentic plan:
   $(launcher_command plan)
 
-Then launch the paid $AGENTIC_TOTAL_CELLS-cell study with one scope-bound command:
+Then launch the paid $AGENTIC_SWEEP_TOTAL_CELLS-cell study with one scope-bound command:
   CODEX_PAID_APPROVAL=${approval_hint:0:16} \\
   CODEX_AUTH_SOURCE="\$HOME/.codex/auth.json" \\
     $(launcher_command paid)
@@ -1463,8 +1533,10 @@ require_codex_agentic_paid_inputs() {
   fi
   local agentic_manifest_sha
   agentic_manifest_sha="$(sha256_file "$AGENTIC_MANIFEST_PATH")"
-  resolve_agentic_scope
-  if agentic_scope_is_default; then
+  resolve_codex_agentic_sweep_scopes
+  if agentic_selection_is_sweep; then
+    approval_hint="$(codex_agentic_sweep_approval)"
+  elif agentic_scope_is_default; then
     approval_hint="$agentic_manifest_sha"
   else
     approval_hint="$AGENTIC_SCOPE_SHA"
@@ -1511,13 +1583,14 @@ require_codex_agentic_paid_inputs() {
 codex_multi_stratum_design() {
   local per_model_cells
   per_model_cells="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["task_selection"]["default_total_cells"])' "$MANIFEST_PATH")"
+  [ -z "$CODEX_TASKS" ] || per_model_cells="$CODEX_SELECTION_TOTAL_CELLS"
   printf '%s cells = %s per stratum × %s strata (separate, nonpoolable studies)\n' \
     "$(( per_model_cells * ${#CODEX_SELECTED_MODELS[@]} ))" "$per_model_cells" "${#CODEX_SELECTED_MODELS[@]}"
 }
 
 codex_combined_structural_scope() {
   if [ "${#CODEX_SELECTED_MODELS[@]}" -gt 1 ]; then
-    codex_models_scope_sha "$CODEX_EXECUTION_SCOPE_SHA" "${CODEX_SELECTED_MODELS[*]}"
+    codex_models_scope_sha "${CODEX_EXECUTION_SCOPES[*]}" "${CODEX_SELECTED_MODELS[*]}"
   else
     printf '%s\n' "$CODEX_EXECUTION_SCOPE_SHA"
   fi
@@ -1527,11 +1600,6 @@ print_codex_combined_plan_authorization() {
   # Printed by the combined no-model plan, after both child scopes are known.
   local combined_scope agentic_approval structural_scope strata_design="" strata_lanes="both lanes"
   agentic_approval="$(codex_agentic_approval_hint)"
-  # One agentic study is one stratum, so a longer selection is honoured on the structural lane alone.
-  # Naming the stratum the agentic half will actually run keeps that from reading as a swept lane.
-  if [ -z "$AGENTIC_MODEL" ] && [ "${#CODEX_SELECTED_MODELS[@]}" -gt 1 ]; then
-    strata_lanes="structural lane; agentic lane runs $(agentic_manifest_model)"
-  fi
   structural_scope="$(codex_combined_structural_scope)"
   combined_scope="$(codex_combined_scope_sha "$structural_scope" "$agentic_approval")"
   # Several strata multiply the structural lane's cell count, which the plan above prints once per
@@ -1550,6 +1618,7 @@ COMBINED SCOPE     $combined_scope
  structural scope  $structural_scope
  strata            ${CODEX_SELECTED_MODELS[*]} ($strata_lanes)$strata_design
  agentic scope     $agentic_approval
+ agentic design    $AGENTIC_SWEEP_TOTAL_CELLS cells
 PAID_COMMAND:
 ------------------------------------------------------------------------------
   CODEX_PAID_APPROVAL=${combined_scope:0:16} \\
@@ -1702,7 +1771,8 @@ configure_codex_selected_plan() {
 }
 
 run_codex_plan() {
-  local plan_output
+  local plan_output model model_scope index
+  local -a model_args
   # Paid execution wraps this function in a tee pipeline. Explicit propagation
   # prevents the full plan or paid cells from starting after a failed smoke.
   query_check || return "$?"
@@ -1725,12 +1795,32 @@ run_codex_plan() {
   # command this plan authorizes instead: the combined block for a combined plan, the multi-stratum
   # block for a selection, the structural block below for everything else. One plan, one command,
   # and always the launcher-shaped one the operator can actually retype.
-  if ! python3 "$ROOT/benchmarks/run-codex-structural.py" "${common_args[@]}" --dry-run \
-    --no-paid-command | tee "$plan_output"; then
-    rm -f "$plan_output"
-    return 1
-  fi
-  CODEX_EXECUTION_SCOPE_SHA="$(awk '$1 == "SCOPE" {print $2}' "$plan_output" | tail -n 1)"
+  CODEX_EXECUTION_SCOPES=()
+  for model in "${CODEX_SELECTED_MODELS[@]}"; do
+    model_args=("${common_args[@]}")
+    for index in "${!model_args[@]}"; do
+      if [ "${model_args[$index]}" = "--model" ]; then
+        model_args[$((index + 1))]="$model"
+        break
+      fi
+    done
+    : > "$plan_output"
+    if ! python3 "$ROOT/benchmarks/run-codex-structural.py" "${model_args[@]}" --dry-run \
+      --no-paid-command | tee -a "$plan_output"; then
+      rm -f "$plan_output"
+      return 1
+    fi
+    model_scope="$(awk '$1 == "SCOPE" {scope = $2} END {print scope}' "$plan_output")"
+    if [[ ! "$model_scope" =~ ^[0-9a-f]{64}$ ]]; then
+      rm -f "$plan_output"
+      echo "ERROR: Codex preflight did not emit a valid scope for $model." >&2
+      return 2
+    fi
+    CODEX_EXECUTION_SCOPES+=("$model_scope")
+    if [ "$model" = "${CODEX_SELECTED_MODELS[0]}" ]; then
+      CODEX_EXECUTION_SCOPE_SHA="$model_scope"
+    fi
+  done
   rm -f "$plan_output"
   if [[ ! "$CODEX_EXECUTION_SCOPE_SHA" =~ ^[0-9a-f]{64}$ ]]; then
     echo "ERROR: unified Codex preflight did not emit one valid aggregate SCOPE." >&2
@@ -1778,7 +1868,7 @@ print_codex_models_authorization() {
   # copyable command that silently drops the agentic study.
   [ "$STRUCTURAL" != true ] && return 0
   [ -n "${CODEX_COMBINED_AGENTIC_APPROVAL:-}" ] && return 0
-  models_scope="$(codex_models_scope_sha "$CODEX_EXECUTION_SCOPE_SHA" "${CODEX_SELECTED_MODELS[*]}")"
+  models_scope="$(codex_models_scope_sha "${CODEX_EXECUTION_SCOPES[*]}" "${CODEX_SELECTED_MODELS[*]}")"
   # Same header treatment as the combined block: rendered, not hand-spelled, so both authorizations
   # and every phase header around them are one surface.
   printf '\n'
@@ -1802,7 +1892,8 @@ EOF
 run_codex_model_strata() {
   local models_scope expected_approval parent_dir model child_status
   local parent_agentic_approval="${CODEX_COMBINED_AGENTIC_APPROVAL:-}"
-  models_scope="$(codex_models_scope_sha "$CODEX_EXECUTION_SCOPE_SHA" "${CODEX_SELECTED_MODELS[*]}")"
+  local -a child_args
+  models_scope="$(codex_models_scope_sha "${CODEX_EXECUTION_SCOPES[*]}" "${CODEX_SELECTED_MODELS[*]}")"
   # Inside a combined run the same strata are one half of a token that also binds the agentic scope,
   # so the parent verifies whichever token this invocation was actually authorized with.
   if [ -n "${CODEX_COMBINED_AGENTIC_APPROVAL:-}" ]; then
@@ -1817,6 +1908,8 @@ run_codex_model_strata() {
   fi
   parent_dir="$CODEX_RUN_DIR"
   for model in "${CODEX_SELECTED_MODELS[@]}"; do
+    child_args=(codex --struct --models="$model")
+    [ -z "$CODEX_TASKS" ] || child_args+=(--tasks="$CODEX_TASKS")
     section_rule "CODEX STRATUM $model"
     validate_paid_source_snapshot
     (
@@ -1825,15 +1918,12 @@ run_codex_model_strata() {
       # not. Each stratum is a single-model study from here, so it verifies its own execution scope.
       unset CODEX_COMBINED_AGENTIC_APPROVAL
       export CODEX_RUN_DIR="$parent_dir/$model"
-      # A stratum re-derives its own execution scope, and that scope binds its own model, so only the
-      # primary stratum could ever match the parent's. Handing every child the parent's scope refused
-      # each later stratum after the earlier ones had already been paid for. The child is authorized
-      # by the token the operator actually approved, plus the terms needed to re-derive it.
+      # Each child must match its own recorded scope before it can spend under the parent token.
       export CODEX_PAID_APPROVAL="$expected_approval"
-      export CODEX_STRATUM_PARENT_SCOPE="$CODEX_EXECUTION_SCOPE_SHA"
+      export CODEX_STRATUM_PARENT_SCOPE="${CODEX_EXECUTION_SCOPES[*]}"
       export CODEX_STRATUM_MODELS="${CODEX_SELECTED_MODELS[*]}"
       export CODEX_STRATUM_AGENTIC_APPROVAL="$parent_agentic_approval"
-      /bin/bash "$ROOT/benchmarks/run-all.sh" codex --struct --models="$model"
+      /bin/bash "$ROOT/benchmarks/run-all.sh" "${child_args[@]}"
     )
     child_status="$?"
     [ "$child_status" -ne 0 ] && return "$child_status"
@@ -1844,20 +1934,28 @@ run_codex_model_strata() {
 }
 
 # A stratum child cannot re-derive the multi-stratum token on its own: that token binds the whole
-# ordered selection and the parent's primary-model scope, and a child knows only its own. The parent
+# ordered selection and every parent's resolved scope, and a child knows only its own. The parent
 # therefore passes the terms, and the child recomputes the token from them rather than trusting the
 # value it was handed. Prints nothing and returns non-zero when this is not a stratum child.
 codex_stratum_delegated_approval() {
-  local models_scope
+  local models_scope index matched=false
+  local -a parent_models parent_scopes
   [ -n "${CODEX_STRATUM_PARENT_SCOPE:-}" ] || return 1
   [ -n "${CODEX_STRATUM_MODELS:-}" ] || return 1
   [ "${#CODEX_SELECTED_MODELS[@]}" -eq 1 ] || return 1
   # The child must be one of the strata the operator authorized, not an unrelated model riding a
   # token minted for someone else.
-  case " $CODEX_STRATUM_MODELS " in
-    *" ${CODEX_SELECTED_MODELS[0]} "*) ;;
-    *) return 1 ;;
-  esac
+  read -r -a parent_models <<< "$CODEX_STRATUM_MODELS"
+  read -r -a parent_scopes <<< "$CODEX_STRATUM_PARENT_SCOPE"
+  [ "${#parent_models[@]}" -eq "${#parent_scopes[@]}" ] || return 1
+  for index in "${!parent_models[@]}"; do
+    if [ "${parent_models[$index]}" = "${CODEX_SELECTED_MODELS[0]}" ]; then
+      [ "${parent_scopes[$index]}" = "$CODEX_EXECUTION_SCOPE_SHA" ] || return 1
+      matched=true
+      break
+    fi
+  done
+  [ "$matched" = true ] || return 1
   models_scope="$(codex_models_scope_sha "$CODEX_STRATUM_PARENT_SCOPE" "$CODEX_STRATUM_MODELS")"
   if [ -n "${CODEX_STRATUM_AGENTIC_APPROVAL:-}" ]; then
     codex_combined_scope_sha "$models_scope" "$CODEX_STRATUM_AGENTIC_APPROVAL"
@@ -1874,6 +1972,10 @@ run_codex_study() {
     return "$?"
   fi
   delegated_approval="$(codex_stratum_delegated_approval || true)"
+  if [ -n "${CODEX_STRATUM_PARENT_SCOPE:-}" ] && [ -z "$delegated_approval" ]; then
+    echo "ERROR: child structural scope differs from its approved model stratum." >&2
+    return 2
+  fi
   if [ -n "$delegated_approval" ]; then
     expected_approval="$delegated_approval"
   elif [ -n "${CODEX_COMBINED_AGENTIC_APPROVAL:-}" ]; then
@@ -1905,9 +2007,32 @@ run_codex_agentic_prepared_plan() {
   section_rule "CODEX SHARED AGENTIC A/B/C PREFLIGHT (no model)"
   echo "→ design: $AGENTIC_TOTAL_CELLS cells (${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms; nonpoolable)"
   echo "→ scope: $AGENTIC_SCOPE_SHA"
-  configure_agentic_dispatch
-  python3 "$AGENTIC_RUNNER" "${AGENTIC_DISPATCH_ARGS[@]}" --dry-run
+  configure_agentic_dispatch || return "$?"
+  python3 "$AGENTIC_RUNNER" "${AGENTIC_DISPATCH_ARGS[@]}" --dry-run || return "$?"
   print_codex_agentic_authorization
+}
+
+run_codex_agentic_prepared_plans() {
+  local model prior_suppression
+  resolve_agentic_model || return "$?"
+  if ! agentic_selection_is_sweep; then
+    run_codex_agentic_prepared_plan || return "$?"
+    AGENTIC_SWEEP_TOTAL_CELLS="$AGENTIC_TOTAL_CELLS"
+    return 0
+  fi
+  prior_suppression="${CODEX_PLAN_SUPPRESSES_LANE_COMMAND:-}"
+  CODEX_PLAN_SUPPRESSES_LANE_COMMAND=1
+  AGENTIC_SWEEP_APPROVALS=()
+  AGENTIC_SWEEP_TOTAL_CELLS=0
+  for model in "${AGENTIC_SELECTED_MODELS[@]}"; do
+    select_agentic_model "$model"
+    run_codex_agentic_prepared_plan || return "$?"
+    AGENTIC_SWEEP_APPROVALS+=("$(codex_agentic_child_approval_hint)")
+    AGENTIC_SWEEP_TOTAL_CELLS="$((AGENTIC_SWEEP_TOTAL_CELLS + AGENTIC_TOTAL_CELLS))"
+  done
+  AGENTIC_MODEL=""
+  CODEX_PLAN_SUPPRESSES_LANE_COMMAND="$prior_suppression"
+  [ -n "$prior_suppression" ] || print_codex_agentic_sweep_authorization
 }
 
 # Every other no-model plan ends in the one command it authorizes. The agentic plan used to print
@@ -1945,12 +2070,31 @@ PAID_COMMAND:
 EOF
 }
 
+print_codex_agentic_sweep_authorization() {
+  local approval_hint
+  approval_hint="$(codex_agentic_sweep_approval)"
+  printf '\n'
+  section_rule "CODEX AGENTIC MODEL-SWEEP AUTHORIZATION"
+  cat <<EOF
+AGENTIC SWEEP SCOPE  $approval_hint
+ design              $AGENTIC_SWEEP_TOTAL_CELLS cells (${#AGENTIC_SELECTED_MODELS[@]} strata × ${#AGENTIC_TASK_IDS[@]} tasks × $AGENTIC_REPETITIONS repetitions × 3 arms; separate, nonpoolable studies)
+ strata              ${AGENTIC_SELECTED_MODELS[*]}
+ token binds         the ordered stratum list and each resolved agentic child scope
+PAID_COMMAND:
+------------------------------------------------------------------------------
+  CODEX_PAID_APPROVAL=${approval_hint:0:16} \\
+  CODEX_AUTH_SOURCE="\$HOME/.codex/auth.json" \\
+    $(launcher_command paid)
+------------------------------------------------------------------------------
+EOF
+}
+
 run_codex_agentic_plan() {
   # Agentic execution reuses the structural target/index preparation contract
   # but resolves its own shared task/repeat scope before dispatch.
   prepare_locked_inputs || return "$?"
   validate_codex_cli || return "$?"
-  run_codex_agentic_prepared_plan
+  run_codex_agentic_prepared_plans
 }
 
 run_codex_agentic_study() {
@@ -1975,6 +2119,36 @@ run_codex_agentic_study() {
     --invocation-launcher-path "$CODEX_INVOCATION_LAUNCHER" \
     --run-dir "$CODEX_RUN_DIR" \
     --paid-approval "$CODEX_AGENTIC_PAID_APPROVAL"
+}
+
+run_codex_agentic_sweep_studies() {
+  local parent_dir model approval_hint supplied_approval child_status index
+  local -a child_args
+  resolve_codex_agentic_sweep_scopes || return "$?"
+  approval_hint="$(codex_agentic_sweep_approval)"
+  supplied_approval="${CODEX_AGENTIC_PAID_APPROVAL:-${CODEX_PAID_APPROVAL:-}}"
+  if [[ "$approval_hint" != "$supplied_approval"* ]]; then
+    echo "ERROR: paid Codex agentic model sweep requires CODEX_PAID_APPROVAL=${approval_hint:0:16}" >&2
+    return 2
+  fi
+  parent_dir="$CODEX_RUN_DIR"
+  for index in "${!AGENTIC_SELECTED_MODELS[@]}"; do
+    model="${AGENTIC_SELECTED_MODELS[$index]}"
+    child_args=(codex --agentic --models="$model" --repetitions="$AGENTIC_REPETITIONS")
+    [ -z "$CODEX_TASKS" ] || child_args+=(--tasks="$CODEX_TASKS")
+    section_rule "CODEX AGENTIC STRATUM $model"
+    validate_paid_source_snapshot
+    (
+      unset CODEX_INVOCATION_LAUNCHER CODEX_LAUNCHER_SHA256 CODEX_LAUNCHER_SNAPSHOT_ACTIVE
+      export CODEX_RUN_DIR="$parent_dir/$model"
+      export CODEX_PAID_APPROVAL="${AGENTIC_SWEEP_APPROVALS[$index]}"
+      export CODEX_AGENTIC_PAID_APPROVAL="$CODEX_PAID_APPROVAL"
+      /bin/bash "$ROOT/benchmarks/run-all.sh" "${child_args[@]}"
+    )
+    child_status="$?"
+    [ "$child_status" -ne 0 ] && return "$child_status"
+  done
+  return 0
 }
 
 run_codex_with_artifacts() {
@@ -2050,20 +2224,17 @@ run_codex_combined_child() {
 run_codex_combined_studies() {
   local combined_root="$CODEX_RUN_DIR"
   local -a structural_extra_args=()
-  resolve_agentic_scope
+  configure_codex_model
+  resolve_codex_agentic_sweep_scopes
   CODEX_COMBINED_AGENTIC_APPROVAL="$(codex_agentic_approval_hint)"
   export CODEX_COMBINED_AGENTIC_APPROVAL
-  # One selected stratum reaches both lanes, so the same name binds the structural study, the agentic
-  # study, and the token covering them. A longer selection reaches the structural lane alone, because
-  # one agentic study is one stratum; the agentic child then keeps the manifest default, which the
-  # combined authorization block names rather than leaving the operator to assume it.
+  # The combined children each receive the canonical ordered selection. This includes the launcher
+  # default, whose omitted spelling still has to reproduce the same two-lane sweep in both children.
   local -a agentic_extra_args=()
-  if [ -n "$MODELS_SELECTION" ]; then
-    structural_extra_args=(--models="$MODELS_SELECTION")
-    if [ -n "$AGENTIC_MODEL" ]; then
-      agentic_extra_args=(--models="$AGENTIC_MODEL")
-    fi
-  fi
+  local selected_models
+  selected_models="$(IFS=,; echo "${CODEX_SELECTED_MODELS[*]}")"
+  structural_extra_args=(--models="$selected_models")
+  agentic_extra_args=(--models="$selected_models")
   run_codex_combined_child "$combined_root/structural" --struct ${structural_extra_args[@]+"${structural_extra_args[@]}"}
   run_codex_combined_child "$combined_root/agentic" --agentic ${agentic_extra_args[@]+"${agentic_extra_args[@]}"}
 }
@@ -2072,6 +2243,9 @@ run_codex_combined_studies() {
 # sandbox reset, the frozen index preparation, and the full no-model query benchmark had already
 # run. Resolving the selection here fails in a second instead, and the resolved list is discarded
 # so each study still resolves its own.
+if [ "$MODE" = "codex" ] && [ -z "$MODELS_SELECTION" ]; then
+  MODELS_SELECTION="luna,terra"
+fi
 if [ -n "$MODELS_SELECTION" ] && [ "$MODE" != "smoke" ]; then
   resolve_provider_models "$MODE"
 fi
@@ -2116,9 +2290,13 @@ case "$MODE" in
         if [ "${CODEX_LAUNCHER_SNAPSHOT_ACTIVE:-}" != "1" ]; then
           exec_codex_launcher_snapshot "$@"
         fi
-        prepare_locked_inputs
-        validate_codex_cli
-        run_codex_agentic_with_artifacts run_codex_agentic_study
+        if agentic_selection_is_sweep; then
+          run_codex_agentic_sweep_studies
+        else
+          prepare_locked_inputs
+          validate_codex_cli
+          run_codex_agentic_with_artifacts run_codex_agentic_study
+        fi
       fi
       echo "→ done. Results in benchmarks/results/"
       exit 0
@@ -2143,7 +2321,7 @@ case "$MODE" in
       validate_codex_cli
       CODEX_PLAN_SUPPRESSES_LANE_COMMAND=1
       run_codex_plan
-      run_codex_agentic_prepared_plan
+      run_codex_agentic_prepared_plans
       CODEX_PLAN_SUPPRESSES_LANE_COMMAND=""
       print_codex_combined_plan_authorization
     else

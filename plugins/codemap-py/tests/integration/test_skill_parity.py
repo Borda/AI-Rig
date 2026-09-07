@@ -129,6 +129,19 @@ _CUSTOM_ROOT_INDEX_SNIPPETS = (
     "--root <same-root>",
     "path resolution only",
 )
+_QUERY_EXECUTION_CONTRACT_SNIPPETS = (
+    "resolve the installed launcher once",
+    "independent read-only queries may run concurrently",
+    "prepared stable index",
+    "dependent queries wait",
+    "index writes run serially",
+    "no arbitrary total-call cap",
+    "bounded targeted correction retries",
+    "same correction failure recurs",
+    "complete, untruncated",
+    "settles its own",
+    "independent ast/oracle",
+)
 
 
 def _direct_caller_routing_violations(skill_text: str) -> list[str]:
@@ -342,6 +355,15 @@ def test_query_code_routes_centrality_and_transitive_blast_to_supported_commands
     assert all(snippet not in skill_text for snippet in _QUERY_CODE_FORBIDDEN_SNIPPETS)
 
 
+@pytest.mark.parametrize("runtime_dir", (_CLAUDE_SKILLS_DIR, _CODEX_SKILLS_DIR), ids=("claude", "codex"))
+def test_query_code_execution_contract_bounds_concurrency_and_retries(runtime_dir: Path) -> None:
+    """Require stable-index concurrency, dependency waits, and recurrence stops in both rosters."""
+    flat = _flat(_skill_text(runtime_dir, "query-code"))
+
+    assert all(snippet in flat for snippet in _QUERY_EXECUTION_CONTRACT_SNIPPETS)
+    assert "maximum three codemap calls" not in flat
+
+
 @pytest.mark.parametrize(
     "contract_path",
     (
@@ -534,6 +556,7 @@ _JQ_INVOCATIONS = (re.compile(r"\bjq\s+-r\b"), re.compile(r"\bjq\s+--arg"), re.c
 # The suppression idiom only: `2>/dev/null || echo "0"`.  A roster quoting the antipattern
 # in order to forbid it must not trip this.
 _SUPPRESSED_QUERY_DEFAULT = re.compile(r'2>/dev/null\s*\|\|\s*echo\s*"(?:\[\]|0)"')
+_CODEMAP_BIN_INVOCATION = re.compile(r'(?m)^\s*"?\$\{?CODEMAP_BIN\}?')
 _QNAME_GRAMMAR_CLAIM = "module-qualified form (`module::symbol`) is not accepted by `find-symbol`"
 _TRUNCATION_DISCLOSURE_SNIPPETS = (
     "truncation at 20 items is a real cap",
@@ -578,12 +601,12 @@ def test_gated_dispatch_checker_rejects_an_ungated_alias_call() -> None:
 
 
 def test_no_roster_command_invokes_an_undefined_launcher_variable() -> None:
-    """Prevent roster commands from invoking an undefined launcher variable."""
+    """Prevent roster commands from invoking an undefined launcher variable while allowing contract prose."""
     offenders = [
         f"{runtime_dir.name}/{skill_name}"
         for runtime_dir in (_CLAUDE_SKILLS_DIR, _CODEX_SKILLS_DIR)
         for skill_name in sorted(_CANONICAL_SKILLS)
-        if "CODEMAP_BIN" in _skill_text(runtime_dir, skill_name)
+        if _CODEMAP_BIN_INVOCATION.search(_skill_text(runtime_dir, skill_name))
     ]
 
     assert offenders == []
@@ -726,10 +749,32 @@ def test_report_paths_are_branch_scoped_and_never_overwritten(runtime_dir: Path,
     (
         _CLAUDE_SKILLS_DIR / "integration" / "SKILL.md",
         _CODEX_SKILLS_DIR / "integration" / "SKILL.md",
-        _CAPABILITY_CONTRACT,
+        _INTEGRATION_CONTRACT,
     ),
-    ids=("claude", "codex", "shared-contract"),
+    ids=("claude", "codex", "integration-contract"),
 )
-def test_integration_demo_promises_plain_versus_structural_evidence(contract_path: Path) -> None:
-    """Require comparative evidence for the demonstration workflow."""
-    assert "plain-vs-structural" in _flat(contract_path.read_text(encoding="utf-8"))
+def test_integration_demo_promises_current_structural_smoke_evidence(contract_path: Path) -> None:
+    """Keep the demo promise aligned with the implemented audit plus one structural smoke query."""
+    flat = _flat(contract_path.read_text(encoding="utf-8"))
+    assert "one representative structural smoke query" in flat
+    assert "token savings" in flat
+    assert "current-session activation" in flat
+
+
+@pytest.mark.parametrize(
+    "contract_path",
+    (
+        _CLAUDE_SKILLS_DIR / "integration" / "SKILL.md",
+        _CODEX_SKILLS_DIR / "integration" / "SKILL.md",
+        _INTEGRATION_CONTRACT,
+    ),
+    ids=("claude", "codex", "integration-contract"),
+)
+def test_integration_surfaces_separate_active_guidance_and_metadata_evidence(contract_path: Path) -> None:
+    """Keep setup guidance honest about active consumers, reusable artifacts, and session limits."""
+    flat = _flat(contract_path.read_text(encoding="utf-8"))
+
+    assert "active consumer" in flat
+    assert "metadata-only" in flat
+    assert "one" in flat and "artifact" in flat and "reuse" in flat
+    assert "installed" in flat and "session" in flat

@@ -622,7 +622,7 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "Run the exact no-model unified plan first:",
         "",
         "```bash",
-        "bash benchmarks/run-all.sh codex --struct --dry-run",
+        f"bash benchmarks/run-all.sh codex --struct --models={manifest['model']['name']} --dry-run",
         "```",
         "",
         "After reviewing the 73-task/219-cell plan, copy the exact `PAID_COMMAND` printed by that dry run. Do not substitute the machine-manifest or selector-resolution digest for its aggregate approval.",

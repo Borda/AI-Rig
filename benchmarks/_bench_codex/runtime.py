@@ -10,7 +10,7 @@ import hashlib
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import shlex
 import sys
@@ -70,6 +70,8 @@ class CodexParseResult:
     reasoning_output_tokens: int = 0
     command_calls: int = 0
     codemap_observed_calls: int = 0
+    codemap_observed_successful_calls: int = 0
+    codemap_observed_complete_calls: int = 0
     codemap_calls: int = 0
     codemap_successful_calls: int = 0
     codemap_compact_successful_calls: int = 0
@@ -281,8 +283,13 @@ def _unwrap_native_command(command: str) -> str | None:
     return parts[2]
 
 
-def _native_item_tokens(command: str, *, preserve_quotes: bool = False) -> list[str] | None:
-    """Tokenize one dedicated native command, optionally retaining quote context."""
+def _native_item_tokens(
+    command: str,
+    *,
+    preserve_quotes: bool = False,
+    allow_compound: bool = False,
+) -> list[str] | None:
+    """Tokenize a native command, retaining compound separators only when requested."""
     normalized = _unwrap_native_command(command)
     if normalized is None:
         return None
@@ -293,7 +300,9 @@ def _native_item_tokens(command: str, *, preserve_quotes: bool = False) -> list[
         tokens = list(lexer)
     except ValueError:
         return None
-    if not tokens or any(any(character in ";&|<>()`" for character in token) for token in tokens):
+    if not tokens or any("`" in token for token in tokens):
+        return None
+    if not allow_compound and any(any(character in ";&|<>()" for character in token) for token in tokens):
         return None
     return tokens
 
@@ -335,8 +344,8 @@ def validate_codex_stratum(model: str, reasoning_effort: str, manifest_path: Pat
         raise ValueError(f"Codex provider-parity reasoning effort must be {expected_effort}")
 
 
-def _canonical_query_arguments(command: str) -> list[str] | None:
-    """Return query arguments only for the dedicated canonical launcher command."""
+def _dedicated_compact_query(command: str) -> tuple[str, list[str]] | None:
+    """Return an executable token and arguments for one standalone compact query."""
     normalized = _unwrap_native_command(command)
     if normalized is None:
         return None
@@ -349,7 +358,6 @@ def _canonical_query_arguments(command: str) -> list[str] | None:
         or quoted_tokens is None
         or len(tokens) != len(quoted_tokens)
         or len(tokens) < 4
-        or tokens[0] not in {"$CODEMAP_BIN", "${CODEMAP_BIN}"}
         or tokens[1:3] != ["query", "--compact"]
         or any(
             "$" in token and not (len(token) >= 2 and token.startswith("'") and token.endswith("'"))
@@ -358,30 +366,138 @@ def _canonical_query_arguments(command: str) -> list[str] | None:
     ):
         return None
     arguments = tokens[3:]
-    if arguments[0] == "help" or arguments[0].startswith("-"):
+    if (
+        arguments[0] == "help"
+        or arguments[0].startswith("-")
+        or any(argument in {"-h", "--help"} for argument in arguments)
+    ):
         return None
-    return arguments
+    return tokens[0], arguments
 
 
-def _records_compact_query_attempt(command: str) -> bool:
-    """Return whether a native item records a compact-query attempt for C ordering."""
-    return _canonical_query_arguments(command) is not None
+def _is_launcher_variable(executable: str, quoted_executable: str) -> bool:
+    """Return whether an executable token expands the injected launcher variable."""
+    return executable in {"$CODEMAP_BIN", "${CODEMAP_BIN}"} and quoted_executable != f"'{executable}'"
 
 
-def _observes_compact_codemap_query(command: str) -> bool:
-    """Return whether a native item invokes Codemap's compact query surface.
-
-    This observational signal is broader than canonical-query credit: a compound
-    shell item can prove use, but cannot satisfy a treatment requirement that
-    demands one standalone, exact query command.
-    """
-    normalized = _unwrap_native_command(command)
-    if normalized is None:
+def is_absolute_launcher_path(launcher_path: str | Path | None) -> bool:
+    """Return whether a serialized launcher path is absolute in a supported host syntax."""
+    if launcher_path is None:
         return False
+    path_text = str(launcher_path)
+    return PurePosixPath(path_text).is_absolute() or PureWindowsPath(path_text).is_absolute()
+
+
+def _is_verified_launcher(executable: str, launcher_path: str | Path | None) -> bool:
+    """Return whether an executable token exactly matches the verified launcher."""
+    return is_absolute_launcher_path(launcher_path) and executable == str(launcher_path)
+
+
+def _canonical_query_arguments(
+    command: str,
+    *,
+    launcher_path: str | Path | None = None,
+    allow_equivalent_launcher: bool = False,
+) -> list[str] | None:
+    """Return arguments for a variable or explicitly credited verified launcher query."""
+    query = _dedicated_compact_query(command)
+    if query is None:
+        return None
+    executable, arguments = query
+    quoted_tokens = _native_item_tokens(command, preserve_quotes=True)
+    if quoted_tokens is None:
+        return None
+    if _is_launcher_variable(executable, quoted_tokens[0]):
+        return arguments
+    if allow_equivalent_launcher and (
+        _is_verified_launcher(executable, launcher_path) or _is_verified_launcher(quoted_tokens[0], launcher_path)
+    ):
+        return arguments
+    return None
+
+
+def _records_compact_query_attempt(
+    command: str,
+    *,
+    launcher_path: str | Path | None = None,
+    allow_equivalent_launcher: bool = False,
+) -> bool:
+    """Return whether a native item records a compact-query attempt for C ordering."""
     return (
-        re.search(r"(?:['\"]?\$CODEMAP_BIN['\"]?|\$\{CODEMAP_BIN\})\s+query\s+--compact(?:\s|$)", normalized)
+        _canonical_query_arguments(
+            command,
+            launcher_path=launcher_path,
+            allow_equivalent_launcher=allow_equivalent_launcher,
+        )
         is not None
     )
+
+
+_SHELL_SEGMENT_BOUNDARIES = frozenset({";", "|", "&&", "||", "do", "then", "else"})
+_LAUNCHER_MUTATING_BUILTINS = frozenset({"export", "readonly", "typeset", "declare", "local", "unset", "read"})
+
+
+def _is_unquoted_segment_boundary(token: str, quoted_token: str) -> bool:
+    """Return whether one token is shell syntax rather than quoted command data."""
+    return token in _SHELL_SEGMENT_BOUNDARIES and token == quoted_token
+
+
+def _mutates_launcher(tokens: Sequence[str]) -> bool:
+    """Return whether a compound shell item can change the injected launcher."""
+    for index, token in enumerate(tokens):
+        bare = token.lstrip("'\"")
+        if bare.startswith("CODEMAP_BIN=") or token in {"eval", "source", "."}:
+            return True
+        if token in {"for", "read", "unset"} and index + 1 < len(tokens) and tokens[index + 1] == "CODEMAP_BIN":
+            return True
+        if token in _LAUNCHER_MUTATING_BUILTINS and index + 1 < len(tokens):
+            next_token = tokens[index + 1].lstrip("'\"")
+            if next_token == "CODEMAP_BIN" or next_token.startswith("CODEMAP_BIN="):
+                return True
+    return False
+
+
+def _observed_compact_query_arguments(command: str, *, launcher_path: str | Path | None = None) -> list[str] | None:
+    """Return one defensible compact-query segment from a native shell item."""
+    normalized = _unwrap_native_command(command)
+    if normalized is None or _has_unquoted_comment(normalized):
+        return None
+    tokens = _native_item_tokens(command, allow_compound=True)
+    quoted_tokens = _native_item_tokens(command, preserve_quotes=True, allow_compound=True)
+    if tokens is None or quoted_tokens is None or len(tokens) != len(quoted_tokens):
+        return None
+    for index, executable in enumerate(tokens[:-3]):
+        if index and not _is_unquoted_segment_boundary(tokens[index - 1], quoted_tokens[index - 1]):
+            continue
+        variable_launcher = _is_launcher_variable(executable, quoted_tokens[index])
+        # Preserve an unquoted Windows launcher from telemetry: POSIX tokenization removes its backslashes.
+        verified_launcher = _is_verified_launcher(executable, launcher_path) or _is_verified_launcher(
+            quoted_tokens[index], launcher_path
+        )
+        if not variable_launcher and not verified_launcher:
+            continue
+        if variable_launcher and _mutates_launcher(tokens[:index]):
+            continue
+        if tokens[index + 1 : index + 3] != ["query", "--compact"]:
+            continue
+        arguments: list[str] = []
+        for argument, quoted_argument in zip(tokens[index + 3 :], quoted_tokens[index + 3 :], strict=True):
+            if _is_unquoted_segment_boundary(argument, quoted_argument) or (
+                argument in {"&", "(", ")", "<", ">"} and argument == quoted_argument
+            ):
+                break
+            arguments.append(argument)
+        if not arguments or arguments[0] == "help" or arguments[0].startswith("-"):
+            continue
+        if any(argument in {"-h", "--help"} for argument in arguments):
+            continue
+        return arguments
+    return None
+
+
+def _observes_compact_codemap_query(command: str, *, launcher_path: str | Path | None = None) -> bool:
+    """Return whether a native item contains a defensible compact-query execution."""
+    return _observed_compact_query_arguments(command, launcher_path=launcher_path) is not None
 
 
 _FALLBACK_TOOLS = frozenset(
@@ -425,15 +541,35 @@ def _is_search_or_read_fallback(command: str) -> bool:
     return bool(tokens) and Path(tokens[0]).name in _FALLBACK_TOOLS
 
 
-def _is_codemap_command(command: str, *, launcher_path: Path | None = None) -> bool:
+def _is_codemap_command(
+    command: str,
+    *,
+    launcher_path: str | Path | None = None,
+    allow_equivalent_launcher: bool = False,
+) -> bool:
     """Return whether a command satisfies the prospective canonical query form."""
-    del launcher_path
-    return _canonical_query_arguments(command) is not None
+    return (
+        _canonical_query_arguments(
+            command,
+            launcher_path=launcher_path,
+            allow_equivalent_launcher=allow_equivalent_launcher,
+        )
+        is not None
+    )
 
 
-def _is_compact_codemap_query(command: str, *, launcher_path: Path | None = None) -> bool:
+def _is_compact_codemap_query(
+    command: str,
+    *,
+    launcher_path: Path | None = None,
+    allow_equivalent_launcher: bool = False,
+) -> bool:
     """Return whether a command satisfies the canonical compact-query form."""
-    return _is_codemap_command(command, launcher_path=launcher_path)
+    return _is_codemap_command(
+        command,
+        launcher_path=launcher_path,
+        allow_equivalent_launcher=allow_equivalent_launcher,
+    )
 
 
 def _command_output(item: Mapping[str, Any]) -> str:
@@ -455,6 +591,28 @@ def _query_output_complete(item: Mapping[str, Any]) -> bool:
             continue
         index = payload.get("index") if isinstance(payload, Mapping) else None
         if isinstance(index, Mapping) and index.get("query_complete") is True:
+            return True
+    return False
+
+
+def _query_output_compact_complete(item: Mapping[str, Any]) -> bool:
+    """Return whether output contains an untruncated complete compact-query document."""
+    output = _command_output(item)
+    decoder = json.JSONDecoder()
+    for offset, character in enumerate(output):
+        if character != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(output[offset:])
+        except json.JSONDecodeError:
+            continue
+        index = payload.get("index") if isinstance(payload, Mapping) else None
+        if (
+            isinstance(index, Mapping)
+            and index.get("query_complete") is True
+            and index.get("compact") is True
+            and index.get("truncated") is not True
+        ):
             return True
     return False
 
@@ -534,6 +692,7 @@ def parse_codex_jsonl(
     stream: str | bytes | Iterable[str | bytes],
     *,
     launcher_path: Path | None = None,
+    allow_equivalent_launcher: bool = False,
     skill_path: Path | None = None,
     skill_sha256: str = "",
 ) -> CodexParseResult:
@@ -543,6 +702,16 @@ def parse_codex_jsonl(
     assistant blocks across CLI versions.  This parser accepts both shapes,
     deduplicates lifecycle events by item ID, and retains every valid parsed
     event in ``raw_events`` for audit/debugging.
+
+    ``launcher_path`` may identify an observed exact executable path as either a native path or a serialized POSIX or
+    Windows string. Set ``allow_equivalent_launcher`` only for a future run whose contract permits
+    that verified path to receive canonical credit; its default preserves
+    historical variable-only adherence during replay.
+
+    ``codemap_observed_complete_calls`` counts untruncated compact JSON output;
+    ``codemap_observed_successful_calls`` additionally requires explicit zero
+    exit status. Compound segments can supply these observational signals but
+    never canonical treatment credit.
 
     Observed vs configured: the ``codemap_*`` call and error counters are read
     from the stream, but the ``_skill_`` / ``_direct_`` split is *not*. It is
@@ -604,7 +773,20 @@ def parse_codex_jsonl(
                         and _completed_with_explicit_zero_exit(item)
                         and _exact_skill_read_output(item, skill_path, skill_sha256)
                     )
-                    if _canonical_query_arguments(command) is not None:
+                    observed_query = _observes_compact_codemap_query(command, launcher_path=launcher_path)
+                    credited_arguments = _canonical_query_arguments(
+                        command,
+                        launcher_path=launcher_path,
+                        allow_equivalent_launcher=allow_equivalent_launcher,
+                    )
+                    if observed_query:
+                        result.codemap_observed_calls += 1
+                        observed_complete = _query_output_compact_complete(item)
+                        if observed_complete:
+                            result.codemap_observed_complete_calls += 1
+                        if _completed_with_explicit_zero_exit(item) and observed_complete:
+                            result.codemap_observed_successful_calls += 1
+                    if credited_arguments is not None:
                         result.codemap_calls += 1
                         # CONFIGURED BY CONSTRUCTION, NOT OBSERVED. `skill_path` is
                         # non-None only for the C_strict home, so this split
@@ -615,8 +797,8 @@ def parse_codex_jsonl(
                         # A manual Skill-file read remains useful audit evidence, but
                         # requiring it would add ceremony unrelated to a query's use.
                         # Consequence: `_arm_compliance` for C_strict (see
-                        # run-codex-structural.py) is a home-integrity claim plus an
-                        # observed successful query — not proof the Skill was read.
+                        # run-codex-structural.py) is a home-integrity claim plus a
+                        # credited successful query — not proof the Skill was read.
                         # `skill_delivery_observed` is the separate observational signal.
                         delivery = "skill" if skill_path is not None else "direct"
                         if delivery == "direct":
@@ -628,22 +810,22 @@ def parse_codex_jsonl(
                         else:
                             result.codemap_successful_calls += 1
                             result.codemap_compact_successful_calls += 1
-                            query_arguments = _canonical_query_arguments(command)
-                            if query_arguments is not None:
-                                result.successful_query_arguments.append(query_arguments)
+                            result.successful_query_arguments.append(credited_arguments)
                             if delivery == "direct":
                                 result.codemap_direct_successful_calls += 1
                                 result.codemap_direct_compact_successful_calls += 1
                             else:
                                 result.codemap_skill_successful_calls += 1
                                 result.codemap_skill_compact_successful_calls += 1
-                    if _observes_compact_codemap_query(command):
-                        result.codemap_observed_calls += 1
-                    elif result.codemap_errors and _is_search_or_read_fallback(command):
+                    if not observed_query and result.codemap_errors and _is_search_or_read_fallback(command):
                         result.fallback_calls += 1
                     if skill_read_verified and not compact_query_attempt_seen:
                         result.skill_delivery_observed = True
-                    if _records_compact_query_attempt(command):
+                    if _records_compact_query_attempt(
+                        command,
+                        launcher_path=launcher_path,
+                        allow_equivalent_launcher=allow_equivalent_launcher,
+                    ):
                         compact_query_attempt_seen = True
 
         # Compatibility with older/fixture streams that use assistant blocks.
@@ -661,7 +843,11 @@ def parse_codex_jsonl(
                     command = _tool_use_command(block)
                     if name.lower() in {"bash", "shell", "command_execution"}:
                         result.command_calls += 1
-                    if _is_codemap_command(command, launcher_path=launcher_path):
+                    if _is_codemap_command(
+                        command,
+                        launcher_path=launcher_path,
+                        allow_equivalent_launcher=allow_equivalent_launcher,
+                    ):
                         result.codemap_calls += 1
                         if result.skill_delivery_observed:
                             result.codemap_skill_calls += 1
@@ -916,7 +1102,7 @@ def _row_arm(row: str) -> str | None:
 def render_result_rows(
     rows: Iterable[str], output: TextIO, *, force_color: bool = False, hide_plan: bool = False
 ) -> None:
-    """Render result rows with rich terminal output and ANSI-free redirected output."""
+    """Render unwrapped result rows with terminal color and ANSI-free redirected output."""
     use_color = force_color or output.isatty()
     if not use_color:
         for row in rows:
@@ -933,6 +1119,7 @@ def render_result_rows(
         markup=False,
         no_color=not use_color,
         legacy_windows=False if force_color else None,
+        width=presentation.BENCHMARK_OUTPUT_WIDTH,
     )
     legend_lines: list[str] | None = None
 
@@ -942,8 +1129,7 @@ def render_result_rows(
         if legend_lines is None:
             return
         body = "\n".join(line.rstrip("\r\n") for line in legend_lines[1:-1])
-        # Fixed at the shared benchmark width so a replayed legend lines up with every other framed
-        # block instead of stretching to whatever width the replaying terminal happens to have.
+        # Both console and panel use the shared width, preventing terminal-width clipping on replay.
         console.print(
             Panel(
                 body,
@@ -979,6 +1165,6 @@ def render_result_rows(
             else:
                 output.write(colored_row)
             continue
-        console.print(row.rstrip("\n"), style=ARM_ROW_STYLES[arm], end="\n")
+        console.print(row.rstrip("\n"), style=ARM_ROW_STYLES[arm], end="\n", soft_wrap=True)
     flush_legend()
     output.flush()

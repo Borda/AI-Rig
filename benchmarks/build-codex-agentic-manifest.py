@@ -24,7 +24,7 @@ TASKS_PATH = BENCHMARKS / "suites" / "tasks-agentic.json"
 OUTPUT_MANIFEST = MANIFESTS / "codex-agentic.json"
 OUTPUT_HUMAN_MANIFEST = MANIFESTS / "codex-agentic.md"
 EXPERIMENT_ID = "codex-agentic"
-EXPERIMENT_REVISION = "codex-agentic-skill-imports-guidance-2026-08-09"
+EXPERIMENT_REVISION = "codex-agentic-verified-launcher-balanced-order-2026-09-07"
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt  # noqa: E402
 from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash  # noqa: E402
@@ -170,12 +170,20 @@ def _build_manifest() -> dict[str, Any]:
             },
             "C_strict": {
                 "codemap_available": True,
-                "requirement": "Use the immutable installed Skill treatment for a successful compact query.",
+                "requirement": (
+                    "Use the immutable installed Skill treatment for a standalone successful complete compact query "
+                    "through the injected CODEMAP_BIN variable or exact installed launcher."
+                ),
                 "skill_path": "plugins/codemap-py/codex-skills/query-code/SKILL.md",
                 "no_call_valid": False,
                 "row_retained_on_noncompliance": True,
                 "pooling": "ineligible when the required successful compact query is absent",
             },
+        },
+        "execution_order": {
+            "strategy": "cyclic-arm-order-v1",
+            "arm_cycle": list(ARMS),
+            "index_basis": "locked-task-ordinal-plus-repetition-minus-one",
         },
         "preregistered_scope": {
             "task_ids": [task["id"] for task in raw_tasks],
@@ -186,7 +194,7 @@ def _build_manifest() -> dict[str, Any]:
             "coordinate_timeout_seconds": COORDINATE_TIMEOUT_SECONDS,
             "nonpoolable": True,
             "pooling_eligibility": "ineligible; exploratory evidence only",
-            "arm_order": "deterministic lexical arm order within each repetition",
+            "arm_order": "cyclic task/repetition rotation; three repetitions balance each task across arm positions",
         },
         "scoring": {
             "provider": "provider_neutral_answer_contract",
@@ -232,6 +240,7 @@ def _build_manifest() -> dict[str, Any]:
                 "telemetry.jsonl (raw)",
                 "telemetry-canonical.jsonl",
                 "run-metadata.json",
+                "summary.json",
                 "inputs/ (frozen input snapshot)",
                 "runtime-isolation.jsonl (0600 expected/observed plugin identity evidence; may be empty)",
                 "checksums.sha256",
@@ -298,13 +307,14 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "",
         f"- Tasks: `{scope['task_ids']}`; repetitions: `{scope['repetitions']}`; arms: `{scope['arms']}`.",
         f"- Cells: `{scope['total_cells']}`; per-cell timeout: `{scope['coordinate_timeout_seconds']}s`, including retries.",
+        f"- Arm order: {scope['arm_order']}. One repetition remains exploratory, not a significance test.",
         "- `A_plain`: Codemap absent; no-call is valid.",
         "- `B_auto`: Codemap CLI available; use is optional, and adoption is measured.",
-        "- `C_strict`: immutable installed-Skill treatment requires a successful compact query; noncompliant rows remain scored but are excluded from pooling.",
+        f"- `C_strict`: {manifest['arms']['C_strict']['requirement']} Noncompliant rows remain scored but are excluded from pooling.",
         "",
         "## Artifact and stop contract",
         "",
-        "- Required package: `run.log`, raw `telemetry.jsonl`, `telemetry-canonical.jsonl`, `run-metadata.json`, frozen `inputs/`, and `checksums.sha256`.",
+        "- Required completed package: `run.log`, raw `telemetry.jsonl`, `telemetry-canonical.jsonl`, `run-metadata.json`, `summary.json`, frozen `inputs/`, and `checksums.sha256`.",
         "- Stop on the first runtime or admission-integrity failure; ordinary model/task/treatment-nonadherence rows do not stop scheduling; preserve partial artifacts and never pool partial/nonpoolable evidence.",
         "",
         "## Shared scoring",
@@ -323,7 +333,7 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "Review the no-model plan first:",
         "",
         "```bash",
-        "bash benchmarks/run-all.sh codex --agentic --dry-run",
+        f"bash benchmarks/run-all.sh codex --agentic --models={manifest['model']['name']} --dry-run",
         "```",
         "",
         "Then run the exact reviewed scope; the launcher creates a fresh run directory:",
@@ -331,7 +341,7 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "```bash",
         "CODEX_AGENTIC_PAID_APPROVAL=<MANIFEST_SHA256> \\",
         'CODEX_AUTH_SOURCE="$HOME/.codex/auth.json" \\',
-        "  bash benchmarks/run-all.sh codex --agentic",
+        f"  bash benchmarks/run-all.sh codex --agentic --models={manifest['model']['name']}",
         "```",
         "",
         "Replace `<MANIFEST_SHA256>` with the machine-manifest SHA-256 shown above. The caller supplies authorization; no credential bytes are stored in this manifest.",

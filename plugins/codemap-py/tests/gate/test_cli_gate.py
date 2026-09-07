@@ -60,6 +60,35 @@ def _run_cli(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
     )
 
 
+@pytest.mark.parametrize("flag", [pytest.param("--help", id="long"), pytest.param("-h", id="short")])
+def test_index_help_succeeds_without_the_scan_index_launcher(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
+) -> None:
+    """`index --help` prints usage and exits 0 even when bin/scan-index is absent.
+
+    The dispatcher used to check for the launcher before looking at the arguments, so asking for help returned a
+    missing_executable error and exit 1. That also broke `index --help && query --help`: the chain aborted on the first
+    command and the caller never received the query help it was after.
+    """
+    (tmp_path / "bin").mkdir()
+
+    exit_code = _cli.main(["index", flag], plugin_root=tmp_path)
+
+    assert exit_code == 0
+    assert "usage: codemap-py index" in capsys.readouterr().out
+
+
+def test_index_without_the_launcher_still_reports_the_missing_executable(tmp_path: Path) -> None:
+    """A real index request with no launcher keeps its structured missing_executable error.
+
+    The help short-circuit must not swallow the genuine failure it sits in front of, which is the only signal a caller
+    gets that the plugin's own executables did not install.
+    """
+    (tmp_path / "bin").mkdir()
+
+    assert _cli.main(["index"], plugin_root=tmp_path) == 1
+
+
 @pytest.mark.parametrize("with_override", [pytest.param(False, id="default"), pytest.param(True, id="override")])
 def test_doctor_index_path_matches_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_override: bool

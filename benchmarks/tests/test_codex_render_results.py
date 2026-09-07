@@ -137,6 +137,26 @@ def test_render_results_preserves_noninteractive_stream_byte_for_byte() -> None:
     assert "\x1b[" not in completed.stdout
 
 
+@pytest.mark.parametrize("terminal", [False, True], ids=["redirected", "terminal"])
+@pytest.mark.parametrize("force_color", [False, True], ids=["automatic-color", "forced-color"])
+def test_render_results_preserves_long_rows_without_inserted_wraps(
+    terminal: bool, force_color: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Long result rows retain all fields on one logical line in every output mode."""
+    stream = io.StringIO()
+    monkeypatch.setattr(stream, "isatty", lambda: terminal)
+    row = (
+        "(37/48) ✓  BA-13  rep=1  A_plain     in=180.4k  out=  3.9k  time=2m46s  "
+        "SCORE=0.889  EREC=1.000  RREC=1.000  DEFF=0.500  answer:✓  treatment:✓  codemap-used:✗\n"
+    )
+    assert len(row.rstrip("\n")) > BENCHMARK_OUTPUT_WIDTH
+
+    codex_runtime.render_result_rows([row], stream, force_color=force_color)
+
+    assert _ANSI_CODE.sub("", stream.getvalue()) == row
+    assert ("\x1b[" in stream.getvalue()) == (terminal or force_color)
+
+
 def test_render_results_noninteractive_legend_is_byte_stable() -> None:
     """The noninteractive renderer does not rewrite a bounded plain legend."""
     input_text = (
@@ -207,12 +227,7 @@ def test_hide_plan_requires_render_results_mode() -> None:
 
 
 def test_replayed_legend_panel_matches_the_shared_benchmark_width() -> None:
-    """A replayed legend is drawn as a panel exactly as wide as every other framed block.
-
-    Archived runs are replayed on whatever terminal an operator happens to have. The panel used to take that terminal's
-    own width, so a legend and the paid command block printed beside it in the same log disagreed by however wide the
-    window was; pinning the shared width settles that.
-    """
+    """Archived legends replay at 120 columns regardless of the detected terminal width."""
     stream = io.StringIO()
 
     codex_runtime.render_result_rows(
@@ -223,7 +238,8 @@ def test_replayed_legend_panel_matches_the_shared_benchmark_width() -> None:
 
     visible = [_ANSI_CODE.sub("", line) for line in stream.getvalue().splitlines()]
     assert [line[0] for line in visible] == ["╭", "│", "╰"]
-    assert {len(line) for line in visible} == {BENCHMARK_OUTPUT_WIDTH}
+    assert {len(line) for line in visible} == {120}
+    assert BENCHMARK_OUTPUT_WIDTH == 120
 
 
 def test_structural_legend_keeps_its_plain_framed_form_when_redirected(capsys: pytest.CaptureFixture[str]) -> None:

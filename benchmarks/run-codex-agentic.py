@@ -38,6 +38,7 @@ from _bench_common.presentation import (  # noqa: E402
     fmt_time,
     fmt_tok,
     format_probe_row,
+    print_arm_row,
     print_legend,
 )
 from _bench_codex import runtime as codex_runtime  # noqa: E402
@@ -156,6 +157,7 @@ class AgenticRun:
     retry_count: int = 0
     raw_events: list[dict[str, Any]] | None = None
     native_attempt_events: list[list[dict[str, Any]]] | None = None
+    launcher_path: str | None = None
 
 
 def probe_arm(arm: str) -> ArmProbe:
@@ -250,6 +252,8 @@ def parse_agentic_stream(
     oracle: Any | None = None,
     repetition: int = 1,
     skill_path: Path | None = None,
+    launcher_path: Path | None = None,
+    allow_equivalent_launcher: bool = False,
     ground_truth: Any | None = None,
 ) -> AgenticRun:
     """Normalize one native stream and score it with the shared Claude oracle.
@@ -275,8 +279,10 @@ def parse_agentic_stream(
     skill_bytes = skill_path.read_bytes() if skill_path is not None else b""
     parsed = codex_runtime.parse_codex_jsonl(
         stream,
+        launcher_path=launcher_path,
         skill_path=skill_path,
         skill_sha256=hashlib.sha256(skill_bytes).hexdigest() if skill_bytes else "",
+        allow_equivalent_launcher=allow_equivalent_launcher,
     )
     codemap_used = getattr(parsed, "codemap_observed_calls", parsed.codemap_calls) > 0
     contaminated = arm == "A_plain" and codemap_used
@@ -344,6 +350,7 @@ def parse_agentic_stream(
         diagnostic_only=diagnostic_only,
         answer_pooling_eligible=answer_pooling_eligible,
         raw_events=parsed.raw_events,
+        launcher_path=str(launcher_path.resolve()) if launcher_path is not None else None,
     )
 
 
@@ -399,6 +406,53 @@ def resolve_agentic_model(manifest: Mapping[str, Any], manifest_path: Path, mode
     return str(model)
 
 
+def _execution_order_contract(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the manifest-bound schedule policy, retaining historic fixed-order studies.
+
+    A frozen result without this field predates order balancing. It remains interpretable under its original lexical
+    order; only a new manifest may opt into the cyclic schedule used for future variance screening.
+    """
+    declared = manifest.get("execution_order")
+    if declared is None:
+        return {
+            "strategy": "legacy-fixed-arm-order-v1",
+            "arm_cycle": list(AGENTIC_ARMS),
+            "index_basis": "task-order-then-repetition",
+        }
+    if not isinstance(declared, Mapping):
+        raise ValueError("Codex agentic manifest execution order must be an object")
+    contract = dict(declared)
+    if (
+        contract.get("strategy") != "cyclic-arm-order-v1"
+        or contract.get("arm_cycle") != list(AGENTIC_ARMS)
+        or contract.get("index_basis") != "locked-task-ordinal-plus-repetition-minus-one"
+    ):
+        raise ValueError("Codex agentic manifest has an unsupported execution-order contract")
+    return contract
+
+
+def _scheduled_coordinates(
+    task_ids: Sequence[str],
+    *,
+    repetitions: int,
+    cyclic: bool,
+    task_ordinals: Mapping[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the immutable execution order for one selected agentic scope.
+
+    Cyclic rotation places each treatment first, second, and third exactly once per task across three repetitions. A
+    single screening repetition is still useful diagnostic evidence but is explicitly not position-balanced alone.
+    """
+    coordinates: list[dict[str, Any]] = []
+    for selected_ordinal, task_id in enumerate(task_ids):
+        task_ordinal = task_ordinals.get(task_id, selected_ordinal) if task_ordinals is not None else selected_ordinal
+        for repetition in range(1, repetitions + 1):
+            rotation = (task_ordinal + repetition - 1) % len(AGENTIC_ARMS) if cyclic else 0
+            arm_order = (*AGENTIC_ARMS[rotation:], *AGENTIC_ARMS[:rotation])
+            coordinates.extend({"task_id": task_id, "repetition": repetition, "arm": arm} for arm in arm_order)
+    return coordinates
+
+
 def resolve_agentic_scope(
     manifest_path: Path = _MANIFEST_PATH,
     *,
@@ -434,6 +488,13 @@ def resolve_agentic_scope(
     if type(coordinate_timeout_seconds) is not int or coordinate_timeout_seconds < 1:
         raise ValueError("Codex agentic manifest must lock a positive per-cell timeout")
     total_cells = len(ordered_task_ids) * len(AGENTIC_ARMS) * repetitions
+    execution_order = _execution_order_contract(manifest)
+    coordinates = _scheduled_coordinates(
+        ordered_task_ids,
+        repetitions=repetitions,
+        cyclic=execution_order["strategy"] == "cyclic-arm-order-v1",
+        task_ordinals={task_id: ordinal for ordinal, task_id in enumerate(locked_task_ids)},
+    )
     payload = {
         "manifest_sha256": _manifest_sha256(manifest_path),
         "experiment_revision": manifest.get("experiment_revision"),
@@ -443,6 +504,8 @@ def resolve_agentic_scope(
         "coordinate_timeout_seconds": coordinate_timeout_seconds,
         "total_cells": total_cells,
         "nonpoolable": True,
+        "execution_order": execution_order,
+        "coordinates": coordinates,
     }
     # The default stratum leaves the payload as the manifest locked it, so a run that selects nothing keeps the
     # identity its manifest digest already authorizes; a selected stratum is a distinct study and hashes as one.
@@ -518,8 +581,8 @@ def _agentic_envelope(arm: str, task: Mapping[str, Any]) -> str:
     elif arm == "C_strict":
         treatment = (
             "The installed Codemap Skill is bound immutably for this treatment. Use its smallest complete-query "
-            "guidance, then complete at least one standalone successful $CODEMAP_BIN query --compact structural query; "
-            "do not prefix, assign, wrap, or combine the credited query with shell work. "
+            "guidance, then complete at least one standalone successful compact query through $CODEMAP_BIN or the "
+            "exact installed Codemap launcher; do not prefix, assign, wrap, or combine the credited query with shell work. "
             "Other reads and shell commands remain allowed."
         )
     else:
@@ -727,6 +790,8 @@ class AgenticCodexRunner:
                         oracle=oracle,
                         repetition=repetition,
                         skill_path=home.codemap_skill_path if arm == "C_strict" and home is not None else None,
+                        launcher_path=getattr(home, "codemap_launcher_path", None),
+                        allow_equivalent_launcher=True,
                     )
                     break
                 if self.transport is None:
@@ -741,6 +806,8 @@ class AgenticCodexRunner:
                     oracle=oracle,
                     repetition=repetition,
                     skill_path=home.codemap_skill_path if arm == "C_strict" and home is not None else None,
+                    launcher_path=getattr(home, "codemap_launcher_path", None),
+                    allow_equivalent_launcher=True,
                 )
                 attempts.append(result.raw_events or [])
                 postflight_error = self._postflight(home)
@@ -935,9 +1002,8 @@ def dry_run(
     for task_id in scope["task_ids"]:
         if task_id not in tasks_by_id:
             raise ValueError(f"agentic scope task {task_id} is not loadable")
-        for repetition in range(1, repetitions + 1):
-            for arm in AGENTIC_ARMS:
-                lines.append(_format_plan(task_id, repetition, arm))
+    for coordinate in scope["coordinates"]:
+        lines.append(_format_plan(coordinate["task_id"], coordinate["repetition"], coordinate["arm"]))
     return lines
 
 
@@ -988,6 +1054,386 @@ def _write_checksums(run_dir: Path) -> None:
         f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(run_dir).as_posix()}\n" for path in files
     )
     (run_dir / "checksums.sha256").write_text(payload, encoding="utf-8")
+
+
+def _row_number(row: Mapping[str, Any], field: str) -> float:
+    """Read one non-negative numeric telemetry value without fabricating malformed data."""
+    value = row.get(field)
+    return float(value) if type(value) in {int, float} and value >= 0 else 0.0
+
+
+def _row_quality(row: Mapping[str, Any]) -> float | None:
+    """Return a semantic score only when the persisted result has one."""
+    quality = row.get("quality")
+    value = quality.get("quality_score") if isinstance(quality, Mapping) else None
+    return float(value) if type(value) in {int, float} else None
+
+
+def _row_fresh_tokens(row: Mapping[str, Any]) -> float | None:
+    """Return fresh input only when the row has consistent token accounting."""
+    if "fresh_input_tokens" in row:
+        value = row.get("fresh_input_tokens")
+        return float(value) if type(value) in {int, float} and value >= 0 else None
+    gross, cached = row.get("input_tokens"), row.get("cached_input_tokens")
+    if type(gross) not in {int, float} or type(cached) not in {int, float} or gross < cached or cached < 0:
+        return None
+    return float(gross - cached)
+
+
+def _native_diagnostics(row: Mapping[str, Any]) -> dict[str, int | None | str]:
+    """Extract command diagnostics from raw events without treating them as requests.
+
+    Native streams do not promise command start records. In that case concurrency and waves are unavailable rather than
+    inferred from completion order.
+    """
+    raw_events = row.get("raw_events")
+    if not isinstance(raw_events, list):
+        return {
+            "help_discovery_calls": None,
+            "captured_output_characters": None,
+            "max_concurrent_commands": None,
+            "serial_waves": None,
+            "concurrency_status": "unavailable_native_events",
+        }
+    help_calls = 0
+    output_characters = 0
+    active: set[str] = set()
+    starts_observed = False
+    command_completions = 0
+    max_concurrent = 0
+    waves = 0
+    for event in raw_events:
+        if not isinstance(event, Mapping):
+            continue
+        item = event.get("item")
+        if not isinstance(item, Mapping) or item.get("type") != "command_execution":
+            continue
+        event_type = event.get("type")
+        item_id = item.get("id")
+        if event_type == "item.started" and isinstance(item_id, str):
+            if not active:
+                waves += 1
+            active.add(item_id)
+            starts_observed = True
+            max_concurrent = max(max_concurrent, len(active))
+        elif event_type == "item.completed":
+            command_completions += 1
+            command = item.get("command")
+            if isinstance(command, str) and ("help" in command or "doctor" in command):
+                help_calls += 1
+            output = item.get("aggregated_output", item.get("output", ""))
+            if isinstance(output, str):
+                output_characters += len(output)
+            if isinstance(item_id, str):
+                active.discard(item_id)
+    has_command_content = command_completions == int(_row_number(row, "command_calls"))
+    concurrency_complete = starts_observed and not active
+    return {
+        "help_discovery_calls": help_calls if has_command_content else None,
+        "captured_output_characters": output_characters if has_command_content else None,
+        "max_concurrent_commands": max_concurrent if concurrency_complete else None,
+        "serial_waves": waves if concurrency_complete else None,
+        "concurrency_status": "complete" if concurrency_complete else "unavailable_or_partial_native_events",
+    }
+
+
+def _aggregate_arm_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Total reported telemetry without replacing absent quality with a score."""
+    qualities = [quality for row in rows if (quality := _row_quality(row)) is not None]
+    cells = len(rows)
+    diagnostics = [_native_diagnostics(row) for row in rows]
+    concurrency = [value for diagnostic in diagnostics if (value := diagnostic["max_concurrent_commands"]) is not None]
+    waves = [value for diagnostic in diagnostics if (value := diagnostic["serial_waves"]) is not None]
+    help_counts = [value for diagnostic in diagnostics if (value := diagnostic["help_discovery_calls"]) is not None]
+    output_characters = [
+        value for diagnostic in diagnostics if (value := diagnostic["captured_output_characters"]) is not None
+    ]
+    return {
+        "cells": cells,
+        "gross_input_tokens": int(sum(_row_number(row, "input_tokens") for row in rows)),
+        "cached_input_tokens": int(sum(_row_number(row, "cached_input_tokens") for row in rows)),
+        "fresh_input_tokens": int(sum(fresh for row in rows if (fresh := _row_fresh_tokens(row)) is not None)),
+        "fresh_input_ineligible_cells": sum(_row_fresh_tokens(row) is None for row in rows),
+        "output_tokens": int(sum(_row_number(row, "output_tokens") for row in rows)),
+        "runtime_seconds": sum(_row_number(row, "elapsed_s") for row in rows),
+        "quality_mean": sum(qualities) / len(qualities) if qualities else None,
+        "quality_scored_cells": len(qualities),
+        "observed_use_cells": sum(row.get("codemap_used") is True for row in rows),
+        "adherent_cells": sum(row.get("treatment_adherence") is True for row in rows),
+        "native_command_calls": int(sum(_row_number(row, "command_calls") for row in rows)),
+        "heuristic_help_discovery_calls": sum(help_counts) if cells and len(help_counts) == cells else None,
+        "captured_output_characters": sum(output_characters) if cells and len(output_characters) == cells else None,
+        "max_concurrent_commands": max(concurrency) if cells and len(concurrency) == cells else None,
+        "serial_waves": sum(waves) if cells and len(waves) == cells else None,
+        "native_event_diagnostics_ineligible_cells": sum(
+            diagnostic["concurrency_status"] != "complete" for diagnostic in diagnostics
+        ),
+    }
+
+
+def _win_loss(left: float | None, right: float | None, *, lower_is_better: bool) -> str:
+    """Name one paired comparison outcome without hiding unavailable measurements."""
+    if left is None or right is None:
+        return "unavailable"
+    if left == right:
+        return "tie"
+    return "C_strict" if (left < right if lower_is_better else left > right) else "A_plain"
+
+
+def _summarize_telemetry(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Build transparent all-assigned and paired-adherent agentic summaries.
+
+    B_auto remains a diagnostic optional-use canary. A/C comparisons only require adherent A and C cells at the same
+    task/repetition; B cannot erase that pair. All-assigned totals retain every recorded cell and its cost.
+    """
+    by_arm = {arm: [row for row in rows if row.get("arm") == arm] for arm in AGENTIC_ARMS}
+    by_coordinate: dict[tuple[str, int], dict[str, Mapping[str, Any]]] = {}
+    for row in rows:
+        task_id, repetition, arm = row.get("task_id"), row.get("repetition"), row.get("arm")
+        if isinstance(task_id, str) and type(repetition) is int and arm in AGENTIC_ARMS:
+            by_coordinate.setdefault((task_id, repetition), {})[arm] = row
+    paired_a_c = [
+        (task_id, repetition, arms)
+        for (task_id, repetition), arms in by_coordinate.items()
+        if {"A_plain", "C_strict"}.issubset(arms)
+        and arms["A_plain"].get("treatment_adherence") is True
+        and arms["C_strict"].get("treatment_adherence") is True
+    ]
+    matched_by_arm = {
+        "A_plain": [arms["A_plain"] for _, _, arms in paired_a_c],
+        "B_auto": [
+            arms["B_auto"] for _, _, arms in paired_a_c if arms.get("B_auto", {}).get("treatment_adherence") is True
+        ],
+        "C_strict": [arms["C_strict"] for _, _, arms in paired_a_c],
+    }
+    quality_outcomes = {"C_strict": 0, "A_plain": 0, "tie": 0, "unavailable": 0}
+    fresh_outcomes = dict(quality_outcomes)
+    by_task: dict[str, dict[str, Any]] = {}
+    for task_id, _repetition, arms in paired_a_c:
+        quality = _win_loss(_row_quality(arms["C_strict"]), _row_quality(arms["A_plain"]), lower_is_better=False)
+        fresh = _win_loss(_row_fresh_tokens(arms["C_strict"]), _row_fresh_tokens(arms["A_plain"]), lower_is_better=True)
+        quality_outcomes[quality] += 1
+        fresh_outcomes[fresh] += 1
+        task_summary = by_task.setdefault(
+            task_id,
+            {
+                "matched_repetitions": 0,
+                "quality_win_loss": {key: 0 for key in quality_outcomes},
+                "fresh_input_win_loss": {key: 0 for key in fresh_outcomes},
+            },
+        )
+        task_summary["matched_repetitions"] += 1
+        task_summary["quality_win_loss"][quality] += 1
+        task_summary["fresh_input_win_loss"][fresh] += 1
+    return {
+        "all_assigned": {arm: _aggregate_arm_rows(by_arm[arm]) for arm in AGENTIC_ARMS},
+        "matched_adherent": {arm: _aggregate_arm_rows(matched_by_arm[arm]) for arm in AGENTIC_ARMS},
+        "task_comparisons": {
+            "matched_a_c_coordinates": len(paired_a_c),
+            "quality_win_loss": quality_outcomes,
+            "fresh_input_win_loss": fresh_outcomes,
+            "by_task": by_task,
+        },
+        "b_auto_diagnostic": True,
+    }
+
+
+def _summary_lines(summary: Mapping[str, Any]) -> list[tuple[str, str | None]]:
+    """Format compact end-of-run rows while keeping arm output on the shared renderer."""
+    lines: list[tuple[str, str | None]] = []
+    for cohort in ("all_assigned", "matched_adherent"):
+        for arm in AGENTIC_ARMS:
+            values = summary[cohort][arm]
+            score = "n/a" if values["quality_mean"] is None else f"{values['quality_mean']:.3f}"
+            fresh = "n/a" if values["fresh_input_ineligible_cells"] else fmt_tok(values["fresh_input_tokens"])
+            lines.append(
+                (
+                    f"SUMMARY  cohort={cohort}  {arm:<10} cells={values['cells']}"
+                    f" gross={fmt_tok(values['gross_input_tokens'])} cache={fmt_tok(values['cached_input_tokens'])}"
+                    f" fresh={fresh} out={fmt_tok(values['output_tokens'])}"
+                    f" SCORE={score} time={fmt_time(values['runtime_seconds'])}"
+                    f" use={values['observed_use_cells']}/{values['cells']}"
+                    f" adherence={values['adherent_cells']}/{values['cells']}"
+                    f" cmd={values['native_command_calls']}"
+                    f" help~={values['heuristic_help_discovery_calls'] if values['heuristic_help_discovery_calls'] is not None else 'n/a'}"
+                    f" chars={values['captured_output_characters'] if values['captured_output_characters'] is not None else 'n/a'}"
+                    f" max-concurrent={values['max_concurrent_commands'] if values['max_concurrent_commands'] is not None else 'n/a'}"
+                    f" waves={values['serial_waves'] if values['serial_waves'] is not None else 'n/a'}",
+                    arm,
+                )
+            )
+    comparisons = summary["task_comparisons"]
+    lines.append(
+        (
+            "SUMMARY  comparisons=A_plain-vs-C_strict"
+            f" matched={comparisons['matched_a_c_coordinates']}"
+            f" quality={json.dumps(comparisons['quality_win_loss'], sort_keys=True)}"
+            f" fresh={json.dumps(comparisons['fresh_input_win_loss'], sort_keys=True)}"
+            " B_auto=diagnostic-optional-use",
+            None,
+        )
+    )
+    for task_id, outcomes in sorted(comparisons["by_task"].items()):
+        lines.append(
+            (
+                f"SUMMARY  task={task_id} matched={outcomes['matched_repetitions']}"
+                f" quality={json.dumps(outcomes['quality_win_loss'], sort_keys=True)}"
+                f" fresh={json.dumps(outcomes['fresh_input_win_loss'], sort_keys=True)}",
+                None,
+            )
+        )
+    return lines
+
+
+def _write_summary(run_dir: Path, summary: Mapping[str, Any]) -> Path:
+    """Persist one derived report without rewriting immutable telemetry rows."""
+    output = Path(run_dir) / "summary.json"
+    with output.open("x", encoding="utf-8", newline="\n") as handle:
+        json.dump(summary, handle, sort_keys=True)
+        handle.write("\n")
+    return output
+
+
+def _load_replay_launcher_map(
+    path: Path | None,
+) -> tuple[dict[tuple[str, int, str], dict[str, Any]], dict[str, Any] | None]:
+    """Load reviewed coordinate-specific launcher provenance without basename trust."""
+    if path is None:
+        return {}, None
+    path = Path(path)
+    try:
+        payload_bytes = path.read_bytes()
+        payload = json.loads(payload_bytes)
+        coordinates = payload["coordinates"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("diagnostic replay launcher map is unavailable or malformed") from exc
+    if not isinstance(payload, Mapping) or set(payload) != {"coordinates"} or not isinstance(coordinates, list):
+        raise ValueError("diagnostic replay launcher map requires a coordinate list")
+    resolved: dict[tuple[str, int, str], dict[str, Any]] = {}
+    for coordinate in coordinates:
+        if not isinstance(coordinate, Mapping) or set(coordinate) - {
+            "task_id",
+            "repetition",
+            "arm",
+            "launcher_path",
+            "source_evidence",
+        }:
+            raise ValueError("diagnostic replay launcher map coordinates must be objects")
+        task_id, repetition, arm = coordinate.get("task_id"), coordinate.get("repetition"), coordinate.get("arm")
+        launcher, evidence = coordinate.get("launcher_path"), coordinate.get("source_evidence")
+        if (
+            not isinstance(task_id, str)
+            or type(repetition) is not int
+            or arm not in AGENTIC_ARMS
+            or launcher is not None
+            and (
+                not isinstance(launcher, str)
+                or not codex_runtime.is_absolute_launcher_path(launcher)
+                or not isinstance(evidence, Mapping)
+                or not evidence
+            )
+        ):
+            raise ValueError("diagnostic replay launcher map has an invalid coordinate provenance entry")
+        key = (task_id, repetition, arm)
+        if key in resolved:
+            raise ValueError("diagnostic replay launcher map has a duplicate coordinate")
+        resolved[key] = {"launcher_path": launcher, "source_evidence": evidence}
+    return resolved, {"path": str(path.resolve()), "sha256": hashlib.sha256(payload_bytes).hexdigest()}
+
+
+def _has_unproven_absolute_query(raw_events: Sequence[Mapping[str, Any]]) -> bool:
+    """Identify an absolute compact command that needs launcher provenance before credit."""
+    for event in raw_events:
+        item = event.get("item")
+        command = item.get("command") if isinstance(item, Mapping) else None
+        query = codex_runtime._dedicated_compact_query(command) if isinstance(command, str) else None
+        raw_tokens = codex_runtime._native_item_tokens(command, preserve_quotes=True)
+        if query is not None and any(
+            codex_runtime.is_absolute_launcher_path(candidate)
+            for candidate in (query[0], raw_tokens[0] if raw_tokens else "")
+        ):
+            return True
+    return False
+
+
+def replay_diagnostic(source_telemetry_path: Path, output_path: Path, *, launcher_map_path: Path | None = None) -> Path:
+    """Reclassify observed Codemap use from immutable raw events without changing source rows."""
+    source_telemetry_path = Path(source_telemetry_path)
+    output_path = Path(output_path)
+    if output_path.resolve().is_relative_to(source_telemetry_path.resolve().parent):
+        raise ValueError("diagnostic replay output must be outside the historical telemetry directory")
+    if output_path.exists():
+        raise FileExistsError(output_path)
+    try:
+        source_bytes = source_telemetry_path.read_bytes()
+        source_rows = [json.loads(line) for line in source_bytes.splitlines() if line]
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("diagnostic replay requires a valid telemetry JSONL input") from exc
+    if not all(isinstance(row, dict) for row in source_rows):
+        raise ValueError("diagnostic replay telemetry rows must be JSON objects")
+    launcher_map, launcher_map_identity = _load_replay_launcher_map(launcher_map_path)
+    replay_rows: list[dict[str, Any]] = []
+    for row in source_rows:
+        raw_events = row.get("raw_events")
+        recorded_launcher = row.get("launcher_path")
+        if not isinstance(raw_events, list) or not all(isinstance(event, Mapping) for event in raw_events):
+            raise ValueError("diagnostic replay requires raw native events in every telemetry row")
+        key = (row.get("task_id"), row.get("repetition"), row.get("arm"))
+        map_entry = launcher_map.get(key)
+        launcher = (
+            recorded_launcher
+            if isinstance(recorded_launcher, str) and codex_runtime.is_absolute_launcher_path(recorded_launcher)
+            else None
+        )
+        launcher_provenance: str | Mapping[str, Any] | None = "recorded_per_cell" if launcher is not None else None
+        if launcher is None and map_entry is not None and isinstance(map_entry["launcher_path"], str):
+            launcher = map_entry["launcher_path"]
+            launcher_provenance = map_entry
+        parsed = codex_runtime.parse_codex_jsonl(
+            (json.dumps(event, sort_keys=True) for event in raw_events), launcher_path=launcher
+        )
+        observed_calls = getattr(parsed, "codemap_observed_calls", 0)
+        unavailable = observed_calls == 0 and launcher is None and _has_unproven_absolute_query(raw_events)
+        replay_rows.append(
+            {
+                "original": row,
+                "corrected_observed_use": None if unavailable else observed_calls > 0,
+                "corrected_observed_use_status": "unavailable_launcher_provenance"
+                if unavailable
+                else ("observed" if observed_calls else "not_observed"),
+                "corrected_observed_calls": observed_calls,
+                "corrected_observed_successful_calls": getattr(parsed, "codemap_observed_successful_calls", 0),
+                "corrected_observed_complete_calls": getattr(parsed, "codemap_observed_complete_calls", 0),
+                "launcher_provenance": launcher_provenance,
+            }
+        )
+    metadata_path = source_telemetry_path.with_name("run-metadata.json")
+    checksums_path = source_telemetry_path.with_name("checksums.sha256")
+    detector_path = _BENCHMARKS_DIR / "_bench_codex" / "runtime.py"
+    document = {
+        "schema": "codex-agentic-observed-use-replay-v1",
+        "source": {
+            "telemetry_path": str(source_telemetry_path.resolve()),
+            "telemetry_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            "coordinate_launcher_map": launcher_map_identity,
+            "run_metadata_sha256": hashlib.sha256(metadata_path.read_bytes()).hexdigest()
+            if metadata_path.is_file()
+            else None,
+            "checksums_sha256": hashlib.sha256(checksums_path.read_bytes()).hexdigest()
+            if checksums_path.is_file()
+            else None,
+        },
+        "detector": {
+            "name": "codemap-observed-use-v2",
+            "path": str(detector_path.resolve()),
+            "sha256": hashlib.sha256(detector_path.read_bytes()).hexdigest(),
+        },
+        "rows": replay_rows,
+    }
+    with output_path.open("x", encoding="utf-8", newline="\n") as handle:
+        json.dump(document, handle, sort_keys=True)
+        handle.write("\n")
+    return output_path
 
 
 def _runtime_plugin_identities_are_valid(identities: Mapping[str, Any]) -> bool:
@@ -1048,11 +1494,18 @@ def _progress_line(execution_index: int, total_cells: int, run: AgenticRun) -> s
     )
 
 
-def _emit_run_line(run_log: Path, line: str) -> None:
-    """Print and append one human-readable paid-run evidence line."""
-    print(line)
+def _emit_run_line(run_log: Path, line: str, *, arm: str | None = None) -> None:
+    """Print and append one paid-run line, using the shared renderer for arm rows."""
+    if arm is None:
+        print(line)
+    else:
+        print_arm_row(line, arm, console=benchmark_console())
     with run_log.open("a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
+        with contextlib.redirect_stdout(handle):
+            if arm is None:
+                print(line)
+            else:
+                print_arm_row(line, arm, console=benchmark_console(file=handle))
 
 
 def _initial_metadata(
@@ -1069,12 +1522,6 @@ def _initial_metadata(
     manifest = _read_agentic_manifest(manifest_path)
     model = manifest["model"]
     executed_model = str(resolve_agentic_model(manifest, Path(manifest_path), model_name) or model["name"])
-    coordinates = [
-        {"task_id": task["id"], "repetition": repetition, "arm": arm}
-        for task in tasks
-        for repetition in range(1, int(scope["repetitions"]) + 1)
-        for arm in AGENTIC_ARMS
-    ]
     return {
         "schema": "codex-agentic-run-v1",
         "status": "running",
@@ -1091,7 +1538,17 @@ def _initial_metadata(
             "reasoning_effort": model["reasoning_effort"],
             "codex_cli_observed_version": os.environ.get("CODEX_CLI_OBSERVED_VERSION"),
             "cell_wall_clock_seconds": scope["coordinate_timeout_seconds"],
-            "coordinates": coordinates,
+            "execution_order": dict(scope["execution_order"]),
+            "coordinates": list(scope["coordinates"]),
+            "comparability_scope": {
+                "model": executed_model,
+                "reasoning_effort": model["reasoning_effort"],
+                "repository_and_index": "manifest-locked",
+                "plugin_bytes": "frozen-in-run-input-snapshot",
+                "isolation": "per-cell-isolated-codex-home",
+                "cache_policy": "provider-cache-state-observed; no supported per-cell reset",
+                "repetitions_limit": "variance screening only; not a significance or universal-savings claim",
+            },
             "pooling_eligible": False,
         },
         "artifacts": {
@@ -1234,31 +1691,41 @@ def run_paid(
         metadata["artifacts"]["runtime_isolation_sha256"] = hashlib.sha256(runtime_evidence.read_bytes()).hexdigest()
         _structural._write_run_metadata(metadata_path, metadata)
         _write_checksums(run_dir)
-        for task in tasks:
-            for repetition in range(1, repetitions + 1):
-                for arm in AGENTIC_ARMS:
-                    run = runner.run(task, arm, repetition=repetition, oracle=oracles[task["id"]])
-                    _validate_agentic_runtime(manifest, repo_path, index_path, index_relocation)
-                    _structural._validate_invocation_launcher(invocation_launcher_path, launcher_hash)
-                    _append_telemetry(raw_path, run, int(metadata["persisted_cells"]))
-                    metadata["persisted_cells"] = int(metadata["persisted_cells"]) + 1
-                    metadata["last_persisted_coordinate"] = {
-                        "task_id": task["id"],
-                        "repetition": repetition,
-                        "arm": arm,
-                    }
-                    metadata["artifacts"]["canonical_telemetry_sha256"] = _write_canonical_telemetry(
-                        raw_path, scope["task_ids"]
-                    )
-                    _structural._write_run_metadata(metadata_path, metadata)
-                    _emit_run_line(
-                        run_log,
-                        _progress_line(int(metadata["persisted_cells"]), int(scope["total_cells"]), run),
-                    )
-                    _write_checksums(run_dir)
+        for coordinate in scope["coordinates"]:
+            task = tasks_by_id[coordinate["task_id"]]
+            repetition = int(coordinate["repetition"])
+            arm = str(coordinate["arm"])
+            run = runner.run(task, arm, repetition=repetition, oracle=oracles[task["id"]])
+            _validate_agentic_runtime(manifest, repo_path, index_path, index_relocation)
+            _structural._validate_invocation_launcher(invocation_launcher_path, launcher_hash)
+            _append_telemetry(raw_path, run, int(metadata["persisted_cells"]))
+            metadata["persisted_cells"] = int(metadata["persisted_cells"]) + 1
+            metadata["last_persisted_coordinate"] = {
+                "task_id": task["id"],
+                "repetition": repetition,
+                "arm": arm,
+            }
+            metadata["artifacts"]["canonical_telemetry_sha256"] = _write_canonical_telemetry(
+                raw_path, scope["task_ids"]
+            )
+            _structural._write_run_metadata(metadata_path, metadata)
+            _emit_run_line(
+                run_log,
+                _progress_line(int(metadata["persisted_cells"]), int(scope["total_cells"]), run),
+                arm=arm,
+            )
+            _write_checksums(run_dir)
         metadata["status"] = "completed"
         metadata["completed_at"] = _structural._utc_now()
+        summary = _summarize_telemetry(
+            [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line]
+        )
+        summary_path = _write_summary(run_dir, summary)
+        metadata["artifacts"]["summary_json"] = str(summary_path.resolve())
+        metadata["artifacts"]["summary_sha256"] = hashlib.sha256(summary_path.read_bytes()).hexdigest()
         _structural._write_run_metadata(metadata_path, metadata)
+        for line, arm in _summary_lines(summary):
+            _emit_run_line(run_log, line, arm=arm)
         _emit_run_line(
             run_log,
             f"SUMMARY  status=completed  persisted_cells={metadata['persisted_cells']}/{scope['total_cells']}",
@@ -1372,6 +1839,9 @@ def _require_dry_run_admission_arguments(**arguments: Any) -> None:
 def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag with a default (0 required)
     dry_run: bool = False,
     resolve_scope: bool = False,
+    replay_telemetry_path: Path | None = None,
+    replay_output_path: Path | None = None,
+    replay_launcher_map_path: Path | None = None,
     tasks_path: Path = _TASKS_PATH,
     manifest_path: Path = _MANIFEST_PATH,
     task_id: str | Sequence[str] | None = None,
@@ -1393,6 +1863,9 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
     Args:
         dry_run: Print the resolved no-model cell plan and exit.
         resolve_scope: Print the resolved scope JSON and exit.
+        replay_telemetry_path: Immutable telemetry JSONL to inspect without a model call.
+        replay_output_path: New diagnostic JSON written by an offline replay.
+        replay_launcher_map_path: Reviewed per-coordinate launcher provenance for legacy rows.
         tasks_path: Locked shared agentic task suite.
         manifest_path: Locked Codex agentic manifest.
         task_id: One manifest-bound task ID, or several as a single comma-separated
@@ -1421,6 +1894,20 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
     """
     # fire passes CLI strings through regardless of annotation — coerce every typed argument.
     task_ids = _normalize_task_ids(task_id)
+    if (replay_telemetry_path is None) != (replay_output_path is None):
+        _cli_error("diagnostic replay requires both --replay-telemetry-path and --replay-output-path")
+    if replay_launcher_map_path is not None and replay_telemetry_path is None:
+        _cli_error("--replay-launcher-map-path requires diagnostic replay input and output paths")
+    if replay_telemetry_path is not None:
+        try:
+            replay_diagnostic(
+                Path(replay_telemetry_path),
+                Path(replay_output_path),
+                launcher_map_path=None if replay_launcher_map_path is None else Path(replay_launcher_map_path),
+            )
+        except (FileExistsError, ValueError) as exc:
+            _cli_error(str(exc))
+        return
     manifest_path = Path(manifest_path)
     repetitions = None if repetitions is None else int(repetitions)
     paid_approval = None if paid_approval is None else str(paid_approval)

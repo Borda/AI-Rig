@@ -633,8 +633,8 @@ def _autobuild_disabled() -> bool:
 class _FileShas(NamedTuple):
     """Tracked blob SHAs plus how confidently they were obtained.
 
-    ``status`` is what separates "git says nothing changed" from "git never answered". Collapsing the two — the
-    previous behaviour, an empty dict for both — let a git failure be read as proof of a fresh index.
+    ``status`` is what separates "git says nothing changed" from "git never answered". Collapsing the two — the previous
+    behaviour, an empty dict for both — let a git failure be read as proof of a fresh index.
     """
 
     shas: dict[str, str]
@@ -729,10 +729,10 @@ def _resolve_current_file_shas() -> _FileShas:
 def _current_file_shas() -> _FileShas:
     """Return the memoized tracked-blob SHAs (and their status) for this invocation.
 
-    Memoized because two independent consumers ask the same question on every query — :func:`_changed_py_files` for
-    the self-heal decision and :func:`_coverage` for the honesty block. Without this memo, each query spawned two
-    identical subprocesses running ``git ls-files``. The working tree cannot change under a single query, so one call is
-    both cheaper and guaranteed self-consistent.
+    Memoized because two independent consumers ask the same question on every query — :func:`_changed_py_files` for the
+    self-heal decision and :func:`_coverage` for the honesty block. Without this memo, each query spawned two identical
+    subprocesses running ``git ls-files``. The working tree cannot change under a single query, so one call is both
+    cheaper and guaranteed self-consistent.
     """
     global _file_shas_cache
     if _file_shas_cache is None:
@@ -4460,10 +4460,15 @@ def cmd_diff_impact(index: dict, args: argparse.Namespace, parser: argparse.Argu
 
 
 def _load_batch_items(source: str) -> list[dict]:
-    """Read and validate the batch request array from a file path or stdin.
+    """Read and validate the batch request array from inline JSON, a file path, or stdin.
+
+    A caller who passes the array itself rather than a path used to see its own JSON reported as a
+    missing filename, which reads as a broken command rather than a wrong argument form. An argument
+    that already starts with ``[`` is therefore taken as the array, and the unreadable-input error
+    names every accepted form instead of only the filesystem failure.
 
     Args:
-        source: filesystem path to a JSON file, or ``"-"`` to read stdin.
+        source: the JSON array itself, a filesystem path to a JSON file, or ``"-"`` to read stdin.
 
     Returns:
         The parsed list of request objects.
@@ -4472,10 +4477,20 @@ def _load_batch_items(source: str) -> list[dict]:
         SystemExit: via :func:`_die_json` (exit 2) on unreadable input, non-JSON,
             or a top-level value that is not a list.
     """
-    try:
-        raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
-    except OSError as exc:
-        _die_json({"error": "batch input unreadable", "detail": str(exc)}, _EXIT_BAD_INPUT)
+    if source.lstrip().startswith("["):
+        raw = source
+    else:
+        try:
+            raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+        except OSError as exc:
+            _die_json(
+                {
+                    "error": "batch input unreadable",
+                    "detail": str(exc),
+                    "accepts": "a JSON array, a path to a JSON file, or '-' for stdin",
+                },
+                _EXIT_BAD_INPUT,
+            )
     try:
         items = json.loads(raw)
     except ValueError as exc:
@@ -4565,14 +4580,12 @@ def _run_subquery(
 
 
 def cmd_batch(index: dict, args: argparse.Namespace, parser: argparse.ArgumentParser, project_root: Path) -> None:
-    """Run a list of queries in-process and emit one combined result with one coverage block.
+    """Run queries in-process while preserving each result's coverage and limits.
 
-    agents that fire many small scan-query calls per module pay the process
-    spawn + coverage-block cost N times. ``batch`` collapses that into a single
-    process: each request re-parses through the top-level *parser* and runs through
-    the same :func:`_dispatch_command` path, so a batched query is byte-for-byte the
-    same as its standalone form — minus the per-item coverage block, which is
-    deduplicated to one shared ``index`` block for the whole batch.
+    Batch shares one index load and process. Each request uses the normal parser
+    and dispatch path, and retains its own ``result.index`` metadata. The top-level
+    ``index`` contains common coverage fields plus conservative completion and
+    truncation summaries; it never substitutes for a particular item's metadata.
 
     Results preserve input order. A request that fails to parse, raises, or exits via
     :func:`_die_json` yields a per-item ``{"ok": false, "error": ...}`` object rather
@@ -4586,16 +4599,17 @@ def cmd_batch(index: dict, args: argparse.Namespace, parser: argparse.ArgumentPa
     """
     items = _load_batch_items(args.input)
     results: list[dict] = []
-    shared_coverage: dict | None = None
+    coverages: list[dict] = []
     for i, item in enumerate(items):
         argv = _batch_item_argv(item)
         if isinstance(argv, dict):  # malformed item — argv builder returned an error
             results.append({"ok": False, "index": i, "error": argv["error"], "detail": argv})
             continue
         payload, coverage = _run_subquery(index, parser, project_root, argv)
-        # Hoist the shared coverage block out of the item to one batch-level field.
-        if coverage is not None and shared_coverage is None:
-            shared_coverage = coverage
+        # Scope and truncation differ between queries even against the same index.
+        if coverage is not None:
+            payload["index"] = coverage
+            coverages.append(coverage)
         ok = "error" not in payload
         entry = {"ok": ok, "index": i, "cmd": argv[0], "result": payload}
         if not ok:
@@ -4604,8 +4618,26 @@ def cmd_batch(index: dict, args: argparse.Namespace, parser: argparse.ArgumentPa
             entry["error"] = payload["error"]
         results.append(entry)
     out: dict = {"batch": results, "count": len(results)}
-    if shared_coverage is not None:
-        out["index"] = shared_coverage
+    shared: dict = {}
+    if coverages:
+        shared = {
+            key: value
+            for key, value in coverages[0].items()
+            if key not in {"total_available", "exhaustive", "completeness_reason", "note"}
+            and all(key in coverage and coverage[key] == value for coverage in coverages)
+        }
+    # Per-query prose/legacy completeness cannot describe failed or missing siblings.
+    complete = len(coverages) == len(results) and all(entry["ok"] for entry in results)
+    shared["query_complete"] = complete and all(c.get("query_complete") is True for c in coverages)
+    shared["truncated"] = any(c.get("truncated", False) for c in coverages)
+    shared["confidence"] = (
+        "exact"
+        if shared["query_complete"]
+        and not shared["truncated"]
+        and all(c.get("confidence") == "exact" for c in coverages)
+        else "partial"
+    )
+    out["index"] = shared
     _print(json.dumps(out))
 
 
@@ -4955,7 +4987,7 @@ def _add_composite_subparsers(sub: argparse._SubParsersAction) -> None:
         "input",
         nargs="?",
         default="-",
-        help="Path to a JSON file of [{cmd, args}] objects, or '-' for stdin (default).",
+        help="A JSON array of [{cmd, args}] objects, a path to a file holding one, or '-' for stdin (default).",
     )
 
 

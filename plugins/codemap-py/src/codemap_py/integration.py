@@ -808,6 +808,44 @@ def _managed_protocol(content: str) -> str | None:
     return None
 
 
+def _query_guidance_evidence(plugin_root: Path, relative: str) -> dict:
+    """Hash bounded consumer guidance and report static skill references, never activation.
+
+    Installed identity metadata is not executable wiring. Only a consumer-owned skill reference establishes that the
+    guidance is reachable in the package; runtime loading and instruction compliance remain unobservable here.
+    """
+    guidance = plugin_root / relative
+    try:
+        if not guidance.is_file():
+            return {"state": "missing", "path": relative}
+        skills = sorted((plugin_root / "skills").glob("*/SKILL.md"))
+        if len(skills) > _MAX_PROVIDER_IDENTITY_FILES:
+            return {"state": "unknown", "reason": "guidance_file_limit_exceeded"}
+        contents: dict[str, bytes] = {}
+        bytes_read = 0
+        for path in [guidance, *skills]:
+            if path.is_symlink() or not path.resolve().is_relative_to(plugin_root.resolve()):
+                return {"state": "unknown", "reason": "guidance_path_outside_plugin"}
+            with path.open("rb") as handle:
+                data = handle.read(_MAX_PROVIDER_IDENTITY_BYTES - bytes_read + 1)
+            bytes_read += len(data)
+            if bytes_read > _MAX_PROVIDER_IDENTITY_BYTES:
+                return {"state": "unknown", "reason": "guidance_byte_limit_exceeded"}
+            contents[path.relative_to(plugin_root).as_posix()] = data
+        references = [
+            name for name, data in contents.items() if name != relative and guidance.name in data.decode("utf-8")
+        ]
+        return {
+            "state": "observed" if references else "unreferenced",
+            "path": relative,
+            "sha256": _sha256_bytes(contents[relative]),
+            "referenced_by": references,
+            "activation": "unobservable",
+        }
+    except (OSError, UnicodeError, ValueError):
+        return {"state": "unknown", "reason": "guidance_unreadable"}
+
+
 def _consumer_audit(target: ConsumerTarget, root: Path, installed: object, source_root: Path | None = None) -> dict:
     """Return read-only source, installed, and managed-block evidence for one consumer."""
     source_root = source_root or root / target.plugin_dir
@@ -821,6 +859,7 @@ def _consumer_audit(target: ConsumerTarget, root: Path, installed: object, sourc
     managed_status = _managed_block_status(managed_content)
     native_plugin = _native_plugin_record(target.runtime, installed, target.consumer)
     native_path = native_plugin.get("source_path")
+    guidance_relative = "shared/codemap-contract.md" if target.consumer == "codex-rig" else managed_relative
     source_version = manifest.get("version") if isinstance(manifest, dict) else None
     installed_version = _installed_version_lookup(target.runtime)(target.consumer, installed)
     compare_content = (
@@ -832,6 +871,18 @@ def _consumer_audit(target: ConsumerTarget, root: Path, installed: object, sourc
         "source_version": source_version,
         "installed_version": installed_version,
         "native_plugin": native_plugin,
+        "query_guidance": {
+            "source": (
+                _query_guidance_evidence(source_root, guidance_relative)
+                if guidance_relative and manifest is not None
+                else {"state": "not_applicable"}
+            ),
+            "native": (
+                _query_guidance_evidence(Path(native_path), guidance_relative)
+                if guidance_relative and isinstance(native_path, str)
+                else {"state": "unknown", "reason": "native_consumer_root_not_observed"}
+            ),
+        },
         "source_content": (
             _provider_content_identity(source_root, unreadable_reason="source_plugin_root_unreadable")
             if compare_content
@@ -1430,6 +1481,32 @@ def _audit_state_findings(runtime_state: dict, runtimes: tuple[Runtime, ...]) ->
     return findings
 
 
+def _query_guidance_findings(runtime_state: dict, runtimes: tuple[Runtime, ...]) -> list[dict]:
+    """Warn on observed missing, unreferenced, or source-divergent consumer guidance."""
+    findings: list[dict] = []
+    for runtime in runtimes:
+        for consumer, evidence in runtime_state[runtime.value]["consumers"].items():
+            guidance = evidence["query_guidance"]
+            source, native = guidance["source"], guidance["native"]
+            states = {source["state"], native["state"]}
+            code = "missing" if "missing" in states else "unreachable" if "unreferenced" in states else None
+            if source["state"] == native["state"] == "observed" and native["sha256"] != source["sha256"]:
+                code = "drift"
+            if code is None:
+                continue
+            findings.append(
+                _audit_finding(
+                    f"consumer_query_guidance_{code}",
+                    "medium",
+                    "warn",
+                    {"consumer": consumer, **guidance},
+                    [runtime.value],
+                    "plan_sync" if code == "drift" else "source_maintenance",
+                )
+            )
+    return findings
+
+
 def _audit_remediation(findings: list[dict]) -> list[dict]:
     """Return de-duplicated, non-executable remediation records for audit findings."""
     remediation: list[dict] = []
@@ -1476,6 +1553,7 @@ def build_audit_report(runtime: Runtime | str, plugin_root: Path, since: date | 
     }
     runtime_logs, findings, timestamps, observed_records = _audit_runtime_logs(root, runtimes, since)
     findings.extend(_audit_state_findings(runtime_state, runtimes))
+    findings.extend(_query_guidance_findings(runtime_state, runtimes))
     shared_index, index_findings = _audit_index_evidence(identity, runtimes, observed_records)
     usage, usage_findings = _usage_findings(observed_records, runtimes)
     findings.extend(index_findings)
@@ -2145,6 +2223,9 @@ def run_demo(runtime: Runtime | str, plugin_root: Path) -> dict:
     identity = index_paths.resolve_index(root=root)
     demo = {
         "protocol": PROTOCOL_VERSION,
+        "scope": "structural_smoke",
+        "comparison": "not_performed",
+        "token_measurement": {"status": "unavailable", "reason": "no model usage collected"},
         "audit": build_audit_report(runtime, plugin_root),
         "query_evidence": _demo_query(identity),
     }

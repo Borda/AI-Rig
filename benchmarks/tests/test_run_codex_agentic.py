@@ -605,13 +605,19 @@ def test_paid_run_persists_full_scope_and_noncompliant_c_row(
     metadata = json.loads((run_dir / "run-metadata.json").read_text())
     assert len(rows) == 48
     assert metadata["status"] == "completed"
+    assert metadata["execution"]["comparability_scope"]["repetitions_limit"].startswith("variance screening")
     assert rows[-1]["arm"] == "C_strict"
     assert rows[-1]["treatment_adherence"] is False
     assert (run_dir / "telemetry-canonical.jsonl").is_file()
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    assert summary["all_assigned"]["C_strict"]["cells"] == 16
+    assert summary["matched_adherent"]["A_plain"]["cells"] == 0
+    assert summary["b_auto_diagnostic"] is True
     assert (run_dir / "checksums.sha256").is_file()
     output = capsys.readouterr().out
     assert "(1/48) ✓  BA-01" in output
     assert "SCORE=n/a" in output
+    assert "SUMMARY  cohort=all_assigned  C_strict" in output
     assert "SUMMARY  status=completed  persisted_cells=48/48" in output
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert run_log == output
@@ -1406,6 +1412,23 @@ def test_emitted_legend_keeps_the_framed_plain_form_when_redirected(
     assert capsys.readouterr().out == f"{agentic._OUTPUT_LEGEND}\n"
 
 
+def test_arm_rows_forward_through_shared_renderer_and_keep_logs_ansi_free(
+    agentic: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A summary/progress arm row has one plain archived representation.
+
+    The terminal helper may add Rich color on a TTY, but a redirected run log is an input to later replay and must never
+    contain terminal control codes.
+    """
+    log = tmp_path / "run.log"
+
+    agentic._emit_run_line(log, "SUMMARY  C_strict cells=1", arm="C_strict")
+
+    assert capsys.readouterr().out == "SUMMARY  C_strict cells=1\n"
+    assert log.read_text(encoding="utf-8") == "SUMMARY  C_strict cells=1\n"
+    assert "\x1b" not in log.read_text(encoding="utf-8")
+
+
 def test_selected_stratum_hashes_into_its_own_scope(agentic: Any) -> None:
     """A declared stratum other than the manifest default resolves to a scope of its own.
 
@@ -1509,3 +1532,305 @@ def default_stratum(agentic: Any) -> str:
         True
     """
     return str(json.loads(agentic._MANIFEST_PATH.read_text(encoding="utf-8"))["model"]["name"])
+
+
+def test_cyclic_schedule_balances_three_repetitions_and_records_each_cell(agentic: Any) -> None:
+    """Three screening repeats put each arm in every cyclic position equally.
+
+    A future controlled study needs order balance without random state or a second scheduler.  This checks every
+    coordinate instead of merely counting cells, so duplicate or fixed A/B/C ordering cannot pass by accident.
+    """
+    schedule = agentic._scheduled_coordinates(("BA-01", "BA-02"), repetitions=3, cyclic=True)
+
+    by_coordinate = {(coordinate["task_id"], coordinate["repetition"]): [] for coordinate in schedule}
+    for coordinate in schedule:
+        by_coordinate[(coordinate["task_id"], coordinate["repetition"])].append(coordinate["arm"])
+
+    assert list(by_coordinate.values()) == [
+        ["A_plain", "B_auto", "C_strict"],
+        ["B_auto", "C_strict", "A_plain"],
+        ["C_strict", "A_plain", "B_auto"],
+        ["B_auto", "C_strict", "A_plain"],
+        ["C_strict", "A_plain", "B_auto"],
+        ["A_plain", "B_auto", "C_strict"],
+    ]
+    assert {coordinate["arm"] for coordinate in schedule[::3]} == set(AGENTIC_ARMS)
+    assert [
+        coordinate["arm"]
+        for coordinate in agentic._scheduled_coordinates(
+            ("BA-02",), repetitions=1, cyclic=True, task_ordinals={"BA-02": 1}
+        )
+    ] == ["B_auto", "C_strict", "A_plain"]
+
+
+def test_summary_separates_all_assigned_from_matched_adherent_rows(agentic: Any) -> None:
+    """A failed C treatment never silently removes its expensive A/B comparison cells."""
+    rows = [
+        {
+            "task_id": "BA-01",
+            "repetition": 1,
+            "arm": arm,
+            "input_tokens": 100,
+            "cached_input_tokens": 20,
+            "fresh_input_tokens": 80,
+            "output_tokens": 10,
+            "elapsed_s": 2.0,
+            "codemap_used": arm != "A_plain",
+            "treatment_adherence": arm != "C_strict",
+            "quality": {"quality_score": 0.8},
+        }
+        for arm in AGENTIC_ARMS
+    ]
+    rows[0]["command_calls"] = 1
+    rows[0]["raw_events"] = [_query(), _completed()]
+
+    summary = agentic._summarize_telemetry(rows)
+
+    assert summary["all_assigned"]["C_strict"]["cells"] == 1
+    assert summary["all_assigned"]["C_strict"]["fresh_input_tokens"] == 80
+    assert summary["matched_adherent"]["A_plain"]["cells"] == 0
+    assert summary["matched_adherent"]["C_strict"]["cells"] == 0
+    assert summary["task_comparisons"]["matched_a_c_coordinates"] == 0
+    assert summary["all_assigned"]["A_plain"]["native_command_calls"] == 1
+    assert summary["all_assigned"]["A_plain"]["captured_output_characters"] > 0
+    assert summary["all_assigned"]["A_plain"]["max_concurrent_commands"] is None
+    assert summary["b_auto_diagnostic"] is True
+
+
+def test_diagnostic_replay_preserves_original_row_and_corrects_only_observation(agentic: Any, tmp_path: Path) -> None:
+    """Replay creates a new immutable diagnostic without changing historical adherence or costs."""
+    launcher = tmp_path / "installed" / "bin" / "codemap-py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+    raw_event = _query()
+    raw_event["item"]["command"] = f"{launcher} query --compact rdeps lightning.pytorch.callbacks.timer"
+    source = tmp_path / "telemetry.jsonl"
+    original = {
+        "task_id": "BA-01",
+        "repetition": 1,
+        "arm": "C_strict",
+        "input_tokens": 123,
+        "cached_input_tokens": 23,
+        "output_tokens": 45,
+        "treatment_adherence": False,
+        "answer_contract_valid": True,
+        "codemap_used": False,
+        "raw_events": [raw_event, _completed()],
+        "launcher_path": str(launcher),
+    }
+    source.write_text(json.dumps(original, sort_keys=True) + "\n", encoding="utf-8")
+    replay_dir = tmp_path.with_name(f"{tmp_path.name}-replay")
+    replay_dir.mkdir()
+    destination = replay_dir / "replay.json"
+
+    agentic.replay_diagnostic(source, destination)
+
+    replay = json.loads(destination.read_text(encoding="utf-8"))
+    corrected = replay["rows"][0]
+    assert corrected["original"] == original
+    assert corrected["corrected_observed_use"] is True
+    assert corrected["original"]["treatment_adherence"] is False
+    assert corrected["original"]["input_tokens"] == 123
+    assert replay["source"]["telemetry_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert (
+        replay["detector"]["sha256"]
+        == hashlib.sha256((BENCHMARKS_DIR / "_bench_codex" / "runtime.py").read_bytes()).hexdigest()
+    )
+
+
+def test_diagnostic_replay_preserves_windows_launcher_text_on_non_windows_hosts(agentic: Any, tmp_path: Path) -> None:
+    """Replay preserves a Windows launcher string instead of applying the host path syntax."""
+    launcher = r"C:\agentic\bin\codemap-py"
+    raw_event = _query()
+    raw_event["item"]["command"] = f"{launcher} query --compact rdeps lightning.pytorch.callbacks.timer"
+    source = tmp_path / "telemetry.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "task_id": "BA-01",
+                "repetition": 1,
+                "arm": "C_strict",
+                "launcher_path": launcher,
+                "raw_events": [raw_event, _completed()],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    replay_dir = tmp_path.with_name(f"{tmp_path.name}-replay")
+    replay_dir.mkdir()
+    destination = replay_dir / "replay.json"
+
+    agentic.replay_diagnostic(source, destination)
+
+    corrected = json.loads(destination.read_text(encoding="utf-8"))["rows"][0]
+    assert corrected["corrected_observed_use"] is True
+    assert corrected["launcher_provenance"] == "recorded_per_cell"
+
+
+def test_a_c_pairing_does_not_depend_on_optional_b_adherence(agentic: Any) -> None:
+    """An optional-use canary failure cannot erase an otherwise valid A/C comparison."""
+    rows = [
+        {
+            "task_id": "BA-01",
+            "repetition": 1,
+            "arm": arm,
+            "input_tokens": 10,
+            "cached_input_tokens": 0,
+            "fresh_input_tokens": 10,
+            "output_tokens": 1,
+            "elapsed_s": 1.0,
+            "codemap_used": arm != "A_plain",
+            "treatment_adherence": arm != "B_auto",
+            "quality": {"quality_score": 0.8},
+        }
+        for arm in AGENTIC_ARMS
+    ]
+
+    summary = agentic._summarize_telemetry(rows)
+
+    assert summary["task_comparisons"]["matched_a_c_coordinates"] == 1
+    assert summary["matched_adherent"]["A_plain"]["cells"] == 1
+    assert summary["matched_adherent"]["C_strict"]["cells"] == 1
+    assert summary["matched_adherent"]["B_auto"]["cells"] == 0
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        pytest.param("/private/tmp/frozen-c-home/bin/codemap-py", id="posix"),
+        pytest.param(r"C:\agentic\bin\codemap-py", id="windows"),
+    ],
+)
+def test_diagnostic_replay_uses_reviewed_coordinate_map_without_relabeling_a_rows(
+    agentic: Any, tmp_path: Path, launcher: str
+) -> None:
+    """Legacy absolute commands require a reviewed per-cell path while A needs none."""
+    query = _query()
+    query["item"]["command"] = f"{launcher} query --compact rdeps lightning.pytorch.callbacks.timer"
+    source = tmp_path / "telemetry.jsonl"
+    source.write_text(
+        "\n".join(
+            (
+                json.dumps(
+                    {
+                        "task_id": "BA-01",
+                        "repetition": 1,
+                        "arm": "C_strict",
+                        "launcher_path": "relative/codemap-py",
+                        "raw_events": [query, _completed()],
+                    }
+                ),
+                json.dumps({"task_id": "BA-01", "repetition": 1, "arm": "A_plain", "raw_events": [_completed()]}),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    launcher_map = tmp_path / "launchers.json"
+    launcher_map.write_text(
+        json.dumps(
+            {
+                "coordinates": [
+                    {
+                        "task_id": "BA-01",
+                        "repetition": 1,
+                        "arm": "C_strict",
+                        "launcher_path": launcher,
+                        "source_evidence": {"frozen_skill_sha256": "a" * 64},
+                    },
+                    {"task_id": "BA-01", "repetition": 1, "arm": "A_plain", "launcher_path": None},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    replay_dir = tmp_path.with_name(f"{tmp_path.name}-replay")
+    replay_dir.mkdir()
+    output = replay_dir / "replay.json"
+
+    agentic.replay_diagnostic(source, output, launcher_map_path=launcher_map)
+
+    replay = json.loads(output.read_text(encoding="utf-8"))
+    assert replay["rows"][0]["corrected_observed_use"] is True
+    assert replay["rows"][0]["launcher_provenance"] == {
+        "launcher_path": launcher,
+        "source_evidence": {"frozen_skill_sha256": "a" * 64},
+    }
+    assert replay["rows"][1]["corrected_observed_use"] is False
+    assert replay["rows"][1]["original"]["arm"] == "A_plain"
+    assert (
+        replay["source"]["coordinate_launcher_map"]["sha256"] == hashlib.sha256(launcher_map.read_bytes()).hexdigest()
+    )
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        pytest.param("/private/tmp/frozen-c-home/bin/codemap-py", id="posix"),
+        pytest.param(r"C:\agentic\bin\codemap-py", id="windows"),
+    ],
+)
+def test_diagnostic_replay_marks_relative_launcher_without_map_unavailable(
+    agentic: Any, tmp_path: Path, launcher: str
+) -> None:
+    """A relative recorded launcher cannot be mistaken for reviewed absolute provenance."""
+    query = _query()
+    query["item"]["command"] = f"{launcher} query --compact rdeps lightning.pytorch.callbacks.timer"
+    source = tmp_path / "telemetry.jsonl"
+    source.write_text(
+        json.dumps(
+            {
+                "task_id": "BA-01",
+                "repetition": 1,
+                "arm": "C_strict",
+                "launcher_path": "relative/codemap-py",
+                "raw_events": [query, _completed()],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    replay_dir = tmp_path.with_name(f"{tmp_path.name}-replay")
+    replay_dir.mkdir()
+    output = replay_dir / "replay.json"
+    agentic.replay_diagnostic(source, output)
+
+    row = json.loads(output.read_text(encoding="utf-8"))["rows"][0]
+    assert row["corrected_observed_use"] is None
+    assert row["corrected_observed_use_status"] == "unavailable_launcher_provenance"
+    assert row["launcher_provenance"] is None
+
+
+def test_diagnostic_replay_rejects_output_inside_historical_run(agentic: Any, tmp_path: Path) -> None:
+    """Derived replay data cannot be inserted into the immutable source directory."""
+    source = tmp_path / "telemetry.jsonl"
+    source.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="outside the historical telemetry directory"):
+        agentic.replay_diagnostic(source, tmp_path / "observed-use-replay.json")
+
+
+def test_replay_launcher_map_requires_object_evidence_and_known_coordinate_keys(agentic: Any, tmp_path: Path) -> None:
+    """Reviewed absolute provenance cannot be a truthy placeholder or carry ignored fields."""
+    map_path = tmp_path / "launchers.json"
+    map_path.write_text(
+        json.dumps(
+            {
+                "coordinates": [
+                    {
+                        "task_id": "BA-01",
+                        "repetition": 1,
+                        "arm": "C_strict",
+                        "launcher_path": "/private/tmp/codemap-py",
+                        "source_evidence": "reviewed",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid coordinate provenance"):
+        agentic._load_replay_launcher_map(map_path)

@@ -2,14 +2,35 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
+import re
 import sys
 
 
 BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
-from _bench_common.presentation import format_artifact_block, format_paid_command_block, format_quality  # noqa: E402
+from _bench_common.presentation import (  # noqa: E402
+    benchmark_console,
+    format_artifact_block,
+    format_paid_command_block,
+    format_quality,
+    print_legend,
+)
+
+
+def test_live_legend_panel_is_120_columns() -> None:
+    """Every provider gets a 120-column panel without truncating its legend body."""
+    stream = io.StringIO()
+    body = "Legend content " + "x" * 90
+
+    print_legend([body], console=benchmark_console(file=stream, force_color=True))
+
+    visible = re.sub(r"\x1b\[[0-9;]*m", "", stream.getvalue()).splitlines()
+    assert {len(line) for line in visible} == {120}
+    assert len(visible) == 3
+    assert body in visible[1]
 
 
 def test_multiple_artifacts_render_as_a_readable_list() -> None:

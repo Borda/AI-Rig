@@ -12,9 +12,9 @@ from typing import Any
 PAID_COMMAND_LABEL = "PAID_COMMAND:"
 #: Width of the rules framing a paid command, wide enough for a flag line without wrapping.
 PAID_COMMAND_RULE_WIDTH = 78
-#: Every framed block a run prints shares this width, so panels, rules, and command blocks line up
-#: instead of each taking the terminal's own width.
-BENCHMARK_OUTPUT_WIDTH = PAID_COMMAND_RULE_WIDTH
+#: Terminal legends and section rules share a fixed width; archived markers and copyable command
+#: rules retain their existing width for log compatibility.
+BENCHMARK_OUTPUT_WIDTH = 120
 
 
 def titled_rule(title: str, *, character: str = "=", width: int = PAID_COMMAND_RULE_WIDTH) -> str:
@@ -256,9 +256,9 @@ def print_plan_row(row: str, *, console: Any) -> None:
 def benchmark_console(file: Any = None, *, force_color: bool = False) -> Any:
     """Build the one console every benchmark surface renders through.
 
-    Framed output is fixed at :data:`BENCHMARK_OUTPUT_WIDTH` so a legend, a section rule, and a paid
-    command block are the same width regardless of how wide the window happens to be. Redirected
-    output keeps its plain, ANSI-free form, which is what run logs and downstream parsers read.
+    Terminal legends and section rules use :data:`BENCHMARK_OUTPUT_WIDTH` regardless of the window
+    width. Plain log markers and paid-command rules retain their existing width and ANSI-free form
+    for compatibility with archived streams and downstream parsers.
 
     Args:
         file: Stream to render into; ``None`` uses the console's own default of stdout.
