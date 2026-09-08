@@ -439,7 +439,7 @@
       "report \\[<report-file>:<line>\\].*online \\[<comment\\|thread\\|review-id>\\]",
       "Every source has one owning item",
       "Keep full source records in metadata and expanded item records",
-      "layout=grouped",
+      "layout=concise",
       "resolution_status.*O<n>",
       "E<n>.*owner/status",
       "complete body",

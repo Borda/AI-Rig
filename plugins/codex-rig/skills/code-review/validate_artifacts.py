@@ -499,8 +499,22 @@ def _operational_blocker_identities(metadata: dict[str, Any], finding_ids: set[s
         raise SystemExit("review-operational-blockers-invalid")
     identities: set[str] = set()
     for index, blocker in enumerate(blockers, start=1):
-        if not isinstance(blocker, dict) or set(blocker) != {"id"}:
+        if not isinstance(blocker, dict) or set(blocker) not in (
+            {"id"},
+            {"id", "title", "required_change", "evidence"},
+        ):
             raise SystemExit(f"review-operational-blocker-invalid:{index}")
+        if "title" in blocker:
+            for field in ("title", "required_change"):
+                if not isinstance(blocker[field], str) or not blocker[field].strip():
+                    raise SystemExit(f"review-operational-blocker-{field}-invalid:{index}")
+            evidence = blocker["evidence"]
+            if (
+                not isinstance(evidence, list)
+                or not evidence
+                or any(not isinstance(entry, str) or not entry.strip() for entry in evidence)
+            ):
+                raise SystemExit(f"review-operational-blocker-evidence-invalid:{index}")
         identity = blocker["id"]
         if not isinstance(identity, str) or not identity.strip():
             raise SystemExit(f"review-operational-blocker-id-invalid:{index}")
@@ -587,7 +601,11 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
         raise SystemExit("review-findings-action-table-empty")
     finding_ids = _review_finding_identities(metadata, result)
     blocker_ids = _operational_blocker_identities(metadata, finding_ids or set()) if finding_ids is not None else set()
-    records_by_id = {record["id"]: record for record in metadata["review_findings"]} if finding_ids is not None else {}
+    records_by_id = (
+        {record["id"]: record for record in metadata["review_findings"] + metadata.get("operational_blockers", [])}
+        if finding_ids is not None
+        else {}
+    )
     action_identities: set[str] = set()
     for index, row in enumerate(action_rows, start=1):
         if not all(row):

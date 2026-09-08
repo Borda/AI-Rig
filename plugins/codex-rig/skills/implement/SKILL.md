@@ -35,6 +35,8 @@ The promoted route permits read-only evidence, acceptance, and documentation-imp
 
 ### Required barrier
 
+Apply the shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing any child work. Include `read_host` only from verified launcher-supported child controls. Missing or incompatible controls make `auto` resolve serial with a reason; explicit parallel-read stops before dispatch. A plan declaration is not effective-control proof, and post-run validation remains mandatory.
+
 Before any dispatch, freeze the goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires a new plan.
 
 The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. A planned write requires `<run-directory>/write-approval.json` containing only the exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`.

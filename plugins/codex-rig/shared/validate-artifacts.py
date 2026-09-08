@@ -402,7 +402,8 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
     if not isinstance(rows, list):
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
-    if metadata.get("resolution_scope", {}).get("presentation_version") == 2 and tables[0].get("layout") != "grouped":
+    presentation = metadata.get("resolution_scope", {}).get("presentation_version")
+    if presentation in {2, 3} and tables[0].get("layout") != {2: "grouped", 3: "concise"}[presentation]:
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
     expected_rows = []
     expected_details = []
@@ -544,7 +545,11 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
         if any(not isinstance(identity, str) or not identity.strip() for identity in identities):
             raise SystemExit("code-review-final-handoff-finding-records-invalid")
         table = tables_by_heading.get("Review Findings and Merge Blocks", {})
-        if metadata.get("finding_records_version") == 1 and identities and table.get("layout") != "grouped":
+        if (
+            metadata.get("finding_records_version") == 1
+            and identities
+            and table.get("layout") not in {"grouped", "concise"}
+        ):
             raise SystemExit("code-review-final-handoff-grouped-layout-required")
         rows = table.get("rows", [])
         row_identities = [
@@ -553,7 +558,7 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
         ]
         if len(row_identities) != len(identities) or set(row_identities) != set(identities):
             raise SystemExit("code-review-final-handoff-finding-identity-mismatch")
-        if table.get("layout") == "grouped":
+        if table.get("layout") in {"grouped", "concise"}:
             by_id = {record["id"]: record for record in records + blockers}
             for row in rows:
                 record = by_id[row["cells"][0]]
@@ -883,7 +888,7 @@ def _validate_code_remediate_report_intake(result: dict[str, Any], out_dir: Path
         if not isinstance(value, int) or value < 0:
             raise SystemExit(f"code-remediate-invalid-review-report-intake:{key}")
 
-    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") == 2
+    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3}
     if grouped_scope:
         # Item classifications, unlike rendered titles, bind report gate obligations to the inventory.
         report_items = [
@@ -958,7 +963,7 @@ def _validate_code_remediate_scope_selection(metadata: dict[str, Any], out_dir: 
     if not isinstance(selected_groups, list) or not all(isinstance(item, str) for item in selected_groups):
         raise SystemExit("code-remediate-invalid-selected-severity-groups")
 
-    if resolution_scope.get("presentation_version") == 2:
+    if resolution_scope.get("presentation_version") in {2, 3}:
         _validate_grouped_selection(metadata, out_dir)
         return
 
@@ -1043,6 +1048,8 @@ def _validate_grouped_selection(metadata: dict[str, Any], out_dir: Path) -> None
     if metadata.get("mode") == "pr" and inventory.get("pr_relevance") != metadata.get("pr_relevance"):
         raise SystemExit("code-remediate-selection-pr-relevance-mismatch")
     scope = metadata["resolution_scope"]
+    if inventory.get("presentation_version", 2) != scope["presentation_version"]:
+        raise SystemExit("code-remediate-selection-presentation-version-mismatch")
     selected = inventory.get("selected_indexes")
     selectable = [item for item in inventory["items"] if item["selectable"]]
     if (

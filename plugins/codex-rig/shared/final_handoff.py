@@ -167,8 +167,8 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         layout = table.get("layout", "legacy")
         if (
             not isinstance(layout, str)
-            or layout not in {"legacy", "grouped"}
-            or (layout == "grouped" and (skill not in {"code-review", "code-remediate"} or heading == "PR Snapshot"))
+            or layout not in {"legacy", "grouped", "concise"}
+            or (layout != "legacy" and (skill not in {"code-review", "code-remediate"} or heading == "PR Snapshot"))
         ):
             raise HandoffError(f"table-layout-invalid:{heading}")
         expected = REVIEW_TABLE_COLUMNS.get(heading) if skill == "code-review" else STANDARD_COLUMNS[skill]
@@ -187,7 +187,7 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             cells = _require_string_list(row.get("cells"), f"table-row-cells:{row_id}", allow_empty=False)
             if len(cells) != len(columns):
                 raise HandoffError(f"table-row-width-mismatch:{row_id}")
-            if layout == "grouped" and skill == "code-review":
+            if layout in {"grouped", "concise"} and skill == "code-review":
                 _require_string(row.get("title"), f"table-row-title:{row_id}")
                 for field in ("summary", "closure_evidence"):
                     if field in row:
@@ -392,7 +392,7 @@ def _table_cell(value: str) -> str:
 
 def _render_table(table: dict[str, Any]) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
-    if table.get("layout") == "grouped":
+    if table.get("layout") in {"grouped", "concise"}:
         return _render_grouped_table(table)
     columns = table["columns"]
     lines = [f"**{table['heading']}**", "", "| " + " | ".join(columns) + " |"]
@@ -409,9 +409,12 @@ def _render_table(table: dict[str, Any]) -> list[str]:
 
 
 def _render_grouped_table(table: dict[str, Any]) -> list[str]:
-    """Present bound machine cells as a short overview and labeled per-item details."""
+    """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
+    concise = table.get("layout") == "concise"
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
+    if concise:
+        columns.insert(-1, "Resolution" if remediation else "Resolution proposal")
     lines = [
         f"**{table['heading']}**",
         "",
@@ -422,15 +425,27 @@ def _render_grouped_table(table: dict[str, Any]) -> list[str]:
     for row in table["rows"]:
         cells = row["cells"]
         overview = [*cells[:3], cells[4].split(" — [", 1)[0]] if remediation else [cells[0], row["title"], cells[3]]
+        if concise:
+            resolution = cells[1]
+            if remediation:
+                resolution = re.sub(
+                    r"\[([^\]]+)\]",
+                    lambda match: definitions.get(match[1], match[0]),
+                    cells[4].split(" — ", 1)[-1],
+                )
+            overview.insert(-1, resolution)
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
     for row in table["rows"]:
         cells = row["cells"]
         title = cells[2] if remediation else row["title"]
-        lines.extend(("", f"**{_table_cell(cells[0])} — {_table_cell(title)}**", ""))
+        heading = _table_cell(cells[0]) if concise else f"{_table_cell(cells[0])} — {_table_cell(title)}"
+        lines.extend(("", f"**{heading}**", ""))
         if row.get("summary"):
-            lines.append(f"- Issue: {_table_cell(row['summary'])}")
+            lines.append(f"- {'Context' if concise else 'Issue'}: {_table_cell(row['summary'])}")
         fields = zip(table["columns"][3:], cells[3:]) if remediation else zip(table["columns"][1:], cells[1:])
         for label, value in fields:
+            if concise and label in {"Required change", "Status", "Outcome"}:
+                continue
             # Expand only declared symbols; source IDs remain literal and fully visible.
             if label == "Sources":
                 lines.append("- Sources:")
@@ -450,6 +465,9 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
     nonselectable entries, participate in identity and source counts. Related mentions never count as new sources.
     """
     inventory = _require_object(payload, "selection")
+    presentation = inventory.get("presentation_version", 2)
+    if type(presentation) is not int or presentation not in {2, 3}:
+        raise HandoffError("selection-presentation-version-invalid")
     if (
         type(inventory.get("schema_version")) is not int
         or inventory["schema_version"] != 1
@@ -477,6 +495,8 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
         if not isinstance(item.get("selectable"), bool):
             raise HandoffError("selection-item-selectable-invalid")
         if item["selectable"]:
+            if presentation == 3:
+                _require_string(item.get("resolution_proposal"), "selection-item-resolution_proposal")
             selectable.append(item)
         records = item.get("sources")
         if not isinstance(records, list) or not records:
@@ -565,21 +585,31 @@ def render_selection(payload: object) -> str:
             "",
             f"Items: {len(items)}; selectable: {len(selectable)}; sources: {source_count}; grouped items: {grouped}.",
             "",
-            "| # | Severity | Finding |",
-            "| --- | --- | --- |",
+            "| # | Severity | Finding | Resolution proposal | Sources |"
+            if inventory.get("presentation_version") == 3
+            else "| # | Severity | Finding |",
+            "| --- | --- | --- | --- | --- |" if inventory.get("presentation_version") == 3 else "| --- | --- | --- |",
         )
     )
     for index, item in enumerate(selectable, 1):
+        extra = ""
+        if inventory.get("presentation_version") == 3:
+            # Aggregate only genuine sources; related mentions are not independent evidence.
+            kinds = [source["kind"] for source in item["sources"]]
+            tags = "; ".join(f"{kind} ×{kinds.count(kind)}" for kind in dict.fromkeys(kinds))
+            extra = f" {_table_cell(item['resolution_proposal'])} | {tags} |"
         lines.append(
-            f"| {index} | {item['severity']} | {_table_cell(item['input_item_id'])} — {_table_cell(item['item_name'])} |"
+            f"| {index} | {item['severity']} | {_table_cell(item['input_item_id'])} — {_table_cell(item['item_name'])} |{extra}"
         )
     for index, item in enumerate(selectable, 1):
+        concise = inventory.get("presentation_version") == 3
+        title = "" if concise else f" — {_table_cell(item['item_name'])}"
         lines.extend(
             (
                 "",
-                f"### {index} · {_table_cell(item['input_item_id'])} — {_table_cell(item['item_name'])}",
+                f"### {index} · {_table_cell(item['input_item_id'])}{title}",
                 "",
-                f"- Issue: {_table_cell(item['summary'])}",
+                f"- {'Context' if concise else 'Issue'}: {_table_cell(item['summary'])}",
                 f"- Done when: {_table_cell(item['closure_evidence'])}",
             )
         )

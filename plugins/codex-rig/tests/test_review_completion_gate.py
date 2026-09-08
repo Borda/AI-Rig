@@ -384,7 +384,16 @@ def test_review_preflight_rejects_unusable_host_before_dispatch(tmp_path: Path, 
     path = tmp_path / "plan.json"
     path.write_text(json.dumps(plan), encoding="utf-8")
     completed = subprocess.run(
-        [sys.executable, str(PARALLEL), "preflight", "--consumer", "code-review", "--plan", str(path)],
+        [
+            sys.executable,
+            str(PARALLEL),
+            "preflight",
+            "--consumer",
+            "code-review",
+            "--plan",
+            str(path),
+            "--execution=parallel-read",
+        ],
         capture_output=True,
         text=True,
     )
@@ -392,3 +401,42 @@ def test_review_preflight_rejects_unusable_host_before_dispatch(tmp_path: Path, 
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "review-host-controls-unavailable-before-dispatch" in completed.stderr
+
+
+@pytest.mark.parametrize("tier", ["BROAD", "HIGH_RISK"])
+def test_serial_substitutes_cannot_complete_independent_review(assessed_pr: Path, tier: str) -> None:
+    """Reject a passing high-risk verdict even when both inline role outputs are complete."""
+    result_path = assessed_pr / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    routing_path = assessed_pr / "review-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    manifest_path = assessed_pr / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    roles = ["challenger", "qa-specialist"]
+    routing.update(risk_tier=tier, triggered_roles=roles, trigger_reasons={role: ["Broad review"] for role in roles})
+    passes = []
+    for role in roles:
+        output = assessed_pr / f"{role}.md"
+        output.write_text(
+            f"{role}: bounded inline review found no additional issue; independence remains unavailable.\n",
+            encoding="utf-8",
+        )
+        passes.append(
+            {
+                "role": role,
+                "axis": "tests",
+                "mode": "substituted",
+                "trigger": "Broad review",
+                "confidence": 0.94,
+                "blocking_findings": 0,
+                "output_path": str(output),
+                "role_card_sha256": hashlib.sha256((PLUGIN_ROOT / "roles" / role / "ROLE.md").read_bytes()).hexdigest(),
+            }
+        )
+    manifest["passes"] = passes
+    result["metadata"].update(risk_tier=tier, specialist_passes=passes, fanout_substituted=True)
+    for path, payload in ((result_path, result), (routing_path, routing), (manifest_path, manifest)):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="independent-review-required-for-pass:challenger,qa-specialist"):
+        validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)

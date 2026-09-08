@@ -818,7 +818,12 @@ def resolve_consumer_execution_mode(
     plan_path: Path,
     approval_path: Path | None,
 ) -> dict[str, object]:
-    """Resolve a promoted consumer from one frozen plan and exact write approval."""
+    """Admit compatible read plans or serial fallback without certifying runtime controls.
+
+    Host declarations are compatibility inputs transcribed from the actual launcher contract. They never replace
+    authoritative post-run control validation. Explicit parallel reads fail closed; automatic mode retains serial
+    work when compatible child controls are unavailable. Review independence remains a separate completion gate.
+    """
     try:
         plan_bytes = plan_path.read_bytes()
         plan = json.loads(plan_bytes)
@@ -849,15 +854,19 @@ def resolve_consumer_execution_mode(
         read_parallel_promoted=True,
         write_parallel_promoted=False,
     )
-    if consumer_id == "code-review" and resolution["effective_mode"] == "parallel-read":
-        # Role defaults are requests, not proof the current launcher can select review-safe children.
-        # This admission declaration never replaces the authoritative post-run child-control checks.
-        if plan.get("review_host") != {
+    if resolution["effective_mode"] == "parallel-read":
+        # Retain historical review plans; a new declaration cannot be rescued by a conflicting legacy value.
+        host = plan.get("read_host", plan.get("review_host") if consumer_id == "code-review" else None)
+        if host != {
             "source": "runtime-tool-contract",
             "sandbox_mode": "read-only",
             "approval_policy": "never",
         }:
-            raise ValueError("review-host-controls-unavailable-before-dispatch")
+            if resolution["requested_mode"] != "auto":
+                prefix = "review-" if consumer_id == "code-review" else ""
+                raise ValueError(f"{prefix}host-controls-unavailable-before-dispatch")
+            resolution["effective_mode"] = "serial"
+            resolution["fallback_reason"] = "host-controls-unavailable-before-dispatch"
     return {
         **resolution,
         **consumer_policy,

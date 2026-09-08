@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.4
+
+- Consolidate review/remediation handoffs: concrete resolutions in overview rows, ID-only supporting details, descriptive gate blockers, and compact source-kind counts in remediation selection. Preserve canonical evidence bindings and historical rendering.
+- Apply launcher compatibility admission across review, implementation and management before parallel reads. Automatic mode retains serial fallback where independent passes are not mandatory; explicit parallel reads reject unavailable controls. Preserve authoritative runtime checks and high-risk review independence; no new host capability or live-runtime support is claimed.
+
 ## 0.14.3
 
 - Align active Codemap consumer guidance with once-only launcher/context resolution, persisted evidence reuse, direct known syntax, and independent stable read-only queries. Preserve optional-provider fallback and distinguish settled graph facts from separate implementation or coverage questions.

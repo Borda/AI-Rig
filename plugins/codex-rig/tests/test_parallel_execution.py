@@ -470,6 +470,11 @@ def _bind_portable_read_consumer_policy(
         "parent_writes": parent_writes,
         "approval_requirement": "exact-plan-digest" if parent_writes == "planned" else "not-required",
     }
+    plan["read_host"] = {
+        "source": "runtime-tool-contract",
+        "sandbox_mode": "read-only",
+        "approval_policy": "never",
+    }
     plan_path.write_text(json.dumps(plan) + "\n", encoding="utf-8", newline="\n")
     manifest["plan_sha256"] = _sha256(plan_path)
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")

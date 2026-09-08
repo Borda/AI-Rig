@@ -52,7 +52,9 @@ def test_visible_tables_use_compact_sources_without_dropping_details() -> None:
         in skill
     )
     assert "Keep full source records in metadata and expanded item records" in skill
-    assert "layout=grouped" in skill
+    assert "layout=concise" in skill
+    assert "# | Severity | Finding | Resolution proposal | Sources" in skill
+    assert "report ×1; online ×2" in skill
     assert "Failure blocks the prompt and edits" in skill
     assert "omitted_source_records_total" in skill
 

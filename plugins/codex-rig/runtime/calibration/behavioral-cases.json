@@ -2,6 +2,36 @@
   "cases": [
     {
       "expected_findings": [
+        "review-overview-resolution-missing",
+        "review-detail-repeats-overview",
+        "operational-blocker-title-not-descriptive"
+      ],
+      "id": "code-review-concise-handoff",
+      "prompt": "Assess a review handoff whose overview lacks resolution proposals, whose detail groups repeat every finding title, action and status under an Issue label, and whose gate blocker uses its ID as its human title. Keep one concise proposal per row, descriptive blocker names, and only additional context, evidence and acceptance checks below; preserve canonical binding and historical output bytes.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "selection-source-summary-missing",
+        "related-mentions-counted-as-sources",
+        "selection-resolution-proposal-missing"
+      ],
+      "id": "code-remediate-concise-source-selection",
+      "prompt": "Assess remediation selection that omits a short resolution proposal and source column, then counts three repeated report mentions as three independent sources. Display bounded source-kind counts derived from genuine source records, retain full pointers once in the supporting groups, and keep the table's finding names and proposals out of repeated detail prose.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "consumer-host-admission-missing",
+        "requested-controls-treated-as-enforced",
+        "serial-fallback-labelled-independent"
+      ],
+      "id": "implement-host-control-compatibility",
+      "prompt": "Assess implementation and management consumers that inherit a workspace-write parent with no proven child override, treat read-only role text as enforced isolation, and dispatch before checking controls required by runtime validation. Automatic mode may retain equal-gate serial work, but explicit parallel reads must stop before dispatch, and serial fallback cannot satisfy mandatory independent review. A planning declaration is never observed host proof.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [
         "legacy-layout-rule-on-grouped-output",
         "closure-only-finding-merge"
       ],
@@ -1633,5 +1663,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.24"
+  "version": "1.25"
 }

@@ -1,6 +1,7 @@
 """Acceptance checks for canonical findings and readable selection handoffs."""
 
 import copy
+import hashlib
 from io import StringIO
 import json
 from pathlib import Path
@@ -130,6 +131,142 @@ def test_grouped_final_remediation_keeps_evidence_without_symbols() -> None:
     assert "[E1]" not in rendered
 
 
+def test_concise_review_states_actions_once_and_names_gate() -> None:
+    """Keep proposals in the overview and only supporting context below it."""
+    payload = _handoff_payload()
+    payload.update(
+        skill="code-review",
+        branch="assessed",
+        outcome={"title": "Review Decision", "summary": "Recommendation: needs-more-work."},
+    )
+    payload["tables"] = [
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "layout": "concise",
+            "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+            "rows": [
+                {
+                    "id": "CR-1",
+                    "title": "Boundary regression unprotected",
+                    "summary": "Both selectors satisfy the current assertion.",
+                    "closure_evidence": "The regression fails with the wrong selector.",
+                    "cells": ["CR-1", "Use inputs that distinguish selectors.", "tests/test_parser.py:42", "Required"],
+                    "source_ids": ["report:CR-1"],
+                },
+                {
+                    "id": "CR-2",
+                    "title": "Canonical gates unavailable",
+                    "cells": ["CR-2", "Rerun gates in the supported environment.", "gates.json", "Verify"],
+                    "source_ids": ["report:CR-2"],
+                },
+            ],
+        }
+    ]
+    rendered = _load_finalizer().render_handoff(payload)
+    assert "| ID | Finding | Resolution proposal | Status |" in rendered
+    for text in (
+        "Boundary regression unprotected",
+        "Use inputs that distinguish selectors.",
+        "Canonical gates unavailable",
+        "Rerun gates in the supported environment.",
+    ):
+        assert rendered.count(text) == 1
+    assert "**CR-1**" in rendered
+    assert "- Context: Both selectors satisfy the current assertion." in rendered
+    assert "- Done when: The regression fails with the wrong selector." in rendered
+    assert "- Evidence: gates.json" in rendered
+    assert "- Status:" not in rendered and "- Required change:" not in rendered and "- Issue:" not in rendered
+
+
+def test_concise_selection_aggregates_sources_without_losing_references() -> None:
+    """Expose bounded source tags and proposals while preserving full provenance once."""
+    payload = _selection()
+    payload["presentation_version"] = 3
+    for item in payload["items"]:
+        item["resolution_proposal"] = "Add a distinguishing regression."
+    payload["items"][0]["sources"].append(
+        {
+            "kind": "online",
+            "source_id": "thread-2",
+            "location": "src/parser.py:12",
+            "body": "Protect this input.",
+            "evidence": "threads.json",
+        }
+    )
+    rendered = _load_finalizer().render_selection(payload)
+    assert "| # | Severity | Finding | Resolution proposal | Sources |" in rendered
+    assert "| report ×1; online ×1 |" in rendered
+    assert "| online ×1 |" in rendered
+    for item in payload["items"]:
+        assert rendered.count(item["item_name"]) == 1
+        for source in item["sources"]:
+            assert rendered.count(f"{source['kind']} [{source['source_id']}]") == 1
+    assert "- Context: Existing supported inputs must remain accepted." in rendered
+    assert "### 1 · F7\n" in rendered
+    assert "- Issue:" not in rendered
+
+
+def test_concise_selection_requires_proposal() -> None:
+    """Do not offer selectable work without a concrete resolution proposal."""
+    payload = _selection()
+    payload["presentation_version"] = 3
+    with pytest.raises(ValueError, match="selection-item-resolution_proposal"):
+        _load_finalizer().render_selection(payload)
+
+
+def test_operational_blocker_accepts_bound_description() -> None:
+    """Name gate failures without counting them as source defects."""
+    metadata = _metadata()
+    metadata["operational_blockers"] = [
+        {
+            "id": "GATE-1",
+            "title": "Canonical gates unavailable",
+            "required_change": "Rerun canonical gates.",
+            "evidence": ["gates.json"],
+        }
+    ]
+    validator = _load_validator()
+    assert validator._operational_blocker_identities(metadata, {"F7"}) == {"GATE-1"}
+    metadata["operational_blockers"][0]["title"] = ""
+    with pytest.raises(SystemExit, match="review-operational-blocker"):
+        validator._operational_blocker_identities(metadata, {"F7"})
+
+
+def test_concise_remediation_expands_resolution_once() -> None:
+    """Keep the bound resolution in its overview cell and preserve all supporting sources."""
+    payload = _handoff_payload()
+    table = payload["tables"][0]
+    table["layout"] = "concise"
+    table["rows"][0]["cells"][4] = "implemented — [O1]"
+    table["rows"][0]["cells"][5] = "[E1] — owner/status: fixed"
+    table["details"] = [{"id": "O1", "text": "Guard added."}, {"id": "E1", "text": "Tests pass."}]
+    rendered = _load_finalizer().render_handoff(payload)
+    assert "| ID | Severity | Finding | Resolution | Outcome |" in rendered
+    assert "| Guard added. | implemented |" in rendered
+    assert rendered.count("Guard added.") == 1
+    assert rendered.count("Preserve a \\| boundary") == 1
+    assert "- Sources:\n  - report [CR-1]" in rendered
+    assert "- Evidence / next action: Tests pass. — owner/status: fixed" in rendered
+    assert "- Outcome:" not in rendered
+    assert "[O1]" not in rendered and "[E1]" not in rendered
+
+
+def test_historical_presentation_keeps_digest_bound_bytes() -> None:
+    """Preserve saved version-2 selection and legacy/grouped handoffs from release 0.14.3."""
+    renderer = _load_finalizer()
+    payload = _handoff_payload()
+    assert hashlib.sha256(renderer.render_handoff(payload).encode()).hexdigest() == (
+        "acb1961071e2667d46ee791a4b8b01ef8881695922cc8ea86f0abac587d93ba6"
+    )
+    payload["tables"][0]["layout"] = "grouped"
+    assert hashlib.sha256(renderer.render_handoff(payload).encode()).hexdigest() == (
+        "24eb8eb5e23dac060295fadc5fead206e3e6b176abcebc0b552788bbf446cf31"
+    )
+    assert hashlib.sha256(renderer.render_selection(_selection()).encode()).hexdigest() == (
+        "2e3d8bc414fd5b5af44557801d3314f340ac97b656e90d63162f946a2bba5731"
+    )
+
+
 def test_enriched_review_records_accept_titles_without_changing_identity() -> None:
     """Allow canonical descriptions while retaining legacy records and severity binding."""
     metadata = _metadata()
@@ -157,15 +294,19 @@ def test_enriched_review_records_accept_titles_without_changing_identity() -> No
         pytest.param([1, 2], id="all"),
     ],
 )
-def test_selection_confirmation_binds_final_inventory(tmp_path: Path, selected: list[int]) -> None:
+@pytest.mark.parametrize("presentation", [2, 3])
+def test_selection_confirmation_binds_final_inventory(tmp_path: Path, selected: list[int], presentation: int) -> None:
     """Bind the selected indexes and stable inventory to the final validation boundary."""
     payload = _selection()
+    payload["presentation_version"] = presentation
+    for item in payload["items"]:
+        item["resolution_proposal"] = "Add the missing regression."
     payload["selected_indexes"] = selected
     (tmp_path / "selection.json").write_text(json.dumps(payload), encoding="utf-8")
     (tmp_path / "resolution-scope.md").write_bytes(_load_finalizer().render_selection(payload).encode("utf-8"))
     metadata = {
         "resolution_scope": {
-            "presentation_version": 2,
+            "presentation_version": presentation,
             "selection_source": "explicit-input",
             "prompt_presented": False,
             "selection_confirmed_by_user": True,
@@ -497,7 +638,8 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
 
 
 @pytest.mark.parametrize("field", ["title", "summary", "closure_evidence", "action", "evidence"])
-def test_grouped_review_binds_every_display_field(field: str) -> None:
+@pytest.mark.parametrize("layout", ["grouped", "concise"])
+def test_grouped_review_binds_every_display_field(field: str, layout: str) -> None:
     """Reject plausible but substituted content without weakening stable ID coverage."""
     metadata = _metadata()
     metadata.update(scope="working-tree", finding_records_version=1)
@@ -535,7 +677,7 @@ def test_grouped_review_binds_every_display_field(field: str) -> None:
         tables=[
             {
                 "heading": "Review Findings and Merge Blocks",
-                "layout": "grouped",
+                "layout": layout,
                 "columns": ["Finding / area", "Required change", "Evidence", "Status"],
                 "rows": rows,
             }
@@ -552,7 +694,10 @@ def test_grouped_review_binds_every_display_field(field: str) -> None:
     _load_validator()._validate_review_decision(metadata, result)
     VALIDATOR._validate_code_review_final_handoff(result, payload)
     rendered = _load_finalizer().render_handoff(payload)
-    assert "| ID | Finding | Status |" in rendered
+    expected_columns = (
+        "| ID | Finding | Status |" if layout == "grouped" else "| ID | Finding | Resolution proposal | Status |"
+    )
+    assert expected_columns in rendered
     assert "- Done when: Compatibility regression passes." in rendered
     if field in {"action", "evidence"}:
         rows[0]["cells"][1 if field == "action" else 2] = "Substituted content"
