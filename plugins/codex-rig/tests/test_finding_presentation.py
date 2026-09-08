@@ -455,7 +455,7 @@ def test_grouped_intake_rejects_miscounted_gate_items(tmp_path: Path, declared_c
 def test_new_canonical_marker_requires_complete_records() -> None:
     """Do not allow new producers to silently fall back to bare historical records."""
     metadata = _metadata()
-    metadata["finding_records_version"] = 1
+    metadata["review_findings"] = [{"id": "R1", "severity": "high"}, {"id": "R2", "severity": "medium"}]
     with pytest.raises(SystemExit, match="review-finding-canonical-details-missing"):
         _load_validator()._validate_review_decision(metadata, _result())
 

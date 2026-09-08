@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.6
+
+- Require the canonical finding-records marker on every new schema-v2 assessed review candidate. Omitting `finding_records_version` no longer falls back to the bare id/severity record shape, so a new producer cannot skip the canonical title, summary, required change, evidence, and closure fields. The final-handoff validator applies the same requirement and keeps the grouped/concise layout mandatory for those records. Schema-v1 historical results stay readable and exempt.
+
 ## 0.14.5
 
 - Separate read-only specialist findings from parent-owned report persistence and authorized executable probes. Keep investigation productive through safe serial probes without treating unexecuted requests as evidence, scratch directories as sandboxes, or diagnosis as source-edit authorization.

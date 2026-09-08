@@ -42,18 +42,44 @@ def _result() -> dict[str, object]:
 def _metadata(*, finding_severity: str = "high") -> dict[str, object]:
     """Return the assessed-review metadata for the identity-binding contract.
 
+    Records are canonical (``finding_records_version=1`` with complete detail fields) since the validator now
+    requires the marker on every new schema-v2 candidate. ``required_change``/``evidence`` match what ``_notes()``
+    renders so callers exercising the action table need no extra fixture work.
+
     Example:
         >>> _metadata()["review_decision"]["recommendation"]
         'needs-more-work'
     """
     return {
+        "finding_records_version": 1,
         "review_decision": {
             "recommendation": "needs-more-work",
             "summary": "The findings require changes.",
             "rationale": "The action rows map each assessed finding to a required change.",
         },
-        "review_findings": [{"id": "R1", "severity": finding_severity}, {"id": "R2", "severity": "medium"}],
-        "operational_blockers": [{"id": "G1"}],
+        "review_findings": [
+            {
+                "id": "R1",
+                "severity": finding_severity,
+                "title": "Resolve finding",
+                "summary": "Observed issue",
+                "required_change": "Resolve it",
+                "evidence": ["evidence"],
+                "closure_evidence": "Regression passes",
+            },
+            {
+                "id": "R2",
+                "severity": "medium",
+                "title": "Resolve finding",
+                "summary": "Observed issue",
+                "required_change": "Resolve it",
+                "evidence": ["evidence"],
+                "closure_evidence": "Regression passes",
+            },
+        ],
+        "operational_blockers": [
+            {"id": "G1", "title": "Resolve blocker", "required_change": "Resolve it", "evidence": ["evidence"]}
+        ],
     }
 
 
@@ -147,6 +173,30 @@ def test_schema_v2_rejects_finding_severity_totals_that_do_not_match_stable_reco
         _load_validator()._validate_review_decision(_metadata(finding_severity="medium"), _result())
 
 
+def test_schema_v2_rejects_a_new_candidate_that_omits_the_canonical_marker() -> None:
+    """A new schema-v2 candidate can no longer fall back to the bare shape by omitting the marker.
+
+    CR8: a producer that never sets ``finding_records_version`` previously validated as an ordinary bare
+    id/severity record set. That silently permitted new candidates to skip the canonical detail fields the
+    marker is meant to require.
+    """
+    metadata = _metadata()
+    del metadata["finding_records_version"]
+    with pytest.raises(SystemExit, match="review-finding-records-version-missing"):
+        _load_validator()._validate_review_decision(metadata, _result())
+
+
+def test_validator_cli_rejects_a_new_candidate_missing_the_canonical_marker(tmp_path: Path) -> None:
+    """Exercise the same closed loophole through the shipped CLI boundary."""
+    metadata = _metadata()
+    del metadata["finding_records_version"]
+
+    completed = _run_cli_validation(tmp_path, metadata, ["R1", "R2", "G1"])
+
+    assert completed.returncode != 0
+    assert "review-finding-records-version-missing" in completed.stderr
+
+
 @pytest.mark.parametrize("severity", [pytest.param([], id="list"), pytest.param({}, id="object")])
 def test_validator_cli_rejects_structured_finding_severity_without_traceback(tmp_path: Path, severity: object) -> None:
     """Malformed JSON values must preserve the validator's stable error contract."""
@@ -202,12 +252,25 @@ def test_schema_v1_does_not_interpret_opaque_historical_finding_metadata(tmp_pat
     _load_validator()._validate_action_table(notes, result, metadata, "pr")
 
 
+def _canonical_record(identity: str, severity: str) -> dict[str, object]:
+    """Return one canonical review-finding record for the given stable identity and severity."""
+    return {
+        "id": identity,
+        "severity": severity,
+        "title": "Resolve finding",
+        "summary": "Observed issue",
+        "required_change": "Resolve it",
+        "evidence": ["evidence"],
+        "closure_evidence": "Regression passes",
+    }
+
+
 @pytest.mark.parametrize(
     ("mutate_metadata", "identities", "error"),
     [
         pytest.param(
             lambda metadata: metadata.update(
-                {"review_findings": [{"id": "R1", "severity": "high"}, {"id": "R1", "severity": "medium"}]}
+                {"review_findings": [_canonical_record("R1", "high"), _canonical_record("R1", "medium")]}
             ),
             ["R1", "G1"],
             "review-finding-id-duplicate:R1",
@@ -215,7 +278,7 @@ def test_schema_v1_does_not_interpret_opaque_historical_finding_metadata(tmp_pat
         ),
         pytest.param(
             lambda metadata: metadata.update(
-                {"review_findings": [{"id": "R1", "severity": "medium"}, {"id": "R2", "severity": "medium"}]}
+                {"review_findings": [_canonical_record("R1", "medium"), _canonical_record("R2", "medium")]}
             ),
             ["R1", "R2", "G1"],
             "review-findings-severity-count-mismatch:high",

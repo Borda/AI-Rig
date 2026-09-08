@@ -121,6 +121,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
                 "summary": "Spelling corrected.",
                 "rationale": "No behavior change.",
             },
+            "finding_records_version": 1,
             "review_findings": [],
             "operational_blockers": [],
             "specialist_manifest": str(run / "specialist-manifest.json"),

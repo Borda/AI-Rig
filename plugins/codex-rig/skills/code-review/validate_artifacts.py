@@ -440,8 +440,10 @@ def _require_notes_sections(notes_path: Path) -> None:
 def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any]) -> set[str] | None:
     """Validate schema-v2 finding records and return their stable identities.
 
-    Schema-v1 results retain their historical severity-count-only shape. Schema-v2 assessed results must supply the
-    records that make those counts actionable.
+    Schema-v1 results retain their historical severity-count-only shape and are exempt from this check entirely.
+    Schema-v2 assessed results must declare ``finding_records_version=1`` and supply the complete canonical records that
+    make those counts actionable; omitting the marker no longer falls back to the bare id/severity shape for a new
+    candidate.
     """
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
@@ -451,7 +453,9 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
 
     records = metadata.get("review_findings")
     records_version = metadata.get("finding_records_version")
-    if records_version is not None and (type(records_version) is not int or records_version != 1):
+    if records_version is None:
+        raise SystemExit("review-finding-records-version-missing")
+    if type(records_version) is not int or records_version != 1:
         raise SystemExit("review-finding-records-version-invalid")
     if not isinstance(records, list):
         raise SystemExit("review-findings-records-missing")

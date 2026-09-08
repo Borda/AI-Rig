@@ -268,7 +268,7 @@ Independence gate:
 
 ### 06: Write `<run-directory>/review-notes.md`
 
-Set `CODE_REVIEW_METADATA.finding_records_version=1` for new assessed reviews; legacy records without this marker remain readable.
+Set `CODE_REVIEW_METADATA.finding_records_version=1` for every new assessed review; the validator now rejects a schema-v2 candidate that omits it — there is no bare-record fallback for new writes. Schema-v1 historical results remain exempt and readable without the marker.
 
 Define each finding once in `CODE_REVIEW_METADATA.review_findings` with stable `id`, `severity`, `title`, `summary`, `required_change`, nonempty ordered `evidence` strings, and `closure_evidence`. These enriched records are canonical; counts, notes and final actions are views, never separately ingested findings. In `Findings`, reference the canonical IDs instead of repeating the complete finding text. Decision summaries and confidence gaps sharing a finding's closure cross-reference that ID; independent operational obligations remain distinct. Keep genuine code/test/online evidence in the canonical record, not merely repeated report-line mentions.
 

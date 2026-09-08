@@ -382,7 +382,7 @@ Paid live A/B calibration is separate, explicit, and never implied by the offlin
 
 ## 🧾 Approval prompts and commit handoffs
 
-Review/remediation reports keep one canonical record per finding, not one source per repeated summary/action/confidence mention. New review records add a title, issue, required change, evidence and closure criterion under `finding_records_version=1`; older ID/severity-only records and historical rendering remain readable. Real report/online references stay intact; related report mentions do not inflate source counts, and each comment has one owning item.
+Review/remediation reports keep one canonical record per finding, not one source per repeated summary/action/confidence mention. New review records add a title, issue, required change, evidence and closure criterion under `finding_records_version=1`, and the validator requires that marker on every new schema-v2 assessed candidate — there is no bare-record fallback for new writes. Older schema-v1 ID/severity-only records and historical rendering remain readable. Real report/online references stay intact; related report mentions do not inflate source counts, and each comment has one owning item.
 
 All-closed remediation records empty selected/deferred indexes without implying user confirmation. Grouped output keeps complete evidence in named detail blocks; only durable ledgers and historical symbol layouts require visible symbol definitions.
 

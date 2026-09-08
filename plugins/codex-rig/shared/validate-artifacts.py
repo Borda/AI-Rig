@@ -541,15 +541,13 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
         blockers = metadata.get("operational_blockers", [])
         if not isinstance(records, list) or not isinstance(blockers, list):
             raise SystemExit("code-review-final-handoff-finding-records-missing")
+        if metadata.get("finding_records_version") != 1:
+            raise SystemExit("code-review-final-handoff-records-version-missing")
         identities = [record.get("id") if isinstance(record, dict) else None for record in records + blockers]
         if any(not isinstance(identity, str) or not identity.strip() for identity in identities):
             raise SystemExit("code-review-final-handoff-finding-records-invalid")
         table = tables_by_heading.get("Review Findings and Merge Blocks", {})
-        if (
-            metadata.get("finding_records_version") == 1
-            and identities
-            and table.get("layout") not in {"grouped", "concise"}
-        ):
+        if identities and table.get("layout") not in {"grouped", "concise"}:
             raise SystemExit("code-review-final-handoff-grouped-layout-required")
         rows = table.get("rows", [])
         row_identities = [

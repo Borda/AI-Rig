@@ -132,11 +132,13 @@ def test_review_handoff_rejects_replaced_finding_identity() -> None:
     result["schema_version"] = 2
     result["findings"]["high"] = 1
     result["metadata"]["review_findings"] = [{"id": "CR-1", "severity": "high"}]
+    result["metadata"]["finding_records_version"] = 1
     handoff = _handoff("needs-more-work", "needs work")
     handoff["tables"].append(
         {
             "heading": "Review Findings and Merge Blocks",
-            "rows": [{"id": "row-1", "cells": ["CR-2", "Fix", "source.py:1", "Required"]}],
+            "layout": "grouped",
+            "rows": [{"id": "row-1", "title": "CR-1", "cells": ["CR-2", "Fix", "source.py:1", "Required"]}],
         }
     )
 
@@ -145,3 +147,25 @@ def test_review_handoff_rejects_replaced_finding_identity() -> None:
 
     handoff["tables"][-1]["rows"][0]["cells"][0] = "CR-1"
     VALIDATOR._validate_code_review_final_handoff(result, handoff)
+
+
+def test_review_handoff_rejects_a_new_candidate_missing_the_canonical_marker() -> None:
+    """A schema-v2 handoff cannot omit the canonical records marker to reach the bare-record path.
+
+    CR8: without the marker the grouped-layout requirement was skipped entirely, so a new candidate could
+    ship an ungrouped table carrying none of the canonical detail fields.
+    """
+    result = _result("needs-more-work")
+    result["schema_version"] = 2
+    result["findings"]["high"] = 1
+    result["metadata"]["review_findings"] = [{"id": "CR-1", "severity": "high"}]
+    handoff = _handoff("needs-more-work", "needs work")
+    handoff["tables"].append(
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "rows": [{"id": "row-1", "cells": ["CR-1", "Fix", "source.py:1", "Required"]}],
+        }
+    )
+
+    with pytest.raises(SystemExit, match="code-review-final-handoff-records-version-missing"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
