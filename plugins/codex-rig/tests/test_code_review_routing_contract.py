@@ -186,11 +186,7 @@ def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_pat
     assert validator._validate_routing(tmp_path, "LOCAL") == {"qa-specialist"}
 
 
-@pytest.mark.parametrize(
-    "reasons",
-    ["one bare reason", ["valid reason", 3]],
-    ids=["bare-string", "non-string-member"],
-)
+@pytest.mark.parametrize("reasons", ["one bare reason", pytest.param(["valid reason", 3], id="non-string-member")])
 def test_routing_rejects_trigger_reasons_that_are_not_nonempty_string_lists(tmp_path: Path, reasons: object) -> None:
     """Prevent malformed reason collections from passing the routing preflight."""
     validator = _load_validator()

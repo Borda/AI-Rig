@@ -7,6 +7,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 from codemap_py import integration
 
 
@@ -47,6 +49,7 @@ def _replace_codex_manifest(candidate: Path, hooks: str) -> None:
     package_manifest_path.write_text(json.dumps(package_manifest, sort_keys=True, separators=(",", ":")) + "\n")
 
 
+@pytest.mark.packaging
 def test_built_candidate_contains_codex_hook_config() -> None:
     """The packaging inventory must ship the configuration the Codex manifest declares."""
     # Kept local because build_package clears its output directory by contract.
@@ -60,6 +63,8 @@ def test_built_candidate_contains_codex_hook_config() -> None:
         assert (candidate / "hooks" / "codex-hooks.json").is_file()
 
 
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_content_identity_matches_built_payload(tmp_path: Path) -> None:
     """Source and built payload hashes must agree when their shipped files agree."""
     candidate = _build_candidate(tmp_path)
@@ -72,6 +77,8 @@ def test_content_identity_matches_built_payload(tmp_path: Path) -> None:
     assert candidate_identity == source_identity
 
 
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_validator_rejects_missing_or_mismatched_codex_hook_pointer(tmp_path: Path) -> None:
     """A candidate must fail closure when Codex points at a missing hook config."""
     candidate = _build_candidate(tmp_path)

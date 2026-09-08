@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
 if str(_SCRIPTS) not in sys.path:
@@ -116,11 +117,13 @@ def _validate_findings(package: Path) -> list[str]:
 # --- happy path ------------------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_valid_package_has_no_findings(valid_package: Path) -> None:
     """A well-formed package yields zero findings."""
     assert _validate_findings(valid_package) == []
 
 
+@pytest.mark.packaging
 def test_cli_exits_zero_on_valid_package(valid_package: Path) -> None:
     """The validator CLI exits zero on a clean package."""
     assert validator.main(["--package", str(valid_package)]) == 0
@@ -129,18 +132,21 @@ def test_cli_exits_zero_on_valid_package(valid_package: Path) -> None:
 # --- inventory violations --------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_missing_payload_flagged(valid_package: Path) -> None:
     """A manifest entry with no on-disk file is flagged missing."""
     (valid_package / "bin" / "_schema.py").unlink()
     assert any("missing payload file: bin/_schema.py" == item for item in _validate_findings(valid_package))
 
 
+@pytest.mark.packaging
 def test_modified_payload_flagged(valid_package: Path) -> None:
     """A payload file whose bytes drift from its recorded hash is flagged."""
     (valid_package / "README.md").write_bytes(b"# tampered\n")
     assert any("modified payload file: README.md" == item for item in _validate_findings(valid_package))
 
 
+@pytest.mark.packaging
 def test_extra_unmanifested_file_flagged(valid_package: Path) -> None:
     """A file absent from the manifest is flagged extra."""
     (valid_package / "bin" / "stowaway.py").write_bytes(b"x = 1\n")
@@ -150,14 +156,8 @@ def test_extra_unmanifested_file_flagged(valid_package: Path) -> None:
 # --- path violations -------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "bad_path",
-    [
-        pytest.param("/etc/passwd", id="absolute"),
-        pytest.param("../escape.py", id="parent-escape"),
-        pytest.param("C:\\Windows\\x", id="drive-qualified"),
-    ],
-)
+@pytest.mark.parametrize("bad_path", ["/etc/passwd", "../escape.py", "C:\\Windows\\x"])
+@pytest.mark.packaging
 def test_non_relative_manifest_path_flagged(valid_package: Path, bad_path: str) -> None:
     """Absolute, parent-escaping, or drive-qualified manifest paths are flagged."""
     _mutate_manifest(valid_package, lambda m: m["files"].append({"path": bad_path, "sha256": "0" * 64, "exec": False}))
@@ -167,6 +167,7 @@ def test_non_relative_manifest_path_flagged(valid_package: Path, bad_path: str) 
 # --- hygiene violations ----------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_personal_path_reference_flagged(valid_package: Path) -> None:
     """The build host's real home path baked into a payload file is flagged."""
     leaked = f"root = '{Path.home()}/checkout/codemap-py'\n".encode()
@@ -177,6 +178,7 @@ def test_personal_path_reference_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_secret_material_flagged(valid_package: Path) -> None:
     """Private-key header bytes inside a payload file are flagged."""
     # Assembled from fragments so no literal key header sits in this source file.
@@ -190,18 +192,21 @@ def test_secret_material_flagged(valid_package: Path) -> None:
 # --- closure violations ----------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_missing_required_document_flagged(valid_package: Path) -> None:
     """Dropping a required document (and its manifest entry) is flagged as missing."""
     _drop_member(valid_package, "CHANGELOG.md")
     assert any("missing required member: CHANGELOG.md" == item for item in _validate_findings(valid_package))
 
 
+@pytest.mark.packaging
 def test_forbidden_default_path_flagged(valid_package: Path) -> None:
     """A leaked default ``hooks/hooks.json`` is flagged forbidden."""
     _add_member(valid_package, "hooks/hooks.json", b"{}\n")
     assert any("forbidden default path present: hooks/hooks.json" == item for item in _validate_findings(valid_package))
 
 
+@pytest.mark.packaging
 def test_symlink_flagged(valid_package: Path) -> None:
     """A symlink anywhere in the package is flagged."""
     link = valid_package / "bin" / "alias-link"
@@ -212,6 +217,7 @@ def test_symlink_flagged(valid_package: Path) -> None:
 # --- declared-component closure ---------------------------------------
 
 
+@pytest.mark.packaging
 def test_missing_referenced_hook_helper_flagged(valid_package: Path) -> None:
     """A hook helper named by the wiring but absent from the package is flagged."""
     _drop_member(valid_package, "hooks/seed-session.py")
@@ -220,6 +226,7 @@ def test_missing_referenced_hook_helper_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_missing_hooks_pointer_file_flagged(valid_package: Path) -> None:
     """A Claude ``hooks`` pointer whose target file is absent is flagged."""
     _drop_member(valid_package, "hooks/claude-hooks.json")
@@ -229,12 +236,14 @@ def test_missing_hooks_pointer_file_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_undeclared_extra_roster_dir_flagged(valid_package: Path) -> None:
     """An on-disk skill dir absent from the manifest roster is flagged as a mismatch."""
     _add_member(valid_package, "claude-skills/rogue/SKILL.md", b"---\nname: rogue\n---\n")
     assert any(item.startswith("claude roster ") and "rogue" in item for item in _validate_findings(valid_package))
 
 
+@pytest.mark.packaging
 def test_rostered_skill_missing_skillmd_flagged(valid_package: Path) -> None:
     """A rostered skill whose SKILL.md is absent is flagged."""
     _drop_member(valid_package, "claude-skills/scan-codebase/SKILL.md")
@@ -244,6 +253,7 @@ def test_rostered_skill_missing_skillmd_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_codex_manifest_missing_skills_key_flagged(valid_package: Path) -> None:
     """A Codex manifest that omits the ``skills`` pointer violates the six-skill-parity contract."""
     codex = valid_package / ".codex-plugin" / "plugin.json"
@@ -255,6 +265,7 @@ def test_codex_manifest_missing_skills_key_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_codex_manifest_missing_hooks_key_flagged(valid_package: Path) -> None:
     """A Codex package without its runtime hook pointer is not integration-complete."""
     codex = valid_package / ".codex-plugin" / "plugin.json"
@@ -268,6 +279,7 @@ def test_codex_manifest_missing_hooks_key_flagged(valid_package: Path) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_rostered_codex_skill_missing_skillmd_flagged(valid_package: Path) -> None:
     """A rostered Codex skill whose ``SKILL.md`` is absent violates the six-skill-parity contract."""
     _drop_member(valid_package, "codex-skills/scan-codebase/SKILL.md")
@@ -277,6 +289,7 @@ def test_rostered_codex_skill_missing_skillmd_flagged(valid_package: Path) -> No
     )
 
 
+@pytest.mark.packaging
 def test_codex_roster_mismatch_flagged(valid_package: Path) -> None:
     """Flag a Codex roster that diverges from the corresponding Claude roster."""
     _mutate_manifest(valid_package, lambda m: m["skills"].__setitem__("codex", []))
@@ -287,6 +300,7 @@ def test_codex_roster_mismatch_flagged(valid_package: Path) -> None:
 
 
 @pytest.mark.skipif(os.name != "posix", reason="executable bit is unreliable off POSIX")
+@pytest.mark.packaging
 def test_exec_flag_mismatch_flagged(valid_package: Path) -> None:
     """A data file made executable on disk disagrees with its manifest exec flag."""
     (valid_package / "bin" / "_schema.py").chmod(0o755)

@@ -74,10 +74,7 @@ def test_is_valid_commit_git_missing_is_false(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.parametrize(
     ("returncode", "expected"),
-    [
-        pytest.param(0, True, id="is-ancestor-of-head"),
-        pytest.param(1, False, id="not-ancestor-of-head-rebased-away"),
-    ],
+    [pytest.param(0, True, id="is-ancestor-of-head"), pytest.param(1, False, id="not-ancestor-of-head-rebased-away")],
 )
 def test_is_valid_commit_reflects_ancestor_check(
     monkeypatch: pytest.MonkeyPatch, returncode: int, expected: bool

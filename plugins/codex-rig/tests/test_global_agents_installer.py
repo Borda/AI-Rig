@@ -193,10 +193,10 @@ def test_global_agents_installer_adopts_exact_legacy_copy(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     "damage",
     (
-        pytest.param("modified-body", id="modified-body"),
-        pytest.param("orphan-begin", id="orphan-begin"),
-        pytest.param("orphan-end", id="orphan-end"),
-        pytest.param("duplicate", id="duplicate"),
+        "modified-body",
+        "orphan-begin",
+        "orphan-end",
+        "duplicate",
     ),
 )
 def test_global_agents_installer_refuses_untrusted_managed_state(tmp_path: Path, damage: str) -> None:

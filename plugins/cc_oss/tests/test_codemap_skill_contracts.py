@@ -63,7 +63,7 @@ def _iter_calls(text: str) -> list[tuple[str, list[str]]]:
     return [_split_call(match.group(1)) for match in _QUERY_CALL_RE.finditer(text)]
 
 
-@pytest.mark.parametrize("path", _SKILL_MD, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [pytest.param(p, id=p.name) for p in _SKILL_MD])
 class TestQueryInvocations:
     """Every `codemap-py query` call embedded in oss skill markdown."""
 

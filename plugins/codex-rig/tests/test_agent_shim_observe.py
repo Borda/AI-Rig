@@ -16,7 +16,6 @@ import pytest
 
 
 WINDOWS_POSIX_SKIP_REASON = "requires POSIX filesystem modes, links, and executable semantics"
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 GENERATOR_PATH = SCRIPTS / "generate_roles.py"
@@ -299,6 +298,10 @@ def _observe(module: ModuleType, codex_home: Path, plugin_root: Path) -> object:
     return module.observe_filesystem(codex_home=codex_home, plugin_root=plugin_root)
 
 
+_skip_windows_posix = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
+
+
+@_skip_windows_posix
 def test_absent_roster_observation_is_bounded_degraded_and_zero_write(tmp_path: Path) -> None:
     """Prove empty disposable roots remain byte-for-byte and metadata unchanged."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_absent")
@@ -315,6 +318,7 @@ def test_absent_roster_observation_is_bounded_degraded_and_zero_write(tmp_path: 
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_absent_roots_bind_nearest_ancestor_lock_intent_and_suffix(tmp_path: Path) -> None:
     """Preserve exact root-creation evidence without probing by mutation."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_absent_roots")
@@ -340,6 +344,7 @@ def test_absent_roots_bind_nearest_ancestor_lock_intent_and_suffix(tmp_path: Pat
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_writable_codex_home_blocks_lifecycle_authority(tmp_path: Path) -> None:
     """Reject a namespace another account could substitute during mutation."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_writable_home")
@@ -355,6 +360,7 @@ def test_writable_codex_home_blocks_lifecycle_authority(tmp_path: Path) -> None:
     assert result.codex_home_observation is None
 
 
+@_skip_windows_posix
 def test_existing_empty_lock_and_partial_state_root_are_bound_read_only(tmp_path: Path) -> None:
     """Bind an existing lock and deepest state ancestor without changing either."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_existing_lock")
@@ -379,6 +385,7 @@ def test_existing_empty_lock_and_partial_state_root_are_bound_read_only(tmp_path
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "node",
     [
@@ -415,6 +422,7 @@ def test_unsafe_coordination_lock_blocks(node: str, tmp_path: Path) -> None:
     assert result.coordination_lock_observation.intent is None
 
 
+@_skip_windows_posix
 def test_lock_swap_to_fifo_is_nonblocking_and_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -447,6 +455,7 @@ def test_lock_swap_to_fifo_is_nonblocking_and_fails_closed(
     assert result.coordination_lock_observation.kind == "unsafe"
 
 
+@_skip_windows_posix
 def test_target_swap_to_fifo_is_nonblocking_and_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -479,6 +488,7 @@ def test_target_swap_to_fifo_is_nonblocking_and_fails_closed(
     assert result.targets == "unsafe"
 
 
+@_skip_windows_posix
 def test_exact_current_roster_is_observed_without_claiming_health(tmp_path: Path) -> None:
     """Bind exact state, root identities, markers, and complete target hashes."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_current")
@@ -502,6 +512,7 @@ def test_exact_current_roster_is_observed_without_claiming_health(tmp_path: Path
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_historical_roster_and_old_cache_identity_are_migration_evidence(tmp_path: Path) -> None:
     """Authenticate persisted retired targets without requiring the old cache to exist."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_historical_roster")
@@ -541,6 +552,7 @@ def test_historical_roster_and_old_cache_identity_are_migration_evidence(tmp_pat
     assert dict(result.target_observations)["codex-rig-web-explorer.toml"].kind == "absent"
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "node",
     [
@@ -571,6 +583,7 @@ def test_hostile_target_nodes_fail_closed(tmp_path: Path, node: str) -> None:
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_foreign_and_marker_only_targets_never_become_owned(tmp_path: Path) -> None:
     """Keep namespace and marker evidence insufficient without valid state."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_foreign")
@@ -583,6 +596,7 @@ def test_foreign_and_marker_only_targets_never_become_owned(tmp_path: Path) -> N
     assert result.targets == "foreign"
 
 
+@_skip_windows_posix
 def test_retired_namespace_file_is_inventoried_without_ownership(tmp_path: Path) -> None:
     """List a retired-looking regular file while refusing lifecycle authority."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_retired_namespace")
@@ -601,6 +615,7 @@ def test_retired_namespace_file_is_inventoried_without_ownership(tmp_path: Path)
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_namespace_candidate_preserves_exact_current_role_observations(tmp_path: Path) -> None:
     """Block an unmanaged candidate without degrading authenticated current roles."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_current_with_retired")
@@ -620,6 +635,7 @@ def test_namespace_candidate_preserves_exact_current_role_observations(tmp_path:
     )
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "node",
     [
@@ -650,6 +666,7 @@ def test_unsafe_namespace_candidate_remains_visible(tmp_path: Path, node: str) -
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_malformed_namespace_candidate_fails_closed_and_remains_visible(tmp_path: Path) -> None:
     """Expose a namespace-like basename that violates the strict role grammar."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_malformed_namespace")
@@ -664,6 +681,7 @@ def test_malformed_namespace_candidate_fails_closed_and_remains_visible(tmp_path
     )
 
 
+@_skip_windows_posix
 def test_unrelated_target_names_are_ignored_by_namespace_inventory(tmp_path: Path) -> None:
     """Leave unrelated agent-root entries outside Codex Rig lifecycle authority."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_unrelated_namespace")
@@ -678,6 +696,7 @@ def test_unrelated_target_names_are_ignored_by_namespace_inventory(tmp_path: Pat
     assert result.namespace_candidates == ()
 
 
+@_skip_windows_posix
 def test_namespace_inventory_order_is_deterministic(tmp_path: Path) -> None:
     """Sort namespace candidates independently of filesystem enumeration order."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_namespace_order")
@@ -693,6 +712,7 @@ def test_namespace_inventory_order_is_deterministic(tmp_path: Path) -> None:
     )
 
 
+@_skip_windows_posix
 def test_target_root_inventory_overflow_is_bounded_and_visible(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -714,16 +734,10 @@ def test_target_root_inventory_overflow_is_bounded_and_visible(
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "evidence",
-    [
-        "corrupt-state",
-        "huge-integer-state",
-        "deep-state",
-        "oversized-state",
-        "oversized-target",
-        "state-symlink",
-    ],
+    ["corrupt-state", "huge-integer-state", "deep-state", "oversized-state", "oversized-target", "state-symlink"],
 )
 def test_corrupt_oversized_and_aliased_evidence_blocks(tmp_path: Path, evidence: str) -> None:
     """Bound state and target reads and reject unsafe lifecycle evidence."""
@@ -752,6 +766,7 @@ def test_corrupt_oversized_and_aliased_evidence_blocks(tmp_path: Path, evidence:
     assert result.targets in {"absent", "unsafe"}
 
 
+@_skip_windows_posix
 def test_owned_protected_target_root_mode_0755_is_accepted(tmp_path: Path) -> None:
     """Accept a user-owned target namespace that other users cannot mutate."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_protected_target")
@@ -769,18 +784,19 @@ def test_owned_protected_target_root_mode_0755_is_accepted(tmp_path: Path) -> No
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "mode",
     [
         pytest.param(
             mode,
+            id=case_id,
             marks=pytest.mark.skipif(
                 not _mode_is_retainable(mode), reason=f"filesystem does not retain mode {mode:04o}"
             ),
         )
-        for mode in (0o4700, 0o2700, 0o1700)
+        for mode, case_id in ((0o4700, "setuid"), (0o2700, "setgid"), (0o1700, "sticky"))
     ],
-    ids=["setuid", "setgid", "sticky"],
 )
 def test_protected_target_root_special_bits_block(tmp_path: Path, mode: int) -> None:
     """Reject every special permission bit from the mutable target namespace."""
@@ -799,6 +815,7 @@ def test_protected_target_root_special_bits_block(tmp_path: Path, mode: int) -> 
     )
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize("evidence", ["target-root-mode", "state-root-mode", "target-file-mode", "control-name"])
 def test_nonprivate_or_ambiguous_local_evidence_blocks(tmp_path: Path, evidence: str) -> None:
     """Require private owned lifecycle roots and unambiguous contained names."""
@@ -827,11 +844,20 @@ def test_nonprivate_or_ambiguous_local_evidence_blocks(tmp_path: Path, evidence:
         assert result.reason == (f"unsafe private directory mode: {state_root}; expected 0700, observed 0755")
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("relative", "expected"),
     [
-        ("transactions/123e4567-e89b-42d3-a456-426614174000", "empty-transaction"),
-        (".probe-123e4567-e89b-42d3-a456-426614174000", "empty-probe"),
+        pytest.param(
+            "transactions/123e4567-e89b-42d3-a456-426614174000",
+            "empty-transaction",
+            id="transactions-123e4567-e89b-42d3-a456-426614174000",
+        ),
+        pytest.param(
+            ".probe-123e4567-e89b-42d3-a456-426614174000",
+            "empty-probe",
+            id=".probe-123e4567-e89b-42d3-a456-426614174000",
+        ),
     ],
 )
 def test_exact_empty_recovery_residue_is_recognized(tmp_path: Path, relative: str, expected: str) -> None:
@@ -850,6 +876,7 @@ def test_exact_empty_recovery_residue_is_recognized(tmp_path: Path, relative: st
     assert result.recovery == expected
 
 
+@_skip_windows_posix
 def test_initial_preparation_residue_is_recognized_without_parsing_partial_bytes(tmp_path: Path) -> None:
     """Bind the sole pre-authority crash artifact for explicit cleanup."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_preparing_residue")
@@ -866,6 +893,7 @@ def test_initial_preparation_residue_is_recognized_without_parsing_partial_bytes
     assert result.recovery == "preparing-residue"
 
 
+@_skip_windows_posix
 def test_dual_link_initial_journal_crash_is_recognized(tmp_path: Path) -> None:
     """Recognize the durable window before the initial journal link retires."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_linked_initial_journal")
@@ -884,7 +912,8 @@ def test_dual_link_initial_journal_crash_is_recognized(tmp_path: Path) -> None:
     assert result.recovery == "journal"
 
 
-@pytest.mark.parametrize("partial", [False, True], ids=["journal-only", "partial-artifact"])
+@_skip_windows_posix
+@pytest.mark.parametrize("partial", [False, True])
 def test_single_link_preparing_journal_is_cleanable(tmp_path: Path, partial: bool) -> None:
     """Recognize every ordinary pre-mutation preparation crash window."""
     module = _load_module(OBSERVER_PATH, f"codex_rig_observe_preparing_{partial}")
@@ -908,6 +937,7 @@ def test_single_link_preparing_journal_is_cleanable(tmp_path: Path, partial: boo
     assert result.recovery == "journal"
 
 
+@_skip_windows_posix
 def test_exact_prepared_transaction_is_recognized(tmp_path: Path) -> None:
     """Recognize complete hash-bound artifacts after durable preparation."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_prepared")
@@ -924,6 +954,7 @@ def test_exact_prepared_transaction_is_recognized(tmp_path: Path) -> None:
     assert result.recovery == "journal"
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "tamper",
     ["artifact-bytes", "artifact-mode", "extra-artifact", "transaction-id", "illegal-successor"],
@@ -957,6 +988,7 @@ def test_prepared_transaction_rejects_substituted_or_expanded_authority(tmp_path
     assert result.recovery == "blocked-unknown"
 
 
+@_skip_windows_posix
 def test_prepared_transaction_accepts_one_legal_journal_successor(tmp_path: Path) -> None:
     """Accept a crash-preserved next journal only for one legal transition."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_prepared_successor")
@@ -974,7 +1006,8 @@ def test_prepared_transaction_accepts_one_legal_journal_successor(tmp_path: Path
     assert result.recovery == "journal"
 
 
-@pytest.mark.parametrize("same_inode", [True, False], ids=["linked", "copied"])
+@_skip_windows_posix
+@pytest.mark.parametrize("same_inode", [True, False])
 def test_prepared_transaction_binds_state_publish_inode(tmp_path: Path, same_inode: bool) -> None:
     """Accept a staged state publication only when it links the after-state inode."""
     module = _load_module(OBSERVER_PATH, f"codex_rig_observe_state_publish_{same_inode}")
@@ -994,6 +1027,7 @@ def test_prepared_transaction_binds_state_publish_inode(tmp_path: Path, same_ino
     assert result.recovery == ("journal" if same_inode else "blocked-unknown")
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize("journal_state", ["MUTATING", "RECOVERY_REQUIRED"])
 def test_recovery_accepts_one_unjournaled_create_publication(tmp_path: Path, journal_state: str) -> None:
     """Recognize a published exact target when recovery authority lags one step."""
@@ -1016,6 +1050,7 @@ def test_recovery_accepts_one_unjournaled_create_publication(tmp_path: Path, jou
     assert result.recovery == "journal"
 
 
+@_skip_windows_posix
 def test_unknown_or_multiple_recovery_residue_fails_closed(tmp_path: Path) -> None:
     """Refuse ambiguous recovery authority without reading outside the state root."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_recovery_blocked")
@@ -1041,6 +1076,7 @@ def test_unknown_or_multiple_recovery_residue_fails_closed(tmp_path: Path) -> No
     assert multiple.recovery == "blocked-multiple"
 
 
+@_skip_windows_posix
 def test_nonempty_recovery_receipt_stays_untrusted_until_full_schema_validation(tmp_path: Path) -> None:
     """Never grant recovery authority from a bounded receipt shape alone."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_untrusted_receipt")
@@ -1056,6 +1092,7 @@ def test_nonempty_recovery_receipt_stays_untrusted_until_full_schema_validation(
     assert result.recovery == "blocked-unknown"
 
 
+@_skip_windows_posix
 def test_nonprivate_transactions_container_blocks_even_when_empty(tmp_path: Path) -> None:
     """Require private ownership metadata on the transaction container itself."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_transactions_mode")
@@ -1070,6 +1107,7 @@ def test_nonprivate_transactions_container_blocks_even_when_empty(tmp_path: Path
     assert result.recovery == "blocked-unknown"
 
 
+@_skip_windows_posix
 def test_observer_rejects_relative_and_symlinked_supplied_roots(tmp_path: Path) -> None:
     """Require explicit canonical absolute roots and no-follow every component."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_roots")
@@ -1087,6 +1125,7 @@ def test_observer_rejects_relative_and_symlinked_supplied_roots(tmp_path: Path) 
     assert "plugin root" in result.reason
 
 
+@_skip_windows_posix
 def test_unowned_home_and_invalid_plugin_identity_return_blocked(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1126,6 +1165,7 @@ def test_unowned_home_and_invalid_plugin_identity_return_blocked(
     assert "invalid plugin identity" in invalid_plugin.reason
 
 
+@_skip_windows_posix
 def test_group_writable_home_returns_blocked(tmp_path: Path) -> None:
     """Reject observation when another group member can replace home entries."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_writable_home")
@@ -1140,6 +1180,7 @@ def test_group_writable_home_returns_blocked(tmp_path: Path) -> None:
     assert "observed 0770" in result.reason
 
 
+@_skip_windows_posix
 def test_unsafe_state_path_closes_an_already_open_target_descriptor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1178,6 +1219,7 @@ def test_unsafe_state_path_closes_an_already_open_target_descriptor(
         os.fstat(captured[0])
 
 
+@_skip_windows_posix
 def test_target_metadata_error_is_blocked_not_raised(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1203,6 +1245,7 @@ def test_target_metadata_error_is_blocked_not_raised(
     assert result.targets == "unsafe"
 
 
+@_skip_windows_posix
 def test_observer_calls_no_mutating_os_primitives(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Make accidental filesystem mutation fail immediately during observation."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_mutators")

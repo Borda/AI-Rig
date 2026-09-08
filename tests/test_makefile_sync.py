@@ -48,8 +48,6 @@ def _gnu_make() -> str | None:
 
 GNU_MAKE = _gnu_make()
 
-pytestmark = pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
-
 
 def _run_make(
     target: str, *, env: dict[str, str], extra_vars: dict[str, str] | None = None
@@ -122,6 +120,8 @@ def _fake_codex_home_sync_script(tmp_path: Path) -> FakeScript:
     return FakeScript(path=path, log=log)
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 class TestInstallClaudePlugins:
     """Bridge-purge guard and try-all-6-then-report contract for install-claude-plugins."""
 
@@ -173,6 +173,8 @@ class TestInstallClaudePlugins:
         assert "codemap-py@" in calls  # plugins after the failed one still got installed
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 class TestMigrateMarketplace:
     """Jq-driven registry rewrites for a stale marketplace registration."""
 
@@ -224,6 +226,8 @@ class TestMigrateMarketplace:
         assert "foundry@new-name" in rewritten_settings["enabledPlugins"]
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 class TestInstallCodexPlugins:
     """No-flag invocation contract for the Codex-side install target."""
 
@@ -239,6 +243,8 @@ class TestInstallCodexPlugins:
         assert fake_codex_sync_script.log.read_text(encoding="utf-8") == "install"
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 class TestSyncCodexHomePolicy:
     """Correct argument wiring for the Codex-home policy-mirror target."""
 
@@ -262,15 +268,17 @@ class TestSyncCodexHomePolicy:
         assert "--codex-home /fake/codex-home" in logged_args
 
 
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
 @pytest.mark.parametrize(
     "target",
     [
-        pytest.param("uninstall-claude-plugins", id="uninstall-claude-plugins"),
-        pytest.param("refresh-ext-marketplace", id="refresh-ext-marketplace"),
-        pytest.param("update-ext-plugins", id="update-ext-plugins"),
-        pytest.param("register-marketplace", id="register-marketplace"),
-        pytest.param("clear-claude", id="clear-claude"),
-        pytest.param("clear-codex", id="clear-codex"),
+        "uninstall-claude-plugins",
+        "refresh-ext-marketplace",
+        "update-ext-plugins",
+        "register-marketplace",
+        "clear-claude",
+        "clear-codex",
     ],
 )
 def test_target_dry_runs_without_a_make_parse_error(target: str) -> None:

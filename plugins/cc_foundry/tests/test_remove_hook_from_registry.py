@@ -21,24 +21,17 @@ _SAMPLE_REGISTRY: dict = {
         "PreToolUse": [
             {
                 "matcher": "*",
-                "hooks": [
-                    {"command": ".claude/hooks/rtk-rewrite.js"},
-                    {"command": ".claude/hooks/commit-guard.js"},
-                ],
+                "hooks": [{"command": ".claude/hooks/rtk-rewrite.js"}, {"command": ".claude/hooks/commit-guard.js"}],
             },
         ],
         "PostToolUse": [
             {
                 "matcher": "*",
-                "hooks": [
-                    {"command": ".claude/hooks/rtk-rewrite.js"},
-                ],
+                "hooks": [{"command": ".claude/hooks/rtk-rewrite.js"}],
             },
             {
                 "matcher": "Edit",
-                "hooks": [
-                    {"command": ".claude/hooks/statusline.js"},
-                ],
+                "hooks": [{"command": ".claude/hooks/statusline.js"}],
             },
         ],
     },
@@ -90,9 +83,7 @@ class TestFilterHooks:
 
         reg = {
             "hooks": {
-                "PreToolUse": [
-                    {"matcher": "*", "hooks": [{"command": ".claude/hooks/foo.js"}]},
-                ],
+                "PreToolUse": [{"matcher": "*", "hooks": [{"command": ".claude/hooks/foo.js"}]}],
             },
         }
         out = rhfr.filter_hooks(reg, re.compile(r"foo\.js", re.IGNORECASE))

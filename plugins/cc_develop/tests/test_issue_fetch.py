@@ -40,10 +40,10 @@ def _captured_argv(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 @pytest.mark.parametrize(
     "raw,expected",
     [
-        ("42", "42"),
-        ("#42", "42"),
-        ("001", "001"),
-        (" 42 ", "42"),
+        pytest.param("42", "42", id="plain-number"),
+        pytest.param("#42", "42", id="hash-prefixed-number"),
+        pytest.param("001", "001", id="leading-zeroes"),
+        pytest.param(" 42 ", "42", id="surrounding-whitespace"),
     ],
 )
 def test_valid_issue_numbers(captured_argv: list[list[str]], raw: str, expected: str) -> None:

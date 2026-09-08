@@ -237,7 +237,7 @@ class TestCentralExcludingTests:
                 counts[target] = counts.get(target, 0) + 1
         return counts
 
-    @pytest.mark.parametrize("exclude_tests", [False, True], ids=["all-importers", "production-only"])
+    @pytest.mark.parametrize("exclude_tests", [False, True])
     def test_central_uses_expected_importer_set(self, capsys, exclude_tests: bool):
         """The flag removes test candidates and recomputes their incoming edges."""
         index = {
@@ -555,16 +555,7 @@ class TestScanRoot:
         dir_b.mkdir()
         (dir_b / "afunc.py").write_text("def afunc(x):\n    return x + 10\n")
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(index_path),
-                "--root",
-                str(dir_b),
-                "symbol",
-                "afunc",
-            ],
+            [sys.executable, str(scan_query), "--index", str(index_path), "--root", str(dir_b), "symbol", "afunc"],
             capture_output=True,
             text=True,
             cwd=str(tmp_path),
@@ -580,13 +571,7 @@ class TestScanRoot:
 class TestFunctionCallGraph:
     """Function-level call-graph queries (v3 index): fn-deps, fn-rdeps, fn-central, fn-blast."""
 
-    @pytest.mark.parametrize(
-        "expected_target",
-        [
-            "beta::func_beta",
-            "gamma::func_gamma",
-        ],
-    )
+    @pytest.mark.parametrize("expected_target", ["beta::func_beta", "gamma::func_gamma"])
     def test_fn_deps_includes_exact_direct_callees(self, query, expected_target):
         """func_alpha calls the exact beta/gamma targets, not only similarly named functions."""
         data = query("fn-deps", "alpha::func_alpha")
@@ -595,11 +580,7 @@ class TestFunctionCallGraph:
 
     @pytest.mark.parametrize(
         "unexpected_target",
-        [
-            "pkg.delta::func_delta",
-            "alpha::func_alpha",
-            "beta::not_func_beta",
-        ],
+        ["pkg.delta::func_delta", "alpha::func_alpha", "beta::not_func_beta"],
     )
     def test_fn_deps_excludes_unrelated_or_misqualified_callees(self, query, unexpected_target):
         """func_alpha's edge list excludes unrelated and wrongly qualified callees."""
@@ -607,13 +588,7 @@ class TestFunctionCallGraph:
         callees = {e["target"] for e in data.get("calls", [])}
         assert unexpected_target not in callees
 
-    @pytest.mark.parametrize(
-        "expected_caller",
-        [
-            "alpha::func_alpha",
-            "beta::func_beta",
-        ],
-    )
+    @pytest.mark.parametrize("expected_caller", ["alpha::func_alpha", "beta::func_beta"])
     def test_fn_rdeps_includes_exact_direct_callers(self, query, expected_caller):
         """func_gamma is called directly by alpha.func_alpha and beta.func_beta."""
         data = query("fn-rdeps", "gamma::func_gamma")
@@ -643,14 +618,7 @@ class TestFunctionCallGraph:
         assert scan_result.returncode == 0, scan_result.stderr
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         query_result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(index_path),
-                "fn-rdeps",
-                "target::callee",
-            ],
+            [sys.executable, str(scan_query), "--index", str(index_path), "fn-rdeps", "target::callee"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -703,15 +671,7 @@ def test_path_same_module(project, scan_query):
     """Path A A should return [A] or null — not crash."""
     root, index_path = project
     result = subprocess.run(
-        [
-            sys.executable,
-            str(scan_query),
-            "--index",
-            str(index_path),
-            "path",
-            "gamma",
-            "gamma",
-        ],
+        [sys.executable, str(scan_query), "--index", str(index_path), "path", "gamma", "gamma"],
         capture_output=True,
         text=True,
         cwd=str(root),
@@ -823,27 +783,12 @@ class TestHasCallGraph:
     ``CALL_GRAPH_MIN_VER`` (3) so future ``SCAN_VERSION`` bumps never re-break it.
     """
 
-    @pytest.mark.parametrize(
-        "version",
-        [
-            pytest.param(3, id="floor-v3"),
-            pytest.param(10, id="pre-current-v10"),
-            pytest.param(11, id="current-v11"),
-            pytest.param(99, id="future-version"),
-        ],
-    )
+    @pytest.mark.parametrize("version", [3, 10, 11, 99])
     def test_accepts_versions_at_or_above_floor(self, version: int) -> None:
         """Any index at or above the v3 call-graph floor carries call edges — accept it."""
         assert _has_call_graph({"scan_version": version}) is True
 
-    @pytest.mark.parametrize(
-        "version",
-        [
-            pytest.param(2, id="v2-no-call-graph"),
-            pytest.param(1, id="v1"),
-            pytest.param(0, id="v0"),
-        ],
-    )
+    @pytest.mark.parametrize("version", [2, 1, 0])
     def test_rejects_versions_below_floor(self, version: int) -> None:
         """Indexes below v3 predate call edges — must be rejected."""
         assert _has_call_graph({"scan_version": version}) is False
@@ -1157,11 +1102,11 @@ class TestImportClassification:
     @pytest.mark.parametrize(
         "group, import_name",
         [
-            ("stdlib", "os"),
-            ("stdlib", "collections"),
-            ("third_party", "requests.sessions"),
-            ("internal", "pkg"),
-            ("internal", "pkg.core"),
+            pytest.param("stdlib", "os", id="stdlib-os"),
+            pytest.param("stdlib", "collections", id="stdlib-collections"),
+            pytest.param("third_party", "requests.sessions", id="third_party"),
+            pytest.param("internal", "pkg", id="internal-pkg"),
+            pytest.param("internal", "pkg.core", id="internal-pkg.core"),
         ],
     )
     def test_import_shapes_are_classified(self, tmp_path, scan_index, scan_query, group, import_name):
@@ -1500,9 +1445,7 @@ class TestUncovered:
                     "name": "mymod",
                     "status": "ok",
                     "is_test": False,
-                    "symbols": [
-                        self._make_symbol("foo", fn_rdep_test_count=0, mock_rdep_count=0),
-                    ],
+                    "symbols": [self._make_symbol("foo", fn_rdep_test_count=0, mock_rdep_count=0)],
                 }
             ]
         )
@@ -2082,9 +2025,7 @@ class TestDeadSymbols:
                 self._make_module(
                     "mymod",
                     rdep_count=0,
-                    symbols=[
-                        self._make_symbol("orphan_fn", start_line=1, end_line=10, mock_rdep_count=0),
-                    ],
+                    symbols=[self._make_symbol("orphan_fn", start_line=1, end_line=10, mock_rdep_count=0)],
                 )
             ]
         )
@@ -2100,9 +2041,7 @@ class TestDeadSymbols:
                 self._make_module(
                     "target_mod",
                     rdep_count=0,
-                    symbols=[
-                        self._make_symbol("called_fn", start_line=1, end_line=10),
-                    ],
+                    symbols=[self._make_symbol("called_fn", start_line=1, end_line=10)],
                 ),
                 self._make_module(
                     "caller_mod",
@@ -2133,9 +2072,7 @@ class TestDeadSymbols:
                     "scripts.runner",
                     rdep_count=0,
                     is_entry_point=True,
-                    symbols=[
-                        self._make_symbol("main_fn", start_line=1, end_line=20),
-                    ],
+                    symbols=[self._make_symbol("main_fn", start_line=1, end_line=20)],
                 )
             ]
         )
@@ -2151,9 +2088,7 @@ class TestDeadSymbols:
                     "tests.test_thing",
                     rdep_count=0,
                     is_test=True,
-                    symbols=[
-                        self._make_symbol("test_helper", start_line=1, end_line=20),
-                    ],
+                    symbols=[self._make_symbol("test_helper", start_line=1, end_line=20)],
                 )
             ]
         )
@@ -2187,9 +2122,7 @@ class TestDeadSymbols:
                 self._make_module(
                     "mymod",
                     rdep_count=0,
-                    symbols=[
-                        self._make_symbol("mocked_fn", start_line=1, end_line=10, mock_rdep_count=2),
-                    ],
+                    symbols=[self._make_symbol("mocked_fn", start_line=1, end_line=10, mock_rdep_count=2)],
                 )
             ]
         )
@@ -2204,9 +2137,7 @@ class TestDeadSymbols:
                 self._make_module(
                     "mymod",
                     rdep_count=0,
-                    symbols=[
-                        self._make_symbol("documented_fn", start_line=1, end_line=10),
-                    ],
+                    symbols=[self._make_symbol("documented_fn", start_line=1, end_line=10)],
                 )
             ],
             sphinx_xref_count={"mymod::documented_fn": 3},
@@ -2222,9 +2153,7 @@ class TestDeadSymbols:
                 self._make_module(
                     "mymod",
                     rdep_count=2,
-                    symbols=[
-                        self._make_symbol("orphan_fn", start_line=1, end_line=10),
-                    ],
+                    symbols=[self._make_symbol("orphan_fn", start_line=1, end_line=10)],
                 )
             ]
         )
@@ -2260,9 +2189,7 @@ class TestDeadSymbols:
                     "mymod",
                     rdep_count=0,
                     exports=None,
-                    symbols=[
-                        self._make_symbol("public_fn", start_line=1, end_line=10),
-                    ],
+                    symbols=[self._make_symbol("public_fn", start_line=1, end_line=10)],
                 )
             ]
         )
@@ -2297,9 +2224,7 @@ class TestDeadSymbols:
                     "starry_mod",
                     rdep_count=0,
                     has_star_imports=True,
-                    symbols=[
-                        self._make_symbol("would_look_dead", start_line=1, end_line=20),
-                    ],
+                    symbols=[self._make_symbol("would_look_dead", start_line=1, end_line=20)],
                 )
             ]
         )
@@ -2350,10 +2275,7 @@ class TestDeadSymbols:
     def test_dead_modules_reports_orphan_module(self, capsys):
         """A module with ``rdep_count == 0`` and not an entry point appears in dead-modules."""
         index = self._make_index(
-            [
-                self._make_module("orphan_mod", rdep_count=0, loc=42),
-                self._make_module("used_mod", rdep_count=3, loc=10),
-            ]
+            [self._make_module("orphan_mod", rdep_count=0, loc=42), self._make_module("used_mod", rdep_count=3, loc=10)]
         )
         data = self._run_dead_modules(capsys, index, self._ns_modules())
         names = {m["name"] for m in data["dead_modules"]}
@@ -2978,14 +2900,7 @@ class TestParseCoverageVersion:
         """Major.minor pair must be extracted from any well-formed dotted version."""
         assert _parse_coverage_version(raw) == expected
 
-    @pytest.mark.parametrize(
-        "raw",
-        [
-            pytest.param("garbage", id="non-numeric"),
-            pytest.param("7", id="single-component"),
-            pytest.param("", id="empty-string"),
-        ],
-    )
+    @pytest.mark.parametrize("raw", ["garbage", "7", ""])
     def test_invalid_versions_return_none(self, raw):
         """Anything that cannot be parsed must surface as None, never raise."""
         assert _parse_coverage_version(raw) is None
@@ -3042,14 +2957,7 @@ class TestCoverageScanIntegration:
         _write_synthetic_coverage_file(cov_path, {str(src): [1, 2]})
 
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_index),
-                "--root",
-                str(root),
-                "--with-coverage",
-                str(cov_path),
-            ],
+            [sys.executable, str(scan_index), "--root", str(root), "--with-coverage", str(cov_path)],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3112,14 +3020,7 @@ class TestCoverageQueryCommands:
             file_to_contexts={str(src): {1: ["tests/test_mymod.py::test_full"]}},
         )
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_index),
-                "--root",
-                str(root),
-                "--with-coverage",
-                str(cov_path),
-            ],
+            [sys.executable, str(scan_index), "--root", str(root), "--with-coverage", str(cov_path)],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3132,14 +3033,7 @@ class TestCoverageQueryCommands:
         """Return coverage_pct == 1.0 and lists the test context."""
         root, index_path = covered_project
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(index_path),
-                "coverage",
-                "mymod::full",
-            ],
+            [sys.executable, str(scan_query), "--index", str(index_path), "coverage", "mymod::full"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3268,14 +3162,7 @@ class TestCoverageQueryCommands:
         index_path = root / ".cache" / "codemap" / f"{root.name}.json"
         # plain symbol exists, but coverage_pct does not — query must error explicitly.
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(index_path),
-                "coverage",
-                "plain::hello",
-            ],
+            [sys.executable, str(scan_query), "--index", str(index_path), "coverage", "plain::hello"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3469,7 +3356,7 @@ class TestRootMismatch:
         cov = json.loads(result.stdout)["index"]
         assert cov["root_mismatch"] is False
 
-    @pytest.mark.parametrize("use_override", [False, True], ids=["default-index", "index-directory-override"])
+    @pytest.mark.parametrize("use_override", [False, True])
     def test_custom_root_index_is_selected_from_sibling_project(
         self, tmp_path, scan_index, scan_query, use_override: bool
     ):
@@ -3533,15 +3420,7 @@ class TestRootMismatch:
         unexpected.write_text(json.dumps({"scan_version": 11, "modules": [], "collisions": []}))
 
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(unexpected),
-                "--root",
-                str(selected_root),
-                "list",
-            ],
+            [sys.executable, str(scan_query), "--index", str(unexpected), "--root", str(selected_root), "list"],
             capture_output=True,
             text=True,
             cwd=str(caller),
@@ -3582,15 +3461,7 @@ class TestRootMismatch:
         monkeypatch.setenv("CODEMAP_INDEX_DIR", str(override))
 
         result = subprocess.run(
-            [
-                sys.executable,
-                str(scan_query),
-                "--index",
-                str(unexpected),
-                "--root",
-                str(root),
-                "list",
-            ],
+            [sys.executable, str(scan_query), "--index", str(unexpected), "--root", str(root), "list"],
             capture_output=True,
             text=True,
             cwd=str(root),
@@ -3749,7 +3620,10 @@ def _run_batch(scan_query: Path, root: Path, index_path: Path, items: list) -> d
 class TestBatch:
     """Share one process while preserving per-query coverage and failure evidence."""
 
-    @pytest.mark.parametrize("items", [[], [{"cmd": "not-a-command"}]], ids=["empty", "all-failed"])
+    @pytest.mark.parametrize(
+        "items",
+        [pytest.param([], id="empty"), pytest.param([{"cmd": "not-a-command"}], id="all-failed")],
+    )
     def test_batch_without_coverage_has_explicit_completion(self, project, scan_query, items):
         """Zero returned coverage blocks must not leave aggregate success ambiguous."""
         root, index_path = project
@@ -3760,7 +3634,7 @@ class TestBatch:
             "confidence": "partial" if items else "exact",
         }
 
-    @pytest.mark.parametrize("reverse", [False, True], ids=["complete-first", "failed-first"])
+    @pytest.mark.parametrize("reverse", [False, True])
     def test_batch_keeps_each_query_completeness(self, project, scan_query, query, reverse):
         """A complete sibling must not erase a capped result's limits or a failed query."""
         root, index_path = project
@@ -3821,10 +3695,7 @@ class TestBatch:
     def test_batch_failing_item_does_not_kill_batch(self, project, scan_query):
         """A failing query yields a per-item error object; sibling queries still succeed."""
         root, index_path = project
-        items = [
-            {"cmd": "deps", "args": ["nonexistent.module.xyz"]},
-            {"cmd": "deps", "args": ["alpha"]},
-        ]
+        items = [{"cmd": "deps", "args": ["nonexistent.module.xyz"]}, {"cmd": "deps", "args": ["alpha"]}]
         batch = _run_batch(scan_query, root, index_path, items)
         assert batch["batch"][0]["ok"] is False
         assert batch["batch"][1]["ok"] is True
@@ -3945,11 +3816,7 @@ class TestInvalidCommandSuggestions:
             pytest.param("search", "Hint: use 'find-symbol' to search symbols.", id="search"),
             pytest.param("callers", "Hint: use 'fn-rdeps' for function callers.", id="callers"),
             pytest.param("find-references", "Hint: use 'fn-rdeps' for function callers.", id="find-references"),
-            pytest.param(
-                "imports",
-                "Hint: use 'rdeps' for importers or 'deps' for imports.",
-                id="imports",
-            ),
+            pytest.param("imports", "Hint: use 'rdeps' for importers or 'deps' for imports.", id="imports"),
             pytest.param("help", "Hint: use '--help' to list commands.", id="help"),
         ],
     )

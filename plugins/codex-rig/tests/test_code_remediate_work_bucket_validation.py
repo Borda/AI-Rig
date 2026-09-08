@@ -354,17 +354,25 @@ def test_low_volume_selection_stays_in_one_agent_scope(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ("too-large", "code-remediate-work-bucket-too-large"),
-        ("duplicate-index", "code-remediate-work-bucket-coverage-mismatch"),
-        ("low-volume-fanout", "code-remediate-low-volume-fanout"),
-        ("missing-approval", "code-remediate-parallel-approval-missing"),
-        ("declined-fanout-unrecorded", "code-remediate-eligible-fanout-approval-not-recorded"),
-        ("overlapping-path", "code-remediate-parallel-ownership-overlap"),
-        ("ancestor-path-overlap", "code-remediate-parallel-ownership-overlap"),
-        ("unsupported-owner", "code-remediate-work-bucket-owner-unsupported"),
-        ("parent-parallel-mode", "code-remediate-parent-work-bucket-mode-invalid"),
-        ("missing-context", "code-remediate-specialist-context-pack-missing"),
-        ("one-specialist-per-finding", "code-remediate-one-specialist-per-finding"),
+        pytest.param("too-large", "code-remediate-work-bucket-too-large", id="too-large"),
+        pytest.param("duplicate-index", "code-remediate-work-bucket-coverage-mismatch", id="duplicate-index"),
+        pytest.param("low-volume-fanout", "code-remediate-low-volume-fanout", id="low-volume-fanout"),
+        pytest.param("missing-approval", "code-remediate-parallel-approval-missing", id="missing-approval"),
+        pytest.param(
+            "declined-fanout-unrecorded",
+            "code-remediate-eligible-fanout-approval-not-recorded",
+            id="declined-fanout-unrecorded",
+        ),
+        pytest.param("overlapping-path", "code-remediate-parallel-ownership-overlap", id="overlapping-path"),
+        pytest.param("ancestor-path-overlap", "code-remediate-parallel-ownership-overlap", id="ancestor-path-overlap"),
+        pytest.param("unsupported-owner", "code-remediate-work-bucket-owner-unsupported", id="unsupported-owner"),
+        pytest.param(
+            "parent-parallel-mode", "code-remediate-parent-work-bucket-mode-invalid", id="parent-parallel-mode"
+        ),
+        pytest.param("missing-context", "code-remediate-specialist-context-pack-missing", id="missing-context"),
+        pytest.param(
+            "one-specialist-per-finding", "code-remediate-one-specialist-per-finding", id="one-specialist-per-finding"
+        ),
     ],
 )
 def test_invalid_work_bucket_plans_fail_closed(tmp_path: Path, mutation: str, error: str) -> None:
@@ -486,13 +494,41 @@ def test_completed_parallel_remediation_rejects_lifecycle_bound_to_other_plan(tm
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ("missing-child-path", "code-remediate-production-lifecycle-child-patch-path-invalid"),
-        ("escaped-child-path", "code-remediate-production-lifecycle-child-patch-path-invalid"),
-        ("mismatched-child-patch", "code-remediate-production-lifecycle-child-patch-mismatch"),
-        ("missing-source-path", "code-remediate-production-lifecycle-source-patch-path-invalid"),
-        ("escaped-source-path", "code-remediate-production-lifecycle-source-patch-path-invalid"),
-        ("mismatched-source-patch", "code-remediate-production-lifecycle-source-patch-mismatch"),
-        ("mismatched-rollback-patch", "code-remediate-production-lifecycle-rollback-mismatch"),
+        pytest.param(
+            "missing-child-path",
+            "code-remediate-production-lifecycle-child-patch-path-invalid",
+            id="missing-child-path",
+        ),
+        pytest.param(
+            "escaped-child-path",
+            "code-remediate-production-lifecycle-child-patch-path-invalid",
+            id="escaped-child-path",
+        ),
+        pytest.param(
+            "mismatched-child-patch",
+            "code-remediate-production-lifecycle-child-patch-mismatch",
+            id="mismatched-child-patch",
+        ),
+        pytest.param(
+            "missing-source-path",
+            "code-remediate-production-lifecycle-source-patch-path-invalid",
+            id="missing-source-path",
+        ),
+        pytest.param(
+            "escaped-source-path",
+            "code-remediate-production-lifecycle-source-patch-path-invalid",
+            id="escaped-source-path",
+        ),
+        pytest.param(
+            "mismatched-source-patch",
+            "code-remediate-production-lifecycle-source-patch-mismatch",
+            id="mismatched-source-patch",
+        ),
+        pytest.param(
+            "mismatched-rollback-patch",
+            "code-remediate-production-lifecycle-rollback-mismatch",
+            id="mismatched-rollback-patch",
+        ),
     ],
 )
 def test_completed_parallel_remediation_rejects_unbound_patch_evidence(
@@ -531,9 +567,11 @@ def test_completed_parallel_remediation_rejects_unbound_patch_evidence(
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ("context-tamper", "code-remediate-production-lifecycle-context-mismatch"),
-        ("state-path-drift", "code-remediate-production-lifecycle-state-path-mismatch"),
-        ("gate-drift", "code-remediate-production-lifecycle-verification-gate-mismatch"),
+        pytest.param("context-tamper", "code-remediate-production-lifecycle-context-mismatch", id="context-tamper"),
+        pytest.param(
+            "state-path-drift", "code-remediate-production-lifecycle-state-path-mismatch", id="state-path-drift"
+        ),
+        pytest.param("gate-drift", "code-remediate-production-lifecycle-verification-gate-mismatch", id="gate-drift"),
     ],
 )
 def test_completed_parallel_remediation_reconciles_context_state_and_gate(

@@ -51,9 +51,15 @@ class TestRecoverJsonObject:
     @pytest.mark.parametrize(
         "text,expected",
         [
-            ('prefix {"message":"literal { brace }"} suffix', {"message": "literal { brace }"}),
-            ('bad {"broken": true trailing {"ok": true}', {"ok": True}),
-            ('first {"a":1} second {"b":[{"c":2}]}', {"b": [{"c": 2}]}),
+            pytest.param(
+                'prefix {"message":"literal { brace }"} suffix',
+                {"message": "literal { brace }"},
+                id="prefix-message-literal-brace-suffix",
+            ),
+            pytest.param(
+                'bad {"broken": true trailing {"ok": true}', {"ok": True}, id="bad-broken-true-trailing-ok-true"
+            ),
+            pytest.param('first {"a":1} second {"b":[{"c":2}]}', {"b": [{"c": 2}]}, id="first-a-1-second-b-c-2"),
         ],
     )
     def test_brace_heavy_recovery(self, text: str, expected: dict[str, object]) -> None:
@@ -68,10 +74,7 @@ class TestRecoverJsonObject:
         """Return None for empty input."""
         assert recover_json_object("") is None
 
-    @pytest.mark.parametrize(
-        "alias",
-        [".", "_object", ""],
-    )
+    @pytest.mark.parametrize("alias", [".", "_object", ""])
     def test_whole_object_aliases_recognized(self, alias: str) -> None:
         """Whole-object aliases (., _object, '') are in the frozenset."""
         assert alias in extract_json_field._WHOLE_OBJECT_ALIASES
@@ -88,13 +91,13 @@ class TestFormatField:
     @pytest.mark.parametrize(
         "value,expected",
         [
-            ("PASS", "PASS"),
-            (True, "true"),
-            (False, "false"),
-            (42, "42"),
-            ([1, 2, 3], "[1, 2, 3]"),
-            ({"k": "v"}, '{"k": "v"}'),
-            (None, "null"),
+            pytest.param("PASS", "PASS", id="pass"),
+            pytest.param(True, "true", id="true"),
+            pytest.param(False, "false", id="false"),
+            pytest.param(42, "42", id="42"),
+            pytest.param([1, 2, 3], "[1, 2, 3]", id="1-2-3"),
+            pytest.param({"k": "v"}, '{"k": "v"}', id="k-v"),
+            pytest.param(None, "null", id="none"),
         ],
     )
     def test_format(self, value: object, expected: str) -> None:

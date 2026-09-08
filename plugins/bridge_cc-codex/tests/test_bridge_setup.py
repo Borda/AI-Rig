@@ -239,8 +239,10 @@ def test_actionable_plan_creates_only_safe_key_state_and_check_creates_none(
 
 @pytest.mark.parametrize(
     ("current_host", "target", "direction"),
-    (("codex", "claude", "codex_to_claude"), ("claude", "codex", "claude_to_codex")),
-    ids=("codex-to-claude", "claude-to-codex"),
+    (
+        pytest.param("codex", "claude", "codex_to_claude", id="codex-to-claude"),
+        pytest.param("claude", "codex", "claude_to_codex", id="claude-to-codex"),
+    ),
 )
 def test_peer_target_resolution_is_explicit_for_both_loaded_hosts(
     tmp_path: Path,
@@ -289,7 +291,7 @@ def test_capability_matrix_contains_only_the_version_gated_native_operations() -
     }
 
 
-@pytest.mark.parametrize("approval", (None, "wrong-digest"), ids=("missing", "wrong"))
+@pytest.mark.parametrize("approval", (pytest.param(None, id="missing"), "wrong-digest"))
 def test_apply_rejects_missing_or_wrong_approval_before_any_native_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -647,8 +649,10 @@ def test_live_plan_contains_only_the_separately_approved_peer_inference_operatio
 
 @pytest.mark.parametrize(
     ("claude_installed", "claude_authenticated", "classification"),
-    ((False, True, "configuration-needed"), (True, False, "authentication-needed")),
-    ids=("plugin-not-configured", "host-not-authenticated"),
+    (
+        pytest.param(False, True, "configuration-needed", id="plugin-not-configured"),
+        pytest.param(True, False, "authentication-needed", id="host-not-authenticated"),
+    ),
 )
 def test_live_approval_stops_before_provider_when_prerequisites_are_unproven(
     tmp_path: Path,
@@ -878,7 +882,7 @@ def test_expired_approval_is_rejected_before_configuration_or_live_execution(
     assert live_calls == []
 
 
-@pytest.mark.parametrize("configuration_returncode", (0, 1), ids=("successful", "failed"))
+@pytest.mark.parametrize("configuration_returncode", (0, 1))
 def test_configuration_approval_is_one_use_and_replay_stops_before_native_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -903,8 +907,10 @@ def test_configuration_approval_is_one_use_and_replay_stops_before_native_comman
 
 @pytest.mark.parametrize(
     ("inventory_after_configuration", "classification"),
-    ((False, "fresh-session-required"), (True, "configuration-verified")),
-    ids=("host-inventory-unchanged", "host-inventory-updated"),
+    (
+        pytest.param(False, "fresh-session-required", id="host-inventory-unchanged"),
+        pytest.param(True, "configuration-verified", id="host-inventory-updated"),
+    ),
 )
 def test_configuration_reinspects_host_inventory_before_reporting_outcome(
     tmp_path: Path,
@@ -1175,16 +1181,7 @@ def test_concurrent_approval_replay_check_cannot_allow_two_native_configurations
         """Run one approved setup action from a competing worker thread."""
         try:
             exit_codes.append(
-                setup.main(
-                    [
-                        "--current-host",
-                        "codex",
-                        "--workspace",
-                        str(tmp_path),
-                        "--approve",
-                        approval,
-                    ]
-                )
+                setup.main(["--current-host", "codex", "--workspace", str(tmp_path), "--approve", approval])
             )
         except BaseException as error:  # pragma: no cover - asserted below; keeps concurrent errors visible.
             errors.append(error)

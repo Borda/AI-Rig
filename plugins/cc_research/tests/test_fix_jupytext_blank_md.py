@@ -30,15 +30,7 @@ class TestFixText:
         assert fixed == "# %% [markdown]\n# Para one.\n\n# Para two.\n"
         assert count == 1
 
-    @pytest.mark.parametrize(
-        "spacer",
-        [
-            pytest.param("#", id="single-hash"),
-            pytest.param("##", id="double-hash"),
-            pytest.param("# ", id="hash-trailing-space"),
-            pytest.param("###  ", id="triple-hash-trailing-spaces"),
-        ],
-    )
+    @pytest.mark.parametrize("spacer", ["#", "##", "# ", "###  "])
     def test_clears_any_hash_only_spacer(self, spacer: str) -> None:
         """Any run of ``#`` with only whitespace after it counts as a spacer.
 

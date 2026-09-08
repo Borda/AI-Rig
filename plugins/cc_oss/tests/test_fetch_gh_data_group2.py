@@ -39,64 +39,28 @@ def _b64(text: str) -> str:
 
 def test_missing_owner_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     """No ``--owner`` → exit 1 with '--owner required' on stderr."""
-    rc = fgd.main(
-        [
-            "--repo",
-            "repo",
-            "--default-branch",
-            "main",
-            "--data-file",
-            str(tmp_path / "out.jsonl"),
-        ]
-    )
+    rc = fgd.main(["--repo", "repo", "--default-branch", "main", "--data-file", str(tmp_path / "out.jsonl")])
     assert rc == 1
     assert "--owner required" in capsys.readouterr().err
 
 
 def test_missing_repo_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     """Require a repository when an owner is provided."""
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--default-branch",
-            "main",
-            "--data-file",
-            str(tmp_path / "out.jsonl"),
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--default-branch", "main", "--data-file", str(tmp_path / "out.jsonl")])
     assert rc == 1
     assert "--repo required" in capsys.readouterr().err
 
 
 def test_missing_default_branch_exits_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
     """No ``--default-branch`` → exit 1 with '--default-branch required' on stderr."""
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--data-file",
-            str(tmp_path / "out.jsonl"),
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--data-file", str(tmp_path / "out.jsonl")])
     assert rc == 1
     assert "--default-branch required" in capsys.readouterr().err
 
 
 def test_missing_data_file_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     """No ``--data-file`` → exit 1 with '--data-file required' on stderr."""
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "main",
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main"])
     assert rc == 1
     assert "--data-file required" in capsys.readouterr().err
 
@@ -120,16 +84,7 @@ def test_path_traversal_rejected(
 ) -> None:
     """Path-traversal patterns in identifier args → exit 1 with regex hint on stderr."""
     rc = fgd.main(
-        [
-            "--owner",
-            owner,
-            "--repo",
-            repo,
-            "--default-branch",
-            branch,
-            "--data-file",
-            str(tmp_path / "out.jsonl"),
-        ]
+        ["--owner", owner, "--repo", repo, "--default-branch", branch, "--data-file", str(tmp_path / "out.jsonl")]
     )
     assert rc == 1
     assert needle in capsys.readouterr().err
@@ -224,18 +179,7 @@ def test_happy_path_writes_jsonl_records(monkeypatch: pytest.MonkeyPatch, tmp_pa
     monkeypatch.setattr(fgd.subprocess, "run", _stub_gh_run(payloads))
     monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
     data_file = tmp_path / "out.jsonl"
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "main",
-            "--data-file",
-            str(data_file),
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main", "--data-file", str(data_file)])
     assert rc == 0
     assert data_file.exists()
     lines = data_file.read_text(encoding="utf-8").strip().splitlines()
@@ -288,16 +232,7 @@ def test_malformed_success_payloads_are_skipped(
     monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
     data_file = tmp_path / "out.jsonl"
     rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "release/1.x",
-            "--data-file",
-            str(data_file),
-        ]
+        ["--owner", "owner", "--repo", "repo", "--default-branch", "release/1.x", "--data-file", str(data_file)]
     )
     assert rc == 0
     assert {rec["type"] for rec in _records(data_file)}.isdisjoint(unexpected_types)
@@ -321,16 +256,7 @@ def test_branch_names_containing_slash_are_encoded_in_protection_path(
     monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
     data_file = tmp_path / "out.jsonl"
     rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "release/1.x",
-            "--data-file",
-            str(data_file),
-        ]
+        ["--owner", "owner", "--repo", "repo", "--default-branch", "release/1.x", "--data-file", str(data_file)]
     )
     assert rc == 0
     assert "repos/owner/repo/branches/release/1.x/protection" in captured_paths
@@ -347,18 +273,7 @@ def test_all_404s_writes_no_records(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     )
     monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
     data_file = tmp_path / "out.jsonl"
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "main",
-            "--data-file",
-            str(data_file),
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main", "--data-file", str(data_file)])
     assert rc == 0
     # No records appended → file never opened for write; absent or empty both fine.
     if data_file.exists():
@@ -380,18 +295,7 @@ def test_codeowners_fallback_to_root(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(fgd.subprocess, "run", _run)
     monkeypatch.setattr(fgd, "which", lambda _: "/fake/gh")
     data_file = tmp_path / "out.jsonl"
-    rc = fgd.main(
-        [
-            "--owner",
-            "owner",
-            "--repo",
-            "repo",
-            "--default-branch",
-            "main",
-            "--data-file",
-            str(data_file),
-        ]
-    )
+    rc = fgd.main(["--owner", "owner", "--repo", "repo", "--default-branch", "main", "--data-file", str(data_file)])
     assert rc == 0
     records = [json.loads(line) for line in data_file.read_text(encoding="utf-8").splitlines() if line]
     co = [rec for rec in records if rec["type"] == "codeowners_text"]

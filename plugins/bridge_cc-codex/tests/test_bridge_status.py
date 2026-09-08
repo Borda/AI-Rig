@@ -73,12 +73,7 @@ def test_bridge_status_is_read_only_and_bound_to_the_host_workspace(
     normalized_workspace = PurePath(canonical_workspace).as_posix()
     assert payload == {
         "bridge_version": MANIFEST_VERSION,
-        "expected_tool_inventory": [
-            "bridge_status",
-            "bridge_implement",
-            "bridge_advise",
-            "bridge_review",
-        ],
+        "expected_tool_inventory": ["bridge_status", "bridge_implement", "bridge_advise", "bridge_review"],
         "plugin_version": MANIFEST_VERSION,
         "protocol_version": "2024-11-05",
         "schema_version": "1.0",

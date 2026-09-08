@@ -84,10 +84,7 @@ class TestValidation:
         assert rc == 1
         assert "skill-id" in capsys.readouterr().err
 
-    @pytest.mark.parametrize(
-        "skill_id",
-        ["bad/id", "bad id", "bad!id", "../evil"],
-    )
+    @pytest.mark.parametrize("skill_id", ["bad/id", "bad id", "bad!id", "../evil"])
     def test_invalid_skill_id_exit_two(self, skill_id: str, capsys: pytest.CaptureFixture[str]) -> None:
         """Skill-id with unsafe chars → exit 2 with SKILL_ID error on stderr."""
         rc = health_monitor_start.main([skill_id])

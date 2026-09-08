@@ -187,13 +187,7 @@ def test_emit_produces_shell_quoted_assignments() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [
-        pytest.param("plain text", id="spaces"),
-        pytest.param("'; touch /tmp/pwned; echo 'x", id="single-quotes-semicolons"),
-        pytest.param("", id="empty"),
-        pytest.param("line1\nline2", id="newline"),
-        pytest.param("$(touch /tmp/pwned)", id="command-substitution"),
-    ],
+    ["plain text", "'; touch /tmp/pwned; echo 'x", "", "line1\nline2", "$(touch /tmp/pwned)"],
 )
 def test_emit_shell_round_trip_for_hostile_values(value: str) -> None:
     """A hostile KEEP_ITEMS value round-trips through eval-safe shell quoting."""

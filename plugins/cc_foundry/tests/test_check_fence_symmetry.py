@@ -54,16 +54,29 @@ class TestCheckFile:
     @pytest.mark.parametrize(
         ("name", "text", "expected_count", "expected_fragments"),
         [
-            ("clean_close", "```bash\necho hi\n```\n", 0, ()),
-            ("trailing_spaces", "```bash\necho hi\n```   \n", 0, ()),
-            (
+            pytest.param("clean_close", "```bash\necho hi\n```\n", 0, (), id="clean_close"),
+            pytest.param("trailing_spaces", "```bash\necho hi\n```   \n", 0, (), id="trailing_spaces"),
+            pytest.param(
                 "trailing_comment",
                 "```bash\necho hi\n```  # timeout: 3000\n",
                 3,
                 ("nesting violation", "line 1", "line 3"),
+                id="trailing_comment",
             ),
-            ("longer_close_count", "```bash\necho hi\n````\n", 3, ("nesting violation", "line 1", "line 3")),
-            ("mismatched_close_count", "````bash\necho hi\n```\n", 2, ("line 1", "line 3")),
+            pytest.param(
+                "longer_close_count",
+                "```bash\necho hi\n````\n",
+                3,
+                ("nesting violation", "line 1", "line 3"),
+                id="longer_close_count",
+            ),
+            pytest.param(
+                "mismatched_close_count",
+                "````bash\necho hi\n```\n",
+                2,
+                ("line 1", "line 3"),
+                id="mismatched_close_count",
+            ),
         ],
     )
     def test_closing_fence_variants(

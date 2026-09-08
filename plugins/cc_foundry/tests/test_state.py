@@ -57,15 +57,7 @@ def test_malformed_assignment_returns_2() -> None:
     assert st.set_values("ns5", ["NOEQUALS"]) == 2
 
 
-@pytest.mark.parametrize(
-    "assignment",
-    [
-        pytest.param("X; malicious=1", id="shell-metachar"),
-        pytest.param("1LEADING_DIGIT=x", id="leading-digit"),
-        pytest.param("has-dash=x", id="dash"),
-        pytest.param("$(id)=x", id="command-substitution"),
-    ],
-)
+@pytest.mark.parametrize("assignment", ["X; malicious=1", "1LEADING_DIGIT=x", "has-dash=x", "$(id)=x"])
 def test_set_rejects_unsafe_key(assignment: str) -> None:
     """A KEY outside the shell-identifier allowlist is a usage error (exit 2)."""
     assert st.set_values("ns9", [assignment]) == 2

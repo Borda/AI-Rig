@@ -37,10 +37,7 @@ STATE_DIR_NAME = f"audit-state-{CSID}"
 RUN_DIR_REL = ".reports/audit/2026-08-04T10-00-00Z"
 FOUR_HOURS_S = 4 * 60 * 60
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 def _gate_payload(**overrides: object) -> dict:
@@ -154,6 +151,13 @@ def _audit_run(tmp_path: Path) -> tuple[Path, Path, str]:
 # ── Gate fires only for an in-flight audit missing its aggregate ──────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 def test_missing_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """Sentinel present without summary.jsonl → deny, naming the step to redo."""
     run_dir, _, cwd = audit_run
@@ -165,6 +169,7 @@ def test_missing_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path
     assert "Step 5" in reason
 
 
+@_skip_node_unavailable
 def test_empty_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """A zero-byte summary.jsonl counts as not written → deny."""
     run_dir, _, cwd = audit_run
@@ -173,6 +178,7 @@ def test_empty_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, 
     assert _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd))) is not None
 
 
+@_skip_node_unavailable
 def test_written_aggregate_passes_through(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """Consolidator output present → hook stays silent and the gate proceeds."""
     run_dir, _, cwd = audit_run
@@ -192,6 +198,7 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
     return transcript
 
 
+@_skip_node_unavailable
 def test_aggregate_written_with_table_in_reply_has_no_reminder(
     tmp_path: Path, audit_run: tuple[Path, Path, str]
 ) -> None:
@@ -205,6 +212,7 @@ def test_aggregate_written_with_table_in_reply_has_no_reminder(
     assert _run(tmp_path, _gate_payload(cwd=cwd, transcript_path=str(transcript))) == {}
 
 
+@_skip_node_unavailable
 def test_aggregate_written_without_table_in_reply_gets_reminder(
     tmp_path: Path, audit_run: tuple[Path, Path, str]
 ) -> None:
@@ -220,6 +228,7 @@ def test_aggregate_written_without_table_in_reply_gets_reminder(
     assert "Step 11b" in hook_output.get("additionalContext", "")
 
 
+@_skip_node_unavailable
 def test_aggregate_written_unreadable_transcript_has_no_reminder(
     tmp_path: Path, audit_run: tuple[Path, Path, str]
 ) -> None:
@@ -232,6 +241,7 @@ def test_aggregate_written_unreadable_transcript_has_no_reminder(
     assert result == {}
 
 
+@_skip_node_unavailable
 def test_absolute_sentinel_path_resolves(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """An absolute run-dir value is honoured as-is, independent of the payload cwd."""
     run_dir, sentinel, _ = audit_run
@@ -240,6 +250,7 @@ def test_absolute_sentinel_path_resolves(tmp_path: Path, audit_run: tuple[Path, 
     assert _denial_reason(_run(tmp_path, _gate_payload(cwd="/nonexistent"))) is not None
 
 
+@_skip_node_unavailable
 def test_simulated_windows_run_dir_resolution_is_canonical_and_contained() -> None:
     """Resolve Windows report paths case-insensitively and reject traversal outside audit."""
     resolved = _call_export("resolveRunDir", r".REPORTS\AUDIT\run-1", r"C:\Repo")
@@ -249,6 +260,7 @@ def test_simulated_windows_run_dir_resolution_is_canonical_and_contained() -> No
     assert _call_export("resolveRunDir", r".reports\audit\..\private", r"C:\Repo") is None
 
 
+@_skip_node_unavailable
 def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """MacOS exports TMPDIR with a trailing slash — the sentinel must still resolve."""
     _, _, cwd = audit_run
@@ -256,6 +268,7 @@ def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, audit_run: tupl
     assert _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd), tmpdir_suffix="/")) is not None
 
 
+@_skip_node_unavailable
 def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """CSID falls back to the payload's session_id when the env var is unset."""
     _, _, cwd = audit_run
@@ -268,6 +281,7 @@ def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, audit_run: tu
 # ── Questions other than the follow-up gate are never blocked ────────────────
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     ("label", "description"),
     [
@@ -287,6 +301,7 @@ def test_non_gate_questions_pass_through(
     assert _run(tmp_path, payload) == {}
 
 
+@_skip_node_unavailable
 def test_gate_label_matched_only_in_label_field(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """Gate wording inside a description must not turn another question into the gate."""
     _, _, cwd = audit_run
@@ -299,11 +314,13 @@ def test_gate_label_matched_only_in_label_field(tmp_path: Path, audit_run: tuple
 # ── Everything outside an in-flight audit passes through ─────────────────────
 
 
+@_skip_node_unavailable
 def test_no_sentinel_passes_through(tmp_path: Path) -> None:
     """No foundry:audit run reached Step 3 → unrelated questions are never gated."""
     assert _run(tmp_path, _gate_payload()) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "payload",
     [
@@ -319,6 +336,7 @@ def test_non_matching_payloads_pass_through(tmp_path: Path, audit_run: tuple[Pat
     assert _run(tmp_path, payload) == {}
 
 
+@_skip_node_unavailable
 def test_stale_sentinel_passes_through(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """Sentinel older than the enforcement window is treated as a crashed run."""
     _, sentinel, cwd = audit_run
@@ -328,6 +346,7 @@ def test_stale_sentinel_passes_through(tmp_path: Path, audit_run: tuple[Path, Pa
     assert _run(tmp_path, _gate_payload(cwd=cwd)) == {}
 
 
+@_skip_node_unavailable
 def test_missing_run_dir_passes_through(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
     """Run dir gone (worktree removed, TTL cleanup) → hook cannot judge, allows."""
     run_dir, _, cwd = audit_run
@@ -336,15 +355,8 @@ def test_missing_run_dir_passes_through(tmp_path: Path, audit_run: tuple[Path, P
     assert _run(tmp_path, _gate_payload(cwd=cwd)) == {}
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        pytest.param("", id="empty"),
-        pytest.param("   \n", id="whitespace"),
-        pytest.param(".reports/review/2026-08-04T10-00-00Z\n", id="not-an-audit-dir"),
-        pytest.param("/etc\n", id="system-path"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("content", ["", "   \n", ".reports/review/2026-08-04T10-00-00Z\n", "/etc\n"])
 def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: str) -> None:
     """Sentinel not holding a path under .reports/audit/ is ignored."""
     state_dir = tmp_path / STATE_DIR_NAME
@@ -354,6 +366,7 @@ def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: st
     assert _run(tmp_path, _gate_payload(cwd=str(tmp_path))) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "tool_input",
     [
@@ -371,14 +384,8 @@ def test_unexpected_tool_input_shape_passes_through(
     assert _run(tmp_path, _gate_payload(cwd=cwd, tool_input=tool_input)) == {}
 
 
-@pytest.mark.parametrize(
-    "session_id",
-    [
-        pytest.param("../../etc/passwd", id="traversal"),
-        pytest.param("has space", id="space"),
-        pytest.param("", id="blank"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("session_id", ["../../etc/passwd", "has space", ""])
 def test_unsafe_csid_passes_through(tmp_path: Path, audit_run: tuple[Path, Path, str], session_id: str) -> None:
     """A CSID that cannot name a sentinel file is discarded, never path-joined."""
     _, _, cwd = audit_run
@@ -386,6 +393,7 @@ def test_unsafe_csid_passes_through(tmp_path: Path, audit_run: tuple[Path, Path,
     assert _run(tmp_path, _gate_payload(cwd=cwd), session_id_env=session_id) == {}
 
 
+@_skip_node_unavailable
 def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     """A hook bug or unparsable payload must never strand the session."""
     proc = subprocess.run(

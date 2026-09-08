@@ -177,11 +177,11 @@ class TestVersionKey:
     @pytest.mark.parametrize(
         ("name", "expected"),
         [
-            ("0.20.0", [0, 20, 0]),
-            ("0.9.9", [0, 9, 9]),
-            ("1.2.3rc4", [1, 2, 3, 4]),
-            ("", []),
-            ("nonsense", []),
+            pytest.param("0.20.0", [0, 20, 0], id="0.20.0"),
+            pytest.param("0.9.9", [0, 9, 9], id="0.9.9"),
+            pytest.param("1.2.3rc4", [1, 2, 3, 4], id="1.2.3rc4"),
+            pytest.param("", [], id="empty"),
+            pytest.param("nonsense", [], id="nonsense"),
         ],
     )
     def test_version_key_extracts_digit_runs(self, name: str, expected: list[int]) -> None:

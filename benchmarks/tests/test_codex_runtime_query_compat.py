@@ -412,9 +412,9 @@ def test_verified_launcher_is_observed_and_requires_opt_in_for_credit(script_run
 @pytest.mark.parametrize(
     "command_template",
     [
-        pytest.param('"{launcher}" --help', id="help-only"),
-        pytest.param('echo "{launcher}" query --compact rdeps pkg.core', id="echo-only"),
-        pytest.param('"{other}" query --compact rdeps pkg.core', id="same-basename-wrong-path"),
+        '"{launcher}" --help',
+        'echo "{launcher}" query --compact rdeps pkg.core',
+        '"{other}" query --compact rdeps pkg.core',
     ],
 )
 def test_verified_launcher_observation_rejects_non_dedicated_or_wrong_commands(
@@ -490,14 +490,11 @@ def test_observed_launcher_success_and_completion_are_distinct(
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("'$CODEMAP_BIN' query --compact rdeps pkg.core", id="single-quoted-variable"),
-        pytest.param("'${CODEMAP_BIN}' query --compact rdeps pkg.core", id="single-quoted-braced-variable"),
-        pytest.param("echo ';' \"$CODEMAP_BIN\" query --compact rdeps pkg.core", id="quoted-semicolon-data"),
-        pytest.param(
-            'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="reassigned-variable",
-        ),
-        pytest.param('"$CODEMAP_BIN" query --compact rdeps --help', id="subcommand-help"),
+        "'$CODEMAP_BIN' query --compact rdeps pkg.core",
+        "'${CODEMAP_BIN}' query --compact rdeps pkg.core",
+        "echo ';' \"$CODEMAP_BIN\" query --compact rdeps pkg.core",
+        'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        '"$CODEMAP_BIN" query --compact rdeps --help',
     ],
 )
 def test_observation_rejects_unexpanded_or_mutated_launcher_commands(script_run_codex: Any, command: str) -> None:
@@ -885,48 +882,17 @@ def test_historical_uppercase_launcher_assignment_rejects_native_item_contract(
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param(
-            'CODEMAP_BIN="${CODEMAP_BIN:-/wrong/codemap-py}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="wrong-fallback",
-        ),
-        pytest.param(
-            'CODEMAP_BIN="{launcher}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="literal-assignment",
-        ),
-        pytest.param(
-            'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; CODEMAP_BIN=/wrong/codemap-py; '
-            '"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="reassigned",
-        ),
-        pytest.param(
-            'export CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="exported",
-        ),
-        pytest.param(
-            'readonly CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="readonly",
-        ),
-        pytest.param(
-            'typeset CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="typeset",
-        ),
-        pytest.param(
-            'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; unset CODEMAP_BIN; '
-            '"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="unset",
-        ),
-        pytest.param(
-            'CODEMAP_BIN="$(printf \'%s\' {launcher})"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="command-substitution",
-        ),
-        pytest.param(
-            'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="dynamic-eval",
-        ),
-        pytest.param(
-            'if true; then CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; fi; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="control-flow-binding",
-        ),
+        'CODEMAP_BIN="${CODEMAP_BIN:-/wrong/codemap-py}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'CODEMAP_BIN="{launcher}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; CODEMAP_BIN=/wrong/codemap-py; '
+        '"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'export CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'readonly CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'typeset CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; unset CODEMAP_BIN; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'CODEMAP_BIN="$(printf \'%s\' {launcher})"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'if true; then CODEMAP_BIN="${CODEMAP_BIN:-{launcher}}"; fi; "$CODEMAP_BIN" query --compact rdeps pkg.core',
     ],
 )
 def test_uppercase_launcher_fallback_rejects_untrusted_shell_forms(
@@ -993,38 +959,14 @@ def test_historical_multiline_direct_query_rejects_native_item_contract(script_r
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param(
-            'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="historical-semicolon",
-        ),
-        pytest.param(
-            'printf ready &&\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="historical-and-newline",
-        ),
-        pytest.param(
-            'false ||\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="historical-or-newline",
-        ),
-        pytest.param(
-            'printf ready |\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="historical-pipe-newline",
-        ),
-        pytest.param(
-            'CODEMAP_BIN=/wrong/codemap-py\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="newline-before-mutated-launcher",
-        ),
-        pytest.param(
-            'printf \'CODEMAP_BIN=/wrong\\n\' "$CODEMAP_BIN" "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="diagnostic-data-without-separator",
-        ),
-        pytest.param(
-            'printf \'CODEMAP_BIN=%s\\n\n"$CODEMAP_BIN" query --compact rdeps pkg.core\' "$CODEMAP_BIN"',
-            id="quoted-literal-newline",
-        ),
-        pytest.param(
-            'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN" \\\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="escaped-line-continuation",
-        ),
+        'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'printf ready &&\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'false ||\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'printf ready |\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'CODEMAP_BIN=/wrong/codemap-py\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'printf \'CODEMAP_BIN=/wrong\\n\' "$CODEMAP_BIN" "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'printf \'CODEMAP_BIN=%s\\n\n"$CODEMAP_BIN" query --compact rdeps pkg.core\' "$CODEMAP_BIN"',
+        'printf \'CODEMAP_BIN=%s\\n\' "$CODEMAP_BIN" \\\n"$CODEMAP_BIN" query --compact rdeps pkg.core',
     ],
 )
 def test_historical_newline_shell_forms_reject_native_item_contract(script_run_codex: Any, command: str) -> None:
@@ -1209,143 +1151,74 @@ def test_historical_conditional_launcher_alias_replay_is_not_canonical_C_complia
 @pytest.mark.parametrize(
     "template",
     [
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_OTHER="$CODEMAP_BIN"; '
-            'else CODEMAP_OTHER="{launcher}"; fi\n'
-            '"$CODEMAP_OTHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-alias-name",
-        ),
-        pytest.param(
-            'if [ -n "$OTHER" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-condition-variable",
-        ),
-        pytest.param(
-            'if [ -z "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-condition-operator",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="/wrong/codemap-py"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-then-source",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="/wrong/codemap-py"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-else-path",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="{launcher}"; '
-            'else CODEMAP_LAUNCHER="$CODEMAP_BIN"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="swapped-branches",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then :; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="missing-then-branch",
-        ),
-        pytest.param(
-            'CODEMAP_BIN=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="precondition-codemap-bin-mutation",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi; CODEMAP_LAUNCHER=/wrong/codemap-py\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="post-fi-alias-reassignment",
-        ),
-        pytest.param(
-            'export CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="export-alias",
-        ),
-        pytest.param(
-            'readonly CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="readonly-alias",
-        ),
-        pytest.param(
-            'typeset CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="typeset-alias",
-        ),
-        pytest.param(
-            'unset CODEMAP_LAUNCHER; if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="unset-alias",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$(printf %s "$CODEMAP_BIN")"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="command-substitution",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi; payload="CODEMAP_LAUNCHER=/wrong/codemap-py"; '
-            'eval "$payload"\n"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="eval",
-        ),
-        pytest.param(
-            'source /dev/null; if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="source",
-        ),
-        pytest.param(
-            'read -r CODEMAP_LAUNCHER <<< /wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="read",
-        ),
-        pytest.param(
-            'while false; do CODEMAP_LAUNCHER="$CODEMAP_BIN"; done; if [ -n "$CODEMAP_BIN" ]; '
-            'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="loop",
-        ),
-        pytest.param(
-            '( if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi )\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="subshell",
-        ),
-        pytest.param(
-            'if true; then if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="nested-conditional",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi',
-            id="query-inside-branch",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="{launcher}"; fi; printf ready\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="intervening-command",
-        ),
-        pytest.param(
-            'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
-            'else CODEMAP_LAUNCHER="/wrong/codemap-py"; fi\n'
-            '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
-            id="wrong-locked-path",
-        ),
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_OTHER="$CODEMAP_BIN"; '
+        'else CODEMAP_OTHER="{launcher}"; fi\n'
+        '"$CODEMAP_OTHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$OTHER" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -z "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="/wrong/codemap-py"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="/wrong/codemap-py"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="{launcher}"; '
+        'else CODEMAP_LAUNCHER="$CODEMAP_BIN"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then :; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'CODEMAP_BIN=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi; CODEMAP_LAUNCHER=/wrong/codemap-py\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'export CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'readonly CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'typeset CODEMAP_LAUNCHER=/wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'unset CODEMAP_LAUNCHER; if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$(printf %s "$CODEMAP_BIN")"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi; payload="CODEMAP_LAUNCHER=/wrong/codemap-py"; '
+        'eval "$payload"\n"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'source /dev/null; if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'read -r CODEMAP_LAUNCHER <<< /wrong/codemap-py; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'while false; do CODEMAP_LAUNCHER="$CODEMAP_BIN"; done; if [ -n "$CODEMAP_BIN" ]; '
+        'then CODEMAP_LAUNCHER="$CODEMAP_BIN"; else CODEMAP_LAUNCHER="{launcher}"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        '( if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi )\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if true; then if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="{launcher}"; fi; printf ready\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
+        'if [ -n "$CODEMAP_BIN" ]; then CODEMAP_LAUNCHER="$CODEMAP_BIN"; '
+        'else CODEMAP_LAUNCHER="/wrong/codemap-py"; fi\n'
+        '"$CODEMAP_LAUNCHER" query --compact fn-rdeps "pkg.core::target"',
     ],
 )
 def test_conditional_launcher_alias_rejects_unproven_forms(
@@ -1573,12 +1446,7 @@ def test_noncanonical_skill_reader_does_not_block_a_later_standalone_c_query(
             1,
             id="incomplete-bytes",
         ),
-        pytest.param(
-            "skill_path='{skill}'; sed -n '1,260p' \"$skill_path\"; {query}",
-            "wrong",
-            1,
-            id="wrong-bytes",
-        ),
+        pytest.param("skill_path='{skill}'; sed -n '1,260p' \"$skill_path\"; {query}", "wrong", 1, id="wrong-bytes"),
     ],
 )
 def test_historical_bound_skill_reader_forms_reject_native_item_contract(
@@ -1655,43 +1523,18 @@ def test_historical_query_then_skill_read_rejects_native_item_contract(script_ru
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param(
-            'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="direct-variable-reassigned",
-        ),
-        pytest.param(
-            'export CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="direct-variable-exported",
-        ),
-        pytest.param(
-            'codemap_bin="${CODEMAP_BIN:-{launcher}}"; codemap_bin=/wrong; '
-            '"$codemap_bin" query --compact rdeps pkg.core',
-            id="bound-variable-reassigned",
-        ),
-        pytest.param(
-            'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="direct-variable-eval-indirection",
-        ),
-        pytest.param(
-            'name=CODEMAP_BIN; typeset "$name"=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
-            id="direct-variable-typeset-indirection",
-        ),
-        pytest.param(
-            'for CODEMAP_BIN in /wrong/codemap-py; do "$CODEMAP_BIN" query --compact rdeps pkg.core; done',
-            id="direct-variable-loop-reassignment",
-        ),
-        pytest.param(
-            "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
-            "CODEMAP_BIN=/wrong/codemap-py; "
-            'if [ -n "${CODEMAP_BIN-}" ]; then '
-            '"$CODEMAP_BIN" query --compact rdeps pkg.core; fi',
-            id="diagnostic-then-direct-reassignment",
-        ),
-        pytest.param(
-            'while IFS= read -r CODEMAP_BIN; do "$CODEMAP_BIN" query --compact '
-            "rdeps pkg.core; break; done <<< /wrong/codemap-py",
-            id="while-read-direct-reassignment",
-        ),
+        'CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'export CODEMAP_BIN=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'codemap_bin="${CODEMAP_BIN:-{launcher}}"; codemap_bin=/wrong; "$codemap_bin" query --compact rdeps pkg.core',
+        'payload="CODEMAP_BIN=/wrong/codemap-py"; eval "$payload"; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'name=CODEMAP_BIN; typeset "$name"=/wrong/codemap-py; "$CODEMAP_BIN" query --compact rdeps pkg.core',
+        'for CODEMAP_BIN in /wrong/codemap-py; do "$CODEMAP_BIN" query --compact rdeps pkg.core; done',
+        "printf 'CODEMAP_BIN=%s\\n' \"${CODEMAP_BIN-}\"; "
+        "CODEMAP_BIN=/wrong/codemap-py; "
+        'if [ -n "${CODEMAP_BIN-}" ]; then '
+        '"$CODEMAP_BIN" query --compact rdeps pkg.core; fi',
+        'while IFS= read -r CODEMAP_BIN; do "$CODEMAP_BIN" query --compact '
+        "rdeps pkg.core; break; done <<< /wrong/codemap-py",
     ],
 )
 def test_query_credit_rejects_launcher_variable_mutation(script_run_codex: Any, tmp_path: Path, command: str) -> None:
@@ -1709,26 +1552,11 @@ def test_query_credit_rejects_launcher_variable_mutation(script_run_codex: Any, 
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param(
-            'codemap_bin="${CODEMAP_BIN:-/wrong/codemap-py}"; "$codemap_bin" query --compact rdeps pkg.core',
-            id="wrong-fallback",
-        ),
-        pytest.param(
-            'codemap_bin="${CODEMAP_BIN:-{launcher}}"; "$codemap_bin" --version',
-            id="not-query",
-        ),
-        pytest.param(
-            'codemap_bin="{launcher}"; "$codemap_bin" query --compact rdeps pkg.core',
-            id="unbound-direct-assignment",
-        ),
-        pytest.param(
-            'runner="${CODEMAP_BIN:-{launcher}}"; "$runner" query --compact rdeps pkg.core',
-            id="other-variable",
-        ),
-        pytest.param(
-            'echo "$CODEMAP_BIN query --compact rdeps pkg.core"',
-            id="echo-only",
-        ),
+        'codemap_bin="${CODEMAP_BIN:-/wrong/codemap-py}"; "$codemap_bin" query --compact rdeps pkg.core',
+        'codemap_bin="${CODEMAP_BIN:-{launcher}}"; "$codemap_bin" --version',
+        'codemap_bin="{launcher}"; "$codemap_bin" query --compact rdeps pkg.core',
+        'runner="${CODEMAP_BIN:-{launcher}}"; "$runner" query --compact rdeps pkg.core',
+        'echo "$CODEMAP_BIN query --compact rdeps pkg.core"',
     ],
 )
 def test_bound_launcher_query_rejects_ambiguous_or_unlocked_shell_forms(

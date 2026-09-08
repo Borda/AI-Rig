@@ -323,14 +323,7 @@ class TestLoadOssTasks:
             result = script_run_cli.load_oss_tasks()
         assert result == []
 
-    @pytest.mark.parametrize(
-        "type_filter",
-        [
-            pytest.param("symbol_extraction", id="symbol_extraction"),
-            pytest.param("code_quality", id="code_quality"),
-            pytest.param("real_issue", id="real_issue"),
-        ],
-    )
+    @pytest.mark.parametrize("type_filter", ["symbol_extraction", "code_quality", "real_issue"])
     def test_load_oss_tasks_type_filter_matches_only(
         self, script_run_cli: Any, type_filter: str, oss_tasks_file: Path
     ) -> None:
@@ -392,15 +385,15 @@ class TestPathToModule:
         "path,repo_root,expected",
         [
             # Standard layout
-            ("/repo/pkg/mod.py", "/repo", "pkg.mod"),
+            pytest.param("/repo/pkg/mod.py", "/repo", "pkg.mod", id="repo-pkg-mod.py"),
             # src/ layout — strip prefix
-            ("/repo/src/pkg/mod.py", "/repo", "pkg.mod"),
+            pytest.param("/repo/src/pkg/mod.py", "/repo", "pkg.mod", id="repo-src-pkg-mod.py"),
             # __init__.py collapses to package
-            ("/repo/pkg/__init__.py", "/repo", "pkg"),
+            pytest.param("/repo/pkg/__init__.py", "/repo", "pkg", id="repo-pkg-__init__.py"),
             # Nested __init__.py
-            ("/repo/pkg/sub/__init__.py", "/repo", "pkg.sub"),
+            pytest.param("/repo/pkg/sub/__init__.py", "/repo", "pkg.sub", id="repo-pkg-sub-__init__.py"),
             # src/ layout with __init__.py
-            ("/repo/src/pkg/__init__.py", "/repo", "pkg"),
+            pytest.param("/repo/src/pkg/__init__.py", "/repo", "pkg", id="repo-src-pkg-__init__.py"),
         ],
     )
     def test_converts_py_path_to_dotted_module(
@@ -415,14 +408,7 @@ class TestPathToModule:
         """
         assert script_run_cli.path_to_module(path, repo_root) == expected
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            "/repo/README.md",
-            "/repo/data.csv",
-            "/repo/LICENSE",
-        ],
-    )
+    @pytest.mark.parametrize("path", ["/repo/README.md", "/repo/data.csv", "/repo/LICENSE"])
     def test_returns_none_for_non_py_files(self, script_run_cli: Any, path: str) -> None:
         """non-.py paths return None.
 
@@ -438,11 +424,12 @@ class TestModuleToGrepPattern:
     @pytest.mark.parametrize(
         "module,expected",
         [
-            ("foo.bar", r"from foo.bar import\|import foo.bar"),
-            ("pkg", r"from pkg import\|import pkg"),
-            (
+            pytest.param("foo.bar", r"from foo.bar import\|import foo.bar", id="foo.bar"),
+            pytest.param("pkg", r"from pkg import\|import pkg", id="pkg"),
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 r"from lightning.pytorch.trainer.trainer import\|import lightning.pytorch.trainer.trainer",
+                id="lightning.pytorch.trainer.trainer",
             ),
         ],
     )
@@ -462,9 +449,9 @@ class TestModuleToPackage:
     @pytest.mark.parametrize(
         "module,expected",
         [
-            ("foo.bar.baz", "foo.bar"),
-            ("foo.bar", "foo"),
-            ("foo", None),
+            pytest.param("foo.bar.baz", "foo.bar", id="foo.bar.baz"),
+            pytest.param("foo.bar", "foo", id="foo.bar"),
+            pytest.param("foo", None, id="foo"),
         ],
     )
     def test_returns_parent_package_or_none(self, script_run_cli: Any, module: str, expected: str | None) -> None:
@@ -489,15 +476,15 @@ class TestComputePrecisionRecall:
         "codemap_set,grep_set,expected_precision,expected_recall,expected_tp,expected_fp,expected_fn",
         [
             # Perfect agreement
-            ({"a", "b", "c"}, {"a", "b", "c"}, 1.0, 1.0, 3, 0, 0),
+            pytest.param({"a", "b", "c"}, {"a", "b", "c"}, 1.0, 1.0, 3, 0, 0, id="a-b-c"),
             # Codemap finds extra (FP)
-            ({"a", "b", "x"}, {"a", "b"}, 2 / 3, 1.0, 2, 1, 0),
+            pytest.param({"a", "b", "x"}, {"a", "b"}, 2 / 3, 1.0, 2, 1, 0, id="a-b-x"),
             # Codemap misses some (FN)
-            ({"a"}, {"a", "b"}, 1.0, 0.5, 1, 0, 1),
+            pytest.param({"a"}, {"a", "b"}, 1.0, 0.5, 1, 0, 1, id="a-a-b"),
             # No overlap at all
-            ({"x"}, {"y"}, 0.0, 0.0, 0, 1, 1),
+            pytest.param({"x"}, {"y"}, 0.0, 0.0, 0, 1, 1, id="x"),
             # Single matching element
-            ({"a"}, {"a"}, 1.0, 1.0, 1, 0, 0),
+            pytest.param({"a"}, {"a"}, 1.0, 1.0, 1, 0, 0, id="a-a"),
         ],
     )
     def test_precision_recall_values(
@@ -587,10 +574,10 @@ class TestComputeVerdict:
     @pytest.mark.parametrize(
         "n_pass,n_total,expected",
         [
-            (3, 4, "PARTIAL"),  # 75% >= 50% but not 100%
-            (1, 2, "PARTIAL"),  # exactly 50%
-            (1, 3, "FAIL"),  # 33% < 50%
-            (0, 3, "FAIL"),  # 0%
+            pytest.param(3, 4, "PARTIAL", id="3"),  # 75% >= 50% but not 100%
+            pytest.param(1, 2, "PARTIAL", id="1-2"),  # exactly 50%
+            pytest.param(1, 3, "FAIL", id="1-3"),  # 33% < 50%
+            pytest.param(0, 3, "FAIL", id="0"),  # 0%
         ],
     )
     def test_partial_and_fail_boundary(self, script_run_cli: Any, n_pass: int, n_total: int, expected: str) -> None:
@@ -652,9 +639,9 @@ class TestValidateCentralJson:
     @pytest.mark.parametrize(
         "data,reason_fragment",
         [
-            ([], "object"),
-            ({"central": [42]}, "object"),
-            ({"central": [{"rdep_count": "5"}]}, "int"),
+            pytest.param([], "object", id="punctuation"),
+            pytest.param({"central": [42]}, "object", id="central-42"),
+            pytest.param({"central": [{"rdep_count": "5"}]}, "int", id="central-rdep_count-5"),
         ],
     )
     def test_wrong_type_payloads_return_not_ok(self, script_run_cli: Any, data: Any, reason_fragment: str) -> None:
@@ -676,9 +663,9 @@ class TestValidateRdepsJson:
     @pytest.mark.parametrize(
         "data,expected_reason_fragment",
         [
-            ({"module": "foo"}, "imported_by"),  # missing imported_by
-            ({"imported_by": []}, "module"),  # missing module
-            ({}, "imported_by"),  # both missing — first check wins
+            pytest.param({"module": "foo"}, "imported_by", id="module-foo"),  # missing imported_by
+            pytest.param({"imported_by": []}, "module", id="imported_by"),  # missing module
+            pytest.param({}, "imported_by", id="punctuation"),  # both missing — first check wins
         ],
     )
     def test_missing_keys_return_not_ok(self, script_run_cli: Any, data: dict, expected_reason_fragment: str) -> None:
@@ -695,9 +682,9 @@ class TestValidateRdepsJson:
     @pytest.mark.parametrize(
         "data,expected_reason_fragment",
         [
-            ([], "object"),
-            ({"imported_by": "a.b", "module": "foo"}, "list"),
-            ({"imported_by": [], "module": 42}, "string"),
+            pytest.param([], "object", id="punctuation"),
+            pytest.param({"imported_by": "a.b", "module": "foo"}, "list", id="imported_by-a.b-module-foo"),
+            pytest.param({"imported_by": [], "module": 42}, "string", id="imported_by-module-42"),
         ],
     )
     def test_wrong_type_payloads_return_not_ok(
@@ -721,9 +708,9 @@ class TestValidateDepsJson:
     @pytest.mark.parametrize(
         "data,expected_reason_fragment",
         [
-            ({"module": "foo"}, "direct_imports"),
-            ({"direct_imports": []}, "module"),
-            ({}, "direct_imports"),
+            pytest.param({"module": "foo"}, "direct_imports", id="module-foo"),
+            pytest.param({"direct_imports": []}, "module", id="direct_imports"),
+            pytest.param({}, "direct_imports", id="punctuation"),
         ],
     )
     def test_missing_keys_return_not_ok(self, script_run_cli: Any, data: dict, expected_reason_fragment: str) -> None:
@@ -740,9 +727,9 @@ class TestValidateDepsJson:
     @pytest.mark.parametrize(
         "data,expected_reason_fragment",
         [
-            ([], "object"),
-            ({"direct_imports": "x.y", "module": "foo"}, "list"),
-            ({"direct_imports": [], "module": 42}, "string"),
+            pytest.param([], "object", id="punctuation"),
+            pytest.param({"direct_imports": "x.y", "module": "foo"}, "list", id="direct_imports-x.y-module-foo"),
+            pytest.param({"direct_imports": [], "module": 42}, "string", id="direct_imports-module-42"),
         ],
     )
     def test_wrong_type_payloads_return_not_ok(
@@ -922,8 +909,10 @@ class TestRunScanQuery:
     @pytest.mark.parametrize(
         "side_effect,expected_error",
         [
-            (subprocess.TimeoutExpired(cmd=[], timeout=30), "timeout"),
-            (OSError("missing executable"), "os error"),
+            pytest.param(
+                subprocess.TimeoutExpired(cmd=[], timeout=30), "timeout", id="subprocess.timeoutexpired-cmd-timeout-30"
+            ),
+            pytest.param(OSError("missing executable"), "os error", id="oserror-missing-executable"),
         ],
     )
     def test_result_wrapper_reports_timeout_and_os_error(
@@ -1113,17 +1102,17 @@ class TestThresholdsConfig:
     @pytest.mark.parametrize(
         "key,sub_key,lo,hi",
         [
-            ("C1", "coverage_gap_min", 0.0, 1.0),
-            ("C2", "infeasible_path_fraction_min", 0.0, 1.0),
-            ("C3", "leverage_ratio_min", 1.0, 100.0),
-            ("A1", "precision_min", 0.0, 1.0),
-            ("A1", "recall_min", 0.0, 1.0),
-            ("A2", "precision_min", 0.0, 1.0),
-            ("A3", "fp_rate_max", 0.0, 1.0),
-            ("L1", "median_ms_max", 1.0, 10_000.0),
-            ("L2", "median_ms_max", 1.0, 10_000.0),
-            ("L3", "amortized_ms_max", 1.0, 10_000.0),
-            ("L4", "speedup_min", 1.0, 1_000.0),
+            pytest.param("C1", "coverage_gap_min", 0.0, 1.0, id="c1"),
+            pytest.param("C2", "infeasible_path_fraction_min", 0.0, 1.0, id="c2"),
+            pytest.param("C3", "leverage_ratio_min", 1.0, 100.0, id="c3"),
+            pytest.param("A1", "precision_min", 0.0, 1.0, id="a1-precision_min"),
+            pytest.param("A1", "recall_min", 0.0, 1.0, id="a1-recall_min"),
+            pytest.param("A2", "precision_min", 0.0, 1.0, id="a2"),
+            pytest.param("A3", "fp_rate_max", 0.0, 1.0, id="a3"),
+            pytest.param("L1", "median_ms_max", 1.0, 10_000.0, id="l1"),
+            pytest.param("L2", "median_ms_max", 1.0, 10_000.0, id="l2"),
+            pytest.param("L3", "amortized_ms_max", 1.0, 10_000.0, id="l3"),
+            pytest.param("L4", "speedup_min", 1.0, 1_000.0, id="l4"),
         ],
     )
     def test_threshold_value_in_expected_range(
@@ -1154,6 +1143,7 @@ class TestThresholdsConfig:
 
 
 @pytest.mark.integration
+@pytest.mark.live
 @NETWORK_INTEGRATION
 @RAW_CODEMAP_LAUNCHERS
 class TestIntegrationScanQuery:
@@ -1310,7 +1300,7 @@ class TestIntegrationSuiteL:
         assert {r.scenario for r in results} == {"L1", "L2", "L3", "L4"}
 
 
-@pytest.mark.parametrize("times_out", [False, True], ids=["completed", "timed-out"])
+@pytest.mark.parametrize("times_out", [False, True])
 def test_latency_index_build_restores_prebuilt_index_bytes(
     script_run_cli: Any,
     tmp_path: Path,
@@ -1510,13 +1500,7 @@ class TestFileImportsModule:
 
     @pytest.mark.parametrize(
         "relpath",
-        [
-            pytest.param("pkg/imp_from.py", id="from-import"),
-            pytest.param("pkg/imp_plain.py", id="plain-import"),
-            pytest.param("pkg/imp_alias.py", id="aliased-import"),
-            pytest.param("pkg/rel/rel_from.py", id="relative-from-parent"),
-            pytest.param("pkg/rel/rel_bare.py", id="relative-bare"),
-        ],
+        ["pkg/imp_from.py", "pkg/imp_plain.py", "pkg/imp_alias.py", "pkg/rel/rel_from.py", "pkg/rel/rel_bare.py"],
     )
     def test_true_importers(self, script_run_cli: Any, sample_pkg: Path, relpath: str) -> None:
         """Every genuine importer of pkg.target is confirmed by AST.
@@ -1526,14 +1510,7 @@ class TestFileImportsModule:
         """
         assert script_run_cli.file_imports_module(sample_pkg / relpath, "pkg.target", sample_pkg) is True
 
-    @pytest.mark.parametrize(
-        "relpath",
-        [
-            pytest.param("pkg/imp_decoy.py", id="decoy-sibling"),
-            pytest.param("pkg/unrelated.py", id="unrelated"),
-            pytest.param("pkg/bad.py", id="syntax-error"),
-        ],
-    )
+    @pytest.mark.parametrize("relpath", ["pkg/imp_decoy.py", "pkg/unrelated.py", "pkg/bad.py"])
     def test_non_importers(self, script_run_cli: Any, sample_pkg: Path, relpath: str) -> None:
         """Non-importers, decoys, and unparsable files are rejected.
 

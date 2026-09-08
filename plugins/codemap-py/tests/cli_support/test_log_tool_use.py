@@ -110,26 +110,14 @@ def test_non_search_tool_ignored(tmp_path: Path) -> None:
     assert _read_records(tmp_path) == []
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("ls -la src/", id="non-search-command"),
-        pytest.param("scan-query rdeps pkg.mod | grep imported_by", id="scan-query-wrapper"),
-    ],
-)
+@pytest.mark.parametrize("command", ["ls -la src/", "scan-query rdeps pkg.mod | grep imported_by"])
 def test_bash_non_search_ignored(tmp_path: Path, command: str) -> None:
     """Bash commands that are not manual search volume must write nothing."""
     _run({"tool_name": "Bash", "tool_input": {"command": command}}, tmp_path)
     assert _read_records(tmp_path) == []
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("rg 'def login' src/", id="rg-direct"),
-        pytest.param("cat f.py | grep import", id="grep-after-pipe"),
-    ],
-)
+@pytest.mark.parametrize("command", ["rg 'def login' src/", "cat f.py | grep import"])
 def test_bash_search_logged_with_command_target(tmp_path: Path, command: str) -> None:
     """Search-shaped Bash commands are logged as tool=Bash with the command as target."""
     _run({"tool_name": "Bash", "tool_input": {"command": command}}, tmp_path)

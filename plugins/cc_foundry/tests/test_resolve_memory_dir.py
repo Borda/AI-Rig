@@ -37,15 +37,15 @@ class TestSlugify:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("MyProject", "myproject"),
-            ("foo_bar", "foo-bar"),
-            ("foo/bar/baz", "foo-bar-baz"),
-            ("foo--bar", "foo-bar"),
-            ("trailing-", "trailing"),
-            ("trailing---", "trailing"),
-            ("/abs/path/Borda.local", "-abs-path-borda-local"),
-            ("UPPER_CASE!@#mix", "upper-case-mix"),
-            ("", ""),
+            pytest.param("MyProject", "myproject", id="myproject"),
+            pytest.param("foo_bar", "foo-bar", id="foo_bar"),
+            pytest.param("foo/bar/baz", "foo-bar-baz", id="foo-bar-baz"),
+            pytest.param("foo--bar", "foo-bar", id="foo--bar"),
+            pytest.param("trailing-", "trailing", id="single-trailing-hyphen"),
+            pytest.param("trailing---", "trailing", id="multiple-trailing-hyphens"),
+            pytest.param("/abs/path/Borda.local", "-abs-path-borda-local", id="abs-path-borda.local"),
+            pytest.param("UPPER_CASE!@#mix", "upper-case-mix", id="upper_case-mix"),
+            pytest.param("", "", id="empty"),
         ],
     )
     def test_canonical_forms(self, raw: str, expected: str) -> None:

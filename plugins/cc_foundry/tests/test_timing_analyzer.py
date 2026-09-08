@@ -344,18 +344,7 @@ def test_main_writes_report(tmp_path: Path, synthetic_logs, capsys):
     """Synthetic rows are dated year 2030 — they sit in any sane past window."""
     timings, inv = synthetic_logs
     out = tmp_path / "report.md"
-    rc = ta.main(
-        [
-            "--timings",
-            str(timings),
-            "--invocations",
-            str(inv),
-            "--since",
-            "30d",
-            "--output",
-            str(out),
-        ]
-    )
+    rc = ta.main(["--timings", str(timings), "--invocations", str(inv), "--since", "30d", "--output", str(out)])
     assert rc == 0
     captured = capsys.readouterr()
     assert str(out) in captured.out
@@ -372,18 +361,7 @@ def test_main_returns_1_when_empty_window(tmp_path: Path, synthetic_logs, capsys
     # but cutoff = now - 1s; rows in year 2030 have ts >> now → they DO match.
     # Use empty timings instead.
     empty = _write_jsonl(tmp_path / "empty.jsonl", [])
-    rc = ta.main(
-        [
-            "--timings",
-            str(empty),
-            "--invocations",
-            str(inv),
-            "--since",
-            "1h",
-            "--output",
-            str(out),
-        ]
-    )
+    rc = ta.main(["--timings", str(empty), "--invocations", str(inv), "--since", "1h", "--output", str(out)])
     assert rc == 1
     err = capsys.readouterr().err
     assert "no sessions" in err

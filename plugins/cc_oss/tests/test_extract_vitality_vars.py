@@ -102,13 +102,13 @@ class TestEmit:
     @pytest.mark.parametrize(
         "value",
         [
-            pytest.param("has 'single quotes'", id="single-quotes"),
-            pytest.param('has "double quotes"', id="double-quotes"),
-            pytest.param("semi;colon", id="semicolon"),
-            pytest.param("$(touch pwned)", id="command-substitution"),
-            pytest.param("", id="empty"),
-            pytest.param("line1\nline2", id="newline"),
-            pytest.param("🟡 review needed", id="status-label"),
+            "has 'single quotes'",
+            'has "double quotes"',
+            "semi;colon",
+            "$(touch pwned)",
+            "",
+            "line1\nline2",
+            "🟡 review needed",
         ],
     )
     def test_shell_sensitive_values_round_trip(self, value: str) -> None:

@@ -270,7 +270,7 @@ def test_codex_uses_the_same_continuous_review_component_fitness(script_run_code
     [
         pytest.param({"id": "q1", "match": "unsupported", "ground_truth": {"count": 10}}, id="unknown-match"),
         pytest.param({"id": "q1", "match": "integer_extract", "ground_truth": {}}, id="missing-count"),
-        pytest.param("not-an-object", id="non-object"),
+        "not-an-object",
     ],
 )
 def test_required_review_subquestions_fail_closed_instead_of_being_silently_skipped(
@@ -403,7 +403,8 @@ def test_fresh_input_tokens_exposes_native_gross_cached_and_fresh_views(
 
 
 @pytest.mark.parametrize(
-    "input_tokens,cached_input_tokens", [(-1, 0), (0, -1)], ids=["negative-gross", "negative-cache"]
+    "input_tokens,cached_input_tokens",
+    [pytest.param(-1, 0, id="negative-gross"), pytest.param(0, -1, id="negative-cache")],
 )
 def test_fresh_input_tokens_rejects_negative_native_usage(input_tokens: int, cached_input_tokens: int) -> None:
     """Native token counters cannot become plausible fresh-input values when malformed."""
@@ -507,9 +508,5 @@ def test_codex_result_block_presents_persisted_arms_in_fixed_order(
         planned_cells=9,
     )
 
-    assert printed == [
-        ("A_plain", "(5/9) A row"),
-        ("B_auto", "(6/9) B row"),
-        ("C_strict", "(7/9) C row"),
-    ]
+    assert printed == [("A_plain", "(5/9) A row"), ("B_auto", "(6/9) B row"), ("C_strict", "(7/9) C row")]
     assert next_progress == 7

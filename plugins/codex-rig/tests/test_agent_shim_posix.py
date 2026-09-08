@@ -152,13 +152,18 @@ def test_protected_target_primitives_preserve_mode(roots: tuple[int, int, Path, 
     [
         pytest.param(
             mode,
+            id=case_id,
             marks=pytest.mark.skipif(
                 not _mode_is_retainable(mode), reason=f"filesystem does not retain mode {mode:04o}"
             ),
         )
-        for mode in (0o775, 0o4700, 0o2700, 0o1700)
+        for mode, case_id in (
+            (0o775, "group-writable"),
+            (0o4700, "setuid"),
+            (0o2700, "setgid"),
+            (0o1700, "sticky"),
+        )
     ],
-    ids=["group-writable", "setuid", "setgid", "sticky"],
 )
 def test_protected_directory_rejects_group_writable_or_special_modes(tmp_path: Path, mode: int) -> None:
     """Reject target namespaces that another principal could mutate or redirect."""

@@ -64,6 +64,7 @@ def _module_paths(index: dict) -> set[str]:
     return {m["path"] for m in index.get("modules", [])}
 
 
+@pytest.mark.integration
 class TestExclusions:
     """The ghost worktree and vendored dir never enter the module index."""
 
@@ -97,6 +98,7 @@ class TestExclusions:
         assert ".claude" not in patterns
 
 
+@pytest.mark.integration
 class TestDedupDeterminism:
     """The non-excluded duplicate tree collides deterministically."""
 
@@ -135,6 +137,7 @@ class TestDedupDeterminism:
         assert len(winners) == 1, f"dedup winner must be deterministic, saw {winners}"
 
 
+@pytest.mark.integration
 class TestDirectionScopedIncompleteness:
     """A degraded file forces global-in / whole-graph queries to report incomplete."""
 
@@ -162,6 +165,7 @@ class TestDirectionScopedIncompleteness:
         assert data["index"]["query_complete"] is False
 
 
+@pytest.mark.integration
 class TestSelfHeal:
     """A stale index is refreshed inline before the query answers."""
 
@@ -193,6 +197,7 @@ class TestSelfHeal:
         assert "pkg.newcaller" not in data["imported_by"], "stale index must not see the new edge"
 
 
+@pytest.mark.integration
 class TestExcludedPathStaleness:
     """Keep excluded tracked Python files from poisoning staleness or completeness.
 

@@ -14,6 +14,17 @@ if str(_TESTS_DIR) not in sys.path:
 from _platform import POSIX_BASH  # noqa: E402
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Register selectors when tests run from a payload without repository configuration."""
+    for marker in (
+        "installed_plugin: runs against an installed plugin without repository context",
+        "integration: exercises interactions between real components or processes",
+        "live: uses real external services, user credentials, or provider budget",
+        "packaging: validates plugin build and distribution contracts",
+    ):
+        config.addinivalue_line("markers", marker)
+
+
 @pytest.fixture(name="posix_bash", scope="session")
 def _posix_bash() -> str:
     """Return the decorator-validated POSIX Bash executable."""

@@ -217,9 +217,7 @@ class TestMain:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """'Calls:' line is printed when at least one resolved call edge exists."""
-        modules = [
-            {"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": [{"target": "n"}]}]},
-        ]
+        modules = [{"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": [{"target": "n"}]}]}]
         _write_index(tmp_path, modules)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("SCAN_ARGS", "")
@@ -234,9 +232,7 @@ class TestMain:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """'Calls:' line is omitted when all call lists are empty."""
-        modules = [
-            {"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": []}]},
-        ]
+        modules = [{"name": "m", "status": "ok", "rdep_count": 0, "symbols": [{"calls": []}]}]
         _write_index(tmp_path, modules)
         monkeypatch.chdir(tmp_path)
         monkeypatch.setenv("SCAN_ARGS", "")

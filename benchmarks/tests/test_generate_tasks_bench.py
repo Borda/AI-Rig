@@ -468,10 +468,10 @@ class TestValidateSymbol:
     @pytest.mark.parametrize(
         "gt_field,live_value,expected_problem",
         [
-            ("start_line", 99, "start_line"),
-            ("end_line", 99, "end_line"),
+            pytest.param("start_line", 99, "start_line", id="start_line"),
+            pytest.param("end_line", 99, "end_line", id="end_line"),
             # module mismatch: symbol is found via widened qname match but module field differs
-            ("module", "wrong.mod", "module"),
+            pytest.param("module", "wrong.mod", "module", id="module"),
         ],
     )
     def test_reports_specific_field_mismatch(
@@ -689,13 +689,13 @@ class TestExtractRvValue:
     @pytest.mark.parametrize(
         "cmd,data,expected",
         [
-            ("rdeps", {"imported_by": ["a", "b", "c"]}, 3),
-            ("rdeps", {"imported_by": []}, 0),
-            ("fn-rdeps", {"count": 7, "called_by": []}, 7),
-            ("fn-rdeps", {"called_by": [1, 2]}, 2),  # fallback len(called_by)
-            ("undocumented", {"total": 12}, 12),
-            ("uncovered", {"total": 5}, 5),
-            ("unknown-cmd", {}, 0),
+            pytest.param("rdeps", {"imported_by": ["a", "b", "c"]}, 3, id="rdeps-imported_by-a-b-c"),
+            pytest.param("rdeps", {"imported_by": []}, 0, id="rdeps-imported_by"),
+            pytest.param("fn-rdeps", {"count": 7, "called_by": []}, 7, id="fn-rdeps-count-7-called_by"),
+            pytest.param("fn-rdeps", {"called_by": [1, 2]}, 2, id="fn-rdeps-called_by-1-2"),  # fallback len(called_by)
+            pytest.param("undocumented", {"total": 12}, 12, id="undocumented"),
+            pytest.param("uncovered", {"total": 5}, 5, id="uncovered"),
+            pytest.param("unknown-cmd", {}, 0, id="unknown-cmd"),
         ],
     )
     def test_integer_extract(self, script_gen_bench: Any, cmd: str, data: dict, expected: int) -> None:
@@ -710,29 +710,27 @@ class TestExtractRvValue:
     @pytest.mark.parametrize(
         "cmd,data,count_hint,expected",
         [
-            (
+            pytest.param(
                 "undocumented",
                 {"undocumented": [{"qualified_name": "A"}, {"qualified_name": "B"}]},
                 0,
                 ["A", "B"],
+                id="undocumented-undocumented-qualified_name-a-qualified_name-b",
             ),
-            (
+            pytest.param(
                 "undocumented",
                 {"undocumented": [{"qualified_name": "A"}, {"qualified_name": "B"}, {"qualified_name": "C"}]},
                 2,
                 ["A", "B"],  # truncated to count_hint
+                id="undocumented-undocumented-qualified_name-a-qualified_name-b-qualified_name-c",
             ),
-            (
-                "uncovered",
-                {"uncovered": [{"qualified_name": "X"}]},
-                0,
-                ["X"],
-            ),
-            (
+            pytest.param("uncovered", {"uncovered": [{"qualified_name": "X"}]}, 0, ["X"], id="uncovered"),
+            pytest.param(
                 "unknown-cmd",
                 {"anything": []},
                 0,
                 [],  # unknown cmd returns empty list for symbol_name_set
+                id="unknown-cmd",
             ),
         ],
     )
@@ -888,10 +886,7 @@ class TestValidateRv:
     @pytest.mark.parametrize(
         "sub_questions",
         [
-            pytest.param(
-                [{"id": "sq1", "match": "unknown", "ground_truth": {"count": 1}}],
-                id="unsupported-match",
-            ),
+            pytest.param([{"id": "sq1", "match": "unknown", "ground_truth": {"count": 1}}], id="unsupported-match"),
             pytest.param(
                 [
                     {"id": "sq1", "match": "integer_extract", "ground_truth": {"count": 1}},
@@ -1207,10 +1202,7 @@ class TestValidateOss:
     @pytest.mark.parametrize(
         "live_ranking",
         [
-            pytest.param(
-                _coupled_ranking(None)[:4],
-                id="missing-fifth-member",
-            ),
+            pytest.param(_coupled_ranking(None)[:4], id="missing-fifth-member"),
             pytest.param(
                 [
                     _coupled_ranking(None)[0],
@@ -1331,35 +1323,38 @@ class TestValidateOss:
     @pytest.mark.parametrize(
         "task,payload,reason_fragment",
         [
-            (
-                _task_undocumented(None, 0, []),
-                {"undocumented": []},
-                "total",
+            pytest.param(
+                _task_undocumented(None, 0, []), {"undocumented": []}, "total", id="_task_undocumented-none-0"
             ),
-            (
+            pytest.param(
                 _task_uncovered(None, 0, []),
                 {"total": 0, "uncovered": "not a list"},
                 "list",
+                id="_task_uncovered-none-0",
             ),
-            (
+            pytest.param(
                 _task_undocumented(None, 2, ["A", "B"]),
                 {"total": 2, "undocumented": [{"qualified_name": "A"}]},
                 "conflicts",
+                id="_task_undocumented-none-2-a-b",
             ),
-            (
+            pytest.param(
                 _task_coupled(None, "mod", 1, 0),
                 {"coupled": "not a list"},
                 "not a list",
+                id="_task_coupled-none-mod-1-0-coupled-not-a-list",
             ),
-            (
+            pytest.param(
                 _task_coupled(None, "mod", 1, 0),
                 {"coupled": [1]},
                 "not an object",
+                id="_task_coupled-none-mod-1-0-coupled-1",
             ),
-            (
+            pytest.param(
                 _task_xrefs(None, 2, [{"target": "mod::Fn", "line": 1}, {"target": "mod::Other", "line": 2}]),
                 {"count": 2, "broken": [{"target": "mod::Fn", "line": 1}]},
                 "conflicts",
+                id="_task_xrefs-none-2-target-mod-fn-line-1-target-mod-other-line-2",
             ),
         ],
     )
@@ -1397,10 +1392,7 @@ class TestValidateOss:
 
         task = {
             "type": "code_quality",
-            "expected_queries": [
-                {"cmd": "undocumented", "args": []},
-                {"cmd": "uncovered", "args": []},
-            ],
+            "expected_queries": [{"cmd": "undocumented", "args": []}, {"cmd": "uncovered", "args": []}],
             "ground_truth": {
                 "check": "combined_health",
                 "undocumented_count": 2,
@@ -1442,12 +1434,7 @@ class TestBuildUpdatedGroundTruth:
 
     @pytest.mark.parametrize(
         "task_type",
-        [
-            "SYMBOL_EXTRACTION",
-            "FN_CALL_GRAPH",
-            "DEVELOP_BLAST_RADIUS",
-            "CODE_QUALITY",
-        ],
+        ["SYMBOL_EXTRACTION", "FN_CALL_GRAPH", "DEVELOP_BLAST_RADIUS", "CODE_QUALITY"],
     )
     def test_merges_live_into_existing(self, script_gen_bench: Any, task_type: str) -> None:
         """Return merged dict with live values overriding existing for standard types.
@@ -1577,11 +1564,11 @@ class TestValidatorsDict:
     @pytest.mark.parametrize(
         "task_type,expected_fn_name",
         [
-            ("SYMBOL_EXTRACTION", "_validate_symbol"),
-            ("FN_CALL_GRAPH", "_validate_fn"),
-            ("DEVELOP_BLAST_RADIUS", "_validate_fn"),
-            ("REVIEW_ASSISTANCE", "_validate_rv"),
-            ("CODE_QUALITY", "_validate_oss"),
+            pytest.param("SYMBOL_EXTRACTION", "_validate_symbol", id="symbol_extraction"),
+            pytest.param("FN_CALL_GRAPH", "_validate_fn", id="fn_call_graph"),
+            pytest.param("DEVELOP_BLAST_RADIUS", "_validate_fn", id="develop_blast_radius"),
+            pytest.param("REVIEW_ASSISTANCE", "_validate_rv", id="review_assistance"),
+            pytest.param("CODE_QUALITY", "_validate_oss", id="code_quality"),
         ],
     )
     def test_task_type_routes_to_correct_validator(
@@ -2002,8 +1989,10 @@ class TestValidateReviewAssistanceAst:
     @pytest.mark.parametrize(
         "cmd,source,expected_symbols",
         [
-            ("undocumented", "def alpha():\n    pass\n\n\ndef beta():\n    pass\n", ["alpha"]),
-            ("uncovered", "def alpha():\n    pass\n\n\ndef beta():\n    pass\n", ["alpha"]),
+            pytest.param(
+                "undocumented", "def alpha():\n    pass\n\n\ndef beta():\n    pass\n", ["alpha"], id="undocumented"
+            ),
+            pytest.param("uncovered", "def alpha():\n    pass\n\n\ndef beta():\n    pass\n", ["alpha"], id="uncovered"),
         ],
     )
     def test_ast_symbol_commands_count_full_set_but_cap_symbol_results(
@@ -2044,25 +2033,28 @@ class TestValidateReviewAssistanceAst:
     @pytest.mark.parametrize(
         "task,expected",
         [
-            (
+            pytest.param(
                 {
                     "type": "review_assistance",
                     "expected_queries": [{"cmd": "rdeps", "args": ["m"]}],
                 },
                 True,
+                id="type-review_assistance-expected_queries-cmd-rdeps-args-m",
             ),
-            (
+            pytest.param(
                 {
                     "type": "review_assistance",
                     "expected_queries": [{"cmd": "unsupported", "args": []}],
                 },
                 False,
+                id="type-review_assistance-expected_queries-cmd-unsupported-args",
             ),
-            (
+            pytest.param(
                 {
                     "type": "debug_from_trace",
                 },
                 True,
+                id="type-debug_from_trace",
             ),
         ],
     )
@@ -2099,7 +2091,11 @@ class TestValidateWorkflowTaskFamilies:
     @pytest.mark.parametrize(
         "ground_truth,reason_fragment",
         [
-            ({"file": "../outside.py", "function": "locate", "start_line": 2}, "safe"),
+            pytest.param(
+                {"file": "../outside.py", "function": "locate", "start_line": 2},
+                "safe",
+                id="file-..-outside.py-function-locate-start_line-2",
+            )
         ],
     )
     def test_debug_rejects_noncanonical_anchor(
@@ -2249,12 +2245,12 @@ class TestIsPublicQualname:
     @pytest.mark.parametrize(
         "name,expected",
         [
-            ("Trainer.fit", True),
-            ("func", True),
-            ("_helper", False),
-            ("_Cache.get", False),
-            ("Trainer.__init__", False),
-            ("", False),
+            pytest.param("Trainer.fit", True, id="trainer.fit"),
+            pytest.param("func", True, id="func"),
+            pytest.param("_helper", False, id="_helper"),
+            pytest.param("_Cache.get", False, id="_cache.get"),
+            pytest.param("Trainer.__init__", False, id="trainer.__init__"),
+            pytest.param("", False, id="empty"),
         ],
     )
     def test_public_rule(self, script_gen_bench: Any, name: str, expected: bool) -> None:
@@ -2330,13 +2326,7 @@ class TestUncoveredViaAst:
         syms, _ = script_gen_bench._uncovered_via_ast(tmp_path)
         assert "used" not in syms
 
-    @pytest.mark.parametrize(
-        "test_expression",
-        [
-            pytest.param("mentioned", id="bare-name-expression"),
-            pytest.param("fixture.mentioned", id="attribute-expression"),
-        ],
-    )
+    @pytest.mark.parametrize("test_expression", ["mentioned", "fixture.mentioned"])
     def test_every_test_name_and_attribute_reference_counts_as_coverage(
         self, script_gen_bench: Any, tmp_path: Path, test_expression: str
     ) -> None:
@@ -2575,15 +2565,35 @@ class TestUpdateGating:
     @pytest.mark.parametrize(
         "task,expected",
         [
-            ({"type": "fn_call_graph"}, True),
-            ({"type": "develop_blast_radius"}, True),
-            ({"type": "code_quality", "ground_truth": {"check": "undocumented"}}, True),
-            ({"type": "code_quality", "ground_truth": {"check": "uncovered"}}, True),
-            ({"type": "code_quality", "ground_truth": {"check": "combined_health"}}, True),
-            ({"type": "code_quality", "ground_truth": {"check": "xrefs_broken"}}, True),
-            ({"type": "code_quality", "ground_truth": {"check": "coupled"}}, False),
-            ({"type": "review_assistance"}, False),
-            ({"type": "symbol_extraction"}, False),
+            pytest.param({"type": "fn_call_graph"}, True, id="type-fn_call_graph"),
+            pytest.param({"type": "develop_blast_radius"}, True, id="type-develop_blast_radius"),
+            pytest.param(
+                {"type": "code_quality", "ground_truth": {"check": "undocumented"}},
+                True,
+                id="type-code_quality-ground_truth-check-undocumented",
+            ),
+            pytest.param(
+                {"type": "code_quality", "ground_truth": {"check": "uncovered"}},
+                True,
+                id="type-code_quality-ground_truth-check-uncovered",
+            ),
+            pytest.param(
+                {"type": "code_quality", "ground_truth": {"check": "combined_health"}},
+                True,
+                id="type-code_quality-ground_truth-check-combined_health",
+            ),
+            pytest.param(
+                {"type": "code_quality", "ground_truth": {"check": "xrefs_broken"}},
+                True,
+                id="type-code_quality-ground_truth-check-xrefs_broken",
+            ),
+            pytest.param(
+                {"type": "code_quality", "ground_truth": {"check": "coupled"}},
+                False,
+                id="type-code_quality-ground_truth-check-coupled",
+            ),
+            pytest.param({"type": "review_assistance"}, False, id="type-review_assistance"),
+            pytest.param({"type": "symbol_extraction"}, False, id="type-symbol_extraction"),
         ],
     )
     def test_oracle_backed_classification(self, script_gen_bench: Any, task: dict, expected: bool) -> None:

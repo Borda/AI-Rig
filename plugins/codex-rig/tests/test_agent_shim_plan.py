@@ -418,8 +418,8 @@ def test_unhashable_candidate_inputs_fail_with_stable_error() -> None:
 @pytest.mark.parametrize(
     ("install_id", "transaction_nonce"),
     [
-        ("not-a-uuid", TRANSACTION_NONCE),
-        (INSTALL_ID, "not-a-uuid"),
+        pytest.param("not-a-uuid", TRANSACTION_NONCE, id="not-a-uuid"),
+        pytest.param(INSTALL_ID, "not-a-uuid", id="install_id"),
     ],
 )
 def test_invalid_identifiers_fail_closed(install_id: str, transaction_nonce: str) -> None:
@@ -514,14 +514,14 @@ def test_state_requires_strict_semver_and_exact_package_content_identity() -> No
 @pytest.mark.parametrize(
     ("active_version", "prior_version", "accepted"),
     [
-        ("0.2.1", "0.2.0", True),
-        ("0.3.0", "0.2.9", True),
-        ("1.0.0", "1.0.0-rc.1", True),
-        ("1.0.0-rc.2", "1.0.0-rc.1", True),
-        ("0.1.9", "0.2.0", False),
-        ("1.0.0-rc.1", "1.0.0", False),
-        ("0.2.0+other.2", "0.2.0+other.1", False),
-        ("0.2.0+codex.2", "0.2.0+codex.1", True),
+        pytest.param("0.2.1", "0.2.0", True, id="0.2.1"),
+        pytest.param("0.3.0", "0.2.9", True, id="0.3.0"),
+        pytest.param("1.0.0", "1.0.0-rc.1", True, id="1.0.0"),
+        pytest.param("1.0.0-rc.2", "1.0.0-rc.1", True, id="1.0.0-rc.2"),
+        pytest.param("0.1.9", "0.2.0", False, id="0.1.9"),
+        pytest.param("1.0.0-rc.1", "1.0.0", False, id="1.0.0-rc.1"),
+        pytest.param("0.2.0+other.2", "0.2.0+other.1", False, id="0.2.0-other.2"),
+        pytest.param("0.2.0+codex.2", "0.2.0+codex.1", True, id="0.2.0-codex.2"),
     ],
 )
 def test_semver_transition_policy(active_version: str, prior_version: str, accepted: bool) -> None:

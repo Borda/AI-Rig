@@ -30,10 +30,7 @@ CSID = "test-session-1234"
 SENTINEL_NAME = f"dev-review-report-dir-{CSID}"
 TWO_HOURS_S = 2 * 60 * 60
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 def _ask_payload(**overrides: object) -> dict:
@@ -106,6 +103,13 @@ def _review_run(tmp_path: Path) -> tuple[Path, Path]:
 # ── Gate fires only for an in-flight review missing its report ────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 def test_missing_report_is_denied(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Sentinel present without review-report.md → deny, naming the step to redo."""
     report_dir, _ = review_run
@@ -117,6 +121,7 @@ def test_missing_report_is_denied(tmp_path: Path, review_run: tuple[Path, Path])
     assert "Step 5b" in reason
 
 
+@_skip_node_unavailable
 def test_denial_names_the_develop_skill(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Reason identifies develop:review, so the oss gate is not blamed for it."""
     reason = _denial_reason(_run(tmp_path, _ask_payload()))
@@ -125,6 +130,7 @@ def test_denial_names_the_develop_skill(tmp_path: Path, review_run: tuple[Path, 
     assert reason.startswith("develop:review report gate")
 
 
+@_skip_node_unavailable
 def test_empty_report_is_denied(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """A zero-byte review-report.md counts as not written → deny."""
     report_dir, _ = review_run
@@ -133,6 +139,7 @@ def test_empty_report_is_denied(tmp_path: Path, review_run: tuple[Path, Path]) -
     assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
 
 
+@_skip_node_unavailable
 def test_written_report_passes_through(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Consolidator output present → hook stays silent and the call proceeds."""
     report_dir, _ = review_run
@@ -159,6 +166,7 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
     return transcript
 
 
+@_skip_node_unavailable
 def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Table already printed this turn → allow with no additionalContext nudge."""
     report_dir, _ = review_run
@@ -170,6 +178,7 @@ def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, revi
     assert _run(tmp_path, _ask_payload(transcript_path=str(transcript))) == {}
 
 
+@_skip_node_unavailable
 def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Raw YAML fields printed instead of a table → nudge to redo Step 5b."""
     report_dir, _ = review_run
@@ -183,6 +192,7 @@ def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, rev
     assert "Step 5b" in hook_output.get("additionalContext", "")
 
 
+@_skip_node_unavailable
 def test_report_written_unreadable_transcript_has_no_reminder(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """transcript_path pointing at a nonexistent file can't be read → fail open, no false nudge."""
     report_dir, _ = review_run
@@ -193,11 +203,13 @@ def test_report_written_unreadable_transcript_has_no_reminder(tmp_path: Path, re
     assert result == {}
 
 
+@_skip_node_unavailable
 def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """MacOS exports TMPDIR with a trailing slash — the sentinel must still resolve."""
     assert _denial_reason(_run(tmp_path, _ask_payload(), tmpdir_suffix="/")) is not None
 
 
+@_skip_node_unavailable
 def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """CSID falls back to the payload's session_id when the env var is unset."""
     result = _run(tmp_path, _ask_payload(session_id=CSID), session_id_env=None)
@@ -205,6 +217,7 @@ def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, review_run: t
     assert _denial_reason(result) is not None
 
 
+@_skip_node_unavailable
 def test_simulated_windows_report_dir_validation_accepts_contained_paths_and_rejects_traversal() -> None:
     """Recognise Windows separators and casing without trusting escaped sentinel paths."""
     assert _call_export("isReviewReportDir", r"C:\Repo\.REPORTS\REVIEW\run-1") is True
@@ -214,11 +227,13 @@ def test_simulated_windows_report_dir_validation_accepts_contained_paths_and_rej
 # ── Everything outside an in-flight review passes through ────────────────────
 
 
+@_skip_node_unavailable
 def test_no_sentinel_passes_through(tmp_path: Path) -> None:
     """No develop:review run reached Step 2 → unrelated questions are never gated."""
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 def test_oss_sentinel_does_not_trigger_develop_gate(tmp_path: Path) -> None:
     """An in-flight /oss:review is gated by its own plugin's hook, not this one."""
     report_dir = tmp_path / "repo" / ".reports" / "review" / "2026-08-04T10-00-00Z"
@@ -228,6 +243,7 @@ def test_oss_sentinel_does_not_trigger_develop_gate(tmp_path: Path) -> None:
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "payload",
     [
@@ -240,6 +256,7 @@ def test_non_matching_payloads_pass_through(tmp_path: Path, review_run: tuple[Pa
     assert _run(tmp_path, payload) == {}
 
 
+@_skip_node_unavailable
 def test_stale_sentinel_passes_through(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Sentinel older than the enforcement window is treated as a crashed run."""
     _, sentinel = review_run
@@ -249,6 +266,7 @@ def test_stale_sentinel_passes_through(tmp_path: Path, review_run: tuple[Path, P
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 def test_missing_report_dir_passes_through(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Report dir gone (worktree removed, TTL cleanup) → hook cannot judge, allows."""
     report_dir, _ = review_run
@@ -257,15 +275,8 @@ def test_missing_report_dir_passes_through(tmp_path: Path, review_run: tuple[Pat
     assert _run(tmp_path, _ask_payload()) == {}
 
 
-@pytest.mark.parametrize(
-    "content",
-    [
-        pytest.param("", id="empty"),
-        pytest.param("   \n", id="whitespace"),
-        pytest.param("repo/.reports/review/2026-08-04T10-00-00Z\n", id="relative-path"),
-        pytest.param("/etc\n", id="not-a-review-dir"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("content", ["", "   \n", "repo/.reports/review/2026-08-04T10-00-00Z\n", "/etc\n"])
 def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: str) -> None:
     """Sentinel not holding an absolute .reports/review/ path is ignored."""
     (tmp_path / SENTINEL_NAME).write_text(content, encoding="utf-8")
@@ -273,19 +284,14 @@ def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: st
     assert _run(tmp_path, _ask_payload()) == {}
 
 
-@pytest.mark.parametrize(
-    "session_id",
-    [
-        pytest.param("../../etc/passwd", id="traversal"),
-        pytest.param("has space", id="space"),
-        pytest.param("", id="blank"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("session_id", ["../../etc/passwd", "has space", ""])
 def test_unsafe_csid_passes_through(tmp_path: Path, review_run: tuple[Path, Path], session_id: str) -> None:
     """A CSID that cannot name a sentinel file is discarded, never path-joined."""
     assert _run(tmp_path, _ask_payload(), session_id_env=session_id) == {}
 
 
+@_skip_node_unavailable
 def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     """A hook bug or unparsable payload must never strand the session."""
     proc = subprocess.run(

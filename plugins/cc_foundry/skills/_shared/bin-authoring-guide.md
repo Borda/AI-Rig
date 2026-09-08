@@ -418,16 +418,20 @@ def test_happy_path(tmp_path: Path) -> None:
 
 **HOME isolation** — always pass `HOME=str(tmp_path)` for scripts doing cache lookups. Never rely on real `~/.claude/` in tests.
 
-**Integration marking** — scripts requiring real git repo with history, `gh` auth, or network calls use module-level `pytestmark`:
+**Integration marking** — scripts requiring real git repo with history, `gh` auth, or network calls use explicit decorators on each test or an existing test class:
 
 ```python
-pytestmark = pytest.mark.skipif(
+@pytest.mark.skipif(
     not os.getenv("RUN_INTEGRATION"),
     reason="requires real git/gh env — set RUN_INTEGRATION=1"
 )
+class TestIntegration:
+    """Group tests requiring the explicitly enabled integration environment."""
+
+    # Add the integration test methods here.
 ```
 
-Apply at module level for fully-integration files; on individual tests for mixed files (arg-validation unit + happy-path integration).
+Apply decorators to an existing class for grouped integration tests, or to individual tests for mixed files (arg-validation unit + happy-path integration).
 
 Integration-requiring conditions: `git describe`, `git log` on real history, `gh` auth/API, network calls.
 

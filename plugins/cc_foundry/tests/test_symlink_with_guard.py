@@ -152,8 +152,8 @@ class TestMarkerSeparators:
     @pytest.mark.parametrize(
         "target",
         [
-            pytest.param("/h/.claude/plugins/cache/borda-ai-rig/foundry/0.40.0/skills/curator", id="posix"),
-            pytest.param(r"C:\h\.claude\plugins\cache\borda-ai-rig\foundry\0.40.0\skills\curator", id="windows"),
+            "/h/.claude/plugins/cache/borda-ai-rig/foundry/0.40.0/skills/curator",
+            r"C:\h\.claude\plugins\cache\borda-ai-rig\foundry\0.40.0\skills\curator",
         ],
     )
     def test_marker_matches_either_separator(self, target: str) -> None:
@@ -235,12 +235,10 @@ class TestCleanup:
     @pytest.mark.parametrize(
         "target_rel",
         [
-            pytest.param(".claude/plugins/cache/other-market/foundry/0.39.0/rules/current.md", id="other-marketplace"),
-            pytest.param(
-                ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md", id="sibling-plugin"
-            ),
-            pytest.param("src/AI-Rig/plugins/cc_foundry/rules/current.md", id="source-checkout"),
-            pytest.param("dotfiles/plugins/cc_foundry/rules/current.md", id="dotfiles"),
+            ".claude/plugins/cache/other-market/foundry/0.39.0/rules/current.md",
+            ".claude/plugins/cache/borda-ai-rig/develop/0.19.0/rules/quality-gates.md",
+            "src/AI-Rig/plugins/cc_foundry/rules/current.md",
+            "dotfiles/plugins/cc_foundry/rules/current.md",
         ],
     )
     def test_keeps_legacy_link_with_foreign_target(self, env: tuple[Path, Path], target_rel: str) -> None:
@@ -571,15 +569,7 @@ class TestMain:
         )
 
         rc = main(
-            [
-                "cleanup",
-                "--plugin-root",
-                str(plugin),
-                "--home",
-                str(home),
-                "--marker",
-                "custom-marker/",
-            ],
+            ["cleanup", "--plugin-root", str(plugin), "--home", str(home), "--marker", "custom-marker/"],
         )
 
         assert rc == 0

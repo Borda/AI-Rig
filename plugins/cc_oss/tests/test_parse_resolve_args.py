@@ -161,13 +161,7 @@ def test_emit_hostile_value_is_quoted() -> None:
 
 @pytest.mark.parametrize(
     "value",
-    [
-        pytest.param("plain text", id="spaces"),
-        pytest.param("'; touch /tmp/pwned; echo 'x", id="single-quotes-semicolons"),
-        pytest.param("", id="empty"),
-        pytest.param("line1\nline2", id="newline"),
-        pytest.param("$(touch /tmp/pwned)", id="command-substitution"),
-    ],
+    ["plain text", "'; touch /tmp/pwned; echo 'x", "", "line1\nline2", "$(touch /tmp/pwned)"],
 )
 def test_emit_shell_round_trip_for_hostile_values(value: str) -> None:
     parsed = {"PR_NUMBER": "", "PR_URL": "", "MODE": "comment-dispatch", "ARGUMENTS": value}
@@ -228,12 +222,12 @@ def test_main_via_subprocess_hostile_input_is_eval_safe() -> None:
 @pytest.mark.parametrize(
     ("argv", "expected_mode"),
     [
-        (["99"], "pr"),
-        (["#99", "report"], "pr+report"),
-        (["https://github.com/o/r/pull/1"], "pr"),
-        (["https://github.com/o/r/pull/1", "report"], "pr+report"),
-        (["report"], "report"),
-        (["some prose comment"], "comment-dispatch"),
+        pytest.param(["99"], "pr", id="99"),
+        pytest.param(["#99", "report"], "pr+report", id="99-report"),
+        pytest.param(["https://github.com/o/r/pull/1"], "pr", id="https-github.com-o-r-pull-1"),
+        pytest.param(["https://github.com/o/r/pull/1", "report"], "pr+report", id="https-github.com-o-r-pull-1-report"),
+        pytest.param(["report"], "report", id="report"),
+        pytest.param(["some prose comment"], "comment-dispatch", id="some-prose-comment"),
     ],
 )
 def test_main_mode_routing_via_subprocess(argv: list[str], expected_mode: str) -> None:

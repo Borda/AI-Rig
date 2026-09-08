@@ -267,6 +267,7 @@ def _parallel_wave() -> dict[str, object]:
     )
 
 
+@pytest.mark.installed_plugin
 def test_retained_wave_evidence_is_compact_private_and_observes_budget_overrun() -> None:
     """Keep durable proof useful without retaining raw runtime identity or diagnostic payloads."""
     record = build_retained_wave_evidence(

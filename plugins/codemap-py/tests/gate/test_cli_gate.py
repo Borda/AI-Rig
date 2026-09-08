@@ -40,10 +40,6 @@ import codemap_py_cli as _cli  # noqa: E402  (needs the scripts/ path insert abo
 # rejection contract itself (exit 127, empty stdout) is asserted — never skipped —
 # by test_interpreter.py on the same cell.
 _RUNNING_SUPPORTED = _cli.is_supported(sys.implementation.name, sys.version_info.major, sys.version_info.minor)
-pytestmark = pytest.mark.skipif(
-    not _RUNNING_SUPPORTED,
-    reason="CLI behavior needs a supported CPython; the 127 rejection contract is covered by test_interpreter.py",
-)
 
 
 def _run_cli(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -60,6 +56,13 @@ def _run_cli(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
     )
 
 
+_skip_unsupported_interpreter = pytest.mark.skipif(
+    not _RUNNING_SUPPORTED,
+    reason="CLI behavior needs a supported CPython; the 127 rejection contract is covered by test_interpreter.py",
+)
+
+
+@_skip_unsupported_interpreter
 @pytest.mark.parametrize("flag", [pytest.param("--help", id="long"), pytest.param("-h", id="short")])
 def test_index_help_succeeds_without_the_scan_index_launcher(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
@@ -78,6 +81,7 @@ def test_index_help_succeeds_without_the_scan_index_launcher(
     assert "usage: codemap-py index" in capsys.readouterr().out
 
 
+@_skip_unsupported_interpreter
 def test_index_without_the_launcher_still_reports_the_missing_executable(tmp_path: Path) -> None:
     """A real index request with no launcher keeps its structured missing_executable error.
 
@@ -89,6 +93,7 @@ def test_index_without_the_launcher_still_reports_the_missing_executable(tmp_pat
     assert _cli.main(["index"], plugin_root=tmp_path) == 1
 
 
+@_skip_unsupported_interpreter
 @pytest.mark.parametrize("with_override", [pytest.param(False, id="default"), pytest.param(True, id="override")])
 def test_doctor_index_path_matches_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_override: bool
@@ -105,6 +110,7 @@ def test_doctor_index_path_matches_resolver(
     assert json.loads(result.stdout)["index_path"] == expected
 
 
+@_skip_unsupported_interpreter
 def test_doctor_override_reports_the_flat_resolver_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Under CODEMAP_INDEX_DIR doctor reports the flat ``<override>/<project>.json``.
 
@@ -120,6 +126,7 @@ def test_doctor_override_reports_the_flat_resolver_path(tmp_path: Path, monkeypa
     assert reported.parent == tmp_path.resolve()
 
 
+@_skip_unsupported_interpreter
 def test_override_lease_write_and_report_paths_are_one_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Prove end to end that leased, written, loaded, and doctor-reported paths agree.
 
@@ -147,6 +154,7 @@ def test_override_lease_write_and_report_paths_are_one_path(tmp_path: Path, monk
     assert reported == written[0]
 
 
+@_skip_unsupported_interpreter
 def test_override_query_leases_and_loads_the_path_doctor_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -183,6 +191,7 @@ def test_override_query_leases_and_loads_the_path_doctor_reports(
     assert reported == index_file
 
 
+@_skip_unsupported_interpreter
 def test_query_reports_the_index_path_it_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A query's own output names the index file it read, under a flat override."""
     project = tmp_path / "proj"
@@ -199,6 +208,7 @@ def test_query_reports_the_index_path_it_loaded(tmp_path: Path, monkeypatch: pyt
     assert Path(json.loads(result.stdout)["index"]["index_path"]) == index_file
 
 
+@_skip_unsupported_interpreter
 def test_reported_index_path_comes_from_the_load_not_the_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,6 +246,7 @@ def _hold_writer_intent(index_path: str, ready: Path, hold: float) -> None:
     _rwgate.write_index(index_path, _build, timeout=30.0)
 
 
+@_skip_unsupported_interpreter
 def test_query_under_live_writer_returns_index_busy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A live writer lease forces the shipped query into a bounded index_busy."""
     monkeypatch.setenv("CODEMAP_INDEX_DIR", str(tmp_path))
@@ -257,6 +268,7 @@ def test_query_under_live_writer_returns_index_busy(tmp_path: Path, monkeypatch:
     assert json.loads(result.stderr.strip().splitlines()[-1])["error"] == "index_busy"
 
 
+@_skip_unsupported_interpreter
 def test_corrupt_index_via_dispatcher_is_a_structured_error_not_a_traceback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -295,6 +307,7 @@ def test_corrupt_index_via_dispatcher_is_a_structured_error_not_a_traceback(
     assert dispatched.returncode == standalone.returncode
 
 
+@_skip_unsupported_interpreter
 def test_writer_refuses_to_downgrade_a_newer_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """An older writer refuses to overwrite a newer-schema index.
 

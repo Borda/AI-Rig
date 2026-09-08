@@ -123,10 +123,7 @@ _V12_ROOT_ADDITIONS = frozenset({"symbol_aliases", "symbol_alias_limitations"})
 _V12_MODULE_ADDITIONS = frozenset({"symbol_aliases", "symbol_alias_limitations"})
 _V13_MODULE_ADDITIONS = frozenset({"unresolved_direct_imports", "from_import_submodules"})
 
-_PATH_CLASSES = [
-    pytest.param("proj", id="normal"),
-    pytest.param("proj café ünïcode dir", id="spaces_nonascii"),
-]
+_PATH_CLASSES = ["proj", "proj café ünïcode dir"]
 
 
 def _materialize_old_bin(dest: Path) -> Path:

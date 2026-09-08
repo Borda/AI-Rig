@@ -159,11 +159,11 @@ class TestSuitesRunGreen:
     @pytest.mark.parametrize(
         "suite_attr",
         [
-            pytest.param("run_correctness_diff_impact", id="diff-impact"),
-            pytest.param("run_correctness_batch", id="batch"),
-            pytest.param("run_correctness_src_roots", id="src_roots"),
-            pytest.param("run_correctness_self_check", id="self-check"),
-            pytest.param("run_correctness_uncovered_xrefs", id="uncovered-xrefs"),
+            "run_correctness_diff_impact",
+            "run_correctness_batch",
+            "run_correctness_src_roots",
+            "run_correctness_self_check",
+            "run_correctness_uncovered_xrefs",
         ],
     )
     def test_suite_passes_against_own_fixture(
@@ -191,11 +191,11 @@ class TestSuitesRunGreen:
     @pytest.mark.parametrize(
         "suite_attr",
         [
-            pytest.param("run_correctness_diff_impact", id="diff-impact"),
-            pytest.param("run_correctness_batch", id="batch"),
-            pytest.param("run_correctness_src_roots", id="src_roots"),
-            pytest.param("run_correctness_self_check", id="self-check"),
-            pytest.param("run_correctness_uncovered_xrefs", id="uncovered-xrefs"),
+            "run_correctness_diff_impact",
+            "run_correctness_batch",
+            "run_correctness_src_roots",
+            "run_correctness_self_check",
+            "run_correctness_uncovered_xrefs",
         ],
     )
     def test_suite_skips_without_scan_index(

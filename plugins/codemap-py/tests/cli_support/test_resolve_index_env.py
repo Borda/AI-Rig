@@ -321,7 +321,7 @@ class TestValidateOutputPrefix:
         """A prefix built from a dotted project basename validates."""
         assert _validate_output_prefix("codemap-Borda.local") == "codemap-Borda.local"
 
-    @pytest.mark.parametrize("bad", [".", "..", "../escape", ""], ids=["dot", "dotdot", "traversal", "empty"])
+    @pytest.mark.parametrize("bad", [".", "..", "../escape", ""])
     def test_dot_forms_and_traversal_are_rejected(self, bad: str) -> None:
         """Bare ``.``/``..``, a traversal segment, and an empty value all raise."""
         with pytest.raises(ValueError, match="output-prefix"):

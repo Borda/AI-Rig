@@ -124,7 +124,7 @@ def test_no_retired_codemap_skill_prefix():
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", _BASH_BLOCK_FILES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [pytest.param(p, id=p.name) for p in _BASH_BLOCK_FILES])
 def test_index_dir_is_root_anchored(path: Path):
     """A CWD-relative default reports no_index whenever the session sits in a subdir."""
     blocks = [b for b in _bash_blocks(path) if "_IDX=" in b]
@@ -139,7 +139,7 @@ def test_index_dir_is_root_anchored(path: Path):
 # --------------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", _BASH_BLOCK_FILES, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", [pytest.param(p, id=p.name) for p in _BASH_BLOCK_FILES])
 @pytest.mark.skipif(_POSIX_BASH is None, reason="requires a working POSIX bash")
 def test_project_name_fallback_fires_outside_a_git_repository(path: Path, tmp_path: Path):
     """Exit 0, so the old `||` fallback was unreachable and PROJ went empty."""

@@ -34,13 +34,7 @@ class TestBuildBatchRequest:
         """
         req = bcb.build_batch_request(["pkg.mod"])
         assert len(req) == 1 + 5
-        assert [item["cmd"] for item in req[1:]] == [
-            "rdeps",
-            "mock-rdeps",
-            "uncovered",
-            "xrefs",
-            "undocumented",
-        ]
+        assert [item["cmd"] for item in req[1:]] == ["rdeps", "mock-rdeps", "uncovered", "xrefs", "undocumented"]
 
     @pytest.mark.parametrize(
         ("index", "expected_args"),
@@ -126,10 +120,7 @@ class TestMain:
         out = tmp_path / "batch.json"
         assert bcb.main([str(out), "--modules", "pkg.a pkg.b", "--queries", "rdeps"]) == 0
         req = json.loads(out.read_text(encoding="utf-8"))
-        assert req == [
-            {"cmd": "rdeps", "args": ["pkg.a"]},
-            {"cmd": "rdeps", "args": ["pkg.b"]},
-        ]
+        assert req == [{"cmd": "rdeps", "args": ["pkg.a"]}, {"cmd": "rdeps", "args": ["pkg.b"]}]
 
     def test_unknown_query_family_exits_1(self, tmp_path, capsys):
         """An unknown ``--queries`` name exits 1 with the offending name on stderr.

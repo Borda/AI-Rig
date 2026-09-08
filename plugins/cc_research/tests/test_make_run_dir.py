@@ -71,10 +71,7 @@ class TestMainValidation:
         assert rc == 1
         assert "usage" in capsys.readouterr().err
 
-    @pytest.mark.parametrize(
-        "slug",
-        ["../evil", "bad/slug", "bad slug", "bad!slug"],
-    )
+    @pytest.mark.parametrize("slug", ["../evil", "bad/slug", "bad slug", "bad!slug"])
     def test_invalid_slug_exit_two(
         self, tmp_path: Path, slug: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -87,10 +84,7 @@ class TestMainValidation:
         assert rc == 2
         assert "SKILL_SLUG" in capsys.readouterr().err
 
-    @pytest.mark.parametrize(
-        "base",
-        ["../evil", "bad base", "bad!base", "/abs/path"],
-    )
+    @pytest.mark.parametrize("base", ["../evil", "bad base", "bad!base", "/abs/path"])
     def test_invalid_base_dir_exit_two(self, tmp_path: Path, base: str, capsys: pytest.CaptureFixture[str]) -> None:
         """Invalid base-dir → exit 2 with BASE_DIR error on stderr."""
         rc = main(["myskill", base])

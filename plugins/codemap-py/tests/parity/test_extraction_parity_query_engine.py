@@ -103,10 +103,7 @@ def _assert_is_monolith(name: str, content: str) -> None:
         )
 
 
-_PATH_CLASSES = [
-    pytest.param("proj", id="normal"),
-    pytest.param("proj café ünïcode dir", id="spaces_nonascii"),
-]
+_PATH_CLASSES = ["proj", "proj café ünïcode dir"]
 
 # Every non-composite scan-query subcommand (batch/diff-impact are covered by
 # dedicated tests below since each needs its own input shape), with args that
@@ -633,7 +630,7 @@ class TestCrossPathParity:
         assert _error_suffix(new_bin.stderr) == _error_suffix(cli.stderr)
 
 
-@pytest.mark.parametrize("runner", [_run_new_bin, _run_cli_module], ids=["bin", "module"])
+@pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
 def test_coupled_top_five_is_ordered_by_internal_dependency_count(
     coupled_ranking_project: Path,
     runner: object,
@@ -652,7 +649,7 @@ def test_coupled_top_five_is_ordered_by_internal_dependency_count(
     assert [row["dep_count"] for row in rows] == [1, 2, 3, 4, 5]
 
 
-@pytest.mark.parametrize("runner", [_run_new_bin, _run_cli_module], ids=["bin", "module"])
+@pytest.mark.parametrize("runner", [pytest.param(_run_new_bin, id="bin"), pytest.param(_run_cli_module, id="module")])
 def test_coupled_help_explains_internal_import_ranking(coupled_ranking_project: Path, runner: object) -> None:
     """Public help must state the ordering metric behind ``coupled --top``.
 

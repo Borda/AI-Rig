@@ -30,16 +30,8 @@ import pytest
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "rtk-rewrite.js"
 
-pytestmark = [
-    pytest.mark.skipif(
-        shutil.which("node") is None,
-        reason="requires node to execute the hook",
-    ),
-    pytest.mark.skipif(
-        shutil.which("rtk") is None,
-        reason="hook is a no-op without rtk on PATH — contract not exercisable",
-    ),
-]
+NODE_UNAVAILABLE = shutil.which("node") is None
+RTK_UNAVAILABLE = shutil.which("rtk") is None
 
 
 def _run(command: str) -> dict:
@@ -75,24 +67,38 @@ def _rewritten_to(result: dict) -> str | None:
 # ── Read-only commands are rewritten + auto-allowed ───────────────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+_skip_rtk_unavailable = pytest.mark.skipif(
+    RTK_UNAVAILABLE,
+    reason="hook is a no-op without rtk on PATH — contract not exercisable",
+)
+
+
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("git status", id="git-status"),
-        pytest.param("git diff HEAD", id="git-diff"),
-        pytest.param("git log --oneline -5", id="git-log"),
-        pytest.param("git show HEAD", id="git-show"),
-        pytest.param("gh pr view 42", id="gh-pr-view"),
-        pytest.param("gh issue list", id="gh-issue-list"),
-        pytest.param("gh api repos/owner/repo", id="gh-api-get"),
-        pytest.param("docker ps", id="docker-ps"),
-        pytest.param("kubectl get pods", id="kubectl-get"),
-        pytest.param("aws ec2 describe-instances", id="aws-describe"),
-        pytest.param("aws s3 ls", id="aws-s3-ls"),
-        pytest.param("pytest tests/", id="pytest"),
-        pytest.param("ruff check .", id="ruff"),
-        pytest.param("grep -r foo .", id="grep"),
-        pytest.param("ls -la", id="ls"),
+        "git status",
+        "git diff HEAD",
+        "git log --oneline -5",
+        "git show HEAD",
+        "gh pr view 42",
+        "gh issue list",
+        "gh api repos/owner/repo",
+        "docker ps",
+        "kubectl get pods",
+        "aws ec2 describe-instances",
+        "aws s3 ls",
+        "pytest tests/",
+        "ruff check .",
+        "grep -r foo .",
+        "ls -la",
     ],
 )
 def test_readonly_commands_are_rewritten_and_allowed(command: str) -> None:
@@ -105,22 +111,24 @@ def test_readonly_commands_are_rewritten_and_allowed(command: str) -> None:
 # ── Mutating / dangerous commands must NEVER be rewritten (no deny bypass) ─────
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("git push origin main", id="git-push"),
-        pytest.param("git branch -D feature", id="git-branch-delete"),
-        pytest.param("git reset --hard HEAD", id="git-reset-hard"),
-        pytest.param("git commit -m x", id="git-commit"),
-        pytest.param("gh pr comment 42 --body hi", id="gh-pr-comment"),
-        pytest.param("gh pr create --title x", id="gh-pr-create"),
-        pytest.param("gh issue close 42", id="gh-issue-close"),
-        pytest.param("gh release create v1", id="gh-release-create"),
-        pytest.param("gh api -X POST repos/o/r/issues", id="gh-api-post-short"),
-        pytest.param("gh api --method DELETE repos/o/r/x", id="gh-api-delete-long"),
-        pytest.param("docker rm -f box", id="docker-rm"),
-        pytest.param("kubectl delete pod x", id="kubectl-delete"),
-        pytest.param("aws s3 rm s3://bucket/key", id="aws-s3-rm"),
+        "git push origin main",
+        "git branch -D feature",
+        "git reset --hard HEAD",
+        "git commit -m x",
+        "gh pr comment 42 --body hi",
+        "gh pr create --title x",
+        "gh issue close 42",
+        "gh release create v1",
+        "gh api -X POST repos/o/r/issues",
+        "gh api --method DELETE repos/o/r/x",
+        "docker rm -f box",
+        "kubectl delete pod x",
+        "aws s3 rm s3://bucket/key",
     ],
 )
 def test_mutating_commands_passthrough_unchanged(command: str) -> None:
@@ -132,19 +140,21 @@ def test_mutating_commands_passthrough_unchanged(command: str) -> None:
 # ── Compound commands must never be rewritten (chaining deny-bypass) ───────────
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("git status && git push origin main", id="and-push"),
-        pytest.param("git status; git push", id="semicolon-push"),
-        pytest.param("git status $(git push)", id="cmd-subst"),
-        pytest.param("git diff HEAD `git push`", id="backtick"),
-        pytest.param("git status && rm -rf /tmp/x", id="and-rm"),
-        pytest.param("gh pr view 42 && gh pr merge 42", id="gh-merge-chain"),
-        pytest.param("aws ec2 describe-instances && aws s3 rm s3://b/k", id="aws-rm-chain"),
-        pytest.param("pytest tests/ && rm -rf build", id="safe-prefix-chain"),
-        pytest.param("git log | tee /tmp/out", id="pipe"),
-        pytest.param("git log > /tmp/out", id="redirect"),
+        "git status && git push origin main",
+        "git status; git push",
+        "git status $(git push)",
+        "git diff HEAD `git push`",
+        "git status && rm -rf /tmp/x",
+        "gh pr view 42 && gh pr merge 42",
+        "aws ec2 describe-instances && aws s3 rm s3://b/k",
+        "pytest tests/ && rm -rf build",
+        "git log | tee /tmp/out",
+        "git log > /tmp/out",
     ],
 )
 def test_compound_commands_are_never_rewritten(command: str) -> None:
@@ -156,6 +166,8 @@ def test_compound_commands_are_never_rewritten(command: str) -> None:
 # ── git branch create must not be rewritten ───────────────────────────────────
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 def test_git_branch_create_passthrough() -> None:
     """Create a branch (mutation) — never rewritten."""
     assert _run("git branch newfeature") == {}
@@ -164,13 +176,15 @@ def test_git_branch_create_passthrough() -> None:
 # ── find is never rewritten (destructive flags carry no shell metacharacter) ──
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("find . -name '*.py' -delete", id="find-delete"),
-        pytest.param("find . -type f -exec rm {} +", id="find-exec-plus"),
-        pytest.param("find . -fprintf /etc/target payload", id="find-fprintf"),
-        pytest.param("find . -name '*.py'", id="find-read-only"),
+        "find . -name '*.py' -delete",
+        "find . -type f -exec rm {} +",
+        "find . -fprintf /etc/target payload",
+        "find . -name '*.py'",
     ],
 )
 def test_find_is_never_rewritten(command: str) -> None:
@@ -187,14 +201,9 @@ def test_find_is_never_rewritten(command: str) -> None:
 # ── cargo / next: inspection rewritten, execution passthrough ─────────────────
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("cargo tree", id="cargo-tree"),
-        pytest.param("cargo metadata --no-deps", id="cargo-metadata"),
-        pytest.param("next info", id="next-info"),
-    ],
-)
+@_skip_rtk_unavailable
+@_skip_node_unavailable
+@pytest.mark.parametrize("command", ["cargo tree", "cargo metadata --no-deps", "next info"])
 def test_guarded_build_tool_inspection_is_rewritten(command: str) -> None:
     """Inspection subcommands of cargo/next still earn the rewrite."""
     result = _run(command)
@@ -202,15 +211,11 @@ def test_guarded_build_tool_inspection_is_rewritten(command: str) -> None:
     assert _rewritten_to(result) == f"rtk {command}"
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
-    [
-        pytest.param("cargo install ripgrep", id="cargo-install"),
-        pytest.param("cargo run --release", id="cargo-run"),
-        pytest.param("cargo check", id="cargo-check-runs-build-rs"),
-        pytest.param("next build", id="next-build"),
-        pytest.param("next dev", id="next-dev"),
-    ],
+    ["cargo install ripgrep", "cargo run --release", "cargo check", "next build", "next dev"],
 )
 def test_guarded_build_tool_execution_passthrough(command: str) -> None:
     """Subcommands that execute arbitrary project code are never rewritten.
@@ -224,13 +229,15 @@ def test_guarded_build_tool_execution_passthrough(command: str) -> None:
 # ── Result-corrupting commands are excluded ───────────────────────────────────
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
-        pytest.param("diff a.txt b.txt", id="diff"),
-        pytest.param("curl -X POST https://api.example.com", id="curl-post"),
-        pytest.param("wget --post-data=x https://example.com", id="wget-post"),
-        pytest.param("psql -c 'DROP TABLE users'", id="psql-drop"),
+        "diff a.txt b.txt",
+        "curl -X POST https://api.example.com",
+        "wget --post-data=x https://example.com",
+        "psql -c 'DROP TABLE users'",
     ],
 )
 def test_excluded_commands_passthrough(command: str) -> None:
@@ -242,11 +249,15 @@ def test_excluded_commands_passthrough(command: str) -> None:
 # ── Basic hook hygiene ────────────────────────────────────────────────────────
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 def test_already_prefixed_command_passthrough() -> None:
     """A command already starting with 'rtk ' is left untouched (no double wrap)."""
     assert _run("rtk git status") == {}
 
 
+@_skip_rtk_unavailable
+@_skip_node_unavailable
 def test_non_bash_tool_passthrough() -> None:
     """Non-Bash tool payloads are ignored."""
     payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x"}})

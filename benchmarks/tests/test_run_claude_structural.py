@@ -323,10 +323,7 @@ class TestProviderParityIntegration:
                 run.quality = script_run_bench.BenchQuality(
                     scored=True,
                     correct=True,
-                    metric_expected=[
-                        {"name": "pkg.alpha", "dep_count": 49},
-                        {"name": "pkg.bravo", "dep_count": 42},
-                    ],
+                    metric_expected=[{"name": "pkg.alpha", "dep_count": 49}, {"name": "pkg.bravo", "dep_count": 42}],
                 )
                 return run
 
@@ -938,14 +935,16 @@ class TestExtractInt:
     @pytest.mark.parametrize(
         "text,patterns,expected",
         [
-            ("found 42 callers in total", [r"(\d+) caller"], 42),
-            ("there are 7 unique callers", [r"(\d+) unique"], 7),
-            ("UNIQUE CALLERS: 15", [r"(\d+) caller", r"unique callers:\s*(\d+)"], 15),
+            pytest.param("found 42 callers in total", [r"(\d+) caller"], 42, id="found-42-callers-in-total"),
+            pytest.param("there are 7 unique callers", [r"(\d+) unique"], 7, id="there-are-7-unique-callers"),
+            pytest.param(
+                "UNIQUE CALLERS: 15", [r"(\d+) caller", r"unique callers:\s*(\d+)"], 15, id="unique-callers-15"
+            ),
             # Bold markers are replaced by spaces; use whitespace-tolerant pattern.
-            ("**42** callers", [r"(\d+)\s+caller"], 42),
+            pytest.param("**42** callers", [r"(\d+)\s+caller"], 42, id="42-callers"),
             # Backticked value — inline-code markers replaced by spaces (same as bold).
-            ("`25` undocumented functions", [r"(\d+)\s+undocumented"], 25),
-            ("total: 100", [r"total[:\s]+(\d+)"], 100),
+            pytest.param("`25` undocumented functions", [r"(\d+)\s+undocumented"], 25, id="25-undocumented-functions"),
+            pytest.param("total: 100", [r"total[:\s]+(\d+)"], 100, id="total-100"),
         ],
     )
     def test_extracts_integer_from_matching_pattern(
@@ -957,9 +956,9 @@ class TestExtractInt:
     @pytest.mark.parametrize(
         "text,patterns",
         [
-            ("no numbers here", [r"(\d+) caller"]),
-            ("", [r"(\d+) caller"]),
-            ("123", []),  # no patterns → nothing matches
+            pytest.param("no numbers here", [r"(\d+) caller"], id="no-numbers-here"),
+            pytest.param("", [r"(\d+) caller"], id="empty"),
+            pytest.param("123", [], id="123"),  # no patterns → nothing matches
         ],
     )
     def test_returns_none_when_no_match(self, script_run_bench: Any, text: str, patterns: list[str]) -> None:
@@ -1218,15 +1217,7 @@ class TestPatchSandboxExitCodes:
             },
         )
 
-    @pytest.mark.parametrize(
-        "code",
-        [
-            pytest.param(2, id="interrupted"),
-            pytest.param(3, id="internal-error"),
-            pytest.param(4, id="usage-error-missing-plugin"),
-            pytest.param(5, id="no-tests-collected"),
-        ],
-    )
+    @pytest.mark.parametrize("code", [2, 3, 4, 5])
     def test_baseline_non_result_exit_raises_sandbox_error(
         self, script_run_bench: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int
     ) -> None:
@@ -1451,14 +1442,14 @@ class TestIntClose:
     @pytest.mark.parametrize(
         "got,expected,tolerance,result",
         [
-            (42, 40, 0.10, True),  # within 10%
-            (44, 40, 0.10, True),  # exactly at boundary: 4/40 = 0.10
-            (45, 40, 0.10, False),  # just over boundary: 5/40 = 0.125
-            (40, 40, 0.10, True),  # exact match
-            (0, 40, 0.10, False),  # far below
-            (42, 30, 0.10, False),  # 12/30 = 0.40
-            (1, 1, 0.0, True),  # zero tolerance exact
-            (2, 1, 0.0, False),  # zero tolerance mismatch
+            pytest.param(42, 40, 0.10, True, id="42-40"),  # within 10%
+            pytest.param(44, 40, 0.10, True, id="44"),  # exactly at boundary: 4/40 = 0.10
+            pytest.param(45, 40, 0.10, False, id="45"),  # just over boundary: 5/40 = 0.125
+            pytest.param(40, 40, 0.10, True, id="40"),  # exact match
+            pytest.param(0, 40, 0.10, False, id="0"),  # far below
+            pytest.param(42, 30, 0.10, False, id="42-30"),  # 12/30 = 0.40
+            pytest.param(1, 1, 0.0, True, id="1"),  # zero tolerance exact
+            pytest.param(2, 1, 0.0, False, id="2"),  # zero tolerance mismatch
         ],
     )
     def test_within_tolerance(
@@ -1524,10 +1515,10 @@ class TestSafeRatio:
     @pytest.mark.parametrize(
         "num,den,expected",
         [
-            (10, 4, 2.5),
-            (0, 5, 0.0),
-            (1, 1, 1.0),
-            (100, 100, 1.0),
+            pytest.param(10, 4, 2.5, id="10"),
+            pytest.param(0, 5, 0.0, id="0"),
+            pytest.param(1, 1, 1.0, id="1"),
+            pytest.param(100, 100, 1.0, id="100"),
         ],
     )
     def test_normal_division(self, script_run_bench: Any, num: float, den: float, expected: float) -> None:
@@ -1537,11 +1528,11 @@ class TestSafeRatio:
     @pytest.mark.parametrize(
         "num,den",
         [
-            (10, 0),
-            (0, 0),
-            (10, None),
-            (None, 4),
-            (None, None),
+            pytest.param(10, 0, id="10-0"),
+            pytest.param(0, 0, id="0"),
+            pytest.param(10, None, id="10-none"),
+            pytest.param(None, 4, id="none-4"),
+            pytest.param(None, None, id="none-none"),
         ],
     )
     def test_returns_nan_for_undefined(self, script_run_bench: Any, num: Any, den: Any) -> None:
@@ -1560,31 +1551,45 @@ class TestParseScanQuerySubcommand:
     @pytest.mark.parametrize(
         "command,expected",
         [
-            ("scan-query --index /x.json fn-rdeps a.b --exclude-tests", "fn-rdeps"),
-            ("scan-query symbol Trainer", "symbol"),
-            ("scan-query find-symbol Trainer", "find-symbol"),
-            ("scan-query symbols lightning.pytorch.trainer", "symbols"),
-            ("scan-query rdeps lightning.pytorch.loops", "rdeps"),
-            ("scan-query undocumented lightning.pytorch.trainer", "undocumented"),
-            ("scan-query uncovered lightning.pytorch.trainer --top 10", "uncovered"),
-            ("scan-query coupled --top 5", "coupled"),
-            ("scan-query xrefs lightning.pytorch.trainer", "xrefs"),
-            ("/path/to/bin/scan-query symbol Trainer", "symbol"),  # full path form
+            pytest.param(
+                "scan-query --index /x.json fn-rdeps a.b --exclude-tests",
+                "fn-rdeps",
+                id="scan-query---index-x.json-fn-rdeps-a.b---exclude-tests",
+            ),
+            pytest.param("scan-query symbol Trainer", "symbol", id="scan-query-symbol-trainer"),
+            pytest.param("scan-query find-symbol Trainer", "find-symbol", id="scan-query-find-symbol-trainer"),
+            pytest.param(
+                "scan-query symbols lightning.pytorch.trainer",
+                "symbols",
+                id="scan-query-symbols-lightning.pytorch.trainer",
+            ),
+            pytest.param(
+                "scan-query rdeps lightning.pytorch.loops", "rdeps", id="scan-query-rdeps-lightning.pytorch.loops"
+            ),
+            pytest.param(
+                "scan-query undocumented lightning.pytorch.trainer",
+                "undocumented",
+                id="scan-query-undocumented-lightning.pytorch.trainer",
+            ),
+            pytest.param(
+                "scan-query uncovered lightning.pytorch.trainer --top 10",
+                "uncovered",
+                id="scan-query-uncovered-lightning.pytorch.trainer---top-10",
+            ),
+            pytest.param("scan-query coupled --top 5", "coupled", id="scan-query-coupled---top-5"),
+            pytest.param(
+                "scan-query xrefs lightning.pytorch.trainer", "xrefs", id="scan-query-xrefs-lightning.pytorch.trainer"
+            ),
+            pytest.param(
+                "/path/to/bin/scan-query symbol Trainer", "symbol", id="path-to-bin-scan-query-symbol-trainer"
+            ),  # full path form
         ],
     )
     def test_known_subcommands_extracted(self, script_run_bench: Any, command: str, expected: str) -> None:
         """_parse_scan_query_subcommand returns the recognised subcommand token."""
         assert script_run_bench._parse_scan_query_subcommand(command) == expected
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "grep -r foo .",
-            "ls -la",
-            "python3 -m pytest",
-            "",
-        ],
-    )
+    @pytest.mark.parametrize("command", ["grep -r foo .", "ls -la", "python3 -m pytest", ""])
     def test_non_scan_query_command_returns_none(self, script_run_bench: Any, command: str) -> None:
         """_parse_scan_query_subcommand returns None for commands without scan-query."""
         assert script_run_bench._parse_scan_query_subcommand(command) is None
@@ -1612,9 +1617,21 @@ class TestParseScanQuerySubcommand:
     @pytest.mark.parametrize(
         "command,expected",
         [
-            ('scan-query --index "/tmp/index with spaces.json" symbol Trainer', "symbol"),
-            ("scan-query --index /tmp/one.json --index /tmp/two.json rdeps pkg.mod", "rdeps"),
-            ("env CODEMAP=1 scan-query --index /tmp/index.json xrefs pkg.mod", "xrefs"),
+            pytest.param(
+                'scan-query --index "/tmp/index with spaces.json" symbol Trainer',
+                "symbol",
+                id="scan-query---index-tmp-index-with-spaces.json-symbol-trainer",
+            ),
+            pytest.param(
+                "scan-query --index /tmp/one.json --index /tmp/two.json rdeps pkg.mod",
+                "rdeps",
+                id="scan-query---index-tmp-one.json---index-tmp-two.json-rdeps-pkg.mod",
+            ),
+            pytest.param(
+                "env CODEMAP=1 scan-query --index /tmp/index.json xrefs pkg.mod",
+                "xrefs",
+                id="env-codemap-1-scan-query---index-tmp-index.json-xrefs-pkg.mod",
+            ),
         ],
     )
     def test_shell_token_edge_cases(self, script_run_bench: Any, command: str, expected: str) -> None:
@@ -1792,18 +1809,36 @@ class TestEvaluateSymbol:
     @pytest.mark.parametrize(
         "output_text,start_line,expected_correct",
         [
-            ("file_path: x.py  start_line: 100  end_line: 110", 100, True),  # exact
-            ("start_line: 104", 100, True),  # within +4 lines
-            ("start_line: 96", 100, True),  # within -4 lines
-            ("start_line: 105", 100, True),  # exactly ±5 boundary
-            ("start_line: 95", 100, True),  # exactly -5 boundary
-            ("start_line: 106", 100, False),  # just outside +5
-            ("start_line: 94", 100, False),  # just outside -5
-            ("Lines 100-110 of the file", 100, True),  # range pattern fallback
-            ("src/lightning/trainer/trainer.py:100-110", 100, True),  # source-location range
-            ("starts at line 100 in the file", 100, True),  # "starts at line N"
-            ("start_line: `100`", 100, True),  # backticked value (markdown inline code)
-            ("file_path: `x.py`  start_line: `104`  end_line: `110`", 100, True),  # full backticked format
+            pytest.param(
+                "file_path: x.py  start_line: 100  end_line: 110",
+                100,
+                True,
+                id="file_path-x.py-start_line-100-end_line-110",
+            ),  # exact
+            pytest.param("start_line: 104", 100, True, id="start_line-104"),  # within +4 lines
+            pytest.param("start_line: 96", 100, True, id="start_line-96"),  # within -4 lines
+            pytest.param("start_line: 105", 100, True, id="start_line-105"),  # exactly ±5 boundary
+            pytest.param("start_line: 95", 100, True, id="start_line-95"),  # exactly -5 boundary
+            pytest.param("start_line: 106", 100, False, id="start_line-106"),  # just outside +5
+            pytest.param("start_line: 94", 100, False, id="start_line-94"),  # just outside -5
+            pytest.param(
+                "Lines 100-110 of the file", 100, True, id="lines-100-110-of-the-file"
+            ),  # range pattern fallback
+            pytest.param(
+                "src/lightning/trainer/trainer.py:100-110", 100, True, id="src-lightning-trainer-trainer.py-100-110"
+            ),  # source-location range
+            pytest.param(
+                "starts at line 100 in the file", 100, True, id="starts-at-line-100-in-the-file"
+            ),  # "starts at line N"
+            pytest.param(
+                "start_line: `100`", 100, True, id="start_line-100"
+            ),  # backticked value (markdown inline code)
+            pytest.param(
+                "file_path: `x.py`  start_line: `104`  end_line: `110`",
+                100,
+                True,
+                id="file_path-x.py-start_line-104-end_line-110",
+            ),  # full backticked format
         ],
     )
     def test_correct_when_start_line_within_tolerance(
@@ -1940,40 +1975,22 @@ class TestEvaluateRv:
     @pytest.mark.parametrize(
         "answer",
         [
-            pytest.param(
-                "I’ll inspect the repository with ordinary file-search tools and count module files "
-                "containing direct imports of `lightning.pytorch.utilities.rank_zero`.64 modules "
-                "directly import `lightning.pytorch.utilities.rank_zero` (60 source modules and 4 "
-                "test modules).",
-                id="plain-answer",
-            ),
-            pytest.param(
-                "I’ll scan the repository with ordinary text search only, identify files that import "
-                "`lightning.pytorch.utilities.rank_zero` directly, and count distinct modules.60 production "
-                "modules directly import `lightning.pytorch.utilities.rank_zero` (64 modules including 4 test modules).",
-                id="prospective-0283-plain-answer",
-            ),
-            pytest.param(
-                "I’ll verify this through Codemap’s native CLI, then cross-check the resulting import "
-                "count in the repository.The relevant Codemap query is reverse dependencies (`rdeps`) "
-                "for `lightning.pytorch.utilities.rank_zero`; I’m running the required compact query "
-                "now.64 modules directly import `lightning.pytorch.utilities.rank_zero`.",
-                id="direct-cli-answer",
-            ),
-            pytest.param(
-                "I’m using the installed `codemap-py:query-code` skill as required. I’ll activate it in "
-                "one dedicated shell item, then run the single compact reverse-dependency query.1. "
-                "**64 modules** directly import `lightning.pytorch.utilities.rank_zero`.",
-                id="skill-answer",
-            ),
-            pytest.param(
-                "64 modules directly depend on `lightning.pytorch.utilities.rank_zero`.",
-                id="direct-depend",
-            ),
-            pytest.param(
-                "64 modules import `lightning.pytorch.utilities.rank_zero`.",
-                id="bare-import",
-            ),
+            "I’ll inspect the repository with ordinary file-search tools and count module files "
+            "containing direct imports of `lightning.pytorch.utilities.rank_zero`.64 modules "
+            "directly import `lightning.pytorch.utilities.rank_zero` (60 source modules and 4 "
+            "test modules).",
+            "I’ll scan the repository with ordinary text search only, identify files that import "
+            "`lightning.pytorch.utilities.rank_zero` directly, and count distinct modules.60 production "
+            "modules directly import `lightning.pytorch.utilities.rank_zero` (64 modules including 4 test modules).",
+            "I’ll verify this through Codemap’s native CLI, then cross-check the resulting import "
+            "count in the repository.The relevant Codemap query is reverse dependencies (`rdeps`) "
+            "for `lightning.pytorch.utilities.rank_zero`; I’m running the required compact query "
+            "now.64 modules directly import `lightning.pytorch.utilities.rank_zero`.",
+            "I’m using the installed `codemap-py:query-code` skill as required. I’ll activate it in "
+            "one dedicated shell item, then run the single compact reverse-dependency query.1. "
+            "**64 modules** directly import `lightning.pytorch.utilities.rank_zero`.",
+            "64 modules directly depend on `lightning.pytorch.utilities.rank_zero`.",
+            "64 modules import `lightning.pytorch.utilities.rank_zero`.",
         ],
     )
     def test_rv02_exact_provider_answers_extract_direct_import_count(self, script_run_bench: Any, answer: str) -> None:
@@ -2178,24 +2195,18 @@ class TestEvaluateOss:
     @pytest.mark.parametrize(
         "answer",
         [
-            pytest.param(
-                "1. `pkg.alpha` — dep_count: 49\n"
-                "2. `pkg.bravo` — dep_count: 42\n"
-                "3. `pkg.charlie` — dep_count: 37\n"
-                "4. `pkg.delta` — dep_count: 31\n"
-                "5. `pkg.echo` — dep_count: 29",
-                id="ordered-bullets",
-            ),
-            pytest.param(
-                "| Rank | Module | dep_count |\n"
-                "| ---: | --- | ---: |\n"
-                "| 1 | `pkg.alpha` | 49 |\n"
-                "| 2 | `pkg.bravo` | 42 |\n"
-                "| 3 | `pkg.charlie` | 37 |\n"
-                "| 4 | `pkg.delta` | 31 |\n"
-                "| 5 | `pkg.echo` | 29 |",
-                id="ordered-table",
-            ),
+            "1. `pkg.alpha` — dep_count: 49\n"
+            "2. `pkg.bravo` — dep_count: 42\n"
+            "3. `pkg.charlie` — dep_count: 37\n"
+            "4. `pkg.delta` — dep_count: 31\n"
+            "5. `pkg.echo` — dep_count: 29",
+            "| Rank | Module | dep_count |\n"
+            "| ---: | --- | ---: |\n"
+            "| 1 | `pkg.alpha` | 49 |\n"
+            "| 2 | `pkg.bravo` | 42 |\n"
+            "| 3 | `pkg.charlie` | 37 |\n"
+            "| 4 | `pkg.delta` | 31 |\n"
+            "| 5 | `pkg.echo` | 29 |",
         ],
     )
     def test_cq03_requires_the_complete_ordered_module_dependency_ranking(
@@ -2212,37 +2223,25 @@ class TestEvaluateOss:
     @pytest.mark.parametrize(
         "answer",
         [
-            pytest.param(
-                "1. `pkg.alpha` — dep_count: 49\n"
-                "2. `pkg.bravo` — dep_count: 42\n"
-                "3. `pkg.charlie` — dep_count: 37\n"
-                "4. `pkg.delta` — dep_count: 31",
-                id="missing-fifth-member",
-            ),
-            pytest.param(
-                "1. `pkg.alpha` — dep_count: 49\n"
-                "2. `pkg.bravo` — dep_count: 42\n"
-                "3. `pkg.unexpected` — dep_count: 37\n"
-                "4. `pkg.delta` — dep_count: 31\n"
-                "5. `pkg.echo` — dep_count: 29",
-                id="wrong-member",
-            ),
-            pytest.param(
-                "1. `pkg.alpha` — dep_count: 49\n"
-                "2. `pkg.charlie` — dep_count: 37\n"
-                "3. `pkg.bravo` — dep_count: 42\n"
-                "4. `pkg.delta` — dep_count: 31\n"
-                "5. `pkg.echo` — dep_count: 29",
-                id="wrong-order",
-            ),
-            pytest.param(
-                "1. `pkg.alpha` — dep_count: 49\n"
-                "2. `pkg.bravo` — dep_count: 42\n"
-                "3. `pkg.charlie` — dep_count: 37\n"
-                "4. `pkg.delta` — dep_count: 31\n"
-                "5. `pkg.echo` — dep_count: 28",
-                id="wrong-count",
-            ),
+            "1. `pkg.alpha` — dep_count: 49\n"
+            "2. `pkg.bravo` — dep_count: 42\n"
+            "3. `pkg.charlie` — dep_count: 37\n"
+            "4. `pkg.delta` — dep_count: 31",
+            "1. `pkg.alpha` — dep_count: 49\n"
+            "2. `pkg.bravo` — dep_count: 42\n"
+            "3. `pkg.unexpected` — dep_count: 37\n"
+            "4. `pkg.delta` — dep_count: 31\n"
+            "5. `pkg.echo` — dep_count: 29",
+            "1. `pkg.alpha` — dep_count: 49\n"
+            "2. `pkg.charlie` — dep_count: 37\n"
+            "3. `pkg.bravo` — dep_count: 42\n"
+            "4. `pkg.delta` — dep_count: 31\n"
+            "5. `pkg.echo` — dep_count: 29",
+            "1. `pkg.alpha` — dep_count: 49\n"
+            "2. `pkg.bravo` — dep_count: 42\n"
+            "3. `pkg.charlie` — dep_count: 37\n"
+            "4. `pkg.delta` — dep_count: 31\n"
+            "5. `pkg.echo` — dep_count: 28",
         ],
     )
     def test_cq03_rejects_incomplete_or_incorrect_ranking_members(self, script_run_bench: Any, answer: str) -> None:
@@ -2324,13 +2323,7 @@ class TestEvaluateOss:
                 "Independent AST view: 7 unique names.",
                 id="independent-ast-view-label",
             ),
-            pytest.param(
-                "uncovered",
-                "uncovered_count",
-                11,
-                "11 uncovered symbols.",
-                id="count-first-uncovered-label",
-            ),
+            pytest.param("uncovered", "uncovered_count", 11, "11 uncovered symbols.", id="count-first-uncovered-label"),
             pytest.param(
                 "uncovered",
                 "uncovered_count",
@@ -2457,11 +2450,11 @@ class TestEvaluateOss:
     @pytest.mark.parametrize(
         "check,gt_fields",
         [
-            ("coupled", {}),
-            ("undocumented", {}),
-            ("uncovered", {}),
-            ("undocumented", {"undocumented_count": "many"}),
-            ("uncovered", {"uncovered_count": None}),
+            pytest.param("coupled", {}, id="coupled"),
+            pytest.param("undocumented", {}, id="undocumented-punctuation"),
+            pytest.param("uncovered", {}, id="uncovered-punctuation"),
+            pytest.param("undocumented", {"undocumented_count": "many"}, id="undocumented-undocumented_count-many"),
+            pytest.param("uncovered", {"uncovered_count": None}, id="uncovered-uncovered_count-none"),
         ],
     )
     def test_missing_or_malformed_count_fields_keep_no_metric_as_extraction_failed(
@@ -2543,10 +2536,7 @@ class TestEvaluateDebug:
 
     @pytest.mark.parametrize(
         "output",
-        [
-            "The issue is in my_function_extra inside utils_extra.py",
-            "my_functionality moved to old_utils.py",
-        ],
+        ["The issue is in my_function_extra inside utils_extra.py", "my_functionality moved to old_utils.py"],
     )
     def test_longer_identifiers_and_unrelated_filenames_do_not_match(self, script_run_bench: Any, output: str) -> None:
         """Function/file substrings embedded in longer names are not enough to score."""
@@ -2656,10 +2646,7 @@ class TestEvaluateFeature:
 
     @pytest.mark.parametrize(
         "output",
-        [
-            "Add invalidate logic in trainer_extra.py",
-            "validation belongs in pretrainer.py",
-        ],
+        ["Add invalidate logic in trainer_extra.py", "validation belongs in pretrainer.py"],
     )
     def test_longer_identifiers_and_unrelated_filenames_do_not_match(self, script_run_bench: Any, output: str) -> None:
         """Method/file substrings embedded in longer names are not enough to score."""
@@ -2791,11 +2778,19 @@ class TestStructuredBlockScoring:
     @pytest.mark.parametrize(
         "stem,text,expected",
         [
-            ("trainer", "the trainer runs the loop", False),  # bare blocklisted word
-            ("trainer", "see trainer.py for details", True),  # .py-qualified
-            ("trainer", "in pkg.trainer here", True),  # dotted-qualified
-            ("utils", "utility helpers live in utils somewhere", False),  # bare blocklisted word
-            ("fit_loop", "the fit_loop advances the epoch", True),  # non-blocklisted plain word
+            pytest.param(
+                "trainer", "the trainer runs the loop", False, id="trainer-the-trainer-runs-the-loop"
+            ),  # bare blocklisted word
+            pytest.param(
+                "trainer", "see trainer.py for details", True, id="trainer-see-trainer.py-for-details"
+            ),  # .py-qualified
+            pytest.param("trainer", "in pkg.trainer here", True, id="trainer-in-pkg.trainer-here"),  # dotted-qualified
+            pytest.param(
+                "utils", "utility helpers live in utils somewhere", False, id="utils"
+            ),  # bare blocklisted word
+            pytest.param(
+                "fit_loop", "the fit_loop advances the epoch", True, id="fit_loop"
+            ),  # non-blocklisted plain word
         ],
     )
     def test_stem_matches(self, script_run_bench: Any, stem: str, text: str, expected: bool) -> None:
@@ -2805,9 +2800,21 @@ class TestStructuredBlockScoring:
     @pytest.mark.parametrize(
         "file_path,text,expected",
         [
-            ("a/b/logger_connector.py", "edit b/logger_connector to fix", True),  # path-with-parent
-            ("a/b/logger_connector.py", "just logger_connector alone", False),  # bare stem
-            ("src/pkg/trainer.py", "pkg/trainer.py has the bug", True),  # full relative path
+            pytest.param(
+                "a/b/logger_connector.py",
+                "edit b/logger_connector to fix",
+                True,
+                id="a-b-logger_connector.py-edit-b-logger_connector-to-fix",
+            ),  # path-with-parent
+            pytest.param(
+                "a/b/logger_connector.py",
+                "just logger_connector alone",
+                False,
+                id="a-b-logger_connector.py-just-logger_connector-alone",
+            ),  # bare stem
+            pytest.param(
+                "src/pkg/trainer.py", "pkg/trainer.py has the bug", True, id="src-pkg-trainer.py"
+            ),  # full relative path
         ],
     )
     def test_ri_file_matches(self, script_run_bench: Any, file_path: str, text: str, expected: bool) -> None:
@@ -2846,13 +2853,17 @@ class TestContaminationDetection:
     @pytest.mark.parametrize(
         "text,expected",
         [
-            ("cat /repo/.cache/codemap/proj.json", True),
-            ("less .cache/scan/x.json", True),
-            ("python3 plugins/codemap-py/bin/scan-query symbol X", True),
-            ("grep -rn Trainer src/", False),
+            pytest.param("cat /repo/.cache/codemap/proj.json", True, id="cat-repo-.cache-codemap-proj.json"),
+            pytest.param("less .cache/scan/x.json", True, id="less-.cache-scan-x.json"),
+            pytest.param(
+                "python3 plugins/codemap-py/bin/scan-query symbol X",
+                True,
+                id="python3-plugins-codemap-py-bin-scan-query-symbol-x",
+            ),
+            pytest.param("grep -rn Trainer src/", False, id="grep--rn-trainer-src"),
             # Windows backslash separators must still match the forward-slash markers.
-            (r"C:\repo\.cache\codemap\proj.json", True),
-            (r"type C:\repo\.cache\scan\proj.json", True),
+            pytest.param(r"C:\repo\.cache\codemap\proj.json", True, id="c-repo-.cache-codemap-proj.json"),
+            pytest.param(r"type C:\repo\.cache\scan\proj.json", True, id="type-c-repo-.cache-scan-proj.json"),
         ],
     )
     def test_is_contaminating_access(self, script_run_bench: Any, text: str, expected: bool) -> None:
@@ -3299,9 +3310,9 @@ class TestWorkflowTypeOf:
     @pytest.mark.parametrize(
         "workflow_type,task_type,expected",
         [
-            ("query", "symbol_extraction", "query"),
-            ("", "fn_call_graph", "fn_call_graph"),
-            ("debug", "debug_from_trace", "debug"),
+            pytest.param("query", "symbol_extraction", "query", id="query"),
+            pytest.param("", "fn_call_graph", "fn_call_graph", id="empty"),
+            pytest.param("debug", "debug_from_trace", "debug", id="debug"),
         ],
     )
     def test_parametrized_fallback_logic(

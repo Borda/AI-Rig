@@ -39,17 +39,22 @@ def _validate(module: ModuleType, name: str, metadata: dict[str, object], gaps: 
 @pytest.mark.parametrize(
     ("gaps", "closures"),
     [
-        ([" "], []),
-        (["Environment missing", "Environment missing"], []),
-        (
+        pytest.param([" "], [], id="punctuation"),
+        pytest.param(["Environment missing", "Environment missing"], [], id="environment-missing-environment-missing"),
+        pytest.param(
             ["Environment missing"],
             [
                 {"gap": "Environment missing", "status": "unresolved", "rationale": "First state."},
                 {"gap": "Environment missing", "status": "unresolved", "rationale": "Second state."},
             ],
+            id="environment-missing-gap-environment-missing-status-unresolved-rationale-first-state.-gap-env",
         ),
-        (["Environment missing"], [{"gap": "Other", "status": "unresolved", "rationale": "Not declared."}]),
-        (["Environment missing"], []),
+        pytest.param(
+            ["Environment missing"],
+            [{"gap": "Other", "status": "unresolved", "rationale": "Not declared."}],
+            id="environment-missing-gap-other-status-unresolved-rationale-not-declared.",
+        ),
+        pytest.param(["Environment missing"], [], id="environment-missing-punctuation"),
     ],
 )
 def test_every_validator_rejects_ambiguous_or_incomplete_confidence_closures(

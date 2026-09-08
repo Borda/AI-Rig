@@ -104,12 +104,12 @@ class TestDifficultyFor:
     @pytest.mark.parametrize(
         "file_count,expected",
         [
-            (1, "simple"),  # documented boundary: exactly 1 -> simple
-            (2, "medium"),  # lower boundary of medium band
-            (3, "medium"),  # upper boundary of medium band
-            (4, "hard"),  # first hard value
-            (5, "hard"),  # another hard value
-            (10, "hard"),  # large collection -> hard
+            pytest.param(1, "simple", id="1"),  # documented boundary: exactly 1 -> simple
+            pytest.param(2, "medium", id="2"),  # lower boundary of medium band
+            pytest.param(3, "medium", id="3"),  # upper boundary of medium band
+            pytest.param(4, "hard", id="4"),  # first hard value
+            pytest.param(5, "hard", id="5"),  # another hard value
+            pytest.param(10, "hard", id="10"),  # large collection -> hard
         ],
     )
     def test_difficulty_for_documented_ranges(
@@ -158,23 +158,31 @@ class TestIsTestPath:
         "path,expected",
         [
             # --- test directory segment ---
-            ("tests/unit/test_trainer.py", True),
-            ("src/lightning/test/helpers.py", True),
-            ("a/tests/b/c.py", True),  # segment anywhere in path
+            pytest.param("tests/unit/test_trainer.py", True, id="tests-unit-test_trainer.py"),
+            pytest.param("src/lightning/test/helpers.py", True, id="src-lightning-test-helpers.py"),
+            pytest.param("a/tests/b/c.py", True, id="a-tests-b-c.py"),  # segment anywhere in path
             # --- test_ prefix on filename ---
-            ("test_trainer.py", True),  # top-level file
-            ("src/lightning/test_loader.py", True),
+            pytest.param("test_trainer.py", True, id="test_trainer.py"),  # top-level file
+            pytest.param("src/lightning/test_loader.py", True, id="src-lightning-test_loader.py"),
             # --- _test.py suffix ---
-            ("src/lightning/trainer_test.py", True),
+            pytest.param("src/lightning/trainer_test.py", True, id="src-lightning-trainer_test.py"),
             # --- conftest.py ---
-            ("conftest.py", True),
-            ("src/conftest.py", True),
+            pytest.param("conftest.py", True, id="conftest.py"),
+            pytest.param("src/conftest.py", True, id="src-conftest.py"),
             # --- normal source files (must NOT match) ---
-            ("src/lightning/pytorch/trainer/trainer.py", False),
-            ("lightning/pytorch/utilities/combined_loader.py", False),
-            ("setup.py", False),
-            ("atestfile.py", False),  # 'atest' prefix, no separator
-            ("src/lightning/latest_test_results.py", False),  # does not end _test.py
+            pytest.param(
+                "src/lightning/pytorch/trainer/trainer.py", False, id="src-lightning-pytorch-trainer-trainer.py"
+            ),
+            pytest.param(
+                "lightning/pytorch/utilities/combined_loader.py",
+                False,
+                id="lightning-pytorch-utilities-combined_loader.py",
+            ),
+            pytest.param("setup.py", False, id="setup.py"),
+            pytest.param("atestfile.py", False, id="atestfile.py"),  # 'atest' prefix, no separator
+            pytest.param(
+                "src/lightning/latest_test_results.py", False, id="src-lightning-latest_test_results.py"
+            ),  # does not end _test.py
         ],
     )
     def test_is_test_path_classification(self, script_gen_real_issues: Any, path: str, expected: bool) -> None:
@@ -222,30 +230,33 @@ class TestModuleFor:
         "path,expected",
         [
             # --- src/ prefix stripping ---
-            (
+            pytest.param(
                 "src/lightning/pytorch/trainer/trainer.py",
                 "lightning.pytorch.trainer.trainer",
+                id="src-lightning-pytorch-trainer-trainer.py",
             ),
             # --- no src/ prefix ---
-            (
+            pytest.param(
                 "lightning/pytorch/callbacks/timer.py",
                 "lightning.pytorch.callbacks.timer",
+                id="lightning-pytorch-callbacks-timer.py",
             ),
             # --- __init__.py collapses to package ---
-            (
-                "src/lightning/pytorch/__init__.py",
-                "lightning.pytorch",
+            pytest.param(
+                "src/lightning/pytorch/__init__.py", "lightning.pytorch", id="src-lightning-pytorch-__init__.py"
             ),
-            (
+            pytest.param(
                 "lightning/pytorch/utilities/__init__.py",
                 "lightning.pytorch.utilities",
+                id="lightning-pytorch-utilities-__init__.py",
             ),
             # --- top-level single file ---
-            ("setup.py", "setup"),
+            pytest.param("setup.py", "setup", id="setup.py"),
             # --- non-root src/ segment: not stripped, but slashes still become dots ---
-            (
+            pytest.param(
                 "pkg/src/module.py",
                 "pkg.src.module",  # src/ not at root -> not stripped; / -> . applies everywhere
+                id="pkg-src-module.py",
             ),
         ],
     )
@@ -368,21 +379,31 @@ class TestIsMeaningfulIssue:
         "title,body,expected",
         [
             # --- happy path: specific title + real body ---
-            ("CombinedLoader hangs on StopIteration", "Detailed description here.", True),
-            ("Timer callback resets on resume", "Steps to reproduce:\n1. ...", True),
+            pytest.param(
+                "CombinedLoader hangs on StopIteration",
+                "Detailed description here.",
+                True,
+                id="combinedloader-hangs-on-stopiteration",
+            ),
+            pytest.param(
+                "Timer callback resets on resume",
+                "Steps to reproduce:\n1. ...",
+                True,
+                id="timer-callback-resets-on-resume",
+            ),
             # --- generic titles are case-folded before the GENERIC_TITLES membership check;
             # the membership check itself over the full current set is proven exhaustively by
             # test_is_meaningful_issue_generic_title_exhaustive below, so only case-folding is
             # spot-checked here ---
-            ("Bug", "Detailed description.", False),  # case folded
-            ("BUG", "Detailed description.", False),
+            pytest.param("Bug", "Detailed description.", False, id="generic-title-mixed-case"),  # case folded
+            pytest.param("BUG", "Detailed description.", False, id="generic-title-uppercase"),
             # --- empty / blank title ---
-            ("", "Body here.", False),
-            ("   ", "Body here.", False),  # whitespace-only title
+            pytest.param("", "Body here.", False, id="empty"),
+            pytest.param("   ", "Body here.", False, id="whitespace"),  # whitespace-only title
             # --- missing / blank body ---
-            ("Specific title", None, False),
-            ("Specific title", "", False),
-            ("Specific title", "   ", False),  # whitespace-only body
+            pytest.param("Specific title", None, False, id="specific-title-none"),
+            pytest.param("Specific title", "", False, id="specific-title-empty"),
+            pytest.param("Specific title", "   ", False, id="specific-title-whitespace"),  # whitespace-only body
         ],
     )
     def test_is_meaningful_issue(
@@ -461,10 +482,10 @@ class TestBuildTask:
     @pytest.mark.parametrize(
         "index,expected_id",
         [
-            (1, "OSS-01"),
-            (9, "OSS-09"),
-            (10, "OSS-10"),
-            (20, "OSS-20"),
+            pytest.param(1, "OSS-01", id="1"),
+            pytest.param(9, "OSS-09", id="9"),
+            pytest.param(10, "OSS-10", id="10"),
+            pytest.param(20, "OSS-20", id="20"),
         ],
     )
     def test_build_task_id_formatting(self, script_gen_real_issues: Any, index: int, expected_id: str) -> None:
@@ -502,10 +523,7 @@ class TestBuildTask:
 
         Scenario: scoring harness reads both sub-keys directly.
         """
-        source_files = [
-            "src/lightning/pytorch/trainer/trainer.py",
-            "src/lightning/pytorch/loops/fit_loop.py",
-        ]
+        source_files = ["src/lightning/pytorch/trainer/trainer.py", "src/lightning/pytorch/loops/fit_loop.py"]
         pr = _make_pr(script_gen_real_issues, source_files=source_files)
         record = _make_record(script_gen_real_issues, pr=pr)
         task = script_gen_real_issues.build_task(1, record)
@@ -517,10 +535,12 @@ class TestBuildTask:
     @pytest.mark.parametrize(
         "source_files,expected_difficulty",
         [
-            (["src/a.py"], "simple"),
-            (["src/a.py", "src/b.py"], "medium"),
-            (["src/a.py", "src/b.py", "src/c.py"], "medium"),
-            (["src/a.py", "src/b.py", "src/c.py", "src/d.py"], "hard"),
+            pytest.param(["src/a.py"], "simple", id="src-a.py"),
+            pytest.param(["src/a.py", "src/b.py"], "medium", id="src-a.py-src-b.py"),
+            pytest.param(["src/a.py", "src/b.py", "src/c.py"], "medium", id="src-a.py-src-b.py-src-c.py"),
+            pytest.param(
+                ["src/a.py", "src/b.py", "src/c.py", "src/d.py"], "hard", id="src-a.py-src-b.py-src-c.py-src-d.py"
+            ),
         ],
     )
     def test_build_task_difficulty_derived_from_file_count(
@@ -546,10 +566,7 @@ class TestBuildTask:
         Scenario: harness uses primary_module as an index key; it must reflect
         the first file in source_files.
         """
-        source_files = [
-            "src/lightning/pytorch/trainer/trainer.py",
-            "src/lightning/pytorch/loops/fit_loop.py",
-        ]
+        source_files = ["src/lightning/pytorch/trainer/trainer.py", "src/lightning/pytorch/loops/fit_loop.py"]
         pr = _make_pr(script_gen_real_issues, source_files=source_files)
         record = _make_record(script_gen_real_issues, pr=pr)
         task = script_gen_real_issues.build_task(1, record)
@@ -620,10 +637,7 @@ class TestBuildTask:
         Scenario: a multi-file PR whose second file has the larger diff must not
         yield the first file's module as primary — the bigger diff drives it.
         """
-        source_files = [
-            "src/lightning/pytorch/trainer/trainer.py",
-            "src/lightning/pytorch/loops/fit_loop.py",
-        ]
+        source_files = ["src/lightning/pytorch/trainer/trainer.py", "src/lightning/pytorch/loops/fit_loop.py"]
         changes = {source_files[0]: 3, source_files[1]: 90}
         pr = _make_pr(script_gen_real_issues, source_files=source_files, source_changes=changes)
         record = _make_record(script_gen_real_issues, pr=pr)
@@ -653,15 +667,33 @@ class TestSelectPrimaryModule:
         "source_files,source_changes,expected_module,expected_basis",
         [
             # most-changed wins even when it is not first
-            (["src/a.py", "src/b.py"], {"src/a.py": 3, "src/b.py": 40}, "b", "most_changed"),
+            pytest.param(
+                ["src/a.py", "src/b.py"],
+                {"src/a.py": 3, "src/b.py": 40},
+                "b",
+                "most_changed",
+                id="src-a.py-src-b.py-src-a.py-3-src-b.py-40",
+            ),
             # first-file tiebreak when change sizes are equal
-            (["src/a.py", "src/b.py"], {"src/a.py": 10, "src/b.py": 10}, "a", "most_changed"),
+            pytest.param(
+                ["src/a.py", "src/b.py"],
+                {"src/a.py": 10, "src/b.py": 10},
+                "a",
+                "most_changed",
+                id="src-a.py-src-b.py-src-a.py-10-src-b.py-10",
+            ),
             # no signal (None) -> first file
-            (["src/a.py", "src/b.py"], None, "a", "first_file"),
+            pytest.param(["src/a.py", "src/b.py"], None, "a", "first_file", id="src-a.py-src-b.py-none"),
             # all-zero changes -> treated as no signal -> first file
-            (["src/a.py", "src/b.py"], {"src/a.py": 0, "src/b.py": 0}, "a", "first_file"),
+            pytest.param(
+                ["src/a.py", "src/b.py"],
+                {"src/a.py": 0, "src/b.py": 0},
+                "a",
+                "first_file",
+                id="src-a.py-src-b.py-src-a.py-0-src-b.py-0",
+            ),
             # single file -> that file regardless of basis
-            (["src/only.py"], {"src/only.py": 5}, "only", "most_changed"),
+            pytest.param(["src/only.py"], {"src/only.py": 5}, "only", "most_changed", id="src-only.py"),
         ],
     )
     def test_select_primary_module(

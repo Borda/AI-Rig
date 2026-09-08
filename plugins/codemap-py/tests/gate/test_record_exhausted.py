@@ -207,16 +207,7 @@ class TestEditInvalidation:
         assert sentinel.exists(), "precondition: sentinel armed"
         return sentinel
 
-    @pytest.mark.parametrize(
-        "tool_name",
-        [
-            pytest.param("Edit", id="edit"),
-            pytest.param("Write", id="write"),
-            pytest.param("apply_patch", id="apply-patch"),
-            pytest.param("MultiEdit", id="multi-edit"),
-            pytest.param("NotebookEdit", id="notebook-edit"),
-        ],
-    )
+    @pytest.mark.parametrize("tool_name", ["Edit", "Write", "apply_patch", "MultiEdit", "NotebookEdit"])
     def test_python_edit_drops_sentinel(self, tool_name: str, tmp_path: Path) -> None:
         """Editing a Python source file invalidates the recorded caller set."""
         sentinel = self._arm(tmp_path)

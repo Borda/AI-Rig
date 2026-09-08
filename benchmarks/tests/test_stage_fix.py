@@ -514,13 +514,7 @@ def test_patch_preflight_admits_clean_context_before_staging_fixture(
         patch_contract=contract,
     )
 
-    assert events == [
-        "prepare:A_plain",
-        "prepare:B_auto",
-        "prepare:C_strict",
-        "stage-fixture",
-        "cleanup",
-    ]
+    assert events == ["prepare:A_plain", "prepare:B_auto", "prepare:C_strict", "stage-fixture", "cleanup"]
 
 
 def test_patch_cell_scores_the_exact_captured_worktree_diff(stage_fix: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -810,8 +804,8 @@ def test_rescore_fix_stage_reuses_captured_agent_worktree_diff(
 @pytest.mark.parametrize(
     ("study", "loader", "scope"),
     (
-        ("fix-single", "load_fix_single_tasks", "resolve_fix_single_scope"),
-        ("fix-multi", "load_fix_multi_tasks", "resolve_fix_multi_scope"),
+        pytest.param("fix-single", "load_fix_single_tasks", "resolve_fix_single_scope", id="fix-single"),
+        pytest.param("fix-multi", "load_fix_multi_tasks", "resolve_fix_multi_scope", id="fix-multi"),
     ),
 )
 def test_executable_paid_stages_route_every_arm_row_through_shared_renderer(
@@ -906,10 +900,7 @@ def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
     "observed_arguments",
     (
         ["symbol", "EarlyStopping._run_early_stopping_check"],
-        [
-            "fn-rdeps",
-            "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check",
-        ],
+        ["fn-rdeps", "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check"],
         [
             "fn-rdeps",
             "--exclude-tests",
@@ -977,7 +968,7 @@ def test_strict_executable_patch_rejects_noncanonical_query_use_from_pooling(
 
 @pytest.mark.parametrize(
     ("arm", "expected_compliance", "expected_pooling"),
-    (("B_auto", True, True), ("C_strict", False, False)),
+    (pytest.param("B_auto", True, True, id="b_auto"), pytest.param("C_strict", False, False, id="c_strict")),
 )
 def test_fix_single_preserves_optional_and_forced_query_controls(
     stage_fix: Any,
@@ -1058,23 +1049,27 @@ def test_fix_single_preserves_optional_and_forced_query_controls(
 @pytest.mark.parametrize(
     ("task_id", "expected_arguments"),
     (
-        (
+        pytest.param(
             "FM-01",
             [
                 "fn-rdeps",
                 "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check",
                 "--exclude-tests",
             ],
+            id="fm-01",
         ),
-        (
+        pytest.param(
             "FM-02",
             [
                 "fn-rdeps",
                 "lightning.pytorch.callbacks.model_checkpoint::ModelCheckpoint._save_checkpoint",
                 "--exclude-tests",
             ],
+            id="fm-02",
         ),
-        ("FM-03", ["find-symbol", r"Strategy\.setup_environment$", "--exclude-tests", "--limit", "0"]),
+        pytest.param(
+            "FM-03", ["find-symbol", r"Strategy\.setup_environment$", "--exclude-tests", "--limit", "0"], id="fm-03"
+        ),
     ),
 )
 def test_fix_multi_strict_prompt_and_conformance_use_task_specific_argv(

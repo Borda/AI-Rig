@@ -52,10 +52,7 @@ import codemap_py_cli  # noqa: E402  (scripts/ shim — aliases codemap_py.cli)
 # name, and one with spaces and non-ASCII characters (repo convention for
 # proving path handling is not accidentally ASCII/no-space-only, e.g. the F9
 # space-in-path coverage in test_interpreter.py).
-_PATH_CLASSES = [
-    pytest.param("proj", id="normal"),
-    pytest.param("proj café ünïcode dir", id="spaces_nonascii"),
-]
+_PATH_CLASSES = ["proj", "proj café ünïcode dir"]
 
 
 # --- shim identity equivalence ----------------------------------------------

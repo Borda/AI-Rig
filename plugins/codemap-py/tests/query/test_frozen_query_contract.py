@@ -227,15 +227,7 @@ def test_compact_reverse_queries_only_reduce_metadata_not_result_arrays(
         text=True,
     )
     compact_fn_rdeps = subprocess.run(
-        [
-            str(_CODEMAP_CLI),
-            "query",
-            "--compact",
-            "--index",
-            str(index_path),
-            "fn-rdeps",
-            "leaf::target",
-        ],
+        [str(_CODEMAP_CLI), "query", "--compact", "--index", str(index_path), "fn-rdeps", "leaf::target"],
         cwd=root,
         env=env,
         capture_output=True,

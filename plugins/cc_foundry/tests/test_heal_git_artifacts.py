@@ -157,7 +157,7 @@ class TestSimulatedWindowsPidLiveness:
 
 
 class TestPidAliveGuards:
-    @pytest.mark.parametrize("pid", [None, 0, -1], ids=["none", "zero", "negative"])
+    @pytest.mark.parametrize("pid", [pytest.param(None, id="none"), 0, -1])
     def test_unverifiable_pid_is_not_alive(self, pid):
         assert _mod.pid_alive(pid) is False
 
@@ -166,16 +166,15 @@ class TestParseLockPid:
     @pytest.mark.parametrize(
         ("text", "expected"),
         [
-            ("33410 2026-08-17T18:10:04Z\n", 33410),
-            ("33410\n", 33410),
-            ("33410 x\nsecond line\n", 33410),
-            ("", None),
-            ("   ", None),
-            ("nope 2026-08-17T18:10:04Z", None),
-            ("-1 x", None),
-            ("0 x", None),
+            pytest.param("33410 2026-08-17T18:10:04Z\n", 33410, id="pid-and-stamp"),
+            pytest.param("33410\n", 33410, id="pid-only"),
+            pytest.param("33410 x\nsecond line\n", 33410, id="multiline"),
+            pytest.param("", None, id="empty"),
+            pytest.param("   ", None, id="blank"),
+            pytest.param("nope 2026-08-17T18:10:04Z", None, id="non-numeric"),
+            pytest.param("-1 x", None, id="negative"),
+            pytest.param("0 x", None, id="zero"),
         ],
-        ids=["pid-and-stamp", "pid-only", "multiline", "empty", "blank", "non-numeric", "negative", "zero"],
     )
     def test_parse(self, text, expected):
         assert _mod.parse_lock_pid(text) == expected

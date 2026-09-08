@@ -9,24 +9,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_SAFE_TEST_SELECTION = (
-    "tests/test_finding_presentation.py",
-    "tests/test_parallel_execution.py",
-    "tests/test_parallel_telemetry.py",
-    "tests/test_parallel_worktrees.py",
-    "tests/test_app_server_denial_protocol.py",
-    "tests/test_networked_cli_approval_contract.py",
-    "tests/test_code_review_pr_failure_output_contract.py",
-    "tests/test_plugin_only_release.py::test_calibration_model_stall_fixture_observations_are_scored",
-)
+PACKAGE_SAFE_TEST_MARKER = "installed_plugin"
 INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 180
-
-
-def test_installed_package_selection_includes_parallel_write_lifecycle() -> None:
-    """Require native CI to exercise the write lifecycle from the installed payload."""
-    assert "tests/test_parallel_worktrees.py" in PACKAGE_SAFE_TEST_SELECTION
 
 
 def test_installed_package_selection_timeout_is_bounded_for_native_windows() -> None:
@@ -60,19 +47,17 @@ def _copied_package_root(tmp_path: Path) -> Path:
     return installed_root
 
 
+@pytest.mark.packaging
+@pytest.mark.integration
 def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path) -> None:
     """Prevent checkout-only tests from being mistaken for installed-package coverage.
 
-    The selected tests cover staged execution manifests, privacy-minimized telemetry, the parallel-write lifecycle, the
-    denial protocol/client, all seven network approval briefs, the complete PR collector boundary, and calibration
-    scoring. A separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
+    The marker selects staged execution manifests, privacy-minimized telemetry, the complete parallel-write lifecycle,
+    the denial protocol/client, all seven network approval briefs, both PR collector boundaries, and calibration
+    scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
+    separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
     """
     installed_root = _copied_package_root(tmp_path)
-    payload_paths = set(_package_payload_paths())
-    selected_files = {node_id.split("::", 1)[0] for node_id in PACKAGE_SAFE_TEST_SELECTION}
-
-    assert selected_files <= payload_paths
-    assert all((installed_root / path).is_file() for path in selected_files)
     for path in (installed_root / "Makefile", installed_root / ".github", installed_root / ".git"):
         assert not path.exists(), f"installed payload must not include checkout context: {path.name}"
     assert not (tmp_path / ".git").exists()
@@ -81,7 +66,7 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     env.pop("PYTHONPATH", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", *PACKAGE_SAFE_TEST_SELECTION],
+        [sys.executable, "-m", "pytest", "-q", "--strict-markers", "-m", PACKAGE_SAFE_TEST_MARKER],
         cwd=installed_root,
         check=False,
         capture_output=True,

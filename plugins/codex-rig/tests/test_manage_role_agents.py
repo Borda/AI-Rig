@@ -16,9 +16,6 @@ from types import ModuleType
 import pytest
 
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="agent-shim lifecycle requires POSIX primitives")
-
-
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 GENERATOR_PATH = SCRIPTS / "generate_roles.py"
@@ -103,6 +100,12 @@ def _executable(tmp_path: Path) -> Path:
     return path
 
 
+_skip_windows_posix = pytest.mark.skipif(
+    sys.platform == "win32", reason="agent-shim lifecycle requires POSIX primitives"
+)
+
+
+@_skip_windows_posix
 def test_doctor_validates_package_without_writing_user_state(tmp_path: Path) -> None:
     """Report verified local prerequisites while preserving every home byte."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_doctor")
@@ -128,6 +131,7 @@ def test_doctor_validates_package_without_writing_user_state(tmp_path: Path) -> 
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize("action", ["doctor", "status"])
 def test_direct_diagnostic_does_not_write_installed_plugin_bytecode(tmp_path: Path, action: str) -> None:
     """Keep standard manager invocation read-only across the installed plugin tree."""
@@ -159,6 +163,7 @@ def test_direct_diagnostic_does_not_write_installed_plugin_bytecode(tmp_path: Pa
     assert _snapshot(plugin_root) == before
 
 
+@_skip_windows_posix
 def test_status_reports_corrupt_state_as_blocked_without_mutation(tmp_path: Path) -> None:
     """Expose untrusted state without repair, adoption, or cleanup writes."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_status")
@@ -187,9 +192,16 @@ def test_status_reports_corrupt_state_as_blocked_without_mutation(tmp_path: Path
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("arguments", "expected"),
-    [([], 2), (["unknown"], 2), (["doctor", "extra"], 2), (["install"], 5), (["remove"], 5)],
+    [
+        pytest.param([], 2, id="punctuation"),
+        pytest.param(["unknown"], 2, id="unknown"),
+        pytest.param(["doctor", "extra"], 2, id="doctor-extra"),
+        pytest.param(["install"], 5, id="install"),
+        pytest.param(["remove"], 5, id="remove"),
+    ],
 )
 def test_public_grammar_rejects_invalid_or_unwired_mutation_actions(
     tmp_path: Path,
@@ -212,6 +224,7 @@ def test_public_grammar_rejects_invalid_or_unwired_mutation_actions(
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_install_is_platform_blocked_before_plan_or_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -243,6 +256,7 @@ def test_install_is_platform_blocked_before_plan_or_approval(
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_doctor_refuses_symlinked_home_alias(tmp_path: Path) -> None:
     """Block unresolved home aliases instead of silently changing authority."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_alias")
@@ -261,6 +275,7 @@ def test_doctor_refuses_symlinked_home_alias(tmp_path: Path) -> None:
         )
 
 
+@_skip_windows_posix
 def test_internal_approved_install_reinstall_remove_converges(tmp_path: Path) -> None:
     """Apply and remove the whole roster while repeated actions produce no writes."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_mutation")
@@ -321,6 +336,7 @@ def test_internal_approved_install_reinstall_remove_converges(tmp_path: Path) ->
     assert '"transaction_status":"removed"' in state
 
 
+@_skip_windows_posix
 def test_large_symlinked_codex_executable_uses_package_binary_bound(tmp_path: Path) -> None:
     """Accept a stable Codex executable above the obsolete 256 MiB limit."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_large_codex")
@@ -338,6 +354,7 @@ def test_large_symlinked_codex_executable_uses_package_binary_bound(tmp_path: Pa
     assert set(digest) <= set("0123456789abcdef")
 
 
+@_skip_windows_posix
 def test_codex_executable_accepts_exact_package_binary_bound(tmp_path: Path) -> None:
     """Accept the inclusive 512 MiB package-wide executable boundary."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_exact_binary_bound")
@@ -366,6 +383,7 @@ def test_codex_executable_accepts_exact_package_binary_bound(tmp_path: Path) -> 
     )
 
 
+@_skip_windows_posix
 def test_oversized_codex_executable_reports_observed_size_and_limit(tmp_path: Path) -> None:
     """Explain the exact bounded-file invariant when an executable is too large."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_oversized_codex")
@@ -384,6 +402,7 @@ def test_oversized_codex_executable_reports_observed_size_and_limit(tmp_path: Pa
         module._digest_regular_executable(target, "Codex executable")
 
 
+@_skip_windows_posix
 def test_wrong_approval_digest_causes_zero_writes(tmp_path: Path) -> None:
     """Refuse mutation authority before creating the coordination lock or roots."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_wrong_approval")
@@ -406,6 +425,7 @@ def test_wrong_approval_digest_causes_zero_writes(tmp_path: Path) -> None:
     assert _snapshot(tmp_path) == before
 
 
+@_skip_windows_posix
 def test_under_lock_drift_preserves_concurrent_foreign_target(tmp_path: Path) -> None:
     """Stop before transaction creation when target evidence changes after approval."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_drift")
@@ -433,6 +453,7 @@ def test_under_lock_drift_preserves_concurrent_foreign_target(tmp_path: Path) ->
     assert not (home / "codex-rig").exists()
 
 
+@_skip_windows_posix
 def test_active_package_probe_uses_disposable_home_copy(tmp_path: Path) -> None:
     """Prove the Codex CLI cannot create temp state in the real diagnostic home."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_active_sandbox")
@@ -480,6 +501,7 @@ def test_active_package_probe_uses_disposable_home_copy(tmp_path: Path) -> None:
     assert _snapshot(home) == before
 
 
+@_skip_windows_posix
 def test_killed_process_requires_approved_rollback_then_can_resume(tmp_path: Path) -> None:
     """Recover an unjournaled publication after process death and converge later."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_process_kill")
@@ -532,6 +554,7 @@ manager.apply_mutation(plan, plan.approval.digest, checkpoint=kill)
     assert len(list((home / "agents").glob("codex-rig-*.toml"))) == 15
 
 
+@_skip_windows_posix
 def test_killed_state_commit_is_approved_and_finalized(tmp_path: Path) -> None:
     """Finalize exact installed state when process death follows its durable commit."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_finalize_kill")
@@ -570,6 +593,7 @@ manager.apply_mutation(plan, plan.approval.digest, checkpoint=kill)
     assert '"transaction_status":"current"' in (home / "codex-rig" / "shims" / "state.json").read_text()
 
 
+@_skip_windows_posix
 def test_partial_initial_journal_cleanup_requires_exact_approval(tmp_path: Path) -> None:
     """Clean the sole pre-authority artifact without parsing or target writes."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_preparing_cleanup")

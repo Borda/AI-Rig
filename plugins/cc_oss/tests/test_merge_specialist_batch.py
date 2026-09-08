@@ -130,8 +130,11 @@ class TestRunPlanNonEachMode:
 
     @pytest.mark.parametrize(
         "mode",
-        [msb.CommitMode.GROUPED, msb.CommitMode.ALL, msb.CommitMode.STAGE],
-        ids=["grouped", "all", "stage"],
+        [
+            pytest.param(msb.CommitMode.GROUPED, id="grouped"),
+            pytest.param(msb.CommitMode.ALL, id="all"),
+            pytest.param(msb.CommitMode.STAGE, id="stage"),
+        ],
     )
     def test_soft_reset_after_each_pick(self, monkeypatch: pytest.MonkeyPatch, mode: msb.CommitMode) -> None:
         """Each successful cherry-pick is immediately soft-reset in non-each modes."""

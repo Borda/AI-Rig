@@ -107,11 +107,7 @@ def test_tail_n_larger_than_output(
 
 
 @pytest.mark.parametrize(
-    "tail_n,expected",
-    [
-        ("0", []),
-        ("1", ["line-3"]),
-    ],
+    "tail_n,expected", [pytest.param("0", [], id="zero-lines"), pytest.param("1", ["line-3"], id="last-line")]
 )
 def test_numeric_tail_n_boundaries(
     monkeypatch: pytest.MonkeyPatch,
@@ -134,13 +130,7 @@ def test_passes_through_exit_code(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize(
     "command",
-    [
-        "rm -rf /",
-        "pytest; rm -rf /",
-        "pytest && echo x",
-        "uv run pytest; echo x",
-        "python -m pytest -q",
-    ],
+    ["rm -rf /", "pytest; rm -rf /", "pytest && echo x", "uv run pytest; echo x", "python -m pytest -q"],
 )
 def test_rejects_unsafe_cmd(
     monkeypatch: pytest.MonkeyPatch,

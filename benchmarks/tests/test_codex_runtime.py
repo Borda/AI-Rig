@@ -472,10 +472,7 @@ def test_progress_scope_restores_stage_local_output_after_an_exception(
             raise RuntimeError("fixture failure")
     runtime.print_arm_row("(1/3) ✓ T-01 A_plain", "A_plain")
 
-    assert capsys.readouterr().out.splitlines() == [
-        "(4/12) ✓ T-01 A_plain",
-        "(1/3) ✓ T-01 A_plain",
-    ]
+    assert capsys.readouterr().out.splitlines() == ["(4/12) ✓ T-01 A_plain", "(1/3) ✓ T-01 A_plain"]
 
 
 @pytest.mark.parametrize(

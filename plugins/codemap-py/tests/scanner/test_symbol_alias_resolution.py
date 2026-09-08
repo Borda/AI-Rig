@@ -217,7 +217,10 @@ def test_compact_central_bounds_alias_limitations_without_losing_full_output(
         assert len(json.dumps(compact, separators=(",", ":"))) < len(json.dumps(full, separators=(",", ":")))
 
 
-@pytest.mark.parametrize(("command", "result_key"), [("fn-rdeps", "called_by"), ("fn-blast", "blast_radius")])
+@pytest.mark.parametrize(
+    ("command", "result_key"),
+    [pytest.param("fn-rdeps", "called_by", id="fn-rdeps"), pytest.param("fn-blast", "blast_radius", id="fn-blast")],
+)
 def test_compact_target_alias_limitations_keep_small_relevant_evidence(
     tmp_path: Path, command: str, result_key: str
 ) -> None:

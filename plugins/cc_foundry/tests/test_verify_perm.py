@@ -123,10 +123,10 @@ class TestStatusFor:
     @pytest.mark.parametrize(
         ("present", "mode", "expected"),
         [
-            (True, "present", "OK"),
-            (False, "present", "MISSING"),
-            (True, "absent", "STILL_PRESENT"),
-            (False, "absent", "OK"),
+            pytest.param(True, "present", "OK", id="true-present"),
+            pytest.param(False, "present", "MISSING", id="false-present"),
+            pytest.param(True, "absent", "STILL_PRESENT", id="true-absent"),
+            pytest.param(False, "absent", "OK", id="false-absent"),
         ],
     )
     def test_matrix(self, present: bool, mode: str, expected: str) -> None:

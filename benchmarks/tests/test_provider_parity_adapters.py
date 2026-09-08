@@ -37,10 +37,7 @@ _REQUIRED_SHARED_RESULT_FIELDS = {
 
 @pytest.mark.parametrize(
     ("adapter", "result_type"),
-    [
-        pytest.param("structural", "BenchRun", id="structural"),
-        pytest.param("agentic", "BenchmarkRun", id="agentic"),
-    ],
+    [pytest.param("structural", "BenchRun", id="structural"), pytest.param("agentic", "BenchmarkRun", id="agentic")],
 )
 def test_adapter_result_uses_the_shared_provenance_schema(
     adapter: str, result_type: str, script_run_agentic: Any, script_run_bench: Any

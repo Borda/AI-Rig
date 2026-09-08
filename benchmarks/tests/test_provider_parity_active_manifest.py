@@ -207,13 +207,7 @@ def test_agentic_execution_contract_records_provider_specific_default_cells() ->
     }
 
 
-@pytest.mark.parametrize(
-    "manifest_name",
-    [
-        pytest.param("codex-integration.json", id="structural"),
-        pytest.param("codex-agentic.json", id="agentic"),
-    ],
-)
+@pytest.mark.parametrize("manifest_name", ["codex-integration.json", "codex-agentic.json"])
 def test_every_codex_manifest_admits_the_same_declared_strata(manifest_name: str) -> None:
     """Each Codex runner admits exactly the strata the methodology declares, in the same set.
 

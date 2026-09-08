@@ -50,10 +50,7 @@ def test_codex_hook_config_registers_runtime_scoped_session_prompt_and_tool_life
     assert "SessionStart" not in config["hooks"]
     assert _commands(config, "UserPromptSubmit", None) == [_command("inject-preamble.py")]
     assert _commands(config, "PreToolUse", "Bash") == [_command("guard-redundant-scan.py")]
-    assert _commands(config, "PostToolUse", "Bash") == [
-        _command("record-exhausted.py"),
-        _command("log-tool-use.py"),
-    ]
+    assert _commands(config, "PostToolUse", "Bash") == [_command("record-exhausted.py"), _command("log-tool-use.py")]
     assert _commands(config, "PostToolUse", "Grep|Read|Glob") == [_command("log-tool-use.py")]
     assert _commands(config, "PostToolUse", "Edit|Write|apply_patch") == [_command("record-exhausted.py")]
 

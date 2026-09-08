@@ -46,7 +46,10 @@ class TestSummarize:
 
     @pytest.mark.parametrize(
         ("payload", "expected"),
-        [({"dependencies": [{"vulns": [{}] * n}]}, f"1 deps, {n} vulns") for n in [0, 1, 5, 10]],
+        [
+            pytest.param({"dependencies": [{"vulns": [{}] * n}]}, f"1 deps, {n} vulns", id=f"{n}-vulns")
+            for n in [0, 1, 5, 10]
+        ],
     )
     def test_vuln_counts(self, payload: dict, expected: str) -> None:
         """Vuln count matches length of 'vulns' list."""

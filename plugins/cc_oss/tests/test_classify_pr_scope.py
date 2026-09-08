@@ -117,40 +117,14 @@ class TestMain:
 
     def test_prints_scope_only(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Stdout is the bare scope label — no ``SCOPE=`` prefix, no trailing data."""
-        rc = cps.main(
-            [
-                "--py-files",
-                "0",
-                "--loc-delta",
-                "0",
-                "--new-api-lines",
-                "0",
-                "--labels",
-                "",
-                "--title",
-                "",
-            ]
-        )
+        rc = cps.main(["--py-files", "0", "--loc-delta", "0", "--new-api-lines", "0", "--labels", "", "--title", ""])
         assert rc == 0
         captured = capsys.readouterr()
         assert captured.out.strip() == "CHORE"
 
     def test_feature_via_cli(self, capsys: pytest.CaptureFixture[str]) -> None:
         """New-api-lines > 0 routes to FEATURE end-to-end."""
-        rc = cps.main(
-            [
-                "--py-files",
-                "2",
-                "--loc-delta",
-                "10",
-                "--new-api-lines",
-                "5",
-                "--labels",
-                "",
-                "--title",
-                "",
-            ]
-        )
+        rc = cps.main(["--py-files", "2", "--loc-delta", "10", "--new-api-lines", "5", "--labels", "", "--title", ""])
         assert rc == 0
         assert capsys.readouterr().out.strip() == "FEATURE"
 
@@ -165,16 +139,7 @@ class TestMain:
 
         --labels and --title are optional — default empty strings.
         """
-        rc = cps.main(
-            [
-                "--py-files",
-                "2",
-                "--loc-delta",
-                "30",
-                "--new-api-lines",
-                "0",
-            ]
-        )
+        rc = cps.main(["--py-files", "2", "--loc-delta", "30", "--new-api-lines", "0"])
         assert rc == 0
         # No refactor signal → FIX
         assert capsys.readouterr().out.strip() == "FIX"

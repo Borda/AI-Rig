@@ -305,21 +305,25 @@ class TestArmContracts:
     @pytest.mark.parametrize(
         ("task", "expected"),
         [
-            (
+            pytest.param(
                 {"type": "develop_blast_radius", "ground_truth": {"fn_callers": [str(i) for i in range(20)]}},
                 ("direct_reverse_call", "high_fan_in"),
+                id="type-develop_blast_radius-ground_truth-fn_callers-str-i-for-i-in-range-2",
             ),
-            (
+            pytest.param(
                 {"type": "graph_fn_blast", "ground_truth": {"blast_callers": ["a", "b"]}},
                 ("transitive_reverse_call",),
+                id="type-graph_fn_blast-ground_truth-blast_callers-a-b",
             ),
-            (
+            pytest.param(
                 {"type": "graph_path", "ground_truth": {"import_path": ["a", "b", "c"]}},
                 ("dependency_path",),
+                id="type-graph_path-ground_truth-import_path-a-b-c",
             ),
-            (
+            pytest.param(
                 {"type": "diff_impact", "ground_truth": {"fn_callers": ["a"], "test_modules": ["test_a"]}},
                 ("diff_impact", "test_selection"),
+                id="type-diff_impact-ground_truth-fn_callers-a-test_modules-test_a",
             ),
         ],
     )
@@ -487,13 +491,7 @@ class TestResultEligibility:
                 policies=_synthetic_policies(),
             )
 
-    @pytest.mark.parametrize(
-        "arm",
-        [
-            pytest.param("B_auto", id="claude-optional-use"),
-            pytest.param("B_auto", id="codex-optional-use"),
-        ],
-    )
+    @pytest.mark.parametrize("arm", ["B_auto", "B_auto"])
     def test_zero_query_b_cell_is_adherent_on_both_providers(self, arm: str) -> None:
         """B is an optional-use canary, so declining to query is compliant.
 
@@ -502,13 +500,7 @@ class TestResultEligibility:
         """
         assert core.treatment_adherence(arm, codemap_use_compliance=False, contaminated=False) is True
 
-    @pytest.mark.parametrize(
-        "arm",
-        [
-            pytest.param("C_strict", id="claude-required-use"),
-            pytest.param("C_strict", id="codex-required-use"),
-        ],
-    )
+    @pytest.mark.parametrize("arm", ["C_strict", "C_strict"])
     def test_zero_query_c_cell_remains_non_adherent(self, arm: str) -> None:
         """The strict arm keeps its required-use contract on both providers."""
         assert core.treatment_adherence(arm, codemap_use_compliance=False, contaminated=False) is False
@@ -529,10 +521,7 @@ class TestResultEligibility:
 
     def test_pairing_rejects_non_boolean_treatment_adherence(self) -> None:
         """An untyped telemetry value cannot be interpreted as observed adherence."""
-        records = [
-            _record(arm="A_plain", treatment_adherence=1),
-            _record(arm="B_auto", treatment_adherence=True),
-        ]
+        records = [_record(arm="A_plain", treatment_adherence=1), _record(arm="B_auto", treatment_adherence=True)]
 
         assert core.result_eligibility(records[0], _synthetic_policies()) is False
         with pytest.raises(ValueError, match="treatment_adherence must be a boolean"):
@@ -722,23 +711,13 @@ class TestPairedEffects:
     @pytest.mark.parametrize(
         "records",
         [
+            pytest.param([_record(arm="A_plain")], id="missing-treatment-arm"),
             pytest.param(
-                [_record(arm="A_plain")],
-                id="missing-treatment-arm",
-            ),
-            pytest.param(
-                [
-                    _record(arm="A_plain"),
-                    _record(arm="B_auto", provider="codex"),
-                ],
+                [_record(arm="A_plain"), _record(arm="B_auto", provider="codex")],
                 id="cross-provider-arms-cannot-pair",
             ),
             pytest.param(
-                [
-                    _record(arm="A_plain"),
-                    _record(arm="A_plain", input_tokens=90),
-                    _record(arm="B_auto"),
-                ],
+                [_record(arm="A_plain"), _record(arm="A_plain", input_tokens=90), _record(arm="B_auto")],
                 id="duplicate-baseline-cell",
             ),
         ],
@@ -763,10 +742,7 @@ class TestPairedEffects:
     def test_pair_effects_rejects_policy_ineligible_task_with_clean_record_flags(self) -> None:
         """Diagnostic task IDs remain excluded even when every ResultRecord flag uses its default."""
         policies = core.load_task_policies(MANIFEST_PATH)
-        records = [
-            _record(arm="A_plain", task_id="RV-05"),
-            _record(arm="B_auto", task_id="RV-05"),
-        ]
+        records = [_record(arm="A_plain", task_id="RV-05"), _record(arm="B_auto", task_id="RV-05")]
 
         with pytest.raises(ValueError, match="ineligible"):
             core.pair_effects(records, baseline_arm="A_plain", treatment_arm="B_auto", policies=policies)
@@ -781,10 +757,7 @@ class TestPairedEffects:
     )
     def test_pair_effects_rejects_invalid_numeric_record_values(self, overrides: dict[str, Any]) -> None:
         """Invalid token and quality values cannot produce undefined or misleading effects."""
-        records = [
-            _record(arm="A_plain", **overrides),
-            _record(arm="B_auto"),
-        ]
+        records = [_record(arm="A_plain", **overrides), _record(arm="B_auto")]
 
         with pytest.raises(ValueError):
             core.pair_effects(
@@ -1036,13 +1009,7 @@ class TestAgenticAnswerContracts:
         assert evidence.rrec == pytest.approx(1.0)
         assert evidence.deff == pytest.approx(2.0)
 
-    @pytest.mark.parametrize(
-        "wrapper",
-        [
-            pytest.param("```json\n{payload}\n```", id="json-fence"),
-            pytest.param("```\n{payload}\n```", id="bare-fence"),
-        ],
-    )
+    @pytest.mark.parametrize("wrapper", ["```json\n{payload}\n```", "```\n{payload}\n```"])
     def test_parse_labeled_answer_strips_cosmetic_markdown_fence(self, wrapper: str) -> None:
         """A markdown code fence inside the envelope is cosmetic, not a scoring failure.
 

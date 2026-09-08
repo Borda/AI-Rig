@@ -72,6 +72,7 @@ def _selection() -> dict:
     }
 
 
+@pytest.mark.installed_plugin
 def test_selection_cli_renders_named_groups_before_prompt(tmp_path: Path) -> None:
     """Keep selection indexes distinct from stable IDs and avoid premature deferral."""
     path = tmp_path / "selection.json"
@@ -95,11 +96,7 @@ def test_selection_cli_renders_named_groups_before_prompt(tmp_path: Path) -> Non
     assert "Related mentions: review-notes.md:53, review-notes.md:62" in rendered
 
 
-@pytest.mark.parametrize(
-    "mutation",
-    ["duplicate-source", "duplicate-finding", "bad-selection", "wrong-count"],
-    ids=["source-owner", "canonical-owner", "unknown-index", "count-mismatch"],
-)
+@pytest.mark.parametrize("mutation", ["duplicate-source", "duplicate-finding", "bad-selection", "wrong-count"])
 def test_selection_rejects_invalid_inventory(mutation: str) -> None:
     """Reject mismatched source/selection identities before a user can select work."""
     payload = _selection()
@@ -151,7 +148,15 @@ def test_enriched_review_records_accept_titles_without_changing_identity() -> No
         _load_validator()._validate_review_decision(metadata, _result())
 
 
-@pytest.mark.parametrize("selected", [[], [1], [2], [1, 2]], ids=["none", "first", "second", "all"])
+@pytest.mark.parametrize(
+    "selected",
+    [
+        pytest.param([], id="none"),
+        pytest.param([1], id="first"),
+        pytest.param([2], id="second"),
+        pytest.param([1, 2], id="all"),
+    ],
+)
 def test_selection_confirmation_binds_final_inventory(tmp_path: Path, selected: list[int]) -> None:
     """Bind the selected indexes and stable inventory to the final validation boundary."""
     payload = _selection()
@@ -216,7 +221,7 @@ def test_selection_check_detects_modified_display(tmp_path: Path) -> None:
     assert output.read_text() == "Wrong finding"
 
 
-@pytest.mark.parametrize("width", [80, 120], ids=["narrow", "wide"])
+@pytest.mark.parametrize("width", [80, 120])
 def test_selection_preview_retains_names_and_references(width: int) -> None:
     """Prove short overview and separate evidence groups survive common terminal widths."""
     output = StringIO()
@@ -285,7 +290,7 @@ def test_selection_cli_rejects_output_symlinks(tmp_path: Path) -> None:
     assert target.read_bytes() == b"preserve unrelated evidence"
 
 
-@pytest.mark.parametrize("declared_count", [0, 2], ids=["hidden-gate", "invented-gate"])
+@pytest.mark.parametrize("declared_count", [0, 2])
 def test_grouped_intake_rejects_miscounted_gate_items(tmp_path: Path, declared_count: int) -> None:
     """A display-word bypass cannot hide or invent canonical report gate obligations."""
     payload = _selection()
@@ -354,7 +359,7 @@ def test_grouped_review_gate_intake_does_not_depend_on_display_words(tmp_path: P
     VALIDATOR._validate_code_remediate_report_intake({"metadata": metadata}, tmp_path)
 
 
-@pytest.mark.parametrize("item_type", ["code", "review-gate"], ids=["closed-code", "closed-review-gates"])
+@pytest.mark.parametrize("item_type", ["code", "review-gate"])
 def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path, item_type: str) -> None:
     """Exercise the outer validator, not just the no-selectable renderer branch."""
     result_path = _write_schema_v2_change_analysis(tmp_path)

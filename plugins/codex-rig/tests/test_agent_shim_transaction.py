@@ -356,18 +356,17 @@ def test_owned_mutation_failure_after_detach_restores_before_image(
 @pytest.mark.parametrize(
     ("intent", "boundary"),
     [
-        ("create", "challenger:published"),
-        ("create", "challenger:verified"),
-        ("create", "state:published"),
-        ("update", "challenger:detached"),
-        ("update", "challenger:published"),
-        ("update", "challenger:verified"),
-        ("update", "state:published"),
-        ("remove", "challenger:detached"),
-        ("remove", "challenger:verified"),
-        ("remove", "state:published"),
+        pytest.param("create", "challenger:published", id="create-challenger-published"),
+        pytest.param("create", "challenger:verified", id="create-challenger-verified"),
+        pytest.param("create", "state:published", id="create-state-published"),
+        pytest.param("update", "challenger:detached", id="update-challenger-detached"),
+        pytest.param("update", "challenger:published", id="update-challenger-published"),
+        pytest.param("update", "challenger:verified", id="update-challenger-verified"),
+        pytest.param("update", "state:published", id="update-state-published"),
+        pytest.param("remove", "challenger:detached", id="remove-challenger-detached"),
+        pytest.param("remove", "challenger:verified", id="remove-challenger-verified"),
+        pytest.param("remove", "state:published", id="remove-state-published"),
     ],
-    ids=lambda value: value,
 )
 def test_each_forward_mutation_boundary_rolls_back_exactly(
     transaction_fixture: tuple[object, ...], intent: str, boundary: str
@@ -404,18 +403,17 @@ def test_each_forward_mutation_boundary_rolls_back_exactly(
 @pytest.mark.parametrize(
     ("intent", "boundary"),
     [
-        ("create", "challenger:published"),
-        ("create", "challenger:verified"),
-        ("create", "state:published"),
-        ("update", "challenger:detached"),
-        ("update", "challenger:published"),
-        ("update", "challenger:verified"),
-        ("update", "state:published"),
-        ("remove", "challenger:detached"),
-        ("remove", "challenger:verified"),
-        ("remove", "state:published"),
+        pytest.param("create", "challenger:published", id="create-challenger-published"),
+        pytest.param("create", "challenger:verified", id="create-challenger-verified"),
+        pytest.param("create", "state:published", id="create-state-published"),
+        pytest.param("update", "challenger:detached", id="update-challenger-detached"),
+        pytest.param("update", "challenger:published", id="update-challenger-published"),
+        pytest.param("update", "challenger:verified", id="update-challenger-verified"),
+        pytest.param("update", "state:published", id="update-state-published"),
+        pytest.param("remove", "challenger:detached", id="remove-challenger-detached"),
+        pytest.param("remove", "challenger:verified", id="remove-challenger-verified"),
+        pytest.param("remove", "state:published", id="remove-state-published"),
     ],
-    ids=lambda value: value,
 )
 def test_process_death_at_each_forward_boundary_recovers_exactly(
     transaction_fixture: tuple[object, ...], intent: str, boundary: str

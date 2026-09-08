@@ -185,7 +185,9 @@ No plugin dependency system in Claude Code — never propose "install `foo` as p
 
 > **Commit gate:** Any `plugins/<name>/` **non-test** file in `git diff HEAD` requires the pre-bump checklist (`AUTHORING.md` §Versioning) before `git add`.
 >
-> All changed files under `tests/` → no bump, skip entirely. Each touched plugin bumps independently.
+> All changed files under `tests/` → no bump, skip entirely. When a shipped test requires regenerated package-manifest hashes, that generated manifest is supporting test metadata: validate it but do not bump the version or update the changelog. Each touched plugin bumps independently.
+>
+> Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
 >
 > **Baseline = HEAD every time:** Re-read it fresh each session; never trust prior-session recall.
 

@@ -90,7 +90,7 @@ wrap-summaries = 120
 wrap-descriptions = 120
 
 [tool.pytest]
-ini_options.testpaths = [ "benchmarks", "plugins" ]
+ini_options.testpaths = [ "benchmarks", "plugins", "tests" ]
 # benchmarks/ has no __init__.py by design; this puts it on sys.path so suites import
 # `_bench_common.<mod>` directly, with no `benchmarks.`-prefixed namespace-package fallback.
 ini_options.pythonpath = [ "benchmarks" ]
@@ -103,6 +103,7 @@ ini_options.norecursedirs = [
   "site",
 ]
 ini_options.addopts = [
+  "--strict-markers",
   "--import-mode=importlib",
   "--color=yes",
   "--doctest-modules",
@@ -124,7 +125,17 @@ ini_options.addopts = [
   "--timeout=180",
 ]
 ini_options.markers = [
-  "integration: marks tests that require external binaries, network access, or large repo checkouts",
+  # No checkout-only metadata, tooling, or fixtures; excludes the outer build/install harness.
+  # Independent of packaging: an installed-plugin runtime test need not test packaging.
+  "installed_plugin: runs against an installed plugin without repository context",
+  # Mocked subprocess/service calls alone do not qualify. Live tests also carry integration.
+  "integration: exercises interactions between real components or processes",
+  # Requires explicit opt-in guards; selection never authorizes network or paid execution.
+  # Excludes offline, fixture, dry-run, and mocked calls.
+  "live: uses real external services, user credentials, or provider budget",
+  # Covers build outputs, manifests, payload integrity, installation, and migration.
+  # May require repository context; does not imply installed_plugin.
+  "packaging: validates plugin build and distribution contracts",
 ]
 ini_options.filterwarnings = [
   "ignore::coverage.exceptions.CoverageWarning",

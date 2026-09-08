@@ -313,11 +313,7 @@ def _patch_index_locks(tmp_path: Path, contract: object, *, canonical_root: str)
 
 @pytest.mark.parametrize(
     "canonical_root",
-    [
-        pytest.param("/canonical/checkout", id="posix_recorded_root"),
-        pytest.param(r"C:\canonical\checkout", id="windows_recorded_root"),
-        pytest.param(r"\\share\canonical\checkout", id="unc_recorded_root"),
-    ],
+    ["/canonical/checkout", r"C:\canonical\checkout", r"\\share\canonical\checkout"],
 )
 def test_patch_index_locks_accept_a_canonical_root_recorded_on_either_platform(
     tmp_path: Path, canonical_root: str

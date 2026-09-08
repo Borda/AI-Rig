@@ -129,10 +129,9 @@ def _write_payload_manifest(package_root: Path, *relative_paths: str) -> None:
 @pytest.mark.parametrize(
     "payload",
     (
-        b"C:" + b"\\Users\\" + b"Alice\\project",
-        b"d:" + b"/users/" + b"alice/project",
+        pytest.param(b"C:" + b"\\Users\\" + b"Alice\\project", id="backslash"),
+        pytest.param(b"d:" + b"/users/" + b"alice/project", id="case-insensitive-forward-slash"),
     ),
-    ids=("backslash", "case-insensitive-forward-slash"),
 )
 def test_package_validator_rejects_simulated_windows_user_profile_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes
@@ -152,11 +151,10 @@ def test_package_validator_rejects_simulated_windows_user_profile_paths(
 @pytest.mark.parametrize(
     "payload",
     (
-        b"C:\\ProgramData\\codex-rig",
-        b"%USERPROFILE%\\codex-rig",
-        b"docs/windows/users/guide.md",
+        pytest.param(b"C:\\ProgramData\\codex-rig", id="system-root"),
+        pytest.param(b"%USERPROFILE%\\codex-rig", id="portable-variable"),
+        pytest.param(b"docs/windows/users/guide.md", id="relative-documentation"),
     ),
-    ids=("system-root", "portable-variable", "relative-documentation"),
 )
 def test_package_validator_accepts_non_private_simulated_windows_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: bytes
@@ -251,10 +249,7 @@ def test_skill_roster_names_and_manifest_records_are_exact() -> None:
 
 def test_installed_markdown_has_no_source_checkout_only_paths() -> None:
     """Keep shipped skill and shared documentation usable from an installed cache."""
-    markdown_files = [
-        *sorted((PLUGIN_ROOT / "skills").rglob("*.md")),
-        *sorted((PLUGIN_ROOT / "shared").rglob("*.md")),
-    ]
+    markdown_files = [*sorted((PLUGIN_ROOT / "skills").rglob("*.md")), *sorted((PLUGIN_ROOT / "shared").rglob("*.md"))]
     for path in markdown_files:
         text = path.read_text(encoding="utf-8")
         assert "plugins/codex-rig/" not in text, path
@@ -622,11 +617,7 @@ def test_calibration_recurrence_cases_cover_each_escalation_stage() -> None:
         "recurrence-initial-obstacle": ("implement", ["initial-obstacle-not-recorded"]),
         "recurrence-second-occurrence-investigate": (
             "investigate",
-            [
-                "recurrence-investigation-required",
-                "root-cause-evidence-required",
-                "recurrence-reset-evidence-missing",
-            ],
+            ["recurrence-investigation-required", "root-cause-evidence-required", "recurrence-reset-evidence-missing"],
         ),
         "recurrence-third-occurrence-human-handoff": (
             "delegation-lead",
@@ -652,11 +643,7 @@ def test_calibration_model_stall_cases_cover_advisory_and_human_escalation() -> 
     assert case_contract == {
         "model-stall-advisory-escalation": (
             "delegation-lead",
-            [
-                "reasoning-progress-not-assessed",
-                "model-stall-escalation-required",
-                "stall-ledger-missing",
-            ],
+            ["reasoning-progress-not-assessed", "model-stall-escalation-required", "stall-ledger-missing"],
         ),
         "model-stall-human-handoff": (
             "delegation-lead",
@@ -676,11 +663,7 @@ def test_calibration_model_stall_cases_cover_advisory_and_human_escalation() -> 
         ),
         "model-stall-user-directed-progress": (
             "delegation-lead",
-            [
-                "user-directed-progress-misclassified",
-                "false-advisory-escalation",
-                "user-decision-evidence-missing",
-            ],
+            ["user-directed-progress-misclassified", "false-advisory-escalation", "user-decision-evidence-missing"],
         ),
         "model-stall-advisory-route-safety": (
             "delegation-lead",
@@ -693,6 +676,7 @@ def test_calibration_model_stall_cases_cover_advisory_and_human_escalation() -> 
     }
 
 
+@pytest.mark.installed_plugin
 def test_calibration_model_stall_fixture_observations_are_scored(monkeypatch: pytest.MonkeyPatch) -> None:
     """Reject an escalation case that has no scored fixture observation."""
     calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"

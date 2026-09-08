@@ -69,17 +69,7 @@ class TestParseSpecs:
 
     def test_multiple_specs(self):
         """Multiple specs parsed in order."""
-        specs = parse_specs(
-            [
-                "--bool",
-                "team",
-                "TEAM_MODE",
-                "false",
-                "--codemap",
-                "CODEMAP_RAW",
-                "auto",
-            ]
-        )
+        specs = parse_specs(["--bool", "team", "TEAM_MODE", "false", "--codemap", "CODEMAP_RAW", "auto"])
         assert len(specs) == 2
         assert specs[0].kind == SpecType.BOOL
         assert specs[1].kind == SpecType.CODEMAP
@@ -145,13 +135,7 @@ class TestBoolFlags:
         assert vals["CHALLENGE"] == "true"
         assert clean == "fix auth.py"
 
-    @pytest.mark.parametrize(
-        "arguments",
-        [
-            "--sembleton fix auth.py",
-            "fix --sembleton auth.py",
-        ],
-    )
+    @pytest.mark.parametrize("arguments", ["--sembleton fix auth.py", "fix --sembleton auth.py"])
     def test_bool_near_miss_not_consumed(self, arguments: str):
         """Flag extraction requires a full token, not a substring prefix."""
         specs = parse_specs(["--bool", "semble", "S", "false"])
@@ -291,9 +275,11 @@ class TestValueFlags:
     @pytest.mark.parametrize(
         "arguments,expected_value,expected_clean",
         [
-            ("fix --max-depths 5 auth.py", "3", "fix --max-depths 5 auth.py"),
-            ("fix --max-depth 5 auth.py", "5", "fix auth.py"),
-            ("fix --max-depth=7 auth.py", "7", "fix auth.py"),
+            pytest.param(
+                "fix --max-depths 5 auth.py", "3", "fix --max-depths 5 auth.py", id="fix---max-depths-5-auth.py"
+            ),
+            pytest.param("fix --max-depth 5 auth.py", "5", "fix auth.py", id="fix---max-depth-5-auth.py"),
+            pytest.param("fix --max-depth=7 auth.py", "7", "fix auth.py", id="fix---max-depth-7-auth.py"),
         ],
     )
     def test_int_token_boundaries(self, arguments: str, expected_value: str, expected_clean: str):
@@ -339,10 +325,10 @@ class TestRunOutput:
     @pytest.mark.parametrize(
         "arguments,expected",
         [
-            ("it's a test", "CLEAN_ARGS='it'\\''s a test'"),
-            ('say "hello"', "CLEAN_ARGS='say \"hello\"'"),
-            ("semi; colon", "CLEAN_ARGS='semi; colon'"),
-            ("", "CLEAN_ARGS=''"),
+            pytest.param("it's a test", "CLEAN_ARGS='it'\\''s a test'", id="it-s-a-test"),
+            pytest.param('say "hello"', "CLEAN_ARGS='say \"hello\"'", id="say-hello"),
+            pytest.param("semi; colon", "CLEAN_ARGS='semi; colon'", id="semi-colon"),
+            pytest.param("", "CLEAN_ARGS=''", id="empty"),
         ],
     )
     def test_shell_quoting_exact(self, arguments: str, expected: str):

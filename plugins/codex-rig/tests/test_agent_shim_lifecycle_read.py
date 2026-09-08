@@ -105,14 +105,13 @@ def _encode(value: object) -> bytes:
 @pytest.mark.parametrize(
     "payload",
     [
-        b'{"a":1,"a":2}',
-        b'{"value":NaN}',
-        b"\xef\xbb\xbf{}",
-        b"\xff",
-        b"[]",
-        b"{} trailing",
+        pytest.param(b'{"a":1,"a":2}', id="duplicate"),
+        pytest.param(b'{"value":NaN}', id="nonfinite"),
+        pytest.param(b"\xef\xbb\xbf{}", id="bom"),
+        pytest.param(b"\xff", id="utf8"),
+        pytest.param(b"[]", id="nonobject"),
+        pytest.param(b"{} trailing", id="trailing"),
     ],
-    ids=["duplicate", "nonfinite", "bom", "utf8", "nonobject", "trailing"],
 )
 def test_strict_json_rejects_hostile_inputs(payload: bytes) -> None:
     """Prevent ambiguous or unbounded JSON from reaching lifecycle authority."""

@@ -36,15 +36,15 @@ class TestNormalizeLang:
     @pytest.mark.parametrize(
         ("raw", "expected"),
         [
-            ("py", "python"),
-            ("PYTHON3", "python"),
-            ("yml", "yaml"),
-            ("sh", "bash"),
-            ("tsx", "typescript"),
-            ("rs", "rust"),
-            ("", ""),
-            ("unknown", "unknown"),
-            ("BASH", "bash"),
+            pytest.param("py", "python", id="py"),
+            pytest.param("PYTHON3", "python", id="python3"),
+            pytest.param("yml", "yaml", id="yml"),
+            pytest.param("sh", "bash", id="sh"),
+            pytest.param("tsx", "typescript", id="tsx"),
+            pytest.param("rs", "rust", id="rs"),
+            pytest.param("", "", id="empty"),
+            pytest.param("unknown", "unknown", id="unknown"),
+            pytest.param("BASH", "bash", id="bash"),
         ],
     )
     def test_known_aliases(self, raw: str, expected: str) -> None:

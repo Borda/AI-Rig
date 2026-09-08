@@ -17,6 +17,7 @@ BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = BENCHMARKS_DIR.parent
 
 
+@pytest.mark.integration
 def test_session_makes_manifests_ready_once_with_byte_stable_outputs(
     generated_manifest_artifacts: Any,
 ) -> None:

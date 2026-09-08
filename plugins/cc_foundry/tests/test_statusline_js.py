@@ -127,9 +127,9 @@ class TestAgentDisplay:
     @pytest.mark.parametrize(
         ("agent_id", "agent_type", "expected_label"),
         [
-            ("a1", "foundry:sw-engineer", "sw-engineer"),
-            ("audit-17", "oss:shepherd", "shepherd"),
-            ("tu-cdx-1", "codex:rescue", "rescue"),
+            pytest.param("a1", "foundry:sw-engineer", "sw-engineer", id="a1"),
+            pytest.param("audit-17", "oss:shepherd", "shepherd", id="audit-17"),
+            pytest.param("tu-cdx-1", "codex:rescue", "rescue", id="tu-cdx-1"),
         ],
     )
     def test_active_agent_shows_type_label(

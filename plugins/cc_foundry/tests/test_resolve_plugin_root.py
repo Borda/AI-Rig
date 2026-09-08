@@ -133,14 +133,7 @@ class TestMain:
         assert rc == 2
         assert "SECURITY" in capsys.readouterr().err
 
-    @pytest.mark.parametrize(
-        "plugin",
-        [
-            pytest.param("", id="empty"),
-            pytest.param("../etc", id="traversal"),
-            pytest.param("foo/bar", id="slash"),
-        ],
-    )
+    @pytest.mark.parametrize("plugin", ["", "../etc", "foo/bar"])
     def test_exits_2_on_invalid_plugin_token(
         self,
         plugin: str,

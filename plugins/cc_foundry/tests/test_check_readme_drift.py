@@ -151,14 +151,7 @@ def _both_modes_plugin(root: Path) -> Path:
     )
 
 
-@pytest.mark.parametrize(
-    "spec",
-    [
-        pytest.param("version,bin-refs", id="both"),
-        pytest.param("bin-refs,version", id="reordered"),
-        pytest.param(" Version , BIN-REFS ", id="padded-and-uppercased"),
-    ],
-)
+@pytest.mark.parametrize("spec", ["version,bin-refs", "bin-refs,version", " Version , BIN-REFS "])
 def test_parse_kinds_accepts_every_selectable_spelling(spec: str) -> None:
     """Selector parsing is order-, case-, and whitespace-insensitive."""
     assert crd.parse_kinds(spec) == set(crd.SELECTABLE_KINDS)
@@ -194,10 +187,7 @@ def test_single_subcheck_reports_only_its_own_findings(tmp_path: Path, mode: str
 
 @pytest.mark.parametrize(
     ("mode", "expected"),
-    [
-        pytest.param("version", "1.0.0", id="version"),
-        pytest.param("bin-refs", "gone.sh", id="bin-refs"),
-    ],
+    [pytest.param("version", "1.0.0", id="version"), pytest.param("bin-refs", "gone.sh", id="bin-refs")],
 )
 def test_main_single_subcheck_exits_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], mode: str, expected: str

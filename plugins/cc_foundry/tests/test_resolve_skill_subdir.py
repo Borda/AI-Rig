@@ -191,11 +191,11 @@ class TestMain:
     @pytest.mark.parametrize(
         "skill,subdir",
         [
-            ("", "templates"),
-            ("audit", ""),
-            ("../etc", "templates"),
-            ("audit", "../sneaky"),
-            ("audit/sub", "templates"),
+            pytest.param("", "templates", id="empty"),
+            pytest.param("audit", "", id="audit-empty"),
+            pytest.param("../etc", "templates", id="..-etc"),
+            pytest.param("audit", "../sneaky", id="audit-..-sneaky"),
+            pytest.param("audit/sub", "templates", id="audit-sub"),
         ],
     )
     def test_invalid_token_exits_2(

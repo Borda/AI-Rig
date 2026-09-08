@@ -51,10 +51,7 @@ def _vector_params(group: str) -> list:
     return [pytest.param(vector, id=vector["id"]) for vector in VECTORS[group]]
 
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 #: Blueprint texts seeded into every synthetic manifest, keyed by role.
 SINGLE = 'RUN_DIR="$(cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}")"'
@@ -134,6 +131,13 @@ def _is_allowed(result: dict) -> bool:
 # ── Verbatim blueprint text is allowed ────────────────────────────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 class TestVerbatimAllow:
     """A command whose normalized text is a manifest entry gets permissionDecision allow."""
 
@@ -211,6 +215,7 @@ class TestVerbatimAllow:
 # ── Anything not provably verbatim blueprint text passes through ──────────────
 
 
+@_skip_node_unavailable
 class TestPassthrough:
     """Every miss, deviation, or ambiguity falls through to the real permission prompt."""
 
@@ -222,9 +227,9 @@ class TestPassthrough:
             pytest.param(SINGLE.replace('"$(cat', "$(cat"), id="quoting-deviation"),
             pytest.param(f"{SINGLE}\ncat /etc/passwd", id="partial-coverage-appended-line"),
             pytest.param(f"cat /etc/passwd\n{SINGLE}", id="partial-coverage-prepended-line"),
-            pytest.param("", id="empty-command"),
-            pytest.param("   ", id="whitespace-only-command"),
-            pytest.param("ls -la", id="unrelated-command"),
+            "",
+            "   ",
+            "ls -la",
         ],
     )
     def test_deviations_passthrough(self, run_blueprint: Callable[..., dict], seeded: bytes, command: str) -> None:
@@ -279,16 +284,17 @@ class TestPassthrough:
 # ── Defence in depth: a tampered manifest still cannot buy an allow ───────────
 
 
+@_skip_node_unavailable
 class TestTamperedManifestRefused:
     """The independent danger re-check overrides a digest hit."""
 
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param('BUILD=$(rm -rf "$HOME/build")', id="destructive-substitution-body"),
-            pytest.param("echo done && git push origin main", id="git-push-second-segment"),
-            pytest.param("find .cache -type f -mtime +30 -delete", id="find-delete"),
-            pytest.param("printf x | xargs rm -f", id="deferred-rm-via-xargs"),
+            'BUILD=$(rm -rf "$HOME/build")',
+            "echo done && git push origin main",
+            "find .cache -type f -mtime +30 -delete",
+            "printf x | xargs rm -f",
         ],
     )
     def test_dangerous_entry_still_refused(self, run_blueprint: Callable[..., dict], command: str) -> None:
@@ -329,6 +335,7 @@ def _node_eval(expression: str) -> object:
     return json.loads(proc.stdout)
 
 
+@_skip_node_unavailable
 class TestSharedVectors:
     """The JS port must reproduce the Python pipeline on every shared vector."""
 
@@ -396,6 +403,7 @@ def _committed_block() -> tuple[str, str]:
     return "", ""
 
 
+@_skip_node_unavailable
 @pytest.mark.skipif(
     not (PLUGIN_DIR / bbm.MANIFEST_NAME).is_file(),
     reason="cc_foundry blueprint-manifest.json has not been generated in this checkout",

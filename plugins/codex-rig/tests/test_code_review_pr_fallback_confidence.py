@@ -12,13 +12,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REVIEW_VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 SHARED_VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
-UNAVAILABLE_EVIDENCE = [
-    "github_provided_file_list",
-    "mergeability",
-    "review_decision",
-    "reviews",
-    "top_level_comments",
-]
+UNAVAILABLE_EVIDENCE = ["github_provided_file_list", "mergeability", "review_decision", "reviews", "top_level_comments"]
 FALLBACK_CONFIDENCE_GAP = (
     "Public HTTPS PR metadata fallback omitted evidence: "
     "github_provided_file_list, mergeability, review_decision, reviews, top_level_comments."

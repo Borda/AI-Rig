@@ -263,7 +263,12 @@ class TestPrScopedReviewRuns:
 
     @pytest.mark.parametrize(
         "pr_name,run_name",
-        [("pr-x", "run-001"), ("pr-123", "run-x"), ("pr-123", "run-01"), ("pr-123", "run-000")],
+        [
+            pytest.param("pr-x", "run-001", id="pr-x"),
+            pytest.param("pr-123", "run-x", id="pr-123-run-x"),
+            pytest.param("pr-123", "run-01", id="pr-123-run-01"),
+            pytest.param("pr-123", "run-000", id="pr-123-run-000"),
+        ],
     )
     def test_ignores_malformed_nested_directory_names(self, tmp_path: Path, pr_name: str, run_name: str) -> None:
         """Ignore directories outside the canonical PR and zero-padded run grammar."""

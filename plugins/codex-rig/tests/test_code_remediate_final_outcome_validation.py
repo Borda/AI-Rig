@@ -517,10 +517,7 @@ def test_final_handoff_cells_are_value_bound_to_resolution_items() -> None:
 
 @pytest.mark.parametrize(
     "validator",
-    [
-        VALIDATOR._validate_code_remediate_final_handoff,
-        VALIDATOR._validate_code_review_final_handoff,
-    ],
+    [VALIDATOR._validate_code_remediate_final_handoff, VALIDATOR._validate_code_review_final_handoff],
 )
 def test_caller_contract_bypasses_workflow_owned_table_layout(validator: object) -> None:
     """Let an explicit caller output contract replace workflow-owned final tables."""

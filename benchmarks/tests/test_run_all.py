@@ -17,7 +17,7 @@ import pytest
 # Every test here drives ``run-all.sh`` through ``/bin/bash`` with executable
 # shell stubs, so the whole module is POSIX-only — same boundary the shared
 # benchmark fixtures draw in conftest.py.
-pytestmark = pytest.mark.skipif(
+_skip_windows_posix = pytest.mark.skipif(
     sys.platform == "win32",
     reason="benchmark harness exercises the POSIX launcher only",
 )
@@ -519,6 +519,7 @@ def _run_batch_tty(mode: str, env: dict[str, str], *args: str) -> subprocess.Com
     return subprocess.CompletedProcess(command, process.wait(), b"".join(output).decode(), "")
 
 
+@_skip_windows_posix
 def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str, str], Path]) -> None:
     """Reject missing, obsolete, or extra modes before any setup command runs."""
     env, call_log = batch_env
@@ -549,6 +550,7 @@ def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str,
     assert not call_log.exists()
 
 
+@_skip_windows_posix
 def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_inputs(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -601,6 +603,7 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
     assert "96 cells" in completed.stdout
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "lane_args",
     [
@@ -640,6 +643,7 @@ def test_codex_default_models_match_an_explicit_luna_terra_selection(
     assert default_approvals == explicit_approvals
 
 
+@_skip_windows_posix
 def test_codex_accepts_supported_flags_without_an_argument_count_ceiling(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -658,6 +662,7 @@ def test_codex_accepts_supported_flags_without_an_argument_count_ceiling(
     assert completed.returncode == 0, completed.stderr
 
 
+@_skip_windows_posix
 def test_codex_version_is_observed_without_becoming_an_admission_requirement(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -678,6 +683,7 @@ def test_codex_version_is_observed_without_becoming_an_admission_requirement(
     assert "Codex CLI: codex-cli 0.1.0" in older.stdout
 
 
+@_skip_windows_posix
 def test_paid_codex_uses_a_fresh_default_run_directory_without_total_timeout(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -696,6 +702,7 @@ def test_paid_codex_uses_a_fresh_default_run_directory_without_total_timeout(
     assert (run_dirs[0] / "benchmark" / "run-metadata.json").is_file()
 
 
+@_skip_windows_posix
 def test_paid_codex_executes_from_a_run_scoped_source_snapshot(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -719,6 +726,7 @@ def test_paid_codex_executes_from_a_run_scoped_source_snapshot(
     assert str(source_root / "benchmarks" / "run-codex-structural.py") in paid_call
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 def test_struct_flag_dispatches_only_the_provider_structural_runner(
     batch_env: tuple[dict[str, str], Path],
@@ -737,11 +745,14 @@ def test_struct_flag_dispatches_only_the_provider_structural_runner(
     assert f"run-{other_provider}-" not in calls
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 @pytest.mark.parametrize(
     "selectors",
-    [("--struct", "--agentic"), ("--struct", "--struct")],
-    ids=["conflicting-selectors", "duplicate-struct"],
+    [
+        pytest.param(("--struct", "--agentic"), id="conflicting-selectors"),
+        pytest.param(("--struct", "--struct"), id="duplicate-struct"),
+    ],
 )
 def test_struct_selector_rejects_conflicts_before_setup(
     batch_env: tuple[dict[str, str], Path],
@@ -758,6 +769,7 @@ def test_struct_selector_rejects_conflicts_before_setup(
     assert not call_log.exists()
 
 
+@_skip_windows_posix
 def test_codex_agentic_dry_run_dispatches_the_default_shared_scope_once(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -793,6 +805,7 @@ def test_codex_agentic_dry_run_dispatches_the_default_shared_scope_once(
     assert not Path(env.get("CODEX_RUN_DIR", "unused")).exists()
 
 
+@_skip_windows_posix
 def test_codex_agentic_launcher_resolves_a_positive_repeat_override_before_setup(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -816,6 +829,7 @@ def test_codex_agentic_launcher_resolves_a_positive_repeat_override_before_setup
     assert "96 cells" in completed.stdout
 
 
+@_skip_windows_posix
 def test_claude_agentic_dry_run_dispatches_only_the_default_shared_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -849,6 +863,7 @@ def test_claude_agentic_dry_run_dispatches_only_the_default_shared_scope(
     assert f"{CLAUDE_AGENTIC_TOTAL_CELLS} cells" in completed.stdout
 
 
+@_skip_windows_posix
 def test_claude_agentic_launcher_binds_repeat_override_to_its_exact_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -869,23 +884,16 @@ def test_claude_agentic_launcher_binds_repeat_override_to_its_exact_scope(
     assert f"{CLAUDE_AGENTIC_TOTAL_CELLS * 2} cells" in completed.stdout
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "args",
     [
-        ("--repetitions=2",),
-        ("--agentic", "--agentic"),
-        ("--agentic", "--dry-run", "--dry-run"),
-        ("--agentic", "--repetitions=0"),
-        ("--agentic", "--repetitions=invalid"),
-        ("--agentic", "--unknown"),
-    ],
-    ids=[
-        "repeat-without-agentic",
-        "duplicate-agentic",
-        "duplicate-dry-run",
-        "zero-repeat",
-        "invalid-repeat",
-        "unknown-flag",
+        pytest.param(("--repetitions=2",), id="repeat-without-agentic"),
+        pytest.param(("--agentic", "--agentic"), id="duplicate-agentic"),
+        pytest.param(("--agentic", "--dry-run", "--dry-run"), id="duplicate-dry-run"),
+        pytest.param(("--agentic", "--repetitions=0"), id="zero-repeat"),
+        pytest.param(("--agentic", "--repetitions=invalid"), id="invalid-repeat"),
+        pytest.param(("--agentic", "--unknown"), id="unknown-flag"),
     ],
 )
 def test_claude_agentic_launcher_rejects_invalid_or_duplicate_flags_before_setup(
@@ -902,13 +910,13 @@ def test_claude_agentic_launcher_rejects_invalid_or_duplicate_flags_before_setup
     assert not call_log.exists()
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("missing", "expected_error"),
     [
-        ("approval", f"requires CODEX_PAID_APPROVAL={AGENTIC_MANIFEST_SHA[:16]}"),
-        ("auth", "requires CODEX_AUTH_SOURCE"),
+        pytest.param("approval", f"requires CODEX_PAID_APPROVAL={AGENTIC_MANIFEST_SHA[:16]}", id="missing-approval"),
+        pytest.param("auth", "requires CODEX_AUTH_SOURCE", id="missing-auth"),
     ],
-    ids=["missing-approval", "missing-auth"],
 )
 def test_codex_agentic_rejects_missing_paid_inputs_before_setup(
     batch_env: tuple[dict[str, str], Path],
@@ -943,6 +951,7 @@ def test_codex_agentic_rejects_missing_paid_inputs_before_setup(
     _assert_safe_paid_preflight(call_log.read_text(encoding="utf-8").splitlines(), agentic=True)
 
 
+@_skip_windows_posix
 def test_codex_agentic_rejects_reused_run_directory_before_setup(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -968,6 +977,7 @@ def test_codex_agentic_rejects_reused_run_directory_before_setup(
     _assert_safe_paid_preflight(call_log.read_text(encoding="utf-8").splitlines(), agentic=True)
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_uses_snapshot_and_exact_runner_contract(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1011,6 +1021,7 @@ def test_paid_codex_agentic_uses_snapshot_and_exact_runner_contract(
     assert "PLAN " not in completed.stdout
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_admits_the_short_token_under_the_structural_variable(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1039,6 +1050,7 @@ def test_paid_codex_agentic_admits_the_short_token_under_the_structural_variable
     ).read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_final_checksums_exclude_archived_source_tree(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1056,6 +1068,7 @@ def test_paid_codex_agentic_final_checksums_exclude_archived_source_tree(
     assert not any(".launcher/source/" in entry for entry in entries)
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_admits_the_run_directory_before_console_capture(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1071,6 +1084,7 @@ def test_paid_codex_agentic_admits_the_run_directory_before_console_capture(
     assert "agentic console artifact existed before paid Python admission" not in completed.stdout
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_failure_preserves_artifacts_and_prints_fresh_command(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1094,6 +1108,7 @@ def test_paid_codex_agentic_failure_preserves_artifacts_and_prints_fresh_command
     assert (Path(env["CODEX_RUN_DIR"]) / "checksums.sha256").is_file()
 
 
+@_skip_windows_posix
 def test_paid_codex_agentic_tty_output_uses_shared_renderer(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1114,6 +1129,7 @@ def test_paid_codex_agentic_tty_output_uses_shared_renderer(
     assert run_log.count(LEGEND_CLOSE_RULE) == 1
 
 
+@_skip_windows_posix
 def test_codex_agentic_selected_dry_run_dispatches_resolved_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1139,6 +1155,7 @@ def test_codex_agentic_selected_dry_run_dispatches_resolved_scope(
     assert f"{AGENTIC_SELECTED_TOTAL_CELLS} cells" in completed.stdout
 
 
+@_skip_windows_posix
 def test_codex_tasks_dry_run_dispatches_resolved_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1175,15 +1192,15 @@ def test_codex_tasks_dry_run_dispatches_resolved_scope(
     assert completed.stdout.count(f"SCOPE   {SELECTED_SCOPE_SHA}") == 1
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("mode", "args"),
     [
-        ("smoke", ()),
-        ("claude", ("--struct", "--dry-run")),
-        ("codex", ("--agentic", "--dry-run")),
-        ("codex", ("--struct", "--tasks=DI,GR", "--dry-run")),
+        pytest.param("smoke", (), id="smoke"),
+        pytest.param("claude", ("--struct", "--dry-run"), id="claude-structural"),
+        pytest.param("codex", ("--agentic", "--dry-run"), id="codex-agentic"),
+        pytest.param("codex", ("--struct", "--tasks=DI,GR", "--dry-run"), id="codex-non-patch-selection"),
     ],
-    ids=["smoke", "claude-structural", "codex-agentic", "codex-non-patch-selection"],
 )
 def test_non_patch_no_model_modes_do_not_prepare_historical_patch_indexes(
     batch_env: tuple[dict[str, str], Path],
@@ -1202,10 +1219,13 @@ def test_non_patch_no_model_modes_do_not_prepare_historical_patch_indexes(
     assert "--prepare-patch-bundle" not in calls
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "args",
-    [("--struct", "--tasks=PT-01", "--dry-run"), ("--dry-run",)],
-    ids=["selected-patch", "unified-codex"],
+    [
+        pytest.param(("--struct", "--tasks=PT-01", "--dry-run"), id="selected-patch"),
+        pytest.param(("--dry-run",), id="unified-codex"),
+    ],
 )
 def test_patch_and_unified_codex_dry_runs_prepare_historical_patch_indexes(
     batch_env: tuple[dict[str, str], Path],
@@ -1220,15 +1240,15 @@ def test_patch_and_unified_codex_dry_runs_prepare_historical_patch_indexes(
     assert "--prepare-patch-bundle" in call_log.read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("mode", "args"),
     [
-        ("smoke", ()),
-        ("claude", ("--struct", "--dry-run")),
-        ("codex", ("--agentic", "--dry-run")),
-        ("codex", ("--struct", "--tasks=DI,GR", "--dry-run")),
+        pytest.param("smoke", (), id="smoke"),
+        pytest.param("claude", ("--struct", "--dry-run"), id="claude-structural"),
+        pytest.param("codex", ("--agentic", "--dry-run"), id="codex-agentic"),
+        pytest.param("codex", ("--struct", "--tasks=DI,GR", "--dry-run"), id="codex-non-patch-selection"),
     ],
-    ids=["smoke", "claude-structural", "codex-agentic", "codex-non-patch-selection"],
 )
 def test_non_patch_no_model_modes_do_not_prepare_the_patch_test_runtime(
     batch_env: tuple[dict[str, str], Path],
@@ -1249,6 +1269,7 @@ def test_non_patch_no_model_modes_do_not_prepare_the_patch_test_runtime(
     assert "PREPARE patch-stage test runtime" not in completed.stdout
 
 
+@_skip_windows_posix
 def test_patch_dry_run_builds_and_exports_the_patch_test_runtime(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1271,6 +1292,7 @@ def test_patch_dry_run_builds_and_exports_the_patch_test_runtime(
     assert "requirements/fabric/test.txt" in calls
 
 
+@_skip_windows_posix
 def test_patch_dry_run_keeps_a_caller_supplied_pytest(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1288,6 +1310,7 @@ def test_patch_dry_run_keeps_a_caller_supplied_pytest(
     assert "uv venv" not in call_log.read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 def test_patch_dry_run_rejects_a_non_executable_pytest_override(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -1307,6 +1330,7 @@ def test_patch_dry_run_rejects_a_non_executable_pytest_override(
     assert str(missing) in completed.stderr
 
 
+@_skip_windows_posix
 def test_codex_rejects_removed_diagnostic_switch(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1320,6 +1344,7 @@ def test_codex_rejects_removed_diagnostic_switch(
     assert not call_log.exists()
 
 
+@_skip_windows_posix
 def test_codex_tasks_reject_invalid_selector_before_setup(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1333,9 +1358,13 @@ def test_codex_tasks_reject_invalid_selector_before_setup(
     assert not any("prepare-codex-index.py" in line for line in call_log.read_text(encoding="utf-8").splitlines())
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     "args",
-    [("--struct", "--tasks=DI,GR", "--dry-run"), ("--dry-run", "--tasks=DI,GR", "--struct")],
+    [
+        pytest.param(("--struct", "--tasks=DI,GR", "--dry-run"), id="struct"),
+        pytest.param(("--dry-run", "--tasks=DI,GR", "--struct"), id="dry-run"),
+    ],
 )
 def test_codex_tasks_accepts_option_ordering(
     batch_env: tuple[dict[str, str], Path],
@@ -1358,6 +1387,7 @@ def test_codex_tasks_accepts_option_ordering(
     assert "--paid" not in selected
 
 
+@_skip_windows_posix
 def test_smoke_checks_claude_and_codex_without_paid_codex(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1386,16 +1416,16 @@ def test_smoke_checks_claude_and_codex_without_paid_codex(
     assert "--arm" not in codex_call
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("mode", "args"),
     [
-        ("smoke", ()),
-        ("codex", ("--models=luna", "--dry-run")),
-        ("codex", ("--struct", "--models=luna")),
-        ("codex", ("--struct", "--models=luna", "--tasks=DI,GR", "--dry-run")),
-        ("codex", ("--struct", "--models=luna", "--tasks=DI,GR")),
+        pytest.param("smoke", (), id="smoke"),
+        pytest.param("codex", ("--models=luna", "--dry-run"), id="codex-dry-run"),
+        pytest.param("codex", ("--struct", "--models=luna"), id="codex-struct-paid"),
+        pytest.param("codex", ("--struct", "--models=luna", "--tasks=DI,GR", "--dry-run"), id="tasks-dry-run"),
+        pytest.param("codex", ("--struct", "--models=luna", "--tasks=DI,GR"), id="tasks-paid"),
     ],
-    ids=["smoke", "codex-dry-run", "codex-struct-paid", "tasks-dry-run", "tasks-paid"],
 )
 def test_top_level_provider_invocation_emits_one_bounded_legend(
     batch_env: tuple[dict[str, str], Path],
@@ -1415,14 +1445,14 @@ def test_top_level_provider_invocation_emits_one_bounded_legend(
     assert sum(line == LEGEND_OPEN_RULE for line in completed.stdout.splitlines()) == 1
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("mode", "failure_pattern", "full_marker"),
     [
-        ("smoke", "run-claude-structural.py", "run-codex-structural.py"),
-        ("claude", "run-claude-structural.py", "--model haiku --arm A_plain"),
-        ("codex", "--tasks FN-02 --dry-run", "--auth-source"),
+        pytest.param("smoke", "run-claude-structural.py", "run-codex-structural.py", id="both-providers"),
+        pytest.param("claude", "run-claude-structural.py", "--model haiku --arm A_plain", id="claude"),
+        pytest.param("codex", "--tasks FN-02 --dry-run", "--auth-source", id="codex"),
     ],
-    ids=["both-providers", "claude", "codex"],
 )
 def test_provider_smoke_failure_prevents_full_dispatch(
     batch_env: tuple[dict[str, str], Path],
@@ -1444,6 +1474,7 @@ def test_provider_smoke_failure_prevents_full_dispatch(
     assert full_marker not in calls
 
 
+@_skip_windows_posix
 def test_smoke_rebuilds_mismatched_locked_index_before_provider_commands(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1461,6 +1492,7 @@ def test_smoke_rebuilds_mismatched_locked_index_before_provider_commands(
     assert "run-codex-structural.py" in calls
 
 
+@_skip_windows_posix
 def test_smoke_rebuilds_wrong_bytes_with_current_schema_before_provider_commands(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1481,6 +1513,7 @@ def test_smoke_rebuilds_wrong_bytes_with_current_schema_before_provider_commands
     assert "run-codex-structural.py" in calls
 
 
+@_skip_windows_posix
 def test_generated_manifest_build_failure_blocks_provider_preflights(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1498,6 +1531,7 @@ def test_generated_manifest_build_failure_blocks_provider_preflights(
     assert "run-codex-structural.py" not in calls
 
 
+@_skip_windows_posix
 def test_generated_codex_manifest_build_failure_blocks_claude_and_codex_plans(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1525,6 +1559,7 @@ def test_generated_codex_manifest_build_failure_blocks_claude_and_codex_plans(
     assert "build-codex-agentic-manifest.py" not in codex_calls
 
 
+@_skip_windows_posix
 def test_codex_index_preparation_retains_the_dual_lock_cross_check(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1543,6 +1578,7 @@ def test_codex_index_preparation_retains_the_dual_lock_cross_check(
     assert f"--methodology-path {METHODOLOGY_MANIFEST}" in contract_call
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("mode", "arguments"),
     [
@@ -1572,6 +1608,7 @@ def test_methodology_manifest_build_failure_stops_every_public_study_before_setu
     assert "run-codex-" not in calls
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("arguments", "approval_variable"),
     [
@@ -1599,6 +1636,7 @@ def test_methodology_manifest_build_failure_never_prints_unrunnable_paid_guidanc
     assert "run-codex-" not in calls
 
 
+@_skip_windows_posix
 def test_smoke_accepts_git_worktree_metadata_file(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1614,14 +1652,14 @@ def test_smoke_accepts_git_worktree_metadata_file(
     assert "run-codex-structural.py" in call_log.read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("invalid_input", "expected_error"),
     [
-        ("approval", "CODEX_PAID_APPROVAL"),
-        ("auth", "CODEX_AUTH_SOURCE"),
-        ("existing-run-dir", "already exists"),
+        pytest.param("approval", "CODEX_PAID_APPROVAL", id="missing-approval"),
+        pytest.param("auth", "CODEX_AUTH_SOURCE", id="missing-auth"),
+        pytest.param("existing-run-dir", "already exists", id="existing-run-dir"),
     ],
-    ids=["missing-approval", "missing-auth", "existing-run-dir"],
 )
 def test_codex_mode_requires_explicit_paid_inputs_before_setup(
     batch_env: tuple[dict[str, str], Path],
@@ -1647,6 +1685,7 @@ def test_codex_mode_requires_explicit_paid_inputs_before_setup(
     _assert_safe_paid_preflight(call_log.read_text(encoding="utf-8").splitlines(), agentic=False)
 
 
+@_skip_windows_posix
 def test_codex_paid_rejection_prints_actionable_launch_guidance(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1673,6 +1712,7 @@ def test_codex_paid_rejection_prints_actionable_launch_guidance(
     assert "reauthenticate after the run if needed" in completed.stderr
 
 
+@_skip_windows_posix
 def test_codex_default_paid_rejection_asks_only_for_the_combined_approval(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1697,6 +1737,7 @@ def test_codex_default_paid_rejection_asks_only_for_the_combined_approval(
     assert not any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_codex_default_paid_run_accepts_the_combined_token_without_an_agentic_variable(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -1720,6 +1761,7 @@ def test_codex_default_paid_run_accepts_the_combined_token_without_an_agentic_va
     assert any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_combined_paid_run_carries_one_token_through_every_selected_stratum(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -1747,6 +1789,7 @@ def test_combined_paid_run_carries_one_token_through_every_selected_stratum(
     assert any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_combined_agentic_sweep_rejects_reordered_scope_before_paid_dispatch(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1768,6 +1811,7 @@ def test_combined_agentic_sweep_rejects_reordered_scope_before_paid_dispatch(
     assert not any("--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_agentic_sweep_stops_after_a_failed_child(batch_env: tuple[dict[str, str], Path], tmp_path: Path) -> None:
     """A failed scalar agentic child prevents later strata from starting.
 
@@ -1793,6 +1837,7 @@ def test_agentic_sweep_stops_after_a_failed_child(batch_env: tuple[dict[str, str
     assert not any("--model gpt-5.6-sol" in line for line in paid)
 
 
+@_skip_windows_posix
 def test_agentic_dry_sweep_stops_without_an_authorization_after_a_runner_failure(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -1812,6 +1857,7 @@ def test_agentic_dry_sweep_stops_without_an_authorization_after_a_runner_failure
     assert [_option_value(line, "--model") for line in plans] == ["gpt-5.6-terra"]
 
 
+@_skip_windows_posix
 def test_agentic_sweep_children_keep_the_selected_tasks_and_repeat_scope(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1844,6 +1890,7 @@ def test_agentic_sweep_children_keep_the_selected_tasks_and_repeat_scope(
     assert all("--task-id BA-02,BA-04" in line and "--repetitions 2" in line for line in paid)
 
 
+@_skip_windows_posix
 def test_agentic_sweep_rejects_a_first_child_scope_that_changes_after_approval(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1874,6 +1921,7 @@ def test_agentic_sweep_rejects_a_first_child_scope_that_changes_after_approval(
     assert not paid
 
 
+@_skip_windows_posix
 def test_agentic_sweep_stops_before_the_third_child_after_the_second_fails(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1895,6 +1943,7 @@ def test_agentic_sweep_stops_before_the_third_child_after_the_second_fails(
     assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-sol", "gpt-5.6-terra"]
 
 
+@_skip_windows_posix
 def test_structural_sweep_children_keep_the_selected_tasks(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1916,6 +1965,7 @@ def test_structural_sweep_children_keep_the_selected_tasks(
     assert all("--tasks DI,GR" in line for line in paid)
 
 
+@_skip_windows_posix
 def test_structural_sweep_stops_when_the_second_child_scope_drifts(
     batch_env: tuple[dict[str, str], Path], tmp_path: Path
 ) -> None:
@@ -1938,6 +1988,7 @@ def test_structural_sweep_stops_when_the_second_child_scope_drifts(
     assert [_option_value(line, "--model") for line in paid] == ["gpt-5.6-sol"]
 
 
+@_skip_windows_posix
 def test_multi_stratum_paid_run_admits_a_stratum_whose_scope_differs_from_the_parents(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -1970,6 +2021,7 @@ def test_multi_stratum_paid_run_admits_a_stratum_whose_scope_differs_from_the_pa
     assert any("--model gpt-5.6-terra" in line for line in paid_structural)
 
 
+@_skip_windows_posix
 def test_a_stratum_token_does_not_admit_a_model_outside_the_authorized_selection(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -1997,6 +2049,7 @@ def test_a_stratum_token_does_not_admit_a_model_outside_the_authorized_selection
     )
 
 
+@_skip_windows_posix
 def test_codex_default_paid_run_rejects_a_token_bound_to_the_structural_scope_alone(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2020,6 +2073,7 @@ def test_codex_default_paid_run_rejects_a_token_bound_to_the_structural_scope_al
     assert not any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_combined_paid_run_defers_exact_aggregate_match_until_structural_preflight(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2045,6 +2099,7 @@ def test_combined_paid_run_defers_exact_aggregate_match_until_structural_preflig
     assert not any("run-codex-agentic.py" in line and "--auth-source" in line for line in calls)
 
 
+@_skip_windows_posix
 def test_explicit_codex_struct_rejection_preserves_selector_in_guidance(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2059,6 +2114,7 @@ def test_explicit_codex_struct_rejection_preserves_selector_in_guidance(
     assert "bash benchmarks/run-all.sh codex --struct\n" in completed.stderr
 
 
+@_skip_windows_posix
 def test_provider_modes_dispatch_only_the_selected_provider(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2123,6 +2179,7 @@ def test_provider_modes_dispatch_only_the_selected_provider(
     ).read_bytes()
 
 
+@_skip_windows_posix
 def test_paid_claude_structural_dispatches_shared_provider_parity_matrix(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2147,6 +2204,7 @@ def test_paid_claude_structural_dispatches_shared_provider_parity_matrix(
     assert not any(task_id.startswith("RI-") for task_id in SHARED_STRUCTURAL_TASK_IDS)
 
 
+@_skip_windows_posix
 def test_paid_codex_tasks_runs_only_resolved_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2182,6 +2240,7 @@ def test_paid_codex_tasks_runs_only_resolved_scope(
     assert "--no-legend" not in selected_plan
 
 
+@_skip_windows_posix
 def test_paid_codex_checksums_include_canonical_telemetry_sidecar(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2199,6 +2258,7 @@ def test_paid_codex_checksums_include_canonical_telemetry_sidecar(
     assert canonical_line.split()[0] == hashlib.sha256(canonical.read_bytes()).hexdigest()
 
 
+@_skip_windows_posix
 def test_codex_mode_reconstructs_a_missing_locked_index_before_dispatch(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2216,6 +2276,7 @@ def test_codex_mode_reconstructs_a_missing_locked_index_before_dispatch(
     assert "run-codex-structural.py" in call_log.read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 def test_paid_codex_noninteractive_output_and_artifact_log_remain_plain(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2246,6 +2307,7 @@ def test_paid_codex_noninteractive_output_and_artifact_log_remain_plain(
     assert 'echo "→ metadata:' not in script
 
 
+@_skip_windows_posix
 def test_paid_codex_tty_output_hides_plan_rows_and_uses_shared_renderer(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2261,6 +2323,7 @@ def test_paid_codex_tty_output_hides_plan_rows_and_uses_shared_renderer(
     assert "--render-results --hide-plan" in call_log.read_text(encoding="utf-8")
 
 
+@_skip_windows_posix
 def test_paid_codex_runner_failure_survives_the_artifact_tee(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2275,6 +2338,7 @@ def test_paid_codex_runner_failure_survives_the_artifact_tee(
     assert (Path(env["CODEX_RUN_DIR"]) / "run.log").is_file()
 
 
+@_skip_windows_posix
 def test_paid_claude_runner_failure_stops_the_batch(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2290,6 +2354,7 @@ def test_paid_claude_runner_failure_stops_the_batch(
     assert "--model sonnet --provider-parity" not in calls
 
 
+@_skip_windows_posix
 def test_paid_codex_renderer_failure_survives_the_artifact_pipeline(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2303,6 +2368,7 @@ def test_paid_codex_renderer_failure_survives_the_artifact_pipeline(
     assert (Path(env["CODEX_RUN_DIR"]) / "run.log").is_file()
 
 
+@_skip_windows_posix
 def test_paid_codex_tee_failure_survives_the_artifact_pipeline(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2322,6 +2388,7 @@ def _target_lock_dir(env: dict[str, str]) -> Path:
     return Path(env["TMPDIR"]) / f"codemap-bench-target-{key}.lock"
 
 
+@_skip_windows_posix
 def test_second_study_refuses_to_share_the_target_clone_with_a_live_run(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2349,6 +2416,7 @@ def test_second_study_refuses_to_share_the_target_clone_with_a_live_run(
     assert lock.is_dir()
 
 
+@_skip_windows_posix
 def test_stale_lock_from_a_dead_run_does_not_block_the_next_study(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2373,6 +2441,7 @@ def test_stale_lock_from_a_dead_run_does_not_block_the_next_study(
     assert not lock.exists()
 
 
+@_skip_windows_posix
 def test_models_selection_restricts_and_orders_the_claude_tiers(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2394,6 +2463,7 @@ def test_models_selection_restricts_and_orders_the_claude_tiers(
     assert invoked[-2:] == ["opus", "haiku"]
 
 
+@_skip_windows_posix
 def test_models_selection_rejects_a_model_the_provider_never_declared(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2412,6 +2482,7 @@ def test_models_selection_rejects_a_model_the_provider_never_declared(
     assert "--model gpt-5.6-luna" not in calls
 
 
+@_skip_windows_posix
 def test_models_selection_rejects_a_repeated_model(batch_env: tuple[dict[str, str], Path]) -> None:
     """A duplicated name is a typo rather than a request to run a tier twice.
 
@@ -2426,6 +2497,7 @@ def test_models_selection_rejects_a_repeated_model(batch_env: tuple[dict[str, st
     assert "selected more than once" in completed.stderr
 
 
+@_skip_windows_posix
 def test_codex_multi_stratum_dry_run_discloses_the_full_design_and_its_own_token(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2445,6 +2517,7 @@ def test_codex_multi_stratum_dry_run_discloses_the_full_design_and_its_own_token
     assert "--models=gpt-5.6-luna,gpt-5.6-terra" in completed.stdout
 
 
+@_skip_windows_posix
 def test_codex_multi_stratum_token_binds_the_ordered_model_list(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2465,6 +2538,7 @@ def test_codex_multi_stratum_token_binds_the_ordered_model_list(
     assert _token(forward.stdout) != _token(reversed_order.stdout)
 
 
+@_skip_windows_posix
 def test_codex_models_selection_runs_the_named_stratum(batch_env: tuple[dict[str, str], Path]) -> None:
     """A single declared stratum reaches the structural runner as its --model argument.
 
@@ -2480,6 +2554,7 @@ def test_codex_models_selection_runs_the_named_stratum(batch_env: tuple[dict[str
     assert "--model gpt-5.6-terra" in calls
 
 
+@_skip_windows_posix
 def test_models_selection_accepts_a_stratum_nickname(batch_env: tuple[dict[str, str], Path]) -> None:
     """A stratum's trailing nickname selects the declared full name it belongs to.
 
@@ -2496,6 +2571,7 @@ def test_models_selection_accepts_a_stratum_nickname(batch_env: tuple[dict[str, 
     assert "--model gpt-5.6-terra" in calls
 
 
+@_skip_windows_posix
 def test_nickname_and_full_name_mint_the_same_multi_stratum_token(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2519,6 +2595,7 @@ def test_nickname_and_full_name_mint_the_same_multi_stratum_token(
     assert "MODELS             gpt-5.6-luna gpt-5.6-terra" in nicknamed.stdout
 
 
+@_skip_windows_posix
 def test_models_selection_rejects_a_stratum_named_twice_under_two_spellings(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2535,6 +2612,7 @@ def test_models_selection_rejects_a_stratum_named_twice_under_two_spellings(
     assert "selected more than once" in completed.stderr
 
 
+@_skip_windows_posix
 def test_agentic_selector_runs_the_stratum_it_names(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2558,6 +2636,7 @@ def test_agentic_selector_runs_the_stratum_it_names(
     assert all("run-codex-structural.py" not in line for line in calls)
 
 
+@_skip_windows_posix
 def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2585,11 +2664,12 @@ def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
     assert all("--repetitions 1" in line for line in plans)
 
 
+@_skip_windows_posix
 @pytest.mark.parametrize(
     ("provider", "models", "expected"),
     [
-        ("codex", "terra,sol", ("gpt-5.6-terra", "gpt-5.6-sol")),
-        ("claude", "haiku,sonnet", ("haiku", "sonnet")),
+        pytest.param("codex", "terra,sol", ("gpt-5.6-terra", "gpt-5.6-sol"), id="codex"),
+        pytest.param("claude", "haiku,sonnet", ("haiku", "sonnet"), id="claude"),
     ],
 )
 def test_agentic_selection_reaches_each_provider_runner_in_requested_order(
@@ -2613,6 +2693,7 @@ def test_agentic_selection_reaches_each_provider_runner_in_requested_order(
     assert [_option_value(line, "--model") for line in plans] == list(expected)
 
 
+@_skip_windows_posix
 def test_explicit_agentic_luna_selection_keeps_the_manifest_default_study(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2632,6 +2713,7 @@ def test_explicit_agentic_luna_selection_keeps_the_manifest_default_study(
     assert _agentic_scope(selected.stdout) == AGENTIC_SCOPE_SHA
 
 
+@_skip_windows_posix
 def test_agentic_selector_still_rejects_an_undeclared_model(batch_env: tuple[dict[str, str], Path]) -> None:
     """A stratum the provider never declared fails on an agentic-only run too.
 
@@ -2648,6 +2730,7 @@ def test_agentic_selector_still_rejects_an_undeclared_model(batch_env: tuple[dic
     assert "run-codex-agentic.py" not in calls
 
 
+@_skip_windows_posix
 def test_combined_dry_run_prints_exactly_one_copyable_paid_command(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2674,6 +2757,7 @@ def test_combined_dry_run_prints_exactly_one_copyable_paid_command(
     assert all("--no-paid-command" in line for line in lane_plans)
 
 
+@_skip_windows_posix
 def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2701,6 +2785,7 @@ def test_structural_only_dry_run_keeps_the_command_its_own_lane_authorizes(
     assert all("--no-paid-command" in line for line in lane_plans)
 
 
+@_skip_windows_posix
 def test_environment_probe_runs_without_advertising_its_own_single_task_study(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2726,6 +2811,7 @@ def test_environment_probe_runs_without_advertising_its_own_single_task_study(
     assert all("--dry-run" in line and "--no-paid-command" in line for line in probes)
 
 
+@_skip_windows_posix
 def test_explicit_luna_agentic_dry_run_names_the_command_it_authorizes(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2755,6 +2841,7 @@ def test_explicit_luna_agentic_dry_run_names_the_command_it_authorizes(
     assert "bash benchmarks/run-all.sh codex --agentic" in authorization
 
 
+@_skip_windows_posix
 def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2782,6 +2869,7 @@ def test_combined_mode_binds_every_selected_stratum_into_one_authorization(
     assert [line for line in calls if "run-codex-agentic.py" in line]
 
 
+@_skip_windows_posix
 def test_combined_token_separates_a_multi_stratum_run_from_a_single_stratum_one(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2801,6 +2889,7 @@ def test_combined_token_separates_a_multi_stratum_run_from_a_single_stratum_one(
     assert _combined_scope(one.stdout) != _combined_scope(several.stdout)
 
 
+@_skip_windows_posix
 def test_combined_paid_command_carries_the_declared_name_of_the_selected_stratum(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2819,6 +2908,7 @@ def test_combined_paid_command_carries_the_declared_name_of_the_selected_stratum
     assert "bash benchmarks/run-all.sh codex --models=gpt-5.6-terra" in authorization
 
 
+@_skip_windows_posix
 def test_combined_dry_run_runs_one_selected_stratum_in_both_lanes(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2843,6 +2933,7 @@ def test_combined_dry_run_runs_one_selected_stratum_in_both_lanes(
     assert all("--model gpt-5.6-terra" in line for line in agentic_dry_run)
 
 
+@_skip_windows_posix
 def test_combined_dry_run_sweeps_every_selected_stratum_in_both_lanes(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2866,6 +2957,7 @@ def test_combined_dry_run_sweeps_every_selected_stratum_in_both_lanes(
     ]
 
 
+@_skip_windows_posix
 def test_combined_dry_run_still_rejects_an_undeclared_model(batch_env: tuple[dict[str, str], Path]) -> None:
     """A typo'd stratum fails fast even once the combined guard stops refusing the whole run.
 
@@ -2883,6 +2975,7 @@ def test_combined_dry_run_still_rejects_an_undeclared_model(batch_env: tuple[dic
     assert "run-codex-agentic.py" not in calls
 
 
+@_skip_windows_posix
 def test_combined_paid_run_forwards_one_selected_stratum_to_both_children(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2911,6 +3004,7 @@ def test_combined_paid_run_forwards_one_selected_stratum_to_both_children(
     assert all("--model gpt-5.6-terra" in line for line in paid_agentic)
 
 
+@_skip_windows_posix
 def test_isolated_refuses_to_share_the_run_with_an_operator_supplied_repo(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -2929,6 +3023,7 @@ def test_isolated_refuses_to_share_the_run_with_an_operator_supplied_repo(
     assert "run-codex-structural.py" not in calls
 
 
+@_skip_windows_posix
 def test_isolated_run_uses_its_own_worktree_and_removes_it_when_the_study_succeeds(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2965,6 +3060,7 @@ def test_isolated_run_uses_its_own_worktree_and_removes_it_when_the_study_succee
     assert f"--repo-path {worktree}" in calls
 
 
+@_skip_windows_posix
 def test_isolated_run_keeps_its_worktree_when_the_study_fails(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -2996,6 +3092,7 @@ def test_isolated_run_keeps_its_worktree_when_the_study_fails(
     assert Path(kept).is_dir()
 
 
+@_skip_windows_posix
 def test_index_gate_off_the_canonical_clone_verifies_semantics_and_names_the_skipped_byte_check(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -3017,6 +3114,7 @@ def test_index_gate_off_the_canonical_clone_verifies_semantics_and_names_the_ski
     assert all("--require-hash" not in line for line in verify_calls)
 
 
+@_skip_windows_posix
 def test_isolated_run_relocates_the_locked_index_and_forwards_its_provenance(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3055,6 +3153,7 @@ def test_isolated_run_relocates_the_locked_index_and_forwards_its_provenance(
     assert all("--index-relocation-path" in line for line in structural)
 
 
+@_skip_windows_posix
 def test_isolated_run_hands_every_lane_its_relocation_proof(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3092,6 +3191,7 @@ def test_isolated_run_hands_every_lane_its_relocation_proof(
     assert not unproven, unproven
 
 
+@_skip_windows_posix
 def test_isolated_paid_run_keeps_every_child_study_on_the_one_worktree(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3131,6 +3231,7 @@ def test_isolated_paid_run_keeps_every_child_study_on_the_one_worktree(
     assert repo_paths == {worktree}
 
 
+@_skip_windows_posix
 def test_isolated_run_refuses_when_the_managed_clone_has_no_locked_index(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3195,6 +3296,7 @@ def _managed_clone_with_frozen_index(env: dict[str, str], tmp_path: Path) -> Pat
     return managed
 
 
+@_skip_windows_posix
 def test_agentic_authorization_reprints_the_isolation_the_operator_asked_for(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3216,6 +3318,7 @@ def test_agentic_authorization_reprints_the_isolation_the_operator_asked_for(
     assert "bash benchmarks/run-all.sh codex --agentic --isolated\n" in authorization
 
 
+@_skip_windows_posix
 def test_multi_stratum_authorization_reprints_the_isolation_the_operator_asked_for(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3237,6 +3340,7 @@ def test_multi_stratum_authorization_reprints_the_isolation_the_operator_asked_f
     assert "bash benchmarks/run-all.sh codex --struct --isolated --models=gpt-5.6-sol,gpt-5.6-terra\n" in authorization
 
 
+@_skip_windows_posix
 def test_multi_stratum_authorization_keeps_the_task_selection_its_token_binds(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -3258,6 +3362,7 @@ def test_multi_stratum_authorization_keeps_the_task_selection_its_token_binds(
     )
 
 
+@_skip_windows_posix
 def test_agentic_authorization_reprints_the_selected_model(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
@@ -3271,6 +3376,7 @@ def test_agentic_authorization_reprints_the_selected_model(
     assert "bash benchmarks/run-all.sh codex --agentic --models=gpt-5.6-terra\n" in authorization
 
 
+@_skip_windows_posix
 def test_structural_paid_command_never_names_the_worktree_the_dry_run_removes(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3293,6 +3399,7 @@ def test_structural_paid_command_never_names_the_worktree_the_dry_run_removes(
     assert all("codemap-parity-run-" not in block for block in blocks), blocks
 
 
+@_skip_windows_posix
 def test_structural_authorization_reprints_the_isolation_the_operator_asked_for(
     batch_env: tuple[dict[str, str], Path],
     tmp_path: Path,
@@ -3313,6 +3420,7 @@ def test_structural_authorization_reprints_the_isolation_the_operator_asked_for(
     assert "bash benchmarks/run-all.sh codex --struct --isolated\n" in authorization
 
 
+@_skip_windows_posix
 def test_multi_stratum_dry_run_prints_exactly_one_copyable_paid_command(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:

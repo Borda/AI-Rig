@@ -31,10 +31,7 @@ CSID = "test-session-1234"
 SENTINEL_NAME = f"research-topic-report-file-{CSID}"
 TWO_HOURS_S = 2 * 60 * 60
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 def _ask_payload(**overrides: object) -> dict:
@@ -107,6 +104,13 @@ def _topic_run(tmp_path: Path) -> tuple[Path, Path]:
 # ── Gate fires only for an in-flight run missing its report ──────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 def test_missing_report_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Sentinel present without the report file → deny, naming the path to write."""
     report_file, _ = topic_run
@@ -118,6 +122,7 @@ def test_missing_report_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) 
     assert "Print report header" in reason
 
 
+@_skip_node_unavailable
 def test_empty_report_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """A zero-byte report counts as not written → deny."""
     report_file, _ = topic_run
@@ -126,6 +131,7 @@ def test_empty_report_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) ->
     assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
 
 
+@_skip_node_unavailable
 def test_written_report_passes_through(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Report present → hook stays silent and the call proceeds."""
     report_file, _ = topic_run
@@ -152,6 +158,7 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
     return transcript
 
 
+@_skip_node_unavailable
 def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Table already printed this turn → allow with no additionalContext nudge."""
     report_file, _ = topic_run
@@ -163,6 +170,7 @@ def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, topi
     assert _run(tmp_path, _ask_payload(transcript_path=str(transcript))) == {}
 
 
+@_skip_node_unavailable
 def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Raw YAML fields printed instead of a table → nudge naming research:topic."""
     report_file, _ = topic_run
@@ -176,6 +184,7 @@ def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, top
     assert "research:topic" in hook_output.get("additionalContext", "")
 
 
+@_skip_node_unavailable
 def test_report_written_unreadable_transcript_has_no_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """transcript_path pointing at a nonexistent file can't be read → fail open, no false nudge."""
     report_file, _ = topic_run
@@ -186,6 +195,7 @@ def test_report_written_unreadable_transcript_has_no_reminder(tmp_path: Path, to
     assert result == {}
 
 
+@_skip_node_unavailable
 def test_plan_mode_report_name_is_gated(tmp_path: Path) -> None:
     """plan.md writes `topic-plan-<branch>-<date>.md` — same gate applies."""
     report_file = tmp_path / "repo" / ".reports" / "research" / "topic-plan-main-2026-08-04.md"
@@ -195,6 +205,7 @@ def test_plan_mode_report_name_is_gated(tmp_path: Path) -> None:
     assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
 
 
+@_skip_node_unavailable
 def test_counter_suffixed_report_name_is_gated(tmp_path: Path) -> None:
     """Anti-overwrite reruns resolve to `-2.md`; the sentinel path is used verbatim."""
     report_file = tmp_path / "repo" / ".reports" / "research" / "topic-main-2026-08-04-2.md"
@@ -204,11 +215,13 @@ def test_counter_suffixed_report_name_is_gated(tmp_path: Path) -> None:
     assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
 
 
+@_skip_node_unavailable
 def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """MacOS exports TMPDIR with a trailing slash — the sentinel must still resolve."""
     assert _denial_reason(_run(tmp_path, _ask_payload(), tmpdir_suffix="/")) is not None
 
 
+@_skip_node_unavailable
 def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """CSID falls back to the payload's session_id when the env var is unset."""
     result = _run(tmp_path, _ask_payload(session_id=CSID), session_id_env=None)
@@ -216,6 +229,7 @@ def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, topic_run: tu
     assert _denial_reason(result) is not None
 
 
+@_skip_node_unavailable
 def test_simulated_windows_topic_report_validation_accepts_contained_paths_and_rejects_traversal() -> None:
     """Recognise Windows separators and casing without trusting escaped sentinel paths."""
     assert _call_export("isTopicReportFile", r"C:\Repo\.REPORTS\RESEARCH\TOPIC-main.md") is True
@@ -225,11 +239,13 @@ def test_simulated_windows_topic_report_validation_accepts_contained_paths_and_r
 # ── Everything outside an in-flight topic run passes through ─────────────────
 
 
+@_skip_node_unavailable
 def test_no_sentinel_passes_through(tmp_path: Path) -> None:
     """No topic run resolved a report path → unrelated questions are never gated."""
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "payload",
     [
@@ -242,6 +258,7 @@ def test_non_matching_payloads_pass_through(tmp_path: Path, topic_run: tuple[Pat
     assert _run(tmp_path, payload) == {}
 
 
+@_skip_node_unavailable
 def test_stale_sentinel_passes_through(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Sentinel older than the enforcement window is treated as a crashed run."""
     _, sentinel = topic_run
@@ -251,6 +268,7 @@ def test_stale_sentinel_passes_through(tmp_path: Path, topic_run: tuple[Path, Pa
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 def test_missing_report_dir_passes_through(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Allow writes when expired research evidence is no longer available."""
     report_file, _ = topic_run
@@ -259,14 +277,15 @@ def test_missing_report_dir_passes_through(tmp_path: Path, topic_run: tuple[Path
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "content",
     [
-        pytest.param("", id="empty"),
-        pytest.param("   \n", id="whitespace"),
-        pytest.param("repo/.reports/research/topic-main-2026-08-04.md\n", id="relative-path"),
-        pytest.param("/etc/passwd\n", id="not-a-topic-report"),
-        pytest.param("/repo/.reports/research/topic-main-2026-08-04\n", id="not-markdown"),
+        "",
+        "   \n",
+        "repo/.reports/research/topic-main-2026-08-04.md\n",
+        "/etc/passwd\n",
+        "/repo/.reports/research/topic-main-2026-08-04\n",
     ],
 )
 def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: str) -> None:
@@ -276,19 +295,14 @@ def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: st
     assert _run(tmp_path, _ask_payload()) == {}
 
 
-@pytest.mark.parametrize(
-    "session_id",
-    [
-        pytest.param("../../etc/passwd", id="traversal"),
-        pytest.param("has space", id="space"),
-        pytest.param("", id="blank"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("session_id", ["../../etc/passwd", "has space", ""])
 def test_unsafe_csid_passes_through(tmp_path: Path, topic_run: tuple[Path, Path], session_id: str) -> None:
     """A CSID that cannot name a sentinel file is discarded, never path-joined."""
     assert _run(tmp_path, _ask_payload(), session_id_env=session_id) == {}
 
 
+@_skip_node_unavailable
 def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     """A hook bug or unparsable payload must never strand the session."""
     proc = subprocess.run(

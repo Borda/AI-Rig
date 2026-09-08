@@ -89,13 +89,7 @@ class TestProjectSmokeResult:
             "error": "index file not found",
         }
 
-    @pytest.mark.parametrize(
-        "raw",
-        [
-            pytest.param("", id="empty"),
-            pytest.param("   \n", id="whitespace_only"),
-        ],
-    )
+    @pytest.mark.parametrize("raw", ["", "   \n"])
     def test_empty_input_returns_no_output_error(self, raw: str) -> None:
         """Empty / whitespace-only stdin must yield the canonical no-output error."""
         out = project_smoke_result(raw)

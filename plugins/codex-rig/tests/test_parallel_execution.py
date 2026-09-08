@@ -616,10 +616,10 @@ def test_sequential_intervals_cannot_claim_parallel(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("mutation", "error"),
     (
-        ("role", "role-card-hash-mismatch:N1"),
-        ("context", "context-hash-mismatch:N1"),
-        ("output", "output-hash-mismatch:N1"),
-        ("join", "join-before-terminal:N1"),
+        pytest.param("role", "role-card-hash-mismatch:N1", id="role"),
+        pytest.param("context", "context-hash-mismatch:N1", id="context"),
+        pytest.param("output", "output-hash-mismatch:N1", id="output"),
+        pytest.param("join", "join-before-terminal:N1", id="join"),
     ),
 )
 def test_hash_and_join_provenance_fail_closed(
@@ -997,13 +997,13 @@ def test_read_only_runtime_binds_plan_lineage_terminal_output_and_declared_contr
 @pytest.mark.parametrize(
     ("mutation", "error"),
     (
-        ("missing", "runtime-parent-join-missing:N1"),
-        ("duplicate", "runtime-parent-join-duplicate:N1"),
-        ("wrong-sender", "runtime-parent-join-sender-mismatch:N1"),
-        ("wrong-content", "runtime-parent-join-content-mismatch:N1"),
-        ("empty-recipient", "runtime-parent-join-recipient-required:N1"),
-        ("early", "runtime-parent-join-before-terminal:N1"),
-        ("self-attested", "runtime-parent-join-missing:N1"),
+        pytest.param("missing", "runtime-parent-join-missing:N1", id="missing"),
+        pytest.param("duplicate", "runtime-parent-join-duplicate:N1", id="duplicate"),
+        pytest.param("wrong-sender", "runtime-parent-join-sender-mismatch:N1", id="wrong-sender"),
+        pytest.param("wrong-content", "runtime-parent-join-content-mismatch:N1", id="wrong-content"),
+        pytest.param("empty-recipient", "runtime-parent-join-recipient-required:N1", id="empty-recipient"),
+        pytest.param("early", "runtime-parent-join-before-terminal:N1", id="early"),
+        pytest.param("self-attested", "runtime-parent-join-missing:N1", id="self-attested"),
     ),
 )
 def test_read_only_runtime_host_binds_each_join_to_one_consumed_final_answer(
@@ -1285,11 +1285,12 @@ def test_schema_v2_portable_tier_rejects_legacy_false_node_controls(tmp_path: Pa
 @pytest.mark.parametrize(
     ("plan", "error"),
     (
-        (
+        pytest.param(
             {"run_id": "run-1", "capability_policy": {"task_sensitivity": "sensitive"}},
             "runtime-plan-task-sensitivity-mismatch",
+            id="run_id-run-1-capability_policy-task_sensitivity-sensitive",
         ),
-        ({"run_id": "run-1"}, "runtime-plan-capability-policy-missing"),
+        pytest.param({"run_id": "run-1"}, "runtime-plan-capability-policy-missing", id="run_id-run-1"),
     ),
 )
 def test_schema_v2_portable_tier_requires_parent_plan_task_sensitivity(
@@ -1310,9 +1311,9 @@ def test_schema_v2_portable_tier_requires_parent_plan_task_sensitivity(
 @pytest.mark.parametrize(
     ("mutation", "error"),
     (
-        ("missing", "runtime-plan-token-budgets-missing"),
-        ("overflow", "runtime-token-budget-dispatch-exceeds-admission:wave-alpha"),
-        ("node-mismatch", "runtime-plan-token-budget-node-mismatch:wave-alpha"),
+        pytest.param("missing", "runtime-plan-token-budgets-missing", id="missing"),
+        pytest.param("overflow", "runtime-token-budget-dispatch-exceeds-admission:wave-alpha", id="overflow"),
+        pytest.param("node-mismatch", "runtime-plan-token-budget-node-mismatch:wave-alpha", id="node-mismatch"),
     ),
 )
 def test_schema_v2_runtime_binds_every_spawned_node_to_the_frozen_token_budget(
@@ -1378,10 +1379,12 @@ def test_schema_v2_portable_tier_rejects_restricted_network_with_on_request_appr
 @pytest.mark.parametrize(
     ("case", "error"),
     (
-        ("malformed", "capability-evidence-invalid"),
-        ("declared-external-event", "portable-external-events-invalid"),
-        ("context-scan-failed", "portable-context-scan-required"),
-        ("filesystem-isolation-claimed", "portable-filesystem-isolation-invalid"),
+        pytest.param("malformed", "capability-evidence-invalid", id="malformed"),
+        pytest.param("declared-external-event", "portable-external-events-invalid", id="declared-external-event"),
+        pytest.param("context-scan-failed", "portable-context-scan-required", id="context-scan-failed"),
+        pytest.param(
+            "filesystem-isolation-claimed", "portable-filesystem-isolation-invalid", id="filesystem-isolation-claimed"
+        ),
     ),
 )
 def test_schema_v2_portable_tier_rejects_untrusted_capability_evidence(
@@ -1553,22 +1556,23 @@ class TestPortableReadConsumerRuntimeMatrix:
     @pytest.mark.parametrize(
         ("skill", "safe_surface", "serial_surface", "join_clause", "resource_clause"),
         (
-            (
+            pytest.param(
                 "implement",
                 "read-only evidence, acceptance, and documentation-impact passes",
                 "implementation, test, and documentation writes",
                 "join every terminal handoff before implementation, integration, gates, or acceptance",
                 "Shared paths, indexes, caches, generated outputs, test environments, ports, devices, or undeclared resources force serial execution or re-planning.",
+                id="implement",
             ),
-            (
+            pytest.param(
                 "manage",
                 "read-only inventory, reference, ownership, and policy-impact scans",
                 "create, update, delete, rename, and permission mutations",
                 "join every terminal scan before edits, propagation, gates, or acceptance",
                 "Shared targets, paths, indexes, caches, generated outputs, test environments, ports, devices, or undeclared resources force serial execution or re-planning.",
+                id="manage",
             ),
         ),
-        ids=("implement", "manage"),
     )
     def test_documents_portable_read_only_contract(
         self,
@@ -1673,12 +1677,13 @@ class TestPortableReadConsumerRuntimeMatrix:
     @pytest.mark.parametrize(
         ("skill", "case", "error"),
         (
-            ("implement", "incomplete-join", "runtime-parent-join-missing:N1"),
-            ("implement", "write-authority", "runtime-write-parallel-unsupported:N1"),
-            ("manage", "incomplete-join", "runtime-parent-join-missing:N1"),
-            ("manage", "write-authority", "runtime-write-parallel-unsupported:N1"),
+            pytest.param(
+                "implement", "incomplete-join", "runtime-parent-join-missing:N1", id="implement-incomplete-join"
+            ),
+            pytest.param("implement", "write-authority", "runtime-write-parallel-unsupported:N1", id="implement-write"),
+            pytest.param("manage", "incomplete-join", "runtime-parent-join-missing:N1", id="manage-incomplete-join"),
+            pytest.param("manage", "write-authority", "runtime-write-parallel-unsupported:N1", id="manage-write"),
         ),
-        ids=("implement-incomplete-join", "implement-write", "manage-incomplete-join", "manage-write"),
     )
     def test_rejects_incomplete_join_or_write_nodes(
         self,
@@ -1726,6 +1731,7 @@ def test_unbound_runtime_evidence_is_valid_but_not_promotion_eligible(tmp_path: 
     assert summary["consumer_id"] is None
 
 
+@pytest.mark.installed_plugin
 @pytest.mark.parametrize("consumer_id", ["implement", "manage"])
 def test_consumer_preflight_cli_binds_auto_and_exact_parent_write_approval(tmp_path: Path, consumer_id: str) -> None:
     """Prove the shipped consumer command derives promotion and exact write authority."""
@@ -1777,9 +1783,9 @@ def test_consumer_preflight_cli_binds_auto_and_exact_parent_write_approval(tmp_p
 @pytest.mark.parametrize(
     ("field", "value"),
     (
-        ("plan_sha256", "0" * 64),
-        ("response", "deny"),
-        ("source", "environment"),
+        pytest.param("plan_sha256", "0" * 64, id="plan_sha256"),
+        pytest.param("response", "deny", id="response"),
+        pytest.param("source", "environment", id="source"),
     ),
 )
 def test_consumer_preflight_rejects_each_invalid_write_approval_field(
@@ -1870,11 +1876,13 @@ def test_consumer_runtime_cli_requires_identity_and_returns_bound_summary(tmp_pa
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     (
-        ("consumer_id", "other", "runtime-consumer-id-mismatch"),
-        ("capability", "parallel-write", "runtime-consumer-capability-invalid"),
-        ("promotion_status", "pending", "runtime-consumer-promotion-required"),
-        ("parent_mutations", "parallel", "runtime-consumer-parent-mutations-invalid"),
-        ("canonical_gates", "parallel", "runtime-consumer-canonical-gates-invalid"),
+        pytest.param("consumer_id", "other", "runtime-consumer-id-mismatch", id="consumer_id"),
+        pytest.param("capability", "parallel-write", "runtime-consumer-capability-invalid", id="capability"),
+        pytest.param("promotion_status", "pending", "runtime-consumer-promotion-required", id="promotion_status"),
+        pytest.param(
+            "parent_mutations", "parallel", "runtime-consumer-parent-mutations-invalid", id="parent_mutations"
+        ),
+        pytest.param("canonical_gates", "parallel", "runtime-consumer-canonical-gates-invalid", id="canonical_gates"),
     ),
 )
 def test_portable_read_runtime_requires_exact_promoted_consumer_policy(
@@ -1936,15 +1944,33 @@ def test_token_budget_admits_a_stable_prefix_and_preserves_existing_work() -> No
 @pytest.mark.parametrize(
     ("overrides", "error"),
     (
-        ({"ceiling_tokens": 0}, "token-budget-ceiling-invalid"),
-        ({"node_order": "first"}, "token-budget-node-order-invalid"),
-        ({"reservations": ["first", "second"]}, "token-reservations-invalid"),
-        ({"reservations": {"first": True, "second": 20}}, "token-reservation-invalid:first"),
-        ({"reservations": {"first": 20}}, "token-reservation-node-mismatch"),
-        ({"completed_node_ids": "first"}, "token-budget-completed-state-invalid"),
-        ({"active_node_ids": ["second"]}, "token-budget-existing-state-not-prefix"),
-        ({"completed_node_ids": ["first"], "active_node_ids": ["first"]}, "token-budget-state-overlap:first"),
-        ({"ceiling_tokens": 10, "completed_node_ids": ["first"]}, "token-budget-already-exceeded"),
+        pytest.param({"ceiling_tokens": 0}, "token-budget-ceiling-invalid", id="ceiling_tokens-0"),
+        pytest.param({"node_order": "first"}, "token-budget-node-order-invalid", id="node_order-first"),
+        pytest.param(
+            {"reservations": ["first", "second"]}, "token-reservations-invalid", id="reservations-first-second"
+        ),
+        pytest.param(
+            {"reservations": {"first": True, "second": 20}},
+            "token-reservation-invalid:first",
+            id="reservations-first-true-second-20",
+        ),
+        pytest.param({"reservations": {"first": 20}}, "token-reservation-node-mismatch", id="reservations-first-20"),
+        pytest.param(
+            {"completed_node_ids": "first"}, "token-budget-completed-state-invalid", id="completed_node_ids-first"
+        ),
+        pytest.param(
+            {"active_node_ids": ["second"]}, "token-budget-existing-state-not-prefix", id="active_node_ids-second"
+        ),
+        pytest.param(
+            {"completed_node_ids": ["first"], "active_node_ids": ["first"]},
+            "token-budget-state-overlap:first",
+            id="completed_node_ids-first-active_node_ids-first",
+        ),
+        pytest.param(
+            {"ceiling_tokens": 10, "completed_node_ids": ["first"]},
+            "token-budget-already-exceeded",
+            id="ceiling_tokens-10-completed_node_ids-first",
+        ),
     ),
 )
 def test_token_budget_rejects_unsafe_or_incoherent_admission_state(

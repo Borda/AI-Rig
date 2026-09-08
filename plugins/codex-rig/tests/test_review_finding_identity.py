@@ -52,10 +52,7 @@ def _metadata(*, finding_severity: str = "high") -> dict[str, object]:
             "summary": "The findings require changes.",
             "rationale": "The action rows map each assessed finding to a required change.",
         },
-        "review_findings": [
-            {"id": "R1", "severity": finding_severity},
-            {"id": "R2", "severity": "medium"},
-        ],
+        "review_findings": [{"id": "R1", "severity": finding_severity}, {"id": "R2", "severity": "medium"}],
         "operational_blockers": [{"id": "G1"}],
     }
 
@@ -150,7 +147,7 @@ def test_schema_v2_rejects_finding_severity_totals_that_do_not_match_stable_reco
         _load_validator()._validate_review_decision(_metadata(finding_severity="medium"), _result())
 
 
-@pytest.mark.parametrize("severity", [[], {}], ids=["list", "object"])
+@pytest.mark.parametrize("severity", [pytest.param([], id="list"), pytest.param({}, id="object")])
 def test_validator_cli_rejects_structured_finding_severity_without_traceback(tmp_path: Path, severity: object) -> None:
     """Malformed JSON values must preserve the validator's stable error contract."""
     metadata = _metadata()
@@ -208,28 +205,35 @@ def test_schema_v1_does_not_interpret_opaque_historical_finding_metadata(tmp_pat
 @pytest.mark.parametrize(
     ("mutate_metadata", "identities", "error"),
     [
-        (
+        pytest.param(
             lambda metadata: metadata.update(
                 {"review_findings": [{"id": "R1", "severity": "high"}, {"id": "R1", "severity": "medium"}]}
             ),
             ["R1", "G1"],
             "review-finding-id-duplicate:R1",
+            id="duplicate-finding-id",
         ),
-        (
+        pytest.param(
             lambda metadata: metadata.update(
                 {"review_findings": [{"id": "R1", "severity": "medium"}, {"id": "R2", "severity": "medium"}]}
             ),
             ["R1", "R2", "G1"],
             "review-findings-severity-count-mismatch:high",
+            id="wrong-severity-total",
         ),
-        (
+        pytest.param(
             lambda _metadata: None,
             ["R1", "R2", "unbound-area"],
             "review-findings-action-table-identity-unbound:unbound-area",
+            id="unknown-action",
         ),
-        (lambda _metadata: None, ["R1", "R2"], "review-findings-action-table-identity-coverage-mismatch:G1"),
+        pytest.param(
+            lambda _metadata: None,
+            ["R1", "R2"],
+            "review-findings-action-table-identity-coverage-mismatch:G1",
+            id="missing-operational-blocker-action",
+        ),
     ],
-    ids=["duplicate-finding-id", "wrong-severity-total", "unknown-action", "missing-operational-blocker-action"],
 )
 def test_validator_cli_rejects_unbound_schema_v2_finding_actions(
     tmp_path: Path,

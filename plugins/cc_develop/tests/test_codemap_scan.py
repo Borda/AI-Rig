@@ -23,13 +23,13 @@ import codemap_scan as cs
 @pytest.mark.parametrize(
     ("inp", "expected"),
     [
-        ("./src/pkg/mod.py", "pkg.mod"),
-        ("src/pkg/mod.py", "pkg.mod"),
-        ("./pkg/mod.py", "pkg.mod"),
-        ("pkg/mod.py", "pkg.mod"),
-        ("mod.py", "mod"),
-        ("pkg/__init__.py", "pkg.__init__"),
-        ("./src/a/b/c.py", "a.b.c"),
+        pytest.param("./src/pkg/mod.py", "pkg.mod", id=".-src-pkg-mod.py"),
+        pytest.param("src/pkg/mod.py", "pkg.mod", id="src-pkg-mod.py"),
+        pytest.param("./pkg/mod.py", "pkg.mod", id=".-pkg-mod.py"),
+        pytest.param("pkg/mod.py", "pkg.mod", id="pkg-mod.py"),
+        pytest.param("mod.py", "mod", id="mod.py"),
+        pytest.param("pkg/__init__.py", "pkg.__init__", id="pkg-__init__.py"),
+        pytest.param("./src/a/b/c.py", "a.b.c", id=".-src-a-b-c.py"),
     ],
 )
 def test_derive_module_from_path(inp: str, expected: str) -> None:
@@ -52,12 +52,7 @@ def test_derive_modules_from_diff_strips_src_and_init() -> None:
 
 def test_derive_modules_from_diff_dedupes_and_limits_primary_modules() -> None:
     """Primary diff module derivation dedupes in order and applies the same limit as fallback."""
-    files = [
-        "src/pkg/a.py",
-        "src/pkg/a.py",
-        "src/pkg/b.py",
-        "src/pkg/c.py",
-    ]
+    files = ["src/pkg/a.py", "src/pkg/a.py", "src/pkg/b.py", "src/pkg/c.py"]
     assert cs.derive_modules_from_diff(files, limit=2) == ["pkg.a", "pkg.b"]
 
 

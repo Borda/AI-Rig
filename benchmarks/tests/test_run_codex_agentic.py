@@ -1015,12 +1015,7 @@ def test_agentic_snapshot_cleans_a_shared_treatment_coordination_root_once(
         manifest_path=agentic._MANIFEST_PATH,
         invocation_launcher_path=BENCHMARKS_DIR / "run-all.sh",
     ) == {"ok": True, "path": "fixture"}
-    assert events == [
-        "home:A_plain",
-        "coordination:.index-rw",
-        "home:B_auto",
-        "home:C_strict",
-    ]
+    assert events == ["home:A_plain", "coordination:.index-rw", "home:B_auto", "home:C_strict"]
     assert runner.adapter.bound_sources == (
         tmp_path / "run" / "inputs",
         {
@@ -1134,10 +1129,7 @@ def test_malformed_incomplete_and_error_streams_fail_closed(
 
 @pytest.mark.parametrize(
     "answer_text",
-    [
-        pytest.param("Final answer without the required envelope.", id="missing-envelope"),
-        pytest.param("BEGIN_ANSWER_JSON\n{not-json}\nEND_ANSWER_JSON", id="invalid-json"),
-    ],
+    ["Final answer without the required envelope.", "BEGIN_ANSWER_JSON\n{not-json}\nEND_ANSWER_JSON"],
 )
 def test_completed_invalid_answer_is_unscored_without_becoming_transport_failure(
     task_and_truth: tuple[Any, Any], agentic: Any, answer_text: str, tmp_path: Path
@@ -1695,13 +1687,7 @@ def test_a_c_pairing_does_not_depend_on_optional_b_adherence(agentic: Any) -> No
     assert summary["matched_adherent"]["B_auto"]["cells"] == 0
 
 
-@pytest.mark.parametrize(
-    "launcher",
-    [
-        pytest.param("/private/tmp/frozen-c-home/bin/codemap-py", id="posix"),
-        pytest.param(r"C:\agentic\bin\codemap-py", id="windows"),
-    ],
-)
+@pytest.mark.parametrize("launcher", ["/private/tmp/frozen-c-home/bin/codemap-py", r"C:\agentic\bin\codemap-py"])
 def test_diagnostic_replay_uses_reviewed_coordinate_map_without_relabeling_a_rows(
     agentic: Any, tmp_path: Path, launcher: str
 ) -> None:
@@ -1764,13 +1750,7 @@ def test_diagnostic_replay_uses_reviewed_coordinate_map_without_relabeling_a_row
     )
 
 
-@pytest.mark.parametrize(
-    "launcher",
-    [
-        pytest.param("/private/tmp/frozen-c-home/bin/codemap-py", id="posix"),
-        pytest.param(r"C:\agentic\bin\codemap-py", id="windows"),
-    ],
-)
+@pytest.mark.parametrize("launcher", ["/private/tmp/frozen-c-home/bin/codemap-py", r"C:\agentic\bin\codemap-py"])
 def test_diagnostic_replay_marks_relative_launcher_without_map_unavailable(
     agentic: Any, tmp_path: Path, launcher: str
 ) -> None:

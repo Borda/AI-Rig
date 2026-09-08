@@ -55,9 +55,16 @@ def _metadata(recommendation: str) -> dict[str, object]:
 @pytest.mark.parametrize(
     ("recommendation", "result", "error"),
     [
-        ("accept-as-is", _result(high=1), "review-accept-with-findings"),
-        ("minor-changes", _result(high=1), "review-minor-with-blocking-findings"),
-        ("minor-changes", _result(critical=1), "review-minor-with-blocking-findings"),
+        pytest.param("accept-as-is", _result(high=1), "review-accept-with-findings", id="accept-as-is"),
+        pytest.param(
+            "minor-changes", _result(high=1), "review-minor-with-blocking-findings", id="minor-changes-_result-high-1"
+        ),
+        pytest.param(
+            "minor-changes",
+            _result(critical=1),
+            "review-minor-with-blocking-findings",
+            id="minor-changes-_result-critical-1",
+        ),
     ],
 )
 def test_review_recommendation_is_bound_to_finding_severity(
@@ -88,8 +95,11 @@ def test_review_action_table_rejects_duplicate_finding_identity(tmp_path: Path) 
 @pytest.mark.parametrize("recommendation", ["accept-as-is", "minor-changes"])
 @pytest.mark.parametrize(
     "status,checks_failed",
-    [("fail", ["tests"]), ("timeout", ["tests"]), ("fail", [])],
-    ids=["failed-check", "timeout", "failed-process"],
+    [
+        pytest.param("fail", ["tests"], id="failed-check"),
+        pytest.param("timeout", ["tests"], id="timeout"),
+        pytest.param("fail", [], id="failed-process"),
+    ],
 )
 def test_approving_recommendation_requires_passing_quality_gates(
     recommendation: str, status: str, checks_failed: list[str]

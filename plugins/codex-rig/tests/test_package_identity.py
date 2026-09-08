@@ -67,6 +67,7 @@ def _write_fixture(root: Path, *, recorded_mode: int | None = None) -> None:
     )
 
 
+@pytest.mark.packaging
 def test_verify_package_checks_hashes_without_path_read_bytes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Read verified inputs only through the bounded safe-open backend."""
     identity = _load_identity()
@@ -84,6 +85,7 @@ def test_verify_package_checks_hashes_without_path_read_bytes(tmp_path: Path, mo
     assert result.mode_status == "pass"
 
 
+@pytest.mark.packaging
 def test_verify_package_reports_simulated_windows_mode_check_not_applicable(tmp_path: Path) -> None:
     """Ignore only POSIX mode comparison when native Windows cannot retain it."""
     identity = _load_identity()
@@ -98,6 +100,7 @@ def test_verify_package_reports_simulated_windows_mode_check_not_applicable(tmp_
     assert result.mode_status == "not-applicable"
 
 
+@pytest.mark.packaging
 def test_verify_package_bounds_every_recorded_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Reject a recorded file before reading beyond the configured safety limit."""
     identity = _load_identity()
@@ -108,6 +111,7 @@ def test_verify_package_bounds_every_recorded_payload(tmp_path: Path, monkeypatc
         identity.verify_package(tmp_path, enforce_modes=os.name != "nt")
 
 
+@pytest.mark.packaging
 def test_verify_package_rejects_mode_drift_on_posix(tmp_path: Path) -> None:
     """Preserve exact mode enforcement on supported POSIX filesystems."""
     identity = _load_identity()
@@ -118,6 +122,7 @@ def test_verify_package_rejects_mode_drift_on_posix(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("mutation", ("tamper", "extra"))
+@pytest.mark.packaging
 def test_verify_package_rejects_payload_drift(tmp_path: Path, mutation: str) -> None:
     """Reject changed bytes and unrecorded package payloads."""
     identity = _load_identity()
@@ -134,6 +139,7 @@ def test_verify_package_rejects_payload_drift(tmp_path: Path, mutation: str) -> 
 
 
 @pytest.mark.parametrize("unsafe_path", [r"folder\payload.txt", "C:payload.txt"])
+@pytest.mark.packaging
 def test_verify_package_rejects_nonportable_record_paths(tmp_path: Path, unsafe_path: str) -> None:
     """Prevent manifest paths from changing containment meaning on Windows."""
     identity = _load_identity()
@@ -148,6 +154,7 @@ def test_verify_package_rejects_nonportable_record_paths(tmp_path: Path, unsafe_
 
 
 @pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks")
+@pytest.mark.packaging
 def test_verify_package_rejects_symlink_payload(tmp_path: Path) -> None:
     """Reject links before any verified payload bytes are consumed."""
     identity = _load_identity()

@@ -720,15 +720,10 @@ def test_structural_snapshot_cleans_a_shared_treatment_coordination_root_once(
         tasks=[],
         arms=["A_plain", "B_auto", "C_strict"],
     ) == {"ok": True}
-    assert events == [
-        "home:A_plain",
-        "coordination:.index-rw",
-        "home:B_auto",
-        "home:C_strict",
-    ]
+    assert events == ["home:A_plain", "coordination:.index-rw", "home:B_auto", "home:C_strict"]
 
 
-@pytest.mark.parametrize("unsafe_entry", ["coord-symlink", "readers-symlink"], ids=["coord", "readers"])
+@pytest.mark.parametrize("unsafe_entry", ["coord-symlink", "readers-symlink"])
 def test_coordination_root_rejects_symlinks_and_cannot_escape_its_index_directory(
     script_run_codex: Any, tmp_path: Path, unsafe_entry: str
 ) -> None:
@@ -1277,12 +1272,7 @@ def test_codemap_failure_then_ordinary_command_is_fallback(script_run_codex: Any
             1,
             id="zero-token-error-retried",
         ),
-        pytest.param(
-            _completed_stream(input_tokens=0, output_tokens=0),
-            1,
-            0,
-            id="successful-zero-token-not-retried",
-        ),
+        pytest.param(_completed_stream(input_tokens=0, output_tokens=0), 1, 0, id="successful-zero-token-not-retried"),
         pytest.param(
             "\n".join(
                 [
@@ -1335,10 +1325,7 @@ def test_retry_policy_only_retries_zero_token_transport_failures(
 
 @pytest.mark.parametrize(
     "message",
-    [
-        pytest.param("HTTP 401 Unauthorized: refresh token expired", id="expired-refresh-token"),
-        pytest.param("HTTP 401 Unauthorized: refresh token has already been used", id="used-refresh-token"),
-    ],
+    ["HTTP 401 Unauthorized: refresh token expired", "HTTP 401 Unauthorized: refresh token has already been used"],
 )
 def test_retry_policy_does_not_repeat_non_retryable_authentication_failures(
     script_run_codex: Any,
@@ -2192,10 +2179,7 @@ def test_initial_skill_admission_failure_keeps_identity_evidence_after_cleanup(
     [
         pytest.param([{"name": "codemap-py", "enabled": True}], id="missing-rig"),
         pytest.param(
-            [
-                {"name": "codemap-py", "enabled": True},
-                {"name": "codex-rig", "enabled": False},
-            ],
+            [{"name": "codemap-py", "enabled": True}, {"name": "codex-rig", "enabled": False}],
             id="disabled-rig",
         ),
         pytest.param(
@@ -3201,10 +3185,7 @@ def test_main_persists_each_completed_cell_in_task_then_arm_order(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A partial JSONL artifact retains every completed cell in deterministic plan order."""
-    tasks = [
-        {"id": "first", "prompt": "one", "type": "demo"},
-        {"id": "second", "prompt": "two", "type": "demo"},
-    ]
+    tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
     monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
     monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
 
@@ -3279,10 +3260,7 @@ def test_main_records_cell_failures_and_continues_after_smoke(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """The full run reports treatment failures without optional cell-level stopping."""
-    tasks = [
-        {"id": "first", "prompt": "one", "type": "demo"},
-        {"id": "second", "prompt": "two", "type": "demo"},
-    ]
+    tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
 
     class FixtureRunner:
         """Return one non-compliant cell followed by one compliant cell."""
@@ -3572,7 +3550,7 @@ def test_main_continues_after_semantic_or_model_quality_failures(
     assert metadata["persisted_cells"] == 4
 
 
-@pytest.mark.parametrize("raise_from_run", [False, True], ids=["normal-exit", "exceptional-exit"])
+@pytest.mark.parametrize("raise_from_run", [False, True])
 def test_main_closes_runner_auth_state_on_all_study_exits(
     script_run_codex: Any,
     tmp_path: Path,
@@ -3843,10 +3821,7 @@ def test_main_progress_denominator_matches_selected_cells(
     expected_prefixes: list[str],
 ) -> None:
     """Subset and single-arm runs use their exact selected-cell totals."""
-    tasks = [
-        {"id": "first", "prompt": "one", "type": "demo"},
-        {"id": "second", "prompt": "two", "type": "demo"},
-    ]
+    tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
 
     class FixtureRunner:
         """Return a minimal completed result for each selected cell."""
@@ -4185,10 +4160,7 @@ def test_format_result_row_separates_treatment_from_observed_codemap_use(
 
 @pytest.mark.parametrize(
     ("is_terminal", "expected_rich_calls", "expected_plain_calls"),
-    [
-        pytest.param(True, 1, 0, id="interactive-rich-color"),
-        pytest.param(False, 0, 1, id="redirected-plain-text"),
-    ],
+    [pytest.param(True, 1, 0, id="interactive-rich-color"), pytest.param(False, 0, 1, id="redirected-plain-text")],
 )
 def test_print_arm_row_colors_only_interactive_output(
     monkeypatch: pytest.MonkeyPatch,
@@ -4331,10 +4303,7 @@ def test_print_result_block_keeps_partial_progress_relative_to_full_plan(
         planned_cells=3,
     )
 
-    assert printed == [
-        ("(1/3) ✓  task  rep=1  B_auto", "B_auto"),
-        ("(2/3) ✓  task  rep=1  C_strict", "C_strict"),
-    ]
+    assert printed == [("(1/3) ✓  task  rep=1  B_auto", "B_auto"), ("(2/3) ✓  task  rep=1  C_strict", "C_strict")]
     assert next_progress == 2
 
 
@@ -4342,10 +4311,7 @@ def test_main_filters_locked_tasks_in_suite_order_and_rejects_invalid_ids(
     script_run_codex: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Smoke selection keeps canonical suite order without accepting unknown or duplicate IDs."""
-    tasks = [
-        {"id": "first", "prompt": "one", "type": "demo"},
-        {"id": "second", "prompt": "two", "type": "demo"},
-    ]
+    tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
     monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
     monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
     planned: list[str] = []
@@ -4715,13 +4681,7 @@ def test_canonical_native_query_allows_auxiliary_separate_events(script_run_code
             True,
             id="equivalent-boolean-and-value-order",
         ),
-        pytest.param(
-            [{"cmd": "central", "args": ["--top", "5"]}],
-            None,
-            [["coupled"]],
-            False,
-            id="wrong-endpoint",
-        ),
+        pytest.param([{"cmd": "central", "args": ["--top", "5"]}], None, [["coupled"]], False, id="wrong-endpoint"),
         pytest.param(
             [{"cmd": "central", "args": ["--top", "5"]}],
             None,
@@ -5207,7 +5167,7 @@ def test_snapshot_copy_rejects_source_replacement_between_validation_and_open(
     assert entries == []
 
 
-@pytest.mark.parametrize("source_kind", ["leaf-symlink", "hardlink", "escaping-parent"], ids=str)
+@pytest.mark.parametrize("source_kind", ["leaf-symlink", "hardlink", "escaping-parent"])
 def test_snapshot_source_indirection_fails_closed(
     script_run_codex: Any,
     tmp_path: Path,
@@ -5308,8 +5268,7 @@ def test_staged_direct_cli_admission_rejects_malformed_output_and_index_mutation
 
 @pytest.mark.parametrize(
     "selected_arms",
-    [("B_auto", "C_strict"), ("C_strict",)],
-    ids=["both-treatments", "skill-only"],
+    [pytest.param(("B_auto", "C_strict"), id="both-treatments"), pytest.param(("C_strict",), id="skill-only")],
 )
 def test_expected_query_preflight_runs_unique_b_queries_once_and_never_replays_c(
     script_run_codex: Any,
@@ -5372,10 +5331,7 @@ def test_expected_query_preflight_runs_unique_b_queries_once_and_never_replays_c
     )
 
     assert prepared_arms == ["B_auto"]
-    assert [command[-2:] for command in commands] == [
-        ["central", "package"],
-        ["fn-rdeps", "package.module::target"],
-    ]
+    assert [command[-2:] for command in commands] == [["central", "package"], ["fn-rdeps", "package.module::target"]]
 
 
 def test_expected_query_preflight_rejects_malformed_or_failed_b_queries(
@@ -5437,10 +5393,16 @@ def test_targeted_cells_are_explicitly_non_poolable(script_run_codex: Any) -> No
 @pytest.mark.parametrize(
     ("selectors", "expected_ids"),
     [
-        ("DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"]),
-        ("DI,GR", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06", "GR-01", "GR-02", "GR-03", "GR-04"]),
-        ("GR-03,DI-01,DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06", "GR-03"]),
-        ("DI,DI-01,DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"]),
+        pytest.param("DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"], id="di"),
+        pytest.param(
+            "DI,GR",
+            ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06", "GR-01", "GR-02", "GR-03", "GR-04"],
+            id="di-gr",
+        ),
+        pytest.param(
+            "GR-03,DI-01,DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06", "GR-03"], id="gr-03-di-01-di"
+        ),
+        pytest.param("DI,DI-01,DI", ["DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"], id="di-di-01-di"),
     ],
 )
 def test_resolve_task_selection_is_manifest_ordered_and_deduplicated(
@@ -5466,11 +5428,11 @@ def test_resolve_task_selection_is_manifest_ordered_and_deduplicated(
 @pytest.mark.parametrize(
     ("selectors", "error"),
     [
-        ("", "empty tokens"),
-        ("DI,,GR", "empty tokens"),
-        ("ZZ", "unknown task selector"),
-        ("RI", "unknown task selector"),
-        ("RI-01", "unknown task selector"),
+        pytest.param("", "empty tokens", id="empty"),
+        pytest.param("DI,,GR", "empty tokens", id="di-gr"),
+        pytest.param("ZZ", "unknown task selector", id="zz"),
+        pytest.param("RI", "unknown task selector", id="ri"),
+        pytest.param("RI-01", "unknown task selector", id="ri-01"),
     ],
 )
 def test_resolve_task_selection_rejects_empty_and_unknown_selectors(
@@ -5484,10 +5446,10 @@ def test_resolve_task_selection_rejects_empty_and_unknown_selectors(
 @pytest.mark.parametrize(
     ("repetitions", "arm", "scope_sha256", "error"),
     [
-        (2, "all", "match", "repetition"),
-        (3, "A_plain", "match", "arm all"),
-        (3, "all", "0" * 64, "SHA-256"),
-        (3, "all", None, "requires --scope-sha256"),
+        pytest.param(2, "all", "match", "repetition", id="2"),
+        pytest.param(3, "A_plain", "match", "arm all", id="3-a_plain"),
+        pytest.param(3, "all", "0" * 64, "SHA-256", id="3-all-0-64"),
+        pytest.param(3, "all", None, "requires --scope-sha256", id="3-all-none"),
     ],
 )
 def test_paid_targeted_scope_rejects_control_or_hash_tampering(
@@ -5738,11 +5700,11 @@ def test_diff_impact_contamination_persists_stage_and_worktree_evidence(script_r
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
-        ("extra-tracked", "unexpected worktree status"),
-        ("extra-untracked", "unexpected worktree status"),
-        ("delete-stage", "unexpected worktree status"),
-        ("symlink-stage", "unexpected worktree status"),
-        ("hardlink-stage", "unlinked regular tracked files"),
+        pytest.param("extra-tracked", "unexpected worktree status", id="extra-tracked"),
+        pytest.param("extra-untracked", "unexpected worktree status", id="extra-untracked"),
+        pytest.param("delete-stage", "unexpected worktree status", id="delete-stage"),
+        pytest.param("symlink-stage", "unexpected worktree status", id="symlink-stage"),
+        pytest.param("hardlink-stage", "unlinked regular tracked files", id="hardlink-stage"),
     ],
 )
 def test_diff_impact_admission_rejects_worktree_mutations(

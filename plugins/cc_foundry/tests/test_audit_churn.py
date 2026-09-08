@@ -18,14 +18,14 @@ _spec.loader.exec_module(ch)
 @pytest.mark.parametrize(
     ("subject", "expected"),
     [
-        ("fix(oss): repair x", "fix"),
-        ("feat: add y", "feat"),
-        ("refactor!: breaking", "refactor"),
-        ("refine(foundry): tweak", "refine"),
-        ("chore: bump", "chore"),
-        ("plain english subject", "other"),
-        ("wip: not a known type", "other"),
-        ("", "other"),
+        pytest.param("fix(oss): repair x", "fix", id="fix-oss-repair-x"),
+        pytest.param("feat: add y", "feat", id="feat-add-y"),
+        pytest.param("refactor!: breaking", "refactor", id="refactor-breaking"),
+        pytest.param("refine(foundry): tweak", "refine", id="refine-foundry-tweak"),
+        pytest.param("chore: bump", "chore", id="chore-bump"),
+        pytest.param("plain english subject", "other", id="plain-english-subject"),
+        pytest.param("wip: not a known type", "other", id="wip-not-a-known-type"),
+        pytest.param("", "other", id="empty"),
     ],
 )
 def test_classify_commit(subject: str, expected: str) -> None:

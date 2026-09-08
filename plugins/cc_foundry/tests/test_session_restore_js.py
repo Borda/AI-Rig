@@ -30,10 +30,7 @@ import pytest
 
 HOOK = "session-restore.js"
 
-pytestmark = pytest.mark.skipif(
-    subprocess.run(["node", "--version"], capture_output=True, timeout=5).returncode != 0,
-    reason="requires node on PATH",
-)
+NODE_UNAVAILABLE = subprocess.run(["node", "--version"], capture_output=True, timeout=5).returncode != 0
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -141,6 +138,13 @@ def _payload(project: Path | None, **overrides) -> dict:
 # ── Silence by default ────────────────────────────────────────────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node on PATH",
+)
+
+
+@_skip_node_unavailable
 def test_no_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     (tmp_path / ".claude" / "state" / "session").mkdir(parents=True)
     result = run_hook(HOOK, _payload(tmp_path))
@@ -148,12 +152,14 @@ def test_no_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_missing_cwd_is_silent(run_hook) -> None:
     result = run_hook(HOOK, _payload(None))
     assert result.returncode == 0
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_other_event_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path)
     result = run_hook(HOOK, _payload(tmp_path, hook_event_name="SessionEnd"))
@@ -161,6 +167,7 @@ def test_other_event_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_other_source_is_silent(run_hook, tmp_path: Path) -> None:
     """Filter in production; the in-code gate is a second line."""
     _write_handover(tmp_path)
@@ -169,6 +176,7 @@ def test_other_source_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_absent_source_still_injects(run_hook, tmp_path: Path) -> None:
     """Source gate is lenient — a _payload without the field must not silently no-op."""
     _write_handover(tmp_path)
@@ -178,6 +186,7 @@ def test_absent_source_still_injects(run_hook, tmp_path: Path) -> None:
     assert "[session] restored" in result.stdout
 
 
+@_skip_node_unavailable
 def test_blank_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     """Empty the latest-session marker during session recall."""
     _write_handover(tmp_path, pointer="")
@@ -186,6 +195,7 @@ def test_blank_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_traversal_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, pointer="../../../etc/passwd")
     result = run_hook(HOOK, _payload(tmp_path))
@@ -193,6 +203,7 @@ def test_traversal_pointer_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_pointer_to_missing_doc_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, pointer="does-not-exist")
     result = run_hook(HOOK, _payload(tmp_path))
@@ -200,6 +211,7 @@ def test_pointer_to_missing_doc_is_silent(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_malformed_stdin_is_silent() -> None:
     """Bypasses ``run_hook`` deliberately — it JSON-encodes its _payload."""
     hook_path = Path(__file__).resolve().parent.parent / "hooks" / HOOK
@@ -217,24 +229,28 @@ def test_malformed_stdin_is_silent() -> None:
 # ── Gates ─────────────────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_consumed_doc_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, consumed="true")
     result = run_hook(HOOK, _payload(tmp_path))
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_expired_doc_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, created=_iso(minutes_ago=31))
     result = run_hook(HOOK, _payload(tmp_path))
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_doc_just_inside_window_injects(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, created=_iso(minutes_ago=29))
     result = run_hook(HOOK, _payload(tmp_path))
     assert "[session] restored" in result.stdout
 
 
+@_skip_node_unavailable
 def test_unparseable_created_is_silent(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path, created="whenever")
     result = run_hook(HOOK, _payload(tmp_path))
@@ -244,6 +260,7 @@ def test_unparseable_created_is_silent(run_hook, tmp_path: Path) -> None:
 # ── Injection content ─────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_fresh_doc_injects_full_body(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path)
     out = run_hook(HOOK, _payload(tmp_path)).stdout
@@ -254,6 +271,7 @@ def test_fresh_doc_injects_full_body(run_hook, tmp_path: Path) -> None:
     assert "run the pytest suite" in out
 
 
+@_skip_node_unavailable
 def test_injection_strips_frontmatter(run_hook, tmp_path: Path) -> None:
     _write_handover(tmp_path)
     out = run_hook(HOOK, _payload(tmp_path)).stdout
@@ -261,6 +279,7 @@ def test_injection_strips_frontmatter(run_hook, tmp_path: Path) -> None:
     assert "consumed:" not in out
 
 
+@_skip_node_unavailable
 def test_oversized_doc_injects_head_only(run_hook, tmp_path: Path) -> None:
     filler = "- filler decision line, repeated for bulk\n" * 220
     _write_handover(tmp_path, slug="big-x", filler=filler)
@@ -275,6 +294,7 @@ def test_oversized_doc_injects_head_only(run_hook, tmp_path: Path) -> None:
 # ── Consumption ───────────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_injection_marks_consumed_and_clears_pointer(run_hook, tmp_path: Path) -> None:
     doc = _write_handover(tmp_path)
     run_hook(HOOK, _payload(tmp_path))
@@ -282,6 +302,7 @@ def test_injection_marks_consumed_and_clears_pointer(run_hook, tmp_path: Path) -
     assert not (tmp_path / ".claude" / "state" / "session" / "LATEST").exists()
 
 
+@_skip_node_unavailable
 def test_second_clear_is_idempotent(run_hook, tmp_path: Path) -> None:
     doc = _write_handover(tmp_path)
     first = run_hook(HOOK, _payload(tmp_path))
@@ -291,6 +312,7 @@ def test_second_clear_is_idempotent(run_hook, tmp_path: Path) -> None:
     assert "consumed: true" in doc.read_text(encoding="utf8")
 
 
+@_skip_node_unavailable
 def test_consumption_rewrites_only_the_flag(run_hook, tmp_path: Path) -> None:
     """The rewrite must round-trip the doc — closing ``---`` delimiter and body intact."""
     doc = _write_handover(tmp_path)
@@ -309,6 +331,7 @@ def test_consumption_rewrites_only_the_flag(run_hook, tmp_path: Path) -> None:
 # platform — the line ending is written explicitly, not inherited from the host.
 
 
+@_skip_node_unavailable
 def test_crlf_doc_injects(run_hook, tmp_path: Path) -> None:
     """Frontmatter gates must parse a CRLF document, not fall through to silence."""
     _write_handover(tmp_path, newline="\r\n")
@@ -317,6 +340,7 @@ def test_crlf_doc_injects(run_hook, tmp_path: Path) -> None:
     assert "branch main" in result.stdout
 
 
+@_skip_node_unavailable
 def test_crlf_doc_gates_still_reject_consumed(run_hook, tmp_path: Path) -> None:
     """CRLF parsing must read the real flag value, not merely find the key."""
     _write_handover(tmp_path, consumed="true", newline="\r\n")
@@ -324,6 +348,7 @@ def test_crlf_doc_gates_still_reject_consumed(run_hook, tmp_path: Path) -> None:
     assert result.stdout == ""
 
 
+@_skip_node_unavailable
 def test_crlf_consumption_preserves_line_endings(run_hook, tmp_path: Path) -> None:
     """The in-place rewrite round-trips byte for byte apart from the flag — no lone LF left behind."""
     doc = _write_handover(tmp_path, newline="\r\n")
@@ -337,6 +362,7 @@ def test_crlf_consumption_preserves_line_endings(run_hook, tmp_path: Path) -> No
 # ── Registration ──────────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_hook_is_registered_with_clear_matcher() -> None:
     """Verify that the result has an unregistered SessionStart branch — this one must not."""
     hooks_json = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"

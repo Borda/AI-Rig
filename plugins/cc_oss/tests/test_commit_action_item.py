@@ -327,12 +327,12 @@ def test_git_missing_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("main", "main"),
-        ("My/Repo Name", "my-repo-name"),
-        ("feature/add-thing!", "feature-add-thing"),
-        ("UPPER-CASE", "upper-case"),
-        ("trailing-", "trailing"),
-        ("multi---dashes", "multi-dashes"),
+        pytest.param("main", "main", id="main"),
+        pytest.param("My/Repo Name", "my-repo-name", id="my-repo-name"),
+        pytest.param("feature/add-thing!", "feature-add-thing", id="feature-add-thing"),
+        pytest.param("UPPER-CASE", "upper-case", id="upper-case"),
+        pytest.param("trailing-", "trailing", id="trailing"),
+        pytest.param("multi---dashes", "multi-dashes", id="multi---dashes"),
     ],
 )
 def test_slug(text: str, expected: str) -> None:

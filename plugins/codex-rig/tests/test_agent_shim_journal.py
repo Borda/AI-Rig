@@ -197,13 +197,12 @@ def test_preparing_journal_advances_only_to_prepared() -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        b'{"schema":1,"schema":1}',
-        b'{"value":NaN}',
-        b"[]",
-        b"\xef\xbb\xbf{}",
-        b'{ "schema":1}',
+        pytest.param(b'{"schema":1,"schema":1}', id="duplicate"),
+        pytest.param(b'{"value":NaN}', id="nonfinite"),
+        pytest.param(b"[]", id="nonobject"),
+        pytest.param(b"\xef\xbb\xbf{}", id="bom"),
+        pytest.param(b'{ "schema":1}', id="noncanonical"),
     ],
-    ids=["duplicate", "nonfinite", "nonobject", "bom", "noncanonical"],
 )
 def test_parser_rejects_ambiguous_or_noncanonical_json(payload: bytes) -> None:
     """Reject JSON encodings that cannot carry unique bounded authority."""
@@ -244,12 +243,12 @@ def test_roster_and_schema_are_exact(mutation: str) -> None:
 @pytest.mark.parametrize(
     ("intent", "action", "bad_progress"),
     [
-        ("noop", "install", "PLANNED"),
-        ("create", "install", "DETACHED"),
-        ("repair-missing", "install", "DETACHED"),
-        ("update", "install", "INVALID"),
-        ("retire", "install", "PUBLISHED"),
-        ("remove", "remove", "PUBLISHED"),
+        pytest.param("noop", "install", "PLANNED", id="noop"),
+        pytest.param("create", "install", "DETACHED", id="create"),
+        pytest.param("repair-missing", "install", "DETACHED", id="repair-missing"),
+        pytest.param("update", "install", "INVALID", id="update"),
+        pytest.param("retire", "install", "PUBLISHED", id="retire"),
+        pytest.param("remove", "remove", "PUBLISHED", id="remove"),
     ],
 )
 def test_intent_specific_progress_is_strict(intent: str, action: str, bad_progress: str) -> None:
@@ -265,11 +264,10 @@ def test_intent_specific_progress_is_strict(intent: str, action: str, bad_progre
 @pytest.mark.parametrize(
     "role_ids",
     [
-        ("historical",),
-        ("active", "historical", "retired"),
-        tuple(f"role-{index:03d}" for index in range(256)),
+        pytest.param(("historical",), id="one"),
+        pytest.param(("active", "historical", "retired"), id="migration-union"),
+        pytest.param(tuple(f"role-{index:03d}" for index in range(256)), id="maximum"),
     ],
-    ids=["one", "migration-union", "maximum"],
 )
 def test_variable_sorted_operation_rosters_are_bounded(role_ids: tuple[str, ...]) -> None:
     """Accept a bounded sorted active-and-historical operation union."""
@@ -282,8 +280,7 @@ def test_variable_sorted_operation_rosters_are_bounded(role_ids: tuple[str, ...]
 
 @pytest.mark.parametrize(
     "role_ids",
-    [(), tuple(f"role-{index:03d}" for index in range(257))],
-    ids=["empty", "over-bound"],
+    [pytest.param((), id="empty"), pytest.param(tuple(f"role-{index:03d}" for index in range(257)), id="over-bound")],
 )
 def test_variable_operation_rosters_reject_empty_or_over_bound(role_ids: tuple[str, ...]) -> None:
     """Reject journals outside the explicit operation-count bound."""

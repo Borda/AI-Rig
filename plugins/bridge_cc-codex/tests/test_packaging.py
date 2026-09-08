@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
@@ -25,6 +27,8 @@ validate_package = importlib.util.module_from_spec(_VALIDATE_SPECIFICATION)
 _VALIDATE_SPECIFICATION.loader.exec_module(validate_package)
 
 
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_build_and_validate_use_only_the_disposable_package_copy(tmp_path: Path) -> None:
     """Prove package validation resolves payload paths without source-tree context."""
     output = tmp_path / "bridge"
@@ -54,6 +58,7 @@ def test_build_and_validate_use_only_the_disposable_package_copy(tmp_path: Path)
     assert (output / "schemas" / "setup-result.schema.json").is_file()
 
 
+@pytest.mark.packaging
 def test_mcp_server_resolves_from_installed_plugin_root() -> None:
     """Reject source-tree-relative MCP commands that break cache installs."""
     config = json.loads((PLUGIN_ROOT / ".mcp.json").read_text(encoding="utf-8"))
@@ -63,6 +68,7 @@ def test_mcp_server_resolves_from_installed_plugin_root() -> None:
     assert "cwd" not in server
 
 
+@pytest.mark.packaging
 def test_source_package_validation_ignores_non_payload_test_and_cache_files() -> None:
     """Keep the validator's documented default useful in a development checkout."""
     validated = subprocess.run(
@@ -76,6 +82,7 @@ def test_source_package_validation_ignores_non_payload_test_and_cache_files() ->
     assert "Package validation passed" in validated.stdout
 
 
+@pytest.mark.packaging
 def test_host_manifests_select_disjoint_skill_surfaces() -> None:
     """Prevent either host from discovering the other host's execution instructions."""
     claude = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
@@ -106,6 +113,7 @@ def test_host_manifests_select_disjoint_skill_surfaces() -> None:
     }
 
 
+@pytest.mark.packaging
 def test_repository_marketplaces_advertise_both_host_installations() -> None:
     """Prevent a complete bridge package from becoming undiscoverable in either host catalog."""
     claude_marketplace = json.loads(
@@ -131,6 +139,7 @@ def test_repository_marketplaces_advertise_both_host_installations() -> None:
     }
 
 
+@pytest.mark.packaging
 def test_disposable_package_has_no_nested_marketplace(tmp_path: Path) -> None:
     """The disposable package must not carry a redundant nested marketplace."""
     output = tmp_path / "bridge"
@@ -145,6 +154,7 @@ def test_disposable_package_has_no_nested_marketplace(tmp_path: Path) -> None:
     assert not (output / ".claude-plugin" / "marketplace.json").exists()
 
 
+@pytest.mark.packaging
 def test_diagnose_payload_fingerprint_stays_inside_the_validated_package_manifest() -> None:
     """Keep the doctor's completeness fingerprint aligned with the validated package manifest.
 

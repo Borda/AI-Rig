@@ -18,14 +18,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 FINALIZER = PLUGIN_ROOT / "shared" / "final_handoff.py"
 SHARED_VALIDATOR = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
 RESULT_WRITER = PLUGIN_ROOT / "shared" / "write-result.py"
-REMEDIATION_COLUMNS = [
-    "Item",
-    "Severity",
-    "Finding",
-    "Sources",
-    "Outcome",
-    "Evidence / next action",
-]
+REMEDIATION_COLUMNS = ["Item", "Severity", "Finding", "Sources", "Outcome", "Evidence / next action"]
 
 
 def _load_finalizer() -> Any:

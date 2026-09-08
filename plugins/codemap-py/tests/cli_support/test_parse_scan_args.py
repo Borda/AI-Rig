@@ -74,10 +74,18 @@ class TestRootPosition:
     @pytest.mark.parametrize(
         ("arguments", "expected"),
         [
-            ("--root /abs/path --incremental", ["--root", "/abs/path", "--incremental"]),
-            ("--incremental --root /abs/path", ["--root", "/abs/path", "--incremental"]),
-            ("prefix-noise --root /abs/path", ["--root", "/abs/path"]),
-            ("--root /abs/path trailing-noise", ["--root", "/abs/path"]),
+            pytest.param(
+                "--root /abs/path --incremental",
+                ["--root", "/abs/path", "--incremental"],
+                id="root-abs-path---incremental",
+            ),
+            pytest.param(
+                "--incremental --root /abs/path",
+                ["--root", "/abs/path", "--incremental"],
+                id="incremental---root-abs-path",
+            ),
+            pytest.param("prefix-noise --root /abs/path", ["--root", "/abs/path"], id="prefix-noise---root-abs-path"),
+            pytest.param("--root /abs/path trailing-noise", ["--root", "/abs/path"], id="root-abs-path-trailing-noise"),
         ],
     )
     def test_position_variants(self, arguments: str, expected: list[str]) -> None:

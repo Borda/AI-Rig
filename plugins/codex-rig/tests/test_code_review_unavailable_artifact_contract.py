@@ -156,13 +156,35 @@ def test_unavailable_pr_artifact_retains_conservative_checkout_state(tmp_path: P
 @pytest.mark.parametrize(
     ("decision", "finding_table", "extra_result", "extra_notes"),
     [
-        (True, False, None, ""),
-        (False, True, None, ""),
-        (False, False, {"recommendations": ["needs-more-work"]}, ""),
-        (False, False, {"follow_up": ["merge must be blocked"]}, ""),
-        (False, False, {"findings": {"critical": 0, "high": 0, "medium": 0, "low": 0, "source_review": {}}}, ""),
-        (False, False, None, "\n## Decision Summary\n\nRecommendation: needs-more-work\n"),
-        (False, False, None, "\nSource assessment: implementation requires changes.\n"),
+        pytest.param(True, False, None, "", id="true"),
+        pytest.param(False, True, None, "", id="false-true"),
+        pytest.param(
+            False, False, {"recommendations": ["needs-more-work"]}, "", id="false-false-recommendations-needs-more-work"
+        ),
+        pytest.param(
+            False, False, {"follow_up": ["merge must be blocked"]}, "", id="false-false-follow_up-merge-must-be-blocked"
+        ),
+        pytest.param(
+            False,
+            False,
+            {"findings": {"critical": 0, "high": 0, "medium": 0, "low": 0, "source_review": {}}},
+            "",
+            id="false-false-findings-critical-0-high-0-medium-0-low-0-source_review",
+        ),
+        pytest.param(
+            False,
+            False,
+            None,
+            "\n## Decision Summary\n\nRecommendation: needs-more-work\n",
+            id="false-false-none-decision-summary-recommendation-needs-more-work",
+        ),
+        pytest.param(
+            False,
+            False,
+            None,
+            "\nSource assessment: implementation requires changes.\n",
+            id="false-false-none-source-assessment-implementation-requires-changes.",
+        ),
     ],
 )
 def test_unavailable_pr_artifact_rejects_assessed_review_content(

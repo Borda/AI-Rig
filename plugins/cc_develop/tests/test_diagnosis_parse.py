@@ -16,12 +16,7 @@ import diagnosis_parse  # type: ignore[import-not-found]
 
 @pytest.mark.parametrize(
     "arguments",
-    [
-        "--diagnosis={path}",
-        "--diagnosis {path}",
-        "--diagnosis=relative/diag.md",
-        "--diagnosis 'relative path/diag.md'",
-    ],
+    ["--diagnosis={path}", "--diagnosis {path}", "--diagnosis=relative/diag.md", "--diagnosis 'relative path/diag.md'"],
 )
 def test_valid_diagnosis_forms(
     tmp_path: Path,
@@ -158,14 +153,7 @@ def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage" in capsys.readouterr().out.lower()
 
 
-@pytest.mark.parametrize(
-    "blob",
-    [
-        pytest.param("--mode fix --team", id="dash-tokens-no-diagnosis"),
-        pytest.param("--diagnosis", id="bare-diagnosis-token-only"),
-        pytest.param("--team --other", id="multiple-unknown-dash-tokens"),
-    ],
-)
+@pytest.mark.parametrize("blob", ["--mode fix --team", "--diagnosis", "--team --other"])
 def test_blob_dash_tokens_reach_inner_parser_unmangled(blob: str, capsys: pytest.CaptureFixture[str]) -> None:
     """A blob whose tokens are ``--``-shaped is passed opaquely to parse_diagnosis, not argparse.
 

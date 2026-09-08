@@ -14,7 +14,6 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="requires bash")
 
 SCRIPT = Path(__file__).parent.parent / "bin" / "resolve-quality-gates.sh"
 
@@ -31,6 +30,10 @@ def _sh(*args: str, env: dict | None = None, cwd: str | None = None) -> subproce
     )
 
 
+_skip_windows_posix = pytest.mark.skipif(sys.platform == "win32", reason="requires bash")
+
+
+@_skip_windows_posix
 def test_local_claude_rules_preferred(tmp_path: Path) -> None:
     """Project-local ``.claude/rules/quality-gates.md`` takes priority over cache."""
     project = tmp_path / "project"
@@ -49,6 +52,7 @@ def test_local_claude_rules_preferred(tmp_path: Path) -> None:
     assert result.stdout.strip() == str(local_file)
 
 
+@_skip_windows_posix
 def test_cache_fallback_when_local_absent(tmp_path: Path) -> None:
     """No local ``.claude/rules/`` → resolver falls back to foundry plugin cache."""
     project = tmp_path / "project"
@@ -65,6 +69,7 @@ def test_cache_fallback_when_local_absent(tmp_path: Path) -> None:
     assert result.stdout.strip() == str(cache_file)
 
 
+@_skip_windows_posix
 def test_neither_location_exits_nonzero(tmp_path: Path) -> None:
     """No local and no cached file → exit 1 with stderr warning, empty stdout."""
     project = tmp_path / "project"
@@ -76,6 +81,7 @@ def test_neither_location_exits_nonzero(tmp_path: Path) -> None:
     assert "quality-gates.md not found" in result.stderr
 
 
+@_skip_windows_posix
 def test_git_root_env_override(tmp_path: Path) -> None:
     """Prefer an explicit repository root over Git discovery."""
     explicit_root = tmp_path / "explicit"

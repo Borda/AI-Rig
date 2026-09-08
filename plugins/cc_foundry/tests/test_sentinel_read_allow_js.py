@@ -25,10 +25,7 @@ import pytest
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "sentinel-read-allow.js"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 SENTINEL = '"${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"'
 
@@ -64,6 +61,13 @@ def _is_allowed(result: dict) -> bool:
 # ── Blueprint sentinel reads with read-only follow-ups are allowed ────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
@@ -73,54 +77,21 @@ def _is_allowed(result: dict) -> bool:
             'cat "$RUN_DIR/foundry--solution-architect.md"',
             id="observed-run-dir-cat",
         ),
-        pytest.param(
-            f'RUN_DIR="$(cat {SENTINEL})"; ls "$RUN_DIR"/*.md',
-            id="observed-quoted-assign-ls-glob",
-        ),
-        pytest.param(
-            'FOUNDRY_SHARED=$(cat "${TMPDIR:-/tmp}/foundry-shared-dir-${CSID}"); '
-            'cat "$FOUNDRY_SHARED/agent-spawn-protocol.md"',
-            id="observed-shared-dir-cat",
-        ),
-        pytest.param(
-            'V=$(cat ${TMPDIR:-/tmp}/dev-review-run-dir-123 2>/dev/null || echo "")',
-            id="unquoted-path-variant",
-        ),
-        pytest.param(
-            f'V=$(cat {SENTINEL} 2>/dev/null || echo "$CLEAN_ARGS")',
-            id="default-from-variable",
-        ),
-        pytest.param(
-            f'V=$(cat {SENTINEL}); grep -c "verdict" "$V/report.md" | head -5',
-            id="pipe-into-whitelisted",
-        ),
-        pytest.param(
-            f'V=$(cat {SENTINEL}); [ -z "$V" ] && echo missing',
-            id="test-bracket-guard",
-        ),
-        pytest.param(
-            'TS=$(date -u +%Y-%m-%dT%H-%M-%SZ); echo "$TS"',
-            id="date-stamp-echo",
-        ),
-        pytest.param(
-            'IFS= read -r TS < "${TMPDIR:-/tmp}/dev-fix-team-ts-${CSID}" 2>/dev/null || TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)',
-            id="read-form-with-date-fallback",
-        ),
+        pytest.param(f'RUN_DIR="$(cat {SENTINEL})"; ls "$RUN_DIR"/*.md', id="observed-quoted-assign-ls-glob"),
+        'FOUNDRY_SHARED=$(cat "${TMPDIR:-/tmp}/foundry-shared-dir-${CSID}"); '
+        'cat "$FOUNDRY_SHARED/agent-spawn-protocol.md"',
+        'V=$(cat ${TMPDIR:-/tmp}/dev-review-run-dir-123 2>/dev/null || echo "")',
+        pytest.param(f'V=$(cat {SENTINEL} 2>/dev/null || echo "$CLEAN_ARGS")', id="default-from-variable"),
+        pytest.param(f'V=$(cat {SENTINEL}); grep -c "verdict" "$V/report.md" | head -5', id="pipe-into-whitelisted"),
+        pytest.param(f'V=$(cat {SENTINEL}); [ -z "$V" ] && echo missing', id="test-bracket-guard"),
+        'TS=$(date -u +%Y-%m-%dT%H-%M-%SZ); echo "$TS"',
+        'IFS= read -r TS < "${TMPDIR:-/tmp}/dev-fix-team-ts-${CSID}" 2>/dev/null || TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)',
         # Pure read-form anchor — ZERO substitutions. Prefix allow-rules can never
         # match it (first token = `IFS=` assignment), so the hook must carry it.
-        pytest.param(
-            'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""',
-            id="read-form-pure-no-subst",
-        ),
-        pytest.param(
-            'IFS= read -r V < "${TMPDIR:-/tmp}/foundry-shared-dir-${CSID}" 2>/dev/null || V=""\n'
-            'cat "$V/agent-spawn-protocol.md"',
-            id="read-form-then-cat",
-        ),
-        pytest.param(
-            "IFS= read -r V < ${TMPDIR:-/tmp}/dev-review-run-dir-123 2>/dev/null || V=x",
-            id="read-form-unquoted-path",
-        ),
+        'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""',
+        'IFS= read -r V < "${TMPDIR:-/tmp}/foundry-shared-dir-${CSID}" 2>/dev/null || V=""\n'
+        'cat "$V/agent-spawn-protocol.md"',
+        "IFS= read -r V < ${TMPDIR:-/tmp}/dev-review-run-dir-123 2>/dev/null || V=x",
     ],
 )
 def test_blueprint_sentinel_reads_are_allowed(command: str) -> None:
@@ -129,6 +100,7 @@ def test_blueprint_sentinel_reads_are_allowed(command: str) -> None:
     assert _is_allowed(result), f"{command!r} should be allowed, got: {result}"
 
 
+@_skip_node_unavailable
 def test_allow_emits_no_updated_input() -> None:
     """Allow decision must not rewrite the command — deny rules match the original."""
     result = _run(f"V=$(cat {SENTINEL})")
@@ -138,37 +110,29 @@ def test_allow_emits_no_updated_input() -> None:
 # ── Anything not provably the blueprint idiom must passthrough ────────────────
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
         pytest.param(f"rm $(cat {SENTINEL})", id="rm-not-whitelisted"),
         pytest.param(f"V=$(cat {SENTINEL}); git push origin main", id="git-push-chain"),
-        pytest.param('V=$(cat "/etc/passwd")', id="non-tmpdir-path"),
-        pytest.param('V=$(cat "$HOME/.ssh/id_rsa")', id="home-path"),
+        'V=$(cat "/etc/passwd")',
+        'V=$(cat "$HOME/.ssh/id_rsa")',
         pytest.param(f"V=$(cat {SENTINEL}); W=$(date)", id="second-non-sentinel-subst"),
-        pytest.param("V=`cat ${TMPDIR:-/tmp}/x`", id="backtick"),
+        "V=`cat ${TMPDIR:-/tmp}/x`",
         pytest.param(f"V=$(cat {SENTINEL}); diff <(echo a) <(echo b)", id="process-subst"),
         pytest.param(f"V=$(cat {SENTINEL}); cat <<EOF\nhi\nEOF", id="heredoc"),
         pytest.param(f'V=$(cat {SENTINEL}); echo hi > "$V/out.txt"', id="write-redirect"),
-        pytest.param(
-            'V=$(cat "${TMPDIR:-/tmp}/${X:-$(rm -rf /)}")',
-            id="nested-subst-inside-param-expansion",
-        ),
-        pytest.param(
-            'echo \\" ; rm -rf / ; echo \\"',
-            id="escaped-quote-smuggling",
-        ),
-        pytest.param("ls -la", id="no-substitution-at-all"),
+        'V=$(cat "${TMPDIR:-/tmp}/${X:-$(rm -rf /)}")',
+        'echo \\" ; rm -rf / ; echo \\"',
+        "ls -la",
         # Read-form anchor must NOT loosen anything else:
-        pytest.param('IFS= read -r V < "/etc/passwd"', id="read-form-non-tmpdir"),
-        pytest.param(
-            'IFS= read -r V < "${TMPDIR:-/tmp}/s-1" || V=""; rm -rf "$V"',
-            id="read-form-then-rm",
-        ),
-        pytest.param('read -r V < "${TMPDIR:-/tmp}/../../etc/passwd"', id="read-form-traversal"),
+        'IFS= read -r V < "/etc/passwd"',
+        'IFS= read -r V < "${TMPDIR:-/tmp}/s-1" || V=""; rm -rf "$V"',
+        'read -r V < "${TMPDIR:-/tmp}/../../etc/passwd"',
         pytest.param(f"export PATH=/tmp/evil:$PATH; IFS= read -r V < {SENTINEL}", id="read-form-path-hijack"),
-        pytest.param("TS=$(date +%s; rm -rf /)", id="date-with-injected-command"),
-        pytest.param("TS=$(date -u +%Y -d yesterday)", id="date-with-extra-arg"),
+        "TS=$(date +%s; rm -rf /)",
+        "TS=$(date -u +%Y -d yesterday)",
         pytest.param(f"V=$(cat {SENTINEL}); python -c 'x'", id="python-not-whitelisted"),
         pytest.param(f"V=$(cat {SENTINEL}); curl https://x.example", id="curl-not-whitelisted"),
     ],
@@ -182,37 +146,35 @@ def test_non_blueprint_commands_passthrough(command: str) -> None:
 # ── Codex adversarial-review PoCs (2026-07-22) — all MUST passthrough ─────────
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "command",
     [
         # Class 1 — unquoted path/default swallowing shell syntax (injection inside $()).
-        pytest.param("V=$(cat ${TMPDIR:-/tmp}/sentinel;rm${IFS}/tmp/pwned)", id="poc-unquoted-semicolon-rm"),
-        pytest.param("V=$(cat ${TMPDIR:-/tmp}/sentinel;curl${IFS}https://x.invalid)", id="poc-unquoted-curl"),
-        pytest.param("V=$(cat ${TMPDIR:-/tmp}/sentinel>/tmp/pwned)", id="poc-unquoted-redirect-in-subst"),
-        pytest.param("V=$(cat ${TMPDIR:-/tmp}/sentinel||echo ;>/tmp/pwned)", id="poc-unquoted-default-redirect"),
-        pytest.param("V=$(cat ${TMPDIR:-/tmp}/sentinel)>(touch${IFS}/tmp/pwned)", id="poc-proc-subst-tail"),
+        "V=$(cat ${TMPDIR:-/tmp}/sentinel;rm${IFS}/tmp/pwned)",
+        "V=$(cat ${TMPDIR:-/tmp}/sentinel;curl${IFS}https://x.invalid)",
+        "V=$(cat ${TMPDIR:-/tmp}/sentinel>/tmp/pwned)",
+        "V=$(cat ${TMPDIR:-/tmp}/sentinel||echo ;>/tmp/pwned)",
+        "V=$(cat ${TMPDIR:-/tmp}/sentinel)>(touch${IFS}/tmp/pwned)",
         # Class 2 — find spawns / deletes.
-        pytest.param(
-            f"V=$(cat {SENTINEL}); find /tmp -exec sh -c 'touch /tmp/pwned' {{}} \\;",
-            id="poc-find-exec",
-        ),
+        pytest.param(f"V=$(cat {SENTINEL}); find /tmp -exec sh -c 'touch /tmp/pwned' {{}} \\;", id="poc-find-exec"),
         pytest.param(f"V=$(cat {SENTINEL}); find /tmp -exec curl https://x.invalid \\;", id="poc-find-exec-curl"),
         pytest.param(f"V=$(cat {SENTINEL}); find /tmp -delete", id="poc-find-delete"),
         # Class 3 — writer tokens.
         pytest.param(f"V=$(cat {SENTINEL}); touch /tmp/pwned", id="poc-touch"),
-        pytest.param("TS=$(date +%s); mkdir -p /tmp/pwned-dir", id="poc-mkdir"),
-        pytest.param("TS=$(date +%s); sort -o /tmp/pwned /etc/hosts", id="poc-sort-o"),
-        pytest.param("TS=$(date +%s); date --set=@0", id="poc-date-set-token"),
+        "TS=$(date +%s); mkdir -p /tmp/pwned-dir",
+        "TS=$(date +%s); sort -o /tmp/pwned /etc/hosts",
+        "TS=$(date +%s); date --set=@0",
         # Class 4 — path traversal (input-redirect `<` is intentionally allowed:
         # no escalation over what a whitelisted read-only token already reads).
-        pytest.param('V=$(cat ${TMPDIR:-/tmp}/../../etc/passwd); printf %s "$V"', id="poc-traversal"),
+        'V=$(cat ${TMPDIR:-/tmp}/../../etc/passwd); printf %s "$V"',
         # Re-review pass 2 — loader/lookup-path hijack via sensitive assignment.
         pytest.param(f"export PATH=/tmp/attacker:$PATH; V=$(cat {SENTINEL})", id="poc-path-hijack"),
         pytest.param(f"PATH=/tmp/x:$PATH V=$(cat {SENTINEL})", id="poc-path-inline"),
         pytest.param(f"export LD_PRELOAD=/tmp/evil.so; V=$(cat {SENTINEL}); cat x", id="poc-ld-preload"),
         pytest.param(f"IFS=x; V=$(cat {SENTINEL})", id="poc-nonempty-ifs"),
         # Re-review pass 2 — unquoted bare $VAR word-split read (PV dropped from UPATH).
-        pytest.param('export X=" /etc/passwd"; V=$(cat ${TMPDIR:-/tmp}/$X); printf %s "$V"', id="poc-var-split-read"),
+        'export X=" /etc/passwd"; V=$(cat ${TMPDIR:-/tmp}/$X); printf %s "$V"',
     ],
 )
 def test_codex_poc_bypasses_are_closed(command: str) -> None:
@@ -224,6 +186,7 @@ def test_codex_poc_bypasses_are_closed(command: str) -> None:
 # ── Basic hook hygiene ────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_non_bash_tool_passthrough() -> None:
     """Non-Bash tool payloads are ignored."""
     payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "/x"}})
@@ -232,6 +195,7 @@ def test_non_bash_tool_passthrough() -> None:
     assert proc.stdout.strip() == ""
 
 
+@_skip_node_unavailable
 def test_malformed_json_exits_zero() -> None:
     """Malformed stdin never crashes or blocks."""
     proc = subprocess.run(["node", str(HOOK)], input="not json", capture_output=True, text=True, timeout=10)
@@ -244,6 +208,7 @@ def test_malformed_json_exits_zero() -> None:
 READ_FORM = f"IFS= read -r RUN_DIR < {SENTINEL}"
 
 
+@_skip_node_unavailable
 class TestCommentSegments:
     """Segment validation skips whole-line comments.
 
@@ -293,7 +258,7 @@ class TestCommentSegments:
         "command",
         [
             pytest.param(f"# {READ_FORM}\ncat /etc/passwd", id="poc-commented-read-form-anchor"),
-            pytest.param("# TS=$(date -u +%Y)\ncat /etc/passwd", id="poc-commented-date-anchor"),
+            "# TS=$(date -u +%Y)\ncat /etc/passwd",
             pytest.param(f"cat /etc/passwd ; # {READ_FORM}", id="poc-commented-anchor-after-separator"),
         ],
     )
@@ -322,6 +287,7 @@ class TestCommentSegments:
 # ── Adversarial-review regressions, 2026-08-18 ───────────────────────────────
 
 
+@_skip_node_unavailable
 class TestReviewedBypasses:
     """PoCs from the 2026-08-18 adversarial review (Codex + challenger).
 
@@ -332,11 +298,11 @@ class TestReviewedBypasses:
     @pytest.mark.parametrize(
         "payload",
         [
-            pytest.param("rm -rf /tmp/pwned", id="rm"),
-            pytest.param("sh -c 'id; touch /tmp/m'", id="nested-shell"),
-            pytest.param("git push --force", id="guarded-cli"),
-            pytest.param("python3 -c 'import os'", id="interpreter"),
-            pytest.param("X=1 touch /tmp/m", id="leading-assignment"),
+            "rm -rf /tmp/pwned",
+            "sh -c 'id; touch /tmp/m'",
+            "git push --force",
+            "python3 -c 'import os'",
+            "X=1 touch /tmp/m",
         ],
     )
     def test_escaped_newline_cannot_extend_a_comment_over_a_payload(self, payload: str) -> None:
@@ -357,11 +323,7 @@ class TestReviewedBypasses:
 
     @pytest.mark.parametrize(
         "command",
-        [
-            pytest.param("echo $'\\''; git push --force \\'", id="separator-hidden-by-desync"),
-            pytest.param("cat $'\\056\\056'/etc/passwd", id="octal-dots"),
-            pytest.param("cat $'\\x2e\\x2e'/etc/passwd", id="hex-dots"),
-        ],
+        ["echo $'\\''; git push --force \\'", "cat $'\\056\\056'/etc/passwd", "cat $'\\x2e\\x2e'/etc/passwd"],
     )
     def test_ansi_c_quoting_is_refused_outright(self, command: str) -> None:
         """Reject shell quoting that desynchronizes the quote parser.
@@ -373,13 +335,7 @@ class TestReviewedBypasses:
         result = _run(f"{READ_FORM}\n{command}")
         assert result == {}, f"{command!r} STILL ALLOWED — ANSI-C desync: {result}"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("echo $\\\n'\\''; git push --force \\'", id="split-across-continuation"),
-            pytest.param("cat $\\\n'\\056\\056'/etc/passwd", id="split-then-octal-dots"),
-        ],
-    )
+    @pytest.mark.parametrize("command", ["echo $\\\n'\\''; git push --force \\'", "cat $\\\n'\\056\\056'/etc/passwd"])
     def test_ansi_c_split_across_a_line_continuation_rejects(self, command: str) -> None:
         """ANSI-C quoting assembled across a `\\`+newline must not reach the desync.
 
@@ -391,13 +347,7 @@ class TestReviewedBypasses:
         result = _run(f"{READ_FORM}\n{command}")
         assert result == {}, f"{command!r} STILL ALLOWED — ANSI-C via continuation: {result}"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("cat \\.\\./etc/passwd", id="both-dots-escaped"),
-            pytest.param("cat .\\./etc/passwd", id="second-dot-escaped"),
-        ],
-    )
+    @pytest.mark.parametrize("command", ["cat \\.\\./etc/passwd", "cat .\\./etc/passwd"])
     def test_backslash_escaped_dots_are_still_traversal(self, command: str) -> None:
         """Reject escaped parent traversal that the shell resolves after parsing.
 
@@ -407,13 +357,7 @@ class TestReviewedBypasses:
         result = _run(f"{READ_FORM}\n{command}")
         assert result == {}, f"{command!r} STILL ALLOWED — escaped traversal: {result}"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("uniq /etc/hosts /tmp/pwned", id="uniq-positional-output-file"),
-            pytest.param("uniq /dev/null /tmp/victim.txt", id="uniq-truncates-target"),
-        ],
-    )
+    @pytest.mark.parametrize("command", ["uniq /etc/hosts /tmp/pwned", "uniq /dev/null /tmp/victim.txt"])
     def test_uniq_is_not_a_read_only_token(self, command: str) -> None:
         """Write OUT — it cannot be a whitelisted segment head.
 
@@ -428,11 +372,11 @@ class TestReviewedBypasses:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param('export "PATH"=/attacker/bin:$PATH', id="quoted-var-name"),
-            pytest.param("export \\PATH=/attacker/bin:$PATH", id="backslash-escaped-name"),
-            pytest.param("export PATH+=:/attacker/bin", id="append-operator"),
-            pytest.param('export "GLOBIGNORE"=x', id="quoted-non-path-sensitive-var"),
-            pytest.param('export PA"TH"=/evil', id="quote-split-var-name"),
+            'export "PATH"=/attacker/bin:$PATH',
+            "export \\PATH=/attacker/bin:$PATH",
+            "export PATH+=:/attacker/bin",
+            'export "GLOBIGNORE"=x',
+            'export PA"TH"=/evil',
         ],
     )
     def test_quote_and_append_forms_of_sensitive_assignment_reject(self, command: str) -> None:
@@ -448,10 +392,10 @@ class TestReviewedBypasses:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("cat () ( touch /tmp/pwned ); cat", id="function-def-subshell-body"),
-            pytest.param('cat () ( sh -c "echo X > ./f" ); cat', id="function-def-nested-shell"),
-            pytest.param("ls () ( touch /tmp/pwned ); ls", id="function-def-shadowing-ls"),
-            pytest.param("( touch /tmp/pwned )", id="bare-subshell"),
+            "cat () ( touch /tmp/pwned ); cat",
+            'cat () ( sh -c "echo X > ./f" ); cat',
+            "ls () ( touch /tmp/pwned ); ls",
+            "( touch /tmp/pwned )",
         ],
     )
     def test_bare_parens_are_rejected(self, command: str) -> None:
@@ -468,20 +412,20 @@ class TestReviewedBypasses:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param('printf -v PATH /attacker/bin:%s "$PATH"', id="printf-v-path"),
-            pytest.param("printf -v BASH_ENV /tmp/e", id="printf-v-bash-env"),
-            pytest.param("IFS= read -r PATH < /tmp/attacker", id="read-into-path"),
-            pytest.param("IFS= read -r LD_PRELOAD < /tmp/x", id="read-into-ld-preload"),
-            pytest.param("X=T\nexport PA${X}H=/attacker/bin:$PATH", id="export-computed-name"),
-            pytest.param('export "IFS"=,', id="quoted-ifs"),
-            pytest.param("export \\IFS=,", id="escaped-ifs"),
-            pytest.param("export LD_AUDIT=/tmp/e.so", id="ld-audit"),
-            pytest.param("export DYLD_FRAMEWORK_PATH=/tmp/e", id="dyld-framework-path"),
-            pytest.param("export PROMPT_COMMAND=/tmp/e", id="prompt-command"),
-            pytest.param("echo ${DYLD_INSERT_LIBRARIES:=/tmp/evil.dylib}", id="colon-equals-expansion"),
-            pytest.param("echo ${LD_PRELOAD:=/tmp/evil.so}", id="colon-equals-ld-preload"),
-            pytest.param("echo ${IFS:=X}", id="colon-equals-ifs"),
-            pytest.param("echo ${IFS=X}", id="brace-boundary-ifs"),
+            'printf -v PATH /attacker/bin:%s "$PATH"',
+            "printf -v BASH_ENV /tmp/e",
+            "IFS= read -r PATH < /tmp/attacker",
+            "IFS= read -r LD_PRELOAD < /tmp/x",
+            "X=T\nexport PA${X}H=/attacker/bin:$PATH",
+            'export "IFS"=,',
+            "export \\IFS=,",
+            "export LD_AUDIT=/tmp/e.so",
+            "export DYLD_FRAMEWORK_PATH=/tmp/e",
+            "export PROMPT_COMMAND=/tmp/e",
+            "echo ${DYLD_INSERT_LIBRARIES:=/tmp/evil.dylib}",
+            "echo ${LD_PRELOAD:=/tmp/evil.so}",
+            "echo ${IFS:=X}",
+            "echo ${IFS=X}",
         ],
     )
     def test_non_assignment_routes_to_setting_a_variable_reject(self, command: str) -> None:
@@ -499,9 +443,9 @@ class TestReviewedBypasses:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("printf '%s\\n' \"$RUN_DIR\"", id="printf-without-v"),
-            pytest.param('export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"', id="export-literal-name"),
-            pytest.param('IFS= read -r OTHER < "${TMPDIR:-/tmp}/y-${CSID}"', id="read-into-ordinary-name"),
+            "printf '%s\\n' \"$RUN_DIR\"",
+            'export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"',
+            'IFS= read -r OTHER < "${TMPDIR:-/tmp}/y-${CSID}"',
         ],
     )
     def test_variable_write_guards_spare_the_blueprint_idioms(self, command: str) -> None:
@@ -526,6 +470,7 @@ class TestReviewedBypasses:
 # ── Stripped redirect forms must end at a token boundary ─────────────────────
 
 
+@_skip_node_unavailable
 class TestRedirectStripping:
     """Only genuine stderr-silencing / stdout-to-null forms are stripped.
 
@@ -573,6 +518,7 @@ class TestRedirectStripping:
 # ── `..` is matched as a path component, not as any two dots ──────────────────
 
 
+@_skip_node_unavailable
 class TestTraversalMatching:
     """Traversal rejection keys on a real path component.
 
@@ -596,7 +542,7 @@ class TestTraversalMatching:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param('IFS= read -r V < "${TMPDIR:-/tmp}/../../etc/passwd"', id="traversal-in-sentinel"),
+            'IFS= read -r V < "${TMPDIR:-/tmp}/../../etc/passwd"',
             pytest.param(f'{READ_FORM}\ncat "$RUN_DIR/../secrets.md"', id="traversal-mid-path"),
             pytest.param(f'{READ_FORM}\ncat "../etc/passwd"', id="traversal-leading"),
             pytest.param(f'{READ_FORM}\ncat "$RUN_DIR/.."', id="traversal-trailing"),
@@ -639,6 +585,7 @@ class TestTraversalMatching:
 # ── Verdicts are invariant under runtime value substitution ───────────────────
 
 
+@_skip_node_unavailable
 class TestRuntimeInvariance:
     """The same shape gets the same verdict whatever the runtime values are.
 
@@ -650,31 +597,13 @@ class TestRuntimeInvariance:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param(
-                'IFS= read -r WORK_DIR < "${TMPDIR:-/tmp}/develop-fix-run-dir-${CSID}"\n'
-                'grep -n "CRITICAL" "$WORK_DIR/out.md" | head -200',
-                id="renamed-sentinel-and-var",
-            ),
-            pytest.param(
-                'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-$CSID"\ncat "$RUN_DIR/r.md"',
-                id="csid-plain-var",
-            ),
-            pytest.param(
-                'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID:-shared}"\ncat "$RUN_DIR/r.md"',
-                id="csid-with-default",
-            ),
-            pytest.param(
-                f'{READ_FORM}\ncat "$RUN_DIR/my report.md"',
-                id="target-with-space",
-            ),
-            pytest.param(
-                f'{READ_FORM}\ncat "$RUN_DIR/foundry--challenger.md"',
-                id="target-with-double-hyphen",
-            ),
-            pytest.param(
-                'IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH"\necho "$BRANCH"',
-                id="subdir-sentinel-path",
-            ),
+            'IFS= read -r WORK_DIR < "${TMPDIR:-/tmp}/develop-fix-run-dir-${CSID}"\n'
+            'grep -n "CRITICAL" "$WORK_DIR/out.md" | head -200',
+            'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-$CSID"\ncat "$RUN_DIR/r.md"',
+            'IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID:-shared}"\ncat "$RUN_DIR/r.md"',
+            pytest.param(f'{READ_FORM}\ncat "$RUN_DIR/my report.md"', id="target-with-space"),
+            pytest.param(f'{READ_FORM}\ncat "$RUN_DIR/foundry--challenger.md"', id="target-with-double-hyphen"),
+            'IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH"\necho "$BRANCH"',
         ],
     )
     def test_allows_every_runtime_variant_of_one_shape(self, command: str) -> None:

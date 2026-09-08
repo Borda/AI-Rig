@@ -352,11 +352,7 @@ def test_public_pr_metadata_normalizes_an_absent_optional_body() -> None:
 
 @pytest.mark.parametrize(
     "target",
-    [
-        pytest.param("https://github.com/Borda/AI-Rig/pull/17", id="canonical-pr-url"),
-        pytest.param("https://github.com/borda/ai-rig/pull/17", id="case-normalized-canonical-pr-url"),
-        pytest.param("17", id="unique-configured-github-remote"),
-    ],
+    ["https://github.com/Borda/AI-Rig/pull/17", "https://github.com/borda/ai-rig/pull/17", "17"],
 )
 @pytest.mark.parametrize(
     ("failure_kind", "stderr"),
@@ -589,10 +585,7 @@ def test_collect_pr_rejects_canonical_url_without_matching_configured_github_rem
 
 @pytest.mark.parametrize(
     "target",
-    [
-        pytest.param("https://github.com/Borda/AI-Rig/pull/17?access_token=secret", id="token-query"),
-        pytest.param("https://token@github.com/Borda/AI-Rig/pull/17", id="userinfo"),
-    ],
+    ["https://github.com/Borda/AI-Rig/pull/17?access_token=secret", "https://token@github.com/Borda/AI-Rig/pull/17"],
 )
 def test_collect_pr_rejects_unsafe_public_target_without_persisting_it(
     target: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -954,9 +947,9 @@ def test_collect_pr_failure_clears_prior_attempt_before_retaining_current_diagno
 @pytest.mark.parametrize(
     ("argv", "label"),
     [
-        (["gh", "pr", "merge", "17", "--merge"], "gh-pr-merge"),
-        (["gh", "auth", "status"], "gh-auth-status"),
-        (
+        pytest.param(["gh", "pr", "merge", "17", "--merge"], "gh-pr-merge", id="gh-pr-merge-17---merge"),
+        pytest.param(["gh", "auth", "status"], "gh-auth-status", id="gh-auth-status"),
+        pytest.param(
             [
                 "gh",
                 "api",
@@ -971,6 +964,7 @@ def test_collect_pr_failure_clears_prior_attempt_before_retaining_current_diagno
                 "query=mutation { closePullRequest(input: {}) { pullRequest { id } } }",
             ],
             "gh-review-threads",
+            id="gh-api-graphql--f-owner-borda--f-name-ai-rig--f-number-17--f-query-mutat",
         ),
     ],
 )

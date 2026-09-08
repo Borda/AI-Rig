@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _SCRIPTS = _PLUGIN_ROOT / "scripts"
@@ -57,6 +58,8 @@ def _assert_source_hidden(installed_path: str) -> None:
 
 
 @pytest.mark.skipif(not _CLAUDE_CLI_AVAILABLE, reason="claude CLI not present on this runner")
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_claude_probe_installs_and_verifies_exact_roster() -> None:
     """The Claude probe installs the built package and verifies the exact 6-skill roster."""
     result = _run_probe("probe_claude_install.py")
@@ -71,6 +74,8 @@ def test_claude_probe_installs_and_verifies_exact_roster() -> None:
 
 
 @pytest.mark.skipif(not _CODEX_CLI_AVAILABLE, reason="codex CLI not present on this runner")
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_codex_probe_installs_and_verifies_exact_roster() -> None:
     """The Codex probe installs the built package and verifies the exact six-skill roster (Phase 4)."""
     result = _run_probe("probe_codex_install.py")
@@ -106,6 +111,7 @@ def _assert_runtime_proof(result: dict) -> None:
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX executable-bit falsification")
+@pytest.mark.packaging
 def test_runtime_proof_fails_when_launcher_mode_stripped(tmp_path: Path) -> None:
     """Falsification: a non-executable installed launcher makes the runtime proof fail (no fallback)."""
     if str(_SCRIPTS) not in sys.path:

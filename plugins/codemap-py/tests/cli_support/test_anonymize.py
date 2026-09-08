@@ -414,16 +414,7 @@ def test_refuse_when_explicit_output_dir_contains_salt(tmp_path: Path) -> None:
     (unsafe_dir / ".salt").write_text("00" * 32)
     salt_file = tmp_path / "keep" / ".salt"
 
-    rc = anonymize.main(
-        [
-            "--input",
-            str(src),
-            "--output",
-            str(unsafe_dir / "cli-anon.jsonl"),
-            "--salt",
-            str(salt_file),
-        ]
-    )
+    rc = anonymize.main(["--input", str(src), "--output", str(unsafe_dir / "cli-anon.jsonl"), "--salt", str(salt_file)])
     assert rc == anonymize._EXIT_UNSAFE_OUT_DIR
     assert not (unsafe_dir / "cli-anon.jsonl").exists()
 
@@ -460,7 +451,12 @@ def test_cli_subprocess_refusal_exit_code(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file-mode bits are not meaningful on Windows")
+_skip_windows_posix = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX file-mode bits are not meaningful on Windows"
+)
+
+
+@_skip_windows_posix
 def test_salt_file_created_0600(tmp_path: Path) -> None:
     """A freshly created salt file is owner-only (0o600) so no local user can reverse pseudonyms."""
     salt_file = tmp_path / ".salt"
@@ -469,7 +465,7 @@ def test_salt_file_created_0600(tmp_path: Path) -> None:
     assert mode == 0o600, f"salt file mode is {oct(mode)}, expected 0o600"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file-mode bits are not meaningful on Windows")
+@_skip_windows_posix
 def test_salt_file_0600_regardless_of_umask(tmp_path: Path) -> None:
     """The 0o600 mode holds even under a permissive umask that would otherwise widen it."""
     salt_file = tmp_path / ".salt"

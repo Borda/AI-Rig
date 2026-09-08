@@ -434,8 +434,7 @@ def test_existing_roots_remain_unchanged_intent() -> None:
 
 @pytest.mark.parametrize(
     ("target_inode", "expected"),
-    [(2, "unchanged"), (99, "rebind-removed-root")],
-    ids=["same-root", "replaced-root"],
+    [pytest.param(2, "unchanged", id="same-root"), pytest.param(99, "rebind-removed-root", id="replaced-root")],
 )
 def test_removed_tombstone_binds_target_root_identity(target_inode: int, expected: str) -> None:
     """Require explicit rebind approval when an empty removed root was replaced."""
@@ -495,14 +494,18 @@ def test_forward_cache_migration_binds_exact_source_and_historical_union() -> No
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [
-        ("sha256", "0" * 64),
-        ("transition", "development-rebuild"),
-        ("plugin_version", "0.1.1"),
-        ("package_hash", "0" * 64),
-        ("bootstrap", {"protocol": 1, "helper_path": "scripts/verify_role_link.py", "helper_hash": "0" * 64}),
-        ("generator_version", 2),
-        ("roster_hash", "0" * 64),
-        (
+        pytest.param("sha256", "0" * 64, id="sha256"),
+        pytest.param("transition", "development-rebuild", id="transition"),
+        pytest.param("plugin_version", "0.1.1", id="plugin_version"),
+        pytest.param("package_hash", "0" * 64, id="package_hash"),
+        pytest.param(
+            "bootstrap",
+            {"protocol": 1, "helper_path": "scripts/verify_role_link.py", "helper_hash": "0" * 64},
+            id="bootstrap",
+        ),
+        pytest.param("generator_version", 2, id="generator_version"),
+        pytest.param("roster_hash", "0" * 64, id="roster_hash"),
+        pytest.param(
             "plugin_root_identity",
             {
                 "canonical_path": "/plugin-cache/other",
@@ -512,6 +515,7 @@ def test_forward_cache_migration_binds_exact_source_and_historical_union() -> No
                 "group": 20,
                 "mode": "0700",
             },
+            id="plugin_root_identity",
         ),
     ],
 )

@@ -13,6 +13,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "module",
     [

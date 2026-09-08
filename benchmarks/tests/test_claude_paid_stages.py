@@ -753,8 +753,22 @@ def test_executable_stage_row_uses_pooling_eligibility_for_its_leading_glyph(scr
 @pytest.mark.parametrize(
     ("study", "task_id", "loader_name", "tasks_path_name", "executor_name"),
     [
-        ("fix-single", "FS-01", "load_claude_fix_single_tasks", "FIX_SINGLE_TASKS_PATH", "execute_fix_single_patch"),
-        ("fix-multi", "FM-01", "load_claude_fix_multi_tasks", "FIX_MULTI_TASKS_PATH", "execute_fix_multi_patch"),
+        pytest.param(
+            "fix-single",
+            "FS-01",
+            "load_claude_fix_single_tasks",
+            "FIX_SINGLE_TASKS_PATH",
+            "execute_fix_single_patch",
+            id="fix-single",
+        ),
+        pytest.param(
+            "fix-multi",
+            "FM-01",
+            "load_claude_fix_multi_tasks",
+            "FIX_MULTI_TASKS_PATH",
+            "execute_fix_multi_patch",
+            id="fix-multi",
+        ),
     ],
 )
 def test_paid_executable_stage_preserves_canonical_diff_oracle_and_workspace_cleanup(

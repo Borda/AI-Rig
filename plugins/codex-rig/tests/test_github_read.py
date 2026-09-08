@@ -101,10 +101,7 @@ def test_default_gh_transport_rejects_oversized_output_without_returning_it(monk
 
 @pytest.mark.parametrize(
     "argv",
-    [
-        ["gh", "api", "/repos/Borda/AI-Rig/issues/17"],
-        ["gh", "api", "/repos/Borda/AI-Rig/issues/17", "--method", "GET"],
-    ],
+    [["gh", "api", "/repos/Borda/AI-Rig/issues/17"], ["gh", "api", "/repos/Borda/AI-Rig/issues/17", "--method", "GET"]],
 )
 def test_run_gh_read_allows_rest_get_commands(argv: list[str]) -> None:
     """Allow REST GET requests through the shared read boundary."""
@@ -373,14 +370,22 @@ def test_dns_failures_enable_public_last_resort_transport(stderr: bytes) -> None
 @pytest.mark.parametrize(
     ("stderr", "expected"),
     [
-        (b"run gh auth login to authenticate", "github-auth"),
-        (b"HTTP 401: authentication required", "github-auth"),
-        (b"request requires authentication", "github-auth"),
-        (b"context deadline exceeded", "github-network"),
-        (b"read: connection reset by peer", "github-network"),
-        (b"failed to connect to api.github.com port 443", "github-network"),
-        (b"Client.Timeout exceeded while awaiting headers", "github-network"),
-        (b"oauth token has expired", "github-auth"),
+        pytest.param(b"run gh auth login to authenticate", "github-auth", id="b-run-gh-auth-login-to-authenticate"),
+        pytest.param(b"HTTP 401: authentication required", "github-auth", id="b-http-401-authentication-required"),
+        pytest.param(b"request requires authentication", "github-auth", id="b-request-requires-authentication"),
+        pytest.param(b"context deadline exceeded", "github-network", id="b-context-deadline-exceeded"),
+        pytest.param(b"read: connection reset by peer", "github-network", id="b-read-connection-reset-by-peer"),
+        pytest.param(
+            b"failed to connect to api.github.com port 443",
+            "github-network",
+            id="b-failed-to-connect-to-api.github.com-port-443",
+        ),
+        pytest.param(
+            b"Client.Timeout exceeded while awaiting headers",
+            "github-network",
+            id="b-client.timeout-exceeded-while-awaiting-headers",
+        ),
+        pytest.param(b"oauth token has expired", "github-auth", id="b-oauth-token-has-expired"),
     ],
 )
 def test_gh_failure_classifies_common_auth_and_transport_diagnostics(stderr: bytes, expected: str) -> None:

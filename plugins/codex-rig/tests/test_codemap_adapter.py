@@ -338,12 +338,16 @@ def test_skip_route_persists_auditable_context_without_resolving_codemap(monkeyp
 @pytest.mark.parametrize(
     ("query_kind", "target", "expected_target", "expected_query"),
     [
-        ("central", "pkg.mod::edit", "pkg.mod::edit", ["central", "--top", "5"]),
-        ("callers", "pkg.mod::edit", "pkg.mod::edit", ["fn-rdeps", "pkg.mod::edit", "--exclude-tests"]),
-        ("blast", "pkg.mod::edit", "pkg.mod::edit", ["fn-blast", "pkg.mod::edit"]),
-        ("dependencies", "pkg.mod::edit", "pkg.mod::edit", ["rdeps", "pkg.mod"]),
-        ("test-impact", "pkg.mod::edit", "pkg.mod::edit", ["test-impact", "pkg.mod::edit"]),
-        ("coupling", "pkg.mod::edit", "pkg.mod::edit", ["coupled"]),
+        pytest.param("central", "pkg.mod::edit", "pkg.mod::edit", ["central", "--top", "5"], id="central"),
+        pytest.param(
+            "callers", "pkg.mod::edit", "pkg.mod::edit", ["fn-rdeps", "pkg.mod::edit", "--exclude-tests"], id="callers"
+        ),
+        pytest.param("blast", "pkg.mod::edit", "pkg.mod::edit", ["fn-blast", "pkg.mod::edit"], id="blast"),
+        pytest.param("dependencies", "pkg.mod::edit", "pkg.mod::edit", ["rdeps", "pkg.mod"], id="dependencies"),
+        pytest.param(
+            "test-impact", "pkg.mod::edit", "pkg.mod::edit", ["test-impact", "pkg.mod::edit"], id="test-impact"
+        ),
+        pytest.param("coupling", "pkg.mod::edit", "pkg.mod::edit", ["coupled"], id="coupling"),
     ],
 )
 def test_fact_routes_run_doctor_and_exactly_one_compact_query(
@@ -407,18 +411,18 @@ def test_fact_route_without_target_records_bounded_error_after_doctor(monkeypatc
 @pytest.mark.parametrize(
     ("query_kind", "target"),
     [
-        ("callers", None),
-        ("callers", "pkg.mod"),
-        ("callers", "pkg.mod::"),
-        ("callers", "pkg.mod::edit::nested"),
-        ("blast", None),
-        ("blast", "pkg.mod"),
-        ("blast", "::edit"),
-        ("dependencies", None),
-        ("dependencies", "pkg.mod::"),
-        ("dependencies", "pkg.mod::edit::nested"),
-        ("test-impact", None),
-        ("test-impact", "::edit"),
+        pytest.param("callers", None, id="callers-none"),
+        pytest.param("callers", "pkg.mod", id="callers-module-only"),
+        pytest.param("callers", "pkg.mod::", id="callers-empty-symbol"),
+        pytest.param("callers", "pkg.mod::edit::nested", id="callers-pkg.mod-edit-nested"),
+        pytest.param("blast", None, id="blast-none"),
+        pytest.param("blast", "pkg.mod", id="blast-pkg.mod"),
+        pytest.param("blast", "::edit", id="blast-edit"),
+        pytest.param("dependencies", None, id="dependencies-none"),
+        pytest.param("dependencies", "pkg.mod::", id="dependencies-pkg.mod"),
+        pytest.param("dependencies", "pkg.mod::edit::nested", id="dependencies-pkg.mod-edit-nested"),
+        pytest.param("test-impact", None, id="test-impact-none"),
+        pytest.param("test-impact", "::edit", id="test-impact-edit"),
     ],
 )
 def test_fact_routes_degrade_without_query_for_missing_or_malformed_target(
@@ -721,15 +725,7 @@ def test_cli_context_persists_json_to_out_path(monkeypatch: pytest.MonkeyPatch, 
     out_path = tmp_path / "run" / "codemap-context.json"
 
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(ADAPTER_PATH),
-            "context",
-            "--category",
-            "review",
-            "--out",
-            str(out_path),
-        ],
+        [sys.executable, str(ADAPTER_PATH), "context", "--category", "review", "--out", str(out_path)],
         capture_output=True,
         text=True,
         env=env,

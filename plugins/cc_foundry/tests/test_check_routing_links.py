@@ -541,9 +541,9 @@ class TestFormatResults:
     @pytest.mark.parametrize(
         ("severity", "expected_exit", "expected_fragment"),
         [
-            (Severity.FAIL, 1, "R1-FAIL"),
-            (Severity.WARN, 0, "R1-WARN"),
-            (Severity.INFO, 0, "reference(s) skipped"),
+            pytest.param(Severity.FAIL, 1, "R1-FAIL", id="severity.fail"),
+            pytest.param(Severity.WARN, 0, "R1-WARN", id="severity.warn"),
+            pytest.param(Severity.INFO, 0, "reference(s) skipped", id="severity.info"),
         ],
     )
     def test_r1_exit_code_by_severity(self, severity: Severity, expected_exit: int, expected_fragment: str) -> None:
@@ -582,10 +582,7 @@ class TestFormatResults:
 
     @pytest.mark.parametrize(
         ("severity", "expected_exit"),
-        [
-            (Severity.FAIL, 1),
-            (Severity.WARN, 0),
-        ],
+        [pytest.param(Severity.FAIL, 1, id="severity.fail"), pytest.param(Severity.WARN, 0, id="severity.warn")],
     )
     def test_r3_exit_code_by_severity(self, severity: Severity, expected_exit: int) -> None:
         results = CheckResults()
@@ -647,14 +644,7 @@ class TestMain:
         plugins_dir.mkdir()
         cache_dir = tmp_path / "cache"
         cache_dir.mkdir()
-        exit_code = main(
-            [
-                "--plugins-dir",
-                str(plugins_dir),
-                "--cache-dir",
-                str(cache_dir),
-            ]
-        )
+        exit_code = main(["--plugins-dir", str(plugins_dir), "--cache-dir", str(cache_dir)])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert "✓" in captured.out

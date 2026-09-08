@@ -205,7 +205,14 @@ def test_emit_progress_keeps_native_log_while_terminal_uses_aggregate_counter(
     assert run_log.read_text(encoding="utf-8") == "(1/3) ✓  RC-01  C_strict\n"
 
 
-@pytest.mark.parametrize(("arm", "ansi_code"), (("A_plain", "33"), ("B_auto", "36"), ("C_strict", "35")))
+@pytest.mark.parametrize(
+    ("arm", "ansi_code"),
+    (
+        pytest.param("A_plain", "33", id="a_plain"),
+        pytest.param("B_auto", "36", id="b_auto"),
+        pytest.param("C_strict", "35", id="c_strict"),
+    ),
+)
 def test_readcrop_rows_are_compatible_with_the_shared_arm_palette(arm: str, ansi_code: str) -> None:
     """ReadCrop labels retain the structural A/B/C palette when ANSI is forced."""
     runner = _load()

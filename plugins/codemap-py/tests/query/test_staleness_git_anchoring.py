@@ -350,15 +350,7 @@ class TestGitFailureIsUndetermined:
 class TestWriterReaderFileSetParity:
     """Both staleness paths watch the file set the index writer actually records."""
 
-    @pytest.mark.parametrize(
-        "pattern",
-        [
-            pytest.param("*.py", id="python"),
-            pytest.param("*.pyi", id="stub"),
-            pytest.param("*.rst", id="rst"),
-            pytest.param("docs/**/*.md", id="docs-markdown"),
-        ],
-    )
+    @pytest.mark.parametrize("pattern", ["*.py", "*.pyi", "*.rst", "docs/**/*.md"])
     def test_pathspec_covers_every_indexed_kind(self, pattern: str) -> None:
         """Every file kind scan-index records a SHA for is watched for staleness."""
         assert pattern in query._INDEXED_PATHSPEC

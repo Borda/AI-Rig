@@ -259,13 +259,16 @@ def test_approval_rejects_a_server_prompt_that_does_not_offer_decline(tmp_path: 
 @pytest.mark.parametrize(
     ("mutate", "match"),
     [
-        (
+        pytest.param(
             lambda items: items.__setitem__(1, _approval_request(Path("workspace"), Path("out"), request_id=42)),
             "duplicate",
+            id="duplicate",
         ),
-        (lambda items: items.__setitem__(1, _resolved_request(99)), "resolution"),
-        (lambda items: items[2]["params"]["item"].__setitem__("status", "completed"), "declined"),
-        (
+        pytest.param(lambda items: items.__setitem__(1, _resolved_request(99)), "resolution", id="wrong-resolution"),
+        pytest.param(
+            lambda items: items[2]["params"]["item"].__setitem__("status", "completed"), "declined", id="not-declined"
+        ),
+        pytest.param(
             lambda items: items.insert(
                 2,
                 {
@@ -275,8 +278,9 @@ def test_approval_rejects_a_server_prompt_that_does_not_offer_decline(tmp_path: 
                 },
             ),
             "output",
+            id="matching-output-delta",
         ),
-        (
+        pytest.param(
             lambda items: items.insert(
                 2,
                 {
@@ -286,17 +290,10 @@ def test_approval_rejects_a_server_prompt_that_does_not_offer_decline(tmp_path: 
                 },
             ),
             "output",
+            id="distinct-item-output-delta",
         ),
-        (lambda items: items.pop(), "fresh-turn|recovery"),
+        pytest.param(lambda items: items.pop(), "fresh-turn|recovery", id="missing-recovery"),
     ],
-    ids=(
-        "duplicate",
-        "wrong-resolution",
-        "not-declined",
-        "matching-output-delta",
-        "distinct-item-output-delta",
-        "missing-recovery",
-    ),
 )
 def test_protocol_drift_fails_closed(
     tmp_path: Path,
@@ -316,11 +313,12 @@ def test_protocol_drift_fails_closed(
 @pytest.mark.parametrize(
     ("command", "network_context", "match"),
     [
-        ("python collect_pr.py Borda/AI-Rig#17 --out other", None, "command"),
-        (None, {"host": "example.invalid", "protocol": "https"}, "network"),
-        ("python broader_fallback.py Borda/AI-Rig#17 --out /tmp/out", None, "command"),
+        pytest.param("python collect_pr.py Borda/AI-Rig#17 --out other", None, "command", id="wrong-output"),
+        pytest.param(None, {"host": "example.invalid", "protocol": "https"}, "network", id="wrong-network-host"),
+        pytest.param(
+            "python broader_fallback.py Borda/AI-Rig#17 --out /tmp/out", None, "command", id="broader-command"
+        ),
     ],
-    ids=("wrong-output", "wrong-network-host", "broader-command"),
 )
 def test_unexpected_command_or_network_identity_fails_closed(
     tmp_path: Path,
@@ -346,7 +344,6 @@ def test_unexpected_command_or_network_identity_fails_closed(
         "echo 'python collect_pr.py Borda/AI-Rig#17 --out {output}'",
         "python collect_pr.py Borda/AI-Rig#17 --out {output} && python broader_operation.py",
     ),
-    ids=("embedded-in-echo", "compound-suffix"),
 )
 def test_command_identity_rejects_marker_injection(tmp_path: Path, mutated_command: str) -> None:
     """Reject commands that contain the old markers but are not the exact collector command."""
@@ -518,12 +515,13 @@ def test_recovery_command_start_or_terminal_before_local_item_fails_closed(tmp_p
 @pytest.mark.parametrize(
     ("terminal_event", "match"),
     [
-        (None, "authoritative-primary-turn-completion"),
-        (_primary_turn_completed(thread_id="thread-other"), "thread-correlation-drift"),
-        (_primary_turn_completed(turn_id="turn-other"), "primary-turn-completion-correlation-drift"),
-        (_primary_turn_completed(status="inProgress"), "nonterminal-status"),
+        pytest.param(None, "authoritative-primary-turn-completion", id="missing"),
+        pytest.param(_primary_turn_completed(thread_id="thread-other"), "thread-correlation-drift", id="wrong-thread"),
+        pytest.param(
+            _primary_turn_completed(turn_id="turn-other"), "primary-turn-completion-correlation-drift", id="wrong-turn"
+        ),
+        pytest.param(_primary_turn_completed(status="inProgress"), "nonterminal-status", id="nonterminal-status"),
     ],
-    ids=("missing", "wrong-thread", "wrong-turn", "nonterminal-status"),
 )
 def test_primary_turn_terminal_event_is_required_and_correlated(
     tmp_path: Path,
@@ -897,18 +895,16 @@ def _successful_live_messages(config: LiveProbeConfig) -> list[dict[str, object]
 @pytest.mark.parametrize(
     ("late_event", "match"),
     (
-        (
+        pytest.param(
             {
                 "jsonrpc": "2.0",
                 "method": TURN_COMPLETED_METHOD,
-                "params": {
-                    "threadId": "thread-live",
-                    "turn": {"id": "turn-primary", "items": [], "status": "failed"},
-                },
+                "params": {"threadId": "thread-live", "turn": {"id": "turn-primary", "items": [], "status": "failed"}},
             },
             "duplicate-primary-turn-completion",
+            id="duplicate-primary-terminal",
         ),
-        (
+        pytest.param(
             {
                 "jsonrpc": "2.0",
                 "method": OUTPUT_DELTA_METHOD,
@@ -920,9 +916,9 @@ def _successful_live_messages(config: LiveProbeConfig) -> list[dict[str, object]
                 },
             },
             "command-output-observed",
+            id="command-output",
         ),
     ),
-    ids=("duplicate-primary-terminal", "command-output"),
 )
 def test_live_probe_revalidates_queued_events_after_recovery_terminal(
     tmp_path: Path,
@@ -943,6 +939,7 @@ def test_live_probe_revalidates_queued_events_after_recovery_terminal(
     assert evidence["cleanupStatus"] == "pass"
 
 
+@pytest.mark.installed_plugin
 def test_live_probe_uses_exact_installed_skill_and_writes_only_sanitized_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1503,10 +1500,9 @@ def test_live_probe_records_cleanup_failure_as_failure_after_attempt(
 @pytest.mark.parametrize(
     "oversized_payload",
     (
-        "raw-oversized-secret" + "x" * denial_probe.MAX_JSON_RPC_CHARS,
-        "raw-oversized-secret" + "💥" * (denial_probe.MAX_JSON_RPC_BYTES // 4),
+        pytest.param("raw-oversized-secret" + "x" * denial_probe.MAX_JSON_RPC_CHARS, id="character-limit"),
+        pytest.param("raw-oversized-secret" + "💥" * (denial_probe.MAX_JSON_RPC_BYTES // 4), id="utf8-byte-limit"),
     ),
-    ids=("character-limit", "utf8-byte-limit"),
 )
 def test_live_probe_rejects_oversized_json_rpc_without_persisting_payload(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, oversized_payload: str
@@ -1663,8 +1659,8 @@ def test_text_control_uses_only_fixed_no_tool_text_and_publishes_safe_summary(
 @pytest.mark.parametrize(
     ("method", "expected"),
     (
-        (APPROVAL_METHOD, "control-unexpected-command-approval"),
-        (FILE_APPROVAL_METHOD, "control-unexpected-file-change-approval"),
+        pytest.param(APPROVAL_METHOD, "control-unexpected-command-approval", id="approval_method"),
+        pytest.param(FILE_APPROVAL_METHOD, "control-unexpected-file-change-approval", id="file_approval_method"),
     ),
 )
 def test_text_control_rejects_any_tool_or_approval_event(
@@ -1690,9 +1686,9 @@ def test_text_control_rejects_any_tool_or_approval_event(
 @pytest.mark.parametrize(
     ("method", "item_type", "expected"),
     (
-        (STARTED_METHOD, "commandExecution", "control-command-execution-observed"),
-        (COMPLETED_METHOD, "fileChange", "control-file-change-observed"),
-        (OUTPUT_DELTA_METHOD, None, "control-output-observed"),
+        pytest.param(STARTED_METHOD, "commandExecution", "control-command-execution-observed", id="started_method"),
+        pytest.param(COMPLETED_METHOD, "fileChange", "control-file-change-observed", id="completed_method"),
+        pytest.param(OUTPUT_DELTA_METHOD, None, "control-output-observed", id="output_delta_method"),
     ),
 )
 def test_text_control_rejects_command_file_and_output_events(
@@ -1897,10 +1893,10 @@ def test_matrix_rejects_cross_scenario_symlink_alias(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field", "value"),
     (
-        ("model", "different-model"),
-        ("codex_bin", Path("/different/codex")),
-        ("plugin_version", "different-version"),
-        ("package_sha256", "0" * 64),
+        pytest.param("model", "different-model", id="model"),
+        pytest.param("codex_bin", Path("/different/codex"), id="codex_bin"),
+        pytest.param("plugin_version", "different-version", id="plugin_version"),
+        pytest.param("package_sha256", "0" * 64, id="package_sha256"),
     ),
 )
 def test_matrix_requires_identical_runtime_identity(tmp_path: Path, field: str, value: object) -> None:

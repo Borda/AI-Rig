@@ -198,17 +198,7 @@ class TestMainBadArgs:
 class TestMainSkillIdValidation:
     """Reject unsafe skill identifiers when starting a health sentinel."""
 
-    @pytest.mark.parametrize(
-        "skill_id",
-        [
-            "a;b",
-            "../traverse",
-            "rm -rf /",
-            "$(cmd)",
-            "",
-            " spaces",
-        ],
-    )
+    @pytest.mark.parametrize("skill_id", ["a;b", "../traverse", "rm -rf /", "$(cmd)", "", " spaces"])
     def test_invalid_skill_id_returns_2(
         self,
         skill_id: str,

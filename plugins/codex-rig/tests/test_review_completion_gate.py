@@ -358,11 +358,15 @@ def test_failed_quality_gate_cannot_complete_an_approval(assessed_pr: Path) -> N
 @pytest.mark.parametrize(
     "host",
     [
-        None,
-        {"source": "role-card", "sandbox_mode": "read-only", "approval_policy": "never"},
-        {"source": "runtime-tool-contract", "sandbox_mode": "workspace-write", "approval_policy": "on-request"},
+        pytest.param(None, id="missing-contract"),
+        pytest.param(
+            {"source": "role-card", "sandbox_mode": "read-only", "approval_policy": "never"}, id="requested-role-only"
+        ),
+        pytest.param(
+            {"source": "runtime-tool-contract", "sandbox_mode": "workspace-write", "approval_policy": "on-request"},
+            id="incompatible-host",
+        ),
     ],
-    ids=["missing-contract", "requested-role-only", "incompatible-host"],
 )
 def test_review_preflight_rejects_unusable_host_before_dispatch(tmp_path: Path, host: object) -> None:
     """Promotion policy cannot imply that the current launcher supports required child controls."""

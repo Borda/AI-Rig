@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+
 _MOD_PATH = Path(__file__).resolve().parent.parent / "bin" / "check_plugin_version_sync.py"
 _spec = importlib.util.spec_from_file_location("check_plugin_version_sync", _MOD_PATH)
 assert _spec and _spec.loader
@@ -35,6 +36,7 @@ def _plugin(root: Path, name: str, claude: str | None, codex: str | None) -> Pat
     return plugin
 
 
+@pytest.mark.packaging
 class TestFindDesyncs:
     """Flag disagreeing dual-manifest pairs only."""
 
@@ -93,15 +95,13 @@ class TestFindDesyncs:
         assert ".claude-plugin" in findings[0]
 
 
+@pytest.mark.packaging
 class TestMain:
     """CLI exit codes mirror the findings."""
 
     @pytest.mark.parametrize(
         ("claude", "codex", "expected"),
-        [
-            pytest.param("1.0.0", "1.0.0", 0, id="in-sync"),
-            pytest.param("1.0.1", "1.0.0", 1, id="desynced"),
-        ],
+        [pytest.param("1.0.0", "1.0.0", 0, id="in-sync"), pytest.param("1.0.1", "1.0.0", 1, id="desynced")],
     )
     def test_exit_codes(self, tmp_path: Path, capsys, claude: str, codex: str, expected: int) -> None:
         """Exit 0 when every pair agrees, 1 on any desync (with a VERSION-DESYNC line).

@@ -31,10 +31,7 @@ def test_cache_hit_returns_newest_version(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "older_version,newer_version",
-    [
-        ("0.9.0", "0.10.0"),
-        ("0.20.0", "1.0.0"),
-    ],
+    [pytest.param("0.9.0", "0.10.0", id="0.9.0"), pytest.param("0.20.0", "1.0.0", id="0.20.0")],
 )
 def test_cache_hit_uses_semver_ordering(tmp_path: Path, older_version: str, newer_version: str) -> None:
     """Newest cached research version is selected semantically, not lexicographically."""

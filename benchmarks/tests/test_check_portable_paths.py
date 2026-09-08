@@ -33,11 +33,10 @@ def _checker() -> ModuleType:
 @pytest.mark.parametrize(
     ("source", "fragment"),
     [
-        ('LOCK = "/private/tmp/frozen/index.json"\n', "/private/tmp/frozen/index.json"),
-        ('HOME = "/Users/alice/project"\n', "/Users/alice/project"),
-        ('TMP = "/tmp/runtime/state"\n', "/tmp/runtime/state"),
+        pytest.param('LOCK = "/private/tmp/frozen/index.json"\n', "/private/tmp/frozen/index.json", id="private-tmp"),
+        pytest.param('HOME = "/Users/alice/project"\n', "/Users/alice/project", id="personal-home"),
+        pytest.param('TMP = "/tmp/runtime/state"\n', "/tmp/runtime/state", id="tmp"),
     ],
-    ids=["private-tmp", "personal-home", "tmp"],
 )
 def test_python_literals_are_rejected(checker: ModuleType, tmp_path: Path, source: str, fragment: str) -> None:
     """Machine-bound Python literals fail with their exact line and value."""

@@ -74,28 +74,31 @@ def test_patience_oracle_accepts_a_behavioral_fix(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("task_id", "old", "new"),
     (
-        (
+        pytest.param(
             "FS-02",
             "        self.min_delta = min_delta\n",
             "        if min_delta < 0:\n"
             '            raise MisconfigurationException(f"min_delta must be >= 0, got {min_delta}")\n'
             "        self.min_delta = min_delta\n",
+            id="fs-02",
         ),
-        (
+        pytest.param(
             "FS-03",
             "        trainer.save_checkpoint(filepath, self.save_weights_only)\n",
             "        if trainer.global_step == self._last_global_step_saved:\n"
             '            rank_zero_info("Skipping duplicate checkpoint save")\n'
             "            return\n"
             "        trainer.save_checkpoint(filepath, self.save_weights_only)\n",
+            id="fs-03",
         ),
-        (
+        pytest.param(
             "FS-04",
             "        if self.save_top_k < -1:\n",
             "        if self.save_top_k == 0:\n"
             '            rank_zero_warn("ModelCheckpoint(save_top_k=0) is set: no checkpoints will be saved. '
             'Pass save_top_k=-1 to save all checkpoints.")\n'
             "        if self.save_top_k < -1:\n",
+            id="fs-04",
         ),
     ),
 )

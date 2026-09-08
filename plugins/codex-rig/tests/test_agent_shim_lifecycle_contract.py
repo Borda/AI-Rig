@@ -54,13 +54,7 @@ def test_public_grammar_scope_and_exit_contract_are_frozen() -> None:
         "whole_roster_mutations": ["install", "remove"],
         "approval": "install and remove require explicit approval of the exact canonical plan digest",
         "fresh_session_after_mutation": True,
-        "forbidden": [
-            "subset mutation",
-            "force",
-            "adoption",
-            "overwrite unowned",
-            "noninteractive approval bypass",
-        ],
+        "forbidden": ["subset mutation", "force", "adoption", "overwrite unowned", "noninteractive approval bypass"],
     }
     assert contract["exit_codes"] == {
         "0": "success or already converged",
@@ -580,13 +574,7 @@ class TestLifecycleTransactionContract:
         transaction = _load_contract()["transaction"]
 
         assert transaction["probe_directory"].startswith("<state_root>/.probe-<transaction_nonce>")
-        assert transaction["probe_artifacts"] == [
-            "source",
-            "published",
-            "replacement",
-            "fsync-file",
-            "fsync-directory",
-        ]
+        assert transaction["probe_artifacts"] == ["source", "published", "replacement", "fsync-file", "fsync-directory"]
         assert "valid residue is recoverable only through an approved clean-probe" in transaction["probe_receipt"]
         assert set(transaction["probe_receipt_identity_schema"]) == set(transaction["probe_receipt_required_fields"])
         assert transaction["probe_receipt_extra_fields"].startswith("rejected")
@@ -714,10 +702,7 @@ class TestLifecycleTransactionContract:
         """Keep rollback progress monotonic through restored state."""
         transaction = _load_contract()["transaction"]
 
-        assert transaction["journal_operation_rollback_progress"] == [
-            "NOT_STARTED",
-            "TARGET_RESTORED",
-        ]
+        assert transaction["journal_operation_rollback_progress"] == ["NOT_STARTED", "TARGET_RESTORED"]
         assert transaction["journal_operation_rollback_progress_successors"] == {
             "NOT_STARTED": ["TARGET_RESTORED"],
             "TARGET_RESTORED": [],
@@ -1001,12 +986,7 @@ def test_verifier_argv_survives_json_and_toml_parsing() -> None:
     """Prevent legal quoted or backslashed paths from changing verifier arguments."""
     contract = _load_contract()
     encoding_rule = contract["shim_format"]["dynamic_fields"]["toml_escaped_verifier_argv_json"]
-    argv = [
-        '/tmp/python"quoted',
-        "/tmp/plugin\\root/scripts/verify_role_link.py",
-        "--role",
-        "challenger",
-    ]
+    argv = ['/tmp/python"quoted', "/tmp/plugin\\root/scripts/verify_role_link.py", "--role", "challenger"]
     argv_json = json.dumps(argv, ensure_ascii=True, separators=(",", ":"))
     toml_escaped = argv_json.replace("\\", "\\\\").replace('"', '\\"')
     parsed = tomllib.loads(f'developer_instructions = """\n{toml_escaped}\n"""\n')

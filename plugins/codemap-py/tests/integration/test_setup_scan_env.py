@@ -28,6 +28,9 @@ from pathlib import Path
 
 import pytest
 
+# Both entry points require the POSIX shell and source-based state reader.
+POSIX_ENTRYPOINTS_UNAVAILABLE = sys.platform == "win32" or shutil.which("python3") is None
+
 PLUGIN_ROOT = Path(__file__).parent.parent.parent  # contains real bin/scan-index
 SCRIPT = PLUGIN_ROOT / "bin" / "setup_scan_env.py"
 SHIM = PLUGIN_ROOT / "bin" / "setup_scan_env.sh"
@@ -114,6 +117,13 @@ def _isolated_tmpdir(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
+_skip_posix_entrypoints_unavailable = pytest.mark.skipif(
+    POSIX_ENTRYPOINTS_UNAVAILABLE,
+    reason="the bash shim and the source-based state reader need a POSIX shell",
+)
+
+
+@_skip_posix_entrypoints_unavailable
 class TestArgumentValidation:
     """Bad CLI shapes must fail fast with exit 3 and never touch tmpfiles."""
 
@@ -156,6 +166,7 @@ class TestArgumentValidation:
 # ---------------------------------------------------------------------------
 
 
+@_skip_posix_entrypoints_unavailable
 class TestMissingScanIndex:
     """Bogus ``CLAUDE_PLUGIN_ROOT`` ⇒ scan-index validation fails (exit 1)."""
 
@@ -211,6 +222,7 @@ def _read_state(state_file: Path) -> dict[str, str]:
     return out
 
 
+@_skip_posix_entrypoints_unavailable
 class TestHappyPath:
     """Normal invocation produces a sourceable state file and per-slug tmpfiles."""
 
@@ -319,6 +331,7 @@ class TestHappyPath:
 # ---------------------------------------------------------------------------
 
 
+@_skip_posix_entrypoints_unavailable
 class TestIncrementalSentinel:
     """Combine incremental mode with prior-index detection."""
 
@@ -402,6 +415,7 @@ def _tmpfile_shapes(tmpdir: Path) -> list[str]:
     return sorted(re.sub(r"^codemap-scan-state-.*$", "codemap-scan-state-<rand>", name) for name in masked)
 
 
+@_skip_posix_entrypoints_unavailable
 class TestShimDelegation:
     """Require the shell wrapper to pass arguments transparently to the Python port."""
 
@@ -438,17 +452,3 @@ class TestShimDelegation:
         )
         assert r.returncode == 1
         assert "scan-index binary not found" in r.stderr
-
-
-# ---------------------------------------------------------------------------
-# Module-level skip — the suite drives both entry points, and the bash shim plus
-# the `source`-based state reader need a POSIX shell. The .py itself is Windows-safe
-# by construction (no hostname/tr/mktemp/stat shell-outs), but proving that needs a
-# Windows runner this suite does not have.
-# ---------------------------------------------------------------------------
-
-
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32" or shutil.which("python3") is None,
-    reason="the bash shim and the source-based state reader need a POSIX shell",
-)

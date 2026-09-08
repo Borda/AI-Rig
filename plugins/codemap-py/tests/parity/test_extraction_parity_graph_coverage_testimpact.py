@@ -79,10 +79,7 @@ _MONOLITH_MIN_LINES = {
 # post-extraction content instead of holding the frozen monolith.
 _POST_EXTRACTION_MARKERS = ("codemap_py", "thin launcher", "compatibility shim")
 
-_PATH_CLASSES = [
-    pytest.param("proj", id="normal"),
-    pytest.param("proj café ünïcode dir", id="spaces_nonascii"),
-]
+_PATH_CLASSES = ["proj", "proj café ünïcode dir"]
 
 
 def _assert_is_monolith(name: str, content: str) -> None:

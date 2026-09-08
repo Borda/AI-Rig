@@ -51,10 +51,15 @@ class TestRunWilcoxon:
     @pytest.mark.parametrize(
         "baseline,candidate,direction",
         [
-            ([1.0] * 8, [1.0] * 8, ra.Direction.HIGHER),
-            ([1.0] * 8, [0.8, 1.2, 0.9, 1.1, 0.95, 1.05, 1.0, 1.0], ra.Direction.HIGHER),
-            ([1.0] * 8, [0.5] * 8, ra.Direction.HIGHER),
-            ([1.0] * 8, [1.5] * 8, ra.Direction.LOWER),
+            pytest.param([1.0] * 8, [1.0] * 8, ra.Direction.HIGHER, id="1.0-8-1.0-8"),
+            pytest.param(
+                [1.0] * 8,
+                [0.8, 1.2, 0.9, 1.1, 0.95, 1.05, 1.0, 1.0],
+                ra.Direction.HIGHER,
+                id="1.0-8-0.8-1.2-0.9-1.1-0.95-1.05-1.0-1.0",
+            ),
+            pytest.param([1.0] * 8, [0.5] * 8, ra.Direction.HIGHER, id="1.0-8-0.5-8"),
+            pytest.param([1.0] * 8, [1.5] * 8, ra.Direction.LOWER, id="1.0-8-1.5-8"),
         ],
     )
     def test_adequate_sample_non_significant_cases(

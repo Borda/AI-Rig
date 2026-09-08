@@ -82,7 +82,13 @@ def _handoff(recommendation: str, suggestion: str) -> dict[str, object]:
     }
 
 
-@pytest.mark.parametrize("malformed_fields", [("PR", "Author", "CI", "Type"), ("PR", "Author", "CI", "Type", "State")])
+@pytest.mark.parametrize(
+    "malformed_fields",
+    [
+        pytest.param(("PR", "Author", "CI", "Type"), id="pr-author-ci-type"),
+        pytest.param(("PR", "Author", "CI", "Type", "State"), id="pr-author-ci-type-state"),
+    ],
+)
 def test_review_snapshot_rejects_missing_or_replaced_suggestion(malformed_fields: tuple[str, ...]) -> None:
     """Prevent a complete-looking PR summary from omitting its review outcome."""
     handoff = _handoff("needs-more-work", "needs work")
@@ -96,7 +102,10 @@ def test_review_snapshot_rejects_missing_or_replaced_suggestion(malformed_fields
         VALIDATOR._validate_code_review_final_handoff(_result("needs-more-work"), handoff)
 
 
-@pytest.mark.parametrize(("recommendation", "suggestion"), SUGGESTIONS.items())
+@pytest.mark.parametrize(
+    ("recommendation", "suggestion"),
+    [pytest.param(recommendation, suggestion, id=recommendation) for recommendation, suggestion in SUGGESTIONS.items()],
+)
 def test_review_snapshot_suggestion_is_bound_to_structured_decision(recommendation: str, suggestion: str) -> None:
     """Keep every user-facing suggestion synchronized with the validated decision."""
     handoff = _handoff(recommendation, suggestion)

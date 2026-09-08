@@ -313,10 +313,7 @@ class TestDedupModules:
 
     def test_deterministic_winner_across_shuffles(self):
         """Same qualname at two paths yields the same winner regardless of input order."""
-        entries = [
-            {"name": "pkg.mod", "path": "copy/pkg/mod.py"},
-            {"name": "pkg.mod", "path": "src/pkg/mod.py"},
-        ]
+        entries = [{"name": "pkg.mod", "path": "copy/pkg/mod.py"}, {"name": "pkg.mod", "path": "src/pkg/mod.py"}]
         winners = set()
         for order in (entries, list(reversed(entries)), entries, list(reversed(entries)), entries):
             kept, collisions = _dedup_modules(list(order), "src")

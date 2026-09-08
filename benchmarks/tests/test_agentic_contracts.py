@@ -135,11 +135,7 @@ def _evidence_oracle() -> agentic_contracts.AgenticOracle:
 
 @pytest.mark.parametrize(
     "text",
-    [
-        "inspected pkg.core_utils only",
-        "inspected other.pkg.core.helpers only",
-        "inspected mypkg.core only",
-    ],
+    ["inspected pkg.core_utils only", "inspected other.pkg.core.helpers only", "inspected mypkg.core only"],
 )
 def test_evidence_recall_rejects_substring_containment(text: str) -> None:
     """A longer dotted name no longer donates recall to a shorter one."""

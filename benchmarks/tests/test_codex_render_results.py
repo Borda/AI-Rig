@@ -137,8 +137,8 @@ def test_render_results_preserves_noninteractive_stream_byte_for_byte() -> None:
     assert "\x1b[" not in completed.stdout
 
 
-@pytest.mark.parametrize("terminal", [False, True], ids=["redirected", "terminal"])
-@pytest.mark.parametrize("force_color", [False, True], ids=["automatic-color", "forced-color"])
+@pytest.mark.parametrize("terminal", [False, True])
+@pytest.mark.parametrize("force_color", [False, True])
 def test_render_results_preserves_long_rows_without_inserted_wraps(
     terminal: bool, force_color: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:

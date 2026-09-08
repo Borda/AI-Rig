@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _REPO_ROOT = _PLUGIN_ROOT.parents[1]
 _BIN = _PLUGIN_ROOT / "bin"
@@ -44,6 +45,7 @@ def _plugin_names(marketplace: Path) -> set[str]:
 # --- dual-identity ban -----------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_repo_tracks_exactly_one_plugin_identity() -> None:
     """Exactly one of plugins/codemap or plugins/codemap-py exists on disk."""
     legacy = _REPO_ROOT / "plugins" / "codemap"
@@ -52,13 +54,8 @@ def test_repo_tracks_exactly_one_plugin_identity() -> None:
     assert not legacy.exists()
 
 
-@pytest.mark.parametrize(
-    "marketplace_rel",
-    [
-        pytest.param(".claude-plugin/marketplace.json", id="claude-marketplace"),
-        pytest.param(".agents/plugins/marketplace.json", id="codex-marketplace"),
-    ],
-)
+@pytest.mark.parametrize("marketplace_rel", [".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json"])
+@pytest.mark.packaging
 def test_marketplace_advertises_codemap_py_only(marketplace_rel: str) -> None:
     """Marketplace catalogs list codemap-py and never the legacy codemap name."""
     names = _plugin_names(_REPO_ROOT / marketplace_rel)
@@ -69,11 +66,13 @@ def test_marketplace_advertises_codemap_py_only(marketplace_rel: str) -> None:
 # --- legacy cache path retained --------------------------------------------
 
 
+@pytest.mark.packaging
 def test_index_subdir_is_legacy_cache_codemap() -> None:
     """The resolver's index subdir constant is still ``.cache/codemap``."""
     assert _index_identity.INDEX_SUBDIR == Path(".cache", "codemap")
 
 
+@pytest.mark.packaging
 def test_resolver_places_index_under_legacy_cache(tmp_path: Path) -> None:
     """A default resolution nests the index under ``.cache/codemap`` for a root."""
     identity = _index_identity.resolve_index(root=tmp_path, index_dir_override=None)
@@ -84,6 +83,7 @@ def test_resolver_places_index_under_legacy_cache(tmp_path: Path) -> None:
 # --- install-shaped dual-identity ban --------------------------------------
 
 
+@pytest.mark.packaging
 def test_resolver_selects_codemap_py_when_both_cached(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """With BOTH legacy and renamed plugin caches present, the shipped resolver picks codemap-py."""
     home = tmp_path / "home"
@@ -98,12 +98,14 @@ def test_resolver_selects_codemap_py_when_both_cached(tmp_path: Path, monkeypatc
     assert resolved.name == "0.25.0"
 
 
+@pytest.mark.packaging
 def test_shipped_detect_dual_identity_fires_when_both_cached(tmp_path: Path) -> None:
     """The shipped migration utility names the violation when both identities coexist."""
     cache_base = _seed_plugin_cache(tmp_path / "home", {"codemap": "1.0.0", "codemap-py": "0.25.0"})
     assert index_paths.detect_dual_identity(cache_base) == "dual_plugin_identity"
 
 
+@pytest.mark.packaging
 def test_shipped_detect_dual_identity_clean_when_only_renamed_cached(tmp_path: Path) -> None:
     """The shipped detector is silent when only codemap-py is cached."""
     cache_base = _seed_plugin_cache(tmp_path / "home", {"codemap-py": "0.25.0"})
@@ -151,6 +153,7 @@ class _CountingParse:
         return self._real(filepath, root, src_root)
 
 
+@pytest.mark.packaging
 def test_pyi_rebuild_single_pass_then_stable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corpus_pyi_dir: Path
 ) -> None:

@@ -72,7 +72,9 @@ def test_manifest_is_current_and_regeneration_is_byte_stable() -> None:
     assert _run_builder("--check").returncode == 0
 
 
-@pytest.mark.parametrize("study,command_count", [("agentic", 2), ("integration", 1)])
+@pytest.mark.parametrize(
+    "study,command_count", [pytest.param("agentic", 2, id="agentic"), pytest.param("integration", 1, id="integration")]
+)
 def test_single_model_manifest_commands_name_the_locked_model(study: str, command_count: int) -> None:
     """Single-model approval examples must not inherit the launcher's multi-model default."""
     builder = runpy.run_path(str(BENCHMARKS / f"build-codex-{study}-manifest.py"))

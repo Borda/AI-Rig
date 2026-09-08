@@ -87,14 +87,14 @@ class TestContextContract:
     @pytest.mark.parametrize(
         "section",
         [
-            pytest.param("## Target derivation — pluggable (consumer supplies)", id="pluggable-target"),
-            pytest.param("## Core query map", id="core-query-map"),
-            pytest.param("## Batch pre-flight pattern", id="batch-preflight"),
-            pytest.param("## Evidence-line contract", id="evidence-line"),
-            pytest.param("## Coverage metadata in output", id="coverage-metadata"),
-            pytest.param("## Effort-tier guidance", id="effort-tier"),
-            pytest.param("## Extended scan — multi-file / API changes", id="extended-scan"),
-            pytest.param("## Targeted-edit pattern (known symbol, large file)", id="targeted-edit"),
+            "## Target derivation — pluggable (consumer supplies)",
+            "## Core query map",
+            "## Batch pre-flight pattern",
+            "## Evidence-line contract",
+            "## Coverage metadata in output",
+            "## Effort-tier guidance",
+            "## Extended scan — multi-file / API changes",
+            "## Targeted-edit pattern (known symbol, large file)",
         ],
     )
     def test_carries_required_section(self, section: str):
@@ -151,16 +151,8 @@ class TestContextContract:
                 ["--timeout 5 fn-rdeps package.module::target --exclude-tests"],
                 id="direct-callers",
             ),
-            pytest.param(
-                "test-impact",
-                ["--timeout 5 test-impact package.module::target"],
-                id="targeted-test-impact",
-            ),
-            pytest.param(
-                "coupling",
-                ["--timeout 5 coupled"],
-                id="targetless-coupling",
-            ),
+            pytest.param("test-impact", ["--timeout 5 test-impact package.module::target"], id="targeted-test-impact"),
+            pytest.param("coupling", ["--timeout 5 coupled"], id="targetless-coupling"),
             pytest.param(
                 "imports",
                 [
@@ -245,17 +237,17 @@ class TestGatesContract:
     @pytest.mark.parametrize(
         "marker",
         [
-            pytest.param("## Gate A — missing index", id="gate-a"),
-            pytest.param("## Gate B — stale index", id="gate-b"),
-            pytest.param("Continue without codemap", id="a-continue"),
-            pytest.param("Build index now", id="a-build"),
-            pytest.param("Abort", id="a-abort"),
-            pytest.param("Rebuild now", id="b-rebuild"),
-            pytest.param("Continue with stale data", id="b-stale"),
-            pytest.param("Skip codemap", id="b-skip"),
+            "## Gate A — missing index",
+            "## Gate B — stale index",
+            "Continue without codemap",
+            "Build index now",
+            "Abort",
+            "Rebuild now",
+            "Continue with stale data",
+            "Skip codemap",
             # The former bare `scan-index` alias had already been replaced by every skill
             # and consumer wrapper, which otherwise needed an explicit override.
-            pytest.param("run `codemap-py index` in the foreground", id="build-gated-launcher"),
+            "run `codemap-py index` in the foreground",
         ],
     )
     def test_carries_gate_machinery(self, marker: str):
@@ -305,14 +297,7 @@ class TestDevelopWrapper:
 
     @pytest.mark.parametrize(
         "surface",
-        [
-            pytest.param("uncovered --top 20", id="qa-uncovered"),
-            pytest.param("mock-rdeps", id="qa-mock"),
-            pytest.param("undocumented", id="doc-undocumented"),
-            pytest.param("codemap_scan.py", id="batch-producer"),
-            pytest.param("codemap_cache.py", id="review-resolve-cache"),
-            pytest.param("Semble companion", id="semble"),
-        ],
+        ["uncovered --top 20", "mock-rdeps", "undocumented", "codemap_scan.py", "codemap_cache.py", "Semble companion"],
     )
     def test_retains_per_plugin_surface(self, surface: str):
         """Develop-specific dimensions, batch/cache scripts, and semble stay in the wrapper."""

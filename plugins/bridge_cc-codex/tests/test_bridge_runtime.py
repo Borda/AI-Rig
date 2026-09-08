@@ -483,7 +483,7 @@ def test_mcp_containment_rejection_returns_a_generic_error_without_provider_disp
     assert set(tool["name"] for tool in responses[1]["result"]["tools"]) == set(bridge_mcp.EXPECTED_TOOL_INVENTORY)
 
 
-@pytest.mark.parametrize("timeout", ("nan", "inf", "-inf"), ids=("nan", "positive-infinity", "negative-infinity"))
+@pytest.mark.parametrize("timeout", ("nan", "inf", "-inf"))
 def test_cli_rejects_nonfinite_timeout_before_provider_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], timeout: str
 ) -> None:
@@ -611,10 +611,8 @@ def test_budget_prompt_and_timeout_terminate_held_process(tmp_path: Path) -> Non
     (
         "import sys, time; sys.stdout.buffer.write(b'x' * 400000); sys.stdout.flush(); time.sleep(30)",
         "import sys, time; sys.stderr.buffer.write(b'x' * 400000); sys.stderr.flush(); time.sleep(30)",
-        "import sys, time; sys.stdout.buffer.write(b'x' * 200000); sys.stderr.buffer.write(b'y' * 200000); "
-        "sys.stdout.flush(); sys.stderr.flush(); time.sleep(30)",
+        "import sys, time; sys.stdout.buffer.write(b'x' * 200000); sys.stderr.buffer.write(b'y' * 200000); sys.stdout.flush(); sys.stderr.flush(); time.sleep(30)",
     ),
-    ids=("stdout", "stderr", "combined"),
 )
 def test_child_output_limit_stops_a_noisy_peer_and_caps_its_transcript(tmp_path: Path, emitter: str) -> None:
     """Prevent a verbose peer from growing supervisor memory or transcript storage without a bound."""
@@ -933,7 +931,7 @@ def test_job_lifecycle_uses_workspace_local_record_and_missing_signal_doubles(
     assert bridge_call.job_status(tmp_path, job_id)["status"] == "cancel_requested"
 
 
-@pytest.mark.parametrize("command", ("status", "result", "cancel"), ids=("status", "result", "cancel"))
+@pytest.mark.parametrize("command", ("status", "result", "cancel"))
 def test_lifecycle_cli_rejects_job_identifier_traversal(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], command: str
 ) -> None:
@@ -1661,7 +1659,7 @@ def test_mcp_rejects_nonfinite_timeout_before_provider_dispatch(
         assert response["error"]["code"] == -32602
 
 
-@pytest.mark.parametrize("task", ("a" * 70_000, "🙂" * 20_000), ids=("ascii", "multibyte"))
+@pytest.mark.parametrize("task", (pytest.param("a" * 70000, id="ascii"), pytest.param("🙂" * 20000, id="multibyte")))
 def test_mcp_rejects_an_encoded_task_over_the_transport_budget_before_artifacts_or_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, task: str
 ) -> None:
@@ -1688,8 +1686,7 @@ def test_mcp_rejects_an_encoded_task_over_the_transport_budget_before_artifacts_
 
 @pytest.mark.parametrize(
     "task",
-    ("a" * (16 * 1024), "🙂" * (4 * 1024)),
-    ids=("ascii-boundary", "multibyte-boundary"),
+    (pytest.param("a" * (16 * 1024), id="ascii-boundary"), pytest.param("🙂" * (4 * 1024), id="multibyte-boundary")),
 )
 def test_transport_budget_accepts_all_host_safe_utf8_boundaries(tmp_path: Path, task: str) -> None:
     """Keep accepted task text below the portable byte ceiling for both single- and multibyte input."""
@@ -1707,8 +1704,10 @@ def test_windows_command_measurement_uses_list2cmdline_utf16_units() -> None:
 
 @pytest.mark.parametrize(
     ("executable", "rejects"),
-    ((r"C:\\Bridge\\codex.cmd", True), (r"C:\\Bridge\\codex.exe", False)),
-    ids=("batch-shim", "native-executable"),
+    (
+        pytest.param("C:\\\\Bridge\\\\codex.cmd", True, id="batch-shim"),
+        pytest.param("C:\\\\Bridge\\\\codex.exe", False, id="native-executable"),
+    ),
 )
 def test_windows_batch_shim_uses_a_stricter_resolved_command_budget(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable: str, rejects: bool
@@ -1816,12 +1815,11 @@ def test_mcp_refuses_write_verbs_from_a_home_or_root_workspace(monkeypatch: pyte
 @pytest.mark.parametrize(
     "invalid_arguments",
     (
-        {"depth": True},
-        {"timeout_seconds": True},
-        {"timeout_seconds": 360.1},
-        {"supported_efforts": []},
+        pytest.param({"depth": True}, id="boolean-depth"),
+        pytest.param({"timeout_seconds": True}, id="boolean-timeout"),
+        pytest.param({"timeout_seconds": 360.1}, id="timeout-over-host-safe-maximum"),
+        pytest.param({"supported_efforts": []}, id="empty-supported-efforts"),
     ),
-    ids=("boolean-depth", "boolean-timeout", "timeout-over-host-safe-maximum", "empty-supported-efforts"),
 )
 def test_mcp_rejects_values_that_disagree_with_its_json_schema(
     tmp_path: Path, invalid_arguments: dict[str, object]
@@ -1961,13 +1959,12 @@ def test_mcp_implement_runs_real_supervisor_with_claude_write_permissions(
 @pytest.mark.parametrize(
     "invalid_core",
     (
-        _core(details=["detail"] * 33),
-        _core(details=["x" * 2001]),
-        _core(verdict="x" * 501),
-        _core(findings=["finding"] * 9),
-        _core(findings=["x" * 501]),
+        pytest.param(_core(details=["detail"] * 33), id="too-many-details"),
+        pytest.param(_core(details=["x" * 2001]), id="detail-too-long"),
+        pytest.param(_core(verdict="x" * 501), id="verdict-too-long"),
+        pytest.param(_core(findings=["finding"] * 9), id="too-many-findings"),
+        pytest.param(_core(findings=["x" * 501]), id="finding-too-long"),
     ),
-    ids=("too-many-details", "detail-too-long", "verdict-too-long", "too-many-findings", "finding-too-long"),
 )
 def test_peer_summary_limits_reject_oversized_model_output(invalid_core: dict[str, object]) -> None:
     """Prevent a peer from smuggling unbounded verbose or summary content across the bridge boundary."""
@@ -2387,7 +2384,7 @@ def test_posix_termination_falls_back_when_killpg_is_unavailable(
     )
 
 
-@pytest.mark.parametrize("tree_status", [0, 1], ids=["tree-killed", "leader-kill-fallback"])
+@pytest.mark.parametrize("tree_status", [0, 1])
 def test_simulated_windows_termination_uses_tree_kill_before_the_leader_can_exit(
     monkeypatch: pytest.MonkeyPatch,
     tree_status: int,

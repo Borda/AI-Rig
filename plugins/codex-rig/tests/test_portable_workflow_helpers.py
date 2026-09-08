@@ -222,15 +222,7 @@ def test_run_gates_times_out_and_terminates_native_process(tmp_path: Path) -> No
 
     started = time.monotonic()
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(RUN_GATES),
-            "--out",
-            str(output),
-            "--timeout-seconds",
-            "1",
-            *arguments,
-        ],
+        [sys.executable, str(RUN_GATES), "--out", str(output), "--timeout-seconds", "1", *arguments],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

@@ -35,10 +35,7 @@ import pytest
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "write-guard.js"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 @pytest.fixture(name="run_guard")
@@ -78,6 +75,13 @@ def _asks(result: dict) -> bool:
 # ── Protected files raise a confirmation ──────────────────────────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 class TestProtectedPaths:
     """A write to a file in the protected set is gated behind a confirmation."""
 
@@ -124,15 +128,7 @@ class TestProtectedPaths:
         """
         assert _asks(run_guard("C:\\repo\\.github\\workflows\\x.yml"))
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            pytest.param("changelog.md", id="lowercased-changelog"),
-            pytest.param("Claude.md", id="mixed-case-claude-md"),
-            pytest.param("UV.LOCK", id="uppercased-lockfile"),
-            pytest.param(".GitHub/workflows/ci.yml", id="mixed-case-github-dir"),
-        ],
-    )
+    @pytest.mark.parametrize("path", ["changelog.md", "Claude.md", "UV.LOCK", ".GitHub/workflows/ci.yml"])
     def test_case_variants(self, run_guard: Callable[..., dict], path: str) -> None:
         """Case variants of a protected name still ask.
 
@@ -163,15 +159,16 @@ class TestProtectedPaths:
 # ── Everything else is silent passthrough ─────────────────────────────────────
 
 
+@_skip_node_unavailable
 class TestPassthrough:
     """Routine work, near-misses and malformed input never reach a confirmation."""
 
     @pytest.mark.parametrize(
         "path",
         [
-            pytest.param("tests/training/callbacks/test_coco_eval_callback.py", id="routine-test-edit"),
-            pytest.param("src/rfdetr/models/backbone.py", id="routine-source-edit"),
-            pytest.param("tests/new_test_file.py", id="new-test-file"),
+            "tests/training/callbacks/test_coco_eval_callback.py",
+            "src/rfdetr/models/backbone.py",
+            "tests/new_test_file.py",
         ],
     )
     def test_routine_work(self, run_guard: Callable[..., dict], path: str) -> None:
@@ -182,14 +179,7 @@ class TestPassthrough:
         """
         assert run_guard(path) == {}
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            pytest.param("src/my_changelog_helper.py", id="near-miss-not-changelog-md"),
-            pytest.param("src/github/client.py", id="near-miss-not-dot-github-dir"),
-            pytest.param("docs/pyproject_notes.md", id="near-miss-not-pyproject-toml"),
-        ],
-    )
+    @pytest.mark.parametrize("path", ["src/my_changelog_helper.py", "src/github/client.py", "docs/pyproject_notes.md"])
     def test_near_misses(self, run_guard: Callable[..., dict], path: str) -> None:
         """A path merely containing a protected name is not protected.
 
@@ -198,14 +188,7 @@ class TestPassthrough:
         """
         assert run_guard(path) == {}, f"{path!r} asked — guard is too broad"
 
-    @pytest.mark.parametrize(
-        "tool_name",
-        [
-            pytest.param("Read", id="read-tool"),
-            pytest.param("Bash", id="bash-tool"),
-            pytest.param("Glob", id="glob-tool"),
-        ],
-    )
+    @pytest.mark.parametrize("tool_name", ["Read", "Bash", "Glob"])
     def test_unguarded_tools(self, run_guard: Callable[..., dict], tool_name: str) -> None:
         """Non-writing tools are ignored even when the path would match.
 
@@ -238,6 +221,7 @@ class TestPassthrough:
 # ── The decision itself ───────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 class TestDecisionShape:
     """The emitted envelope grants nothing and rewrites nothing."""
 

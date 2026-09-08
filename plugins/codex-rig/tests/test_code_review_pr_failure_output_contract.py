@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
@@ -50,6 +52,7 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "suggest filing a Codex Rig bug" in skill
 
 
+@pytest.mark.installed_plugin
 def test_pr_review_approves_the_complete_collector_before_terminal_network_failure() -> None:
     """Require network approval to cover the collector and its nested GitHub reads."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
@@ -64,6 +67,7 @@ def test_pr_review_approves_the_complete_collector_before_terminal_network_failu
     )
 
 
+@pytest.mark.installed_plugin
 def test_pr_remediation_approves_the_complete_collector_before_terminal_network_failure() -> None:
     """Keep PR remediation from repeating the review collector's sandbox failure."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")

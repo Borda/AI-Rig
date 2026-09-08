@@ -134,11 +134,10 @@ def test_audit_json_v2_fails_current_flat_runtime_logs(repo: Path, capsys: pytes
 @pytest.mark.parametrize(
     ("runtime", "claude_index", "codex_index", "expects_split"),
     [
-        ("both", "/indexes/claude.json", "/indexes/codex.json", True),
-        ("both", "/indexes/shared.json", "/indexes/shared.json", False),
-        ("claude", "/indexes/claude.json", None, False),
+        pytest.param("both", "/indexes/claude.json", "/indexes/codex.json", True, id="both-diverge"),
+        pytest.param("both", "/indexes/shared.json", "/indexes/shared.json", False, id="both-share"),
+        pytest.param("claude", "/indexes/claude.json", None, False, id="one-runtime"),
     ],
-    ids=["both-diverge", "both-share", "one-runtime"],
 )
 def test_audit_index_paths_report_only_selected_runtime_divergence(
     repo: Path,
@@ -194,8 +193,7 @@ def test_audit_index_paths_report_only_selected_runtime_divergence(
 
 @pytest.mark.parametrize(
     ("indexed_sha", "expected_stale_state"),
-    [("current", None), ("stale", "stale")],
-    ids=["matching-sha", "stale-sha"],
+    [pytest.param("current", None, id="matching-sha"), pytest.param("stale", "stale", id="stale-sha")],
 )
 def test_audit_index_evidence_reports_degraded_and_stale_state_without_query(
     repo: Path, monkeypatch: pytest.MonkeyPatch, indexed_sha: str, expected_stale_state: str | None
@@ -338,7 +336,7 @@ def test_audit_observes_same_version_native_content_divergence_and_session_catal
     }
 
 
-@pytest.mark.parametrize("native_path", ["same-source", "unreadable-native"], ids=["same-digest", "unreadable"])
+@pytest.mark.parametrize("native_path", ["same-source", "unreadable-native"])
 def test_audit_content_identity_equal_or_unknown_never_claims_drift(
     repo: Path, monkeypatch: pytest.MonkeyPatch, native_path: str
 ) -> None:
@@ -469,15 +467,14 @@ def test_audit_warns_on_same_version_consumer_content_drift(
 @pytest.mark.parametrize(
     ("native_state", "expected_finding"),
     [
-        ("matching", None),
-        ("missing", "consumer_query_guidance_missing"),
-        ("unreferenced", "consumer_query_guidance_unreachable"),
-        ("stale", "consumer_query_guidance_drift"),
-        ("source_missing", "consumer_query_guidance_missing"),
-        ("source_unreferenced", "consumer_query_guidance_unreachable"),
-        ("absent_consumer", None),
+        pytest.param("matching", None, id="matching"),
+        pytest.param("missing", "consumer_query_guidance_missing", id="missing"),
+        pytest.param("unreferenced", "consumer_query_guidance_unreachable", id="unreferenced"),
+        pytest.param("stale", "consumer_query_guidance_drift", id="stale"),
+        pytest.param("source_missing", "consumer_query_guidance_missing", id="source-missing"),
+        pytest.param("source_unreferenced", "consumer_query_guidance_unreachable", id="source-unreferenced"),
+        pytest.param("absent_consumer", None, id="optional-absent"),
     ],
-    ids=["matching", "missing", "unreferenced", "stale", "source-missing", "source-unreferenced", "optional-absent"],
 )
 def test_audit_checks_referenced_consumer_guidance_without_writes(
     repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, native_state: str, expected_finding: str | None
@@ -782,7 +779,10 @@ def test_sentinel_schema_stays_v1_while_body_protocol_is_v2() -> None:
     assert integration._render_managed_block("x\n").startswith("<!-- codemap-py:integration:begin v1 sha256=")
 
 
-@pytest.mark.parametrize(("since", "expected_records"), [("2026-08-18", 1), ("2026-08-19", 0)])
+@pytest.mark.parametrize(
+    ("since", "expected_records"),
+    [pytest.param("2026-08-18", 1, id="2026-08-18"), pytest.param("2026-08-19", 0, id="2026-08-19")],
+)
 def test_audit_since_bounds_runtime_evidence(
     repo: Path, capsys: pytest.CaptureFixture[str], since: str, expected_records: int
 ) -> None:

@@ -41,10 +41,7 @@ SENTINEL_NAME = f"foundry-profile-state-{CSID}"
 REPORT_DIR_REL = ".reports/profile/2026-08-04T10-00-00Z"
 TWO_HOURS_S = 2 * 60 * 60
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the hook",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 def _state_file(report_dir_line: str) -> str:
@@ -141,6 +138,13 @@ def _profile_run(tmp_path: Path) -> tuple[Path, Path, str]:
 # ── Gate fires only for an in-flight run missing its report ──────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the hook",
+)
+
+
+@_skip_node_unavailable
 def test_missing_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """Sentinel present without report.md → deny, naming the steps to redo."""
     report_dir, _, cwd = profile_run
@@ -152,6 +156,7 @@ def test_missing_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path,
     assert "Step 4" in reason
 
 
+@_skip_node_unavailable
 def test_empty_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """A zero-byte report.md counts as not written → deny."""
     report_dir, _, cwd = profile_run
@@ -160,6 +165,7 @@ def test_empty_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, s
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd))) is not None
 
 
+@_skip_node_unavailable
 def test_written_report_passes_through(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """Analyzer output present → hook stays silent and the call proceeds."""
     report_dir, _, cwd = profile_run
@@ -179,6 +185,7 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
     return transcript
 
 
+@_skip_node_unavailable
 def test_report_written_with_table_in_reply_has_no_reminder(
     tmp_path: Path, profile_run: tuple[Path, Path, str]
 ) -> None:
@@ -192,6 +199,7 @@ def test_report_written_with_table_in_reply_has_no_reminder(
     assert _run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(transcript))) == {}
 
 
+@_skip_node_unavailable
 def test_report_written_without_table_in_reply_gets_reminder(
     tmp_path: Path, profile_run: tuple[Path, Path, str]
 ) -> None:
@@ -207,6 +215,7 @@ def test_report_written_without_table_in_reply_gets_reminder(
     assert "Step 4b" in hook_output.get("additionalContext", "")
 
 
+@_skip_node_unavailable
 def test_report_written_unreadable_transcript_has_no_reminder(
     tmp_path: Path, profile_run: tuple[Path, Path, str]
 ) -> None:
@@ -219,6 +228,7 @@ def test_report_written_unreadable_transcript_has_no_reminder(
     assert result == {}
 
 
+@_skip_node_unavailable
 def test_absolute_sentinel_path_resolves(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """An absolute REPORT_DIR value is honoured as-is, independent of the payload cwd."""
     report_dir, sentinel, _ = profile_run
@@ -227,6 +237,7 @@ def test_absolute_sentinel_path_resolves(tmp_path: Path, profile_run: tuple[Path
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd="/nonexistent"))) is not None
 
 
+@_skip_node_unavailable
 def test_simulated_windows_report_dir_resolution_is_canonical_and_contained() -> None:
     """Resolve Windows report paths case-insensitively and reject traversal outside profile."""
     resolved = _call_export("resolveReportDir", r".REPORTS\PROFILE\run-1", r"C:\Repo")
@@ -236,6 +247,7 @@ def test_simulated_windows_report_dir_resolution_is_canonical_and_contained() ->
     assert _call_export("resolveReportDir", r".reports\profile\..\private", r"C:\Repo") is None
 
 
+@_skip_node_unavailable
 def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """MacOS exports TMPDIR with a trailing slash — the sentinel must still resolve."""
     _, _, cwd = profile_run
@@ -243,6 +255,7 @@ def test_trailing_slash_tmpdir_resolves_sentinel(tmp_path: Path, profile_run: tu
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd), tmpdir_suffix="/")) is not None
 
 
+@_skip_node_unavailable
 def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """CSID falls back to the payload's session_id when the env var is unset."""
     _, _, cwd = profile_run
@@ -255,6 +268,7 @@ def test_sentinel_resolved_from_payload_session_id(tmp_path: Path, profile_run: 
 # ── REPORT_DIR is read the way `source` would bind it ────────────────────────
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "line",
     [
@@ -277,6 +291,7 @@ def test_assignment_forms_are_parsed(tmp_path: Path, profile_run: tuple[Path, Pa
     assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd))) is not None
 
 
+@_skip_node_unavailable
 def test_last_assignment_wins(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """Sourcing binds the final assignment — an earlier stale one must not shadow it."""
     report_dir, sentinel, cwd = profile_run
@@ -292,11 +307,12 @@ def test_last_assignment_wins(tmp_path: Path, profile_run: tuple[Path, Path, str
     assert str(report_dir / "report.md") in reason
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "line",
     [
-        pytest.param("SINCE=7d", id="key-absent"),
-        pytest.param("REPORT_DIR=", id="empty-value"),
+        "SINCE=7d",
+        "REPORT_DIR=",
         pytest.param(f"REPORT_DIR = {REPORT_DIR_REL}", id="spaces-around-equals"),
         pytest.param(f"MY_REPORT_DIR={REPORT_DIR_REL}", id="key-suffix-only"),
         pytest.param(f"REPORT_DIR:{REPORT_DIR_REL}", id="colon-not-equals"),
@@ -314,11 +330,13 @@ def test_unparsable_report_dir_passes_through(tmp_path: Path, profile_run: tuple
 # ── Everything outside an in-flight profile run passes through ───────────────
 
 
+@_skip_node_unavailable
 def test_no_sentinel_passes_through(tmp_path: Path) -> None:
     """No foundry:profile run reached Step 1 → unrelated questions are never gated."""
     assert _run(tmp_path, _ask_payload()) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "payload",
     [
@@ -333,6 +351,7 @@ def test_non_matching_payloads_pass_through(tmp_path: Path, profile_run: tuple[P
     assert _run(tmp_path, {**payload, "cwd": cwd}) == {}
 
 
+@_skip_node_unavailable
 def test_stale_sentinel_passes_through(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """Sentinel older than the enforcement window is treated as a crashed run."""
     _, sentinel, cwd = profile_run
@@ -342,6 +361,7 @@ def test_stale_sentinel_passes_through(tmp_path: Path, profile_run: tuple[Path, 
     assert _run(tmp_path, _ask_payload(cwd=cwd)) == {}
 
 
+@_skip_node_unavailable
 def test_missing_report_dir_passes_through(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
     """Report dir gone (worktree removed, TTL cleanup) → hook cannot judge, allows."""
     report_dir, _, cwd = profile_run
@@ -350,14 +370,10 @@ def test_missing_report_dir_passes_through(tmp_path: Path, profile_run: tuple[Pa
     assert _run(tmp_path, _ask_payload(cwd=cwd)) == {}
 
 
+@_skip_node_unavailable
 @pytest.mark.parametrize(
     "content",
-    [
-        pytest.param("", id="empty"),
-        pytest.param("   \n", id="whitespace"),
-        pytest.param("REPORT_DIR=.reports/audit/2026-08-04T10-00-00Z\n", id="not-a-profile-dir"),
-        pytest.param("REPORT_DIR=/etc\n", id="system-path"),
-    ],
+    ["", "   \n", "REPORT_DIR=.reports/audit/2026-08-04T10-00-00Z\n", "REPORT_DIR=/etc\n"],
 )
 def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: str) -> None:
     """A REPORT_DIR not under .reports/profile/ is ignored."""
@@ -366,14 +382,8 @@ def test_implausible_sentinel_content_passes_through(tmp_path: Path, content: st
     assert _run(tmp_path, _ask_payload(cwd=str(tmp_path))) == {}
 
 
-@pytest.mark.parametrize(
-    "session_id",
-    [
-        pytest.param("../../etc/passwd", id="traversal"),
-        pytest.param("has space", id="space"),
-        pytest.param("", id="blank"),
-    ],
-)
+@_skip_node_unavailable
+@pytest.mark.parametrize("session_id", ["../../etc/passwd", "has space", ""])
 def test_unsafe_csid_passes_through(tmp_path: Path, profile_run: tuple[Path, Path, str], session_id: str) -> None:
     """A CSID that cannot name a sentinel file is discarded, never path-joined."""
     _, _, cwd = profile_run
@@ -381,6 +391,7 @@ def test_unsafe_csid_passes_through(tmp_path: Path, profile_run: tuple[Path, Pat
     assert _run(tmp_path, _ask_payload(cwd=cwd), session_id_env=session_id) == {}
 
 
+@_skip_node_unavailable
 def test_malformed_stdin_passes_through(tmp_path: Path) -> None:
     """A hook bug or unparsable payload must never strand the session."""
     proc = subprocess.run(

@@ -276,10 +276,10 @@ def test_generated_roster_exposes_immutable_manager_identities(tmp_path: Path) -
 @pytest.mark.parametrize(
     ("mutation", "expected"),
     [
-        ("package-version", "plugin manifest identity mismatch"),
-        ("plugin-version", "plugin manifest identity mismatch"),
-        ("invalid-version", "package manifest profile mismatch"),
-        ("plugin-extra-field", "plugin manifest fields mismatch"),
+        pytest.param("package-version", "plugin manifest identity mismatch", id="package-version"),
+        pytest.param("plugin-version", "plugin manifest identity mismatch", id="plugin-version"),
+        pytest.param("invalid-version", "package manifest profile mismatch", id="invalid-version"),
+        pytest.param("plugin-extra-field", "plugin manifest fields mismatch", id="plugin-extra-field"),
     ],
 )
 @POSIX_ONLY
@@ -318,12 +318,13 @@ def test_generated_roster_rejects_inconsistent_plugin_identity(
 @pytest.mark.parametrize(
     ("install_id", "python_hash", "python_path", "expected"),
     [
-        ("NOT-A-UUID", None, None, "invalid install UUID"),
-        (INSTALL_ID, "0" * 64, None, "python executable hash mismatch"),
-        (INSTALL_ID, None, Path("relative-python"), "python executable path must be absolute"),
-        (INSTALL_ID, None, Path("/tmp/control\npython"), "control character"),
+        pytest.param("NOT-A-UUID", None, None, "invalid install UUID", id="uuid"),
+        pytest.param(INSTALL_ID, "0" * 64, None, "python executable hash mismatch", id="hash"),
+        pytest.param(
+            INSTALL_ID, None, Path("relative-python"), "python executable path must be absolute", id="relative-path"
+        ),
+        pytest.param(INSTALL_ID, None, Path("/tmp/control\npython"), "control character", id="control-path"),
     ],
-    ids=["uuid", "hash", "relative-path", "control-path"],
 )
 @POSIX_ONLY
 def test_generation_rejects_bad_identity_inputs(
@@ -404,7 +405,7 @@ def test_generation_is_read_only_for_installed_inputs(tmp_path: Path) -> None:
     assert _snapshot() == before
 
 
-@pytest.mark.parametrize("hooks", [False, True], ids=["without-hook", "with-hook"])
+@pytest.mark.parametrize("hooks", [False, True])
 @POSIX_ONLY
 def test_generation_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> None:
     """Keep the pure renderer usable by the declared manager release."""

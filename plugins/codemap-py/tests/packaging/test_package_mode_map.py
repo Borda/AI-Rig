@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pytest
 
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _PLUGIN_ROOT / "scripts" / "build_package.py"
 if str(_BUILDER.parent) not in sys.path:
@@ -88,6 +89,7 @@ def _copy_and_synthesize_index(real_repo: Path, dest: Path, *, filemode_false: b
 # --- (1) synthesized-copy-index degradation is real -------------------------
 
 
+@pytest.mark.packaging
 def test_synthesized_copy_index_degrades_under_core_filemode_false(tmp_path: Path) -> None:
     """A fresh copy index under ``core.filemode=false`` reports 100644 for a 755 file."""
     real_repo = _make_fixture_repo(tmp_path, "real")
@@ -98,10 +100,14 @@ def test_synthesized_copy_index_degrades_under_core_filemode_false(tmp_path: Pat
     assert modes["bin/launcher"] is False, "core.filemode=false must strip the copy's own recorded mode"
 
 
-@pytest.mark.skipif(
+_skip_windows_posix = pytest.mark.skipif(
     sys.platform == "win32",
     reason="executable bit is POSIX-only; git on Windows/NTFS cannot record 100755",
 )
+
+
+@_skip_windows_posix
+@pytest.mark.packaging
 def test_synthesized_copy_index_is_correct_when_filemode_true(tmp_path: Path) -> None:
     """Control: the same copy under default ``core.filemode`` records the bit correctly."""
     real_repo = _make_fixture_repo(tmp_path, "real")
@@ -115,6 +121,7 @@ def test_synthesized_copy_index_is_correct_when_filemode_true(tmp_path: Path) ->
 # --- (2) authoritative external map overrides the degraded copy index ------
 
 
+@pytest.mark.packaging
 def test_build_with_degraded_copy_own_index_loses_executable_bit(tmp_path: Path) -> None:
     """Building the DEGRADED copy WITHOUT an override reproduces the original defect."""
     real_repo = _make_fixture_repo(tmp_path, "real")
@@ -126,10 +133,8 @@ def test_build_with_degraded_copy_own_index_loses_executable_bit(tmp_path: Path)
     assert record["exec"] is False, "unpatched copy-index path must still be able to reproduce the defect"
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="executable bit is POSIX-only; git on Windows/NTFS cannot record 100755",
-)
+@_skip_windows_posix
+@pytest.mark.packaging
 def test_build_with_real_mode_map_preserves_executable_bit_despite_degraded_copy(tmp_path: Path) -> None:
     """The authoritative real-repo map overrides a degraded copy index; 755 survives."""
     real_repo = _make_fixture_repo(tmp_path, "real")
@@ -147,6 +152,7 @@ def test_build_with_real_mode_map_preserves_executable_bit_despite_degraded_copy
 # --- (3) missing mode-map entry raises, never defaults ----------------------
 
 
+@pytest.mark.packaging
 def test_build_raises_on_payload_path_missing_from_mode_map(tmp_path: Path) -> None:
     """A required top-level document absent from the effective mode map raises, not defaults.
 
@@ -161,6 +167,7 @@ def test_build_raises_on_payload_path_missing_from_mode_map(tmp_path: Path) -> N
         builder.build_package(real_repo, tmp_path / "built", mode_map={})
 
 
+@pytest.mark.packaging
 def test_cli_exits_nonzero_on_missing_mode_map_entry(tmp_path: Path) -> None:
     """The CLI surfaces a missing mode-map entry as a named, nonzero-exit error."""
     empty_map = tmp_path / "empty-map.json"
@@ -182,6 +189,7 @@ def test_cli_exits_nonzero_on_missing_mode_map_entry(tmp_path: Path) -> None:
 # Payload membership shares the mode map's authority, so it can no longer diverge from it.
 
 
+@pytest.mark.packaging
 def test_untracked_file_under_include_dir_is_excluded_not_raised(tmp_path: Path) -> None:
     """An untracked file under an include dir (e.g. concurrent WIP under ``src/``) ships nothing and raises nothing.
 
@@ -200,6 +208,7 @@ def test_untracked_file_under_include_dir_is_excluded_not_raised(tmp_path: Path)
     assert all(not record["path"].startswith("src/") for record in manifest["files"])
 
 
+@pytest.mark.packaging
 def test_check_succeeds_with_untracked_file_under_include_dir(tmp_path: Path) -> None:
     """Allow untracked files inside an included directory during package checks."""
     real_repo = _make_fixture_repo(tmp_path, "real")
@@ -212,6 +221,7 @@ def test_check_succeeds_with_untracked_file_under_include_dir(tmp_path: Path) ->
     assert exit_code == 0
 
 
+@pytest.mark.packaging
 def test_untracked_required_doc_position_still_raises_via_mode_map(tmp_path: Path) -> None:
     """An untracked file does NOT weaken the required-document mode-map check.
 
@@ -230,6 +240,7 @@ def test_untracked_required_doc_position_still_raises_via_mode_map(tmp_path: Pat
 # --- _load_mode_map contract -------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_load_mode_map_reads_valid_json(tmp_path: Path) -> None:
     """A well-formed ``{path: bool}`` JSON file loads as-is."""
     path = tmp_path / "modes.json"
@@ -241,12 +252,13 @@ def test_load_mode_map_reads_valid_json(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "payload",
     [
-        pytest.param("not json", id="invalid-json"),
+        "not json",
         pytest.param(json.dumps(["bin/x"]), id="not-an-object"),
         pytest.param(json.dumps({"bin/x": "yes"}), id="non-bool-value"),
         pytest.param(json.dumps({"bin/x": 1}), id="int-not-bool-value"),
     ],
 )
+@pytest.mark.packaging
 def test_load_mode_map_rejects_malformed_payload(tmp_path: Path, payload: str) -> None:
     """A malformed mode-map file raises ``ValueError`` rather than propagating a parse error."""
     path = tmp_path / "modes.json"
@@ -256,6 +268,7 @@ def test_load_mode_map_rejects_malformed_payload(tmp_path: Path, payload: str) -
         builder._load_mode_map(path)
 
 
+@pytest.mark.packaging
 def test_load_mode_map_missing_file_raises(tmp_path: Path) -> None:
     """A nonexistent mode-map path raises ``ValueError``, not an unhandled ``OSError``."""
     with pytest.raises(ValueError, match="cannot read mode map"):
@@ -265,6 +278,7 @@ def test_load_mode_map_missing_file_raises(tmp_path: Path) -> None:
 # --- CLI ``--mode-map`` integration against the real tracked tree ---------------
 
 
+@pytest.mark.packaging
 def test_cli_mode_map_matches_default_git_derived_build(tmp_path: Path) -> None:
     """Reproduce the default build from an explicit mode map.
 

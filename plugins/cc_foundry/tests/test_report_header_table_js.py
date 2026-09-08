@@ -23,10 +23,7 @@ import pytest
 
 MODULE = Path(__file__).resolve().parent.parent / "hooks" / "report-header-table.js"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("node") is None,
-    reason="requires node to execute the module",
-)
+NODE_UNAVAILABLE = shutil.which("node") is None
 
 
 def _call(name: str, *args: object) -> object:
@@ -51,6 +48,13 @@ def _call(name: str, *args: object) -> object:
 # ── hasHeaderTable ─────────────────────────────────────────────────────────
 
 
+_skip_node_unavailable = pytest.mark.skipif(
+    NODE_UNAVAILABLE,
+    reason="requires node to execute the module",
+)
+
+
+@_skip_node_unavailable
 def test_pipe_table_with_enough_rows_is_detected() -> None:
     """A `| Field | Value |` table with >= MIN_TABLE_ROWS data rows counts."""
     text = "| Field | Value |\n| --- | --- |\n| Title | x |\n| PR | #1 |\n| Date | 2026-08-08 |\n"
@@ -58,6 +62,7 @@ def test_pipe_table_with_enough_rows_is_detected() -> None:
     assert _call("hasHeaderTable", text) is True
 
 
+@_skip_node_unavailable
 def test_raw_yaml_fields_without_pipes_is_not_detected() -> None:
     """The exact failure this module guards against: fields printed one per line, no table."""
     text = "Title: oss-review\nPR: #1303\nDate: 2026-08-08\n"
@@ -65,6 +70,7 @@ def test_raw_yaml_fields_without_pipes_is_not_detected() -> None:
     assert _call("hasHeaderTable", text) is False
 
 
+@_skip_node_unavailable
 def test_table_below_min_rows_is_not_detected() -> None:
     """Fewer than MIN_TABLE_ROWS data rows reads as stray prose pipes, not a rendered header."""
     text = "| Field | Value |\n| --- | --- |\n| Title | x |\n"
@@ -72,6 +78,7 @@ def test_table_below_min_rows_is_not_detected() -> None:
     assert _call("hasHeaderTable", text) is False
 
 
+@_skip_node_unavailable
 def test_fallback_dot_separated_line_is_detected() -> None:
     """SKILL.md's documented one-line fallback (used when the report read fails) also satisfies the check."""
     text = "verdict: APPROVE · findings: 3 · file: review-report.md"
@@ -79,6 +86,7 @@ def test_fallback_dot_separated_line_is_detected() -> None:
     assert _call("hasHeaderTable", text) is True
 
 
+@_skip_node_unavailable
 def test_empty_text_is_not_detected() -> None:
     """No text at all (unreadable transcript) is never mistaken for a printed table."""
     assert _call("hasHeaderTable", "") is False
@@ -101,6 +109,7 @@ def _write_transcript(tmp_path: Path, rows: list[dict]) -> Path:
     return transcript
 
 
+@_skip_node_unavailable
 def test_collects_assistant_text_after_last_human_turn(tmp_path: Path) -> None:
     """Text from the current turn's assistant row is returned."""
     rows = [
@@ -112,6 +121,7 @@ def test_collects_assistant_text_after_last_human_turn(tmp_path: Path) -> None:
     assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "hello"
 
 
+@_skip_node_unavailable
 def test_tool_result_row_is_not_a_turn_boundary(tmp_path: Path) -> None:
     """A `user` row holding only a tool_result is the previous tool call's return value, not a new human turn."""
     rows = [
@@ -126,6 +136,7 @@ def test_tool_result_row_is_not_a_turn_boundary(tmp_path: Path) -> None:
     assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "before\nafter"
 
 
+@_skip_node_unavailable
 def test_non_turn_rows_are_skipped(tmp_path: Path) -> None:
     """Queue-operation / attachment / mode rows are not user or assistant rows and must not be mistaken for a
     boundary."""
@@ -141,6 +152,7 @@ def test_non_turn_rows_are_skipped(tmp_path: Path) -> None:
     assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "hello"
 
 
+@_skip_node_unavailable
 def test_sidechain_assistant_rows_are_excluded(tmp_path: Path) -> None:
     """Subagent output (isSidechain: true) is not the orchestrator's own reply and must not count."""
     rows = [
@@ -157,11 +169,13 @@ def test_sidechain_assistant_rows_are_excluded(tmp_path: Path) -> None:
     assert _call("assistantTextSinceLastUserTurn", str(transcript)) == "orchestrator text"
 
 
+@_skip_node_unavailable
 def test_missing_transcript_path_returns_empty_string() -> None:
     """No transcript_path at all — caller treats this exactly like 'no table found', never a crash."""
     assert _call("assistantTextSinceLastUserTurn", None) == ""
 
 
+@_skip_node_unavailable
 def test_unreadable_transcript_path_returns_empty_string(tmp_path: Path) -> None:
     """A path that doesn't resolve to a file fails open to an empty string."""
     assert _call("assistantTextSinceLastUserTurn", str(tmp_path / "does-not-exist.jsonl")) == ""
@@ -170,6 +184,7 @@ def test_unreadable_transcript_path_returns_empty_string(tmp_path: Path) -> None
 # ── tableReminder ───────────────────────────────────────────────────────────
 
 
+@_skip_node_unavailable
 def test_reminder_names_the_skill_and_print_step() -> None:
     """The additionalContext text must name both the skill and its print step, so the model knows what to redo."""
     reminder = _call("tableReminder", "oss:review", "Step 5b (print report header)")

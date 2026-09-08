@@ -332,14 +332,7 @@ class TestInjectPreambleCurrency:
         assert result.returncode == 0, result.stderr
         assert result.stdout == ""
 
-    @pytest.mark.parametrize(
-        "path",
-        [
-            pytest.param("api.pyi", id="stub"),
-            pytest.param("guide.rst", id="rst"),
-            pytest.param("docs/topic/guide.md", id="nested-docs-markdown"),
-        ],
-    )
+    @pytest.mark.parametrize("path", ["api.pyi", "guide.rst", "docs/topic/guide.md"])
     def test_indexed_non_python_change_marks_index_stale_and_refreshes(self, tmp_path: Path, path: str) -> None:
         """Every tracked indexed file kind makes an otherwise current index stale."""
         repo = tmp_path / "proj"
@@ -928,10 +921,7 @@ class TestGuardRedundantScan:
 
     @pytest.mark.parametrize(
         "command",
-        [
-            pytest.param('grep -rn "import mypackage.auth2" .', id="near-miss-suffix"),
-            pytest.param('grep -rn "import notmypackage.auth" .', id="near-miss-prefix"),
-        ],
+        ['grep -rn "import mypackage.auth2" .', 'grep -rn "import notmypackage.auth" .'],
     )
     def test_near_miss_module_not_denied(self, command: str, tmp_path: Path) -> None:
         """A near-miss module (name contains an exhausted module as a substring) must not be denied.
@@ -992,9 +982,9 @@ class TestGuardCommandAnchoring:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param('python -c "import mypackage.auth" && rm -r tmp', id="python-inline-import-with-rm"),
-            pytest.param("python -m pip install -r requirements.txt  # import mypackage.auth", id="pip-install-r"),
-            pytest.param("mv mypackage/auth.py mypackage/auth_v2.py", id="plain-file-move"),
+            'python -c "import mypackage.auth" && rm -r tmp',
+            "python -m pip install -r requirements.txt  # import mypackage.auth",
+            "mv mypackage/auth.py mypackage/auth_v2.py",
         ],
     )
     def test_non_search_command_never_denied(self, command: str, tmp_path: Path) -> None:
@@ -1006,13 +996,7 @@ class TestGuardCommandAnchoring:
         assert result.returncode == 0, result.stderr
         assert result.stdout == "", f"non-search command must not be denied: {command}"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param('grep -rn "import mypackage.auth" src/', id="grep-import"),
-            pytest.param('rg "from mypackage.auth" -n', id="rg-from"),
-        ],
-    )
+    @pytest.mark.parametrize("command", ['grep -rn "import mypackage.auth" src/', 'rg "from mypackage.auth" -n'])
     def test_search_command_still_denied(self, command: str, tmp_path: Path) -> None:
         """Narrowing the pattern must not stop the greps the guard exists to deny."""
         _seed_sentinel(tmp_path, self._SESSION, self._MODULES)

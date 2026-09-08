@@ -44,6 +44,7 @@ def _load_package_builder() -> Any:
     return module
 
 
+@pytest.mark.packaging
 def test_scaffold_has_stable_role_card_release_identity() -> None:
     """Prevent installed-cache identity and declared boundaries from drifting."""
     manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
@@ -64,6 +65,7 @@ def test_scaffold_has_stable_role_card_release_identity() -> None:
 
 
 @pytest.mark.skipif(not MARKETPLACE_PATH.exists(), reason="repository marketplace is outside installed plugin cache")
+@pytest.mark.packaging
 def test_repository_marketplace_contract() -> None:
     """Validate repository catalog metadata only when its source root exists."""
     marketplace = json.loads(MARKETPLACE_PATH.read_text(encoding="utf-8"))
@@ -73,6 +75,7 @@ def test_repository_marketplace_contract() -> None:
     assert codex_entry["source"]["path"] == "./plugins/codex-rig"
 
 
+@pytest.mark.packaging
 def test_representative_skill_and_role_are_cache_portable() -> None:
     """Prevent representative payloads from depending on the source checkout."""
     skill = (PLUGIN_ROOT / "skills" / "change-analysis" / "SKILL.md").read_text(encoding="utf-8")
@@ -109,6 +112,7 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_package_manifest_covers_regular_payloads_and_modes() -> None:
     """Prevent duplicate, linked, unverified, or mode-drifted package files."""
     manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
@@ -230,6 +234,7 @@ def _failure_payload(result: subprocess.CompletedProcess[bytes]) -> dict[str, ob
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_emits_exact_installed_card_bytes(tmp_path: Path) -> None:
     """Prove the active cache copy emits its verified bytes without source fallback."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -250,8 +255,9 @@ def test_verifier_emits_exact_installed_card_bytes(tmp_path: Path) -> None:
     assert emitted_card == card
 
 
-@pytest.mark.parametrize("hooks", [False, True], ids=["without-hook", "with-hook"])
+@pytest.mark.parametrize("hooks", [False, True])
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> None:
     """Keep linked bootstrap valid for both declared manager package variants."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -268,6 +274,7 @@ def test_verifier_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> 
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_rejects_plugin_manifest_content_not_bound_by_package_manifest(tmp_path: Path) -> None:
     """Prevent same-version plugin metadata tampering from emitting a role card."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -282,8 +289,9 @@ def test_verifier_rejects_plugin_manifest_content_not_bound_by_package_manifest(
     assert CARD_SEPARATOR not in result.stdout
 
 
-@pytest.mark.parametrize("schema", [None, 2], ids=["missing", "future"])
+@pytest.mark.parametrize("schema", [pytest.param(None, id="missing"), 2])
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int | None) -> None:
     """Prevent missing or future package schemas from entering the trust chain."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -302,6 +310,7 @@ def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_bounds_invalid_role_envelope(tmp_path: Path) -> None:
     """Prevent malformed role arguments from expanding or injecting diagnostics."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -325,6 +334,7 @@ def test_verifier_bounds_invalid_role_envelope(tmp_path: Path) -> None:
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_stops_oversized_oracle_output(tmp_path: Path) -> None:
     """Prevent an oversized runtime response from being buffered or trusted."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -340,17 +350,17 @@ def test_verifier_stops_oversized_oracle_output(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("fixture_options", "overrides", "reason"),
     [
-        ({"enabled": False}, {}, "active-package-mismatch"),
-        ({"installed": False}, {}, "active-package-mismatch"),
-        ({"missing_card": True}, {}, "verification-error"),
-        ({"stale_cache": True}, {}, "active-package-mismatch"),
-        ({}, {"role_sha256": "0" * 64}, "role-manifest-mismatch"),
-        ({}, {"helper_sha256": "0" * 64}, "helper-hash-mismatch"),
-        ({}, {"manifest_sha256": "0" * 64}, "manifest-hash-mismatch"),
+        pytest.param({"enabled": False}, {}, "active-package-mismatch", id="disabled"),
+        pytest.param({"installed": False}, {}, "active-package-mismatch", id="removed"),
+        pytest.param({"missing_card": True}, {}, "verification-error", id="missing-card"),
+        pytest.param({"stale_cache": True}, {}, "active-package-mismatch", id="retained-old-cache"),
+        pytest.param({}, {"role_sha256": "0" * 64}, "role-manifest-mismatch", id="role-hash"),
+        pytest.param({}, {"helper_sha256": "0" * 64}, "helper-hash-mismatch", id="helper-hash"),
+        pytest.param({}, {"manifest_sha256": "0" * 64}, "manifest-hash-mismatch", id="manifest-hash"),
     ],
-    ids=["disabled", "removed", "missing-card", "retained-old-cache", "role-hash", "helper-hash", "manifest-hash"],
 )
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_rejects_negative_link_states(
     tmp_path: Path, fixture_options: dict[str, bool], overrides: dict[str, str], reason: str
 ) -> None:
@@ -363,6 +373,7 @@ def test_verifier_rejects_negative_link_states(
 
 
 @POSIX_ONLY
+@pytest.mark.packaging
 def test_verifier_ignores_hostile_path_lookup(tmp_path: Path) -> None:
     """Prevent inherited PATH from substituting the active-package oracle."""
     home, installed_root, codex_binary = _installed_fixture(tmp_path)
@@ -379,6 +390,7 @@ def test_verifier_ignores_hostile_path_lookup(tmp_path: Path) -> None:
     assert not marker.exists()
 
 
+@pytest.mark.packaging
 def test_committed_runtime_payload_has_no_private_machine_paths() -> None:
     """Prevent local cache paths and obvious secret material from publication."""
     manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))

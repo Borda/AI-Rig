@@ -47,12 +47,7 @@ def test_parse_number_accepts_numeric_and_url(raw: str, expected: str) -> None:
 
 @pytest.mark.parametrize(
     "raw",
-    [
-        pytest.param("not-a-number", id="plain-text"),
-        pytest.param("https://github.com/owner/repo/wiki/Home", id="non-thread-url"),
-        pytest.param("https://gitlab.com/owner/repo/issues/3", id="non-github-host"),
-        pytest.param("", id="empty"),
-    ],
+    ["not-a-number", "https://github.com/owner/repo/wiki/Home", "https://gitlab.com/owner/repo/issues/3", ""],
 )
 def test_parse_number_rejects_unrecognised(raw: str) -> None:
     """parse_number returns None for non-numeric, non-thread inputs."""
@@ -69,14 +64,7 @@ def test_parse_iso_to_epoch_round_trip() -> None:
     assert dtt.parse_iso_to_epoch("2024-01-01T00:00:00Z") == 1704067200
 
 
-@pytest.mark.parametrize(
-    "iso",
-    [
-        pytest.param("", id="empty"),
-        pytest.param("not-a-date", id="garbage"),
-        pytest.param("2024-01-01", id="date-only-no-time"),
-    ],
-)
+@pytest.mark.parametrize("iso", ["", "not-a-date", "2024-01-01"])
 def test_parse_iso_to_epoch_returns_none_on_failure(iso: str) -> None:
     """Empty or malformed timestamps return None."""
     assert dtt.parse_iso_to_epoch(iso) is None
@@ -107,13 +95,7 @@ def test_compute_drift_equal_timestamp_is_not_drifted() -> None:
     assert dtt.compute_drift("2024-01-01T00:00:00Z", 1704067200) is False
 
 
-@pytest.mark.parametrize(
-    "iso",
-    [
-        pytest.param("", id="empty-updated-at"),
-        pytest.param("bogus", id="unparseable-timestamp"),
-    ],
-)
+@pytest.mark.parametrize("iso", ["", "bogus"])
 def test_compute_drift_parse_failure_is_conservative(iso: str) -> None:
     """Parse failures bias toward refetch (DRIFT=true) — never miss real updates."""
     assert dtt.compute_drift(iso, 1704067200) is True

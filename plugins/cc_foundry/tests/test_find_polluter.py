@@ -123,12 +123,12 @@ def test_round_estimate_rejects_negative() -> None:
 @pytest.mark.parametrize(
     ("total", "expected"),
     [
-        (0, 0),
-        (1, 1),
-        (2, 2),
-        (7, 3),
-        (8, 4),
-        (1000, 10),
+        pytest.param(0, 0, id="0"),
+        pytest.param(1, 1, id="1"),
+        pytest.param(2, 2, id="2"),
+        pytest.param(7, 3, id="7"),
+        pytest.param(8, 4, id="8"),
+        pytest.param(1000, 10, id="1000"),
     ],
 )
 def test_round_estimate_values(total: int, expected: int) -> None:
@@ -139,11 +139,11 @@ def test_round_estimate_values(total: int, expected: int) -> None:
 @pytest.mark.parametrize(
     ("lo", "hi", "expected"),
     [
-        (0, 10, 5),
-        (3, 7, 5),
-        (0, 1, 0),
-        (4, 5, 4),
-        (0, 0, 0),
+        pytest.param(0, 10, 5, id="0-10"),
+        pytest.param(3, 7, 5, id="3"),
+        pytest.param(0, 1, 0, id="0-1"),
+        pytest.param(4, 5, 4, id="4"),
+        pytest.param(0, 0, 0, id="0-0"),
     ],
 )
 def test_binary_midpoint(lo: int, hi: int, expected: int) -> None:

@@ -111,13 +111,7 @@ def test_allowlisted_python_m_pytest(captured_argv: list[list[str]]) -> None:
 
 @pytest.mark.parametrize(
     "command",
-    [
-        "rm -rf /",
-        "pytest; rm -rf /",
-        "pytest && echo x",
-        "uv run pytest; echo x",
-        "python -m pytest -q",
-    ],
+    ["rm -rf /", "pytest; rm -rf /", "pytest && echo x", "uv run pytest; echo x", "python -m pytest -q"],
 )
 def test_rejects_unsafe_cmd(
     captured_argv: list[list[str]],

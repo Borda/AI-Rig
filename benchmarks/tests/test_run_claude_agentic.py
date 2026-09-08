@@ -165,10 +165,7 @@ class TestTask:
         assert task.primary_module == "lightning.pytorch.trainer.trainer"
         assert task.difficulty == "hard"
 
-    @pytest.mark.parametrize(
-        "task_type",
-        ["fix", "feature", "refactor", "review"],
-    )
+    @pytest.mark.parametrize("task_type", ["fix", "feature", "refactor", "review"])
     def test_accepted_task_types(self, script_run_agentic: Any, task_type: str) -> None:
         """Task accepts all four documented type values without error.
 
@@ -989,11 +986,7 @@ class TestProviderParityTaskIntegration:
         assert script_run_agentic._invokes_scan_query("cd /repo && /plugin/bin/scan-query rdeps module")
         assert not script_run_agentic._invokes_scan_query("echo scan-query symbol Trainer")
 
-    @pytest.mark.parametrize(
-        "quoted_pattern",
-        [r"'Strategy\.setup_environment$'", r'"Strategy\.setup_environment$"'],
-        ids=["single-quoted", "double-quoted"],
-    )
+    @pytest.mark.parametrize("quoted_pattern", [r"'Strategy\.setup_environment$'", r'"Strategy\.setup_environment$"'])
     def test_query_arguments_normalize_shell_quoted_patterns(
         self, script_run_agentic: Any, quoted_pattern: str
     ) -> None:
@@ -1099,11 +1092,19 @@ class TestToolCounts:
     @pytest.mark.parametrize(
         "kwargs,expected_total",
         [
-            ({"grep": 3, "bash": 1, "semble": 2}, 6),  # docstring example
-            ({"grep": 0, "glob": 0, "bash": 0, "skill": 0, "semble": 0}, 0),
-            ({"grep": 1}, 1),
-            ({"glob": 5, "skill": 3}, 8),
-            ({"grep": 10, "glob": 10, "bash": 10, "skill": 10, "semble": 10}, 50),
+            pytest.param({"grep": 3, "bash": 1, "semble": 2}, 6, id="grep-3-bash-1-semble-2"),  # docstring example
+            pytest.param(
+                {"grep": 0, "glob": 0, "bash": 0, "skill": 0, "semble": 0},
+                0,
+                id="grep-0-glob-0-bash-0-skill-0-semble-0",
+            ),
+            pytest.param({"grep": 1}, 1, id="grep-1"),
+            pytest.param({"glob": 5, "skill": 3}, 8, id="glob-5-skill-3"),
+            pytest.param(
+                {"grep": 10, "glob": 10, "bash": 10, "skill": 10, "semble": 10},
+                50,
+                id="grep-10-glob-10-bash-10-skill-10-semble-10",
+            ),
         ],
     )
     def test_total_sums_main_counters(self, script_run_agentic: Any, kwargs: dict, expected_total: int) -> None:
@@ -1428,52 +1429,57 @@ class TestGroundTruthGenerateMatchSet:
         "module,corpus,should_match",
         [
             # Full dotted path must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "lightning.pytorch.trainer.trainer",
                 True,
+                id="lightning.pytorch.trainer.trainer-lightning.pytorch.trainer.trainer",
             ),
             # File path form must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "lightning/pytorch/trainer/trainer.py",
                 True,
+                id="lightning.pytorch.trainer.trainer-lightning-pytorch-trainer-trainer.py",
             ),
             # src/ file path form must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "src/lightning/pytorch/trainer/trainer.py",
                 True,
+                id="lightning.pytorch.trainer.trainer-src-lightning-pytorch-trainer-trainer.py",
             ),
             # 2-component suffix dotted must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "trainer.trainer",
                 True,
+                id="lightning.pytorch.trainer.trainer-trainer.trainer",
             ),
             # 2-component suffix slash must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "trainer/trainer",
                 True,
+                id="lightning.pytorch.trainer.trainer-trainer-trainer",
             ),
             # 3-component suffix must match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "pytorch.trainer.trainer",
                 True,
+                id="lightning.pytorch.trainer.trainer-pytorch.trainer.trainer",
             ),
             # Bare leaf name must NOT match (enforced minimum 2 components)
-            (
-                "lightning.pytorch.trainer.trainer",
-                "trainer",
-                False,
+            pytest.param(
+                "lightning.pytorch.trainer.trainer", "trainer", False, id="lightning.pytorch.trainer.trainer-trainer"
             ),
             # Unrelated text must not match
-            (
+            pytest.param(
                 "lightning.pytorch.trainer.trainer",
                 "completely unrelated text",
                 False,
+                id="lightning.pytorch.trainer.trainer-completely-unrelated-text",
             ),
         ],
     )
@@ -1562,11 +1568,7 @@ class TestGroundTruthScore:
 
     @pytest.mark.parametrize(
         "found_count,expected_recall",
-        [
-            (7, 0.7),
-            (6, 0.6),
-            (10, 1.0),
-        ],
+        [pytest.param(7, 0.7, id="7"), pytest.param(6, 0.6, id="6"), pytest.param(10, 1.0, id="10")],
     )
     def test_recall_boundary_values_are_exact(
         self, script_run_agentic: Any, tmp_path: Path, found_count: int, expected_recall: float
@@ -1815,21 +1817,13 @@ class TestGroundTruthExtractModules:
     @pytest.mark.parametrize(
         "text,expected_subset",
         [
-            pytest.param(
-                "lightning.pytorch.trainer.trainer",
-                {"lightning.pytorch.trainer.trainer"},
-                id="dotted",
-            ),
+            pytest.param("lightning.pytorch.trainer.trainer", {"lightning.pytorch.trainer.trainer"}, id="dotted"),
             pytest.param(
                 "src/lightning/pytorch/trainer/trainer.py",
                 {"lightning.pytorch.trainer.trainer"},
                 id="src-path",
             ),
-            pytest.param(
-                "unrelated text with no lightning modules",
-                set(),
-                id="no-match",
-            ),
+            pytest.param("unrelated text with no lightning modules", set(), id="no-match"),
         ],
     )
     def test_extracts_lightning_module_names(self, ground_truth: Any, text: str, expected_subset: set) -> None:
@@ -3406,10 +3400,7 @@ class TestReportFixFamilySuppression:
         _savings_summary must exclude them, leaving no rows for an all-fix suite.
         """
         tasks = [script_run_agentic.Task(id="FM-01", type="fix_multicaller", prompt="p")]
-        results = [
-            self._fix_run(script_run_agentic, "plain"),
-            self._fix_run(script_run_agentic, "codemap"),
-        ]
+        results = [self._fix_run(script_run_agentic, "plain"), self._fix_run(script_run_agentic, "codemap")]
         report = script_run_agentic.Report(results, tasks, {"date": "2026-07-03"})
         agg = script_run_agentic.aggregate(results, ["FM-01"], model_short="haiku")
         assert report._savings_summary(agg) == []
@@ -3684,7 +3675,10 @@ class TestRunTargetedTest:
         assert runner._run_targeted_test(tmp_path, "test_bad.py") is False
 
 
-@pytest.mark.parametrize(("writable", "expected"), [(False, []), (True, ["--permission-mode", "acceptEdits"])])
+@pytest.mark.parametrize(
+    ("writable", "expected"),
+    [pytest.param(False, [], id="false"), pytest.param(True, ["--permission-mode", "acceptEdits"], id="true")],
+)
 def test_stage_transport_enables_native_edits_only_for_executable_workspaces(
     script_run_agentic: Any,
     monkeypatch: pytest.MonkeyPatch,

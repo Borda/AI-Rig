@@ -27,10 +27,7 @@ from pathlib import Path
 import pytest
 from _hook_env import _hook_tmp_base
 
-pytestmark = pytest.mark.skipif(
-    subprocess.run(["git", "--version"], capture_output=True, timeout=5).returncode != 0,
-    reason="requires functional git (XCode CLI tools or equivalent)",
-)
+GIT_UNAVAILABLE = subprocess.run(["git", "--version"], capture_output=True, timeout=5).returncode != 0
 
 # Repo/branch slugs come from the hook's own toSlug() over `git rev-parse` and
 # `git branch --show-current`; the git_repo fixture pins them to myrepo/main.
@@ -130,6 +127,13 @@ def _user_prompt(prompt_text: str) -> dict:
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
+_skip_git_unavailable = pytest.mark.skipif(
+    GIT_UNAVAILABLE,
+    reason="requires functional git (XCode CLI tools or equivalent)",
+)
+
+
+@_skip_git_unavailable
 @pytest.mark.usefixtures("push_sentinel")
 class TestCommitGuard:
     """commit-guard.js: push-only sentinel gate; commit is prompt-discipline only."""
@@ -195,6 +199,7 @@ class TestCommitGuard:
         assert not push_sentinel.exists()
 
 
+@_skip_git_unavailable
 @pytest.mark.usefixtures("push_sentinel")
 class TestForcePushSpelling:
     """The force-push block must gate the action, not one spelling of it.
@@ -206,24 +211,24 @@ class TestForcePushSpelling:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("git push --force", id="plain-force"),
-            pytest.param("git push -f", id="short-force"),
-            pytest.param("git push --force-with-lease", id="force-with-lease"),
-            pytest.param("git push --force-if-includes origin main", id="force-if-includes"),
-            pytest.param("git -C /some/path push --force", id="dash-C-before-subcommand"),
-            pytest.param("git --git-dir=/some/.git push --force", id="git-dir-inline-value"),
-            pytest.param("git -c user.name=x push --force", id="dash-c-config"),
-            pytest.param("cd /somewhere && git push --force", id="after-and-operator"),
-            pytest.param("echo hi; git push --force", id="after-semicolon"),
-            pytest.param("git push origin +main", id="plus-refspec"),
-            pytest.param("git -C /some/path push origin +main", id="plus-refspec-with-dash-C"),
-            pytest.param("git push -fu origin main", id="clustered-short-flags"),
-            pytest.param("git push -uf origin main", id="clustered-short-flags-reversed"),
-            pytest.param("/usr/bin/git push --force origin main", id="absolute-git-path"),
-            pytest.param("env git push --force origin main", id="env-wrapper"),
-            pytest.param("env -i PATH=/bin git push --force origin main", id="env-wrapper-with-flags"),
-            pytest.param("GIT_TRACE=1 git push --force origin main", id="leading-assignment"),
-            pytest.param("echo $(git push --force origin main)", id="command-substitution"),
+            "git push --force",
+            "git push -f",
+            "git push --force-with-lease",
+            "git push --force-if-includes origin main",
+            "git -C /some/path push --force",
+            "git --git-dir=/some/.git push --force",
+            "git -c user.name=x push --force",
+            "cd /somewhere && git push --force",
+            "echo hi; git push --force",
+            "git push origin +main",
+            "git -C /some/path push origin +main",
+            "git push -fu origin main",
+            "git push -uf origin main",
+            "/usr/bin/git push --force origin main",
+            "env git push --force origin main",
+            "env -i PATH=/bin git push --force origin main",
+            "GIT_TRACE=1 git push --force origin main",
+            "echo $(git push --force origin main)",
         ],
     )
     def test_force_push_spellings_blocked_with_sentinel(
@@ -240,10 +245,10 @@ class TestForcePushSpelling:
     @pytest.mark.parametrize(
         "command",
         [
-            pytest.param("git -C /some/path push", id="dash-C-plain-push"),
-            pytest.param("cd /somewhere && git push", id="chained-plain-push"),
-            pytest.param("git push --follow-tags origin main", id="long-flag-containing-f"),
-            pytest.param("git push -u origin main", id="short-flag-without-f"),
+            "git -C /some/path push",
+            "cd /somewhere && git push",
+            "git push --follow-tags origin main",
+            "git push -u origin main",
         ],
     )
     def test_non_force_push_spellings_still_need_sentinel(self, git_repo: Path, run_hook, command: str) -> None:
@@ -257,14 +262,7 @@ class TestForcePushSpelling:
         assert result.returncode == 2, f"{command!r} bypassed the sentinel gate"
         assert "AskUserQuestion" in result.stderr
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            pytest.param("git log --oneline", id="git-log"),
-            pytest.param("git status", id="git-status"),
-            pytest.param("echo 'git push --force'", id="force-inside-echo-string"),
-        ],
-    )
+    @pytest.mark.parametrize("command", ["git log --oneline", "git status", "echo 'git push --force'"])
     def test_non_push_commands_still_pass(self, git_repo: Path, run_hook, command: str) -> None:
         """Commands that are not a push are untouched.
 

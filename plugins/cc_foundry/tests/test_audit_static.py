@@ -70,12 +70,12 @@ def _seed_defective_plugin(root: Path) -> Path:
 @pytest.mark.parametrize(
     ("check", "expected_file", "expected_text"),
     [
-        ("tag-symmetry", "agents/bad.md", "unbalanced <role>"),
-        ("fence-symmetry", "skills/fencebad/SKILL.md", "unclosed fence"),
-        ("readme-drift", "README.md", "0.0.1"),
-        ("mode-dispatch", "skills/persist/SKILL.md", "Mode: Ghost"),
-        ("bash-persistence", "skills/persist/SKILL.md", "$RUN_ID assigned"),
-        ("plugin-module-docs", "bin/missing_docs.py", "missing module docstring"),
+        pytest.param("tag-symmetry", "agents/bad.md", "unbalanced <role>", id="tag-symmetry"),
+        pytest.param("fence-symmetry", "skills/fencebad/SKILL.md", "unclosed fence", id="fence-symmetry"),
+        pytest.param("readme-drift", "README.md", "0.0.1", id="readme-drift"),
+        pytest.param("mode-dispatch", "skills/persist/SKILL.md", "Mode: Ghost", id="mode-dispatch"),
+        pytest.param("bash-persistence", "skills/persist/SKILL.md", "$RUN_ID assigned", id="bash-persistence"),
+        pytest.param("plugin-module-docs", "bin/missing_docs.py", "missing module docstring", id="plugin-module-docs"),
     ],
 )
 def test_layer1_catches_seeded_defect(tmp_path: Path, check: str, expected_file: str, expected_text: str) -> None:

@@ -396,24 +396,9 @@ class TestMainSubcheckSelection:
     @pytest.mark.parametrize(
         ("mode", "expected", "excluded"),
         [
-            pytest.param(
-                "empty-block",
-                "empty block",
-                ("unbalanced", "escaped structural tag"),
-                id="empty-block",
-            ),
-            pytest.param(
-                "unbalanced",
-                "unbalanced",
-                ("empty block", "escaped structural tag"),
-                id="unbalanced",
-            ),
-            pytest.param(
-                "escaped-tag",
-                "escaped structural tag",
-                ("empty block", "unbalanced"),
-                id="escaped-tag",
-            ),
+            pytest.param("empty-block", "empty block", ("unbalanced", "escaped structural tag"), id="empty-block"),
+            pytest.param("unbalanced", "unbalanced", ("empty block", "escaped structural tag"), id="unbalanced"),
+            pytest.param("escaped-tag", "escaped structural tag", ("empty block", "unbalanced"), id="escaped-tag"),
         ],
     )
     def test_single_subcheck_reports_only_its_own_findings(

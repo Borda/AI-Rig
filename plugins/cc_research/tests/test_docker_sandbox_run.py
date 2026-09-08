@@ -58,10 +58,7 @@ def test_build_verify_command_network_override() -> None:
 
 @pytest.mark.parametrize(
     "builder",
-    [
-        pytest.param(ds.build_explore_command, id="explore"),
-        pytest.param(ds.build_verify_command, id="verify"),
-    ],
+    [pytest.param(ds.build_explore_command, id="explore"), pytest.param(ds.build_verify_command, id="verify")],
 )
 def test_builders_carry_default_resource_quotas(builder: Any) -> None:
     """Both modes cap CPU, memory and process count, not just wall-clock time.
@@ -78,10 +75,7 @@ def test_builders_carry_default_resource_quotas(builder: Any) -> None:
 
 @pytest.mark.parametrize(
     "builder",
-    [
-        pytest.param(ds.build_explore_command, id="explore"),
-        pytest.param(ds.build_verify_command, id="verify"),
-    ],
+    [pytest.param(ds.build_explore_command, id="explore"), pytest.param(ds.build_verify_command, id="verify")],
 )
 def test_builders_render_supplied_limits(builder: Any) -> None:
     """Explicit ``SandboxLimits`` reach the argv of both builders instead of the defaults."""
@@ -122,13 +116,7 @@ def test_resolve_limits_falls_back_instead_of_raising(env: dict[str, str], expec
 
 @pytest.mark.parametrize(
     "arg",
-    [
-        pytest.param("pytest -q metric.py", id="pytest"),
-        pytest.param("python -m eval", id="python"),
-        pytest.param("echo done", id="echo"),
-        pytest.param("./run_metric.sh", id="script-entry"),
-        pytest.param("pytest_rm_module -q", id="substring-not-token"),
-    ],
+    ["pytest -q metric.py", "python -m eval", "echo done", "./run_metric.sh", "pytest_rm_module -q"],
 )
 def test_find_destructive_tokens_allows_benign_commands(arg: str) -> None:
     """Legitimate metric commands contain no destructive whole-word tokens."""

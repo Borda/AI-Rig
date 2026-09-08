@@ -12,9 +12,9 @@ from codemap_py import graph
 @pytest.mark.parametrize(
     ("trigger", "changed", "stale", "expected"),
     [
-        ("query_self_heal", "4", "true", ("query_self_heal", 4, True)),
-        ("unknown", "-1", "maybe", ("direct_cli", None, None)),
-        (None, "", "", ("direct_cli", None, None)),
+        pytest.param("query_self_heal", "4", "true", ("query_self_heal", 4, True), id="query_self_heal"),
+        pytest.param("unknown", "-1", "maybe", ("direct_cli", None, None), id="unknown"),
+        pytest.param(None, "", "", ("direct_cli", None, None), id="none"),
     ],
 )
 def test_refresh_result_normalizes_closed_provenance(

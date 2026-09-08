@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+
 _PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 _BUILDER = _PLUGIN_ROOT / "scripts" / "build_package.py"
 if str(_BUILDER.parent) not in sys.path:
@@ -62,6 +63,7 @@ def _package(tmp_path_factory: pytest.TempPathFactory) -> Path:
 # --- CLI + single-source identity ------------------------------------------
 
 
+@pytest.mark.packaging
 def test_build_exits_zero_and_writes_manifest(package: Path) -> None:
     """Manifest carries the tracked plugin identity and a non-empty file list."""
     name, version = _plugin_identity()
@@ -71,12 +73,14 @@ def test_build_exits_zero_and_writes_manifest(package: Path) -> None:
     assert len(manifest["files"]) >= 1
 
 
+@pytest.mark.packaging
 def test_manifest_version_is_not_hardcoded(package: Path) -> None:
     """The builder reads version from plugin.json rather than a literal."""
     _, version = _plugin_identity()
     assert json.loads((package / "package-manifest.json").read_text())["version"] == version
 
 
+@pytest.mark.packaging
 def test_check_flag_reports_deterministic(package: Path) -> None:
     """Accept a candidate matching a populated reference build."""
     result = _run_builder("--out", str(package), "--check")
@@ -86,6 +90,8 @@ def test_check_flag_reports_deterministic(package: Path) -> None:
 # --- determinism -----------------------------------------------------------
 
 
+@pytest.mark.integration
+@pytest.mark.packaging
 def test_two_builds_are_byte_identical(tmp_path: Path) -> None:
     """Two independent CLI builds produce byte-identical trees."""
     first, second = tmp_path / "a", tmp_path / "b"
@@ -97,12 +103,14 @@ def test_two_builds_are_byte_identical(tmp_path: Path) -> None:
 # --- manifest shape --------------------------------------------------------
 
 
+@pytest.mark.packaging
 def test_both_runtime_manifests_present(package: Path) -> None:
     """Both the Claude and Codex plugin manifests ship in the package."""
     assert (package / ".claude-plugin" / "plugin.json").is_file()
     assert (package / ".codex-plugin" / "plugin.json").is_file()
 
 
+@pytest.mark.packaging
 def test_manifest_pair_shares_identity(package: Path) -> None:
     """Claude and Codex manifests agree on name and version."""
     claude = json.loads((package / ".claude-plugin" / "plugin.json").read_text())
@@ -111,6 +119,7 @@ def test_manifest_pair_shares_identity(package: Path) -> None:
     assert claude["version"] == codex["version"]
 
 
+@pytest.mark.packaging
 def test_codex_manifest_ships_skill_roster_and_runtime_hooks(package: Path) -> None:
     """The Codex manifest advertises its skill roster and runtime-scoped hook configuration."""
     codex = json.loads((package / ".codex-plugin" / "plugin.json").read_text())
@@ -118,6 +127,7 @@ def test_codex_manifest_ships_skill_roster_and_runtime_hooks(package: Path) -> N
     assert codex["hooks"] == "./hooks/codex-hooks.json"
 
 
+@pytest.mark.packaging
 def test_manifest_skill_rosters(package: Path) -> None:
     """The package manifest lists the same six skills for both Claude and Codex."""
     rosters = json.loads((package / "package-manifest.json").read_text())["skills"]
@@ -133,14 +143,8 @@ def test_manifest_skill_rosters(package: Path) -> None:
     assert set(rosters["codex"]) == expected
 
 
-@pytest.mark.parametrize(
-    "absent_rel",
-    [
-        pytest.param("skills", id="no-default-skills-dir"),
-        pytest.param("hooks/hooks.json", id="no-default-hooks-json"),
-        pytest.param("tests", id="no-tests-dir"),
-    ],
-)
+@pytest.mark.parametrize("absent_rel", ["skills", "hooks/hooks.json", "tests"])
+@pytest.mark.packaging
 def test_package_omits_paths(package: Path, absent_rel: str) -> None:
     """Default/source-only paths are excluded from the shipped package."""
     assert not (package / absent_rel).exists()
@@ -152,20 +156,21 @@ def test_package_omits_paths(package: Path, absent_rel: str) -> None:
 @pytest.mark.parametrize(
     "present_rel",
     [
-        pytest.param("claude-skills/query-code/SKILL.md", id="skill"),
-        pytest.param("claude-skills/_shared/codemap-context.md", id="shared-doc"),
-        pytest.param("codex-skills/query-code/SKILL.md", id="codex-skill"),
-        pytest.param("hooks/claude-hooks.json", id="hook-manifest"),
-        pytest.param("hooks/codex-hooks.json", id="codex-hook-manifest"),
-        pytest.param("hooks/inject-preamble.py", id="hook-python"),
-        pytest.param("bin/scan-index", id="cli-alias"),
-        pytest.param("bin/codemap-py", id="launcher"),
-        pytest.param("scripts/codemap_py_cli.py", id="cli-script"),
-        pytest.param("README.md", id="readme"),
-        pytest.param("LICENSE", id="license"),
-        pytest.param("NOTICE", id="notice"),
+        "claude-skills/query-code/SKILL.md",
+        "claude-skills/_shared/codemap-context.md",
+        "codex-skills/query-code/SKILL.md",
+        "hooks/claude-hooks.json",
+        "hooks/codex-hooks.json",
+        "hooks/inject-preamble.py",
+        "bin/scan-index",
+        "bin/codemap-py",
+        "scripts/codemap_py_cli.py",
+        "README.md",
+        "LICENSE",
+        "NOTICE",
     ],
 )
+@pytest.mark.packaging
 def test_payload_includes_expected_members(package: Path, present_rel: str) -> None:
     """The real tracked tree's load-bearing members ship in the package."""
     assert (package / present_rel).is_file()
@@ -190,6 +195,7 @@ _EXPECTED_HOOK_PY = frozenset(
 )
 
 
+@pytest.mark.packaging
 def test_expected_python_hooks_ship(package: Path) -> None:
     """The shipped ``hooks/`` tree holds exactly the expected Python roster, no JavaScript."""
     shipped = {p.name for p in (package / "hooks").glob("*.py")}
@@ -208,6 +214,7 @@ def test_expected_python_hooks_ship(package: Path) -> None:
         pytest.param("README.md", False, id="document"),
     ],
 )
+@pytest.mark.packaging
 def test_manifest_exec_flag_is_platform_neutral(package: Path, member: str, expected_exec: bool) -> None:
     """The manifest ``exec`` flag mirrors git's tracked mode, not host st_mode."""
     manifest = json.loads((package / "package-manifest.json").read_text())
@@ -215,6 +222,7 @@ def test_manifest_exec_flag_is_platform_neutral(package: Path, member: str, expe
     assert record["exec"] is expected_exec
 
 
+@pytest.mark.packaging
 def test_hashed_text_inputs_have_platform_neutral_line_endings(package: Path) -> None:
     """Git attributes and packaged bytes must keep exact package hashes cross-platform."""
     text_inputs = (*_TEXT_LAUNCHERS, *_TEXT_PACKAGE_METADATA)
@@ -232,11 +240,13 @@ def test_hashed_text_inputs_have_platform_neutral_line_endings(package: Path) ->
         assert b"\r" not in (package / member).read_bytes(), member
 
 
+@pytest.mark.packaging
 def test_no_symlinks_in_payload(package: Path) -> None:
     """No payload member is a symlink."""
     assert [p for p in package.rglob("*") if p.is_symlink()] == []
 
 
+@pytest.mark.packaging
 def test_no_case_collisions(package: Path) -> None:
     """No two payload members collide under case folding."""
     folded: dict[str, str] = {}
@@ -248,6 +258,7 @@ def test_no_case_collisions(package: Path) -> None:
         folded[key] = path.name
 
 
+@pytest.mark.packaging
 def test_no_source_tree_references(package: Path) -> None:
     """No payload member embeds the absolute source-root path."""
     needle = str(builder.SOURCE_ROOT).encode("utf-8")
@@ -257,6 +268,7 @@ def test_no_source_tree_references(package: Path) -> None:
     assert offenders == []
 
 
+@pytest.mark.packaging
 def test_package_manifest_hashes_match(package: Path) -> None:
     """Every manifest SHA-256 matches its on-disk payload bytes."""
     manifest = json.loads((package / "package-manifest.json").read_text())
@@ -280,11 +292,13 @@ def test_package_manifest_hashes_match(package: Path) -> None:
         pytest.param(".claude-plugin/plugin.json", False, id="kept-manifest"),
     ],
 )
+@pytest.mark.packaging
 def test_is_excluded(relative: str, excluded: bool) -> None:
     """The exclusion predicate drops caches/state/tests but keeps real payload."""
     assert builder._is_excluded(relative) is excluded
 
 
+@pytest.mark.packaging
 def test_admit_rejects_case_collision() -> None:
     """Two payload paths differing only by case are rejected as a collision."""
     folded: set[str] = set()
@@ -309,6 +323,7 @@ def _git_porcelain() -> str:
     ).stdout
 
 
+@pytest.mark.packaging
 def test_builder_mutates_nothing_tracked(tmp_path: Path) -> None:
     """A build to an external dir leaves the tracked working tree byte-identical."""
     before = _git_porcelain()
@@ -317,6 +332,7 @@ def test_builder_mutates_nothing_tracked(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(sys.platform.startswith("win"), reason="executable bit is unreliable off POSIX")
+@pytest.mark.packaging
 def test_check_flags_tampered_reference_exec_mode(tmp_path: Path) -> None:
     """Reject a reference file whose mode differs from its manifest entry."""
     out = tmp_path / "pkg"

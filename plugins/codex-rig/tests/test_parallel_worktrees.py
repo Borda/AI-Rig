@@ -335,6 +335,8 @@ def _prepare_integrated_code_remediate(
     return lifecycle, state_path, state, repository
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_path: Path) -> None:
     """Prepare detached remediation worktrees from one clean, approval-bound source baseline."""
     lifecycle = _load_lifecycle()
@@ -371,7 +373,9 @@ def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_p
     }
 
 
-@pytest.mark.parametrize("mutation", ["missing", "digest-mismatch"], ids=["missing-context", "changed-context"])
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize("mutation", ["missing", "digest-mismatch"])
 def test_code_remediate_prepare_binds_each_source_local_context_pack(tmp_path: Path, mutation: str) -> None:
     """Reject dispatch when an approved bucket lacks its exact source-local context bytes."""
     lifecycle = _load_lifecycle()
@@ -398,6 +402,8 @@ def test_code_remediate_prepare_binds_each_source_local_context_pack(tmp_path: P
     assert not (tmp_path / ".codex-rig-worktrees" / "fixture").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_transition_rejects_context_pack_drift(tmp_path: Path) -> None:
     """Rehash frozen context bytes before a child handover can advance the lifecycle."""
     lifecycle = _load_lifecycle()
@@ -423,15 +429,11 @@ def test_code_remediate_transition_rejects_context_pack_drift(tmp_path: Path) ->
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "state_case",
     ["different-plan-path", "preexisting-state", "preexisting-state-temporary", "preexisting-output"],
-    ids=[
-        "caller-state-divergence",
-        "state-already-exists",
-        "state-temporary-already-exists",
-        "patch-output-already-exists",
-    ],
 )
 def test_code_remediate_prepare_requires_one_plan_bound_new_state_path(tmp_path: Path, state_case: str) -> None:
     """Reject caller-selected state or pre-existing lifecycle output before creating worktrees."""
@@ -462,6 +464,8 @@ def test_code_remediate_prepare_requires_one_plan_bound_new_state_path(tmp_path:
     assert not (tmp_path / ".codex-rig-worktrees" / "fixture").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_rollback_rechecks_preimages_after_restore(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -491,6 +495,8 @@ def test_code_remediate_rollback_rechecks_preimages_after_restore(
         lifecycle.cleanup_code_remediate_pilot(state_path=state_path)
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_uses_fixed_parent_gate_reference_not_bucket_shell_commands(tmp_path: Path) -> None:
     """Keep structural integration distinct from the parent-owned shared quality-gate execution."""
     lifecycle = _load_lifecycle()
@@ -509,6 +515,8 @@ def test_code_remediate_uses_fixed_parent_gate_reference_not_bucket_shell_comman
     assert state["verification_gate"] == "code-remediate-shared-quality-gates"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
     """Prevent approval of one remediation bucket contract authorizing another."""
     lifecycle = _load_lifecycle()
@@ -530,7 +538,9 @@ def test_code_remediate_prepare_rejects_plan_changed_after_approval(tmp_path: Pa
         )
 
 
-@pytest.mark.parametrize("source_state", ["dirty", "merging"], ids=["dirty-source", "merge-in-progress"])
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize("source_state", ["dirty", "merging"])
 def test_code_remediate_prepare_rejects_nonclean_source_before_dispatch(tmp_path: Path, source_state: str) -> None:
     """Block child dispatch when the authoritative repository has drift or an unresolved merge."""
     lifecycle = _load_lifecycle()
@@ -560,6 +570,8 @@ def test_code_remediate_prepare_rejects_nonclean_source_before_dispatch(tmp_path
     assert not (tmp_path / ".codex-rig-worktrees" / "fixture").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
 def test_code_remediate_prepare_rejects_symlinked_sibling_worktree_root(tmp_path: Path) -> None:
     """Prevent a plan-bound sibling worktree root escaping through a symlinked parent."""
@@ -580,6 +592,8 @@ def test_code_remediate_prepare_rejects_symlinked_sibling_worktree_root(tmp_path
     assert not (outside / "fixture").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
 def test_code_remediate_transition_rejects_symlinked_evidence_root(tmp_path: Path) -> None:
     """Reject lifecycle authority redirected after preparation through source-local evidence symlinks."""
@@ -605,6 +619,8 @@ def test_code_remediate_transition_rejects_symlinked_evidence_root(tmp_path: Pat
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
 def test_code_remediate_prepare_rejects_symlinked_source_parent(tmp_path: Path) -> None:
     """Prevent an authoritative repository path escaping through a symlinked parent."""
@@ -633,6 +649,8 @@ def test_code_remediate_prepare_rejects_symlinked_source_parent(tmp_path: Path) 
     assert not (workspace / ".codex-rig-worktrees" / "fixture").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_source_application_records_rollback_before_nonforce_cleanup(tmp_path: Path) -> None:
     """Apply only integrated bucket patches and retain rollback bytes before cleanup removes worktrees."""
     lifecycle, state_path, state, repository = _prepare_integrated_code_remediate(tmp_path)
@@ -653,6 +671,8 @@ def test_code_remediate_source_application_records_rollback_before_nonforce_clea
     assert all(not (tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_source_application_records_actual_crlf_postimage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -684,6 +704,8 @@ def test_code_remediate_source_application_records_actual_crlf_postimage(
     assert lifecycle.cleanup_code_remediate_pilot(state_path=state_path)["cleanup_status"] == "removed"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(tmp_path: Path) -> None:
     """Reject an otherwise valid external handover before it can satisfy a parent join."""
     lifecycle = _load_lifecycle()
@@ -720,10 +742,10 @@ def test_code_remediate_cli_join_rejects_handover_outside_evidence_root(tmp_path
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "prepared"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
-@pytest.mark.parametrize(
-    "path_kind", ["contained", "symlinked-component"], ids=["contained-control", "intermediate-symlink"]
-)
+@pytest.mark.parametrize("path_kind", ["contained", "symlinked-component"])
 def test_code_remediate_cli_handover_output_rejects_intermediate_symlink(tmp_path: Path, path_kind: str) -> None:
     """Allow a contained output but reject a symlinked parent even before its terminal exists."""
     lifecycle = _load_lifecycle()
@@ -765,6 +787,8 @@ def test_code_remediate_cli_handover_output_rejects_intermediate_symlink(tmp_pat
     assert output_path.exists() is (path_kind == "contained")
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -789,6 +813,8 @@ def test_code_remediate_apply_rejects_tampered_integration_before_source_apply(
     assert (repository / "bucket-b.txt").read_text(encoding="utf-8") == "baseline-b\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -872,6 +898,8 @@ def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
     )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_source_apply_failure_restores_only_known_states(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -908,6 +936,8 @@ def test_code_remediate_source_apply_failure_restores_only_known_states(
     }
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_source_apply_rolls_back_filtered_newline_postimage(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -937,6 +967,8 @@ def test_code_remediate_source_apply_rolls_back_filtered_newline_postimage(
     assert (repository / "bucket-b.txt").read_bytes() == b"baseline-b\r\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_ambiguous_source_failure_retains_evidence(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -993,6 +1025,8 @@ def _write_other_children(workspace: Path, state: dict[str, object], excluded_no
         (worktree / str(node["owned_paths"][0])).write_text("other-child\n", encoding="utf-8", newline="\n")
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
     """Prevent a stale approval from authorizing changed nodes or scope."""
     lifecycle = _load_lifecycle()
@@ -1010,17 +1044,19 @@ def test_prepare_rejects_plan_changed_after_approval(tmp_path: Path) -> None:
     assert not (tmp_path / ".reports" / "codex" / "develop" / "fixture" / "worktrees").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("owned_path", "error"),
     [
-        ("../escape.txt", "owned-path-invalid"),
-        ("/absolute.txt", "owned-path-invalid"),
-        ("C:\\absolute.txt", "owned-path-invalid"),
-        ("C:relative.txt", "owned-path-invalid"),
-        ("\\\\server\\share.txt", "owned-path-invalid"),
-        ("bucket-a.txt.", "owned-path-nonportable"),
-        ("BUCKET-A.TXT", "owned-path-alias"),
-        ("bucket-a.txt/child", "owned-path-overlap"),
+        pytest.param("../escape.txt", "owned-path-invalid", id="..-escape.txt"),
+        pytest.param("/absolute.txt", "owned-path-invalid", id="absolute.txt"),
+        pytest.param("C:\\absolute.txt", "owned-path-invalid", id="c-absolute.txt"),
+        pytest.param("C:relative.txt", "owned-path-invalid", id="c-relative.txt"),
+        pytest.param("\\\\server\\share.txt", "owned-path-invalid", id="server-share.txt"),
+        pytest.param("bucket-a.txt.", "owned-path-nonportable", id="bucket-a.txt."),
+        pytest.param("BUCKET-A.TXT", "owned-path-alias", id="bucket-a.txt"),
+        pytest.param("bucket-a.txt/child", "owned-path-overlap", id="bucket-a.txt-child"),
     ],
 )
 def test_prepare_rejects_nonportable_or_aliased_owned_paths(tmp_path: Path, owned_path: str, error: str) -> None:
@@ -1043,6 +1079,8 @@ def test_prepare_rejects_nonportable_or_aliased_owned_paths(tmp_path: Path, owne
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path) -> None:
     """Stop two otherwise disjoint packages from sharing one exclusive resource."""
     lifecycle = _load_lifecycle()
@@ -1064,6 +1102,8 @@ def test_prepare_rejects_overlapping_resource_locks(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
 def test_prepare_rejects_dirty_fixture_repository(tmp_path: Path, dirty_kind: str) -> None:
     """Prevent dispatch from a baseline with hidden tracked or untracked drift."""
@@ -1081,6 +1121,8 @@ def test_prepare_rejects_dirty_fixture_repository(tmp_path: Path, dirty_kind: st
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_prepare_creates_detached_worktrees_at_exact_frozen_head(tmp_path: Path) -> None:
     """Create isolated children without mutating the generated source checkout."""
     _, _, state, repository = _prepare(tmp_path)
@@ -1093,6 +1135,8 @@ def test_prepare_creates_detached_worktrees_at_exact_frozen_head(tmp_path: Path)
     assert _git(repository, "status", "--porcelain=v1", "--untracked-files=all").stdout == ""
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_prepare_canonicalizes_multi_path_package_order(tmp_path: Path) -> None:
     """Freeze multi-path ownership in the same lexical order used by parent verification."""
     lifecycle = _load_lifecycle()
@@ -1117,7 +1161,9 @@ def test_prepare_canonicalizes_multi_path_package_order(tmp_path: Path) -> None:
     assert state["nodes"][0]["owned_paths"] == ["bucket-a.txt", "bucket-c.txt"]
 
 
-@pytest.mark.parametrize("state_path_kind", ["path", "string"], ids=["path-object", "absolute-string"])
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize("state_path_kind", ["path", "string"])
 def test_create_completed_child_handover_accepts_canonical_state_path_forms(
     tmp_path: Path, state_path_kind: str
 ) -> None:
@@ -1140,6 +1186,8 @@ def test_create_completed_child_handover_accepts_canonical_state_path_forms(
     assert json.loads(state_path.read_text(encoding="utf-8"))["status"] == "prepared"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_create_completed_child_handover_rejects_invalid_state_path_type(tmp_path: Path) -> None:
     """Return the stable pilot error for an unsupported state-path object."""
     lifecycle, _, _, _ = _prepare(tmp_path)
@@ -1152,6 +1200,8 @@ def test_create_completed_child_handover_rejects_invalid_state_path_type(tmp_pat
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_create_completed_child_handover_rejects_relative_state_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1168,6 +1218,8 @@ def test_create_completed_child_handover_rejects_relative_state_path(
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_parent_authoritative_handovers_gate_patch_collection_and_integration(tmp_path: Path) -> None:
     """Require both child reports and verify them against worktrees before integration."""
     lifecycle, state_path, state, repository = _prepare(tmp_path)
@@ -1203,6 +1255,8 @@ def test_parent_authoritative_handovers_gate_patch_collection_and_integration(tm
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(tmp_path: Path) -> None:
     """Freeze retained diagnostics and reject their mutation before current patch collection."""
     lifecycle = _load_lifecycle()
@@ -1242,6 +1296,8 @@ def test_prior_attempt_fingerprint_blocks_retained_worktree_mutation(tmp_path: P
     assert not (state_path.parent / "patch-a.diff").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_state_authority_tamper_fails_before_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Rederive managed roots before executing Git from mutable lifecycle state."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1261,6 +1317,8 @@ def test_state_authority_tamper_fails_before_git(tmp_path: Path, monkeypatch: py
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_collect_rejects_child_commit_and_retains_worktree(tmp_path: Path) -> None:
     """Reject a clean-looking child that hid its mutation in a commit."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1276,6 +1334,8 @@ def test_collect_rejects_child_commit_and_retains_worktree(tmp_path: Path) -> No
     assert worktree.exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize("mutation", ["outside-owned", "untracked"])
 def test_collect_rejects_undeclared_or_untracked_changes(tmp_path: Path, mutation: str) -> None:
     """Prevent a child patch from smuggling undeclared or untracked files."""
@@ -1290,6 +1350,8 @@ def test_collect_rejects_undeclared_or_untracked_changes(tmp_path: Path, mutatio
         _join(lifecycle, state_path, state, tmp_path)
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_collect_rejects_staged_owned_change(tmp_path: Path) -> None:
     """Prevent a valid owned edit from bypassing the patch-only index boundary."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1304,6 +1366,8 @@ def test_collect_rejects_staged_owned_change(tmp_path: Path) -> None:
     assert not (state_path.parent / "patch-a.diff").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_collect_rejects_deletion_patch_shape(tmp_path: Path) -> None:
     """Reject deletion even when it stays in the owned bucket."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1316,6 +1380,8 @@ def test_collect_rejects_deletion_patch_shape(tmp_path: Path) -> None:
         _join(lifecycle, state_path, state, tmp_path)
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capability(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1337,17 +1403,19 @@ def test_raw_content_updates_rejects_mode_only_metadata_without_filemode_capabil
         lifecycle._raw_content_updates(worktree, node)
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("mutation", "error"),
     (
-        ("missing", "child-handovers-incomplete"),
-        ("duplicate", "child-handover-invalid"),
-        ("extra-field", "child-handover-invalid"),
-        ("failed", "child-handover-not-completed:FIXTURE-WRITE-A"),
-        ("cancelled", "child-handover-not-completed:FIXTURE-WRITE-A"),
-        ("empty-summary", "child-handover-summary-invalid:FIXTURE-WRITE-A"),
-        ("wrong-path", "child-handover-paths-mismatch:FIXTURE-WRITE-A"),
-        ("wrong-hash", "child-handover-patch-mismatch:FIXTURE-WRITE-A"),
+        pytest.param("missing", "child-handovers-incomplete", id="missing"),
+        pytest.param("duplicate", "child-handover-invalid", id="duplicate"),
+        pytest.param("extra-field", "child-handover-invalid", id="extra-field"),
+        pytest.param("failed", "child-handover-not-completed:FIXTURE-WRITE-A", id="failed"),
+        pytest.param("cancelled", "child-handover-not-completed:FIXTURE-WRITE-A", id="cancelled"),
+        pytest.param("empty-summary", "child-handover-summary-invalid:FIXTURE-WRITE-A", id="empty-summary"),
+        pytest.param("wrong-path", "child-handover-paths-mismatch:FIXTURE-WRITE-A", id="wrong-path"),
+        pytest.param("wrong-hash", "child-handover-patch-mismatch:FIXTURE-WRITE-A", id="wrong-hash"),
     ),
 )
 def test_join_rejects_incomplete_or_mismatched_child_handover(tmp_path: Path, mutation: str, error: str) -> None:
@@ -1386,6 +1454,8 @@ def test_join_rejects_incomplete_or_mismatched_child_handover(tmp_path: Path, mu
     assert all((tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_collect_rejects_worktree_drift_after_parent_join(tmp_path: Path) -> None:
     """Recheck the reported patch hash immediately before parent collection."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1402,6 +1472,8 @@ def test_collect_rejects_worktree_drift_after_parent_join(tmp_path: Path) -> Non
     assert not (state_path.parent / "patch-a.diff").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_collect_rejects_fabricated_operation_api(tmp_path: Path) -> None:
     """Keep caller-created operation dictionaries outside the collector API."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1415,6 +1487,8 @@ def test_collect_rejects_fabricated_operation_api(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_integrate_requires_every_completed_joined_patch(tmp_path: Path) -> None:
     """Prevent integration before both child reports and patches are verified."""
     lifecycle, state_path, state, repository = _prepare(tmp_path)
@@ -1425,6 +1499,8 @@ def test_integrate_requires_every_completed_joined_patch(tmp_path: Path) -> None
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_integrate_applies_parent_derived_patches_in_lexical_order(tmp_path: Path) -> None:
     """Apply both hash-bound patches to an isolated integration worktree in stable order."""
     lifecycle, state_path, state, repository = _prepare(tmp_path)
@@ -1447,6 +1523,8 @@ def test_integrate_applies_parent_derived_patches_in_lexical_order(tmp_path: Pat
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(tmp_path: Path) -> None:
     """Rehash immutable authority after joins before applying any child patch."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1466,6 +1544,8 @@ def test_plan_drift_after_join_blocks_integration_and_retains_worktrees(tmp_path
     assert all((tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.parametrize("drift", ["approval", "source"])
 def test_authority_or_source_drift_blocks_transition(tmp_path: Path, drift: str) -> None:
     """Reject approval-byte or generated-source drift before another Git transition."""
@@ -1488,6 +1568,8 @@ def test_authority_or_source_drift_blocks_transition(tmp_path: Path, drift: str)
     assert not (state_path.parent / "patch-a.diff").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_patch_digest_tamper_blocks_integration(tmp_path: Path) -> None:
     """Reject changed patch bytes before creating an integration worktree."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1506,6 +1588,8 @@ def test_patch_digest_tamper_blocks_integration(tmp_path: Path) -> None:
     assert not (tmp_path / str(state["worktree_root"]) / "integration").exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_conflicting_patch_retains_failed_integration(tmp_path: Path) -> None:
     """Retain the integration worktree when a hash-bound later patch conflicts."""
     lifecycle, state_path, state, repository = _prepare(tmp_path)
@@ -1532,6 +1616,8 @@ def test_conflicting_patch_retains_failed_integration(tmp_path: Path) -> None:
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_cleanup_removes_only_persisted_successful_worktrees(tmp_path: Path) -> None:
     """Remove generated worktrees only after integration evidence is durable."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1554,6 +1640,8 @@ def test_cleanup_removes_only_persisted_successful_worktrees(tmp_path: Path) -> 
     assert all(item["postcondition"] == "absent" for item in persisted["cleanup"])
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_cleanup_failure_is_retained_and_blocks_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Record non-force cleanup failure and retain every remaining diagnostic path."""
     lifecycle, state_path, state, _ = _prepare(tmp_path)
@@ -1581,6 +1669,8 @@ def test_cleanup_failure_is_retained_and_blocks_success(tmp_path: Path, monkeypa
     assert (tmp_path / str(state["nodes"][0]["worktree_path"])).exists()
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 @pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
 def test_prepare_rejects_symlinked_generated_root_when_supported(tmp_path: Path) -> None:
     """Prevent a managed worktree path from escaping through a symlink component."""
@@ -1601,6 +1691,8 @@ def test_prepare_rejects_symlinked_generated_root_when_supported(tmp_path: Path)
         )
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_git_runner_sanitizes_git_environment_without_shell(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Remove Git overrides while preserving Windows-required child variables."""
     lifecycle = _load_lifecycle()

@@ -71,17 +71,18 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 
 ## Version Pre-Bump Gate
 
-- Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline.
-- A commit changing only files under `plugins/<name>/tests/` needs no bump.
+- Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline, except a generated package manifest updated only to record test-file bytes.
+- A commit changing only files under `plugins/<name>/tests/` needs no bump. When the plugin ships its tests, regenerate and validate the package manifest for those test bytes without bumping the version or updating the changelog.
+- Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.
 - Each touched plugin is evaluated independently, and one commit applies at most one bump per plugin.
-- Before changing a version, run `git diff HEAD --name-only -- plugins/<name>/` and stop with no bump when every changed path is under `tests/`.
+- Before changing a version, run `git diff HEAD --name-only -- plugins/<name>/` and stop with no bump when every changed path is under `tests/`, or the only additional path is the generated package manifest updated for those tests.
 - Otherwise read the baseline with `git show HEAD:plugins/<name>/.claude-plugin/plugin.json | grep version` and the on-disk version with `grep version plugins/<name>/.claude-plugin/plugin.json`; stop if disk already differs from HEAD.
 - Classify patch (`Y`) for a fix, wording change, refactor, cleanup, or restoration of intended behavior.
 - Classify minor (`X`) for a new capability, agent, skill, or designed behavior, resetting patch to zero.
 - Test-only changes need no bump.
 - Calculate from HEAD and write exactly that single bump; never increment from a previously bumped on-disk value.
 - After calculating the bump, update every shipped runtime manifest, including `.codex-plugin/plugin.json` when present, so it shares the bumped version with `.claude-plugin/plugin.json`.
-- Update CHANGELOG or release metadata whenever the plugin's convention requires it.
+- Update CHANGELOG or release metadata only when a change affects shipped product or plugin behavior and the plugin convention requires it.
 
 ## Verification
 

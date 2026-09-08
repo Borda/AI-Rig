@@ -237,11 +237,7 @@ def test_integration_manifest_locks_plain_cli_and_skill_arms_and_artifacts() -> 
     assert manifest["experiment_id"] == "codex-integration-v1"
     assert manifest["schema_version"] == "codex-integration-manifest-v3"
     assert manifest["experiment_revision"] == "codex-integration-unified-task-cli-2026-08-11"
-    assert manifest["preregistered_cells"]["arms"] == [
-        "A_plain",
-        "B_auto",
-        "C_strict",
-    ]
+    assert manifest["preregistered_cells"]["arms"] == ["A_plain", "B_auto", "C_strict"]
     assert manifest["preregistered_cells"]["providers"] == ["codex"]
     assert manifest["preregistered_cells"]["confirmatory_repetitions"] == 1
     assert manifest["preregistered_cells"]["arm_order"] == (
@@ -258,14 +254,8 @@ def test_integration_manifest_locks_plain_cli_and_skill_arms_and_artifacts() -> 
     assert not set(manifest["preregistered_cells"]["structural_confirmatory_task_ids"]) & set(
         manifest["preregistered_cells"]["structural_diagnostic_task_ids"]
     )
-    assert manifest["codex_permission_profiles"]["treatment"]["arms"] == [
-        "B_auto",
-        "C_strict",
-    ]
-    assert manifest["codex_permission_profiles"]["treatment_runtime"]["scope"] == [
-        "B_auto",
-        "C_strict",
-    ]
+    assert manifest["codex_permission_profiles"]["treatment"]["arms"] == ["B_auto", "C_strict"]
+    assert manifest["codex_permission_profiles"]["treatment_runtime"]["scope"] == ["B_auto", "C_strict"]
     assert manifest["codex_permission_profiles"]["host_tooling_isolation"] == {
         "access": "deny",
         "arms": ["A_plain", "B_auto", "C_strict"],

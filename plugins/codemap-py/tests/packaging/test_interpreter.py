@@ -45,13 +45,13 @@ def _run_entry(args: list[str], env: dict[str, str] | None = None) -> subprocess
 @pytest.mark.parametrize(
     ("impl", "major", "minor", "expected"),
     [
-        ("cpython", 3, 11, True),
-        ("cpython", 3, 12, True),
-        ("cpython", 3, 14, True),
-        ("cpython", 3, 10, False),
-        ("cpython", 3, 15, False),
-        ("cpython", 4, 0, False),
-        ("pypy", 3, 12, False),
+        pytest.param("cpython", 3, 11, True, id="cpython-3-11"),
+        pytest.param("cpython", 3, 12, True, id="cpython-3-12"),
+        pytest.param("cpython", 3, 14, True, id="cpython-3-14"),
+        pytest.param("cpython", 3, 10, False, id="cpython-3-10"),
+        pytest.param("cpython", 3, 15, False, id="cpython-3-15"),
+        pytest.param("cpython", 4, 0, False, id="cpython-4"),
+        pytest.param("pypy", 3, 12, False, id="pypy"),
     ],
 )
 def test_version_bound(impl: str, major: int, minor: int, expected: bool) -> None:

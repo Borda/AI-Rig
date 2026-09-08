@@ -393,11 +393,7 @@ class TestSelectTasksIntegration:
     def _selection(self, script_run_bench: Any, **overrides: Any) -> Any:
         """Construct selection arguments with scenario overrides over a complete baseline."""
         base = {
-            "all_tasks": [
-                _task("SE-01", profiles=["dev"]),
-                _task("SE-02"),
-                _task("RI-01", "real_issue"),
-            ],
+            "all_tasks": [_task("SE-01", profiles=["dev"]), _task("SE-02"), _task("RI-01", "real_issue")],
             "ids": None,
             "task_type": None,
             "run_all": True,
@@ -460,11 +456,7 @@ class TestTieredSelection:
     @pytest.fixture(name="tasks")
     def _tasks(self) -> list[dict]:
         """Provide the task collection used by this selection or coverage scenario."""
-        return [
-            _task("SE-01", profiles=["dev"]),
-            _task("SE-02", profiles=["dev"]),
-            _task("FN-01", "fn_call_graph"),
-        ]
+        return [_task("SE-01", profiles=["dev"]), _task("SE-02", profiles=["dev"]), _task("FN-01", "fn_call_graph")]
 
     def test_haiku_tier_is_full(self, script_run_bench: Any, tasks: list[dict], tmp_path: Path) -> None:
         """The haiku tier runs every candidate task."""
@@ -614,9 +606,7 @@ class TestSelfConsistencyExclusion:
 
     def test_self_consistency_reported_separately(self, script_run_bench: Any, capsys: Any) -> None:
         """Self-consistency tasks surface in a dedicated row, not the headline."""
-        runs = [
-            _run(script_run_bench, "CQ-02", "codemap", correct=True, self_consistency=True),
-        ]
+        runs = [_run(script_run_bench, "CQ-02", "codemap", correct=True, self_consistency=True)]
         script_run_bench._print_self_consistency(runs)
         out = capsys.readouterr().out
         assert "Self-consistency" in out

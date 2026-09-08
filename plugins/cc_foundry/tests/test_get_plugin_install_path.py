@@ -120,12 +120,12 @@ class TestMain:
     @pytest.mark.parametrize(
         ("marketplace", "plugin"),
         [
-            ("", "foundry"),
-            ("borda-ai-rig", ""),
-            ("../etc", "foundry"),
-            ("borda-ai-rig", "../etc"),
-            ("foo bar", "foundry"),
-            ("borda-ai-rig", "foo/bar"),
+            pytest.param("", "foundry", id="empty"),
+            pytest.param("borda-ai-rig", "", id="borda-ai-rig-empty"),
+            pytest.param("../etc", "foundry", id="..-etc"),
+            pytest.param("borda-ai-rig", "../etc", id="borda-ai-rig-..-etc"),
+            pytest.param("foo bar", "foundry", id="foo-bar"),
+            pytest.param("borda-ai-rig", "foo/bar", id="borda-ai-rig-foo-bar"),
         ],
     )
     def test_exits_2_on_invalid_args(

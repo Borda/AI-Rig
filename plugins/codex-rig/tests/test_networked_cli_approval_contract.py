@@ -23,16 +23,17 @@ APPROVAL_BRIEF_FIELDS = (
 )
 
 
+@pytest.mark.installed_plugin
 @pytest.mark.parametrize(
     ("skill_name", "network_marker"),
     [
-        ("change-analysis", "github_read.py"),
-        ("calibrate", "run_live_ab.py"),
-        ("code-remediate", "collect_pr.py"),
-        ("code-review", "collect_pr.py"),
-        ("kaggle", "kaggle competitions list -p 1"),
-        ("release", "github_read.py"),
-        ("sync", "codex plugin marketplace upgrade"),
+        pytest.param("change-analysis", "github_read.py", id="change-analysis"),
+        pytest.param("calibrate", "run_live_ab.py", id="calibrate"),
+        pytest.param("code-remediate", "collect_pr.py", id="code-remediate"),
+        pytest.param("code-review", "collect_pr.py", id="code-review"),
+        pytest.param("kaggle", "kaggle competitions list -p 1", id="kaggle"),
+        pytest.param("release", "github_read.py", id="release"),
+        pytest.param("sync", "codex plugin marketplace upgrade", id="sync"),
     ],
 )
 def test_networked_cli_skills_require_complete_owning_command_approval(
@@ -84,10 +85,13 @@ def test_shared_contract_defines_approval_brief_and_denial_turn_recovery() -> No
 @pytest.mark.parametrize(
     ("skill_path", "start_marker", "end_marker"),
     [
-        (CODE_REVIEW_SKILL, "In runtimes with network sandboxing", "\n\nPR evidence has two tiers."),
-        (CODE_REMEDIATE_SKILL, "In runtimes with network sandboxing", "\n\n`github_read.py`"),
+        pytest.param(
+            CODE_REVIEW_SKILL, "In runtimes with network sandboxing", "\n\nPR evidence has two tiers.", id="code-review"
+        ),
+        pytest.param(
+            CODE_REMEDIATE_SKILL, "In runtimes with network sandboxing", "\n\n`github_read.py`", id="code-remediate"
+        ),
     ],
-    ids=("code-review", "code-remediate"),
 )
 def test_pr_collector_owning_boundary_explains_approval_brief_and_denial_recovery(
     skill_path: Path,

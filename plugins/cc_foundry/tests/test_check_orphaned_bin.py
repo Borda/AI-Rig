@@ -102,12 +102,12 @@ class TestIsReferenced:
     @pytest.mark.parametrize(
         ("reference_text", "expected"),
         [
-            ("python bin/foo.py", True),
-            ('python "${CLAUDE_PLUGIN_ROOT}/bin/foo.py"', True),
-            ("python bin/foo.py --help", True),
-            ("python bin/foo.py.bak", False),
-            ("python bin/myfoo.py", False),
-            ("python bin/foo.py.disabled", False),
+            pytest.param("python bin/foo.py", True, id="python-bin-foo.py"),
+            pytest.param('python "${CLAUDE_PLUGIN_ROOT}/bin/foo.py"', True, id="python-claude_plugin_root-bin-foo.py"),
+            pytest.param("python bin/foo.py --help", True, id="python-bin-foo.py---help"),
+            pytest.param("python bin/foo.py.bak", False, id="python-bin-foo.py.bak"),
+            pytest.param("python bin/myfoo.py", False, id="python-bin-myfoo.py"),
+            pytest.param("python bin/foo.py.disabled", False, id="python-bin-foo.py.disabled"),
         ],
     )
     def test_basename_boundary_cases(self, reference_text: str, expected: bool, tmp_path: Path) -> None:
