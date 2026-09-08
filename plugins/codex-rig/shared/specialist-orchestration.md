@@ -64,6 +64,23 @@ For the single advisory pass, first request one supported higher reasoning-effor
 
 ## Context Packs
 
+### Read-only work and executable probes
+
+Classify the assigned operation, not the role name: a QA specialist may author tests during authorized remediation but must not edit source during review. Role-card write defaults never grant authority to a read-only pass. Apply this boundary to review, investigation, audit, analysis, research, release assessment, and read-only verification within implementation, management, optimization, or remediation; retain each workflow's existing authorization for actual implementation.
+
+| Operation | Read-only specialist | Parent |
+| -- | -- | -- |
+| Inspect source and evidence | Read, reason, return findings | Supply narrow context |
+| Execute a hypothesis check | Execute only within verified read-only controls; otherwise return a probe request | Assess and execute authorized probes with bounded side effects |
+| Persist reports, logs, manifests | Return text; no artifact writes | Save the returned text unchanged; keep synthesis separate |
+| Change source, tests, configuration | Propose only | Follow the owning implementation workflow and authorization |
+
+A probe request states the hypothesis, exact command or code, working directory, required inputs, expected confirming/falsifying outcomes, and anticipated filesystem/network effects. It is not execution evidence or permission to run. The parent checks scope and permissions before execution, uses isolated disposable inputs/scratch for necessary writes, records command, exit status and actual output, and leaves denied/unavailable probes inconclusive. A temporary working directory alone does not prevent code from writing elsewhere; never present it as a sandbox. Do not run untrusted repository code with broadened permissions merely to collect evidence.
+
+The parent may execute probes before dispatch and include evidence in the frozen context, or after joining the wave and record its own assessment. Preserve the original specialist output and distinguish parent-run evidence from independently evaluated evidence. If closure needs another independent pass, stop and re-plan under the existing dispatch-wave rule; a parent-run test does not retroactively complete an independent specialist's unresolved conclusion.
+
+Missing child controls block that child route, not safe parent-owned investigation. Continue authorized serial probes where the workflow permits; never downgrade mandatory independence, bypass approval, or claim a completed review from unavailable evidence. Scratch-write child routes are not supported by the current portable validator; keep those executions parent-owned instead of relabelling a writable child read-only.
+
 Before spawning/simulating pass, write/describe context pack:
 
 - `Objective`: one-sentence subtask.

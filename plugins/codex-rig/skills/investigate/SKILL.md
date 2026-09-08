@@ -79,6 +79,8 @@ Each context pack: symptom slice, relevant logs/touched files/environment facts,
 
 Use targeted probes confirming, ruling out, or narrowing one hypothesis at a time.
 
+Diagnosis does not authorize source fixes. The parent owns probe execution and log persistence; read-only specialists return findings or a concrete probe request under [read-only work and executable probes](../../shared/specialist-orchestration.md#read-only-work-and-executable-probes). A request includes the hypothesis, exact command/code, working directory, inputs, expected falsifier, and anticipated side effects. Inspect executable probes before running; use isolated disposable inputs for necessary writes and retain runtime approval boundaries. No safe child route does not prevent permitted parent-serial investigation. Denied or unavailable execution remains inconclusive, never confirmed; parent-run evidence is not an independent specialist conclusion. Hand source remediation off only after the root-cause gate.
+
 Each probe must have a clear outcome:
 
 - `confirmed`

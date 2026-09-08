@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.5
+
+- Separate read-only specialist findings from parent-owned report persistence and authorized executable probes. Keep investigation productive through safe serial probes without treating unexecuted requests as evidence, scratch directories as sandboxes, or diagnosis as source-edit authorization.
+- Reject observed filesystem write grants and unsupported filesystem-control records in portable read-only runtime validation across review, implementation, and management. Preserve mandatory isolation admission, independent review gates, and explicit limits: no new launcher support or live isolation proof.
+
 ## 0.14.4
 
 - Consolidate review/remediation handoffs: concrete resolutions in overview rows, ID-only supporting details, descriptive gate blockers, and compact source-kind counts in remediation selection. Preserve canonical evidence bindings and historical rendering.

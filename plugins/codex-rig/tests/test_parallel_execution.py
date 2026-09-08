@@ -1228,6 +1228,79 @@ def test_schema_v2_portable_tier_accepts_restricted_network_without_external_eve
     assert summary["filesystem_credential_isolation"] == "unverified"
 
 
+@pytest.mark.parametrize("consumer_id", ["code-review", "implement", "manage"])
+@pytest.mark.parametrize("control_record", ["thread_settings_applied", "turn_context"])
+@pytest.mark.parametrize("access", ["read", "write"])
+def test_read_only_runtime_reconciles_filesystem_grants(
+    tmp_path: Path, consumer_id: str, control_record: str, access: str
+) -> None:
+    """Reject write grants hidden behind a read-only label in either host record."""
+    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
+    _bind_portable_read_consumer_policy(manifest, manifest_path, plan_path, consumer_id=consumer_id)
+    child_rollout = sessions_dir / "rollout-child-1.jsonl"
+    rows = [json.loads(line) for line in child_rollout.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        payload = row["payload"]
+        if control_record == "thread_settings_applied" and payload.get("type") == control_record:
+            profile = payload["thread_settings"]["permission_profile"]
+        elif control_record == "turn_context" and row["type"] == control_record:
+            profile = payload["permission_profile"]
+        else:
+            continue
+        profile["file_system"] = {
+            "type": "restricted",
+            "entries": [{"access": access, "path": str(tmp_path)}],
+        }
+    _write_jsonl(child_rollout, rows)
+
+    if access == "write":
+        with pytest.raises(ValueError, match="^runtime-child-filesystem-write-grant:N1$"):
+            _validate_runtime(
+                manifest,
+                manifest_path,
+                plan_path,
+                parent_rollout,
+                sessions_dir,
+                roles_dir,
+                expected_consumer_id=consumer_id,
+            )
+    else:
+        summary = _validate_runtime(
+            manifest,
+            manifest_path,
+            plan_path,
+            parent_rollout,
+            sessions_dir,
+            roles_dir,
+            expected_consumer_id=consumer_id,
+        )
+        assert summary["runtime_promotion_eligible"] is True
+        assert summary["filesystem_credential_isolation"] == "unverified"
+
+
+@pytest.mark.parametrize(
+    "filesystem",
+    [
+        pytest.param({"type": "unrestricted"}, id="unrestricted"),
+        pytest.param({"type": "restricted", "entries": None}, id="missing-entries"),
+        pytest.param({"type": "restricted", "entries": ["read"]}, id="malformed-entry"),
+        pytest.param({"type": "restricted", "entries": [{"access": "unknown"}]}, id="unknown-access"),
+    ],
+)
+def test_read_only_runtime_rejects_unrecognized_filesystem_controls(tmp_path: Path, filesystem: dict) -> None:
+    """Fail closed on explicit filesystem records outside the supported read-only shape."""
+    manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)
+    child_rollout = sessions_dir / "rollout-child-1.jsonl"
+    rows = [json.loads(line) for line in child_rollout.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        if row["type"] == "turn_context":
+            row["payload"]["permission_profile"]["file_system"] = filesystem
+    _write_jsonl(child_rollout, rows)
+
+    with pytest.raises(ValueError, match="^runtime-child-filesystem-controls-invalid:N1$"):
+        _validate_runtime(manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir)
+
+
 def test_schema_v2_runtime_accepts_subsecond_duration_precision_residual(tmp_path: Path) -> None:
     """Accept millisecond duration consistent with whole-second terminal endpoints."""
     manifest, manifest_path, plan_path, parent_rollout, sessions_dir, roles_dir = _schema_v2_runtime_fixture(tmp_path)

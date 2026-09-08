@@ -200,7 +200,7 @@ Before every spawned route:
 
 For every triggered pass:
 
-- Create `<run-directory>/specialists` and one markdown output per triggered spawned/substituted pass.
+- The parent creates `<run-directory>/specialists` and persists one unchanged markdown response per triggered spawned/substituted pass. Specialists return findings, not file writes. Follow the shared [read-only work and executable probes](../../shared/specialist-orchestration.md#read-only-work-and-executable-probes) boundary for checks requiring scratch writes; retain unresolved specialist conclusions separately from parent-run evidence.
 - Apply `../../shared/specialist-orchestration.md`.
 - Before the pass, write narrow `<run-directory>/specialists/<role>-context.md`: objective, axis, relevant evidence, excluded noise, concrete questions, output contract, stop rule.
 - Never give every specialist whole PR/repository.

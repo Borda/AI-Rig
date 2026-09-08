@@ -1144,7 +1144,11 @@ def _runtime_terminal_and_controls(
     expected_approval_policy: str,
     expected_network: str,
 ) -> tuple[int, int, dict[str, str]]:
-    """Validate child declared controls and return the exact terminal work interval."""
+    """Reconcile child control records and return the exact terminal work interval.
+
+    Explicit filesystem write grants contradict this read-only route even when the sandbox label says otherwise.
+    Absence of such a contradiction does not prove filesystem or credential isolation.
+    """
     settings = [
         row["payload"].get("thread_settings")
         for row in rows
@@ -1171,6 +1175,19 @@ def _runtime_terminal_and_controls(
     sandbox = context.get("sandbox_policy")
     if not isinstance(permission, dict) or not isinstance(turn_permission, dict) or not isinstance(sandbox, dict):
         raise ValueError(f"runtime-child-controls-invalid:{node_id}")
+    for profile in (permission, turn_permission):
+        filesystem = profile.get("file_system")
+        if filesystem is None:
+            continue
+        if not isinstance(filesystem, dict) or filesystem.get("type") != "restricted":
+            raise ValueError(f"runtime-child-filesystem-controls-invalid:{node_id}")
+        entries = filesystem.get("entries")
+        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+            raise ValueError(f"runtime-child-filesystem-controls-invalid:{node_id}")
+        if any(entry.get("access") == "write" for entry in entries):
+            raise ValueError(f"runtime-child-filesystem-write-grant:{node_id}")
+        if any(entry.get("access") != "read" for entry in entries):
+            raise ValueError(f"runtime-child-filesystem-controls-invalid:{node_id}")
     model = setting.get("model")
     effort = setting.get("reasoning_effort")
     observed_approval_policy = setting.get("approval_policy")

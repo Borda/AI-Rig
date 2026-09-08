@@ -262,6 +262,8 @@ The model names are requested role settings. Blank-agent injection does not prov
 
 The canonical policy is `shared/specialist-orchestration.md`.
 
+Read-only specialists return findings or executable probe requests; the parent saves responses and owns authorized scratch execution. Review and investigation do not grant source-edit authority. Implementation and remediation retain their separately authorized writer roles. Parent-run probes remain distinguishable from independent conclusions. Runtime validation rejects explicit filesystem write grants even under a read-only sandbox label; absent contradictory grants still do not prove isolation. Missing child controls remain a process limitation, not a reason to broaden permissions or stop otherwise permitted serial investigation.
+
 1. The parent determines whether the work actually benefits from an independent specialist.
 2. It reads and hashes `roles/<role-id>/ROLE.md`.
 3. It builds a narrow context pack: objective, relevant evidence, exclusions, concrete questions, output contract, and stop rule.

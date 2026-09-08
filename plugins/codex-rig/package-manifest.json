@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "cbd991eac7a934b132b2989155fae7fbbe7a939d2271b00cb69ad533722afb6a"
+      "sha256": "5774e1fbf32f9986d48ec9a53bf29d3d9500e389a34cd706dd8513585be4255b"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "25bbc30adf330e4aebe74854389be5ee57eedb2845f8984eeda02f3611045194"
+      "sha256": "8b7a6512ef42d79470a0aa3eb12f56f189579a9d2746aa7a8d12b12c2dab74f9"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "c8726f324508beea5c21d6c1c5c31839c1b0b05f1c01fc188b40643b5cf91d2c"
+      "sha256": "fe6552b709fcd7d592eef639ee721da30bf49b31b4d9856575d245f1df49230c"
     },
     {
       "mode": "0644",
@@ -163,12 +163,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "b75b5647b6cf18118697ad9018b0815b1a654798c990d31fb08c95fb4afee3ae"
+      "sha256": "f73189aec3a57029b9c05cdbb2706757625a89e795b92ae4349e10fa59a1f26e"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "21cd8d3565790a68f079e3d55a8e7c3abe6fc6aeab08756e6085018446071891"
+      "sha256": "13c4599c7e4fad5be5c113c1c6411f806e0a810014e3c673890db504051389a0"
     },
     {
       "mode": "0644",
@@ -398,7 +398,7 @@
     {
       "mode": "0644",
       "path": "shared/parallel_execution.py",
-      "sha256": "717421a8cfd758dec9e3c8439077b94b9d0cc4770a9e2e74731059e1e2d91722"
+      "sha256": "d6f35208522c878cdd24c3a972b624b5e2aa4b870cd90639092411e5621005b0"
     },
     {
       "mode": "0644",
@@ -433,7 +433,7 @@
     {
       "mode": "0644",
       "path": "shared/specialist-orchestration.md",
-      "sha256": "567d0a47925a23814c1fd8bac3b21a87269731f07a2d52aeaa13698f7ae03159"
+      "sha256": "9e3962b79f589a173faa65f68e3fca7e6c5e3ff1937976720d0157e8df7e6fb9"
     },
     {
       "mode": "0755",
@@ -503,7 +503,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/SKILL.md",
-      "sha256": "28de6064a74f00fb747ba24fbb03bdc9d73adcfc4f04ee0ee3b9af67a54a4923"
+      "sha256": "63e172ec1caac79b15bf08049e95a88c1a20d2ba4d8b323d62d4bce950329556"
     },
     {
       "mode": "0644",
@@ -533,7 +533,7 @@
     {
       "mode": "0644",
       "path": "skills/investigate/SKILL.md",
-      "sha256": "f3907a2ef8cb1025d8203da5ee377819c8e563d60dacb2e486878efd3bc1312b"
+      "sha256": "e5b38b996f66ad569e50ca9720b2c03a0a47979d076581238caf83ada861ffb5"
     },
     {
       "mode": "0644",
@@ -873,7 +873,7 @@
     {
       "mode": "0644",
       "path": "tests/test_parallel_execution.py",
-      "sha256": "437db927a9e18f7242ec6d9514795ba67ab0e755de67147d6f8dbefef02346ee"
+      "sha256": "387acc95985b1481a6c737bf817dfaed876d714f674a3b964a5e43d83bf6b129"
     },
     {
       "mode": "0644",
@@ -1159,5 +1159,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.14.4"
+  "version": "0.14.5"
 }

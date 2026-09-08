@@ -2,6 +2,27 @@
   "cases": [
     {
       "expected_findings": [
+        "reviewer-artifact-write-required",
+        "readonly-label-overrides-write-grant",
+        "parent-probe-labelled-independent"
+      ],
+      "id": "code-review-readonly-ownership",
+      "prompt": "Assess a review that requires isolated reviewers to save their own report files, accepts a read-only sandbox label despite observed filesystem write grants, and replaces an unresolved specialist response with the parent's later test result. Reviewers return text; the parent persists it unchanged and keeps its own executable evidence separate. Reject conflicting controls without claiming that absence of conflicts proves isolation.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "child-unavailability-blocks-safe-parent-probe",
+        "probe-request-treated-as-evidence",
+        "scratch-directory-treated-as-sandbox",
+        "diagnosis-authorizes-source-fix"
+      ],
+      "id": "investigate-readonly-probes",
+      "prompt": "Assess an investigation that stops all safe serial probes because child isolation is unavailable, treats a requested experiment as a confirmed result, runs repository code with broadened permissions because its cwd is temporary, and edits the original source before confirming the root cause. Keep authorized parent execution possible; record commands, outcomes and uncertainty; require actual isolation for scratch-writing code; hand source remediation off after diagnosis.",
+      "target": "investigate"
+    },
+    {
+      "expected_findings": [
         "review-overview-resolution-missing",
         "review-detail-repeats-overview",
         "operational-blocker-title-not-descriptive"
