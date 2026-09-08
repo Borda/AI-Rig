@@ -1,5 +1,5 @@
 ---
-description: Python coding standards — docstrings, deprecation, version policy, library API awareness, PyTorch AMP
+description: Python coding standards — docstrings, deprecation, version policy, library API awareness, multi-OS portability, PyTorch AMP
 paths:
   - '**/*.py'
 ---
@@ -23,6 +23,8 @@ paths:
   #: Per-directory memo of the (width, extension) pair that last matched.
   _FRAME_LAYOUT_HINTS: dict[Path, tuple[int, str]] = {}
   ```
+
+- **Opening line states purpose in plain English** — move formulas, assignments, config literals, call notation, and other code-shaped detail into the description or a section below. First line says what the object is for, not how it is computed.
 
 ## Deprecation
 
@@ -71,6 +73,18 @@ Applies to **every code-touching agent**, not `foundry:sw-engineer` alone. Train
 - `torch.cuda.amp.autocast` deprecated since PyTorch 2.4 — use `torch.amp.autocast('cuda', ...)` instead
 - `torch.cuda.amp.GradScaler` deprecated since PyTorch 2.4 — use `torch.amp.GradScaler('cuda')` instead
 - Verify current stable release at pytorch.org when citing specific version numbers <!-- verified: 2026-04-06 -->
+
+## Multi-OS Executables — a POSIX Assumption is a Defect
+
+Scripts, hooks, `bin/` entry points, and CI steps run on Linux, macOS, and native Windows. Fix a portability break at its source; never skip the platform. (Test-side rules live in `python-testing.md` §Cross-OS Tests.)
+
+- `pathlib` throughout: `Path(p).is_absolute()`, never `startswith("/")`; `PurePath(p).as_posix()` before hashing, serializing, or comparing — native separators change the digest. POSIX-absolute literals are unportable fixtures: `/host/x` resolves to `D:\host\x` on Windows.
+- **Serialized telemetry or provenance paths are cross-host coordinates, not local paths.** Preserve the exact string; recognize declared POSIX and Windows absolute forms with `PurePosixPath` and `PureWindowsPath`; never convert through host `Path` before an exact comparison. Regressions exercise both forms on every host.
+- Byte-asserted or hashed writes use `newline="\n"` or bytes — text mode emits CRLF on Windows.
+- Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, and `TMP` on win32, or the child Python aborts before running with `_Py_HashRandomization_Init: failed to get random numbers`. Temp dirs via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never a hardcoded `/tmp`.
+- A CI `run:` step invoking a `.sh` file needs an explicit `shell: bash` — the Windows default shell dot-sources it and exits zero, running nothing (false green).
+- Symlinks, file modes, and uid checks are capabilities: degrade in production code first.
+- Green macOS is absence of regression, not Windows support. Prove Windows semantics with `PureWindowsPath` or `ntpath`; monkeypatching `os.name` does not change `pathlib`.
 
 ## Security
 

@@ -316,11 +316,11 @@ Print merged ACTION_ITEMS as markdown table to terminal immediately after the me
 ```markdown
 ### Action Items — PR #<N> (merged)
 
-| # | Type | Change | Severity | Author | Status | Summary | Loc | Notes |
-|---|------|--------|----------|--------|--------|---------|-----|-------|
-| 1 | [gh][req] | code | 4 | @reviewer | pending | rename param x to count | inline | — |
-| 2 | [gh][suggest] | docs | 2 | @reviewer + foundry:doc-scribe | pending | add docstring (also flagged by /review — foundry:doc-scribe) | inline | — |
-| 3 | [report][suggest] | docs | 2 | foundry:doc-scribe | pending | add docstring to Foo.bar | report | — |
+| # | Type | Change | Severity | Author | Status | Summary | Notes |
+|---|------|--------|----------|--------|--------|---------|-------|
+| 1 | [gh][req] | code | 4 | @reviewer | pending | rename param x to count | — |
+| 2 | [gh][suggest] | docs | 2 | @reviewer + foundry:doc-scribe | pending | add docstring (also flagged by /review — foundry:doc-scribe) | — |
+| 3 | [report][suggest] | docs | 2 | foundry:doc-scribe | pending | add docstring to Foo.bar | — |
 ```
 
 **Author field rules** — Author = who owns fixing this item:
@@ -329,7 +329,9 @@ Print merged ACTION_ITEMS as markdown table to terminal immediately after the me
 - `[gh]` items (dedup collision with report): `@login + <owner-agent>` (e.g. `@reviewer + foundry:doc-scribe`) — both authors preserved
 - `[report]` items (no collision): Owner agent from taxonomy (e.g. `foundry:doc-scribe`, `foundry:qa-specialist`) — **never** the skill name `review` or `/review`
 
-Summary ≤60 chars. Loc = inline / discussion / report. Notes = `—` when empty. Print only when merged ACTION_ITEMS has ≥1 row. The merged table is the authoritative set for Step 3d selection — it supersedes the pre-merge table shown in Step 3b.
+Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` rows and classification verdicts — never `file:line`, which the `file`/`line` fields already hold. Print only when merged ACTION_ITEMS has ≥1 row.
+
+`location` is a field, not a column — it stays in `action-items.jsonl` and drives resolve routing, but gets no column here: `[report]` origin is already carried by `Type` and `Author`. Its one non-redundant bit is resolvability, so preserve that the same way every other table in this skill does — **append `· thread (no GH resolve)` to Status for `location: discussion` rows** (same rule as Step 11's table and the Step 3d picker). Never reintroduce a `Loc` column to restate what `Type`, `Author`, and that suffix already say. The merged table is the authoritative set for Step 3d selection — it supersedes the pre-merge table shown in Step 3b.
 
 ## Step 3d: User item selection
 
@@ -872,7 +874,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **AskUserQuestion usage**: calls spread across independent branch-paths — no single sequential path exceeds 4-call limit (worst case: codex-cap adds one call when N>8 items and codex available). Compliant with sequential-call limit.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
-- **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface `Loc` column in Step 11 report.
+- **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.
 - **Commit attribution** — `[gh]`: `[resolve No.<id>] <reviewer> (gh):`; `[report]`: `[resolve No.<id>] /review finding by <agent> (report: <path>):`.
 - **Reference scenarios**: Mode: bare PR# → pr; `42 report` → pr+report; `report` → report mode; bare comment → comment dispatch. Classification: LGTM/emoji → `[info]`; `nit:` → `[gh][suggest]`; resolved thread → `[done]`; "must fix" from write-access reviewer → `[gh][req]`. Challenge: present bug → VALID; already addressed → REJECT; better alternative → REJECT with alternative.
 - Follow-up chains:

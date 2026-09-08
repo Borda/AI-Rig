@@ -46,12 +46,12 @@ Print ACTION_ITEMS as markdown table to terminal (severity descending):
 ```markdown
 ### Action Items — report
 
-| # | Type | Change | Severity | Author | Status | Summary | Loc | Notes |
-|---|------|--------|----------|--------|--------|---------|-----|-------|
-| 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | report | — |
+| # | Type | Change | Severity | Author | Status | Summary | Notes |
+|---|------|--------|----------|--------|--------|---------|-------|
+| 1 | [report][req] | code | 4 | foundry:sw-engineer | pending | rename param x to count | — |
 ```
 
-Summary ≤60 chars. Notes = `—` when empty. Print before branching on PR# presence so user sees all items that will be executed (report mode skips Step 3d — no picker).
+Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` rows and classification verdicts (e.g. deprecation filter output) — never `file:line`, which the `file`/`line` fields already hold. Print before branching on PR# presence so user sees all items that will be executed (report mode skips Step 3d — no picker).
 
 PR# found in report header → set `$ARGUMENTS = <N>`, go to Step 4; skip Step 3b entirely. After checkout, set `SELECTED_ITEMS` = all report-derived ACTION_ITEMS IDs (report mode executes all findings; no user selection step); skip to Step 8.
 

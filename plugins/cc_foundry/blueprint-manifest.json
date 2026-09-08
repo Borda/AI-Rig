@@ -418,7 +418,7 @@
     },
     "1297c04d4df9b6a7e826b3b799dfbe181aaf49e391269bbcfe523f99cf6dfcff": {
       "kind": "block",
-      "src": "skills/_shared/bin-authoring-guide.md:492"
+      "src": "skills/_shared/bin-authoring-guide.md:496"
     },
     "12f7bc67a6bd22dae09a3a48c12b715e85c79bce76ed342474091224c9a4b7d1": {
       "kind": "command",
@@ -1234,7 +1234,7 @@
     },
     "395706269df15674ebd96c0f411f53a3bac6cc7dbe1a15c1f1c5d7ff9a326dfa": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:492"
+      "src": "skills/_shared/bin-authoring-guide.md:496"
     },
     "395c853c62960c18c66775b409cd4707d72e97d3581e4025c2ee22f692824b59": {
       "kind": "command",
@@ -1466,7 +1466,7 @@
     },
     "44676a7f021bec8dda0a7b5e654a871a85e0396417b02be5bfe8b952b2c1f148": {
       "kind": "block",
-      "src": "rules/python-testing.md:133"
+      "src": "rules/python-testing.md:158"
     },
     "44858de05ee80ecc75f3cae3ed459882e40d969923efa999ba695ac35b51423f": {
       "kind": "command",
@@ -5126,7 +5126,7 @@
     },
     "eb48d5a20fcaaa1acf4fd539e719ca9b2f5841433684c078c3dae9e9282c9375": {
       "kind": "command",
-      "src": "skills/_shared/bin-authoring-guide.md:492"
+      "src": "skills/_shared/bin-authoring-guide.md:496"
     },
     "eb741d90b7639eb11cdf1252a9b1852603351bdab834d55f293ee8f46e13515f": {
       "kind": "command",
@@ -5553,6 +5553,6 @@
       "src": "skills/investigate/SKILL.md:100"
     }
   },
-  "plugin": "cc_foundry@0.52.1",
+  "plugin": "cc_foundry@0.53.0",
   "schema": 1
 }

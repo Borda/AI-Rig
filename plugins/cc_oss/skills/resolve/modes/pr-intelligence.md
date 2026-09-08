@@ -121,10 +121,12 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
    <N> reviews · <N> inline code comments · Report=not used
    Motivation paragraph (2–3 sentences).
    Table header: ### Action Items — PR #<PR_NUMBER>
-   Columns: # | Type | Change | Severity | Author | Status | Summary | Loc | Notes
-   Truncation: Summary ≤60 chars, Notes ≤45 chars (use — when empty). Loc = inline / discussion / report. All Status=pending.
-   MUST render as markdown table. Example row:
-   | 1 | [gh][req] | code | 4 | @reviewer | pending | rename param x to count | inline | — |
+   Columns: # | Type | Change | Severity | Author | Status | Summary | Notes
+   Truncation: Summary ≤60 chars, Notes ≤45 chars (use — when empty). Notes carries commit SHA for [done] rows and classification verdicts — never file:line, already held by the file/line fields.
+   Status: every row starts pending. Write `pending` for `location: inline` and `location: report` rows; write `pending · thread (no GH resolve)` verbatim for `location: discussion` rows — GitHub has no Resolve button for PR main-thread comments, and this suffix is the only place that distinction is visible now that there is no Loc column. The location field itself stays in action-items.jsonl for resolve routing and gets no column.
+   MUST render as markdown table. Example rows (inline, then discussion):
+   | 1 | [gh][req] | code | 4 | @reviewer | pending | rename param x to count | — |
+   | 2 | [gh][suggest] | docs | 2 | @reviewer | pending · thread (no GH resolve) | clarify README setup step | — |
 
 2. <IMPL_DIR>/action-items.jsonl
    One compact JSON object per line, one ACTION_ITEM each.

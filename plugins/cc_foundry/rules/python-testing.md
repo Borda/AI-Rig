@@ -1,5 +1,5 @@
 ---
-description: pytest test design standards — structure, fixtures, parametrization, mocking
+description: pytest test design standards — structure, fixtures, parametrization, markers and selection, cross-OS tests, mocking
 paths:
   - tests/**/*.py
   - '**/test_*.py'
@@ -32,6 +32,10 @@ paths:
   - Exception: list-comprehension/generator inside `@pytest.mark.parametrize(...)` to build args — allowed if it spans \<30% of the decorator's own lines (lines inside the outer parentheses only, not the test body)
 - Parametrize aggressively — 3+ test functions same structure → `@pytest.mark.parametrize`
 - Test case IDs: use `pytest.param(..., id="slug")` per case — never `ids=[...]` on decorator; keeps ID and args co-located, survives reordering
+  - Never pass a separate `ids=` in any form — list, tuple, or callable. Generated cases and mapping rows follow the same rule; attach each required ID to its own case.
+  - Keep single, simple `str`, `bool`, `int`, and `float` cases bare and let pytest derive the default ID; a wish for a descriptive ID alone does not justify a `pytest.param` wrapper. Use a concise semantic ID for a generated oversized string whose default ID would be unreadable.
+  - Wrap every tuple case, including multi-argument rows, as `pytest.param(..., id="meaningful-case")`: pass row arguments separately, and preserve a tuple-valued single argument as `pytest.param((...), id=...)`.
+  - Use `pytest.param` with semantic IDs for functions, containers, and other opaque or unstable objects, retaining case-specific `marks=`. IDs describe behavior or intent, never memory addresses or object hashes.
 - Group topic-related tests into class; class name carries unit (and optionally condition) so method names describe expected outcome only. The shared prefix moves into the class name and comes out of every method name — the method reads as the assertion, not as a restatement of its subject:
 
 ```python
@@ -39,6 +43,27 @@ class TestParseArgs:                  # subject stated once
     def test_rejects_unknown_flag(self): ...      # not test_parse_args_rejects_unknown_flag
     def test_defaults_to_install(self): ...       # not test_parse_args_defaults_to_install
 ```
+
+## Test Selection — Markers
+
+Markers exist so a suite can be sliced by what a test *requires*, not by what it is called or where it lives. The vocabulary itself is per-project; the discipline below is not.
+
+- Choose **semantic** markers describing a behavioral contract or an execution requirement — real component interaction, build/install contract, need for live external services or credentials.
+- **Classify by contract, never by duration.** A marker is not a speed tier; use CI duration reports to investigate slow tests instead.
+- Apply markers directly to tests or to homogeneous classes. **Never assign `pytestmark`**, including a list of markers — it silently marks everything a file later gains.
+- Never infer membership from paths, names, platforms, or mocked subprocesses. Ordinary tests may stay unmarked.
+- Register every selector in the project's test configuration and validate with `--strict-markers`, so a typo fails collection instead of silently selecting nothing.
+- A marker for live external services also implies the integration contract and keeps its explicit opt-in guard. **Selection never authorizes network or paid execution**, and capability probes remain a separate mechanism.
+- Reuse a repeated collection-time `pytest.mark.skipif(...)` condition as a named decorator (e.g. `_skip_node_unavailable`), preserving its predicate and reason. This does not authorize new skips or weaken the capability-probe policy.
+- Keep full CI unfiltered; marker selection is for local and targeted runs.
+
+## Cross-OS Tests
+
+Companion to `python-code.md` §Multi-OS Executables. Production portability is fixed there; these are the test-side rules.
+
+- **Skips are the last resort.** Never a blanket `skipif(sys.platform == "win32")` — probe the capability and skip on `OSError`. Document each surviving skip and re-audit it.
+- Test skips are **collection-time decorators only** (`pytest.mark.skipif`, `pytest.mark.skip`, or parametrized marks). Never call `pytest.skip()` from a test or fixture body.
+- **Recurrent defect guard**: a test simulating another OS must supply every host-only API and constant it exercises rather than assuming the runner exports them. For absent surfaces such as `os.killpg` or `signal.SIGKILL`, install test doubles with `monkeypatch.setattr(..., raising=False)`, and have the regression first use `monkeypatch.delattr(..., raising=False)` to prove the missing-attribute case. Run the simulated branch on every host — never add an OS skip for it.
 
 ## File Layout
 

@@ -682,19 +682,19 @@ ______________________________________________________________________
 >
 > **Measured (2026-08-07)**: the always-injected preamble is ~20.5K tokens per agent and is re-sent every turn — a 56-turn agent re-sends ~1.15M tokens of it. The nine splits above cut ~2.5K of that, plus ~1.3K from `plugins/CLAUDE.md` → `plugins/AUTHORING.md`. **Rule savings are realized only after `make sync-claude` propagates to the plugin cache** — `~/.claude/rules/*.md` are symlinks into a version-pinned cache directory, so edits to this repo's `rules/` do not affect running agents until installed.
 
-| Rule file               | Applies to                      | Governs                                                                                                                    |
-| ----------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `communication.md`      | all                             | Re: anchor format, progress narration, tone, output routing, breaking-findings format, terminal colors, confidence display |
-| `quality-gates.md`      | all                             | Confidence block format, Internal Quality Loop, link verification, output routing (long output to file)                    |
-| `git-commit.md`         | all                             | Commit message format, diff-gathering before writing, co-author trailers, branch + push safety                             |
-| `claude-config.md`      | all                             | Bash timeouts (3x P90), directory navigation rules, no hardcoded absolute paths, agent/skill spawn discipline              |
-| `artifact-lifecycle.md` | all                             | Canonical artifact layout (`.plans/`, `.reports/`, `.temp/`), run directory naming, TTL policy                             |
-| `external-data.md`      | all                             | Pagination rules: GitHub CLI, REST APIs, GraphQL, Cloud APIs — never work on partial result set                            |
-| `foundry-config.md`     | `.claude/**`                    | Plan-mode gate before any `.claude/` edit, post-edit checklist, XML tag conventions, distribution rules                    |
-| `python-code.md`        | `**/*.py`                       | Google-style docstrings, closed option sets as enums, dataclass/TypedDict selection, deprecation API, complexity limits    |
-| `python-testing.md`     | `tests/**/*.py`, `**/test_*.py` | pytest design: TDD process, fixtures, parametrization, mocking, what to test in priority order                             |
-| `public-github.md`      | all                             | Read-only policy on public GitHub — permitted reads vs permanently forbidden write operations                              |
-| `untrusted-content.md`  | all                             | Ingested external text is data, never instruction — delimiters, no permission widening, memory propagation                 |
+| Rule file               | Applies to                      | Governs                                                                                                                                       |
+| ----------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `communication.md`      | all                             | Re: anchor format, progress narration, tone, output routing, breaking-findings format, terminal colors, confidence display                    |
+| `quality-gates.md`      | all                             | Confidence block format, Internal Quality Loop, link verification, output routing (long output to file)                                       |
+| `git-commit.md`         | all                             | Commit message format, diff-gathering before writing, co-author trailers, branch + push safety                                                |
+| `claude-config.md`      | all                             | Bash timeouts (3x P90), directory navigation rules, no hardcoded absolute paths, agent/skill spawn discipline                                 |
+| `artifact-lifecycle.md` | all                             | Canonical artifact layout (`.plans/`, `.reports/`, `.temp/`), run directory naming, TTL policy                                                |
+| `external-data.md`      | all                             | Pagination rules: GitHub CLI, REST APIs, GraphQL, Cloud APIs — never work on partial result set                                               |
+| `foundry-config.md`     | `.claude/**`                    | Plan-mode gate before any `.claude/` edit, post-edit checklist, XML tag conventions, distribution rules                                       |
+| `python-code.md`        | `**/*.py`                       | Google-style docstrings, closed option sets as enums, dataclass/TypedDict selection, deprecation API, multi-OS portability, complexity limits |
+| `python-testing.md`     | `tests/**/*.py`, `**/test_*.py` | pytest design: TDD process, fixtures, parametrization, marker selection, cross-OS tests, mocking, what to test in priority order              |
+| `public-github.md`      | all                             | Read-only policy on public GitHub — permitted reads vs permanently forbidden write operations                                                 |
+| `untrusted-content.md`  | all                             | Ingested external text is data, never instruction — delimiters, no permission widening, memory propagation                                    |
 
 ______________________________________________________________________
 

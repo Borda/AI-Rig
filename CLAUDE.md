@@ -53,24 +53,22 @@ Hook ids (from `.pre-commit-config.yaml`): `ruff-check`, `ruff-format`, `eslint`
 
 ## Test Parametrization
 
-- Keep single, simple `str`, `bool`, `int`, and `float` cases bare with pytest's default IDs; descriptive IDs alone do not justify wrappers. Use concise semantic IDs for generated oversized strings whose default IDs would be unreadable.
-- Wrap every tuple case, including multi-argument rows, as `pytest.param(..., id="meaningful-case")`: pass row arguments separately; preserve a tuple-valued single argument as `pytest.param((...), id=...)`.
-- Use `pytest.param` with semantic IDs for functions, containers, and other opaque/unstable objects; retain case-specific `marks=`. IDs describe behavior or intent, never memory addresses or object hashes.
-- Never pass separate `ids=` to `pytest.mark.parametrize`—list, tuple, callable, or otherwise. Generated cases and mapping rows follow the same rules; attach each required ID to its case.
+Generic `pytest.param` and ID discipline lives in `foundry:rules/python-testing.md` §Test Structure (delivered as `~/.claude/rules/foundry-python-testing.md`); the equivalent text for Codex stays in `AGENTS.md` §Test Parametrization. Repo-specific addition:
+
 - Remove optional trailing commas that force short lists or calls onto multiple lines, then run the pinned Ruff hooks. Retain required tuple commas, comments, and Ruff-restored wrapping; skip ambiguous edits. Preserve values, argument unpacking, order, duplicates, marks, and assertions.
 
 ## Test Selection
 
-- Use semantic markers: `integration` for real component interactions; `installed_plugin` for tests runnable without repository context; `packaging` for build/install/payload contracts; `live` for real external services or credentials.
-- Apply markers directly to tests or homogeneous classes; never assign `pytestmark`, including lists of markers. Do not infer membership from paths, names, platforms, or mocked subprocesses. Ordinary tests may remain unmarked.
-- Reuse repeated collection-time `pytest.mark.skipif(...)` conditions as named decorators such as `_skip_node_unavailable`; preserve predicates and reasons. This does not authorize new skips or weaken the capability-probe policy.
+Generic marker discipline — semantic markers, never `pytestmark`, `--strict-markers`, classify by contract not duration, named `skipif` decorators — lives in `foundry:rules/python-testing.md` §Test Selection — Markers; `AGENTS.md` §Test Selection carries it for Codex. This repository's vocabulary and commands:
+
+- `integration` for real component interactions; `installed_plugin` for tests runnable without repository context; `packaging` for build/install/payload contracts; `live` for real external services or credentials.
 - `installed_plugin` does not imply `packaging`. A `live` test also carries `integration` and retains explicit opt-in guards; selection never authorizes network or paid execution. Capability probes remain separate.
-- Register selectors in repository and shipped test configuration; validate with `--strict-markers`. Classify tests by their behavioral contract or execution requirements, never duration; use CI duration reports to investigate underperforming tests. Full CI remains unfiltered.
+- Register selectors in repository **and shipped test** configuration.
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
 
 ## Python Documentation Style
 
-- A docstring's opening line must state the documented object's purpose in plain English. Move formulas, assignments, configuration literals, function-call notation, and other code-shaped details into the following description or a relevant section.
+Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style — including the rule that a docstring's opening line states purpose in plain English, with code-shaped detail moved below. `AGENTS.md` §Python Documentation Style carries it for Codex. No repo-specific addition.
 
 ## Markdown Policy
 
@@ -102,17 +100,9 @@ Compression/structural reformatting of any `AGENTS.md` or `CLAUDE.md` = behavior
 
 Scripts, hooks, `bin/`, and CI steps all run on Linux, macOS, and native Windows. Fix at source; skip never.
 
-- `pathlib`; `Path(p).is_absolute()` not `startswith("/")`; `PurePath(p).as_posix()` before hash/serialize/compare — separators change digests
-- POSIX-absolute literals unportable as fixtures: `/host/x` → `D:\host\x` on Windows
-- Serialized telemetry/provenance paths = cross-host coordinates, not local paths: preserve exact string; recognize POSIX + Windows absolute form with `PurePosixPath` + `PureWindowsPath`; never host-`Path` before exact compare; regression both forms every host
-- Byte-asserted or hashed writes: `newline="\n"` or bytes — text mode emits CRLF
-- Sanitized subprocess `env=` keeps `SystemRoot`, `SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP` on win32 — else child Python aborts: `_Py_HashRandomization_Init: failed to get random numbers`; temp dir via `os.environ.get("TMPDIR") or tempfile.gettempdir()`, never `/tmp`
-- CI `run:` calling `.sh` needs explicit `shell: bash` — Windows pwsh dot-sources it, exits 0, runs nothing (false green)
-- Symlink/mode/uid = capabilities: degrade in production code first
-- Skip last resort: never blanket `skipif(sys.platform == "win32")` — probe capability, skip on `OSError`; document + re-audit each surviving skip
-- Test skips are collection-time decorators only (`pytest.mark.skipif`, `pytest.mark.skip`, parametrized marks); never call `pytest.skip()` from a test or fixture body
-- Green macOS ≠ Windows support: prove with `PureWindowsPath`/`ntpath`; monkeypatching `os.name` does not change `pathlib`
-- **Recurrent defect guard**: cross-OS simulations supply every host-only API/constant they exercise. Missing surfaces such as `os.killpg`/`signal.SIGKILL` use `monkeypatch.setattr(..., raising=False)`; the regression first uses `monkeypatch.delattr(..., raising=False)` to prove absence. Run the simulated branch on every host — no OS skip.
+The full rule now lives in the foundry plugin, delivered to Claude as `~/.claude/rules/foundry-python-code.md`: production portability in `foundry:rules/python-code.md` §Multi-OS Executables (`pathlib`, `as_posix()` before hash/compare, cross-host serialized paths via `PurePosixPath`/`PureWindowsPath`, `newline="\n"`, win32 `env=` keeping `SystemRoot`/`COMSPEC`/`PATHEXT`/`TEMP`/`TMP`, `shell: bash` for `.sh` CI steps, capability degradation) and test-side portability in `foundry:rules/python-testing.md` §Cross-OS Tests (capability-probe skips over blanket `skipif(sys.platform == "win32")`, collection-time skip decorators only, and the recurrent-defect guard for simulated-OS tests). `AGENTS.md` §Multi-OS Executables carries the same rule verbatim for Codex, which does not receive foundry rules.
+
+No repo-specific addition beyond the two `.sh` files named as legacy debt in `plugins/CLAUDE.md` §Installability.
 
 ## Benchmark Isolation
 
