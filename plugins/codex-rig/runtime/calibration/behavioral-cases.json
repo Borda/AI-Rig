@@ -453,6 +453,15 @@
     },
     {
       "expected_findings": [
+        "unrelated-dirty-worktree-false-blocker",
+        "dirty-worktree-overlap-reason-missing"
+      ],
+      "id": "code-review-pr-dirty-worktree-precision",
+      "prompt": "Assess a PR collector that refuses checkout for every tracked edit, including an unrelated uv.lock change, without comparing those paths to the PR checkout delta. When an edited path would be overwritten, its terminal unavailable response reports only a generic collector failure instead of immediately naming the exact overlapping paths from worktree-preflight.json.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "close-evidence-insufficient",
         "ai-origin-not-close-ground",
         "detailed-review-fallthrough-missing"
@@ -888,6 +897,16 @@
       ],
       "id": "code-remediate-commit-codex-attribution-missing",
       "prompt": "Assess a code-remediate workflow where the user explicitly requests a local commit after remediation gates pass, but the agent creates a commit without the required Codex co-author trailer and does not use the shared commit-response template.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "commit-mode-choice-missing",
+        "commit-unrelated-worktree-change-included",
+        "finding-commit-overlap-unsafe"
+      ],
+      "id": "code-remediate-commit-ownership-and-grouping",
+      "prompt": "Assess a code-remediate workflow that commits immediately after fixes without offering all-at-once, topic, finding, or unstaged choices. Its commit includes an unrelated pre-existing uv.lock change, and it separates two findings sharing one file by partial-hunk staging.",
       "target": "code-remediate"
     },
     {

@@ -98,6 +98,7 @@ COLLECTOR_EVIDENCE_ARTIFACTS = (
     "target-branch.json",
     "unresolved-review-threads.json",
     "untracked.txt",
+    "worktree-preflight.json",
 )
 PR_FIELDS = (
     "number,title,body,url,author,baseRefName,baseRefOid,headRefName,headRefOid,"
@@ -434,6 +435,15 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _git_path_list(payload: bytes) -> list[str]:
+    """Decode and sort the NUL-delimited paths emitted by Git."""
+    try:
+        paths = [path for path in payload.decode("utf-8", errors="strict").split("\0") if path]
+    except UnicodeDecodeError as error:
+        raise CollectionError("invalid-utf8:git-path-list") from error
+    return sorted(set(paths))
+
+
 def _derived_diff_output(
     run: RunCommand,
     argv: list[str],
@@ -759,20 +769,44 @@ def _checkout(
             },
         )
 
-    dirty = _run(
-        run,
-        ["git", "status", "--short", "--untracked-files=no"],
-        timeout,
-        "tracked-worktree-status",
+    current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
+    dirty_paths = _git_path_list(
+        _run(run, ["git", "diff", "--name-only", "-z", "HEAD", "--"], timeout, "tracked-worktree-paths")
     )
-    if dirty.strip():
-        raise CollectionError("dirty-tracked-worktree-before-pr-checkout")
+    checkout_paths = []
+    if current_head != head_oid:
+        checkout_paths = _git_path_list(
+            _run(
+                run,
+                ["git", "diff", "--name-only", "-z", current_head, head_oid, "--"],
+                timeout,
+                "checkout-paths",
+            )
+        )
+    overlapping_paths = sorted(set(dirty_paths).intersection(checkout_paths))
+    preflight_status = "clean"
+    if current_head == head_oid:
+        preflight_status = "already-at-pr-head"
+    elif dirty_paths:
+        preflight_status = "safe-unrelated-dirty-paths"
+    if overlapping_paths:
+        preflight_status = "blocked-overlapping-dirty-paths"
+    preflight = {
+        "status": preflight_status,
+        "current_head": current_head,
+        "expected_head": head_oid,
+        "dirty_paths": dirty_paths,
+        "checkout_paths": checkout_paths,
+        "overlapping_paths": overlapping_paths,
+    }
+    _write_json(output / "worktree-preflight.json", preflight)
+    if overlapping_paths:
+        raise CollectionError("dirty-tracked-worktree-overlap-before-pr-checkout")
     checkout_argv = ["gh", "pr", "checkout", str(number)]
     if (use_pull_ref or routing.get("pr_state") != "OPEN") and isinstance(number, int):
         checkout_argv = ["git", "checkout", "--detach", f"refs/remotes/{remote_name}/pull/{number}/head"]
     routing["local_checkout_command"] = " ".join(checkout_argv)
     _write_json(output / "pr-routing.json", routing)
-    current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
     checkout_command = "not-run: already at expected PR head"
     if current_head != head_oid:
         # gh may alter refs or the worktree before returning an error; retain conservative state first.

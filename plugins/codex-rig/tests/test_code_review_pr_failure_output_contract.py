@@ -48,6 +48,9 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "neither `PR Evidence Collection Recovery` nor `Review Findings and Merge Blocks` applies" in terminal_gate
     assert "`review_status=unavailable`" in terminal_gate
     assert "`collection_failure=" in terminal_gate
+    assert "immediately state `Reason:`" in terminal_gate
+    assert "worktree-preflight.json" in terminal_gate
+    assert "`overlapping_paths`" in terminal_gate
     assert "For retryable `github-network`, `github-rate-limit`, or `command-timeout`" in skill
     assert "suggest filing a Codex Rig bug" in skill
 
@@ -91,4 +94,17 @@ def test_calibration_covers_sandboxed_collector_network_approval() -> None:
         "complete-collector-network-approval-missing",
         "nested-github-read-sandboxed",
         "terminal-unavailable-before-approved-retry",
+    ]
+
+
+def test_calibration_covers_dirty_worktree_checkout_precision() -> None:
+    """Keep unrelated dirty files and overwrite-risk diagnostics distinct."""
+    payload = json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))
+    cases = {case["id"]: case for case in payload["cases"]}
+
+    case = cases["code-review-pr-dirty-worktree-precision"]
+    assert case["target"] == "code-review"
+    assert case["expected_findings"] == [
+        "unrelated-dirty-worktree-false-blocker",
+        "dirty-worktree-overlap-reason-missing",
     ]

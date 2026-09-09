@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.1
+
+- Let PR collection continue when tracked local edits are unrelated to the requested checkout or the current HEAD already exactly matches the PR head. Retain a deterministic `worktree-preflight.json` and block only the dirty paths checkout would overwrite.
+- Make terminal PR-review unavailability state its exact reason immediately. Dirty-worktree overlap reports name the paths from `worktree-preflight.json` instead of a generic collector failure.
+- After validated remediation, offer an explicit local commit choice: all resolved remediation changes, coherent recorded topics, or safely disjoint findings. A selected mode is the commit authorization; the default remains unstaged.
+- Record a pre-edit worktree baseline and require an empty index, exact owned-path staging, and exact staged-scope validation. Unrelated cache/lockfile leftovers remain untouched, while pre-existing, disputed, overlapping, or unprovable paths block only the affected commit unit rather than being included or reset.
+
 ## 0.16.0
 
 - Manage reusable GitHub-reader approval through explicit plugin setup and sync. Install a dedicated user rules file for the installed wrapper, regenerate its path after plugin upgrades, and remove it during managed teardown. Direct plugin installation remains inert.

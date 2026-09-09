@@ -73,10 +73,10 @@ In runtimes with network sandboxing, execute the complete collector command with
 
 Core and supplemental evidence:
 
-- `collect_pr.py` treats PR identity/body plus exact local source as core evidence: it uses numbered fork-aware `gh pr checkout <number>` when needed, verifies the PR head SHA, and derives `diff.patch` locally.
+- `collect_pr.py` treats PR identity/body plus exact local source as core evidence: it uses numbered fork-aware `gh pr checkout <number>` when needed, verifies the PR head SHA, and derives `diff.patch` locally. Its `worktree-preflight.json` permits unrelated tracked edits and blocks only paths checkout would overwrite.
 - GraphQL review-thread resolution status is supplemental; if unavailable, the collector writes empty normalized thread arrays plus `review-threads-error.txt` and continues.
 - Record that online-triage coverage gap in `action-items.md`, result confidence gaps, and unresolved/deferred closure rationale; never treat it as a code finding or silently claim complete thread triage.
-- On core collection failure, use `<run-directory>/pr/pr-error.txt` and `<run-directory>/pr/command-failure.json` when present to distinguish the classified process failure from source-review findings; do not treat it as a merge recommendation.
+- On core collection failure, use `<run-directory>/pr/pr-error.txt`, `<run-directory>/pr/worktree-preflight.json`, and `<run-directory>/pr/command-failure.json` when present to distinguish the classified process failure from source-review findings; for a dirty-worktree overlap, name the exact `overlapping_paths` first; do not treat it as a merge recommendation.
 
 When `gh pr view` metadata fails, public unauthenticated HTTPS fallback is eligible only when all of these hold:
 
@@ -322,6 +322,8 @@ Before any selected-scope edit or specialist spawn, write `<run-directory>/resol
 - `## Execution Order`: dependency-aware bucket order and `parent-owned|sequential-specialists|parallel-specialists` mode.
 - `## Ungrouped Items`: always `none`; every selected item belongs to exactly one bucket, including parent-owned work.
 
+Before the first selected-scope edit, record `<run-directory>/commit-baseline.json`: current `HEAD`, the parsed path/status inventory from raw `git status --porcelain=v1 -z`, and the exact paths planned for each work bucket. This is an ownership boundary for an optional later commit, not a requirement for remediation. Unrelated tracked or untracked changes, including a lockfile such as `uv.lock`, do not block remediation or PR collection unless checkout would overwrite that exact path. A path already changed at the baseline is never automatically commit-eligible; retain it unstaged and do not restore, stash, reset, or otherwise hide it. Exclude run artifacts under `.reports/` from every commit unit.
+
 Also write `<run-directory>/work-bucket-plan.json` with the exact `work_buckets` array used to render the user-visible table. Use `schema_version=1` for parent-owned, sequential, and planning-only work. Use `schema_version=2` from the outset when proposing production `parallel-specialists`; include the consumer, source repository relative to its workspace parent, a `.codex-rig-worktrees/<run-id>` sibling worktree root outside that repository, exact baseline HEAD/tree, rollback and cleanup policies, context hashes, resource locks, output paths, and verification commands required by the loaded production lifecycle reference. Keep the plan, approval, state, patches, rollback material, and lifecycle projection in the source-local `<run-directory>`. Hash the exact plan bytes with SHA-256 and record the digest in the workplan before asking for approval. The table, JSON, metadata, and approval must describe and bind the same plan bytes; never upgrade an already approved schema-v1 plan in place.
 
 Group per capable specialist/domain when it reduces duplicated context or preserves one root cause. Valid keys:
@@ -452,15 +454,42 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `CODE
 
 For `mode=pr`, also include selected PR target plus `pr-routing.json`, `target-branch.json`, `local-checkout.json`, `merge-resolution.json`, and `merge-prestage.md` paths under the run directory.
 
-### 12: Commit Attribution When Explicitly Requested
+### 12: Offer An Opt-In Commit After Verified Remediation
 
-Leave accepted remediation changes unstaged by default. If the user explicitly requests a local commit after gates pass, load `../../shared/commit-response-template.md` and use its exact message shape. Every proposed or created remediation commit must end with:
+After all selected implementation, closure checks, shared quality gates, and result validation finish, write `<run-directory>/commit-plan.md`. It lists only resolved remediation-owned tracked paths and maps each path to its selected finding and work-bucket topic. Do not write a plan or ask when no remediation-owned tracked change exists. Otherwise, show the complete compact plan and ask exactly once:
+
+```text
+Commit verified remediation-owned changes?
+- all at once
+- group findings by topic
+- each finding as a separate commit
+- leave unstaged
+```
+
+Do not stage before this question. A direct user selection authorizes only the selected local commit mode. If the user later says only `commit`, treat it as `all at once`; a summary request does not authorize a commit. If the runtime cannot ask, or the user chooses `leave unstaged`, leave every remediation change unstaged.
+
+Build commit units from the recorded plan, never from a retrospective guess:
+
+- `all at once`: one unit containing every resolved remediation-owned tracked path.
+- `group findings by topic`: use the coherent work-bucket topic already recorded in `resolution-workplan.md`; include its implementation, regression tests, and required documentation together. Do not invent new topics after implementation.
+- `each finding as a separate commit`: use one unit per finding only when all unit paths are exact and disjoint. If findings share a changed path, do not use partial-hunk staging to separate them; report the collision and require `group findings by topic` or `all at once`.
+
+Before staging each chosen unit, require all of the following:
+
+1. The index is empty (`git diff --cached --quiet`); an existing staged change is user state. Stop without changing the index rather than resetting or unstaging it.
+2. Every candidate path is absent from `commit-baseline.json`'s dirty/untracked inventory and belongs to exactly one chosen unit. A pre-existing or concurrently disputed path is not safe to attribute to Codex; leave that unit unstaged and explain the boundary.
+3. Stage only the unit's explicit repo-relative paths with `git add -- <paths>`. Never use `git add .`, `git add -A`, a glob, or an inferred worktree-wide path list.
+4. Inspect `git diff --cached --name-only` and require it to equal the unit's planned paths exactly. A mismatch stops before commit; do not repair the index automatically.
+
+The resulting commit therefore contains only remediation-owned changes from the chosen unit; unrelated worktree changes remain untouched. If a preflight cannot prove that boundary, do not commit and retain the validated remediation result plus the exact blocker in `commit-plan.md`.
+
+For each eligible, user-authorized unit, load `../../shared/commit-response-template.md` and use its exact message shape. Every proposed or created remediation commit must end with:
 
 ```text
 Co-authored-by: Codex <codex@openai.com>
 ```
 
-Do not commit for a remediation summary alone or without the user's explicit authorization. Creating a new remediation commit never authorizes rewriting an existing commit. Amend, rebase, reset, squash, fixup, and equivalent history edits require an explicit request for that exact operation.
+Do not commit for a remediation summary alone or without the user's explicit authorization. Creating a new remediation commit never authorizes rewriting an existing commit. Amend, rebase, reset, squash, fixup, and equivalent history edits require an explicit request for that exact operation. After every commit, verify its stored message, `HEAD`, and post-commit index/worktree state through the shared template before attempting another unit.
 
 ## Fail-fast Rules
 
@@ -508,7 +537,7 @@ Do not commit for a remediation summary alone or without the user's explicit aut
     - A separate scope-selection control repeats the question after the combined user-visible message => fail: `scope-prompt-duplicated`.
     - The parallel-approval question or choices appear in both a user-visible plan message and the approval control => fail: `parallel-approval-prompt-duplicated`.
 42. An explicitly requested remediation commit omits `Co-authored-by: Codex <codex@openai.com>` or the shared commit-response template => fail: `codex-coauthor-trailer-missing`.
-43. Existing history would be rewritten without an explicit request for that exact operation => fail: `history-rewrite-not-explicitly-authorized`.
+43. Existing history would be rewritten without an explicit request for that exact operation => fail: `history-rewrite-not-explicitly-authorized`. 43a. A remediation commit mode is selected before gates/result validation, does not have `<run-directory>/commit-plan.md`, or stages before its one user-visible mode choice => fail: `code-remediate-commit-plan-missing`. 43b. A remediation commit includes a path outside its recorded unit, a path present in the commit baseline, a run artifact, or any pre-existing staged change => fail: `code-remediate-commit-scope-unsafe`. 43c. Per-finding commits split an overlapping path with partial-hunk staging or topic commits invent a post-hoc grouping => fail: `code-remediate-commit-grouping-unsafe`.
 44. Target conflicts are present/likely but `merge-resolution.json` is absent or not `completed` before report/online-review work => fail: `target-merge-not-completed`.
 45. Target merge starts or commits without explicit authorization for that local merge commit => fail: `target-merge-authorization-required`.
 46. Report/online-review finding work starts while unmerged paths or an in-progress merge remain => fail: `merge-conflicts-unresolved-before-review-remediation`.
@@ -550,7 +579,7 @@ Conditional checks:
 Update calibration when resolution policy/output shape changes:
 
 - benchmark patterns: `code-remediate`
-- behavioral cases: bare PR online-only intake without a prior review artifact, explicit report-alias boundary, ambiguous findings, false closure, unresolved critical/high handling, missing user-selected resolution scope, missing resolution workplan for selected items, selected item omitted or duplicated across buckets, bucket over five items, low-volume fan-out, one-specialist-per-finding overhead, parallel execution without user approval, overlapping parallel ownership, specialist-owned bucket missing context pack, completed parallel remediation without hash-bound join/integration/source-application/rollback/cleanup evidence, capability-sandbox overclaim, unconfirmed out-of-scope triage, connected PR item marked out-of-scope, missing connected follow-up, code-review-to-remediation gate symmetry, unresolved selected-item closure summary, complete final resolution table, per-item machine ledger reconciled with durable Markdown, compact report/online references with full expanded source records, final chat outcome table for every ingested item and source, gate failure disclosure, artifact validator bypass, PR online review triage, supplemental-thread degradation, sandboxed collector network approval, PR target-branch refresh, PR intent-first merge/conflict completion, fork-aware numbered checkout, verified local diff before edits
+- behavioral cases: bare PR online-only intake without a prior review artifact, explicit report-alias boundary, ambiguous findings, false closure, unresolved critical/high handling, missing user-selected resolution scope, missing resolution workplan for selected items, selected item omitted or duplicated across buckets, bucket over five items, low-volume fan-out, one-specialist-per-finding overhead, parallel execution without user approval, overlapping parallel ownership, specialist-owned bucket missing context pack, completed parallel remediation without hash-bound join/integration/source-application/rollback/cleanup evidence, capability-sandbox overclaim, unconfirmed out-of-scope triage, connected PR item marked out-of-scope, missing connected follow-up, code-review-to-remediation gate symmetry, unresolved selected-item closure summary, complete final resolution table, per-item machine ledger reconciled with durable Markdown, compact report/online references with full expanded source records, final chat outcome table for every ingested item and source, gate failure disclosure, artifact validator bypass, PR online review triage, supplemental-thread degradation, sandboxed collector network approval, PR target-branch refresh, PR intent-first merge/conflict completion, fork-aware numbered checkout, verified local diff before edits, post-gate remediation commit mode choice, exact ownership-only staging, and unsafe per-finding overlap rejection
 
 ## Output Contract
 

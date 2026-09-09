@@ -141,6 +141,8 @@ class FakeRunner:
         current_head_oid: str = "d" * 40,
         cross_repository: bool = False,
         github_remotes: dict[str, list[str]] | None = None,
+        dirty_paths: list[str] | None = None,
+        checkout_paths: list[str] | None = None,
     ) -> None:
         """Initialize configurable process and GitHub-response fixtures."""
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -154,6 +156,8 @@ class FakeRunner:
         self.local_head_oid = current_head_oid
         self.cross_repository = cross_repository
         self.github_remotes = github_remotes or {"origin": ["https://github.com/Borda/AI-Rig.git"]}
+        self.dirty_paths = dirty_paths or []
+        self.checkout_paths = checkout_paths or ["a.py"]
 
     def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Simulate the Git, GitHub CLI, and remote-selector commands."""
@@ -161,7 +165,11 @@ class FakeRunner:
         assert kwargs.get("shell", False) is False
         self.calls.append((argv, kwargs))
         stdout = b""
-        if argv[:4] == ["git", "status", "--short", "--untracked-files=no"]:
+        if argv == ["git", "diff", "--name-only", "-z", "HEAD", "--"]:
+            stdout = b"".join(f"{path}\0".encode() for path in self.dirty_paths)
+        elif argv[:4] == ["git", "diff", "--name-only", "-z"]:
+            stdout = b"".join(f"{path}\0".encode() for path in self.checkout_paths)
+        elif argv[:4] == ["git", "status", "--short", "--untracked-files=no"]:
             stdout = b""
         elif argv[:3] == ["git", "status", "--short"]:
             stdout = b" M local.txt\n"
@@ -673,6 +681,62 @@ def test_collect_pr_reuses_already_exact_pr_head_for_local_diff(
     assert checkout["command"] == "not-run: already at expected PR head"
     assert checkout["head_matches_pr"] is True
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
+
+
+def test_collect_pr_allows_dirty_paths_untouched_by_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep unrelated tracked environment churn from blocking a verified PR checkout."""
+    module = _load_collector()
+    _runner = FakeRunner(dirty_paths=["uv.lock"], checkout_paths=["a.py"])
+    _configure_collector(monkeypatch, module, _runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0
+    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert preflight["status"] == "safe-unrelated-dirty-paths"
+    assert preflight["dirty_paths"] == ["uv.lock"]
+    assert preflight["checkout_paths"] == ["a.py"]
+    assert preflight["overlapping_paths"] == []
+    assert any(argv == ["gh", "pr", "checkout", "17"] for argv, _ in _runner.calls)
+
+
+def test_collect_pr_names_dirty_paths_that_checkout_would_overwrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Block only tracked edits the requested checkout would overwrite."""
+    module = _load_collector()
+    _runner = FakeRunner(dirty_paths=["uv.lock", "a.py"], checkout_paths=["a.py", "src/app.py"])
+    _configure_collector(monkeypatch, module, _runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(
+        encoding="utf-8"
+    ) == "dirty-tracked-worktree-overlap-before-pr-checkout\n"
+    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert preflight["status"] == "blocked-overlapping-dirty-paths"
+    assert preflight["overlapping_paths"] == ["a.py"]
+    assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in _runner.calls)
+
+
+def test_collect_pr_allows_dirty_paths_when_already_at_pr_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not block a source review when no checkout is necessary."""
+    module = _load_collector()
+    _runner = FakeRunner(current_head_oid=HEAD_OID, cross_repository=True, dirty_paths=["uv.lock"])
+    _configure_collector(monkeypatch, module, _runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0
+    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert preflight["status"] == "already-at-pr-head"
+    assert preflight["dirty_paths"] == ["uv.lock"]
+    assert preflight["checkout_paths"] == []
+    assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in _runner.calls)
 
 
 def test_collect_pr_checkout_writes_verified_fetch_and_checkout_artifacts(
