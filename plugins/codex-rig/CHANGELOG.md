@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.1
+
+- Accept the durable code-remediation table's full workflow column list instead of requiring exactly the nine columns the validator names. `Required table columns` in the skill lists sixteen, so a run that followed the workflow rendered a wider table and was rejected as `code-remediate-final-table-markdown-columns-mismatch`, leaving a complete result stuck as `result.candidate.json` with no way to promote it. The check now reports which required columns are absent and ignores additional ones, matching how the same required set is already checked against the metadata column list and the surrounding prose.
+- Name the durable table's closure-evidence column `evidence` in the skill's required-column list, matching the column name the same skill file already declares in `final_resolution_table.required_columns`. The previous heading described the field rather than naming it, so a run that used it literally omitted a required column.
+- Compare durable-table detail and expanded-source lines against the stored ledger with inline code spans normalized on both sides. A detail line that marked a path or command as code carried the same text the ledger held but failed `code-remediate-final-table-symbol-detail-missing`, so a complete run could not promote its result. Wording, ordering, and every other difference are still rejected exactly as before.
+- Give `shared/app_server_review.py` the module documentation headings the shipped-module check requires. The sections were already present as prose labels; only their form changed.
+
 ## 0.15.0
 
 - Add an explicitly approved, bounded App Server reviewer route for hosts without native child permission controls. Verify invocation-scoped capability restrictions and effective read-only/never thread controls; preserve opaque authentication and parent-owned report persistence.

@@ -188,7 +188,7 @@ Required table columns:
 - resolution: `implemented|resolved|rejected|stale|not-applicable|duplicate|already-fixed|already-applied|needs-clarification|unresolved`
 - owner/status: `todo|fixed|resolved|deferred|unresolved|not-selected|not-actionable`
 - resolved how: `[O<row-position>]`; immediately below the table define `[O<row-position>] <how/why resolved/unresolved/deferred/not applicable>`
-- closure evidence or unresolved rationale: `[E<row-position>]`; immediately below the table define `[E<row-position>] <complete evidence, unresolved rationale, owner action, or next action>`
+- evidence: closure evidence or unresolved rationale as `[E<row-position>]`; immediately below the table define `[E<row-position>] <complete evidence, unresolved rationale, owner action, or next action>`
 
 After table add `## Final Resolution Summary`:
 

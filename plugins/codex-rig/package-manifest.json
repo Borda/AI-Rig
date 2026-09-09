@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "087532818ecbe912d6c2a3b49b253c67cb63a61afa0b631cf08f98753be5047f"
+      "sha256": "2f3d991a11280c266709147d7fcf4c148e3116b6c787662841829ca11b27fd52"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "e4e546447bfa23e6e3f4896f99216a8e4a3fa65bad8769b7d598f8e6b446656d"
+      "sha256": "59252e4f5ef7b1cdbb2785229def7170bc6c8495b4d02321e2c7fa8e6f5f9593"
     },
     {
       "mode": "0644",
@@ -328,7 +328,7 @@
     {
       "mode": "0644",
       "path": "shared/app_server_review.py",
-      "sha256": "6e598b7397c5562a8129dff29e721861a9f470dad1463b68f9c46673b5f014c2"
+      "sha256": "dceb77c331a68ada9d0c97c6dfe0b40e53aab334dde30a15b23cbecc038c4dbe"
     },
     {
       "mode": "0644",
@@ -443,7 +443,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "621d6d63023133faa6ed6572c1dc396eb21b959c5b72b9414479bf2c91b6cfd4"
+      "sha256": "41296d51c491fd3437b4fafbe4a289951ada7f7026c1d4852b8aeb94d909c319"
     },
     {
       "mode": "0755",
@@ -493,7 +493,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "a00c92832855d994d1b97c1dcca54ee9079ca152910e54770dce37c566fef175"
+      "sha256": "1f88baee5afbf0a43af8f0c09f374333a1de83ae22f469de1ffb270be5486ab8"
     },
     {
       "mode": "0644",
@@ -733,7 +733,7 @@
     {
       "mode": "0644",
       "path": "tests/test_code_remediate_final_outcome_validation.py",
-      "sha256": "442adab27ce163e1f42261967a15d6dcc8527f7cfb01a36c689862b300bcb62d"
+      "sha256": "625de9a721110341f9f50a18412f0bfe9df56f813cff51308845696a973e14c0"
     },
     {
       "mode": "0644",
@@ -1179,5 +1179,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.15.0"
+  "version": "0.15.1"
 }

@@ -548,3 +548,83 @@ def test_source_record_counts_fail_closed(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="code-remediate-final-table-source-count-mismatch"):
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+def _widen_resolution_table(out_dir: Path, columns: tuple[str, ...]) -> None:
+    """Append extra workflow columns to every row of the durable table."""
+    path = out_dir / "action-items.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = lines.index("## Review Item Resolution Table") + 2
+    separators = tuple("---" for _ in columns)
+    placeholders = tuple(f"detail for {column}" for column in columns)
+    for offset, line in enumerate(lines[start:]):
+        if not line.startswith("|"):
+            break
+        cells = (columns, separators)[offset] if offset < 2 else placeholders
+        lines[start + offset] = line + "".join(f" {cell} |" for cell in cells)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def test_durable_table_accepts_workflow_columns_beyond_the_required_set(tmp_path: Path) -> None:
+    """Accept the wider column list the workflow mandates, since required columns are a minimum."""
+    metadata = _metadata()
+    _write_action_items(metadata, tmp_path)
+    _widen_resolution_table(
+        tmp_path,
+        ("selection index", "item id or source location", "source category", "PR/diff relation", "severity", "summary"),
+    )
+
+    VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+def test_durable_table_rejects_a_renamed_required_column(tmp_path: Path) -> None:
+    """Reject a required column renamed away from its contract name, naming what is missing."""
+    metadata = _metadata()
+    _write_action_items(metadata, tmp_path)
+    path = tmp_path / "action-items.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "| Resolved how | Evidence |",
+            "| Resolved how | Closure evidence or unresolved rationale |",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="code-remediate-final-table-markdown-columns-missing:evidence"):
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+def test_symbol_detail_accepts_code_spans_around_ledger_text(tmp_path: Path) -> None:
+    """Accept a detail line that marks paths and commands as code without altering the ledger text."""
+    metadata = _metadata()
+    _write_action_items(metadata, tmp_path)
+    path = tmp_path / "action-items.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "[E1] tests/test_guard.py passed",
+            "[E1] `tests/test_guard.py` passed",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+def test_symbol_detail_still_rejects_altered_ledger_text(tmp_path: Path) -> None:
+    """Reject a detail line whose wording differs from the ledger, not merely its code markup."""
+    metadata = _metadata()
+    _write_action_items(metadata, tmp_path)
+    path = tmp_path / "action-items.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "[E1] tests/test_guard.py passed",
+            "[E1] `tests/test_guard.py` skipped",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="code-remediate-final-table-symbol-detail-missing:E1"):
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)

@@ -1723,6 +1723,17 @@ def _parse_markdown_table(path: Path, heading: str) -> tuple[list[str], list[lis
     return headers, rows
 
 
+def _normalize_rendered_detail(value: str) -> str:
+    """Normalize rendered Markdown so it can be compared against a stored ledger value.
+
+    Collapses whitespace, unescapes pipe characters that the table rendering requires, and drops inline code-span
+    backticks. The ledger stores plain text, so a detail line that marks up a path or a command as code renders the same
+    information the ledger holds; treating that markup as a difference rejects a faithful rendering and leaves a
+    complete result unpromotable.
+    """
+    return re.sub(r"\s+", " ", value.replace(r"\|", "|").replace("`", "")).strip()
+
+
 def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], out_dir: Path) -> None:
     """Validate the final code-remediation table covers every ingested entry."""
     table = metadata.get("final_resolution_table")
@@ -1881,8 +1892,9 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             raise SystemExit(f"code-remediate-final-table-missing-{required_text.replace(' ', '-')}")
 
     headers, rows = _parse_markdown_table(out_dir / "action-items.md", "Review Item Resolution Table")
-    if set(headers) != CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS:
-        raise SystemExit("code-remediate-final-table-markdown-columns-mismatch")
+    missing_headers = sorted(CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS - set(headers))
+    if missing_headers:
+        raise SystemExit("code-remediate-final-table-markdown-columns-missing:" + ",".join(missing_headers))
     if len(rows) != counts["table_rows_total"]:
         raise SystemExit("code-remediate-final-table-markdown-row-count-mismatch")
     header_indexes = {header: index for index, header in enumerate(headers)}
@@ -1903,9 +1915,9 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
         "resolution_status": "resolution",
         "owner_status": "owner/status",
     }
-    normalized_action_text = re.sub(r"\s+", " ", action_text.replace(r"\|", "|"))
+    normalized_action_text = _normalize_rendered_detail(action_text)
     normalized_action_lines = {
-        re.sub(r"\s+", " ", line.replace(r"\|", "|")).strip()
+        _normalize_rendered_detail(line)
         for line in (out_dir / "action-items.md").read_text(encoding="utf-8").splitlines()
     }
     for position, item in enumerate(items, start=1):
@@ -1919,7 +1931,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
         ):
             if row[header_indexes[column]] != f"[{detail_id}]":
                 raise SystemExit(f"code-remediate-final-table-markdown-{field}-mismatch")
-            expected_detail = re.sub(r"\s+", " ", f"[{detail_id}] {item[field]}").strip()
+            expected_detail = _normalize_rendered_detail(f"[{detail_id}] {item[field]}")
             if expected_detail not in normalized_action_lines:
                 raise SystemExit(f"code-remediate-final-table-symbol-detail-missing:{detail_id}")
         expected_source_cell = " ".join(f"{source['kind']} [{source['source_id']}]" for source in item["sources"])
@@ -1930,7 +1942,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
                 f"{source['kind']} [{source['source_id']}] @ {source['location']} — "
                 f"{source['body']} — {source['evidence']}"
             )
-            normalized_detail = re.sub(r"\s+", " ", expanded_detail).casefold()
+            normalized_detail = _normalize_rendered_detail(expanded_detail).casefold()
             if normalized_detail not in normalized_action_text:
                 raise SystemExit(
                     f"code-remediate-final-table-expanded-source-detail-missing:"

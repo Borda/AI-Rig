@@ -1,35 +1,46 @@
 """Run and validate a deliberately narrow, opt-in App Server review route.
 
-Purpose: start independent, ephemeral read-only App Server threads only after a parent has frozen a small code-review
-plan, then retain a bounded evidence record that binds role cards, contexts, and final responses. The route exists
-because the native launcher cannot presently attest the mandatory reviewer controls; it is not a general agent runner,
-write adapter, scheduler, or provenance replacement.
+## Purpose
 
-Scope: this module accepts schema-version-one plans for one to four canonical Terra or Luna roles. It validates all
-local inputs before process launch, discovers configured MCP server identifiers without retaining configuration
-content, restarts with every simple identifier disabled, and rejects any control, event, output, path, hash, or cleanup
+Start independent, ephemeral read-only App Server threads only after a parent has frozen a small code-review plan, then
+retain a bounded evidence record that binds role cards, contexts, and final responses. The route exists because the
+native launcher cannot presently attest the mandatory reviewer controls; it is not a general agent runner, write
+adapter, scheduler, or provenance replacement.
+
+## Scope
+
+This module accepts schema-version-one plans for one to four canonical Terra or Luna roles. It validates all local
+inputs before process launch, discovers configured MCP server identifiers without retaining configuration content,
+restarts with every simple identifier disabled, and rejects any control, event, output, path, hash, or cleanup
 deviation. It never changes global configuration, home directories, credentials, plugin state, or a parent result
 artifact.
 
-Usage: an explicitly authorized operator runs ``python app_server_review.py --plan frozen-plan.json --out
-new-output-directory``. Unit tests exercise the pure ``validate_evidence`` boundary and mocked protocol helpers;
-ordinary test execution must never invoke a model or network operation.
+## Usage
 
-Outputs: a completed run writes immutable per-role response files and ``evidence.json`` below a new output directory
-contained by the resolved plan directory. Once that directory is available, failed runs attempt a bounded failure
-record after cleanup and retain completed responses. Input/output setup failures may leave no artifact; a reported
-failure never proves that evidence was written. ``validate_evidence`` returns a compact,
-parent-consumable runtime summary; it deliberately does not claim native child lineage, global credential isolation, or
-write parallel eligibility.
+An explicitly authorized operator runs ``python app_server_review.py --plan frozen-plan.json --out new-output-
+directory``. Unit tests exercise the pure ``validate_evidence`` boundary and mocked protocol helpers; ordinary test
+execution must never invoke a model or network operation.
 
-Failure: malformed, oversized, secret-bearing, mismatched, noncanonical, or unsafe input raises
-``ReviewRouteError`` before model work. During a live run, approval requests, non-read-only observed controls,
-unknown execution events, failed turns, duplicate finals, timeout, and unproven cleanup fail closed. Raw
-configuration, stderr, reasoning, tool payloads, and credentials are neither logged nor included in evidence.
+## Outputs
 
-Used by: the opt-in code-review integration freezes the plan and validates the resulting evidence before it can treat
-reviewers as independently executed. Rig runtime maintainers own this small route and may remove it once native host
-controls and provenance are sufficient.
+A completed run writes immutable per-role response files and ``evidence.json`` below a new output directory contained by
+the resolved plan directory. Once that directory is available, failed runs attempt a bounded failure record after
+cleanup and retain completed responses. Input/output setup failures may leave no artifact; a reported failure never
+proves that evidence was written. ``validate_evidence`` returns a compact, parent-consumable runtime summary; it
+deliberately does not claim native child lineage, global credential isolation, or write parallel eligibility.
+
+## Failure
+
+Malformed, oversized, secret-bearing, mismatched, noncanonical, or unsafe input raises ``ReviewRouteError`` before model
+work. During a live run, approval requests, non-read-only observed controls, unknown execution events, failed turns,
+duplicate finals, timeout, and unproven cleanup fail closed. Raw configuration, stderr, reasoning, tool payloads, and
+credentials are neither logged nor included in evidence.
+
+## Used by
+
+The opt-in code-review integration freezes the plan and validates the resulting evidence before it can treat reviewers
+as independently executed. Rig runtime maintainers own this small route and may remove it once native host controls and
+provenance are sufficient.
 """
 
 from __future__ import annotations
