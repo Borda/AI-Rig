@@ -1076,6 +1076,11 @@ class TestAgenticAnswerContracts:
             "Use exactly these JSON value shapes:\n"
             "- production_importers: array of full dotted module-name strings.\n"
             f"{agentic_contracts.IMPORT_CONVENTION_INSTRUCTION}\n"
+            f"{agentic_contracts.ORACLE_POPULATION_INSTRUCTION}\n"
+            "Run temporary analysis in memory or through interpreter stdin; do not create helper files in the "
+            "repository or tool coordination/lock directories. Writable coordination storage is reserved for the "
+            "tool protocol, not scratch work. Use deterministic code for counts, set filtering and ranking; "
+            "check any reported count against the corresponding complete collection.\n"
             "Do not put objects or counts inside array fields. Values outside these shapes are invalid.\n"
             "Wrap your answer between a BEGIN_ANSWER_JSON line and an END_ANSWER_JSON line, "
             "exactly once, with the JSON object alone between them.\n"
@@ -1258,7 +1263,12 @@ class TestAgenticAnswerContracts:
 
     def test_ba05_declares_package_public_and_examples_internal_boundaries(self, tmp_path: Path) -> None:
         """Package initializers are public; non-package and example importers are internal."""
+        # Every package directory carries its own __init__.py: module names come from the __init__.py chain, so a tree
+        # that skips the intermediate ones names this module `callbacks.finetuning` and no longer describes a package
+        # importable as `lightning.pytorch.callbacks.finetuning`.
         for relative, source in {
+            "lightning/__init__.py": "",
+            "lightning/pytorch/__init__.py": "",
             "lightning/pytorch/callbacks/finetuning.py": "",
             "lightning/pytorch/callbacks/__init__.py": "import lightning.pytorch.callbacks.finetuning\n",
             "lightning/pytorch/callbacks/consumer.py": "import lightning.pytorch.callbacks.finetuning\n",

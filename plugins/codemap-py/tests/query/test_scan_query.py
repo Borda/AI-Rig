@@ -3789,7 +3789,15 @@ class TestCoverageDiet:
 def _run_batch(scan_query: Path, root: Path, index_path: Path, items: list, *, compact: bool = False) -> dict:
     """Run `batch` feeding *items* via stdin; optionally compact coverage metadata."""
     result = subprocess.run(
-        [sys.executable, str(scan_query), "--index", str(index_path), *( ["--compact"] if compact else []), "batch", "-"],
+        [
+            sys.executable,
+            str(scan_query),
+            "--index",
+            str(index_path),
+            *(["--compact"] if compact else []),
+            "batch",
+            "-",
+        ],
         input=json.dumps(items),
         capture_output=True,
         text=True,
@@ -3861,17 +3869,20 @@ class TestBatch:
 
         capped = batch["batch"][0]
         assert capped["ok"] is True
-        assert capped["result"]["index"].items() >= {
-            "query_complete": True,
-            "stale": False,
-            "root_mismatch": False,
-            "compact": True,
-            "method": "import-graph",
-            "not_covered": ["importlib.import_module", "__import__", "lazy-loading"],
-            "confidence": "partial",
-            "truncated": True,
-            "total_available": 2,
-        }.items()
+        assert (
+            capped["result"]["index"].items()
+            >= {
+                "query_complete": True,
+                "stale": False,
+                "root_mismatch": False,
+                "compact": True,
+                "method": "import-graph",
+                "not_covered": ["importlib.import_module", "__import__", "lazy-loading"],
+                "confidence": "partial",
+                "truncated": True,
+                "total_available": 2,
+            }.items()
+        )
         assert batch["batch"][1]["ok"] is False
         assert "error" in batch["batch"][1]
         assert batch["index"].items() >= {"query_complete": False, "truncated": True, "confidence": "partial"}.items()

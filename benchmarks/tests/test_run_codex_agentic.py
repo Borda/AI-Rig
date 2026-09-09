@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,8 +18,15 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
-AGENTIC_TASK_IDS = tuple(f"BA-{number:02d}" for number in range(1, 17))
+#: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
+#: expected scope instead of failing every scope assertion in this module.
+AGENTIC_TASK_IDS = tuple(
+    task["id"]
+    for task in json.loads((BENCHMARKS_DIR / "suites" / "tasks-agentic.json").read_text(encoding="utf-8"))["tasks"]
+)
 AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
+#: One repetition of every suite coordinate — the default no-model plan and paid scope size.
+AGENTIC_CELLS = len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS)
 POSIX_SECURITY = pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX private-mode semantics")
 
 
@@ -152,10 +160,12 @@ def test_dry_run_has_three_probes_and_default_shared_coordinates(agentic: Any) -
     assert len(probes) == 3
     assert len(plan) == len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS)
     assert plan[0] == "PLAN    BA-01  rep=1  A_plain"
-    assert plan[-1] == "PLAN    BA-16  rep=1  C_strict"
+    # Tasks run in suite order, but arms are counterbalanced within each task, so the final row's arm is whatever the
+    # last task's order puts last. Pinning it here would assert the counterbalancing policy, which has its own tests.
+    assert plan[-1].split()[1] == AGENTIC_TASK_IDS[-1]
 
 
-def test_dry_run_default_coordinates_equal_the_shared_16_task_scope(agentic: Any) -> None:
+def test_dry_run_default_coordinates_equal_the_shared_suite_scope(agentic: Any) -> None:
     """The default no-model plan schedules each shared parity coordinate once.
 
     Prevents a runner that advertises parity while retaining the BA-01 pilot, omitting an arm, duplicating a coordinate,
@@ -252,20 +262,18 @@ def test_agentic_output_legend_uses_shared_renderer_contract(agentic: Any) -> No
     assert legend.startswith(f"{LEGEND_OPEN_RULE}\n")
     assert legend.endswith(LEGEND_CLOSE_RULE)
     assert legend.count("LEGEND") == 2
-    assert (
-        "treatments: A_plain=no Codemap, B_auto=CLI available and optional, C_strict=installed Codemap Skill" in legend
-    )
-    assert "SCORE: mean semantic answer-component score" in legend
-    assert (
-        "SCORE: mean semantic answer-component score; n/a when no answer can be recovered (higher is better)" in legend
-    )
+    assert "treatments: A_plain=no Codemap, B_auto=optional CLI, C_strict=installed Codemap Skill" in legend
+    assert "pass:" in legend
+    assert "component:" in legend
+    assert "SCORE:" not in legend
+    assert "component: secondary partial-credit mean; n/a when unscored; scored denominator shown separately" in legend
     assert "EREC: expected-importer recall in all agent text (higher is better)" in legend
     assert "RREC: expected-importer recall in the final report (higher is better)" in legend
     assert (
         "DEFF: unbounded expected-importer exposure hits per command (higher is better within the same task)" in legend
     )
     assert (
-        "input tokens: gross total; cached and fresh details remain in telemetry only (lower is better at equal quality)"
+        "input tokens: gross total; summaries separate fresh/gross/output tokens and time with eligible pair counts"
         in legend
     )
     assert "answer: ✓ strict envelope, △ diagnostic bare-JSON recovery (not poolable), ✗ absent or invalid" in legend
@@ -603,22 +611,24 @@ def test_paid_run_persists_full_scope_and_noncompliant_c_row(
 
     rows = [json.loads(line) for line in (run_dir / "telemetry.jsonl").read_text().splitlines()]
     metadata = json.loads((run_dir / "run-metadata.json").read_text())
-    assert len(rows) == 48
+    assert len(rows) == AGENTIC_CELLS
     assert metadata["status"] == "completed"
     assert metadata["execution"]["comparability_scope"]["repetitions_limit"].startswith("variance screening")
-    assert rows[-1]["arm"] == "C_strict"
-    assert rows[-1]["treatment_adherence"] is False
+    # Selected rather than taken from the end: arm order is counterbalanced, so the last persisted row is not
+    # reliably the C row this scenario makes noncompliant.
+    final_strict_row = next(row for row in reversed(rows) if row["arm"] == "C_strict")
+    assert final_strict_row["treatment_adherence"] is False
     assert (run_dir / "telemetry-canonical.jsonl").is_file()
     summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
-    assert summary["all_assigned"]["C_strict"]["cells"] == 16
-    assert summary["matched_adherent"]["A_plain"]["cells"] == 0
-    assert summary["b_auto_diagnostic"] is True
+    assert summary["all_assigned"]["C_strict"]["cells"] == len(AGENTIC_TASK_IDS)
+    assert summary["all_assigned"]["A_plain"]["passed_cells"] == 0
+    assert summary["comparisons"]["B_auto"]["diagnostic_only"] is True
     assert (run_dir / "checksums.sha256").is_file()
     output = capsys.readouterr().out
-    assert "(1/48) ✓  BA-01" in output
-    assert "SCORE=n/a" in output
+    assert f"(1/{AGENTIC_CELLS}) ✗  BA-01" in output
+    assert "component=n/a" in output
     assert "SUMMARY  cohort=all_assigned  C_strict" in output
-    assert "SUMMARY  status=completed  persisted_cells=48/48" in output
+    assert f"SUMMARY  status=completed  persisted_cells={AGENTIC_CELLS}/{AGENTIC_CELLS}" in output
     run_log = (run_dir / "run.log").read_text(encoding="utf-8")
     assert run_log == output
 
@@ -686,8 +696,16 @@ def test_paid_run_persists_failed_artifact_when_initialization_fails(
     metadata = json.loads((run_dir / "run-metadata.json").read_text(encoding="utf-8"))
     assert metadata["status"] == "failed"
     assert metadata["persisted_cells"] == 0
+    summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+    for values in summary["all_assigned"].values():
+        assert values["assigned_cells"] == len(AGENTIC_TASK_IDS)
+        assert values["passed_cells"] == 0
+        assert values["unobserved_cells"] == len(AGENTIC_TASK_IDS)
+        assert values["component_mean"] is None
     assert (run_dir / "telemetry.jsonl").read_text(encoding="utf-8") == ""
-    assert "SUMMARY  status=failed  persisted_cells=0/48" in (run_dir / "run.log").read_text(encoding="utf-8")
+    assert f"SUMMARY  status=failed  persisted_cells=0/{AGENTIC_CELLS}" in (run_dir / "run.log").read_text(
+        encoding="utf-8"
+    )
     assert (run_dir / "checksums.sha256").is_file()
 
 
@@ -783,6 +801,14 @@ def test_agentic_snapshot_records_its_own_runner_identity(agentic: Any, tmp_path
         }
     ]
     assert not (tmp_path / "inputs" / "shared" / "run-codex-structural.py").exists()
+    for name in ("agentic_reporting", "agentic_contracts"):
+        source = BENCHMARKS_DIR / "_bench_common" / f"{name}.py"
+        archived = tmp_path / "inputs" / "shared" / f"{name}.py"
+        assert archived.read_bytes() == source.read_bytes()
+        assert (
+            next(entry for entry in payload["files"] if entry["role"] == name)["sha256"]
+            == hashlib.sha256(source.read_bytes()).hexdigest()
+        )
 
 
 @POSIX_SECURITY
@@ -1107,6 +1133,70 @@ def test_native_runner_refreshes_auth_and_fails_postflight_contamination(
     assert failed.error_type == "runtime_contamination"
 
 
+def test_scratch_left_in_the_coordination_gate_is_recorded_beside_a_passing_cell(
+    agentic: Any, monkeypatch: pytest.MonkeyPatch, task_and_truth: tuple[Any, Any], tmp_path: Path
+) -> None:
+    """A cell that answers correctly still passes after writing scratch into its coordination gate.
+
+    The gate is the only path a measured cell's sandbox may write to, so scratch there is permitted behaviour. It is
+    reported on the row as an observation about how the cell worked; a paid run lost a correct answer because the same
+    files were scored as an execution failure instead.
+    """
+    task, truth = task_and_truth
+    gate = agentic._structural.prepare_coordination_root(tmp_path / "index-dir")
+    (gate / "analyze_imports.py").write_text("print(1)\n", encoding="utf-8")
+
+    class Home:
+        """Disposable home whose coordination gate holds the cell's leftover scratch."""
+
+        auth_provisioned = False
+        codemap_skill_path = None
+        coordination_path = gate
+
+        def __init__(self) -> None:
+            """Initialize the test double's fixture-controlled state."""
+            self.env = {}
+            self.path = tmp_path / "home"
+
+        def cleanup(self) -> None:
+            """Implement the test home or workspace cleanup boundary."""
+
+    class Adapter:
+        """Native transport seam returning one correct answer without a model."""
+
+        timeout = 600.0
+        _auth_state = None
+
+        def _prepare_verified_home(self, _arm: str) -> Home:
+            """Return the fixture home through the runner's preparation interface."""
+            return Home()
+
+        def build_command(self, _prompt: str) -> list[str]:
+            """Return fixed argv without launching the Codex executable."""
+            return ["codex", "exec"]
+
+        def _subprocess(self, _command: list[str], _env: dict[str, str], *, timeout: float) -> str:
+            """Return a successful answer stream built from the fixture oracle."""
+            del timeout
+            return _stream(_message(_labelled("lightning.pytorch.trainer.trainer.", truth)), _completed())
+
+    runner = object.__new__(agentic.AgenticCodexRunner)
+    runner.repo_path = tmp_path
+    runner.index_path = tmp_path / "index.json"
+    runner.agentic_manifest = {}
+    runner.transport = None
+    runner.adapter = Adapter()
+    monkeypatch.setattr(agentic, "_validate_agentic_runtime", lambda *_args: None)
+
+    result = runner.run(task, "A_plain", repetition=1, oracle=truth)
+
+    assert result.success is True
+    assert result.incomplete is False
+    assert result.error_type == ""
+    assert result.coordination_scratch_entries == ["analyze_imports.py"]
+    assert not gate.exists()
+
+
 @pytest.mark.parametrize(
     ("stream", "error_type"),
     [
@@ -1152,7 +1242,11 @@ def test_completed_invalid_answer_is_unscored_without_becoming_transport_failure
     assert result.evidence.erec == 0.0
     assert result.evidence.rrec == 0.0
     assert result.evidence.deff == 0.0
-    assert "SCORE=n/a" in agentic._progress_line(1, 1, result)
+    line = agentic._progress_line(1, 1, result)
+    assert line.startswith("(1/1) ✗  ")
+    assert "component=n/a" in line
+    assert "pass=" not in line and "status=" not in line
+    assert "EREC=" in line and "RREC=" in line and "DEFF=" in line
     assert "answer:✗" in agentic._progress_line(1, 1, result)
     assert "correct:" not in agentic._progress_line(1, 1, result)
 
@@ -1163,6 +1257,83 @@ def test_completed_invalid_answer_is_unscored_without_becoming_transport_failure
     assert telemetry["answer_error"] == result.answer_error
     assert telemetry["quality"] is None
     assert telemetry["evidence"] == {"deff": 0.0, "erec": 0.0, "rrec": 0.0}
+
+
+@pytest.mark.parametrize(
+    ("success", "incomplete", "adherent", "correct", "symbol"),
+    [
+        pytest.param(True, False, True, True, "✓", id="fully-passing"),
+        pytest.param(True, False, True, False, "✗", id="partial-answer"),
+        pytest.param(True, False, False, True, "✗", id="treatment-violation"),
+        pytest.param(False, False, True, True, "!", id="execution-failed-despite-correct-answer"),
+        pytest.param(True, True, True, True, "!", id="incomplete-despite-correct-answer"),
+        pytest.param(False, True, False, False, "!", id="execution-failure-precedes-other-failures"),
+    ],
+)
+def test_progress_symbol_distinguishes_execution_failure_from_pass(
+    task_and_truth: tuple[Any, Any],
+    agentic: Any,
+    success: bool,
+    incomplete: bool,
+    adherent: bool,
+    correct: bool,
+    symbol: str,
+) -> None:
+    """Use a single verdict symbol with execution failure taking priority over answer correctness."""
+    task, truth = task_and_truth
+    result = agentic.parse_agentic_stream(
+        _stream(_message(_labelled("", truth)), _completed()), arm="A_plain", task=task, ground_truth=truth
+    )
+    result = replace(
+        result,
+        success=success,
+        incomplete=incomplete,
+        treatment_adherence=adherent,
+        quality=replace(
+            result.quality,
+            correct=correct,
+            quality_score=1.0 if correct else 2 / 3,
+            graded_score=1.0 if correct else 56 / 57,
+        ),
+    )
+
+    line = agentic._progress_line(3, 48, result)
+
+    assert line.startswith(f"(3/48) {symbol}  BA-01")
+    assert "pass=" not in line and "status=" not in line
+    assert f"component={'1.000' if correct else '0.667'}" in line
+    expected_grade = 0.0 if not success or incomplete or not adherent else (1.0 if correct else 56 / 57)
+    assert f"quality={expected_grade:.1%}" in line
+    assert "outcome: ✓ pass, ✗ completed but not passing, ! execution failed or incomplete" in agentic._OUTPUT_LEGEND
+
+
+@pytest.mark.parametrize(
+    ("deff", "display"),
+    [
+        pytest.param(0.0, "0.00", id="zero"),
+        pytest.param(5.4, "5.40", id="trailing-zero"),
+        pytest.param(23.333333, "23.33", id="above-ten"),
+        pytest.param(123.456, "123.46", id="rounding"),
+    ],
+)
+def test_progress_deff_uses_two_decimals_without_changing_evidence(
+    task_and_truth: tuple[Any, Any],
+    agentic: Any,
+    deff: float,
+    display: str,
+) -> None:
+    """Round the unbounded display metric while retaining full-precision telemetry evidence."""
+    task, truth = task_and_truth
+    result = agentic.parse_agentic_stream(
+        _stream(_message(_labelled("", truth)), _completed()), arm="A_plain", task=task, ground_truth=truth
+    )
+    result = replace(result, evidence=replace(result.evidence, deff=deff))
+
+    line = agentic._progress_line(1, 1, result)
+
+    assert f" DEFF={display} " in line
+    assert "component=1.000  EREC=1.000  RREC=1.000" in line
+    assert result.evidence.deff == deff
 
 
 def test_unique_bare_json_is_diagnostic_only_but_keeps_semantic_and_evidence_scores(
@@ -1431,7 +1602,7 @@ def test_selected_stratum_hashes_into_its_own_scope(agentic: Any) -> None:
     """
     default = agentic.resolve_agentic_scope()
     selected = agentic.resolve_agentic_scope(model="gpt-5.6-terra")
-    named_default = agentic.resolve_agentic_scope(model=default_stratum(agentic))
+    named_default = agentic.resolve_agentic_scope(model=_default_stratum(agentic))
 
     assert selected["scope_sha256"] != default["scope_sha256"]
     assert selected["total_cells"] == default["total_cells"]
@@ -1510,7 +1681,7 @@ def test_paid_run_of_a_selected_stratum_refuses_the_default_study_token(
         )
 
 
-def default_stratum(agentic: Any) -> str:
+def _default_stratum(agentic: Any) -> str:
     """Return the model stratum the active agentic manifest names as its own default.
 
     Args:
@@ -1520,7 +1691,7 @@ def default_stratum(agentic: Any) -> str:
         The declared default stratum name.
 
     Examples:
-        >>> default_stratum(_load_agentic()).startswith("gpt-")
+        >>> _default_stratum(_load_agentic()).startswith("gpt-")
         True
     """
     return str(json.loads(agentic._MANIFEST_PATH.read_text(encoding="utf-8"))["model"]["name"])
@@ -1555,6 +1726,53 @@ def test_cyclic_schedule_balances_three_repetitions_and_records_each_cell(agenti
     ] == ["B_auto", "C_strict", "A_plain"]
 
 
+def test_summary_includes_every_unobserved_assigned_cell(agentic: Any) -> None:
+    """No completed telemetry must still expose the manifest-sized pass denominator."""
+    summary = agentic._summarize_telemetry([], task_ids=["BA-01", "BA-02"], repetitions=2)
+
+    assert summary["all_assigned"]["A_plain"]["assigned_cells"] == 4
+    assert summary["all_assigned"]["A_plain"]["passed_cells"] == 0
+    assert summary["all_assigned"]["A_plain"]["failure_counts"] == {"unobserved": 4}
+
+
+@pytest.mark.parametrize(
+    ("success", "legacy", "grade", "assigned", "expected"),
+    [
+        pytest.param(True, 0.0, 56 / 57, 1, 56 / 57, id="near-correct"),
+        pytest.param(False, 1.0, 1.0, 1, 0.0, id="failed-execution"),
+        pytest.param(True, 1.0, 1.0, 2, 0.5, id="unobserved-cell"),
+        pytest.param(True, 1.0, None, 1, None, id="unavailable-grade"),
+    ],
+)
+def test_native_summary_preserves_shared_granular_quality(
+    agentic: Any, success: bool, legacy: float, grade: float | None, assigned: int, expected: float | None
+) -> None:
+    """Native telemetry must not overwrite the same shared summary consumed by Claude."""
+    row = {
+        "task_id": "synthetic-1",
+        "repetition": 1,
+        "arm": "A_plain",
+        "success": success,
+        "answer_contract_valid": True,
+        "answer_pooling_eligible": True,
+        "treatment_adherence": True,
+        "quality": {"correct": legacy == 1.0, "quality_score": legacy, "graded_score": grade},
+        "input_tokens": 123,
+        "command_calls": 2,
+    }
+    task_ids = [f"synthetic-{number}" for number in range(1, assigned + 1)]
+    shared = agentic.summarize_agentic([row], task_ids=task_ids, repetitions=1)
+    summary = agentic._summarize_telemetry([row], task_ids=task_ids, repetitions=1)
+    actual = summary["all_assigned"]["A_plain"]["quality_mean"]
+    assert actual == pytest.approx(expected) if expected is not None else actual is None
+    for arm, values in shared["all_assigned"].items():
+        assert {key: summary["all_assigned"][arm][key] for key in values} == values
+    assert summary["comparisons"] == shared["comparisons"]
+    assert summary["all_assigned"]["A_plain"]["gross_input_tokens"] == 123
+    assert summary["all_assigned"]["A_plain"]["native_command_calls"] == 2
+    assert not set(agentic._aggregate_arm_rows([row])) & set(shared["all_assigned"]["A_plain"])
+
+
 def test_summary_separates_all_assigned_from_matched_adherent_rows(agentic: Any) -> None:
     """A failed C treatment never silently removes its expensive A/B comparison cells."""
     rows = [
@@ -1576,17 +1794,17 @@ def test_summary_separates_all_assigned_from_matched_adherent_rows(agentic: Any)
     rows[0]["command_calls"] = 1
     rows[0]["raw_events"] = [_query(), _completed()]
 
-    summary = agentic._summarize_telemetry(rows)
+    summary = agentic._summarize_telemetry(rows, task_ids=["BA-01"], repetitions=1)
 
     assert summary["all_assigned"]["C_strict"]["cells"] == 1
     assert summary["all_assigned"]["C_strict"]["fresh_input_tokens"] == 80
-    assert summary["matched_adherent"]["A_plain"]["cells"] == 0
-    assert summary["matched_adherent"]["C_strict"]["cells"] == 0
-    assert summary["task_comparisons"]["matched_a_c_coordinates"] == 0
+    assert summary["all_assigned"]["A_plain"]["passed_cells"] == 0
+    assert summary["all_assigned"]["C_strict"]["passed_cells"] == 0
+    assert summary["comparisons"]["C_strict"]["outcomes"]["both_pass"] == 0
     assert summary["all_assigned"]["A_plain"]["native_command_calls"] == 1
     assert summary["all_assigned"]["A_plain"]["captured_output_characters"] > 0
     assert summary["all_assigned"]["A_plain"]["max_concurrent_commands"] is None
-    assert summary["b_auto_diagnostic"] is True
+    assert summary["comparisons"]["B_auto"]["diagnostic_only"] is True
 
 
 def test_diagnostic_replay_preserves_original_row_and_corrects_only_observation(agentic: Any, tmp_path: Path) -> None:
@@ -1673,18 +1891,68 @@ def test_a_c_pairing_does_not_depend_on_optional_b_adherence(agentic: Any) -> No
             "output_tokens": 1,
             "elapsed_s": 1.0,
             "codemap_used": arm != "A_plain",
+            "success": True,
+            "answer_contract_valid": True,
+            "answer_pooling_eligible": True,
             "treatment_adherence": arm != "B_auto",
-            "quality": {"quality_score": 0.8},
+            "quality": {"correct": True, "quality_score": 1.0},
         }
         for arm in AGENTIC_ARMS
     ]
 
-    summary = agentic._summarize_telemetry(rows)
+    summary = agentic._summarize_telemetry(rows, task_ids=["BA-01"], repetitions=1)
 
-    assert summary["task_comparisons"]["matched_a_c_coordinates"] == 1
-    assert summary["matched_adherent"]["A_plain"]["cells"] == 1
-    assert summary["matched_adherent"]["C_strict"]["cells"] == 1
-    assert summary["matched_adherent"]["B_auto"]["cells"] == 0
+    assert summary["comparisons"]["C_strict"]["outcomes"]["both_pass"] == 1
+    assert summary["comparisons"]["C_strict"]["efficiency"]["input_tokens"]["paired_cells"] == 1
+    assert summary["all_assigned"]["A_plain"]["observed_cells"] == 1
+    assert summary["all_assigned"]["C_strict"]["observed_cells"] == 1
+    assert summary["all_assigned"]["B_auto"]["passed_cells"] == 0
+
+
+@pytest.mark.parametrize(
+    "usage",
+    [
+        pytest.param(None, id="absent"),
+        pytest.param({}, id="empty"),
+        pytest.param({"input_tokens": -1, "output_tokens": 0}, id="malformed"),
+    ],
+)
+def test_missing_native_usage_cannot_claim_token_savings(
+    agentic: Any, task_and_truth: tuple[Any, Any], tmp_path: Path, usage: Any
+) -> None:
+    """A correct answer with unusable usage remains pass but has no token efficiency measurement."""
+    task, oracle = task_and_truth
+    answer = "BEGIN_ANSWER_JSON\n" + json.dumps(dict(oracle.expected)) + "\nEND_ANSWER_JSON"
+    result = agentic.parse_agentic_stream(
+        _stream(_message(answer), {"type": "turn.completed", "usage": usage}),
+        arm="A_plain",
+        task=task,
+        oracle=oracle,
+    )
+    assert result.quality.correct is True
+    assert result.usage_complete is False
+    path = tmp_path / "telemetry.jsonl"
+    agentic._append_telemetry(path, result, 0)
+    row = json.loads(path.read_text(encoding="utf-8"))
+    assert row["passed"] is True
+    assert row["input_tokens"] is None
+    assert row["fresh_input_tokens"] is None
+    control = {
+        **row,
+        "usage_complete": True,
+        "input_tokens": 100,
+        "cached_input_tokens": 20,
+        "fresh_input_tokens": 80,
+        "output_tokens": 10,
+    }
+    treatment = {**row, "arm": "C_strict"}
+    comparison = agentic._summarize_telemetry([control, treatment], task_ids=[task["id"]], repetitions=1)[
+        "comparisons"
+    ]["C_strict"]
+    assert comparison["outcomes"]["both_pass"] == 1
+    assert comparison["efficiency"]["input_tokens"]["paired_cells"] == 0
+    assert comparison["efficiency"]["input_tokens"]["unavailable_pairs"] == 1
+    assert comparison["efficiency"]["input_tokens"]["median_percent_change"] is None
 
 
 @pytest.mark.parametrize("launcher", ["/private/tmp/frozen-c-home/bin/codemap-py", r"C:\agentic\bin\codemap-py"])
@@ -1814,3 +2082,47 @@ def test_replay_launcher_map_requires_object_evidence_and_known_coordinate_keys(
 
     with pytest.raises(ValueError, match="invalid coordinate provenance"):
         agentic._load_replay_launcher_map(map_path)
+
+
+def test_impact_cli_passes_native_factory_and_private_auth_only_to_paid_stage(
+    agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Impact CLI accepts only its own scope controls and binds auth outside the model environment."""
+    observed: dict[str, object] = {}
+
+    def _stage(**kwargs: object) -> None:
+        """Capture the provider-stage boundary without creating a fixture or invoking Codex."""
+        observed.update(kwargs)
+
+    monkeypatch.setattr(agentic, "run_change_impact_stage", _stage)
+    auth_source = tmp_path / "auth.json"
+    agentic.main(
+        study="change-impact",
+        model="gpt-5.6-terra",
+        timeout=73,
+        run_dir=tmp_path / "result",
+        paid_approval="a" * 16,
+        scope_sha256="b" * 64,
+        auth_source=auth_source,
+    )
+
+    assert observed["provider"] == "codex"
+    assert observed["model"] == "gpt-5.6-terra"
+    assert observed["timeout"] == 73
+    assert observed["output_dir"] == tmp_path / "result"
+    assert observed["paid_approval"] == "a" * 16
+    assert observed["scope_sha256"] == "b" * 64
+    assert callable(observed["runtime_factory"])
+    assert observed["runtime_factory"].keywords["auth_source"] == auth_source
+
+    observed.clear()
+    agentic.main(study="change-impact", dry_run=True, timeout=600)
+
+    assert observed["model"] == "gpt-5.6-terra"
+    assert observed["runtime_factory"].keywords["auth_source"] is None
+    with pytest.raises(SystemExit):
+        agentic.main(study="change-impact", dry_run=True, timeout=True)
+    assert "positive integer" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        agentic.main(study="change-impact", resolve_scope=True, model="unadmitted-model")
+    assert "Codex provider parity requires" in capsys.readouterr().err

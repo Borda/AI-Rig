@@ -25,7 +25,7 @@ METHODOLOGY_BUILDER = BENCHMARKS / "build-provider-parity-methodology-manifest.p
 FIXTURE_DIR = BENCHMARKS / "tests" / "fixtures"
 REPAIRED_SUITE_PATH = "benchmarks/suites/tasks-bench.json"
 EXPECTED_SUITE_TASK_COUNTS = {
-    "benchmarks/suites/tasks-agentic.json": 16,
+    "benchmarks/suites/tasks-agentic.json": 20,
     "benchmarks/suites/tasks-bench.json": 60,
     "benchmarks/suites/tasks-code.json": 15,
     "benchmarks/suites/tasks-fix-multi.json": 3,
@@ -200,7 +200,7 @@ def test_agentic_execution_contract_records_provider_specific_default_cells() ->
     contract = _load(METHODOLOGY_MANIFEST)["agentic_execution_contract"]
 
     assert contract["default_repetitions"] == 1
-    assert contract["default_total_cells_by_provider"] == {"claude": 144, "codex": 48}
+    assert contract["default_total_cells_by_provider"] == {"claude": 180, "codex": 60}
     assert contract["models_by_provider"] == {
         "claude": ["haiku", "sonnet", "opus"],
         "codex": ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
@@ -448,6 +448,7 @@ def test_methodology_manifest_locks_luna_high_and_exact_implementation_identitie
     }
     assert implementation["artifact_sha256"] == {
         "agentic_contracts": _sha256(BENCHMARKS / "_bench_common" / "agentic_contracts.py"),
+        "agentic_reporting": _sha256(BENCHMARKS / "_bench_common" / "agentic_reporting.py"),
         "claude_query_skill": _sha256(ROOT / "plugins/codemap-py/claude-skills/query-code/SKILL.md"),
         "codemap_graph": _sha256(ROOT / "plugins/codemap-py/src/codemap_py/graph.py"),
         "codemap_query": _sha256(ROOT / "plugins/codemap-py/src/codemap_py/query.py"),

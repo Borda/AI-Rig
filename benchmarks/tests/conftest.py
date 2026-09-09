@@ -93,6 +93,16 @@ def _script_run_agentic():
     return _load_module("run_claude_agentic", "run-claude-agentic.py")
 
 
+@pytest.fixture(name="script_run_codex", scope="session")
+def _script_run_codex():
+    """Cache the Codex structural adapter's definitions without entering its command-line entry point.
+
+    >>> getfixture("script_run_codex").__name__
+    'run_codemap_codex'
+    """
+    return _load_module("run_codemap_codex", "run-codex-structural.py")
+
+
 @pytest.fixture(name="script_run_bench", scope="session")
 def _script_run_bench():
     """Cache the structural runner's definitions without executing a benchmark or provider call.

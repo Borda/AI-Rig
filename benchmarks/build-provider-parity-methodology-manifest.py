@@ -25,7 +25,7 @@ REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as
 OUTPUT_MANIFEST = BENCHMARKS / "manifests" / "provider-parity-methodology.json"
 POLICY_SEED = BENCHMARKS / "policy" / "provider-parity-methodology.json"
 POLICY_SEED_SHA256 = "1e5b1cad389513db9402ca2da39f58c1ff9b7cb36b0fdc4a23ce03886e12f1f1"
-EXPERIMENT_REVISION = "provider-parity-historical-patch-executable-2026-08-12"
+EXPERIMENT_REVISION = "provider-parity-agentic-nested-package-imports-2026-09-09"
 TASKS_BENCH = "benchmarks/suites/tasks-bench.json"
 TASKS_AGENTIC = "benchmarks/suites/tasks-agentic.json"
 # Root temp dir, not the per-user one: patch-index-locks.json locks canonical_scan_root
@@ -248,6 +248,7 @@ def _artifact_hashes() -> dict[str, str]:
     """Lock shared provider-neutral implementation bytes used by both runners."""
     paths = {
         "agentic_contracts": "benchmarks/_bench_common/agentic_contracts.py",
+        "agentic_reporting": "benchmarks/_bench_common/agentic_reporting.py",
         "claude_query_skill": "plugins/codemap-py/claude-skills/query-code/SKILL.md",
         "codemap_graph": "plugins/codemap-py/src/codemap_py/graph.py",
         "codemap_query": "plugins/codemap-py/src/codemap_py/query.py",
@@ -334,6 +335,8 @@ def _build_manifest() -> dict[str, Any]:
     )
     agentic_suite = next(suite for suite in suites if suite["path"] == TASKS_AGENTIC)
     manifest["agentic_execution_contract"] = {
+        "measurement_scope": "static_graph_query",
+        "quality_claim_limit": "Declared static graph facts only; no behavioral change-impact or implementation correctness claim.",
         "arms": list(core.ARM_CONTRACTS),
         "coordinate_timeout_seconds": core.PARITY_TIMEOUT_SECONDS,
         "default_repetitions": 1,
@@ -351,11 +354,18 @@ def _build_manifest() -> dict[str, Any]:
             "the provider, current manifest, ordered tasks, arms, models, repetitions, total cells, and per-cell timeout."
         ),
         "scoring": (
-            "Macro mean across every required answer_contract component for a strict labelled envelope. Exactly one "
+            "quality is graded admitted credit / all assigned cells; counts use min/max proportional credit and "
+            "rankings use longest-common-subsequence overlap divided by maximum list length. Invalid execution, "
+            "format, treatment and unobserved cells score zero; unknown grading is unavailable. Exact "
+            "pass is fully correct, completed, valid, uncontaminated and treatment-adherent cells / all assigned cells, "
+            "including failed and unobserved cells. component is the secondary macro mean across required answer_contract "
+            "components with an explicit scored denominator. Efficiency pairs require both cells to pass and report "
+            "per-metric eligibility; pass improvements, regressions, both-fail and unobserved pairs remain separate. Exactly one "
             "complete bare JSON object may be scored as diagnostic-only and is never pooling-eligible; malformed or "
             "ambiguous answers remain semantically unscored. EREC and RREC are raw-text recall diagnostics independent "
             "of the answer protocol, and DEFF is their unbounded expected-importer exposure-hit count per command."
         ),
+        "reporting_version": "agentic-graded-v2",
         "task_ids": agentic_suite["ordered_task_ids"],
     }
     manifest["implementation_contract"]["artifact_sha256"] = _artifact_hashes()

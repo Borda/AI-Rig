@@ -52,6 +52,18 @@ set -euo pipefail
 
 ROOT="${CODEX_LAUNCHER_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 CODEX_RESULTS_ROOT="${CODEX_RESULTS_ROOT:-$ROOT/benchmarks/results}"
+# Preserve evaluator boundaries when paid execution re-enters a frozen launcher. Child
+# providers consume this parent-only provenance before sanitizing their model environments.
+BENCHMARK_EVIDENCE_ROOTS="$(python3 -c '
+import json, os, sys
+from pathlib import Path
+roots = json.loads(os.environ.get("BENCHMARK_EVIDENCE_ROOTS", "[]"))
+if not isinstance(roots, list) or any(not isinstance(root, str) or not Path(root).is_absolute() for root in roots):
+    raise SystemExit("BENCHMARK_EVIDENCE_ROOTS must be a JSON list of absolute paths")
+roots.extend(root for root in sys.argv[1:] if root)
+print(json.dumps(list(dict.fromkeys(str(Path(root).resolve()) for root in roots))))
+' "$ROOT" "$CODEX_RESULTS_ROOT" "${CODEX_RUN_DIR:-}")"
+export BENCHMARK_EVIDENCE_ROOTS
 PL_TAG="2.6.5"
 PL_URL="${PL_URL:-https://github.com/Lightning-AI/pytorch-lightning.git}"
 BENCHMARK_TEMP_ROOT="$(python3 -c 'import os; from pathlib import Path; print((Path(os.sep) / "tmp").resolve())')"

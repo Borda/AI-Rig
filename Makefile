@@ -87,6 +87,7 @@ clear-claude:
 migrate-marketplace:
 	@echo "Migrating stale marketplace registrations..."; \
 	while IFS= read -r stale; do \
+		stale="$${stale%$$'\r'}"; \
 		[[ -z "$$stale" ]] && continue; \
 		echo "Migrating marketplace '$$stale' → '$(MARKETPLACE)'..."; \
 		if [[ -d "$(CACHE_DIR)/$$stale" && ! -d "$(CACHE_DIR)/$(MARKETPLACE)" ]]; then \

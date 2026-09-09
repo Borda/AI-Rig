@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import NamedTuple
 
@@ -47,6 +49,7 @@ def _gnu_make() -> str | None:
 
 
 GNU_MAKE = _gnu_make()
+JQ = shutil.which("jq")
 
 
 def _run_make(
@@ -174,21 +177,31 @@ class TestInstallClaudePlugins:
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+@pytest.mark.skipif(GNU_MAKE is None or JQ is None, reason="GNU make and jq are required on this host")
 class TestMigrateMarketplace:
     """Jq-driven registry rewrites for a stale marketplace registration."""
 
-    def test_renames_stale_marketplace_across_all_three_registries(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("jq_selector_line_ending", ["\n", "\r\n"])
+    def test_renames_stale_marketplace_across_all_three_registries(
+        self, tmp_path: Path, jq_selector_line_ending: str
+    ) -> None:
         """A stale marketplace name must be renamed everywhere, including nested string values.
 
         Covers the cache directory rename plus all three jq mutations (known_marketplaces.json key rename,
         installed_plugins.json key + nested-string rename via `walk`, and settings.json's extraKnownMarketplaces
-        deletion + nested-string rename).
+        deletion + nested-string rename). The selector's line ending is varied because Bash `read -r` preserves a
+        carriage return before its newline.
         """
+        assert JQ is not None
         cache_dir = tmp_path / "cache"
         (cache_dir / "old-name").mkdir(parents=True)
+        project_dir = tmp_path / "project"
+        project_dir.mkdir()
+        # GNU Make executes recipes through Bash.  Use its slash-delimited spelling
+        # on every host so the registry value and shell argument stay comparable.
+        project_path = project_dir.as_posix()
         known_marketplaces = tmp_path / "known_marketplaces.json"
-        known_marketplaces.write_text(json.dumps({"old-name": {"source": {"path": "/fake/project"}}}), encoding="utf-8")
+        known_marketplaces.write_text(json.dumps({"old-name": {"source": {"path": project_path}}}), encoding="utf-8")
         installed_plugins = tmp_path / "installed_plugins.json"
         installed_plugins.write_text(
             json.dumps({"plugins": {"foundry@old-name": [{"installPath": "old-name/foundry/1.0.0"}]}}),
@@ -199,13 +212,39 @@ class TestMigrateMarketplace:
             json.dumps({"extraKnownMarketplaces": {"old-name": {}}, "enabledPlugins": {"foundry@old-name": True}}),
             encoding="utf-8",
         )
+        jq_bin_dir = tmp_path / "bin"
+        jq_bin_dir.mkdir()
+        jq_wrapper = jq_bin_dir / "jq"
+        jq_wrapper_program = (
+            "import os\n"
+            "import subprocess\n"
+            "import sys\n"
+            "result = subprocess.run([os.environ['REAL_JQ'], *sys.argv[1:]], capture_output=True, check=False)\n"
+            "if 'to_entries | map' in ' '.join(sys.argv[1:]):\n"
+            "    output = result.stdout.replace(b'\\r\\n', b'\\n').replace(b'\\n', os.environ['JQ_SELECTOR_EOL'].encode())\n"
+            "    sys.stdout.buffer.write(output)\n"
+            "else:\n"
+            "    sys.stdout.buffer.write(result.stdout)\n"
+            "sys.stderr.buffer.write(result.stderr)\n"
+            "raise SystemExit(result.returncode)\n"
+        )
+        jq_wrapper.write_text(
+            "#!/usr/bin/env bash\n"
+            f'exec {shlex.quote(Path(sys.executable).as_posix())} -c {shlex.quote(jq_wrapper_program)} "$@"\n',
+            encoding="utf-8",
+            newline="\n",
+        )
+        jq_wrapper.chmod(0o755)
         env = os.environ.copy()
+        env["PATH"] = f"{jq_bin_dir}{os.pathsep}{env['PATH']}"
+        env["REAL_JQ"] = JQ
+        env["JQ_SELECTOR_EOL"] = jq_selector_line_ending
 
         result = _run_make(
             "migrate-marketplace",
             env=env,
             extra_vars={
-                "PROJECT_DIR": "/fake/project",
+                "PROJECT_DIR": project_path,
                 "MARKETPLACE": "new-name",
                 "CACHE_DIR": str(cache_dir),
                 "KNOWN_MARKETPLACES": str(known_marketplaces),
@@ -218,7 +257,7 @@ class TestMigrateMarketplace:
         assert (cache_dir / "new-name").is_dir()
         assert not (cache_dir / "old-name").exists()
         assert json.loads(known_marketplaces.read_text(encoding="utf-8")) == {
-            "new-name": {"source": {"path": "/fake/project"}}
+            "new-name": {"source": {"path": project_path}}
         }
         assert "foundry@new-name" in json.loads(installed_plugins.read_text(encoding="utf-8"))["plugins"]
         rewritten_settings = json.loads(settings.read_text(encoding="utf-8"))
@@ -251,7 +290,9 @@ class TestSyncCodexHomePolicy:
     def test_invokes_with_source_and_codex_home_arguments(self, fake_codex_home_sync_script: FakeScript) -> None:
         """The Makefile must forward config/policy source paths and $CODEX_HOME, always including policy."""
         env = os.environ.copy()
-        env["CODEX_HOME"] = "/fake/codex-home"
+        codex_home = fake_codex_home_sync_script.path.parent / "codex-home"
+        codex_home.mkdir()
+        env["CODEX_HOME"] = codex_home.as_posix()
 
         result = _run_make(
             "sync-codex-home-policy",
@@ -262,10 +303,10 @@ class TestSyncCodexHomePolicy:
         assert result.returncode == 0, result.stdout + result.stderr
         logged_args = fake_codex_home_sync_script.log.read_text(encoding="utf-8")
         assert "--source-config" in logged_args
-        assert str(ROOT / ".codex" / "config.toml") in logged_args
+        assert (ROOT / ".codex" / "config.toml").as_posix() in logged_args
         assert "--source-policy" in logged_args
-        assert str(ROOT / ".codex" / "global-session-policy.md") in logged_args
-        assert "--codex-home /fake/codex-home" in logged_args
+        assert (ROOT / ".codex" / "global-session-policy.md").as_posix() in logged_args
+        assert f"--codex-home {codex_home.as_posix()}" in logged_args
 
 
 @pytest.mark.integration

@@ -9,7 +9,7 @@ from __future__ import annotations
 import ast
 from collections import defaultdict, deque
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from functools import lru_cache
 import json
 from pathlib import Path
@@ -33,6 +33,20 @@ IMPORT_CONVENTION_INSTRUCTION = (
     "and additionally the submodule `a.b.c` when `a.b.c` is itself a module in this repository. "
     "`import a.b` counts as importing `a.b`. Only modules that exist in this repository count; "
     "third-party and standard-library imports are ignored."
+)
+ORACLE_POPULATION_INSTRUCTION = (
+    "Oracle population, naming, and ranking: use only statically resolved imports between repository Python modules. "
+    "A module name is its repository-relative dotted path after a leading `src` layout directory is stripped and a "
+    "terminal `__init__` is removed, so `a/b/__init__.py` is `a.b`, never `a.b.__init__`. A module inside a package is "
+    "instead named from the outermost directory of its `__init__.py` chain, which is the only name that resolves at "
+    "runtime: where `a/b/c/` is the outermost directory carrying an `__init__.py`, `a/b/c/d.py` is `c.d`, and the "
+    "`import c.d` its neighbours write is credited to it. A test module has any "
+    "source-path component (including its filename stem) equal "
+    "to `test` or `tests`, or beginning with `test_` or `tests_`. Production direct importers exclude test modules and "
+    "the target module itself; report test importers only in the explicitly requested test-count fields. Every rdep count "
+    "counts non-test direct importers only and excludes the counted module itself. Deduplicate module names. For rankings, "
+    "apply the requested candidate filter, sort by rdep count descending and then full dotted module name ascending to "
+    "break ties, and return the requested leading positions."
 )
 
 _ANSWER_FIELDS = frozenset(
@@ -93,10 +107,12 @@ class AgenticOracle:
 
 @dataclass(frozen=True)
 class AnswerScore:
-    """Deterministic semantic components plus raw-text evidence diagnostics.
+    """Deterministic exact and prospective graded components plus evidence diagnostics.
 
-    Set and mapping components are F1 values. ``erec`` and ``rrec`` are expected-importer recall in the exposure and
-    report text, while ``deff`` is the unbounded exposure-hit count per command.
+    ``quality_score``, ``components``, and ``correct`` retain exact historical semantics. ``graded_score`` and
+    ``graded_components`` add bounded partial credit for selected count and ranking fields. ``erec`` and ``rrec`` are
+    expected-importer recall in the exposure and report text, while ``deff`` is the unbounded exposure-hit count per
+    command.
     """
 
     scored: bool
@@ -106,6 +122,8 @@ class AnswerScore:
     erec: float
     rrec: float
     deff: float
+    graded_score: float | None = None
+    graded_components: Mapping[str, float] = dataclass_field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)
@@ -177,6 +195,11 @@ def answer_format_instruction(task: Mapping[str, Any]) -> str:
             "Use exactly these JSON value shapes:",
             *specs,
             IMPORT_CONVENTION_INSTRUCTION,
+            ORACLE_POPULATION_INSTRUCTION,
+            "Run temporary analysis in memory or through interpreter stdin; do not create helper files in the "
+            "repository or tool coordination/lock directories. Writable coordination storage is reserved for the "
+            "tool protocol, not scratch work. Use deterministic code for counts, set filtering and ranking; "
+            "check any reported count against the corresponding complete collection.",
             "Do not put objects or counts inside array fields. Values outside these shapes are invalid.",
             # The delimiters used to appear only inside the example below, which is labelled
             # synthetic — so nothing told a model to wrap its own answer. Codex read that literally
@@ -370,24 +393,43 @@ def score_answer(
 ) -> AnswerScore:
     """Score a parsed labelled answer with fixed component and tie rules.
 
-    Set and mapping fields use F1, rankings use position fraction, and scalar/path fields require exact equality.
-    ``erec`` and ``rrec`` remain raw-text expected-importer recall; ``deff`` is unbounded exposure hits per command.
-    Empty expected collections receive credit only from an explicit empty collection.
+    ``quality_score``, ``components``, and ``correct`` retain their exact compatibility rules. ``graded_score`` adds
+    proportional count credit and ordered ranking subsequence credit, while set, categorical, and path fields retain
+    their established grading rules. ``erec`` and ``rrec`` remain raw-text expected-importer recall; ``deff`` is
+    unbounded exposure hits per command. Empty expected collections receive credit only from an explicit empty
+    collection.
     """
     if not isinstance(answer, Mapping):
         raise TypeError("answer must be a mapping parsed from the labelled JSON envelope")
     components: dict[str, float] = {}
+    graded_components: dict[str, float] = {}
     for field in oracle.fields:
         expected = oracle.expected[field]
         actual = answer.get(field)
         if field in {"production_importers", "overlap_importers", "cross_namespace_importers"}:
             components[field] = _set_f1(expected, actual)
-        elif field in {"rdep_counts", "buckets", "high_centrality"}:
+            graded_components[field] = components[field]
+        elif field in {"rdep_counts", "high_centrality"}:
             components[field] = _mapping_fraction(expected, actual)
+            graded_components[field] = _graded_count_mapping(expected, actual)
+        elif field == "buckets":
+            components[field] = _mapping_fraction(expected, actual)
+            graded_components[field] = components[field]
         elif field == "ranking":
             components[field] = _ranking_fraction(expected, actual)
+            graded_components[field] = _graded_ranking_fraction(expected, actual)
+        elif field in {
+            "affected_module_count",
+            "production_importer_count",
+            "excluded_test_importer_count",
+            "test_importer_count",
+            "overlap_count",
+        }:
+            components[field] = 1.0 if _same_value(expected, actual) else 0.0
+            graded_components[field] = _graded_count_fraction(expected, actual)
         else:
             components[field] = 1.0 if _same_value(expected, actual) else 0.0
+            graded_components[field] = components[field]
     evidence = score_evidence_metrics(
         oracle, exposure_text=exposure_text, report_text=report_text, tool_calls=tool_calls
     )
@@ -397,6 +439,7 @@ def score_answer(
     # is identical in every arm, so between-arm aqs deltas are unaffected; only the
     # absolute level is inflated, and README reports it with that caveat.
     quality_score = sum(components.values()) / len(components)
+    graded_score = sum(graded_components.values()) / len(graded_components)
     return AnswerScore(
         scored=True,
         quality_score=quality_score,
@@ -405,7 +448,144 @@ def score_answer(
         erec=evidence.erec,
         rrec=evidence.rrec,
         deff=evidence.deff,
+        graded_score=graded_score,
+        graded_components=MappingProxyType(graded_components),
     )
+
+
+def answer_failure_details(oracle: AgenticOracle, answer: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return deterministic, bounded semantic mismatches for one parsed answer.
+
+    The details explain only answer-content differences. Envelope parsing, execution, and treatment status stay with the
+    provider runner. Missing mapping keys are missing facts rather than wrong counts; count disagreements are reported
+    only when both answers name the same key.
+    """
+    if not isinstance(answer, Mapping):
+        raise TypeError("answer must be a mapping parsed from the labelled JSON envelope")
+    details: list[dict[str, Any]] = []
+    for field in oracle.fields:
+        expected = oracle.expected[field]
+        actual = answer.get(field)
+        if field in {"production_importers", "overlap_importers", "cross_namespace_importers"}:
+            details.extend(_collection_failure_details(field, expected, actual))
+        elif field in {"rdep_counts", "high_centrality"}:
+            details.extend(_mapping_failure_details(field, expected, actual))
+        elif field == "buckets":
+            details.extend(_bucket_failure_details(field, expected, actual))
+        elif field == "ranking":
+            details.extend(_ranking_failure_details(field, expected, actual))
+        elif field in {
+            "affected_module_count",
+            "production_importer_count",
+            "excluded_test_importer_count",
+            "test_importer_count",
+            "overlap_count",
+        }:
+            if not _same_value(expected, actual):
+                details.append(_failure_detail("wrong_counts", field, expected, actual))
+        elif not _same_value(expected, actual):
+            details.append(_failure_detail("wrong_values", field, expected, actual))
+    return details
+
+
+def _collection_failure_details(field: str, expected: Any, actual: Any) -> list[dict[str, Any]]:
+    """Describe missing and unexpected members of one set-scored answer field."""
+    if not isinstance(actual, list) or not all(isinstance(item, str) for item in actual):
+        return [_failure_detail("wrong_values", field, expected, actual)]
+    expected_values = set(expected)
+    actual_values = set(actual)
+    details: list[dict[str, Any]] = []
+    missing = sorted(expected_values - actual_values)
+    if missing:
+        details.append(_failure_detail("missing_facts", field, missing, []))
+    unexpected = sorted(actual_values - expected_values)
+    if unexpected:
+        details.append(_failure_detail("unexpected_facts", field, [], unexpected))
+    return details
+
+
+def _mapping_failure_details(field: str, expected: Any, actual: Any) -> list[dict[str, Any]]:
+    """Describe absent, extra, and mismatched entries of one mapping-scored field."""
+    if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
+        return [_failure_detail("wrong_values", field, expected, actual)]
+    expected_keys = set(expected)
+    actual_keys = set(actual)
+    details: list[dict[str, Any]] = []
+    missing = sorted(expected_keys - actual_keys)
+    if missing:
+        details.append(_failure_detail("missing_facts", field, _selected_mapping(expected, missing), {}))
+    unexpected = sorted(actual_keys - expected_keys)
+    if unexpected:
+        details.append(_failure_detail("unexpected_facts", field, {}, _selected_mapping(actual, unexpected)))
+    wrong = sorted(key for key in expected_keys & actual_keys if not _same_value(expected[key], actual[key]))
+    if wrong:
+        details.append(
+            _failure_detail("wrong_counts", field, _selected_mapping(expected, wrong), _selected_mapping(actual, wrong))
+        )
+    return details
+
+
+def _bucket_failure_details(field: str, expected: Any, actual: Any) -> list[dict[str, Any]]:
+    """Describe bucket-label and bucket-member mismatches without conflating them with counts."""
+    if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
+        return [_failure_detail("wrong_values", field, expected, actual)]
+    expected_labels = set(expected)
+    actual_labels = set(actual)
+    details: list[dict[str, Any]] = []
+    missing_labels = sorted(expected_labels - actual_labels)
+    if missing_labels:
+        details.append(_failure_detail("missing_facts", field, _selected_mapping(expected, missing_labels), {}))
+    unexpected_labels = sorted(actual_labels - expected_labels)
+    if unexpected_labels:
+        details.append(_failure_detail("unexpected_facts", field, {}, _selected_mapping(actual, unexpected_labels)))
+    for label in sorted(expected_labels & actual_labels):
+        details.extend(_collection_failure_details(f"{field}.{label}", expected[label], actual[label]))
+    return details
+
+
+def _ranking_failure_details(field: str, expected: Any, actual: Any) -> list[dict[str, Any]]:
+    """Describe misplaced and extra ranking entries while preserving legacy position scores."""
+    if not isinstance(actual, list) or not all(isinstance(item, str) for item in actual):
+        return [_failure_detail("wrong_values", field, expected, actual)]
+    details = [
+        _failure_detail(
+            "wrong_rankings",
+            f"{field}[{index}]",
+            value,
+            actual[index] if index < len(actual) else None,
+        )
+        for index, value in enumerate(expected)
+        if index >= len(actual) or actual[index] != value
+    ]
+    if len(actual) > len(expected):
+        details.append(_failure_detail("unexpected_facts", field, [], actual[len(expected) :]))
+    return details
+
+
+def _selected_mapping(values: Mapping[str, Any], keys: list[str]) -> dict[str, Any]:
+    """Return selected mapping values in deterministic key order."""
+    return {key: values[key] for key in keys}
+
+
+def _failure_detail(category: str, field: str, expected: Any, actual: Any) -> dict[str, Any]:
+    """Build one JSON-safe semantic mismatch event."""
+    return {
+        "category": category,
+        "field": field,
+        "expected": _json_value(expected),
+        "actual": _json_value(actual),
+    }
+
+
+def _json_value(value: Any) -> Any:
+    """Convert oracle tuples and mappings to deterministic JSON-compatible diagnostic values."""
+    if isinstance(value, Mapping):
+        return {str(key): _json_value(value[key]) for key in sorted(value, key=str)}
+    if isinstance(value, tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    return value
 
 
 def score_evidence_metrics(
@@ -688,7 +868,31 @@ def _scan_modules(source_root: Path) -> dict[str, _SourceModule]:
 
 
 def _module_name(path: Path, source_root: Path) -> str:
-    """Return the source-root-relative dotted module name for one Python file."""
+    """Return the dotted module name a file is importable under, matching the index the arms query.
+
+    A file inside a package is named from the outermost directory of its ``__init__.py`` chain, which is the only name
+    that resolves at runtime and the name Codemap records: ``examples/fabric/rl/agent.py`` under a chain that starts at
+    ``rl`` is ``rl.agent``, not its repository-relative path. A file in no package keeps the repository-relative path
+    with a leading ``src`` layout directory stripped, so a loose script cannot collapse onto a same-named sibling in
+    another directory.
+
+    The two rules coincide for a conventional package under ``src``: ``src/`` holds no ``__init__.py``, so the chain
+    stops there and ``src/lightning/pytorch/core/module.py`` is ``lightning.pytorch.core.module`` either way.
+
+    Args:
+        path: absolute path to a ``.py`` file inside the scanned tree.
+        source_root: repository root the name is derived relative to.
+
+    Returns:
+        Dotted module name; an ``__init__.py`` resolves to its package name.
+    """
+    if (path.parent / "__init__.py").exists():
+        parts = [] if path.stem == "__init__" else [path.stem]
+        directory = path.parent
+        while (directory / "__init__.py").exists() and directory != directory.parent:
+            parts.append(directory.name)
+            directory = directory.parent
+        return ".".join(reversed(parts))
     parts = list(path.relative_to(source_root).with_suffix("").parts)
     if parts[:1] == ["src"]:
         parts.pop(0)
@@ -935,6 +1139,25 @@ def _mapping_fraction(expected: Any, actual: Any) -> float:
     return 2 * true_positive / (len(expected) + len(actual))
 
 
+def _graded_count_mapping(expected: Any, actual: Any) -> float:
+    """Score count mappings with soft F1, penalizing missing or extra keys once."""
+    if not isinstance(expected, Mapping) or not isinstance(actual, Mapping):
+        return 0.0
+    if not expected:
+        return 1.0 if dict(actual) == {} else 0.0
+    value_credit = sum(_graded_count_fraction(value, actual.get(key)) for key, value in expected.items())
+    return 2 * value_credit / (len(expected) + len(actual))
+
+
+def _graded_count_fraction(expected: Any, actual: Any) -> float:
+    """Return bounded proportional credit for one non-negative integer count."""
+    if not all(isinstance(value, int) and not isinstance(value, bool) and value >= 0 for value in (expected, actual)):
+        return 0.0
+    if expected == actual == 0:
+        return 1.0
+    return min(expected, actual) / max(expected, actual)
+
+
 def _ranking_fraction(expected: Any, actual: Any) -> float:
     """Return the fraction of expected ranking positions matched by a string list.
 
@@ -953,6 +1176,24 @@ def _ranking_fraction(expected: Any, actual: Any) -> float:
     if not expected:
         return 1.0 if actual == [] else 0.0
     return sum(index < len(actual) and actual[index] == value for index, value in enumerate(expected)) / len(expected)
+
+
+def _graded_ranking_fraction(expected: Any, actual: Any) -> float:
+    """Return longest-common-subsequence credit for an ordered ranking answer."""
+    if not isinstance(actual, list) or not all(isinstance(item, str) for item in actual):
+        return 0.0
+    if not expected:
+        return 1.0 if actual == [] else 0.0
+    previous = [0] * (len(actual) + 1)
+    for expected_item in expected:
+        current = [0]
+        for index, actual_item in enumerate(actual, start=1):
+            # Extend an ordered match; otherwise retain the best subsequence seen on either prefix.
+            current.append(
+                previous[index - 1] + 1 if expected_item == actual_item else max(previous[index], current[index - 1])
+            )
+        previous = current
+    return previous[-1] / max(len(expected), len(actual))
 
 
 def _same_value(expected: Any, actual: Any) -> bool:

@@ -14,6 +14,7 @@ definition.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import importlib.util
 import json
@@ -25,7 +26,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Callable, Iterable, Mapping, NoReturn, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, NoReturn, Sequence
 
 _BENCHMARKS_DIR = Path(__file__).resolve().parent
 if str(_BENCHMARKS_DIR) not in sys.path:
@@ -42,6 +43,8 @@ from _bench_common.presentation import (  # noqa: E402
     print_legend,
 )
 from _bench_codex import runtime as codex_runtime  # noqa: E402
+from _bench_codex.fixture_runtime import FixtureCodexRuntime  # noqa: E402
+from _bench_common.change_impact_stage import run_stage as run_change_impact_stage  # noqa: E402
 from _bench_common.mutation_isolation import (  # noqa: E402
     load_index_relocation,
     verify_index_relocation,
@@ -49,6 +52,7 @@ from _bench_common.mutation_isolation import (  # noqa: E402
 from _bench_common.agentic_contracts import (  # noqa: E402
     AGENTIC_ARMS,
     DEFAULT_REPETITIONS,
+    answer_failure_details,
     assess_answer_response,
     build_oracle,
     materialize_agentic_prompt,
@@ -56,6 +60,14 @@ from _bench_common.agentic_contracts import (  # noqa: E402
     score_answer,
     score_evidence_metrics,
     validate_answer_contract,
+)
+from _bench_common.agentic_reporting import (  # noqa: E402
+    cell_quality,
+    REPORTING_VERSION,
+    cell_failure_details,
+    cell_passes,
+    summarize_agentic,
+    summary_lines as _summary_lines,
 )
 from _bench_common.provider_parity_contracts import (  # noqa: E402
     ARM_CONTRACTS,
@@ -79,19 +91,22 @@ _NATIVE_HOME_ARM = {
 #: Legend body lines without their framing rules, so a terminal can panel them while the run log
 #: keeps the plain framed form it has always archived.
 _LEGEND_BODY = (
-    "  treatments: A_plain=no Codemap, B_auto=CLI available and optional, "
-    "C_strict=installed Codemap Skill with compact query required",
+    "  treatments: A_plain=no Codemap, B_auto=optional CLI, C_strict=installed Codemap Skill, compact query required",
     "  metrics:",
-    "      SCORE: mean semantic answer-component score; n/a when no answer can be recovered (higher is better)",
+    "      quality: graded credit / all assigned cells; execution, format, treatment and unobserved failures score zero",
+    "      exact_pass: fully correct, valid, complete, uncontaminated, adherent cells / all assigned cells",
+    "      component: secondary partial-credit mean; n/a when unscored; scored denominator shown separately",
+    "      efficiency: paired token/time changes only when both A and treatment pass; B_auto remains diagnostic",
     "      EREC: expected-importer recall in all agent text (higher is better)",
     "      RREC: expected-importer recall in the final report (higher is better)",
     "      DEFF: unbounded expected-importer exposure hits per command (higher is better within the same task)",
     "  answer: ✓ strict envelope, △ diagnostic bare-JSON recovery (not poolable), ✗ absent or invalid",
-    "  status: ✓ completed, ✗ failed",
+    "  outcome: ✓ pass, ✗ completed but not passing, ! execution failed or incomplete",
     "  progress: N completed cells / manifest-scoped planned cells",
     "  treatment: ✓ assigned arm followed, ✗ assigned arm not followed",
     "  codemap-used: ✓ Codemap call observed; ✗ no call observed (A_plain expects none)",
-    "  input tokens: gross total; cached and fresh details remain in telemetry only (lower is better at equal quality)",
+    "  input tokens: gross total; summaries separate fresh/gross/output tokens and time with eligible pair counts",
+    "  failures: semantic details in telemetry/summary.json; formatting, treatment, execution and unobserved separated",
 )
 _OUTPUT_LEGEND = "\n".join((LEGEND_OPEN_RULE, *_LEGEND_BODY, LEGEND_CLOSE_RULE))
 
@@ -112,6 +127,64 @@ def _load_sibling(module_name: str, filename: str) -> ModuleType:
 
 
 _structural = _load_sibling("_codex_agentic_structural", "run-codex-structural.py")
+
+
+def _impact_arm_envelope(arm: str) -> str:
+    """Return the generic A/B/C availability instruction for source-impact predictions."""
+    try:
+        contract = ARM_CONTRACTS[arm]["contract"]
+    except KeyError as exc:
+        raise ValueError(f"unknown change-impact arm {arm!r}") from exc
+    return f"{contract} Do not edit source files; report the requested source-level compatibility prediction."
+
+
+@contextlib.contextmanager
+def impact_runtime(
+    *,
+    model: str,
+    source_root: Path,
+    index_path: Path,
+    run_dir: Path,
+    timeout: int,
+    dry_run: bool,
+    fixture_runtime_coordinate: Mapping[str, Any],
+    auth_source: Path | None = None,
+) -> Iterator[FixtureCodexRuntime]:
+    """Provide one fresh fixture cell with native Codex isolation and no graph-task assumptions."""
+    source_root = Path(source_root).resolve(strict=True)
+    index_path = Path(index_path).resolve(strict=True)
+    run_dir = Path(run_dir).resolve(strict=True)
+    if source_root.is_relative_to(run_dir) or index_path.is_relative_to(run_dir):
+        raise ValueError("change-impact fixture runtime must stay outside run evidence")
+    if type(timeout) is not int or timeout < 1:
+        raise ValueError("change-impact runtime requires a positive cell timeout")
+    codex_runtime.validate_codex_stratum(model, "high", _MANIFEST_PATH)
+    runner = _structural.CodexRunner(
+        model,
+        source_root,
+        reasoning_effort="high",
+        index_path=index_path,
+        timeout=float(timeout),
+        marketplace_root=_BENCHMARKS_DIR.parent,
+        codemap_bin=_BENCHMARKS_DIR.parent / "plugins" / "codemap-py" / "bin" / "codemap-py",
+        manifest_path=_structural.PARITY_MANIFEST_PATH,
+        auth_source=None if dry_run else auth_source,
+        evidence_roots=(*_structural._benchmark_evidence_roots(), run_dir),
+    )
+    runtime = FixtureCodexRuntime(
+        runner=runner,
+        native=_structural,
+        source_root=source_root,
+        index_path=index_path,
+        coordinate=fixture_runtime_coordinate,
+        arm_envelope=_impact_arm_envelope,
+    )
+    try:
+        if dry_run:
+            runtime.probe(tuple(AGENTIC_ARMS))
+        yield runtime
+    finally:
+        runtime.close()
 
 
 @dataclass(frozen=True)
@@ -158,6 +231,12 @@ class AgenticRun:
     raw_events: list[dict[str, Any]] | None = None
     native_attempt_events: list[list[dict[str, Any]]] | None = None
     launcher_path: str | None = None
+    failure_details: list[dict[str, Any]] | None = None
+    usage_complete: bool = False
+    # Non-skeleton entries the cell left in its coordination gate. The sandbox profile grants that directory write
+    # access, so scratch there is permitted behaviour and is recorded as an observation about how the cell worked, not
+    # scored as a failure. Empty means the cell wrote nothing outside the gate's own files.
+    coordination_scratch_entries: list[str] | None = None
 
 
 def probe_arm(arm: str) -> ArmProbe:
@@ -302,6 +381,7 @@ def parse_agentic_stream(
     answer_contract_valid: bool | None = None
     diagnostic_only = False
     answer_pooling_eligible = False
+    failure_details: list[dict[str, Any]] = []
     if parsed.success:
         assessment = assess_answer_response(task, report_text)
         evidence = score_evidence_metrics(
@@ -315,6 +395,7 @@ def parse_agentic_stream(
         diagnostic_only = assessment.diagnostic_only
         answer_pooling_eligible = assessment.pooling_eligible
         if assessment.answer is not None:
+            failure_details = answer_failure_details(oracle, assessment.answer)
             quality = score_answer(
                 oracle,
                 assessment.answer,
@@ -323,6 +404,19 @@ def parse_agentic_stream(
                 tool_calls=parsed.command_calls,
             )
     return AgenticRun(
+        failure_details=failure_details,
+        usage_complete=(
+            parsed.completed
+            and not parsed.malformed_usage
+            and all(
+                type(value) is int and value >= 0
+                for value in (
+                    parsed.raw_usage.get("input_tokens"),
+                    parsed.raw_usage.get("cached_input_tokens", parsed.raw_usage.get("cache_read_input_tokens")),
+                    parsed.raw_usage.get("output_tokens"),
+                )
+            )
+        ),
         arm=arm,
         task_id=str(task["id"]),
         repetition=repetition,
@@ -665,11 +759,16 @@ class AgenticCodexRunner:
                     home.cleanup()
 
     def _postflight(self, home: Any | None) -> str:
-        """Return a concrete error when a native attempt changed locked runtime state."""
+        """Return a concrete error when a native attempt changed locked runtime state.
+
+        The coordination gate is checked for liveness and path safety, not for tidiness: the sandbox profile grants the
+        cell write access to that directory, so files it left there are permitted output, and the locked runtime this
+        guards is the target worktree and the frozen index, both verified above.
+        """
         try:
             _validate_agentic_runtime(self.agentic_manifest, self.repo_path, self.index_path, self.index_relocation)
             if home is not None and home.coordination_path is not None:
-                _structural._validate_coordination_root(home.coordination_path)
+                _structural._assert_coordination_root_idle(home.coordination_path)
         except ValueError as exc:
             return str(exc)
         return ""
@@ -775,6 +874,7 @@ class AgenticCodexRunner:
         postflight_error = ""
         auth_state_error = ""
         cleanup_error = ""
+        scratch_entries: list[str] = []
         if self.transport is None:
             home = self.adapter._prepare_verified_home(_NATIVE_HOME_ARM[arm])
         try:
@@ -835,7 +935,7 @@ class AgenticCodexRunner:
                     auth_state_error = str(exc)
                 try:
                     if home.coordination_path is not None:
-                        _structural._cleanup_coordination_root(home.coordination_path)
+                        scratch_entries = _structural._cleanup_coordination_root(home.coordination_path) or []
                 except ValueError as exc:
                     cleanup_error = str(exc)
                 finally:
@@ -843,11 +943,17 @@ class AgenticCodexRunner:
         result.elapsed_s = time.monotonic() - started
         result.retry_count = max(len(attempts) - 1, 0)
         result.native_attempt_events = attempts
+        # Empty failed attempts have no trustworthy usage; final-turn totals cannot price the whole coordinate.
+        if result.retry_count:
+            result.usage_complete = False
         if auth_state_error:
             result.incomplete = True
             result.success = False
             result.error = "run auth state could not be refreshed"
             result.error_type = "authentication_state_failed"
+        # Scratch in the coordination gate is a permitted write, so it is reported beside the cell rather than scored
+        # against it: the answer this cell produced was already graded on its own evidence.
+        result.coordination_scratch_entries = scratch_entries or None
         if cleanup_error:
             result.incomplete = True
             result.success = False
@@ -921,6 +1027,8 @@ def _write_agentic_input_snapshot(
         ("manifest", manifest_path, Path("manifest.json")),
         ("task_suite", tasks_path, Path("tasks-agentic.json")),
         ("agentic_runner", runner_path, Path("run-codex-agentic.py")),
+        ("agentic_reporting", _BENCHMARKS_DIR / "_bench_common" / "agentic_reporting.py", Path("agentic_reporting.py")),
+        ("agentic_contracts", _BENCHMARKS_DIR / "_bench_common" / "agentic_contracts.py", Path("agentic_contracts.py")),
         ("invocation_launcher", invocation_launcher_path, Path("run-all.sh")),
         ("locked_index", index_path, Path("locked-index.json")),
     ):
@@ -1016,12 +1124,22 @@ def _append_telemetry(path: Path, run: AgenticRun, execution_index: int) -> None
     """Append one immutable raw agentic row before updating derived evidence."""
     row = vars(run).copy()
     if run.quality is not None:
-        row["quality"] = {**vars(run.quality), "components": dict(run.quality.components)}
+        row["quality"] = {
+            **vars(run.quality),
+            "components": dict(run.quality.components),
+            "graded_components": dict(run.quality.graded_components),
+        }
     if run.evidence is not None:
         row["evidence"] = vars(run.evidence)
     row["execution_index"] = execution_index
     row["fresh_input_tokens"] = fresh_input_tokens(run.input_tokens, run.cached_input_tokens)
     row["token_accounting_inconsistent"] = token_accounting_inconsistent(run.input_tokens, run.cached_input_tokens)
+    if not run.usage_complete:
+        for field in ("input_tokens", "cached_input_tokens", "fresh_input_tokens", "output_tokens"):
+            row[field] = None
+    row["reporting_version"] = REPORTING_VERSION
+    row["passed"] = cell_passes(row)
+    row["failure_details"] = cell_failure_details(row)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
 
@@ -1060,13 +1178,6 @@ def _row_number(row: Mapping[str, Any], field: str) -> float:
     """Read one non-negative numeric telemetry value without fabricating malformed data."""
     value = row.get(field)
     return float(value) if type(value) in {int, float} and value >= 0 else 0.0
-
-
-def _row_quality(row: Mapping[str, Any]) -> float | None:
-    """Return a semantic score only when the persisted result has one."""
-    quality = row.get("quality")
-    value = quality.get("quality_score") if isinstance(quality, Mapping) else None
-    return float(value) if type(value) in {int, float} else None
 
 
 def _row_fresh_tokens(row: Mapping[str, Any]) -> float | None:
@@ -1138,8 +1249,7 @@ def _native_diagnostics(row: Mapping[str, Any]) -> dict[str, int | None | str]:
 
 
 def _aggregate_arm_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Total reported telemetry without replacing absent quality with a score."""
-    qualities = [quality for row in rows if (quality := _row_quality(row)) is not None]
+    """Aggregate native resources and commands; shared reporting exclusively owns quality."""
     cells = len(rows)
     diagnostics = [_native_diagnostics(row) for row in rows]
     concurrency = [value for diagnostic in diagnostics if (value := diagnostic["max_concurrent_commands"]) is not None]
@@ -1156,8 +1266,6 @@ def _aggregate_arm_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "fresh_input_ineligible_cells": sum(_row_fresh_tokens(row) is None for row in rows),
         "output_tokens": int(sum(_row_number(row, "output_tokens") for row in rows)),
         "runtime_seconds": sum(_row_number(row, "elapsed_s") for row in rows),
-        "quality_mean": sum(qualities) / len(qualities) if qualities else None,
-        "quality_scored_cells": len(qualities),
         "observed_use_cells": sum(row.get("codemap_used") is True for row in rows),
         "adherent_cells": sum(row.get("treatment_adherence") is True for row in rows),
         "native_command_calls": int(sum(_row_number(row, "command_calls") for row in rows)),
@@ -1171,118 +1279,14 @@ def _aggregate_arm_rows(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _win_loss(left: float | None, right: float | None, *, lower_is_better: bool) -> str:
-    """Name one paired comparison outcome without hiding unavailable measurements."""
-    if left is None or right is None:
-        return "unavailable"
-    if left == right:
-        return "tie"
-    return "C_strict" if (left < right if lower_is_better else left > right) else "A_plain"
-
-
-def _summarize_telemetry(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Build transparent all-assigned and paired-adherent agentic summaries.
-
-    B_auto remains a diagnostic optional-use canary. A/C comparisons only require adherent A and C cells at the same
-    task/repetition; B cannot erase that pair. All-assigned totals retain every recorded cell and its cost.
-    """
-    by_arm = {arm: [row for row in rows if row.get("arm") == arm] for arm in AGENTIC_ARMS}
-    by_coordinate: dict[tuple[str, int], dict[str, Mapping[str, Any]]] = {}
-    for row in rows:
-        task_id, repetition, arm = row.get("task_id"), row.get("repetition"), row.get("arm")
-        if isinstance(task_id, str) and type(repetition) is int and arm in AGENTIC_ARMS:
-            by_coordinate.setdefault((task_id, repetition), {})[arm] = row
-    paired_a_c = [
-        (task_id, repetition, arms)
-        for (task_id, repetition), arms in by_coordinate.items()
-        if {"A_plain", "C_strict"}.issubset(arms)
-        and arms["A_plain"].get("treatment_adherence") is True
-        and arms["C_strict"].get("treatment_adherence") is True
-    ]
-    matched_by_arm = {
-        "A_plain": [arms["A_plain"] for _, _, arms in paired_a_c],
-        "B_auto": [
-            arms["B_auto"] for _, _, arms in paired_a_c if arms.get("B_auto", {}).get("treatment_adherence") is True
-        ],
-        "C_strict": [arms["C_strict"] for _, _, arms in paired_a_c],
-    }
-    quality_outcomes = {"C_strict": 0, "A_plain": 0, "tie": 0, "unavailable": 0}
-    fresh_outcomes = dict(quality_outcomes)
-    by_task: dict[str, dict[str, Any]] = {}
-    for task_id, _repetition, arms in paired_a_c:
-        quality = _win_loss(_row_quality(arms["C_strict"]), _row_quality(arms["A_plain"]), lower_is_better=False)
-        fresh = _win_loss(_row_fresh_tokens(arms["C_strict"]), _row_fresh_tokens(arms["A_plain"]), lower_is_better=True)
-        quality_outcomes[quality] += 1
-        fresh_outcomes[fresh] += 1
-        task_summary = by_task.setdefault(
-            task_id,
-            {
-                "matched_repetitions": 0,
-                "quality_win_loss": {key: 0 for key in quality_outcomes},
-                "fresh_input_win_loss": {key: 0 for key in fresh_outcomes},
-            },
-        )
-        task_summary["matched_repetitions"] += 1
-        task_summary["quality_win_loss"][quality] += 1
-        task_summary["fresh_input_win_loss"][fresh] += 1
-    return {
-        "all_assigned": {arm: _aggregate_arm_rows(by_arm[arm]) for arm in AGENTIC_ARMS},
-        "matched_adherent": {arm: _aggregate_arm_rows(matched_by_arm[arm]) for arm in AGENTIC_ARMS},
-        "task_comparisons": {
-            "matched_a_c_coordinates": len(paired_a_c),
-            "quality_win_loss": quality_outcomes,
-            "fresh_input_win_loss": fresh_outcomes,
-            "by_task": by_task,
-        },
-        "b_auto_diagnostic": True,
-    }
-
-
-def _summary_lines(summary: Mapping[str, Any]) -> list[tuple[str, str | None]]:
-    """Format compact end-of-run rows while keeping arm output on the shared renderer."""
-    lines: list[tuple[str, str | None]] = []
-    for cohort in ("all_assigned", "matched_adherent"):
-        for arm in AGENTIC_ARMS:
-            values = summary[cohort][arm]
-            score = "n/a" if values["quality_mean"] is None else f"{values['quality_mean']:.3f}"
-            fresh = "n/a" if values["fresh_input_ineligible_cells"] else fmt_tok(values["fresh_input_tokens"])
-            lines.append(
-                (
-                    f"SUMMARY  cohort={cohort}  {arm:<10} cells={values['cells']}"
-                    f" gross={fmt_tok(values['gross_input_tokens'])} cache={fmt_tok(values['cached_input_tokens'])}"
-                    f" fresh={fresh} out={fmt_tok(values['output_tokens'])}"
-                    f" SCORE={score} time={fmt_time(values['runtime_seconds'])}"
-                    f" use={values['observed_use_cells']}/{values['cells']}"
-                    f" adherence={values['adherent_cells']}/{values['cells']}"
-                    f" cmd={values['native_command_calls']}"
-                    f" help~={values['heuristic_help_discovery_calls'] if values['heuristic_help_discovery_calls'] is not None else 'n/a'}"
-                    f" chars={values['captured_output_characters'] if values['captured_output_characters'] is not None else 'n/a'}"
-                    f" max-concurrent={values['max_concurrent_commands'] if values['max_concurrent_commands'] is not None else 'n/a'}"
-                    f" waves={values['serial_waves'] if values['serial_waves'] is not None else 'n/a'}",
-                    arm,
-                )
-            )
-    comparisons = summary["task_comparisons"]
-    lines.append(
-        (
-            "SUMMARY  comparisons=A_plain-vs-C_strict"
-            f" matched={comparisons['matched_a_c_coordinates']}"
-            f" quality={json.dumps(comparisons['quality_win_loss'], sort_keys=True)}"
-            f" fresh={json.dumps(comparisons['fresh_input_win_loss'], sort_keys=True)}"
-            " B_auto=diagnostic-optional-use",
-            None,
-        )
-    )
-    for task_id, outcomes in sorted(comparisons["by_task"].items()):
-        lines.append(
-            (
-                f"SUMMARY  task={task_id} matched={outcomes['matched_repetitions']}"
-                f" quality={json.dumps(outcomes['quality_win_loss'], sort_keys=True)}"
-                f" fresh={json.dumps(outcomes['fresh_input_win_loss'], sort_keys=True)}",
-                None,
-            )
-        )
-    return lines
+def _summarize_telemetry(
+    rows: Sequence[Mapping[str, Any]], *, task_ids: Sequence[str], repetitions: int
+) -> dict[str, Any]:
+    """Combine shared planned-scope outcomes with Codex-native cost and command diagnostics."""
+    summary = summarize_agentic(rows, task_ids=task_ids, repetitions=repetitions)
+    for arm, values in summary["all_assigned"].items():
+        values.update(_aggregate_arm_rows([row for row in rows if row.get("arm") == arm]))
+    return summary
 
 
 def _write_summary(run_dir: Path, summary: Mapping[str, Any]) -> Path:
@@ -1292,6 +1296,19 @@ def _write_summary(run_dir: Path, summary: Mapping[str, Any]) -> Path:
         json.dump(summary, handle, sort_keys=True)
         handle.write("\n")
     return output
+
+
+def _publish_summary(run_dir: Path, metadata: dict[str, Any], scope: Mapping[str, Any]) -> None:
+    """Publish a planned-scope summary after either completion or interrupted execution."""
+    raw_path = run_dir / "telemetry.jsonl"
+    rows = [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line]
+    summary = _summarize_telemetry(rows, task_ids=scope["task_ids"], repetitions=int(scope["repetitions"]))
+    summary_path = _write_summary(run_dir, summary)
+    metadata["artifacts"]["summary_json"] = str(summary_path.resolve())
+    metadata["artifacts"]["summary_sha256"] = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    metadata["reporting_version"] = REPORTING_VERSION
+    for line, arm in _summary_lines(summary):
+        _emit_run_line(run_dir / "run.log", line, arm=arm)
 
 
 def _load_replay_launcher_map(
@@ -1477,20 +1494,24 @@ def _attest_runtime_isolation(path: Path) -> None:
 
 
 def _progress_line(execution_index: int, total_cells: int, run: AgenticRun) -> str:
-    """Render one compact agentic result after its immutable telemetry row is persisted."""
-    status = "✓" if run.success else "✗"
+    """Render one result with execution failure taking priority over its full-pass verdict."""
     treatment = "✓" if run.treatment_adherence else "✗"
     used = "✓" if run.codemap_used else "✗"
     score = "n/a" if run.quality is None else f"{run.quality.quality_score:.3f}"
+    grade = cell_quality({**vars(run), "quality": vars(run.quality) if run.quality is not None else None})
+    grade_text = "n/a" if grade is None else f"{100 * grade:.1f}%"
+    passed = cell_passes({**vars(run), "quality": vars(run.quality) if run.quality is not None else None})
+    outcome = "!" if not run.success or run.incomplete else ("✓" if passed else "✗")
     answer = "✓" if run.answer_contract_valid else ("△" if run.diagnostic_only else "✗")
     erec = run.evidence.erec if run.evidence is not None else 0.0
     rrec = run.evidence.rrec if run.evidence is not None else 0.0
     deff = run.evidence.deff if run.evidence is not None else 0.0
     return (
-        f"({execution_index}/{total_cells}) {status}  {run.task_id:<5}  rep={run.repetition}  {run.arm:<10}"
-        f"  in={fmt_tok(run.input_tokens):>6}  out={fmt_tok(run.output_tokens):>6}"
-        f"  time={fmt_time(run.elapsed_s):>5}  SCORE={score}  EREC={erec:.3f}"
-        f"  RREC={rrec:.3f}  DEFF={deff:.3f}  answer:{answer}  treatment:{treatment}  codemap-used:{used}"
+        f"({execution_index}/{total_cells}) {outcome}  {run.task_id:<5}  rep={run.repetition}  {run.arm:<10}"
+        f"  in={fmt_tok(run.input_tokens) if run.usage_complete else 'n/a':>6}"
+        f"  out={fmt_tok(run.output_tokens) if run.usage_complete else 'n/a':>6}"
+        f"  time={fmt_time(run.elapsed_s):>5}  quality={grade_text}  component={score}  EREC={erec:.3f}"
+        f"  RREC={rrec:.3f}  DEFF={deff:.2f}  answer:{answer}  treatment:{treatment}  codemap-used:{used}"
     )
 
 
@@ -1524,6 +1545,7 @@ def _initial_metadata(
     executed_model = str(resolve_agentic_model(manifest, Path(manifest_path), model_name) or model["name"])
     return {
         "schema": "codex-agentic-run-v1",
+        "reporting_version": REPORTING_VERSION,
         "status": "running",
         "started_at": _structural._utc_now(),
         "persisted_cells": 0,
@@ -1717,15 +1739,8 @@ def run_paid(
             _write_checksums(run_dir)
         metadata["status"] = "completed"
         metadata["completed_at"] = _structural._utc_now()
-        summary = _summarize_telemetry(
-            [json.loads(line) for line in raw_path.read_text(encoding="utf-8").splitlines() if line]
-        )
-        summary_path = _write_summary(run_dir, summary)
-        metadata["artifacts"]["summary_json"] = str(summary_path.resolve())
-        metadata["artifacts"]["summary_sha256"] = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+        _publish_summary(run_dir, metadata, scope)
         _structural._write_run_metadata(metadata_path, metadata)
-        for line, arm in _summary_lines(summary):
-            _emit_run_line(run_log, line, arm=arm)
         _emit_run_line(
             run_log,
             f"SUMMARY  status=completed  persisted_cells={metadata['persisted_cells']}/{scope['total_cells']}",
@@ -1736,6 +1751,8 @@ def run_paid(
         metadata["status"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
         metadata["completed_at"] = _structural._utc_now()
         metadata["error"] = {"type": type(exc).__name__, "message": str(exc)[:1000]}
+        if not (run_dir / "summary.json").exists():
+            _publish_summary(run_dir, metadata, scope)
         _structural._write_run_metadata(metadata_path, metadata)
         _emit_run_line(
             run_log,
@@ -1856,7 +1873,10 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
     paid_approval: str | None = None,
     scope_sha256: str | None = None,
     model: str | None = None,
+    timeout: int = 600,
     index_relocation_path: Path | None = None,
+    study: str = "agentic",
+    change_impact_answers: Path | None = None,
 ) -> None:
     """Run a no-model scope preflight or a separately admitted paid study.
 
@@ -1882,8 +1902,11 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
         scope_sha256: Exact SHA-256 of a nondefault resolved scope.
         model: Declared model stratum to run instead of the manifest default; the resulting scope hash binds it and
             is the approval a paid run of that stratum requires.
+        timeout: Per-cell change-impact timeout; graph-agentic timing remains manifest-locked.
         index_relocation_path: Relocation provenance written when this run's index was moved into an
             isolated worktree; absent for a run at the canonical managed clone.
+        study: Agentic graph query, or change-impact fixture preflight/diagnostic scoring only.
+        change_impact_answers: Untrusted JSONL answers for the separate no-model impact diagnostic.
 
     Raises:
         SystemExit: When the invocation is rejected before any paid coordinate runs.
@@ -1892,6 +1915,62 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
         >>> main.__name__
         'main'
     """
+    if study == "change-impact":
+        if (
+            any(
+                value is not None
+                for value in (
+                    task_id,
+                    repetitions,
+                    repo_path,
+                    index_path,
+                    marketplace_root,
+                    codemap_bin,
+                    invocation_launcher_path,
+                    index_relocation_path,
+                    replay_telemetry_path,
+                    replay_output_path,
+                    replay_launcher_map_path,
+                )
+            )
+            or Path(tasks_path) != _TASKS_PATH
+            or Path(manifest_path) != _MANIFEST_PATH
+        ):
+            _cli_error("change-impact accepts only model, timeout, run, approval, scope, and private auth controls")
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, str)):
+            _cli_error("change-impact timeout must be a positive integer")
+        try:
+            impact_timeout = int(timeout)
+        except ValueError:
+            _cli_error("change-impact timeout must be a positive integer")
+        if impact_timeout < 1 or str(impact_timeout) != str(timeout):
+            _cli_error("change-impact timeout must be a positive integer")
+        impact_model = "gpt-5.6-terra" if model is None else str(model)
+        try:
+            codex_runtime.validate_codex_stratum(impact_model, "high", _MANIFEST_PATH)
+        except ValueError as exc:
+            _cli_error(str(exc))
+        if not dry_run and not resolve_scope and change_impact_answers is None and auth_source is None:
+            _cli_error("paid Codex change-impact requires --auth-source")
+        runtime_auth = None if dry_run or resolve_scope else (None if auth_source is None else Path(auth_source))
+        try:
+            run_change_impact_stage(
+                provider="codex",
+                dry_run=dry_run,
+                resolve_scope_requested=resolve_scope,
+                answers_file=change_impact_answers,
+                output_dir=run_dir,
+                model=impact_model,
+                paid_approval=None if paid_approval is None else str(paid_approval),
+                timeout=impact_timeout,
+                runtime_factory=functools.partial(impact_runtime, auth_source=runtime_auth),
+                scope_sha256=None if scope_sha256 is None else str(scope_sha256),
+            )
+        except ValueError as exc:
+            _cli_error(str(exc))
+        return
+    if study != "agentic" or change_impact_answers is not None:
+        _cli_error("select agentic or change-impact; diagnostic impact answers require change-impact")
     # fire passes CLI strings through regardless of annotation — coerce every typed argument.
     task_ids = _normalize_task_ids(task_id)
     if (replay_telemetry_path is None) != (replay_output_path is None):
@@ -1913,6 +1992,12 @@ def main(  # noqa: PLR0913 — fire CLI adapter: every param is a keyword flag w
     paid_approval = None if paid_approval is None else str(paid_approval)
     scope_sha256 = None if scope_sha256 is None else str(scope_sha256)
     model = None if model is None else str(model)
+    try:
+        graph_timeout = int(timeout)
+    except (TypeError, ValueError):
+        _cli_error("agentic graph timeout is manifest-locked")
+    if isinstance(timeout, bool) or graph_timeout != 600 or str(graph_timeout) != str(timeout):
+        _cli_error("agentic graph timeout is manifest-locked")
     try:
         index_relocation = load_index_relocation(None if index_relocation_path is None else Path(index_relocation_path))
     except ValueError as exc:

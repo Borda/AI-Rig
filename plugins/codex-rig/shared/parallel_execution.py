@@ -821,8 +821,8 @@ def resolve_consumer_execution_mode(
     """Admit compatible read plans or serial fallback without certifying runtime controls.
 
     Host declarations are compatibility inputs transcribed from the actual launcher contract. They never replace
-    authoritative post-run control validation. Explicit parallel reads fail closed; automatic mode retains serial
-    work when compatible child controls are unavailable. Review independence remains a separate completion gate.
+    authoritative post-run control validation. Explicit parallel reads fail closed; automatic mode retains serial work
+    when compatible child controls are unavailable. Review independence remains a separate completion gate.
     """
     try:
         plan_bytes = plan_path.read_bytes()
@@ -1146,8 +1146,8 @@ def _runtime_terminal_and_controls(
 ) -> tuple[int, int, dict[str, str]]:
     """Reconcile child control records and return the exact terminal work interval.
 
-    Explicit filesystem write grants contradict this read-only route even when the sandbox label says otherwise.
-    Absence of such a contradiction does not prove filesystem or credential isolation.
+    Explicit filesystem write grants contradict this read-only route even when the sandbox label says otherwise. Absence
+    of such a contradiction does not prove filesystem or credential isolation.
     """
     settings = [
         row["payload"].get("thread_settings")

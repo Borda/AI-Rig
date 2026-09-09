@@ -25,6 +25,10 @@ if str(_BENCHMARKS_DIR) not in sys.path:
 
 from _bench_common import manifest_session  # noqa: E402 — needs the sys.path insert above.
 
+# This is an isolated input repository, not importable project doctest modules.
+# Dedicated change-impact tests validate it in its own repository context.
+collect_ignore = ["fixtures/change-impact"]
+
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_sessionstart(session: pytest.Session) -> None:

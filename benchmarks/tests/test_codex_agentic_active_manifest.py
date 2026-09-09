@@ -18,8 +18,27 @@ BENCHMARKS = ROOT / "benchmarks"
 BUILDER = BENCHMARKS / "build-codex-agentic-manifest.py"
 MANIFEST = BENCHMARKS / "manifests" / "codex-agentic.json"
 HUMAN_MANIFEST = BENCHMARKS / "manifests" / "codex-agentic.md"
-AGENTIC_TASK_IDS = tuple(f"BA-{number:02d}" for number in range(1, 17))
+#: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
+#: expected scope instead of failing every scope assertion in this module.
+AGENTIC_TASK_IDS = tuple(
+    task["id"]
+    for task in json.loads((BENCHMARKS / "suites" / "tasks-agentic.json").read_text(encoding="utf-8"))["tasks"]
+)
 AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
+#: One repetition of every suite coordinate — the default no-model plan and paid scope size.
+AGENTIC_CELLS = len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS)
+
+
+def test_graph_query_measurement_scope_matches_both_provider_manifests() -> None:
+    """Graph-answer quality must not be advertised as general change-impact correctness."""
+    codex = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    shared = json.loads((BENCHMARKS / "manifests/provider-parity-methodology.json").read_text(encoding="utf-8"))
+    for contract in (codex["scoring"], shared["agentic_execution_contract"]):
+        assert contract["measurement_scope"] == "static_graph_query"
+        assert (
+            contract["quality_claim_limit"]
+            == "Declared static graph facts only; no behavioral change-impact or implementation correctness claim."
+        )
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -106,10 +125,12 @@ def test_manifest_locks_shared_scope_and_identity() -> None:
     }
     assert tuple(task["id"] for task in manifest["tasks"]) == AGENTIC_TASK_IDS
     scope = manifest["preregistered_scope"]
+    assert len(AGENTIC_TASK_IDS) == 20
+    assert AGENTIC_CELLS == 60
     assert tuple(scope["task_ids"]) == AGENTIC_TASK_IDS
     assert tuple(scope["arms"]) == AGENTIC_ARMS
     assert scope["repetitions"] == 1
-    assert scope["total_cells"] == 48
+    assert scope["total_cells"] == AGENTIC_CELLS
     assert scope["coordinate_timeout_seconds"] == 600
     assert "complete_run_max_wall_clock_seconds" not in scope
     assert scope["nonpoolable"] is True
@@ -139,7 +160,7 @@ def test_manifest_locks_the_full_shared_agentic_scope_with_one_default_repeat() 
     """The Codex study uses every shared agentic task once in each canonical arm.
 
     Prevents an apparently valid Codex manifest from silently retaining the incomplete task subset, using a noncanonical
-    arm label, or multiplying the default study beyond the reviewed 16 × 3 × 1 coordinate set.
+    arm label, or multiplying the default study beyond one repetition of every suite task in every canonical arm.
     """
     manifest = _load(MANIFEST)
     methodology = _load(BENCHMARKS / "manifests" / "provider-parity-methodology.json")
@@ -152,7 +173,7 @@ def test_manifest_locks_the_full_shared_agentic_scope_with_one_default_repeat() 
     assert tuple(scope["task_ids"]) == AGENTIC_TASK_IDS
     assert tuple(scope["arms"]) == AGENTIC_ARMS
     assert scope["repetitions"] == 1
-    assert scope["total_cells"] == 48
+    assert scope["total_cells"] == AGENTIC_CELLS
 
 
 def test_claude_and_codex_load_identical_shared_agentic_prompts() -> None:
@@ -214,13 +235,21 @@ def test_manifest_has_exact_shared_scoring_and_plugin_hashes() -> None:
     assert manifest["scoring"]["implementation"]["response_symbol"] == "assess_answer_response"
     assert manifest["scoring"]["implementation"]["evidence_symbol"] == "score_evidence_metrics"
     assert manifest["scoring"]["metrics"] == {
-        "SCORE": "mean semantic component score for each declared answer-contract field",
+        "quality": "graded admitted credit / all assigned cells; unknown grading is explicitly unavailable",
+        "pass": "fully correct, completed, valid, uncontaminated and treatment-adherent cells / all assigned cells",
+        "component": "secondary mean semantic component score over scored cells; report scored denominator",
         "EREC": "expected-importer recall in all agent text, independent of answer-envelope validity",
         "RREC": "expected-importer recall in the final report, independent of answer-envelope validity",
         "DEFF": "unbounded expected-importer exposure hits per command",
     }
     hashes = manifest["artifact_sha256"]
-    assert len(hashes) == 12
+    assert len(hashes) == 13
+    assert (
+        hashes["agentic_reporting"]
+        == hashlib.sha256((ROOT / "benchmarks/_bench_common/agentic_reporting.py").read_bytes()).hexdigest()
+    )
+    assert manifest["scoring"]["reporting_version"] == "agentic-graded-v2"
+    assert "both cells pass" in manifest["scoring"]["efficiency_policy"]
     assert all(len(value) == 64 for value in hashes.values())
     assert manifest["plugin_runtime"]["source_hashes"] == hashes
     assert (

@@ -6,6 +6,7 @@ import hashlib
 import errno
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -27,6 +28,12 @@ BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 SCRIPT = BENCHMARKS_DIR / "run-all.sh"
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
+_PLATFORM_TESTS_DIR = BENCHMARKS_DIR.parent / "plugins" / "codex-rig" / "tests"
+if str(_PLATFORM_TESTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_PLATFORM_TESTS_DIR))
+
+from _platform import POSIX_BASH  # noqa: E402
+
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
 REAL_GIT = shutil.which("git")
@@ -36,6 +43,10 @@ AGENTIC_MANIFEST = BENCHMARKS_DIR / "manifests" / "codex-agentic.json"
 AGENTIC_MANIFEST_SHA = hashlib.sha256(AGENTIC_MANIFEST.read_bytes()).hexdigest()
 AGENTIC_MANIFEST_DATA = json.loads(AGENTIC_MANIFEST.read_text(encoding="utf-8"))
 AGENTIC_TOTAL_CELLS = AGENTIC_MANIFEST_DATA["preregistered_scope"]["total_cells"]
+#: Rendered into the stub launcher's canned scope so its id list and its cell count keep describing the same suite.
+AGENTIC_SCOPE_TASK_IDS_JSON = json.dumps(
+    AGENTIC_MANIFEST_DATA["preregistered_scope"]["task_ids"], separators=(",", ":")
+)
 AGENTIC_CELL_TIMEOUT = AGENTIC_MANIFEST_DATA["preregistered_scope"]["coordinate_timeout_seconds"]
 AGENTIC_SCOPE_SHA = "agentic-default-scope"
 AGENTIC_REPEAT_TWO_SCOPE_SHA = "agentic-repeat-two-scope"
@@ -179,7 +190,7 @@ def _write_executable(path: Path, body: str) -> None:
     ...     path.read_text(encoding="utf-8").splitlines()
     ['#!/usr/bin/env bash', 'exit 0']
     """
-    path.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8")
+    path.write_text(f"#!/usr/bin/env bash\n{body}\n", encoding="utf-8", newline="\n")
     path.chmod(0o755)
 
 
@@ -219,7 +230,10 @@ printf "fixture-head\\n"''',
     )
     _write_executable(
         bin_dir / "python3",
-        f"""if [ "$1" = "-c" ]; then exec {sys.executable} "$@"; fi
+        f"""if [ "$1" = "-c" ]; then exec {shlex.quote(Path(sys.executable).as_posix())} "$@"; fi
+if [ -n "${{EVIDENCE_ROOTS_LOG:-}}" ]; then
+  printf '%s\\n' "${{BENCHMARK_EVIDENCE_ROOTS:-[]}}" >> "$EVIDENCE_ROOTS_LOG"
+fi
 # Phase headers render through a CLI; answer with the redirected form and keep them out of the call log.
 if [[ "$*" == *"render_cli.py"* ]]; then printf "== %s ==\\n" "$3"; exit 0; fi
 printf "python %s\\n" "$*" >> "$CALL_LOG"
@@ -253,23 +267,23 @@ if [[ "$*" == *"run-codex-agentic.py"* && "$*" == *"--resolve-scope"* ]]; then
   elif [[ "$*" == *"--task-id BA-02,BA-04"* ]]; then
     printf '{{"task_ids":["BA-02","BA-04"],"repetitions":1,"total_cells":{AGENTIC_SELECTED_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SELECTED_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--model gpt-5.6-luna"* ]]; then
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_LUNA_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_LUNA_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--model gpt-5.6-terra"* ]]; then
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-terra"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_STRATUM_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-terra"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_STRATUM_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--model gpt-5.6-sol"* ]]; then
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SOL_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-sol"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SOL_SCOPE_SHA}"}}\n'
   elif [[ "$*" == *"--repetitions 2"* ]]; then
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":2,"total_cells":96,"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":2,"total_cells":{AGENTIC_TOTAL_CELLS * 2},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
   else
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["gpt-5.6-luna"],"coordinate_timeout_seconds":600,"scope_sha256":"{AGENTIC_SCOPE_SHA}"}}\n'
   fi
   exit 0
 fi
 if [[ "$*" == *"run-claude-agentic.py"* && "$*" == *"--resolve-scope"* ]]; then
   if [[ "$*" == *"--repeat 2"* ]]; then
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":2,"total_cells":{CLAUDE_AGENTIC_TOTAL_CELLS * 2},"arms":["A_plain","B_auto","C_strict"],"models":["haiku","sonnet","opus"],"coordinate_timeout_seconds":600,"scope_sha256":"{CLAUDE_AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":2,"total_cells":{CLAUDE_AGENTIC_TOTAL_CELLS * 2},"arms":["A_plain","B_auto","C_strict"],"models":["haiku","sonnet","opus"],"coordinate_timeout_seconds":600,"scope_sha256":"{CLAUDE_AGENTIC_REPEAT_TWO_SCOPE_SHA}"}}\n'
   else
-    printf '{{"task_ids":["BA-01","BA-02","BA-03","BA-04","BA-05","BA-06","BA-07","BA-08","BA-09","BA-10","BA-11","BA-12","BA-13","BA-14","BA-15","BA-16"],"repetitions":1,"total_cells":{CLAUDE_AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["haiku","sonnet","opus"],"coordinate_timeout_seconds":600,"scope_sha256":"{CLAUDE_AGENTIC_SCOPE_SHA}"}}\n'
+    printf '{{"task_ids":{AGENTIC_SCOPE_TASK_IDS_JSON},"repetitions":1,"total_cells":{CLAUDE_AGENTIC_TOTAL_CELLS},"arms":["A_plain","B_auto","C_strict"],"models":["haiku","sonnet","opus"],"coordinate_timeout_seconds":600,"scope_sha256":"{CLAUDE_AGENTIC_SCOPE_SHA}"}}\n'
   fi
   exit 0
 fi
@@ -328,7 +342,7 @@ if [[ "$*" == *"--render-results"* ]]; then
   if [ -n "${{FAIL_RENDER_RESULTS:-}}" ]; then
     exit 43
   fi
-  exec {sys.executable} "$@"
+  exec {shlex.quote(Path(sys.executable).as_posix())} "$@"
 fi
 if [[ "$*" == *"run-codex-structural.py"* && "$*" != *"--no-legend"* ]]; then
   printf "{LEGEND_OPEN_RULE}\n  treatments: A_plain=no Codemap, B_auto=direct Codemap required, C_strict=Codemap Skill required\n{LEGEND_CLOSE_RULE}\n"
@@ -425,7 +439,7 @@ fi""",
     _write_executable(
         bin_dir / "shasum",
         f"""if [ -z "${{3:-}}" ]; then
-  exec /usr/bin/shasum -a 256
+  exec {shlex.quote(Path(sys.executable).as_posix())} -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest() + "  -")'
 elif [[ "$3" == "$REPO/"* && "$(sed -n '1p' "$3")" == *'"scan_version": {LOCKED_INDEX_SCAN_VERSION}'* && "$(sed -n '1p' "$3")" == *'"modules": []'* ]]; then
   printf "{LOCKED_INDEX_SHA}  %s\\n" "$3"
 elif [[ "$3" == *"/benchmarks/manifests/codex-integration.json" ]]; then
@@ -433,7 +447,7 @@ elif [[ "$3" == *"/benchmarks/manifests/codex-integration.json" ]]; then
 elif [[ "$3" == *"/benchmarks/manifests/codex-agentic.json" ]]; then
   printf "{AGENTIC_MANIFEST_SHA}  %s\\n" "$3"
 elif [[ "$3" == "$CODEX_RUN_DIR/"* ]]; then
-  exec /usr/bin/shasum -a 256 "$3"
+  exec {shlex.quote(Path(sys.executable).as_posix())} -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest() + "  " + sys.argv[1])' "$3" < "$3"
 else
   printf "%064d  %s\\n" 0 "$3"
 fi""",
@@ -460,14 +474,99 @@ fi""",
 
 def _run_batch(mode: str, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
     """Run one batch mode against command stubs and capture its public output."""
+    if POSIX_BASH is None:
+        raise RuntimeError("benchmark launcher test requires a working POSIX Bash executable")
     return subprocess.run(
-        ["/bin/bash", str(SCRIPT), mode, *args],
+        [POSIX_BASH, SCRIPT.as_posix(), mode, *args],
         cwd=BENCHMARKS_DIR.parent,
         env=env,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+@pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")
+@pytest.mark.parametrize("executable", [r"D:\a\project\.venv\Scripts\python.exe", "/opt/Python Runtime/bin/python3"])
+@pytest.mark.parametrize("argument", ["-c", "--render-results"])
+def test_python_stub_preserves_interpreter_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, executable: str, argument: str
+) -> None:
+    """Both delegation branches must pass the interpreter path to Bash as one literal argument."""
+    monkeypatch.setattr(sys, "executable", executable)
+    env, _ = _batch_env.__wrapped__(tmp_path)
+    assert b"\r\n" not in (tmp_path / "bin" / "python3").read_bytes()
+    result = subprocess.run(
+        [
+            POSIX_BASH,
+            "-c",
+            'exec() { printf "%s\\n" "$1"; exit 0; }; source "$1" "$2"',
+            "stub-probe",
+            (tmp_path / "bin" / "python3").as_posix(),
+            argument,
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == Path(executable).as_posix()
+
+
+@pytest.mark.skipif(POSIX_BASH is None, reason="requires a working POSIX Bash executable")
+@pytest.mark.parametrize("source", ["stdin", "file"])
+def test_hash_stub_without_system_shasum(batch_env: tuple[dict[str, str], Path], tmp_path: Path, source: str) -> None:
+    """Hash exact input bytes without requiring the Unix-only system shasum path."""
+    env, _ = batch_env
+    payload = b"binary\x00\xff\r\ntext\n"
+    run_dir = Path(env["CODEX_RUN_DIR"])
+    run_dir.mkdir()
+    artifact = run_dir / "artifact with spaces.bin"
+    artifact.write_bytes(payload)
+    env["CODEX_RUN_DIR"] = run_dir.as_posix()
+    arguments = ["-a", "256", artifact.as_posix()] if source == "file" else ["-a", "256"]
+    result = subprocess.run(
+        [
+            POSIX_BASH,
+            "-c",
+            'exec() { if [[ "$1" == /usr/bin/shasum ]]; then return 127; fi; builtin exec "$@"; }; source "$@"',
+            "hash-probe",
+            (tmp_path / "bin" / "shasum").as_posix(),
+            *arguments,
+        ],
+        env=env,
+        input=payload if source == "stdin" else None,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[0].decode("ascii") == hashlib.sha256(payload).hexdigest()
+
+
+@_skip_windows_posix
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_launcher_preserves_evaluator_roots_for_provider_children(
+    batch_env: tuple[dict[str, str], Path], tmp_path: Path, provider: str
+) -> None:
+    """Both provider children must receive original evaluator and historical-result boundaries."""
+    env, _ = batch_env
+    original_evidence = tmp_path / "earlier evaluator"
+    results_root = tmp_path / "external results"
+    evidence_log = tmp_path / "evidence-roots.jsonl"
+    env.update(
+        BENCHMARK_EVIDENCE_ROOTS=json.dumps([str(original_evidence)]),
+        CODEX_RESULTS_ROOT=str(results_root),
+        EVIDENCE_ROOTS_LOG=str(evidence_log),
+    )
+    result = _run_batch(
+        provider, env, "--agentic", "--models=terra" if provider == "codex" else "--models=sonnet", "--dry-run"
+    )
+    assert result.returncode == 0, result.stderr
+    observations = [json.loads(line) for line in evidence_log.read_text(encoding="utf-8").splitlines()]
+    assert observations
+    required = {str(BENCHMARKS_DIR.parent.resolve()), str(results_root.resolve()), str(original_evidence.resolve())}
+    assert all(required <= set(roots) for roots in observations)
 
 
 def _combined_scope(stdout: str) -> str:
@@ -600,7 +699,7 @@ def test_codex_default_dry_run_dispatches_structural_then_agentic_without_paid_i
     assert "PLAN " in completed.stdout
     assert "438 cells" in completed.stdout
     assert completed.stdout.count(f"SCOPE   {DEFAULT_SCOPE_SHA}") == 1
-    assert "96 cells" in completed.stdout
+    assert "120 cells" in completed.stdout
 
 
 @_skip_windows_posix
@@ -773,7 +872,7 @@ def test_struct_selector_rejects_conflicts_before_setup(
 def test_codex_agentic_dry_run_dispatches_the_default_shared_scope_once(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
-    """The launcher advertises the 16-task, three-arm, one-repeat dry-run plan.
+    """The launcher advertises the 20-task, three-arm, one-repeat dry-run plan.
 
     Prevents launcher drift where the runner is correct but ``run-all.sh`` still
     dispatches only BA-01 or supplies the retired three-repeat default.
@@ -801,7 +900,7 @@ def test_codex_agentic_dry_run_dispatches_the_default_shared_scope_once(
     assert "--metadata-path" not in agentic_call
     assert "run-codex-structural.py" not in "\n".join(calls)
     assert "PROBE   A_plain" in completed.stdout
-    assert "48 cells" in completed.stdout
+    assert "60 cells" in completed.stdout
     assert not Path(env.get("CODEX_RUN_DIR", "unused")).exists()
 
 
@@ -809,7 +908,7 @@ def test_codex_agentic_dry_run_dispatches_the_default_shared_scope_once(
 def test_codex_agentic_launcher_resolves_a_positive_repeat_override_before_setup(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
-    """A positive override binds the paid plan to its derived 96-cell scope.
+    """A positive override binds the paid plan to its derived double-length scope.
 
     Prevents the launcher from retaining the retired fixed-repeat admission or
     dispatching a larger scope without forwarding its explicit scope identity.
@@ -826,14 +925,14 @@ def test_codex_agentic_launcher_resolves_a_positive_repeat_override_before_setup
     )
     assert "--repetitions 2" in agentic_call
     assert f"--scope-sha256 {AGENTIC_REPEAT_TWO_SCOPE_SHA}" in agentic_call
-    assert "96 cells" in completed.stdout
+    assert "120 cells" in completed.stdout
 
 
 @_skip_windows_posix
 def test_claude_agentic_dry_run_dispatches_only_the_default_shared_scope(
     batch_env: tuple[dict[str, str], Path],
 ) -> None:
-    """The Claude launcher binds the 144-cell dry-run to its resolved scope.
+    """The Claude launcher binds the 180-cell dry-run to its resolved scope.
 
     Prevents the two providers from exposing incompatible agentic flags or from
     retaining Claude's historical full-batch path for the shared suite.
@@ -860,7 +959,7 @@ def test_claude_agentic_dry_run_dispatches_only_the_default_shared_scope(
     assert "--model" not in plan_call
     assert not any("run-claude-structural.py" in line for line in calls)
     assert not any("run-codex-" in line for line in calls)
-    assert f"{CLAUDE_AGENTIC_TOTAL_CELLS} cells" in completed.stdout
+    assert "180 cells" in completed.stdout
 
 
 @_skip_windows_posix
@@ -881,7 +980,7 @@ def test_claude_agentic_launcher_binds_repeat_override_to_its_exact_scope(
     assert "--repeat 2" in resolver_call
     assert "--repeat 2" in plan_call
     assert f"--scope-sha256 {CLAUDE_AGENTIC_REPEAT_TWO_SCOPE_SHA}" in plan_call
-    assert f"{CLAUDE_AGENTIC_TOTAL_CELLS * 2} cells" in completed.stdout
+    assert "360 cells" in completed.stdout
 
 
 @_skip_windows_posix
@@ -985,6 +1084,8 @@ def test_paid_codex_agentic_uses_snapshot_and_exact_runner_contract(
     env, call_log = batch_env
     env["CODEX_AGENTIC_PAID_APPROVAL"] = AGENTIC_MANIFEST_SHA
     env["CODEX_RUN_DIR"] = str(Path(env["CODEX_RUN_DIR"]).with_name("codex-agentic-run"))
+    evidence_log = Path(env["CODEX_RUN_DIR"]).with_name("snapshot-evidence-roots.jsonl")
+    env["EVIDENCE_ROOTS_LOG"] = str(evidence_log)
 
     completed = _run_batch("codex", env, "--agentic", "--models=luna")
 
@@ -993,6 +1094,10 @@ def test_paid_codex_agentic_uses_snapshot_and_exact_runner_contract(
     paid_call = next(line for line in calls if "run-codex-agentic.py" in line and "--auth-source" in line)
     launcher_snapshot = Path(env["CODEX_RUN_DIR"]) / ".launcher" / "run-all.sh"
     source_root = launcher_snapshot.parent / "source"
+    evidence_roots = [json.loads(line) for line in evidence_log.read_text(encoding="utf-8").splitlines()]
+    assert all(str(BENCHMARKS_DIR.parent.resolve()) in roots for roots in evidence_roots)
+    assert any(str(source_root.resolve()) in roots for roots in evidence_roots)
+    assert all(str(Path(env["CODEX_RUN_DIR"]).resolve()) in roots for roots in evidence_roots)
     for flag, value in (
         ("--repo-path", env["REPO"]),
         ("--index-path", f"{env['REPO']}/.cache/codemap/target.json"),
@@ -2651,7 +2756,7 @@ def test_agentic_selector_sweeps_each_selected_stratum_in_requested_order(
     completed = _run_batch("codex", env, "--agentic", "--models=luna,terra,sol", "--repetitions=1", "--dry-run")
 
     assert completed.returncode == 0, completed.stderr
-    assert "144 cells" in completed.stdout
+    assert "180 cells" in completed.stdout
     calls = call_log.read_text(encoding="utf-8").splitlines()
     plans = [
         line
@@ -2701,7 +2806,7 @@ def test_explicit_agentic_luna_selection_keeps_the_manifest_default_study(
 
     Scenario: one physical study must not have two valid approvals. Selecting the default explicitly
     is the default, so it has to resolve to the manifest digest rather than to a second, scope-derived
-    token that would authorize the same 48 cells under a different name.
+    token that would authorize the same 60 cells under a different name.
     """
     env, _ = batch_env
 

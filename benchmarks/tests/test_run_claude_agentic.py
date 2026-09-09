@@ -9,10 +9,14 @@ requires a real codemap index on disk is guarded with
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
 import os
+import subprocess
 import sys
-from pathlib import Path
+import threading
+from collections.abc import Mapping
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -26,12 +30,30 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH  # noqa: E402
 
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
+CLAUDE_RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
 PARITY_MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
 ACTIVE_MANIFEST = json.loads(PARITY_MANIFEST_PATH.read_text(encoding="utf-8"))
 ACTIVE_REVISION = ACTIVE_MANIFEST["experiment_revision"]
 ACTIVE_AGENTIC_SUITE = next(
     suite for suite in ACTIVE_MANIFEST["suites"] if suite["path"] == "benchmarks/suites/tasks-agentic.json"
 )
+#: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
+#: expected scope instead of failing every scope assertion in this module.
+AGENTIC_TASK_IDS = [task["id"] for task in json.loads(AGENTIC_SUITE_PATH.read_text(encoding="utf-8"))["tasks"]]
+AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
+_skip_claude_sandbox_integration = pytest.mark.skipif(
+    os.environ.get("RUN_CLAUDE_SANDBOX_INTEGRATION") != "1",
+    reason="set RUN_CLAUDE_SANDBOX_INTEGRATION=1 to exercise the installed Claude sandbox against a loopback mock",
+)
+
+
+def test_public_runner_stays_below_the_250_kilobyte_maintenance_limit() -> None:
+    """The public runner must keep stage detail in focused private modules.
+
+    Matches the gate the Codex structural runner already carries. Without it the file grows past the repository's check-
+    added-large-files limit and the next commit that touches it fails on a size error rather than on its content.
+    """
+    assert CLAUDE_RUNNER_PATH.stat().st_size < 250_000
 
 
 # ===========================================================================
@@ -67,6 +89,39 @@ def _minimal_index(modules: list[dict]) -> dict:
     True
     """
     return {"modules": modules}
+
+
+def _mock_codemap_python_probe(
+    monkeypatch: pytest.MonkeyPatch, script_run_agentic: Any, *, returncode: int = 0
+) -> None:
+    """Mock only the external interpreter capability probe used by Codemap treatments."""
+    original_run = script_run_agentic.subprocess.run
+    candidate = str(Path(script_run_agentic.sys.executable).resolve())
+
+    def _run(command: list[str], *args: Any, **kwargs: Any) -> Any:
+        """Return the selected capability result while preserving unrelated subprocesses."""
+        if (
+            command[:2] == [candidate, "-c"]
+            and len(command) == 3
+            and "sys.implementation.name" in command[2]
+            and "sys.version_info" in command[2]
+        ):
+            return SimpleNamespace(returncode=returncode)
+        return original_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(script_run_agentic.subprocess, "run", _run)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        pytest.param(PurePosixPath("/private/benchmark/evaluator"), "//private/benchmark/evaluator/**", id="posix"),
+        pytest.param(PureWindowsPath("D:/benchmark/evaluator"), "//D:/benchmark/evaluator/**", id="windows"),
+    ],
+)
+def test_absolute_filetool_pattern_is_portable(script_run_agentic: Any, path: PurePath, expected: str) -> None:
+    """File-tool denies preserve absolute POSIX and Windows coordinates."""
+    assert script_run_agentic._absolute_filetool_pattern(path) == expected
 
 
 @pytest.fixture(name="tmp_index")
@@ -295,7 +350,9 @@ class TestProviderParityTaskIntegration:
             assert "scan-query" not in auto
             assert "/codemap:query-code" not in auto
             assert "loading the Skill alone" in strict
-            assert "complete its underlying `codemap-py query`" in strict
+            # The scorer credits adherence only for a successful compact query, so the arm text must ask for one:
+            # a strict prompt that omits `--compact` scores its own contract against a requirement it never stated.
+            assert "`codemap-py query --compact`" in strict
 
     def test_default_dry_run_schedules_the_full_canonical_matrix(
         self, tmp_index: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], script_run_agentic: Any
@@ -336,12 +393,12 @@ class TestProviderParityTaskIntegration:
 
         assert first == second
         assert first["provider"] == "claude"
-        assert first["task_ids"] == [f"BA-{number:02d}" for number in range(1, 17)]
-        assert first["arms"] == ["A_plain", "B_auto", "C_strict"]
+        assert first["task_ids"] == AGENTIC_TASK_IDS
+        assert first["arms"] == list(AGENTIC_ARMS)
         assert first["models"] == list(script_run_agentic.MODELS)
         assert first["repetitions"] == 1
         assert first["coordinate_timeout_seconds"] == 600
-        assert first["total_cells"] == 144
+        assert first["total_cells"] == len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS) * len(script_run_agentic.MODELS)
         assert "complete_run_max_wall_clock_seconds" not in first
         assert first["manifest_sha256"] == hashlib.sha256(PARITY_MANIFEST_PATH.read_bytes()).hexdigest()
         assert first["scope_sha256"] == hashlib.sha256(encoded).hexdigest()
@@ -354,8 +411,11 @@ class TestProviderParityTaskIntegration:
         The regression is an accidental repeat override running without a separately reviewable authorization token. The
         paired successful call proves a valid scope hash is not rejected merely because it is nondefault.
         """
-        tasks = [script_run_agentic.Task(id=f"BA-{number:02d}", type="fix", prompt="p") for number in range(1, 17)]
+        # Ids come from the shipped suite: the derived scope hash fingerprints the real task order, so a synthetic
+        # stand-in list would make the accepted call fail for the wrong reason.
+        tasks = [script_run_agentic.Task(id=task_id, type="fix", prompt="p") for task_id in AGENTIC_TASK_IDS]
         scope = script_run_agentic.resolve_agentic_scope(repetitions=2)
+        expected_runs = len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS) * len(script_run_agentic.MODELS) * 2
 
         with (
             patch.object(script_run_agentic, "load_tasks_with_provenance", return_value=tasks),
@@ -374,9 +434,9 @@ class TestProviderParityTaskIntegration:
             )
 
         output = capsys.readouterr().out
-        assert "tasks:       16, arms: 3, models: 3, repeat: 2" in output
-        assert "total runs:  288" in output
-        assert output.count("[DRY RUN]") == 288
+        assert f"tasks:       {len(AGENTIC_TASK_IDS)}, arms: 3, models: 3, repeat: 2" in output
+        assert f"total runs:  {expected_runs}" in output
+        assert output.count("[DRY RUN]") == expected_runs
 
     def test_canonical_loader_uses_the_shared_labelled_answer_prompt(
         self, tmp_path: Path, script_run_agentic: Any
@@ -486,6 +546,8 @@ class TestProviderParityTaskIntegration:
         assert result.answer_quality_score == 1.0
         assert result.answer_correct is True
         assert result.answer_components == {"production_importers": 1.0}
+        assert result.answer_graded_score == 1.0
+        assert result.answer_graded_components == {"production_importers": 1.0}
         assert score_answer.call_args.kwargs == {
             "exposure_text": native_result.output_text,
             "report_text": native_result.output_text,
@@ -638,6 +700,67 @@ class TestProviderParityTaskIntegration:
         assert result.quality.erec == 1.0
         assert result.quality.rrec == 1.0
         assert result.answer_quality_score == (1.0 if semantic_scored else None)
+
+    def test_canonical_result_persists_structured_semantic_answer_failures(
+        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
+    ) -> None:
+        """Canonical telemetry keeps actual and expected values for a parsed wrong answer.
+
+        Scenario: a valid envelope contains a wrong importer list. The run must
+        retain the field-level semantic mismatch rather than reducing it to a
+        score, so the prospective pass summary can explain the failed cell.
+        """
+        raw_task = {
+            "id": "BA-CONTRACT",
+            "type": "blast_radius_analysis",
+            "prompt": "List the production importers.",
+            "primary_module": "package.target",
+            "answer_contract": {"fields": ["production_importers"]},
+        }
+        task = script_run_agentic.Task(
+            id=raw_task["id"],
+            type=raw_task["type"],
+            prompt=script_run_agentic.materialize_agentic_prompt(raw_task),
+            primary_module=raw_task["primary_module"],
+            answer_task=raw_task,
+        )
+        benchmark = script_run_agentic.Benchmark(
+            tasks=[task],
+            arms=["A_plain"],
+            models=[("haiku", script_run_agentic.MODELS["haiku"])],
+            repo_path=tmp_path,
+            index_path=tmp_index,
+            output_path=tmp_path / "results.json",
+            log_path=tmp_path / "tool-calls.jsonl",
+        )
+        native_result = script_run_agentic.BenchmarkRun(
+            arm="A_plain",
+            task_id=task.id,
+            task_type=task.type,
+            model="haiku",
+            success=True,
+            output_text='BEGIN_ANSWER_JSON\n{"production_importers":["package.unrelated"]}\nEND_ANSWER_JSON',
+        )
+
+        with patch.object(script_run_agentic.ModelRunner, "run", return_value=native_result):
+            result = benchmark._run_single(
+                task,
+                "haiku",
+                script_run_agentic.MODELS["haiku"],
+                "A_plain",
+                1,
+                1,
+                print_fn=lambda _text: None,
+                metadata={},
+            )
+
+        assert result.answer_correct is False
+        assert len(result.answer_failure_details) == 1
+        failure = result.answer_failure_details[0]
+        assert isinstance(failure["category"], str)
+        assert failure["field"] == "production_importers"
+        assert failure["actual"] == ["package.unrelated"]
+        assert failure["expected"] == []
 
     def test_run_single_copies_task_provenance_to_provider_native_result(
         self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
@@ -921,16 +1044,25 @@ class TestProviderParityTaskIntegration:
         assert auto.success is True
         assert auto.parity_arm == "B_auto"
         assert auto.codemap_compliant is None
+        assert auto.treatment_adherence is True
         assert required.success is True
         assert required.error == ""
         assert required.quality.scored is True
         assert required.parity_arm == "C_strict"
         assert required.codemap_compliant is False
+        assert required.treatment_adherence is False
 
-    def test_required_scan_query_call_satisfies_codemap_compliance(
-        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
+    @pytest.mark.parametrize(
+        "compact_success,expected",
+        [
+            pytest.param(False, False, id="attempt-only"),
+            pytest.param(True, True, id="matching-compact-result"),
+        ],
+    )
+    def test_required_graph_compliance_uses_native_compact_result(
+        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any, compact_success: bool, expected: bool
     ) -> None:
-        """C-required credits its approved scan-query path without requiring a Skill call too."""
+        """C admission follows the persisted native compact-result association, not its counters."""
         task = script_run_agentic.Task(
             id="BA-01",
             type="fix",
@@ -959,6 +1091,7 @@ class TestProviderParityTaskIntegration:
             model="haiku",
             success=True,
             tools=script_run_agentic.ToolCounts(bash=1, scan_query=1),
+            codemap_compact_success=compact_success,
         )
 
         with (
@@ -978,7 +1111,173 @@ class TestProviderParityTaskIntegration:
 
         assert result.tools.skill == 0
         assert result.tools.scan_query == 1
-        assert result.codemap_compliant is True
+        assert result.codemap_compliant is expected
+
+    @pytest.mark.parametrize(
+        "command,result",
+        [
+            pytest.param("codemap-py query --help", "usage", id="help"),
+            pytest.param("echo codemap-py query --compact rdeps package", "{}", id="spoofed-shell-text"),
+            pytest.param("codemap-py query --compact", "{}", id="malformed"),
+            pytest.param("codemap-py query --compact rdeps package", "Exit code 127", id="failed-command"),
+            pytest.param("codemap-py query --compact rdeps package", "not-json", id="malformed-result"),
+            pytest.param(
+                "codemap-py query --compact rdeps package 2>/dev/null || printf '{}'",
+                "{}",
+                id="shell-fallback",
+            ),
+            pytest.param(
+                "codemap-py query --compact rdeps package\nprintf '{}'",
+                "{}",
+                id="newline-fallback",
+            ),
+            pytest.param(
+                "codemap-py query --compact rdeps package",
+                '{"error":"frozen index unavailable"}',
+                id="error-payload",
+            ),
+            pytest.param("codemap-py query --compact 'unterminated", "{}", id="malformed-shell-quote"),
+        ],
+    )
+    def test_codemap_evidence_rejects_non_successful_compact_query(
+        self, script_run_agentic: Any, command: str, result: str
+    ) -> None:
+        """Help, spoofed, malformed, and failed Bash calls never produce strict compact success."""
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "tool_use", "id": "query", "name": "Bash", "input": {"command": command}}]
+                },
+            },
+            {
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "tool_use_id": "query", "content": result}]},
+            },
+        ]
+
+        evidence = script_run_agentic._claude_codemap_evidence(events)
+
+        assert evidence["codemap_compact_success"] is False
+
+    def test_codemap_evidence_associates_native_compact_query_result(self, script_run_agentic: Any) -> None:
+        """Only the matching successful result admits a syntactically valid compact native query."""
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "query",
+                            "name": "Bash",
+                            "input": {"command": "codemap-py query --compact rdeps package"},
+                        }
+                    ]
+                },
+            },
+            {
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "tool_use_id": "query", "content": '{"modules": []}'}]},
+            },
+        ]
+
+        evidence = script_run_agentic._claude_codemap_evidence(events)
+
+        assert evidence["codemap_query_attempted"] == 1
+        assert evidence["codemap_query_succeeded"] == 1
+        assert evidence["codemap_compact_success"] is True
+
+    @pytest.mark.parametrize("event_type", ["system", "assistant", "user"])
+    @pytest.mark.parametrize(
+        "message",
+        [
+            pytest.param("provider diagnostic", id="string-message"),
+            pytest.param(None, id="null-message"),
+            pytest.param([], id="list-message"),
+            pytest.param(7, id="number-message"),
+            pytest.param({"content": "plain text"}, id="string-content"),
+            pytest.param({"content": [None, "plain text", 7]}, id="non-object-blocks"),
+        ],
+    )
+    def test_mixed_native_events_preserve_query_evidence_and_usage(
+        self, script_run_agentic: Any, tmp_path: Path, event_type: str, message: Any
+    ) -> None:
+        """Diagnostic message shapes cannot crash native scoring or discard a genuine query result."""
+        diagnostic = {"type": event_type, "message": message}
+        events = [
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "query",
+                            "name": "Bash",
+                            "input": {
+                                "command": "codemap-py query --compact rdeps package --index /outside/index.json"
+                            },
+                        }
+                    ]
+                },
+            },
+            diagnostic,
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "query",
+                            "content": '{"modules": []}',
+                        }
+                    ]
+                },
+            },
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "finished"}]}},
+            {"type": "result", "subtype": "success", "usage": {"input_tokens": 7, "output_tokens": 2}},
+        ]
+        original = json.dumps(events)
+        evidence = script_run_agentic._claude_codemap_evidence(events)
+        assert evidence["codemap_query_attempted"] == 1
+        assert evidence["codemap_query_succeeded"] == 1
+        assert evidence["codemap_compact_success"] is True
+        assert script_run_agentic._claude_codemap_evidence([diagnostic])["codemap_query_attempted"] == 0
+        assert script_run_agentic._outside_workspace_path_evidence(events, tmp_path) == (
+            ["/outside/index.json"],
+            ["/outside/index.json"],
+        )
+        assert script_run_agentic._frozen_index_recovery_attempted(events) is False
+        recovery = {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Bash",
+                        "input": {"command": "codemap-py index"},
+                    }
+                ]
+            },
+        }
+        assert script_run_agentic._frozen_index_recovery_attempted([diagnostic, recovery]) is True
+        summary = script_run_agentic._claude_event_summary(events)
+        assert summary["output_text"] == "finished"
+        assert summary["usage_complete"] is True
+        assert summary["raw_events"] == events
+        runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path)
+        result = script_run_agentic.BenchmarkRun(
+            arm="C_strict", task_id="fixture", task_type="query", model="haiku", success=False
+        )
+        pending: dict[str, float] = {}
+        for event in events:
+            runner._handle_event(event, result, pending, set(), set(), set(), 1.0)
+        assert result.success is True
+        assert result.tools.bash == 1
+        assert result.input_tokens == 7
+        assert result.output_tokens == 2
+        assert result.output_text.endswith("finished")
+        assert json.dumps(events) == original
 
     def test_scan_query_detection_requires_an_executable_command_boundary(self, script_run_agentic: Any) -> None:
         """Telemetry credits direct or chained execution but not text that merely mentions the tool."""
@@ -3175,6 +3474,11 @@ class TestArmToolPolicy:
 class TestSubprocessEnv:
     """Codemap / combined arms opt out of in-task index builds; other arms are untouched."""
 
+    @pytest.fixture(autouse=True)
+    def _accept_external_codemap_python(self, monkeypatch: pytest.MonkeyPatch, script_run_agentic: Any) -> None:
+        """Keep environment-policy tests independent of the CI interpreter version."""
+        _mock_codemap_python_probe(monkeypatch, script_run_agentic)
+
     @pytest.mark.parametrize("arm", ["codemap", "combined"])
     def test_scan_no_autobuild_set_for_structural_arms(self, script_run_agentic: Any, arm: str) -> None:
         """Disable automatic index builds for arms that invoke the structural-query skill."""
@@ -3245,6 +3549,33 @@ class TestSubprocessEnv:
 
         assert Path(env["PATH"].split(os.pathsep)[0]).resolve() == expected.resolve()
 
+    def test_codemap_treatment_binds_an_eligible_external_python(self, script_run_agentic: Any) -> None:
+        """The staged launcher receives an authoritative interpreter outside the denied checkout."""
+        env = script_run_agentic.ModelRunner._subprocess_env("C_strict")
+
+        assert Path(env["CODEMAP_PYTHON"]).resolve() == Path(sys.executable).resolve()
+
+    def test_codemap_treatment_rejects_an_ineligible_external_python(
+        self, script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed external capability probe preserves the staged runtime version gate."""
+        _mock_codemap_python_probe(monkeypatch, script_run_agentic, returncode=127)
+
+        with pytest.raises(RuntimeError, match="CPython >=3.11,<3.15"):
+            script_run_agentic.ModelRunner._eligible_codemap_python()
+
+    @pytest.mark.parametrize("arm", ["plain", "A_plain", "semble", ""])
+    def test_non_codemap_arms_strip_inherited_codemap_environment(
+        self, script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, arm: str
+    ) -> None:
+        """Plain controls cannot inherit a launcher, interpreter, or plugin root from the parent process."""
+        for key in ("CLAUDE_PLUGIN_ROOT", "CODEMAP_BIN", "CODEMAP_PYTHON", "SCAN_NO_AUTOBUILD"):
+            monkeypatch.setenv(key, "/parent-only/sentinel")
+
+        env = script_run_agentic.ModelRunner._subprocess_env(arm)
+
+        assert not {"CLAUDE_PLUGIN_ROOT", "CODEMAP_BIN", "CODEMAP_PYTHON", "SCAN_NO_AUTOBUILD"} & set(env)
+
 
 # ===========================================================================
 # _seed_index_cache — index present in fix-task sandbox
@@ -3253,6 +3584,30 @@ class TestSubprocessEnv:
 
 class TestSeedIndexCache:
     """The prebuilt index cache dirs are copied into a sandbox for non-plain arms."""
+
+    @pytest.mark.parametrize("cache_name", ["codemap", "scan"])
+    def test_relocates_only_index_root_in_disposable_copy(
+        self, script_run_agentic: Any, tmp_path: Path, cache_name: str
+    ) -> None:
+        """Copied graph queries retain frozen facts but describe the actual disposable tree."""
+        repo = tmp_path / "source"
+        index = repo / ".cache" / cache_name / "source.json"
+        index.parent.mkdir(parents=True)
+        payload = {"scan_root": str(repo.resolve()), "scan_version": 13, "modules": {"sample": {"path": "sample.py"}}}
+        original = json.dumps(payload).encode()
+        index.write_bytes(original)
+        sandbox = tmp_path / "copy" / "source"
+        sandbox.mkdir(parents=True)
+        runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], repo)
+
+        relocations = runner._seed_index_cache(sandbox)
+
+        copied = sandbox / ".cache" / cache_name / "source.json"
+        assert json.loads(copied.read_bytes()) == {**payload, "scan_root": str(sandbox.resolve())}
+        assert index.read_bytes() == original
+        assert len(relocations) == 1
+        assert relocations[0]["frozen_index_sha256"] == hashlib.sha256(original).hexdigest()
+        assert relocations[0]["derived_index_sha256"] == hashlib.sha256(copied.read_bytes()).hexdigest()
 
     def test_copies_codemap_and_scan_cache(self, script_run_agentic: Any, tmp_path: Path) -> None:
         """_seed_index_cache seeds .cache/codemap and .cache/scan from the original repo.
@@ -3354,6 +3709,82 @@ class TestReportRendering:
             self._run(script_run_agentic, "BA-01", "codemap", success=False),
         ]
         return script_run_agentic.Report(results, tasks, {"date": "2026-07-03"})
+
+    def test_prospective_canonical_metadata_renders_graded_quality_not_legacy_savings(
+        self, script_run_agentic: Any
+    ) -> None:
+        """A prospective canonical report renders graded quality before its exact-pass diagnostic."""
+        complete = {
+            "success": True,
+            "answer_contract_valid": True,
+            "answer_pooling_eligible": True,
+            "treatment_adherence": True,
+            "quality": {
+                "correct": True,
+                "quality_score": 1.0,
+                "components": {"importers": 1.0},
+                "graded_score": 1.0,
+                "graded_components": {"importers": 1.0},
+            },
+            "input_tokens": 100,
+            "cached_input_tokens": 20,
+            "fresh_input_tokens": 80,
+            "output_tokens": 10,
+            "elapsed_s": 5.0,
+        }
+        rows = [{"task_id": "BA-01", "repetition": 1, "arm": arm, **complete} for arm in ("A_plain", "C_strict")]
+        rows.append(
+            {
+                "task_id": "BA-02",
+                "repetition": 1,
+                "arm": "C_strict",
+                **complete,
+                "quality": {
+                    "correct": False,
+                    "quality_score": 0.5,
+                    "components": {"importers": 0.5},
+                    "graded_score": 0.75,
+                    "graded_components": {"importers": 0.75},
+                },
+                "failure_details": [
+                    {
+                        "category": "missing_facts",
+                        "field": "production_importers",
+                        "actual": [],
+                        "expected": ["package.consumer"],
+                    }
+                ],
+            }
+        )
+        summary = script_run_agentic.summarize_agentic(
+            rows,
+            task_ids=["BA-01", "BA-02"],
+            repetitions=1,
+        )
+        tasks = [
+            script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p"),
+            script_run_agentic.Task(id="BA-02", type="blast_radius_analysis", prompt="p"),
+        ]
+        report = script_run_agentic.Report(
+            [],
+            tasks,
+            {
+                "date": "2026-09-08",
+                "models": "haiku",
+                "agentic_reporting": {
+                    "reporting_version": script_run_agentic.agentic_reporting.REPORTING_VERSION,
+                    "summaries_by_model": {"haiku": summary},
+                },
+            },
+        ).render()
+
+        assert "## Canonical graded quality summary" in report
+        assert "quality=50.0%" in report and "exact_pass=" in report
+        assert "quality  A_plain-vs-C_strict" in report
+        assert "component=" in report
+        assert "both_pass_only" in report
+        assert "FAILURE  BA-02 rep=1 C_strict categories=missing_facts" in report
+        assert "Savings =" not in report
 
     def test_render_includes_success_rate_table(self, script_run_agentic: Any, report: Any) -> None:
         """The rendered report contains a success-rate table."""
@@ -3717,6 +4148,709 @@ def test_stage_transport_enables_native_edits_only_for_executable_workspaces(
     assert permission_flags == expected
 
 
+def test_stage_transport_denies_benchmark_evidence_to_filetools_and_bash(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A canonical Claude cell receives an OS-enforced evidence deny and file-tool denies.
+
+    The regression is a sandboxed evaluator reading a sibling oracle or earlier result through Bash while its ordinary
+    Claude file tools remain unrestricted. The stage transport must load one temporary Claude settings file that blocks
+    both routes while preserving its disposable worktree and staged runtime.
+    """
+    evidence_root = tmp_path / "evaluator"
+    evidence_root.mkdir()
+    (evidence_root / "oracle.json").write_text("answer\n", encoding="utf-8")
+    cwd = tmp_path / "worktree"
+    cwd.mkdir()
+    commands: list[list[str]] = []
+    environments: list[dict[str, str]] = []
+    captured_settings: dict[str, Any] = {}
+
+    def _stream(cmd: list[str], **kwargs: Any) -> Any:
+        """Capture the no-model transport contract and supply a normal completion."""
+        commands.append(cmd)
+        environments.append(kwargs["env"])
+        settings_path = Path(cmd[cmd.index("--settings") + 1])
+        captured_settings.update(json.loads(settings_path.read_text(encoding="utf-8")))
+        return SimpleNamespace(error=None, stderr="", returncode=0, exc_timeout=False, elapsed_s=0.1)
+
+    monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evidence_root)]))
+    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
+
+    runner.run_stage_events(
+        prompt="Inspect the fixture.",
+        system_prompt="Use only the fixture.",
+        arm="A_plain",
+        cwd=cwd,
+    )
+
+    assert "--settings" in commands[0]
+    settings = captured_settings
+    assert settings["sandbox"]["enabled"] is True
+    assert settings["sandbox"]["failIfUnavailable"] is True
+    assert str(evidence_root) in settings["sandbox"]["filesystem"]["denyRead"]
+    assert str(cwd) in settings["sandbox"]["filesystem"]["allowRead"]
+    expected_deny = f"Read(//{evidence_root.as_posix().lstrip('/')}/**)"
+    assert expected_deny in settings["permissions"]["deny"]
+    assert settings["permissions"]["deny"] == [expected_deny]
+    assert "BENCHMARK_EVIDENCE_ROOTS" not in environments[0]
+
+
+def test_stage_transport_stages_runtime_outside_denied_evidence(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Structural cells never re-allow a plugin nested under evaluator evidence.
+
+    Regression: the original Codemap fixture lives in the evaluator checkout. Adding
+    it to ``allowRead`` would contradict the broad evidence deny for both native Bash
+    and Claude file tools. The transport must copy it beside the disposable worktree
+    and load only that copy.
+    """
+    evidence_root = tmp_path / "evaluator"
+    fixture = evidence_root / "plugins" / "codemap-py"
+    (fixture / ".claude-plugin").mkdir(parents=True)
+    (fixture / ".claude-plugin" / "plugin.json").write_text("{}\n", encoding="utf-8")
+    (fixture / "claude-skills" / "query-code").mkdir(parents=True)
+    (fixture / "claude-skills" / "query-code" / "SKILL.md").write_text("skill\n", encoding="utf-8")
+    (fixture / "bin").mkdir()
+    (fixture / "bin" / "codemap-py").write_text("runtime\n", encoding="utf-8")
+    for private_directory in (".cache", ".plans", ".reports", ".pytest_cache", "__pycache__", "tests"):
+        private_sentinel = fixture / private_directory / "oracle.txt"
+        private_sentinel.parent.mkdir(parents=True)
+        private_sentinel.write_text("PRIVATE-ORACLE\n", encoding="utf-8")
+    cwd = tmp_path / "worktree"
+    cwd.mkdir()
+    captured: dict[str, Any] = {}
+
+    def _stream(cmd: list[str], **kwargs: Any) -> Any:
+        """Capture the staged runtime while it exists without starting a model."""
+        plugin_dir = Path(cmd[cmd.index("--plugin-dir") + 1])
+        settings_path = Path(cmd[cmd.index("--settings") + 1])
+        captured.update(
+            plugin_dir=plugin_dir,
+            environment=kwargs["env"],
+            settings=json.loads(settings_path.read_text(encoding="utf-8")),
+            runtime_file=(plugin_dir / "bin" / "codemap-py").read_text(encoding="utf-8"),
+            copied_private_files=[path.relative_to(plugin_dir).as_posix() for path in plugin_dir.rglob("oracle.txt")],
+        )
+        return SimpleNamespace(error=None, stderr="", returncode=0, exc_timeout=False, elapsed_s=0.1)
+
+    monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evidence_root)]))
+    monkeypatch.setattr(script_run_agentic.ModelRunner, "_codemap_plugin_dir", lambda: str(fixture))
+    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    _mock_codemap_python_probe(monkeypatch, script_run_agentic)
+    runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
+
+    runner.run_stage_events(
+        prompt="Inspect the fixture.",
+        system_prompt="Use only the fixture.",
+        arm="C_strict",
+        cwd=cwd,
+    )
+
+    plugin_dir = captured["plugin_dir"]
+    assert not plugin_dir.is_relative_to(evidence_root)
+    assert plugin_dir.is_relative_to(cwd.parent)
+    assert captured["runtime_file"] == "runtime\n"
+    assert captured["copied_private_files"] == []
+    assert captured["environment"]["CLAUDE_PLUGIN_ROOT"] == str(plugin_dir)
+    assert str(plugin_dir) in captured["settings"]["sandbox"]["filesystem"]["allowRead"]
+    assert str(fixture) not in captured["settings"]["sandbox"]["filesystem"]["allowRead"]
+    assert not plugin_dir.exists()
+
+
+def test_evidence_settings_reject_allowing_a_path_nested_under_denied_evidence(
+    script_run_agentic: Any, tmp_path: Path
+) -> None:
+    """A nested allow is rejected before Claude can receive contradictory policy."""
+    evidence_root = tmp_path / "evaluator"
+    worktree = tmp_path / "worktree"
+    runtime = evidence_root / "plugins" / "codemap-py"
+    worktree.mkdir()
+    runtime.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="cannot be inside a denied evidence root"):
+        script_run_agentic._claude_evidence_isolation_settings(
+            worktree,
+            evidence_roots=[evidence_root],
+            runtime_paths=[runtime],
+        )
+
+
+def test_stage_transport_fails_before_launch_for_a_missing_evidence_root(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A future or misspelled result root cannot downgrade a cell to unsafe mode."""
+    cwd = tmp_path / "worktree"
+    cwd.mkdir()
+    missing_root = tmp_path / "not-created"
+    launched = False
+
+    def _stream(*_args: Any, **_kwargs: Any) -> Any:
+        """Record an unexpected model transport attempt."""
+        nonlocal launched
+        launched = True
+        raise AssertionError("missing evidence root must stop before transport")
+
+    monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(missing_root)]))
+    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
+
+    with pytest.raises(ValueError, match="benchmark evidence root is unavailable"):
+        runner.run_stage_events(
+            prompt="Inspect the fixture.",
+            system_prompt="Use only the fixture.",
+            arm="A_plain",
+            cwd=cwd,
+        )
+
+    assert not launched
+
+
+def _change_impact_runtime_coordinate(
+    script_run_agentic: Any, tmp_path: Path
+) -> tuple[Path, Path, Path, dict[str, Any]]:
+    """Create one parent-owned disposable fixture coordinate for transport-only tests."""
+    source_root = tmp_path / "repo"
+    (source_root / "package").mkdir(parents=True)
+    (source_root / "package" / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    index_path = source_root / ".cache" / "codemap" / "repo.json"
+    index_path.parent.mkdir(parents=True)
+    payload = {"scan_version": 1, "scan_root": str(source_root), "modules": []}
+    index_path.write_text(json.dumps(payload), encoding="utf-8")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    return (
+        source_root,
+        index_path,
+        run_dir,
+        {
+            "source_fingerprint": script_run_agentic.change_impact_source_fingerprint(source_root),
+            "raw_index_sha256": hashlib.sha256(index_path.read_bytes()).hexdigest(),
+            "scan_version": 1,
+            "index_scan_root": str(source_root),
+        },
+    )
+
+
+def test_change_impact_runtime_validates_only_in_dry_run(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A no-model preflight validates fixture identity without exposing a launch callable."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    preflight_coordinates: list[tuple[Path, Path]] = []
+
+    def _preflight(source: Path, evidence: Path) -> None:
+        """Record no-model native preflight coordinates without invoking the local launcher."""
+        preflight_coordinates.append((source, evidence))
+
+    monkeypatch.setattr(script_run_agentic, "_native_change_impact_preflight", _preflight)
+
+    with script_run_agentic.impact_runtime(
+        model="sonnet",
+        source_root=source_root,
+        index_path=index_path,
+        run_dir=run_dir,
+        timeout=600,
+        dry_run=True,
+        fixture_runtime_coordinate=coordinate,
+    ) as run_cell:
+        assert run_cell is None
+    assert preflight_coordinates == [(source_root, run_dir)]
+
+
+def test_change_impact_runtime_normalizes_native_stream_facts(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The adapter reports native Claude facts without converting an answer into a pass claim."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    events = [
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "report"}]}},
+        {
+            "type": "result",
+            "subtype": "success",
+            "usage": {"input_tokens": 10, "cache_read_input_tokens": 2, "output_tokens": 3},
+        },
+    ]
+
+    def _run_stage_events(_self: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], float, None]:
+        """Capture the parent-provided evaluator result root without invoking Claude."""
+        assert kwargs["cwd"] == source_root
+        assert kwargs["evidence_roots"] == (run_dir,)
+        assert kwargs["writable"] is False
+        assert script_run_agentic.ARM_CONTRACTS["A_plain"]["contract"] in kwargs["system_prompt"]
+        return events, 1.5, None
+
+    monkeypatch.setattr(script_run_agentic.ModelRunner, "run_stage_events", _run_stage_events)
+    with script_run_agentic.impact_runtime(
+        model="sonnet",
+        source_root=source_root,
+        index_path=index_path,
+        run_dir=run_dir,
+        timeout=600,
+        dry_run=False,
+        fixture_runtime_coordinate=coordinate,
+    ) as adapter:
+        assert adapter is not None
+        row = adapter.run_cell({"id": "CI-01"}, "A_plain", "Classify callsites.")
+
+    assert row == {
+        "success": True,
+        "incomplete": False,
+        "contaminated": False,
+        "report_text": "report",
+        "raw_events": events,
+        "input_tokens": 12,
+        "cached_input_tokens": 2,
+        "output_tokens": 3,
+        "usage_complete": True,
+        "elapsed_s": 1.5,
+        "command_calls": 0,
+        "codemap_calls": 0,
+        "codemap_used": False,
+        "codemap_query_attempted": 0,
+        "codemap_query_succeeded": 0,
+        "codemap_compact_success": False,
+        "treatment_adherence": True,
+        "error": None,
+        "error_type": None,
+        "launcher_path": None,
+    }
+
+
+def test_change_impact_runtime_rejects_stale_fixture_coordinate(script_run_agentic: Any, tmp_path: Path) -> None:
+    """Fixture/index drift stops before a provider transport can receive unsafe bytes."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    index_path.write_text(
+        json.dumps({"scan_version": 2, "scan_root": str(source_root), "modules": []}), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="frozen index fingerprint drifted"):
+        with script_run_agentic.impact_runtime(
+            model="sonnet",
+            source_root=source_root,
+            index_path=index_path,
+            run_dir=run_dir,
+            timeout=600,
+            dry_run=True,
+            fixture_runtime_coordinate=coordinate,
+        ):
+            pass
+
+
+def test_change_impact_runtime_keeps_completed_nonadherent_c_cell_observed(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A completed C response without Codemap use is a treatment violation, not an incomplete execution."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    events = [{"type": "result", "subtype": "success", "usage": {"input_tokens": 1, "output_tokens": 1}}]
+    monkeypatch.setattr(
+        script_run_agentic.ModelRunner,
+        "run_stage_events",
+        lambda _self, **_kwargs: (events, 1.0, None),
+    )
+
+    with script_run_agentic.impact_runtime(
+        model="sonnet",
+        source_root=source_root,
+        index_path=index_path,
+        run_dir=run_dir,
+        timeout=600,
+        dry_run=False,
+        fixture_runtime_coordinate=coordinate,
+    ) as adapter:
+        assert adapter is not None
+        row = adapter.run_cell({"id": "CI-01"}, "C_strict", "Classify callsites.")
+
+    assert row["success"] is True
+    assert row["incomplete"] is False
+    assert row["treatment_adherence"] is False
+
+
+def test_change_impact_runtime_keeps_terminal_success_without_usage_unscoped(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A terminal success without native usage retains its answer but has unavailable resource measurements."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    events = [{"type": "result", "subtype": "success"}]
+    monkeypatch.setattr(
+        script_run_agentic.ModelRunner,
+        "run_stage_events",
+        lambda _self, **_kwargs: (events, 1.0, None),
+    )
+
+    with script_run_agentic.impact_runtime(
+        model="sonnet",
+        source_root=source_root,
+        index_path=index_path,
+        run_dir=run_dir,
+        timeout=600,
+        dry_run=False,
+        fixture_runtime_coordinate=coordinate,
+    ) as adapter:
+        assert adapter is not None
+        row = adapter.run_cell({"id": "CI-01"}, "A_plain", "Classify callsites.")
+
+    assert row["success"] is True
+    assert row["incomplete"] is False
+    assert row["usage_complete"] is False
+    assert row["input_tokens"] is None
+    assert row["cached_input_tokens"] is None
+    assert row["output_tokens"] is None
+
+
+def test_change_impact_runtime_marks_missing_terminal_result_incomplete(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A stream with no terminal provider result is incomplete and has no measured usage."""
+    source_root, index_path, run_dir, coordinate = _change_impact_runtime_coordinate(script_run_agentic, tmp_path)
+    monkeypatch.setattr(
+        script_run_agentic.ModelRunner,
+        "run_stage_events",
+        lambda _self, **_kwargs: ([], 1.0, None),
+    )
+
+    with script_run_agentic.impact_runtime(
+        model="sonnet",
+        source_root=source_root,
+        index_path=index_path,
+        run_dir=run_dir,
+        timeout=600,
+        dry_run=False,
+        fixture_runtime_coordinate=coordinate,
+    ) as adapter:
+        assert adapter is not None
+        row = adapter.run_cell({"id": "CI-01"}, "A_plain", "Classify callsites.")
+
+    assert row["success"] is False
+    assert row["incomplete"] is True
+    assert row["usage_complete"] is False
+    assert row["input_tokens"] is None
+
+
+def test_change_impact_cli_delegates_approved_runtime_coordinate(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The impact CLI passes its only mutable paid coordinates to the shared stage."""
+    observed: dict[str, Any] = {}
+
+    def _stage(**kwargs: Any) -> None:
+        """Capture the shared stage contract without resolving scope or launching Claude."""
+        observed.update(kwargs)
+
+    monkeypatch.setattr(script_run_agentic, "run_change_impact_stage", _stage)
+    run_dir = tmp_path / "new-run"
+    script_run_agentic.main(
+        study="change-impact",
+        model="sonnet",
+        paid_approval="impact-approved",
+        scope_sha256="scope",
+        timeout=123,
+        run_dir=run_dir,
+    )
+
+    assert observed == {
+        "provider": "claude",
+        "dry_run": False,
+        "resolve_scope_requested": False,
+        "answers_file": None,
+        "output_dir": run_dir,
+        "model": "sonnet",
+        "paid_approval": "impact-approved",
+        "timeout": 123,
+        "runtime_factory": script_run_agentic.impact_runtime,
+        "scope_sha256": "scope",
+    }
+
+
+def test_change_impact_cli_rejects_unknown_model_before_shared_stage(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An invalid impact model cannot reach scope resolution, output setup, or provider admission."""
+    launched = False
+
+    def _stage(**_kwargs: Any) -> None:
+        """Fail if invalid model validation accidentally delegates downstream."""
+        nonlocal launched
+        launched = True
+
+    monkeypatch.setattr(script_run_agentic, "run_change_impact_stage", _stage)
+    with pytest.raises(SystemExit, match="change-impact model"):
+        script_run_agentic.main(study="change-impact", model="not-a-model")
+    assert not launched
+
+
+def _anthropic_sse(events: list[dict[str, Any]]) -> bytes:
+    """Encode one minimal Anthropic streaming response for the installed Claude CLI."""
+    return b"".join(
+        b"event: "
+        + event["type"].encode("utf-8")
+        + b"\n"
+        + b"data: "
+        + json.dumps(event, separators=(",", ":")).encode("utf-8")
+        + b"\n\n"
+        for event in events
+    )
+
+
+@_skip_claude_sandbox_integration
+def test_installed_claude_sandbox_denies_bash_evidence_via_loopback_model_mock(
+    script_run_agentic: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Real Claude settings deny an oracle read requested by a loopback-only model mock.
+
+    This is an opt-in provider integration check, not a transport-double assertion: the installed Claude executable
+    receives a dummy API key and a local Anthropic streaming endpoint, then its own Bash tool tries to read the denied
+    sentinel.
+    """
+    evaluator_root = tmp_path / "evaluator"
+    history_root = tmp_path / "result-history"
+    sibling_root = tmp_path / "sibling-arm"
+    for root in (evaluator_root, history_root, sibling_root):
+        root.mkdir()
+    oracle = evaluator_root / "oracle.txt"
+    history = history_root / "previous.json"
+    sibling = sibling_root / "telemetry.json"
+    oracle.write_text("ORACLE-DO-NOT-EXPOSE\n", encoding="utf-8")
+    history.write_text("HISTORY-DO-NOT-EXPOSE\n", encoding="utf-8")
+    sibling.write_text("SIBLING-DO-NOT-EXPOSE\n", encoding="utf-8")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    allowed_source = worktree / "allowed.py"
+    allowed_index = worktree / ".cache" / "codemap" / "worktree.json"
+    allowed_source.write_text('def allowed() -> str:\n    return "SOURCE-ALLOWED"\n', encoding="utf-8")
+    allowed_index.parent.mkdir(parents=True)
+    plugin_root = Path(script_run_agentic.ModelRunner._codemap_plugin_dir())
+    build_env = os.environ.copy()
+    build_env["CODEMAP_PYTHON"] = str(Path(sys.executable).resolve())
+    index_build = subprocess.run(
+        [str(plugin_root / "bin" / "codemap-py"), "index", "--root", str(worktree)],
+        capture_output=True,
+        check=False,
+        env=build_env,
+        text=True,
+        timeout=30,
+    )
+    assert index_build.returncode == 0, index_build.stderr
+    tool_uses = [
+        ("toolu_oracle_bash", "Bash", {"command": f"cat {oracle}"}),
+        ("toolu_history_bash", "Bash", {"command": f"cat {history}"}),
+        ("toolu_sibling_bash", "Bash", {"command": f"cat {sibling}"}),
+        ("toolu_source_bash", "Bash", {"command": f"cat {allowed_source}"}),
+        ("toolu_index_bash", "Bash", {"command": f"cat {allowed_index}"}),
+        ("toolu_oracle_read", "Read", {"file_path": str(oracle)}),
+    ]
+    requests: list[dict[str, Any]] = []
+
+    class _LoopbackAnthropicHandler(http.server.BaseHTTPRequestHandler):
+        """Serve a deterministic tool-use turn and record only local request bodies."""
+
+        def log_message(self, _format: str, *_args: Any) -> None:
+            """Suppress loopback request logs during the focused integration gate."""
+
+        def do_POST(self) -> None:  # noqa: N802
+            """Return tool use first, then a final text response after the tool result."""
+            length = int(self.headers["content-length"])
+            requests.append(json.loads(self.rfile.read(length)))
+            request_text = json.dumps(requests[-1], separators=(",", ":"))
+            if "Write the title in the predominant language" in request_text:
+                response = _anthropic_sse(
+                    [
+                        {
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_loopback_title",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [],
+                                "model": "claude-sonnet-5",
+                                "stop_reason": None,
+                                "stop_sequence": None,
+                                "usage": {"input_tokens": 1, "output_tokens": 1},
+                            },
+                        },
+                        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Test"}},
+                        {"type": "content_block_stop", "index": 0},
+                        {
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                            "usage": {"output_tokens": 1},
+                        },
+                        {"type": "message_stop"},
+                    ]
+                )
+            elif "tool_result" not in request_text:
+                tool_events: list[dict[str, Any]] = []
+                for index, (tool_id, tool_name, tool_input) in enumerate(tool_uses):
+                    tool_events.extend(
+                        [
+                            {
+                                "type": "content_block_start",
+                                "index": index,
+                                "content_block": {"type": "tool_use", "id": tool_id, "name": tool_name, "input": {}},
+                            },
+                            {
+                                "type": "content_block_delta",
+                                "index": index,
+                                "delta": {"type": "input_json_delta", "partial_json": json.dumps(tool_input)},
+                            },
+                            {"type": "content_block_stop", "index": index},
+                        ]
+                    )
+                response = _anthropic_sse(
+                    [
+                        {
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_loopback_1",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [],
+                                "model": "claude-sonnet-5",
+                                "stop_reason": None,
+                                "stop_sequence": None,
+                                "usage": {"input_tokens": 1, "output_tokens": 1},
+                            },
+                        },
+                        *tool_events,
+                        {
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                            "usage": {"output_tokens": 1},
+                        },
+                        {"type": "message_stop"},
+                    ]
+                )
+            else:
+                response = _anthropic_sse(
+                    [
+                        {
+                            "type": "message_start",
+                            "message": {
+                                "id": "msg_loopback_2",
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [],
+                                "model": "claude-sonnet-5",
+                                "stop_reason": None,
+                                "stop_sequence": None,
+                                "usage": {"input_tokens": 1, "output_tokens": 1},
+                            },
+                        },
+                        {
+                            "type": "content_block_start",
+                            "index": 0,
+                            "content_block": {"type": "text", "text": ""},
+                        },
+                        {
+                            "type": "content_block_delta",
+                            "index": 0,
+                            "delta": {"type": "text_delta", "text": "sandbox checked"},
+                        },
+                        {"type": "content_block_stop", "index": 0},
+                        {
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                            "usage": {"output_tokens": 1},
+                        },
+                        {"type": "message_stop"},
+                    ]
+                )
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("content-length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _LoopbackAnthropicHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-loopback-test-key")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", f"http://127.0.0.1:{server.server_port}")
+    monkeypatch.setenv(
+        "BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evaluator_root), str(history_root), str(sibling_root)])
+    )
+    try:
+        runner = script_run_agentic.ModelRunner("sonnet", script_run_agentic.MODELS["sonnet"], worktree, timeout=30)
+        events, _elapsed_s, error = runner.run_stage_events(
+            prompt="Use the Bash tool when instructed.",
+            system_prompt="Follow the model response.",
+            arm="A_plain",
+            cwd=worktree,
+        )
+        baseline_requests = list(requests)
+        requests.clear()
+        tool_uses[:] = [("toolu_runtime_query", "Bash", {"command": "codemap-py query --compact symbol allowed"})]
+        graph_task = script_run_agentic.Task(
+            id="native-graph-runtime",
+            type="blast_radius_analysis",
+            prompt="Run the staged compact Codemap query.",
+        )
+        runtime_result = runner.run(graph_task, "C_strict")
+        runtime_events = runtime_result.raw_events
+        runtime_requests = list(requests)
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+    assert error is None
+    assert runtime_result.error == ""
+    tool_result_request = next(
+        (request for request in baseline_requests if "tool_result" in json.dumps(request, separators=(",", ":"))),
+        None,
+    )
+    assert tool_result_request is not None, json.dumps([request.get("messages") for request in baseline_requests])
+    serialized_tool_result = json.dumps(tool_result_request)
+    for denied_marker in ("ORACLE-DO-NOT-EXPOSE", "HISTORY-DO-NOT-EXPOSE", "SIBLING-DO-NOT-EXPOSE"):
+        assert denied_marker not in serialized_tool_result
+    assert "SOURCE-ALLOWED" in serialized_tool_result
+    for denied_tool_id in ("toolu_oracle_bash", "toolu_history_bash", "toolu_sibling_bash", "toolu_oracle_read"):
+        tool_result = next(
+            content
+            for message in tool_result_request["messages"]
+            for content in message["content"]
+            if isinstance(content, Mapping)
+            and content.get("type") == "tool_result"
+            and content.get("tool_use_id") == denied_tool_id
+        )
+        serialized_denial = json.dumps(tool_result)
+        assert tool_result["is_error"] is True
+        assert any(
+            phrase in serialized_denial
+            for phrase in ("Permission denied", "Operation not permitted", "denied by your permission settings")
+        )
+    assert any(event.get("type") == "result" and event.get("subtype") == "success" for event in events)
+    runtime_request = next(
+        request for request in runtime_requests if "toolu_runtime_query" in json.dumps(request, separators=(",", ":"))
+    )
+    assert "codemap-py query --compact symbol allowed" in json.dumps(runtime_request)
+    runtime_tool_result_request = next(
+        request for request in runtime_requests if "tool_result" in json.dumps(request, separators=(",", ":"))
+    )
+    runtime_tool_result = next(
+        content
+        for message in runtime_tool_result_request["messages"]
+        for content in message["content"]
+        if isinstance(content, Mapping)
+        and content.get("type") == "tool_result"
+        and content.get("tool_use_id") == "toolu_runtime_query"
+    )
+    assert runtime_tool_result.get("is_error") is not True
+    assert "<tool_use_error>" not in json.dumps(runtime_tool_result)
+    assert any(event.get("type") == "result" and event.get("subtype") == "success" for event in runtime_events)
+    runtime_evidence = script_run_agentic._claude_codemap_evidence(runtime_events)
+    assert runtime_evidence["codemap_compact_success"] is True, json.dumps(
+        {"evidence": runtime_evidence, "tool_result": runtime_tool_result}, default=str
+    )
+    assert runtime_result.codemap_compact_success is True
+    assert len(runtime_result.index_relocations) == 1
+    assert runtime_result.index_relocations[0]["source_scan_root"] == str(worktree.resolve())
+    assert json.loads(runtime_tool_result["content"])["index"]["root_mismatch"] is False
+
+
 # ===========================================================================
 # BA query arms run in an isolated copy, not the real repo
 # ===========================================================================
@@ -3821,6 +4955,230 @@ class TestParityArmReport:
         ]
         task = mod.Task(id="BA-01", type="blast_radius_analysis", prompt="p")
         assert mod.Report(results, [task], {})._baseline_arm() == "plain"
+
+
+class TestCanonicalPassReporting:
+    """Prospective Claude A/B/C rows must retain shared pass-reporting inputs."""
+
+    @pytest.mark.parametrize(
+        ("success", "incomplete", "correct", "quality_score", "graded_score", "marker", "quality_text"),
+        [
+            pytest.param(False, True, True, 1.0, 0.75, "!", "0.0%", id="execution-incomplete"),
+            pytest.param(True, False, True, 1.0, 1.0, "✓", "100.0%", id="exact-pass"),
+            pytest.param(True, False, False, 0.0, 56 / 57, "✗", "98.2%", id="completed-nearcorrect"),
+        ],
+    )
+    def test_canonical_progress_uses_admitted_grade_and_exact_marker(
+        self,
+        script_run_agentic: Any,
+        success: bool,
+        incomplete: bool,
+        correct: bool,
+        quality_score: float,
+        graded_score: float,
+        marker: str,
+        quality_text: str,
+    ) -> None:
+        """Canonical progress shows shared admitted quality and the execution/exact status marker."""
+        task = script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p")
+        result = script_run_agentic.BenchmarkRun(
+            arm="A_plain",
+            task_id=task.id,
+            task_type=task.type,
+            model="haiku",
+            success=success,
+            parity_arm="A_plain",
+            incomplete=incomplete,
+            answer_contract_valid=True,
+            answer_pooling_eligible=True,
+            treatment_adherence=True,
+            answer_correct=correct,
+            answer_quality_score=quality_score,
+            answer_components={"production_importers": quality_score},
+            answer_graded_score=graded_score,
+            answer_graded_components={"production_importers": graded_score},
+        )
+
+        line = script_run_agentic._run_line(1, 1, task, "haiku", "A_plain", result)
+
+        assert f"quality={quality_text}" in line
+        assert f" exact={marker}" in line
+        assert "erec=" not in line
+
+    def test_legacy_progress_retains_evidence_recall(self, script_run_agentic: Any) -> None:
+        """Legacy progress retains its existing evidence-recall quality suffix."""
+        task = script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p")
+        result = script_run_agentic.BenchmarkRun(
+            arm="plain",
+            task_id=task.id,
+            task_type=task.type,
+            model="haiku",
+            success=True,
+            quality=script_run_agentic.QualityScore(scored=True, erec=0.5, rrec=0.25),
+        )
+
+        line = script_run_agentic._run_line(1, 1, task, "haiku", "plain", result)
+
+        assert "erec= 50% rrec= 25%" in line
+        assert " exact=" not in line
+
+    def test_normalized_row_keeps_unavailable_native_usage_as_none(self, script_run_agentic: Any) -> None:
+        """A failed stream without terminal usage is not a measured zero-token cell."""
+        result = script_run_agentic.BenchmarkRun(
+            arm="C_strict",
+            task_id="BA-01",
+            task_type="blast_radius_analysis",
+            model="haiku",
+            success=False,
+            repetition=2,
+            parity_arm="C_strict",
+            answer_contract_valid=False,
+            answer_pooling_eligible=False,
+            treatment_adherence=False,
+            incomplete=True,
+            error_type="error_timeout",
+        )
+
+        row = script_run_agentic._canonical_agentic_row(result)
+
+        assert row["repetition"] == 2
+        assert row["quality"] == {
+            "correct": None,
+            "quality_score": None,
+            "components": {},
+            "graded_score": None,
+            "graded_components": {},
+        }
+        assert row["input_tokens"] is None
+        assert row["cached_input_tokens"] is None
+        assert row["fresh_input_tokens"] is None
+        assert row["output_tokens"] is None
+        assert row["elapsed_s"] is None
+
+    def test_normalized_row_keeps_graded_semantic_quality_diagnostic(self, script_run_agentic: Any) -> None:
+        """Canonical rows preserve additive graded quality without changing exact quality fields."""
+        result = script_run_agentic.BenchmarkRun(
+            arm="A_plain",
+            task_id="BA-01",
+            task_type="blast_radius_analysis",
+            model="haiku",
+            success=True,
+            parity_arm="A_plain",
+            answer_contract_valid=True,
+            answer_pooling_eligible=True,
+            treatment_adherence=True,
+            answer_quality_score=0.0,
+            answer_correct=False,
+            answer_components={"production_importers": 0.0},
+            answer_graded_score=0.5,
+            answer_graded_components={"production_importers": 0.5},
+            usage_complete=True,
+        )
+
+        row = script_run_agentic._canonical_agentic_row(result)
+
+        assert row["quality"] == {
+            "correct": False,
+            "quality_score": 0.0,
+            "components": {"production_importers": 0.0},
+            "graded_score": 0.5,
+            "graded_components": {"production_importers": 0.5},
+        }
+
+    def test_rolling_canonical_metadata_keeps_missing_cells_in_each_model_scope(
+        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
+    ) -> None:
+        """One completed A cell leaves B and C as unobserved, not omitted, in its model headline."""
+        task = script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p")
+        benchmark = script_run_agentic.Benchmark(
+            tasks=[task],
+            arms=list(script_run_agentic.AGENTIC_ARMS),
+            models=[("haiku", script_run_agentic.MODELS["haiku"])],
+            repo_path=tmp_path,
+            index_path=tmp_index,
+            output_path=tmp_path / "results.json",
+            log_path=tmp_path / "tool-calls.jsonl",
+        )
+        benchmark.results.append(
+            script_run_agentic.BenchmarkRun(
+                arm="A_plain",
+                task_id="BA-01",
+                task_type="blast_radius_analysis",
+                model="haiku",
+                success=True,
+                parity_arm="A_plain",
+                answer_contract_valid=True,
+                answer_pooling_eligible=True,
+                treatment_adherence=True,
+                answer_quality_score=1.0,
+                answer_correct=True,
+                answer_graded_score=1.0,
+                answer_graded_components={"production_importers": 1.0},
+                usage_complete=True,
+            )
+        )
+
+        metadata: dict[str, Any] = {}
+        benchmark._update_canonical_reporting(metadata)
+
+        summary = metadata["agentic_reporting"]["summaries_by_model"]["haiku"]
+        assert summary["all_assigned"]["A_plain"]["passed_cells"] == 1
+        assert summary["all_assigned"]["B_auto"]["unobserved_cells"] == 1
+        assert summary["all_assigned"]["C_strict"]["unobserved_cells"] == 1
+
+    def test_first_cell_interruption_persists_all_assigned_zero_observed_summary(
+        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
+    ) -> None:
+        """An interruption before the first native row still leaves a canonical denominator snapshot."""
+        output_path = tmp_path / "results.json"
+        benchmark = script_run_agentic.Benchmark(
+            tasks=[script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p")],
+            arms=list(script_run_agentic.AGENTIC_ARMS),
+            models=[("haiku", script_run_agentic.MODELS["haiku"])],
+            repo_path=tmp_path,
+            index_path=tmp_index,
+            output_path=output_path,
+            log_path=tmp_path / "tool-calls.jsonl",
+        )
+
+        with (
+            patch.object(script_run_agentic.ModelRunner, "run", side_effect=KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            benchmark.run({})
+
+        snapshot = json.loads(output_path.read_text(encoding="utf-8"))
+        summary = snapshot["metadata"]["agentic_reporting"]["summaries_by_model"]["haiku"]
+        assert snapshot["results"] == []
+        for arm in script_run_agentic.AGENTIC_ARMS:
+            assert summary["all_assigned"][arm]["observed_cells"] == 0
+            assert summary["all_assigned"][arm]["unobserved_cells"] == 1
+            assert summary["all_assigned"][arm]["failed_cells"] == 1
+
+    def test_legacy_first_cell_interruption_does_not_create_a_new_snapshot(
+        self, tmp_index: Path, tmp_path: Path, script_run_agentic: Any
+    ) -> None:
+        """Legacy execution keeps its historical no-snapshot-before-first-result behavior."""
+        output_path = tmp_path / "legacy-results.json"
+        benchmark = script_run_agentic.Benchmark(
+            tasks=[script_run_agentic.Task(id="BA-01", type="blast_radius_analysis", prompt="p")],
+            arms=["plain"],
+            models=[("haiku", script_run_agentic.MODELS["haiku"])],
+            repo_path=tmp_path,
+            index_path=tmp_index,
+            output_path=output_path,
+            log_path=tmp_path / "tool-calls.jsonl",
+        )
+        metadata: dict[str, Any] = {}
+
+        with (
+            patch.object(script_run_agentic.ModelRunner, "run", side_effect=KeyboardInterrupt),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            benchmark.run(metadata)
+
+        assert not output_path.exists()
+        assert "agentic_reporting" not in metadata
 
 
 # ===========================================================================

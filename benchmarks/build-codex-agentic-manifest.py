@@ -24,7 +24,7 @@ TASKS_PATH = BENCHMARKS / "suites" / "tasks-agentic.json"
 OUTPUT_MANIFEST = MANIFESTS / "codex-agentic.json"
 OUTPUT_HUMAN_MANIFEST = MANIFESTS / "codex-agentic.md"
 EXPERIMENT_ID = "codex-agentic"
-EXPERIMENT_REVISION = "codex-agentic-verified-launcher-balanced-order-2026-09-07"
+EXPERIMENT_REVISION = "codex-agentic-nested-package-imports-2026-09-09"
 sys.path.insert(0, str(BENCHMARKS))
 from _bench_common.agentic_contracts import AGENTIC_ARMS, DEFAULT_REPETITIONS, materialize_agentic_prompt  # noqa: E402
 from _bench_common.provider_parity_contracts import canonical_task_hash, semantic_suite_hash  # noqa: E402
@@ -106,6 +106,7 @@ def _artifact_hashes() -> dict[str, str]:
         "codex_structural_runner": "benchmarks/run-codex-structural.py",
         "codex_structural_manifest": "benchmarks/manifests/codex-integration.json",
         "agentic_contracts": "benchmarks/_bench_common/agentic_contracts.py",
+        "agentic_reporting": "benchmarks/_bench_common/agentic_reporting.py",
         "run_all": "benchmarks/run-all.sh",
     }
     return {name: _sha256(ROOT / relative_path) for name, relative_path in paths.items()}
@@ -198,6 +199,21 @@ def _build_manifest() -> dict[str, Any]:
         },
         "scoring": {
             "provider": "provider_neutral_answer_contract",
+            "measurement_scope": "static_graph_query",
+            "quality_claim_limit": "Declared static graph facts only; no behavioral change-impact or implementation correctness claim.",
+            "reporting_version": "agentic-graded-v2",
+            "graded_scoring": {
+                "aggregation": "unweighted mean of required field grades; invalid execution/format/treatment contributes zero over all assigned cells",
+                "counts": "min(actual, expected) / max(actual, expected); equal zeros score one; invalid or missing scores zero",
+                "count_maps": "2 * sum proportional expected-key count credit / (expected keys + actual keys)",
+                "rankings": "longest common subsequence length / max(expected length, actual length)",
+                "other_fields": "retain legacy field scoring; exact correctness remains a separate diagnostic",
+            },
+            "efficiency_policy": (
+                "Pair A_plain with each treatment within task/repetition/model only when both cells pass; "
+                "report per-metric eligibility and missing/zero-baseline exclusions. Report pass improvements, "
+                "regressions, both-fail and unobserved transitions separately. B_auto remains diagnostic."
+            ),
             "implementation": {
                 "path": "benchmarks/_bench_common/agentic_contracts.py",
                 "sha256": artifact_hashes["agentic_contracts"],
@@ -206,7 +222,9 @@ def _build_manifest() -> dict[str, Any]:
                 "evidence_symbol": "score_evidence_metrics",
             },
             "metrics": {
-                "SCORE": "mean semantic component score for each declared answer-contract field",
+                "quality": "graded admitted credit / all assigned cells; unknown grading is explicitly unavailable",
+                "pass": "fully correct, completed, valid, uncontaminated and treatment-adherent cells / all assigned cells",
+                "component": "secondary mean semantic component score over scored cells; report scored denominator",
                 "EREC": "expected-importer recall in all agent text, independent of answer-envelope validity",
                 "RREC": "expected-importer recall in the final report, independent of answer-envelope validity",
                 "DEFF": "unbounded expected-importer exposure hits per command",
@@ -319,7 +337,11 @@ def _human_bytes(manifest: dict[str, Any], machine_sha256: str) -> bytes:
         "",
         "## Shared scoring",
         "",
-        "- `SCORE` is the mean semantic component score for every declared answer-contract field.",
+        "This suite measures static graph-query accuracy and efficiency, not behavioral change-impact or implementation correctness. Perfect scores can indicate a ceiling; difficulty labels are not calibrated model-capability tiers.",
+        "",
+        "- `quality` is graded admitted credit / all assigned cells. Counts get proportional credit; rankings use ordered subsequence overlap. Invalid execution, format, treatment and unobserved cells contribute zero; unknown grading is unavailable.",
+        "- `exact_pass` is the separate fully correct, completed, valid, uncontaminated and treatment-adherent fraction, including failures and unobserved cells.",
+        "- `component` is secondary partial credit with an explicit scored denominator. Both-pass-only paired efficiency is conditional, not overall savings; improvements and regressions are reported separately.",
         "- `EREC` and `RREC` are raw-text recall diagnostics independent of answer-envelope validity; `DEFF` is unbounded expected-importer exposure hits per command.",
         "- A strict labelled envelope is eligible under the response protocol. One complete bare JSON object is diagnostic-only and never poolable; malformed or ambiguous answers remain semantically unscored.",
         "",

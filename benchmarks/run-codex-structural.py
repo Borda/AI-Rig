@@ -174,14 +174,17 @@ from uuid import uuid4
 
 import sys
 
-if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI only
-    import msvcrt
-else:
-    import fcntl
-
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _bench_codex import plugin_registration, runtime  # noqa: E402
+from _bench_common.coordination_gate import (  # noqa: E402
+    COORDINATION_NAME as _COORDINATION_NAME,
+    assert_coordination_root_idle as _assert_coordination_root_idle,
+    assert_safe_path_components as _assert_safe_path_components,
+    cleanup_coordination_root as _cleanup_coordination_root,
+    prepare_coordination_root,
+    validate_coordination_root as _validate_coordination_root,
+)
 from _bench_common.mutation_isolation import (  # noqa: E402
     ExecutableAgentWorkspace,
     load_index_relocation,
@@ -229,11 +232,9 @@ _PROVENANCE_KEY = "_codex_provenance"
 _NATIVE_ITEM_TELEMETRY_CONTRACT_ID = "installed-skill-binding-locked-query-components-v3"
 _PLAIN_PERMISSION_PROFILE = "provider-parity-plain"
 _CODEMAP_PERMISSION_PROFILE = "provider-parity-codemap"
-_COORDINATION_NAME = ".index-rw"
 _FROZEN_MARKETPLACE_NAME = "borda-ai-rig-frozen"
-_REGISTRY_NAME = "registry.lock"
-_READERS_NAME = "readers"
 _AUTH_MAX_BYTES = 1024 * 1024
+_BENCHMARK_EVIDENCE_ROOTS_ENV = "BENCHMARK_EVIDENCE_ROOTS"
 
 
 def _print_result_block(rows: Iterable[tuple[str, str]], *, printed_cells: int, planned_cells: int) -> int:
@@ -503,14 +504,18 @@ def _validate_locked_runtime(
     diff_impact_stage: DiffImpactStageAdmission | None = None,
     index_relocation: Mapping[str, str] | None = None,
     historical_runtime_coordinate: Mapping[str, str] | None = None,
+    fixture_runtime_coordinate: Mapping[str, Any] | None = None,
 ) -> None:
-    """Fail closed unless the target repository and index match a frozen runtime coordinate.
+    """Fail closed unless the target repository and index match one explicit frozen coordinate."""
+    if fixture_runtime_coordinate is not None:
+        if diff_impact_stage is not None or historical_runtime_coordinate is not None or index_relocation is not None:
+            raise ValueError("fixture runtime coordinate cannot combine with graph runtime admission")
+        if index_path is None:
+            raise ValueError("fixture runtime coordinate requires a frozen index")
+        from _bench_codex.fixture_runtime import validate_fixture_runtime
 
-    Ordinary structural and executable stages remain locked to the active provider-parity manifest. Historical Patch
-    tasks instead supply the reviewed baseline commit, raw source-index digest, and scan version for their individual
-    frozen coordinate. This is deliberately an opt-in path: a caller cannot relax the manifest lock merely by relocating
-    an index.
-    """
+        validate_fixture_runtime(repo_path, index_path, fixture_runtime_coordinate)
+        return
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         manifest_index = manifest["index"]
@@ -896,6 +901,7 @@ class ArmHome:
     codemap_context_path: Path | None = None
     codemap_context_sha256: str = ""
     denied_read_paths: tuple[Path, ...] = ()
+    evidence_probe_paths: tuple[Path, ...] = ()
     host_plugin_names: tuple[str, ...] = ()
 
     def cleanup(self) -> None:
@@ -1172,20 +1178,6 @@ def _copy_auth_source(auth_source: Path, home: Path) -> None:
     _atomic_write_auth_payload(Path(home) / "auth.json", payload, description="cell auth state")
 
 
-def _assert_safe_path_components(path: Path) -> None:
-    """Reject symlink components in an existing absolute filesystem path."""
-    absolute = Path(os.path.abspath(path))
-    current = Path(absolute.anchor)
-    for part in absolute.parts[1:]:
-        current /= part
-        try:
-            metadata = current.lstat()
-        except FileNotFoundError:
-            continue
-        if stat.S_ISLNK(metadata.st_mode):
-            raise ValueError(f"permission path contains a symlink: {current}")
-
-
 def _canonical_index_path(index_path: Path) -> Path:
     """Return one regular, single-link index path with no symlink components."""
     absolute = Path(os.path.abspath(index_path))
@@ -1201,141 +1193,17 @@ def _canonical_index_path(index_path: Path) -> Path:
     return absolute.resolve(strict=True)
 
 
-def _try_lock_coordination_file(fd: int) -> bool:
-    """Try to lock one rwgate coordination handle without blocking."""
-    try:
-        if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI only
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-        else:
-            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return False
-    return True
-
-
-def _unlock_coordination_file(fd: int) -> None:
-    """Release one rwgate coordination handle held by this process."""
-    try:
-        if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI only
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-        else:
-            fcntl.lockf(fd, fcntl.LOCK_UN)
-    except OSError:
-        pass
-
-
-def _reap_stale_reader_tokens(readers: Path, registry: Path) -> None:
-    """Remove unlocked reader tokens while preserving live rwgate leases."""
-    registry_fd = os.open(registry, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
-    registry_locked = False
-    try:
-        registry_locked = _try_lock_coordination_file(registry_fd)
-        if not registry_locked:
-            raise ValueError("Codemap coordination registry is busy")
-        live_tokens: list[str] = []
-        for token in sorted(readers.iterdir()):
-            try:
-                metadata = token.lstat()
-            except FileNotFoundError:
-                continue
-            if token.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-                raise ValueError(f"Codemap readers path has an unsafe entry: {token.name}")
-            try:
-                token_fd = os.open(token, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0))
-            except FileNotFoundError:
-                continue
-            try:
-                if not _try_lock_coordination_file(token_fd):
-                    live_tokens.append(token.name)
-                    continue
-                _unlock_coordination_file(token_fd)
-            finally:
-                os.close(token_fd)
-            with contextlib.suppress(FileNotFoundError):
-                token.unlink()
-        if live_tokens:
-            raise ValueError(f"Codemap coordination root has live reader tokens: {live_tokens}")
-    finally:
-        if registry_locked:
-            _unlock_coordination_file(registry_fd)
-        os.close(registry_fd)
-
-
-def _validate_coordination_root(coordination_root: Path) -> None:
-    """Fail unless the coordination root is a safe, idle rwgate skeleton."""
-    _assert_safe_path_components(coordination_root)
-    try:
-        root_metadata = coordination_root.lstat()
-    except OSError as exc:
-        raise ValueError("Codemap coordination root is unavailable") from exc
-    if not stat.S_ISDIR(root_metadata.st_mode):
-        raise ValueError("Codemap coordination root must be a directory")
-
-    allowed = {_READERS_NAME, _REGISTRY_NAME}
-    entries = {entry.name for entry in coordination_root.iterdir()}
-    if entries != allowed:
-        raise ValueError(f"Codemap coordination root has unexpected or live entries: {sorted(entries - allowed)}")
-
-    readers = coordination_root / _READERS_NAME
-    registry = coordination_root / _REGISTRY_NAME
-    readers_metadata = readers.lstat()
-    registry_metadata = registry.lstat()
-    if not stat.S_ISDIR(readers_metadata.st_mode) or readers.is_symlink():
-        raise ValueError("Codemap readers path must be a real directory")
-    if not stat.S_ISREG(registry_metadata.st_mode) or registry.is_symlink():
-        raise ValueError("Codemap registry must be a regular file")
-    if registry_metadata.st_nlink != 1 or registry.read_bytes() != b"L":
-        raise ValueError("Codemap registry identity is invalid")
-    _reap_stale_reader_tokens(readers, registry)
-
-
-def _prepare_coordination_root(index_path: Path) -> Path:
-    """Create a clean index-local rwgate skeleton before sandboxed execution."""
-    canonical_index = _canonical_index_path(index_path)
-    coordination_root = canonical_index.parent / _COORDINATION_NAME
-    if coordination_root.exists() or coordination_root.is_symlink():
-        _validate_coordination_root(coordination_root)
-        return coordination_root
-
-    try:
-        coordination_root.mkdir(mode=0o700)
-        readers = coordination_root / _READERS_NAME
-        readers.mkdir(mode=0o700)
-        registry = coordination_root / _REGISTRY_NAME
-        fd = os.open(
-            registry,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-        )
-        try:
-            os.write(fd, b"L")
-        finally:
-            os.close(fd)
-    except OSError as exc:
-        raise ValueError("Codemap coordination root could not be created safely") from exc
-    _validate_coordination_root(coordination_root)
-    return coordination_root
-
-
-def _cleanup_coordination_root(coordination_root: Path) -> None:
-    """Remove only a validated, idle rwgate skeleton."""
-    _validate_coordination_root(coordination_root)
-    try:
-        (coordination_root / _REGISTRY_NAME).unlink()
-        (coordination_root / _READERS_NAME).rmdir()
-        coordination_root.rmdir()
-    except OSError as exc:
-        raise ValueError("Codemap coordination root cleanup failed") from exc
+def _prepare_coordination_root(index_path: Path, coordination_root: Path | None = None) -> Path:
+    """Create a clean rwgate skeleton for the index, relocated when ``coordination_root`` names a directory."""
+    return prepare_coordination_root(_canonical_index_path(index_path).parent, coordination_root)
 
 
 # Declared stage surface: supported replacements for stage-module reach-ins into
 # private names. Each delegates rather than aliases, so tests patching the private
 # attribute are still observed through the public one.
-def cleanup_coordination_root(coordination_root: Path) -> None:
-    """Remove only a validated, idle rwgate skeleton."""
-    _cleanup_coordination_root(coordination_root)
+def cleanup_coordination_root(coordination_root: Path) -> list[str]:
+    """Discard an idle rwgate skeleton and report the non-skeleton entries removed with it."""
+    return _cleanup_coordination_root(coordination_root)
 
 
 def _shell_environment(home: ArmHome) -> dict[str, str]:
@@ -1347,6 +1215,7 @@ def _shell_environment(home: ArmHome) -> dict[str, str]:
     }
     for name in (
         "CODEMAP_BIN",
+        "CODEMAP_COORDINATION_DIR",
         "CODEMAP_SKILL_FILE",
         "CODEMAP_PYTHON",
         "SCAN_NO_AUTOBUILD",
@@ -1382,6 +1251,55 @@ def _untrusted_host_agent_roots(
     return tuple(denied)
 
 
+def _benchmark_evidence_roots(environment: Mapping[str, str] | None = None) -> tuple[Path, ...]:
+    """Return absolute evaluator roots that measured cells must not read."""
+    raw_roots = (os.environ if environment is None else environment).get(_BENCHMARK_EVIDENCE_ROOTS_ENV)
+    if raw_roots is None:
+        return (Path(__file__).resolve().parent.parent,)
+    try:
+        serialized_roots = json.loads(raw_roots)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{_BENCHMARK_EVIDENCE_ROOTS_ENV} must be a JSON array") from exc
+    if (
+        not isinstance(serialized_roots, list)
+        or not serialized_roots
+        or not all(isinstance(root, str) and root for root in serialized_roots)
+    ):
+        raise ValueError(f"{_BENCHMARK_EVIDENCE_ROOTS_ENV} must contain non-empty path strings")
+
+    roots: list[Path] = []
+    for raw_root in serialized_roots:
+        candidate = Path(raw_root)
+        if not candidate.is_absolute():
+            raise ValueError(f"{_BENCHMARK_EVIDENCE_ROOTS_ENV} paths must be absolute")
+        try:
+            root = candidate.resolve(strict=False)
+        except OSError as exc:
+            raise ValueError(f"benchmark evidence root is unavailable: {candidate}") from exc
+        if root.exists() and not root.is_dir():
+            raise ValueError(f"benchmark evidence root must be a directory: {root}")
+        if root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _evidence_probe_paths(evidence_roots: Iterable[Path]) -> tuple[Path, ...]:
+    """Return oracle files."""
+    candidates = (
+        Path("benchmarks") / "run-codex-structural.py",
+        Path("inputs") / "shared" / "run-codex-structural.py",
+        Path("inputs") / "input-snapshot.json",
+    )
+    probes: list[Path] = []
+    for root in evidence_roots:
+        for relative_path in candidates:
+            probe = root / relative_path
+            if probe.is_file() and not probe.is_symlink():
+                probes.append(probe)
+                break
+    return tuple(probes)
+
+
 def _write_permission_config(
     home: ArmHome,
     arm: str,
@@ -1390,6 +1308,7 @@ def _write_permission_config(
     marketplace_root: Path | None = None,
     writable_workspace: Path | None = None,
     denied_workspace: Path | None = None,
+    evidence_roots: Iterable[Path] = (),
 ) -> Path:
     """Compose permissions ahead of any preserved Codex plugin registration."""
     if not _is_known_codex_arm(arm):
@@ -1397,11 +1316,17 @@ def _write_permission_config(
     profile = _PLAIN_PERMISSION_PROFILE if arm == "A_plain" else _CODEMAP_PERMISSION_PROFILE
     auth_path = (home.path / "auth.json").resolve()
     filesystem_rules = [f'{json.dumps(str(auth_path))} = "deny"']
-    denied_read_paths = _untrusted_host_agent_roots(home, arm, marketplace_root)
+    denied_read_paths = list(_untrusted_host_agent_roots(home, arm, marketplace_root))
     if denied_workspace is not None:
         denied_workspace = denied_workspace.resolve()
         if denied_workspace not in denied_read_paths:
-            denied_read_paths = (*denied_read_paths, denied_workspace)
+            denied_read_paths.append(denied_workspace)
+    normalized_evidence_roots = tuple(Path(root).resolve(strict=False) for root in evidence_roots)
+    for evidence_root in normalized_evidence_roots:
+        if home.path.resolve().is_relative_to(evidence_root):
+            raise ValueError("disposable Codex home must be outside benchmark evidence roots")
+        if evidence_root not in denied_read_paths:
+            denied_read_paths.append(evidence_root)
     filesystem_rules.extend(f'{json.dumps(str(path))} = "deny"' for path in denied_read_paths)
     if writable_workspace is not None:
         filesystem_rules.append(f'{json.dumps(str(writable_workspace.resolve()))} = "write"')
@@ -1412,7 +1337,7 @@ def _write_permission_config(
     if arm == "A_plain":
         filesystem_rules.append(f'{json.dumps(str(canonical_index.parent))} = "deny"')
     else:
-        coordination_root = canonical_index.parent / _COORDINATION_NAME
+        coordination_root = home.coordination_path or canonical_index.parent / _COORDINATION_NAME
         if coordination_root.is_symlink():
             raise ValueError("Codemap coordination root must not be a symlink")
         filesystem_rules.append(f'{json.dumps(str(coordination_root))} = "write"')
@@ -1428,6 +1353,8 @@ def _write_permission_config(
             'inherit = "none"',
             "ignore_default_excludes = false",
             f"set = {{ {explicit_environment} }}",
+            "",
+            "[permissions]",
             "",
             f"[permissions.{profile}]",
             'description = "Read-only provider parity with isolated Codemap coordination."',
@@ -1457,7 +1384,8 @@ def _write_permission_config(
     config_path.chmod(0o600)
     home.permission_profile = profile
     home.coordination_path = coordination_root
-    home.denied_read_paths = denied_read_paths
+    home.denied_read_paths = tuple(denied_read_paths)
+    home.evidence_probe_paths = _evidence_probe_paths(normalized_evidence_roots)
     return config_path
 
 
@@ -1503,6 +1431,7 @@ def prepare_arm_home(
             "CODEX_PAID_APPROVAL",
             "CODEX_AUTH_SOURCE",
             "CODEX_RUN_DIR",
+            _BENCHMARK_EVIDENCE_ROOTS_ENV,
         ):
             env.pop(variable, None)
         env.pop("CODEMAP_SKILL_FILE", None)
@@ -1682,9 +1611,10 @@ def _verify_permission_profile(
     writable_workspace: Path | None = None,
 ) -> None:
     """Prove the selected profile denies secrets/source and permits only coordination."""
+    sandbox_environment = _shell_environment(home)
     code, stdout, stderr = _invoke_plugin_command(
         [_CODEX_BIN, "--version"],
-        home.env,
+        sandbox_environment,
         command_runner=command_runner,
     )
     if code != 0 or not f"{stdout}\n{stderr}".strip():
@@ -1696,7 +1626,7 @@ def _verify_permission_profile(
     # An activated project virtualenv may expose a workspace symlink even when
     # the running interpreter itself lives outside the protected source tree.
     probe_python = str(Path(sys.executable).resolve())
-    sandbox_prefix = [
+    sandbox_command = [
         _CODEX_BIN,
         "sandbox",
         "-P",
@@ -1705,22 +1635,38 @@ def _verify_permission_profile(
         "-C",
         str(repo_path),
         "--",
+    ]
+    sandbox_prefix = [
+        *sandbox_command,
         probe_python,
         "-c",
     ]
     code, _stdout, error = _invoke_plugin_command(
         [*sandbox_prefix, "pass"],
-        home.env,
+        sandbox_environment,
         command_runner=command_runner,
     )
     if code != 0:
         raise ValueError(f"Codex permission profile is unsupported or rejected: {error[:200]}")
 
+    if home.arm != "A_plain" and home.codemap_available:
+        codemap_bin = home.env.get("CODEMAP_BIN")
+        codemap_python = home.env.get("CODEMAP_PYTHON")
+        if not codemap_bin or not codemap_python:
+            raise ValueError("Codemap permission profile lacks staged runtime paths")
+        code, _stdout, error = _invoke_plugin_command(
+            [*sandbox_command, codemap_bin, "--help"],
+            sandbox_environment,
+            command_runner=command_runner,
+        )
+        if code != 0:
+            raise ValueError(f"Codex permission profile denied staged Codemap runtime: {error[:200]}")
+
     source_probe = repo_path / f".codex-parity-write-{uuid4().hex}"
     write_script = "from pathlib import Path; import sys; Path(sys.argv[1]).write_bytes(b'probe')"
     code, _stdout, _stderr = _invoke_plugin_command(
         [*sandbox_prefix, write_script, str(source_probe)],
-        home.env,
+        sandbox_environment,
         command_runner=command_runner,
     )
     if writable_workspace is None:
@@ -1736,7 +1682,7 @@ def _verify_permission_profile(
     if auth_path.exists():
         code, probe_stdout, probe_stderr = _invoke_plugin_command(
             [*sandbox_prefix, read_script, str(auth_path)],
-            home.env,
+            sandbox_environment,
             command_runner=command_runner,
         )
         if code == 0:
@@ -1752,16 +1698,25 @@ def _verify_permission_profile(
             continue
         code, probe_stdout, _probe_stderr = _invoke_plugin_command(
             [*sandbox_prefix, enumerate_script, str(denied_root)],
-            home.env,
+            sandbox_environment,
             command_runner=command_runner,
         )
         if code == 0 or probe_stdout:
             raise ValueError("Codex permission profile allowed host tooling discovery")
 
+    for evidence_probe in home.evidence_probe_paths:
+        code, probe_stdout, _probe_stderr = _invoke_plugin_command(
+            [*sandbox_prefix, read_script, str(evidence_probe)],
+            sandbox_environment,
+            command_runner=command_runner,
+        )
+        if code == 0 or probe_stdout:
+            raise ValueError("Codex permission profile allowed benchmark evaluator evidence reads")
+
     if index_path is not None:
         code, _stdout, error = _invoke_plugin_command(
             [*sandbox_prefix, read_script, str(index_path)],
-            home.env,
+            sandbox_environment,
             command_runner=command_runner,
         )
         if home.arm == "A_plain" and code == 0:
@@ -1773,7 +1728,7 @@ def _verify_permission_profile(
         coordination_probe = home.coordination_path / f".codex-parity-allow-{uuid4().hex}"
         code, _stdout, error = _invoke_plugin_command(
             [*sandbox_prefix, write_script, str(coordination_probe)],
-            home.env,
+            sandbox_environment,
             command_runner=command_runner,
         )
         if code != 0 or not coordination_probe.is_file():
@@ -2295,12 +2250,18 @@ def _archive_snapshot_tree(
     role: str,
     entries: list[dict[str, Any]],
 ) -> None:
-    """Archive every regular file in one verified package/runtime tree."""
+    """Archive runtime files while excluding private evaluator, cache, plan, and test trees."""
     root = source_root.resolve(strict=True)
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f"snapshot package root must be a real directory: {source_root}")
+    excluded_parts = {".cache", ".git", ".plans", ".reports", "__pycache__", "test", "tests"}
     for source in sorted(root.rglob("*")):
-        if not source.is_file() or source.is_symlink() or "__pycache__" in source.parts or source.suffix == ".pyc":
+        if (
+            not source.is_file()
+            or source.is_symlink()
+            or source.suffix == ".pyc"
+            or excluded_parts.intersection(source.relative_to(root).parts)
+        ):
             continue
         relative = source.relative_to(root)
         _archive_snapshot_file(
@@ -3031,6 +2992,7 @@ class CodexRunner:
         command_runner: Callable[..., Any] | None = None,
         transport: Callable[..., str | bytes | Iterable[str | bytes]] | None = None,
         evaluator: Callable[[Mapping[str, Any], str], EvaluationResult] | None = None,
+        evidence_roots: Iterable[Path] = (),
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
@@ -3040,12 +3002,9 @@ class CodexRunner:
         self.marketplace_root = marketplace_root.resolve() if marketplace_root else None
         self.codemap_bin = Path(codemap_bin) if codemap_bin else None
         self.manifest_path = Path(manifest_path)
-        # Off the canonical clone the locked graph arrives by relocation, not byte identity. The
-        # provenance is the run's, so every arm home admits against it; an executable stage still
-        # passes its own per-task relocation explicitly.
+        # A relocated index carries run-owned provenance.
         self.index_relocation = dict(index_relocation) if index_relocation is not None else None
-        # Preserve the caller-supplied path so `_copy_auth_source` can reject a
-        # symlink instead of silently dereferencing it during normalization.
+        # Preserve this path so auth-copy rejects symlinks.
         self.auth_source = Path(auth_source) if auth_source else None
         self.plugin_installer = plugin_installer
         self.plugin_probe = plugin_probe
@@ -3053,6 +3012,12 @@ class CodexRunner:
         self.command_runner = command_runner
         self.transport = transport
         self.evaluator = evaluator or _default_evaluator
+        supplied_evidence_roots = tuple(evidence_roots)
+        self._evidence_roots = (
+            tuple(Path(root).resolve(strict=False) for root in supplied_evidence_roots)
+            if supplied_evidence_roots
+            else _benchmark_evidence_roots()
+        )
         self._auth_state: _RunAuthState | None = None
         self._auth_state_dir: Path | None = None
         self._runtime_snapshot_sources: dict[str, dict[str, Path]] = {}
@@ -3060,10 +3025,13 @@ class CodexRunner:
         self._runtime_snapshot_hashes: dict[Path, str] = {}
         self._runtime_snapshot_modes: dict[Path, int] = {}
         self._runtime_evidence_path: Path | None = None
-        # Every coordination-root cleanup failure, from every call site. The same
-        # operation used to be suppressed at three sites, raised at two, and promoted to
-        # cell contamination at one — so a leak on a suppressed path left no trace at all.
+        # Record every coordination-root cleanup failure.
         self.coordination_cleanup_errors: list[str] = []
+
+    @property
+    def evidence_roots(self) -> tuple[Path, ...]:
+        """Return denied roots."""
+        return self._evidence_roots
 
     def _cleanup_coordination(self, coordination_path: Path | None) -> str | None:
         """Remove one coordination root, recording rather than discarding a failure.
@@ -3172,6 +3140,9 @@ class CodexRunner:
         self._runtime_snapshot_hashes = expected_hashes
         self._runtime_snapshot_modes = expected_modes
         self._runtime_evidence_path = snapshot_root.parent / "runtime-isolation.jsonl"
+        runtime_history_root = snapshot_root.parent
+        if runtime_history_root not in self._evidence_roots:
+            self._evidence_roots = (*self._evidence_roots, runtime_history_root)
 
     def _validate_runtime_snapshot_tree(
         self,
@@ -3329,12 +3300,13 @@ class CodexRunner:
         return dict(expected), expected_plugins
 
     def _append_runtime_evidence(self, payload: Mapping[str, Any]) -> None:
-        """Append one private runtime-identity record with deterministic JSON bytes."""
+        """Append one private runtime-identity and evidence-boundary record."""
         if self._runtime_evidence_path is None:
             return
+        record = {**payload, "evidence_roots": [str(root) for root in self._evidence_roots]}
         self._runtime_evidence_path.parent.mkdir(parents=True, exist_ok=True)
         with self._runtime_evidence_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
         self._runtime_evidence_path.chmod(0o600)
 
     def _ensure_auth_state(self) -> _RunAuthState | None:
@@ -3395,15 +3367,13 @@ class CodexRunner:
         denied_workspace: Path | None = None,
         index_relocation: Mapping[str, str] | None = None,
         historical_runtime_coordinate: Mapping[str, str] | None = None,
+        fixture_runtime_coordinate: Mapping[str, Any] | None = None,
     ) -> ArmHome:
         """Create and verify one arm home without invoking a model.
 
-        ``historical_runtime_coordinate`` is reserved for the isolated Patch stage, where the runner is temporarily
-        bound to a reviewed historical worktree and its relocated frozen index. All other callers retain the runtime
-        contract from the active manifest.
+        Historical Patch and copied-fixture coordinates are explicit opt-ins; other callers use the active manifest.
         """
-        # A historical Patch coordinate names its own frozen index, which this run's relocation was
-        # never derived from, so only a relocation handed in with that coordinate may be used here.
+        # Historical coordinates do not inherit the active-run relocation.
         run_relocation = None if historical_runtime_coordinate is not None else self.index_relocation
         _validate_locked_runtime(
             self.repo_path,
@@ -3413,6 +3383,7 @@ class CodexRunner:
             diff_impact_stage,
             index_relocation if index_relocation is not None else run_relocation,
             historical_runtime_coordinate,
+            fixture_runtime_coordinate,
         )
         auth_state = self._ensure_auth_state()
         if auth_state is not None:
@@ -3443,10 +3414,16 @@ class CodexRunner:
                 home.env["SCAN_NO_AUTOBUILD"] = "1"
                 home.env["CODEMAP_LOGGING"] = "false"
                 home.env["CODEX_CODEMAP_AVAILABLE"] = "1"
-                home.coordination_path = _prepare_coordination_root(self.index_path)
+                # Sole writable path of a measured cell: outside the workspace, discarded with this cell's home.
+                gate = home.path.parent / f"{home.path.name}-gate"
+                if gate.resolve().is_relative_to(self.repo_path.resolve()):
+                    raise ValueError("Codemap coordination root must be outside the measured workspace")
+                home.coordination_path = _prepare_coordination_root(self.index_path, gate)
+                home.env["CODEMAP_COORDINATION_DIR"] = str(home.coordination_path)
             else:
                 for variable in (
                     "CODEMAP_BIN",
+                    "CODEMAP_COORDINATION_DIR",
                     "CODEMAP_INDEX",
                     "CODEMAP_INDEX_DIR",
                     "CODEMAP_PYTHON",
@@ -3483,7 +3460,7 @@ class CodexRunner:
                 or not home.codex_rig_manifest_sha256
             ):
                 raise RuntimeError("installed Codemap skill and Codex Rig are not verified")
-            if arm == "C_strict":
+            if arm == "C_strict" and fixture_runtime_coordinate is None:
                 if self.index_path is None:
                     raise ValueError("C_strict admission requires the locked index")
                 _admit_installed_skill_pair(
@@ -3500,6 +3477,7 @@ class CodexRunner:
                 marketplace_root=self.marketplace_root,
                 writable_workspace=writable_workspace,
                 denied_workspace=denied_workspace,
+                evidence_roots=self._evidence_roots,
             )
             if arm == "C_strict":
                 _verify_installed_plugin_pair(home, command_runner=self.command_runner)
@@ -3510,7 +3488,7 @@ class CodexRunner:
                 command_runner=self.command_runner,
                 writable_workspace=writable_workspace,
             )
-            if arm == "B_auto":
+            if arm == "B_auto" and fixture_runtime_coordinate is None:
                 if self.index_path is None:
                     raise ValueError("B_auto admission requires the locked index")
                 _admit_staged_direct_cli(
@@ -3839,7 +3817,8 @@ class CodexRunner:
                     try:
                         self._admit_runtime(arm, diff_impact_stage)
                         if home is not None and home.coordination_path is not None:
-                            _validate_coordination_root(home.coordination_path)
+                            # Liveness and path safety only; gate scratch is permitted output.
+                            _assert_coordination_root_idle(home.coordination_path)
                     except ValueError as exc:
                         postflight_error = str(exc)
                         if diff_impact_stage is not None:

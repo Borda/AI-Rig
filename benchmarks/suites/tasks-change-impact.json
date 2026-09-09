@@ -1,0 +1,39 @@
+{
+  "tasks": [
+    {
+      "id": "CI-01",
+      "type": "change_impact_prediction",
+      "primary_fn": "impactlib.quota::apply",
+      "change": {"kind": "keyword_only", "parameter": "limit", "position": 1},
+      "prompt": "`impactlib.quota.apply` will make `limit` keyword-only. Classify every statically resolved direct production and test callsite as requiring an update or already compatible."
+    },
+    {
+      "id": "CI-02",
+      "type": "change_impact_prediction",
+      "primary_fn": "impactlib.formatting::render",
+      "change": {"kind": "rename_keyword", "old_parameter": "style", "new_parameter": "theme"},
+      "prompt": "`impactlib.formatting.render` will rename keyword `style` to `theme`. Classify every statically resolved direct production and test callsite as requiring an update or already compatible."
+    },
+    {
+      "id": "CI-03",
+      "type": "change_impact_prediction",
+      "primary_fn": "impactlib.retry::invoke",
+      "change": {"kind": "keyword_only", "parameter": "retries", "position": 1},
+      "prompt": "`impactlib.retry.invoke` will make `retries` keyword-only. Classify every statically resolved direct production and test callsite as requiring an update or already compatible."
+    },
+    {
+      "id": "CI-04",
+      "type": "change_impact_prediction",
+      "primary_fn": "impactlib.policy::check",
+      "change": {"kind": "required_argument", "parameter": "allow_none", "position": 1},
+      "prompt": "`impactlib.policy.check` will require `allow_none` instead of supplying a default. Classify every statically resolved direct production and test callsite as requiring an update or already compatible."
+    },
+    {
+      "id": "CI-05",
+      "type": "change_impact_prediction",
+      "primary_fn": "impactlib.transport::connect",
+      "change": {"kind": "rename_keyword", "old_parameter": "timeout", "new_parameter": "connect_timeout"},
+      "prompt": "`impactlib.transport.connect` will rename keyword `timeout` to `connect_timeout`. Classify every statically resolved direct production and test callsite as requiring an update or already compatible."
+    }
+  ]
+}

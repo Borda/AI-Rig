@@ -994,10 +994,6 @@ def test_validate_evidence_rejects_cross_platform_duplicate_output_alias(tmp_pat
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["nodes"][1]["output_path"] = "CHALLENGER.MD"
     _write_json(evidence_path, evidence)
-    (evidence_path.parent / "CHALLENGER.MD").write_text("other final response\n", encoding="utf-8")
-    evidence["nodes"][0]["output_sha256"] = _sha256(b"other final response\n")
-    evidence["nodes"][1]["output_sha256"] = _sha256(b"other final response\n")
-    _write_json(evidence_path, evidence)
 
     with pytest.raises(_adapter().ReviewRouteError, match="evidence-output-path-duplicate"):
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
