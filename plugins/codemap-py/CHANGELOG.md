@@ -2,6 +2,16 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.35.0
+
+- Add `query central --among <modules>`, which ranks only the named modules by their own in-degree instead of the whole repository. It answers the question left over after an importer query — order or threshold *these* modules — which previously had no query behind it: callers either issued one `rdeps` call per candidate and counted the returned lists, or filtered a repository-wide `central` ranking against their candidate set by hand. Requested modules the ranking does not cover are returned as `unmatched`, and `candidate_count` states the scoped set's size, so neither a typo nor an explicit `--top` can drop a candidate silently. Without `--top`, a scoped ranking returns every candidate rather than the repository-wide default of ten.
+
+- Report `importer_count` from `query rdeps`, and `excluded_test_importer_count` when `--exclude-tests` is set, so the production and test importer totals both come from one call. Deriving the test count by subtracting a filtered call from an unfiltered one put an arithmetic step outside the tool, where an off-by-one is indistinguishable from a wrong graph. `importer_count` is the total before any `--limit` truncation.
+
+- Break ties in the repository-wide `central` ranking by module name, matching the `--exclude-tests` path. Equal-count modules previously came back in index order.
+
+- Add `CODEMAP_COORDINATION_DIR`, which moves the read/write gate's `.index-rw` skeleton to a named directory while leaving the index where it resolved. It serves a deployment whose index directory cannot hold lock state — a read-only or shared mount, or a sandbox that grants write access to the gate alone — where the existing `CODEMAP_INDEX_DIR` was the only lever and moved the index along with the locks. The path resolver and the gate now derive the directory through one shared rule, so the directory a caller leases is always the directory the gate initialises. One index per override directory: two projects pointed at the same one share a registry mutex and serialise against each other.
+
 ## 0.34.0
 
 - Preserve standalone coverage, completeness, truncation, and totals in each batch item's `result.index`; summarize only common fields and conservative completion at the batch level. A complete first item no longer masks partial or failed siblings.

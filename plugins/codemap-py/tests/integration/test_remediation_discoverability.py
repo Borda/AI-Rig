@@ -44,7 +44,14 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 # identity, targeted-help routing, distinct-fact settlement, and bounded correction
 # retries. Preserve prior index-root/symbol/runtime safety details; never trim them
 # merely to fit the old bound. Live token savings still require matched measurements.
-_CODEX_QUERY_SKILL_MAX_BYTES = 4100
+# 4100 -> 4600: the scoped-ranking route (`central --among`) and the rule that counts and
+# scoped rankings come from the query rather than from hand work on its output. Every
+# measured wrong answer this skill's arm produced in the agentic benchmark was assembly
+# over correct tool output — a list counted by eye, one call subtracted from another, a
+# repository-wide ranking intersected against a candidate set — so the routing row and the
+# prohibition are the correction, not commentary. The prose was compressed first; the
+# addition is 475 bytes and the bound moves by the smallest round step that holds it.
+_CODEX_QUERY_SKILL_MAX_BYTES = 4600
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:

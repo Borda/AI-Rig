@@ -421,7 +421,12 @@ def _error_suffix(stderr: str) -> str:
 
 
 _ADDITIVE_QUERY_KEYS = frozenset({"unique_total", "unique_qualified_names", "count_semantics"})
-_V12_QUERY_ADDITIONS = {"fn-rdeps": frozenset({"resolved_qname"})}
+# Keys a command gained after the frozen oracle was cut. Every legacy key must still be present and byte-identical;
+# only these names may be added, and each one states a total the caller would otherwise compute from the payload.
+_QUERY_KEY_ADDITIONS = {
+    "fn-rdeps": frozenset({"resolved_qname"}),
+    "rdeps": frozenset({"importer_count"}),
+}
 _V13_REMOVED_NOT_COVERED = frozenset({"relative-import", "from-import-submodule"})
 _COUNT_SEMANTIC_KEYS = {
     "undocumented": frozenset({"total", "unique_total"}),
@@ -477,15 +482,18 @@ def _assert_golden_query_parity(
     assert old.returncode == new.returncode
     assert old.stderr == new.stderr
     command = case[0]
-    if command in _V12_QUERY_ADDITIONS:
+    if command in _QUERY_KEY_ADDITIONS:
         legacy = json.loads(old.stdout)
         current = _drop_loaded_index_path(json.loads(new.stdout))
         assert isinstance(legacy, dict)
         assert isinstance(current, dict)
         _restore_v13_not_covered(legacy, current)
-        assert set(current) == set(legacy) | _V12_QUERY_ADDITIONS[command]
+        assert set(current) == set(legacy) | _QUERY_KEY_ADDITIONS[command]
         assert {key: current[key] for key in legacy} == legacy
-        assert current["resolved_qname"] == legacy["qname"]
+        if command == "fn-rdeps":
+            assert current["resolved_qname"] == legacy["qname"]
+        if command == "rdeps":
+            assert current["importer_count"] == len(current["imported_by"])
         return
     if command not in _COUNT_SEMANTIC_KEYS:
         legacy = json.loads(old.stdout)

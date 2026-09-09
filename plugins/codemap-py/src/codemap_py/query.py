@@ -1907,23 +1907,27 @@ def cmd_rdeps(
 ) -> None:
     """Print all modules that import a given module as JSON.
 
-    Includes static importers (``imported_by``), dynamic importers
-    (``dynamic_imported_by`` — from ``importlib.import_module`` / ``__import__`` string literals),
-    and config-file references (``config_refs`` — from ``pyproject.toml``, ``setup.cfg``, etc.).
+    Includes static importers (``imported_by``), their total before any ``limit`` truncation
+    (``importer_count``), dynamic importers (``dynamic_imported_by`` — from ``importlib.import_module`` /
+    ``__import__`` string literals), and config-file references (``config_refs`` — from ``pyproject.toml``,
+    ``setup.cfg``, etc.). With ``exclude_tests`` the count of importers removed by that filter is reported as
+    ``excluded_test_importer_count``, so production and test totals both come from a single call.
 
     Args:
         index: parsed codemap index dict.
         module: dotted module name whose reverse dependencies are queried.
-        exclude_tests: if True, exclude test modules from static results.
+        exclude_tests: if True, exclude test modules from static results and report how many were removed.
         entity: if set, restrict importers to this :class:`EntityType`.
         limit: maximum static importers to return; 0 keeps the exhaustive default.
     """
     modules_list = index.get("modules", [])
-    if exclude_tests:
-        modules_list = [m for m in modules_list if not m.get("is_test")]
     if entity:
         modules_list = [m for m in modules_list if _entity_type(m) == entity]
-    result = sorted(m["name"] for m in modules_list if module in m.get("direct_imports", []))
+    importers = [m for m in modules_list if module in m.get("direct_imports", [])]
+    excluded_tests = sorted(m["name"] for m in importers if m.get("is_test")) if exclude_tests else []
+    if exclude_tests:
+        importers = [m for m in importers if not m.get("is_test")]
+    result = sorted(m["name"] for m in importers)
     total_available = len(result)
     truncated = limit > 0 and total_available > limit
     if truncated:
@@ -1949,17 +1953,19 @@ def cmd_rdeps(
     if truncated:
         coverage["truncated"] = True
         coverage["total_available"] = total_available
-    _print(
-        json.dumps(
-            {
-                "module": module,
-                "imported_by": result,
-                "dynamic_imported_by": dynamic,
-                "config_refs": config,
-                "index": coverage,
-            }
-        )
-    )
+    payload = {
+        "module": module,
+        "imported_by": result,
+        "importer_count": total_available,
+        "dynamic_imported_by": dynamic,
+        "config_refs": config,
+        "index": coverage,
+    }
+    if exclude_tests:
+        # Both halves of the split come from one call: a caller that has to subtract the returned
+        # list from a second unfiltered call to learn the test count gets the subtraction wrong.
+        payload["excluded_test_importer_count"] = len(excluded_tests)
+    _print(json.dumps(payload))
 
 
 def _production_rdep_counts(index: dict) -> dict[str, int]:
@@ -1980,46 +1986,66 @@ def _production_rdep_counts(index: dict) -> dict[str, int]:
     return counts
 
 
-def cmd_central(index: dict, top: int, exclude_tests: bool = False, entity: EntityType | None = None) -> None:
-    """Print the top N most-imported modules ranked by reverse-dependency count.
+def cmd_central(
+    index: dict,
+    top: int | None,
+    exclude_tests: bool = False,
+    entity: EntityType | None = None,
+    among: Sequence[str] | None = None,
+) -> None:
+    """Print the most-imported modules ranked by reverse-dependency count.
+
+    Ranks the whole repository by default. With *among* it ranks only the named modules, which answers
+    "order *these* modules by their own in-degree" — the question left over after a ``rdeps`` call — without
+    the caller intersecting a repository-wide ranking against its candidate list by hand.
 
     Args:
         index: parsed codemap index dict.
-        top: number of top-ranked modules to return.
+        top: number of top-ranked modules to return; ``None`` means 10 repository-wide, or every candidate
+            when *among* is given, so a scoped ranking is never silently cut short.
         exclude_tests: if True, exclude test modules and their importer edges.
         entity: if set, restrict to this :class:`EntityType`.
+        among: if set, rank only these dotted module names. Names that match no ranked candidate are
+            reported back as ``unmatched`` rather than dropped, so a typo or an excluded module is visible.
     """
     candidates = [m for m in index.get("modules", []) if m.get("status") != "degraded"]
     if exclude_tests:
         candidates = [m for m in candidates if not m.get("is_test")]
     if entity:
         candidates = [m for m in candidates if _entity_type(m) == entity]
+    requested = list(dict.fromkeys(among)) if among else []
+    if among is not None:
+        wanted = set(requested)
+        candidates = [m for m in candidates if m["name"] in wanted]
+    if top is None:
+        top = len(candidates) if among is not None else 10
     if exclude_tests:
         rdep_counts = _production_rdep_counts(index)
         ranked = sorted(candidates, key=lambda m: (-rdep_counts.get(m["name"], 0), m["name"]))[:top]
     else:
         rdep_counts = {}
-        ranked = sorted(candidates, key=lambda m: m.get("rdep_count", 0), reverse=True)[:top]
-    _print(
-        json.dumps(
+        ranked = sorted(candidates, key=lambda m: (-m.get("rdep_count", 0), m["name"]))[:top]
+    payload = {
+        "central": [
             {
-                "central": [
-                    {
-                        "name": m["name"],
-                        "rdep_count": rdep_counts.get(m["name"], m.get("rdep_count", 0)),
-                        "path": m.get("path", ""),
-                    }
-                    for m in ranked
-                ],
-                "index": _cmd_coverage(
-                    index,
-                    method="import-graph",
-                    scope="import-centrality",
-                    not_covered=_IMPORT_GRAPH_NOT_COVERED,
-                ),
+                "name": m["name"],
+                "rdep_count": rdep_counts.get(m["name"], m.get("rdep_count", 0)),
+                "path": m.get("path", ""),
             }
-        )
-    )
+            for m in ranked
+        ],
+        "index": _cmd_coverage(
+            index,
+            method="import-graph",
+            scope="import-centrality",
+            not_covered=_IMPORT_GRAPH_NOT_COVERED,
+        ),
+    }
+    if among is not None:
+        matched = {m["name"] for m in candidates}
+        payload["candidate_count"] = len(candidates)
+        payload["unmatched"] = [name for name in requested if name not in matched]
+    _print(json.dumps(payload))
 
 
 def cmd_coupled(index: dict, top: int, exclude_tests: bool = False, entity: EntityType | None = None) -> None:
@@ -2041,7 +2067,7 @@ def cmd_coupled(index: dict, top: int, exclude_tests: bool = False, entity: Enti
     internal_counts = {
         m["name"]: sum(1 for i in m.get("direct_imports", []) if i in all_module_names) for m in candidates
     }
-    ranked = sorted(candidates, key=lambda m: internal_counts.get(m["name"], 0), reverse=True)[:top]
+    ranked = sorted(candidates, key=lambda m: (-internal_counts.get(m["name"], 0), m["name"]))[:top]
     _print(
         json.dumps(
             {
@@ -2164,6 +2190,23 @@ def _entity_type(m: dict) -> str:
 def _as_entity(raw: str | None) -> EntityType | None:
     """Convert an ``--entity`` CLI value to its member (argparse already gated the choices)."""
     return EntityType(raw) if raw else None
+
+
+def _as_module_list(raw: str | None) -> list[str] | None:
+    """Split a comma-separated ``--among`` value into dotted module names.
+
+    An omitted flag stays ``None`` (rank the repository); a supplied but empty value yields an empty list, which
+    scopes the ranking to nothing rather than silently widening it back to every module.
+
+    Examples:
+        >>> _as_module_list("a.b, c.d")
+        ['a.b', 'c.d']
+        >>> _as_module_list(None) is None
+        True
+    """
+    if raw is None:
+        return None
+    return [name.strip() for name in raw.split(",") if name.strip()]
 
 
 def cmd_packages(index: dict) -> None:
@@ -4687,7 +4730,7 @@ def _add_module_subparsers(sub: argparse._SubParsersAction) -> None:
     )
 
     p_central = sub.add_parser("central", help="Most-imported modules (highest blast radius).")
-    p_central.add_argument("--top", type=int, default=10, metavar="N")
+    p_central.add_argument("--top", type=int, default=None, metavar="N", help="Default: 10, or every --among module.")
     p_central.add_argument(
         "--exclude-tests", action="store_true", default=False, help="Exclude test files from results"
     )
@@ -4696,6 +4739,12 @@ def _add_module_subparsers(sub: argparse._SubParsersAction) -> None:
         default=None,
         choices=[e.value for e in EntityType],
         help="Restrict to this entity type (requires v5.5+ index for docs/example).",
+    )
+    p_central.add_argument(
+        "--among",
+        default=None,
+        metavar="MODULES",
+        help="Comma-separated dotted modules; rank only these. Names matching no candidate return as 'unmatched'.",
     )
 
     coupled_help = "Modules ranked by internal import count (highest coupling)."
@@ -5190,7 +5239,9 @@ _COMMAND_HANDLERS: dict[str, Callable[[dict, argparse.Namespace, Path], None]] =
     "rdeps": lambda i, a, r: cmd_rdeps(  # noqa: ARG005
         i, a.module, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity), limit=a.limit
     ),
-    "central": lambda i, a, r: cmd_central(i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity)),  # noqa: ARG005
+    "central": lambda i, a, r: cmd_central(  # noqa: ARG005
+        i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity), among=_as_module_list(a.among)
+    ),
     "coupled": lambda i, a, r: cmd_coupled(i, a.top, exclude_tests=a.exclude_tests, entity=_as_entity(a.entity)),  # noqa: ARG005
     "path": lambda i, a, r: cmd_path(i, a.frm, a.to),  # noqa: ARG005
     "list": lambda i, a, r: cmd_list(i, limit=a.limit),  # noqa: ARG005

@@ -77,6 +77,8 @@ from pathlib import Path
 from typing import IO, Any, Callable, Iterator, Optional
 from uuid import uuid4
 
+from codemap_py.index_paths import coordination_root
+
 __all__ = [
     "read_lease",
     "read_index",
@@ -396,13 +398,16 @@ def _safe_close(fd: int) -> None:
 
 
 def _ensure_coord(index_path: Path) -> Path:
-    """Create ``.index-rw`` beside the index and initialise the registry file.
+    """Create the coordination root for *index_path* and initialise the registry file.
+
+    The root is ``.index-rw`` beside the index unless ``CODEMAP_COORDINATION_DIR`` names another directory; the shared
+    resolver decides, so the gate never initialises a directory the path resolver would not lease.
 
     Raises:
         CoordinationUnavailable: the root is unwritable (read-only source tree
-            without a writable ``CODEMAP_INDEX_DIR``).
+            without a writable ``CODEMAP_INDEX_DIR`` or ``CODEMAP_COORDINATION_DIR``).
     """
-    coord = index_path.parent / _COORD_NAME
+    coord = coordination_root(index_path.parent)
     try:
         (coord / _READERS_NAME).mkdir(parents=True, exist_ok=True)
         _init_registry_file(coord)

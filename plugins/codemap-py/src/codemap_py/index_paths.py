@@ -32,6 +32,13 @@ Resolution rules:
   silently served: an occupant whose stored ``scan_root`` is a different project raises
   an ``index_root_collision`` diagnostic. Give colliding projects separate override
   directories;
+- ``CODEMAP_COORDINATION_DIR`` moves only the coordination directory, leaving the
+  index where it was resolved. It names that directory itself, not a base holding
+  one per project, so it exists for a deployment whose index directory cannot hold
+  lock state — a read-only or shared mount, or a sandbox that must grant write to
+  the gate without granting it beside the index. One index per override directory:
+  two projects pointed at the same one share a registry mutex and serialise against
+  each other for no reason;
 - ``split_index_roots`` is reported when two environments resolve different index paths.
 """
 
@@ -54,6 +61,33 @@ INDEX_ROOT_COLLISION = "index_root_collision"
 SPLIT_INDEX_ROOTS = "split_index_roots"
 
 _UNSET = object()
+COORDINATION_DIR_ENV = "CODEMAP_COORDINATION_DIR"
+
+
+def coordination_root(index_dir: Path | str, *, override: object = _UNSET) -> Path:
+    """Resolve the coordination directory that guards the index in *index_dir*.
+
+    Both the path resolver and the read/write gate call this, so the directory a caller leases is always the directory
+    the gate initialises.
+
+    Args:
+        index_dir: Directory holding the index whose coordination root is wanted.
+        override: Explicit override directory. ``_UNSET`` (default) reads ``CODEMAP_COORDINATION_DIR``; pass ``None``
+            to force the sibling layout even when the environment variable is set.
+
+    Returns:
+        The override directory when one is given, else ``<index_dir>/.index-rw``.
+
+    Examples:
+        >>> coordination_root("/tmp/idx", override=None).name
+        '.index-rw'
+        >>> coordination_root("/tmp/idx", override="/var/run/codemap-gate").name
+        'codemap-gate'
+    """
+    raw = os.environ.get(COORDINATION_DIR_ENV) if override is _UNSET else override
+    if raw:
+        return Path(str(raw)).expanduser().resolve()
+    return Path(index_dir) / COORDINATION_DIRNAME
 
 
 @dataclass(frozen=True)
@@ -81,7 +115,8 @@ class IndexIdentity:
         root_key: Full lowercase SHA-256 of the normalized root identity.
         index_dir: Directory holding the resolved index and coordination subtree.
         index_path: Resolved ``<project>.json`` index path.
-        coordination_dir: Sibling ``.index-rw/`` directory beside the index.
+        coordination_dir: Sibling ``.index-rw/`` directory beside the index, or the ``CODEMAP_COORDINATION_DIR``
+            override when one is set.
         override: ``True`` when ``CODEMAP_INDEX_DIR`` selected the base.
         diagnostics: Any diagnostics raised while resolving (e.g. collisions).
     """
@@ -267,7 +302,7 @@ def resolve_index(
         root_key=rk,
         index_dir=index_dir,
         index_path=index_path,
-        coordination_dir=index_dir / COORDINATION_DIRNAME,
+        coordination_dir=coordination_root(index_dir),
         override=override,
         diagnostics=tuple(diagnostics),
     )

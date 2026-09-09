@@ -190,6 +190,38 @@ class TestModuleQueries:
         assert data["reason"] == "no-import-path"
         assert "error" not in data
 
+    def test_import_submodule_edges_reach_dependency_reverse_and_path_queries(self, tmp_path, scan_index, scan_query):
+        """Known ``from package import submodule`` imports connect all import-graph queries."""
+        root = tmp_path / "from_import_submodule"
+        package = root / "package"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("")
+        (package / "child.py").write_text("VALUE = 1\n")
+        (root / "consumer.py").write_text("from package import child\n")
+
+        indexed = subprocess.run(
+            [sys.executable, str(scan_index), "--root", str(root)],
+            capture_output=True,
+            text=True,
+            cwd=str(root),
+        )
+        assert indexed.returncode == 0, indexed.stderr
+        index_path = root / ".cache" / "codemap" / f"{root.name}.json"
+
+        def run_query(*args: str) -> dict:
+            result = subprocess.run(
+                [sys.executable, str(scan_query), "--index", str(index_path), *args],
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+            )
+            assert result.returncode == 0, result.stderr + result.stdout
+            return json.loads(result.stdout)
+
+        assert "package.child" in run_query("deps", "consumer")["direct_imports"]
+        assert run_query("rdeps", "package.child")["imported_by"] == ["consumer"]
+        assert run_query("path", "consumer", "package.child")["path"] == ["consumer", "package.child"]
+
     def test_list_contains_all_modules(self, query):
         """List command returns all 5 modules."""
         data = query("list")
@@ -273,6 +305,157 @@ class TestCentralExcludingTests:
             key=lambda module: (-module["rdep_count"], module["name"]),
         )
         assert central == expected
+
+
+class TestCoupledQueries:
+    """Module coupling rankings."""
+
+    def test_coupled_orders_equal_scores_by_module_name(self, capsys):
+        """Equal coupling scores must not depend on index insertion order."""
+        index = {
+            "modules": [
+                {"name": "zeta", "status": "ok", "path": "zeta.py", "direct_imports": ["target"], "dep_count": 1},
+                {"name": "alpha", "status": "ok", "path": "alpha.py", "direct_imports": ["target"], "dep_count": 1},
+                {"name": "target", "status": "ok", "path": "target.py", "direct_imports": [], "dep_count": 0},
+            ]
+        }
+
+        _scan_query_mod.cmd_coupled(index, top=2)
+
+        coupled = json.loads(capsys.readouterr().out)["coupled"]
+        assert [entry["name"] for entry in coupled] == ["alpha", "zeta"]
+
+
+def _ranking_index() -> dict:
+    """Build an index whose production in-degrees are known by construction.
+
+    ``hub`` is imported by three production modules, ``mid`` by two, ``leaf`` by one, and ``ignored`` by a test module
+    only, so a production ranking must order them hub, mid, leaf and score ``ignored`` at zero.
+    """
+
+    def module(name: str, imports: list[str] | None = None, *, is_test: bool = False) -> dict:
+        return {
+            "name": name,
+            "status": "ok",
+            "path": f"{name.replace('.', '/')}.py",
+            "direct_imports": imports or [],
+            "is_test": is_test,
+            "rdep_count": 0,
+        }
+
+    return {
+        "modules": [
+            module("hub"),
+            module("mid"),
+            module("leaf"),
+            module("ignored"),
+            module("prod.one", ["hub", "mid", "leaf", "target"]),
+            module("prod.two", ["hub", "mid", "target"]),
+            module("prod.three", ["hub", "target"]),
+            module("tests.test_target", ["ignored", "target"], is_test=True),
+        ],
+    }
+
+
+class TestCentralAmong:
+    """Rank a caller-supplied candidate set instead of the whole repository."""
+
+    def test_ranks_only_the_requested_modules(self, capsys):
+        """``--among`` restricts the ranking to the named modules, ordered by their own in-degree.
+
+        This is the question left over after an ``rdeps`` call — order *these* importers by how exposed they are — which
+        previously forced the caller to intersect a repository-wide ranking against its own list.
+        """
+        _scan_query_mod.cmd_central(_ranking_index(), top=None, exclude_tests=True, among=["leaf", "hub", "mid"])
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert [entry["name"] for entry in payload["central"]] == ["hub", "mid", "leaf"]
+        assert [entry["rdep_count"] for entry in payload["central"]] == [3, 2, 1]
+
+    def test_reports_requested_modules_the_ranking_could_not_cover(self, capsys):
+        """Requested names that match no candidate come back under ``unmatched`` rather than vanishing.
+
+        A typo, or a module the other filters removed, would otherwise leave the caller believing its whole candidate
+        set was ranked — the silent-drop failure this field exists to make impossible.
+        """
+        _scan_query_mod.cmd_central(
+            _ranking_index(), top=None, exclude_tests=True, among=["hub", "tests.test_target", "typo.module"]
+        )
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert [entry["name"] for entry in payload["central"]] == ["hub"]
+        assert payload["unmatched"] == ["tests.test_target", "typo.module"]
+        assert payload["candidate_count"] == 1
+
+    def test_ranks_every_candidate_when_no_top_is_given(self, capsys):
+        """Without an explicit ``--top`` a scoped ranking returns the whole candidate set.
+
+        The repository-wide default of ten would silently cut a longer candidate list short, which is the same silent
+        truncation the ``unmatched`` field guards against from the other direction.
+        """
+        index = _ranking_index()
+        candidates = [module["name"] for module in index["modules"] if not module["is_test"]]
+
+        _scan_query_mod.cmd_central(index, top=None, exclude_tests=True, among=candidates)
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert len(payload["central"]) == len(candidates)
+
+    def test_honours_an_explicit_top_within_the_candidate_set(self, capsys):
+        """An explicit ``--top`` still caps a scoped ranking, and ``candidate_count`` exposes the full size."""
+        _scan_query_mod.cmd_central(_ranking_index(), top=2, exclude_tests=True, among=["leaf", "hub", "mid"])
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert [entry["name"] for entry in payload["central"]] == ["hub", "mid"]
+        assert payload["candidate_count"] == 3
+
+
+class TestRdepsCounts:
+    """Importer totals travel with the importer list."""
+
+    def test_reports_the_importer_total_beside_the_list(self, capsys):
+        """``importer_count`` states the total so the caller never counts the returned list by hand."""
+        _scan_query_mod.cmd_rdeps(_ranking_index(), "target", exclude_tests=True)
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert payload["imported_by"] == ["prod.one", "prod.three", "prod.two"]
+        assert payload["importer_count"] == 3
+
+    def test_reports_excluded_test_importers_in_the_same_call(self, capsys):
+        """Production and test importer totals come from one call, never from subtracting two.
+
+        Deriving the test count as "unfiltered call minus filtered call" is an arithmetic step outside the tool, and an
+        off-by-one there is indistinguishable from a wrong graph.
+        """
+        _scan_query_mod.cmd_rdeps(_ranking_index(), "target", exclude_tests=True)
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert payload["excluded_test_importer_count"] == 1
+
+    def test_omits_the_excluded_count_when_tests_are_included(self, capsys):
+        """Without ``--exclude-tests`` nothing was excluded, so the field is absent rather than zero."""
+        _scan_query_mod.cmd_rdeps(_ranking_index(), "target")
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert "excluded_test_importer_count" not in payload
+        assert payload["importer_count"] == 4
+
+    def test_importer_count_survives_limit_truncation(self, capsys):
+        """A truncated preview still reports the full total, matching ``index.total_available``."""
+        _scan_query_mod.cmd_rdeps(_ranking_index(), "target", limit=1)
+
+        payload = json.loads(capsys.readouterr().out)
+
+        assert len(payload["imported_by"]) == 1
+        assert payload["importer_count"] == 4
+        assert payload["index"]["total_available"] == 4
 
 
 class TestSymbolQueries:
@@ -3603,10 +3786,10 @@ class TestCoverageDiet:
 # ── batch subcommand ───────────────────────────────────────────────────────
 
 
-def _run_batch(scan_query: Path, root: Path, index_path: Path, items: list) -> dict:
-    """Run `batch` feeding *items* via stdin; return the decoded batch result."""
+def _run_batch(scan_query: Path, root: Path, index_path: Path, items: list, *, compact: bool = False) -> dict:
+    """Run `batch` feeding *items* via stdin; optionally compact coverage metadata."""
     result = subprocess.run(
-        [sys.executable, str(scan_query), "--index", str(index_path), "batch", "-"],
+        [sys.executable, str(scan_query), "--index", str(index_path), *( ["--compact"] if compact else []), "batch", "-"],
         input=json.dumps(items),
         capture_output=True,
         text=True,
@@ -3665,6 +3848,33 @@ class TestBatch:
         assert "completeness_reason" not in batch["index"]
         assert "note" not in batch["index"]
         assert "total_available" not in batch["index"]
+
+    def test_batch_compact_keeps_truncation_and_failed_item_evidence(self, project, scan_query):
+        """Compact coverage cannot promote a capped or failed sibling to complete."""
+        root, index_path = project
+        items = [
+            {"cmd": "rdeps", "args": ["gamma", "--limit", "1"]},
+            {"cmd": "deps", "args": ["missing.module"]},
+        ]
+
+        batch = _run_batch(scan_query, root, index_path, items, compact=True)
+
+        capped = batch["batch"][0]
+        assert capped["ok"] is True
+        assert capped["result"]["index"].items() >= {
+            "query_complete": True,
+            "stale": False,
+            "root_mismatch": False,
+            "compact": True,
+            "method": "import-graph",
+            "not_covered": ["importlib.import_module", "__import__", "lazy-loading"],
+            "confidence": "partial",
+            "truncated": True,
+            "total_available": 2,
+        }.items()
+        assert batch["batch"][1]["ok"] is False
+        assert "error" in batch["batch"][1]
+        assert batch["index"].items() >= {"query_complete": False, "truncated": True, "confidence": "partial"}.items()
 
     def test_batch_matches_individual_results(self, project, scan_query, query):
         """A batch of four mixed queries preserves each complete standalone result."""

@@ -63,7 +63,7 @@ _skip_unsupported_interpreter = pytest.mark.skipif(
 
 
 @_skip_unsupported_interpreter
-@pytest.mark.parametrize("flag", [pytest.param("--help", id="long"), pytest.param("-h", id="short")])
+@pytest.mark.parametrize("flag", ["--help", "-h"])
 def test_index_help_succeeds_without_the_scan_index_launcher(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str
 ) -> None:
@@ -94,7 +94,7 @@ def test_index_without_the_launcher_still_reports_the_missing_executable(tmp_pat
 
 
 @_skip_unsupported_interpreter
-@pytest.mark.parametrize("with_override", [pytest.param(False, id="default"), pytest.param(True, id="override")])
+@pytest.mark.parametrize("with_override", [False, True])
 def test_doctor_index_path_matches_resolver(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_override: bool
 ) -> None:

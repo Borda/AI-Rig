@@ -40,6 +40,8 @@ Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable intera
 | module imports | `deps <module>` |
 | shortest import chain | `path <from> <to>` |
 | production centrality / highest in-degree | `central --top N --exclude-tests` |
+| rank / threshold a known candidate set | `central --among <a,b,c> --exclude-tests` |
+| production vs test importer counts | `rdeps <module> --exclude-tests` (`importer_count`, `excluded_test_importer_count`) |
 | internal-import coupling (not centrality) | `coupled --top N` |
 | symbol source including module imports or module symbols | `symbol <name> --with-imports` · `symbols <module>` |
 | regex symbol search | `find-symbol <pattern>` |
@@ -56,7 +58,9 @@ Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable intera
 
 Direct/every/all/production/blast-radius callers → `fn-rdeps <module::symbol> --exclude-tests`; `fn-blast <module::symbol>` only for explicit transitive, closure, hops, or all-levels requests.
 
-Test modules directly importing module: use `rdeps <module>`, then filter/report tests. Reserve `test-impact <target>` for transitive affected-test selection.
+Test modules directly importing module: use `rdeps <module>`, then filter/report tests. Reserve `test-impact <target>` for transitive affected-test selection. For the counts alone, `rdeps <module> --exclude-tests` reports `importer_count` and `excluded_test_importer_count` together; never derive one by subtracting a second call from the first.
+
+Counts and scoped rankings come from the query, not from hand work on its output: do not count a returned list by eye, and do not intersect a repository-wide `central` ranking against a candidate set by hand. To order or threshold modules a previous query returned, pass them to `central --among <a,b,c>`; its `unmatched` field names every requested module the ranking did not cover, so nothing drops silently.
 
 `symbol <name>` accepts bare function (for example `authenticate`) or qualified method (for example `MyClass.method`); `module::symbol` belongs to `fn-*` call-graph queries. To chain `symbol` into `fn-*`, compose returned `module` + `qualified_name` exactly as `<module>::<qualified_name>`; example `mypackage.module::MyClass.method`. For feature scaffolding, query requested qualified extension method (for example, `symbol MyClass.add_feature`), not nearby `symbol MyClass` or `symbols <module>` listing unless broader scope requested.
 
