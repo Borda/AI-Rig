@@ -43,7 +43,7 @@ codex plugin list
 
 `codemap-py` and `bridge` are optional for direct installation. The repository synchronization path manages all three Codex plugins. Start a fresh Codex session after installation. To pin an immutable marketplace revision, add it with `--ref <release-tag>` rather than relying on a copied "latest" tag.
 
-Direct plugin installation changes only Codex's plugin configuration and cache. It does not copy this repository's `.codex/config.toml`, personal policy, or global `AGENTS.md` into your Codex home.
+Direct plugin installation changes only Codex's plugin configuration and cache. It does not copy this repository's `.codex/config.toml`, personal policy, global `AGENTS.md`, or `rules/codex-rig-github-read.rules` into your Codex home. Reader rules are inert until explicit setup or repository sync invokes the installed helper.
 
 ## ⚡ First five minutes
 
@@ -326,16 +326,16 @@ Codex Rig's `implement`, `investigate`, and `optimize` routes may probe the publ
 
 Direct marketplace installation is the public path and leaves global/project instructions alone.
 
-From this source checkout, `make sync-codex` performs a broader managed restore: it installs or updates Codex Rig, Codemap-py, and bridge_CC-Codex, projects selected repository model defaults and personal policy, and always manages one authenticated Codex Rig block in `CODEX_HOME/AGENTS.md` — there is no opt-out flag. Read the [Codex Rig managed-instructions section](../plugins/codex-rig/README.md#managed-global-instructions) before using it.
+From this source checkout, `make sync-codex` performs a broader managed restore: it installs or updates Codex Rig, Codemap-py, and bridge_CC-Codex, manages one authenticated Codex Rig block in `CODEX_HOME/AGENTS.md` plus the owned `rules/codex-rig-github-read.rules`, and projects selected repository model defaults and personal policy. The root Make target supplies no direct-script flags, so it has no opt-out for these managed surfaces. Read the [Codex Rig managed-instructions section](../plugins/codex-rig/README.md#managed-global-instructions) before using it.
 
 `make sync-codex` installs from the pushed GitHub remote, not a dirty local tree. Commit and push first when you intentionally want a checkout change to become installable.
 
 <details>
 <summary><strong>Show sync scope and cleanup boundaries</strong></summary>
 
-Direct installation changes only the Codex plugin configuration/cache. Repository sync additionally installs or updates all three managed plugins, projects the root `model` and `review_model` defaults plus the authenticated personal policy, and always manages one marked Codex Rig global-instructions block. It does not overwrite project-owned `AGENTS.md` files or unrelated user configuration.
+Direct installation changes only the Codex plugin configuration/cache. Repository sync additionally installs or updates all three managed plugins, manages one marked Codex Rig global-instructions block and the owned GitHub reader rules, and projects the root `model` and `review_model` defaults plus the authenticated personal policy. Reader-rule migration may remove only exact canonical two-token legacy reader allow entries from `CODEX_HOME/rules/default.rules`; unrelated bytes remain unchanged and every required existing-file backup is prepared before rules mutation. It does not overwrite project-owned `AGENTS.md` files or unrelated user configuration. The direct `sync_codex.py --no-codex-global-agents` flag skips only the global `AGENTS.md` block; reader-rule installation remains part of successful plugin installation.
 
-`make clear-codex` removes Codex Rig, Codemap-py, bridge_CC-Codex, and the managed block while preserving user-owned bytes; marketplace registrations remain. The native `plugins/codex-rig/scripts/sync_codex.py` path manages the Codex plugins and block but does not project repository model defaults or personal policy.
+`make clear-codex` removes Codex Rig, Codemap-py, bridge_CC-Codex, the managed block, and the owned reader rules while preserving user-owned bytes; marketplace registrations remain. The native `plugins/codex-rig/scripts/sync_codex.py` path manages the Codex plugins, block, and reader rules but does not project repository model defaults or personal policy. Both lifecycle paths back up changed files and fail closed when ownership or integrity cannot be verified.
 
 </details>
 
@@ -355,9 +355,9 @@ Use `codex plugin remove <plugin>@borda-ai-rig` to remove a plugin. If old Codex
 <details>
 <summary><strong>Show update, uninstall, and recovery sequence</strong></summary>
 
-After an update or reinstall, start a fresh Codex session and run `$codex-rig:agent-shims doctor` plus a small audit. Remove Codemap-py independently when its structural context is no longer wanted; its `.cache/codemap/` index is project state and is retained unless the project owner intentionally cleans it.
+After an update or reinstall, start a fresh Codex session so regenerated reader rules are observed, then run `$codex-rig:agent-shims doctor` plus a small audit. Remove Codemap-py independently when its structural context is no longer wanted; its `.cache/codemap/` index is project state and is retained unless the project owner intentionally cleans it.
 
-For Codex Rig, remove authenticated legacy shims first, then remove the plugin. A sync-managed global block is separate from plugin removal and must be removed through the guarded sync clear or a marker-preserving manual review. If cleanup is blocked, reinstall the same plugin revision, start a fresh session, preserve the diagnostic artifact, and retry the documented guarded action; there is no force-cleanup path.
+For Codex Rig, remove authenticated legacy shims first, then use the guarded sync clear while the installed package is available; it removes the sync-managed global block and owned reader rules before plugin removal. If cleanup is blocked, reinstall the same plugin revision, start a fresh session, preserve the diagnostic artifact, and retry the documented guarded action; there is no force-cleanup path.
 
 </details>
 

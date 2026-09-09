@@ -14,7 +14,7 @@ ______________________________________________________________________
 
 - [What is oss?](#-what-is-oss)
 - [Why oss?](#-why-oss)
-- [Install](#-install)
+- [Install](#oss-install)
 - [Quick start](#-quick-start)
 - [Skills reference](#-skills-reference)
   - [/oss:analyse](#ossanalyse)
@@ -59,6 +59,8 @@ Maintaining OSS = three competing demands: review code carefully (catch regressi
 **Triage with structure.** `/oss:analyse vitality` produces a repo vitality scorecard with duplicate issue clustering and stale-PR detection. A specific thread becomes a structured summary with next actions.
 
 ______________________________________________________________________
+
+<a id="oss-install"></a>
 
 ## 📦 Install
 
@@ -660,7 +662,7 @@ ______________________________________________________________________
 
 **Permission manifests:** `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`), every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`), and the `curl` write verbs the broad `Bash(curl:*)` allowance would otherwise reach. Both files are merged into `~/.claude/settings.json` by `/oss:setup` (Step 5) — additive and idempotent, nothing is ever removed. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 
-**Optional plugin integrations** detected automatically at runtime. Install any optional plugin from [Install](#-install) — skills use them next invocation, no config changes.
+**Optional plugin integrations** detected automatically at runtime. Install any optional plugin from [Install](#oss-install) — skills use them next invocation, no config changes.
 
 **Hooks** register automatically from `hooks/hooks.json` when the plugin is enabled — no `settings.json` edits needed:
 

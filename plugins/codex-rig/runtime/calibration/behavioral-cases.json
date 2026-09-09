@@ -2,6 +2,22 @@
   "cases": [
     {
       "expected_findings": [
+        "sync-reader-approval-bypasses-managed-lifecycle",
+        "sync-reader-rule-does-not-follow-installed-version",
+        "sync-reader-migration-overwrites-user-rules",
+        "sync-check-mutates-reader-permissions",
+        "sync-reader-scope-not-disclosed",
+        "sync-reader-backup-preflight-missing",
+        "sync-reader-partial-effects-hidden",
+        "sync-reader-pin-compatibility-checked-after-mutation",
+        "sync-reader-package-verification-missing"
+      ],
+      "id": "sync-managed-github-reader-approval",
+      "prompt": "Assess a request for reusable GitHub log access where an agent saves a permanent prefix directly through the approval UI, keeps an obsolete plugin-version path after sync, replaces all default.rules content without a backup, installs permission during a check-only run, and describes the wrapper as logs-only despite its other GitHub reads, local PR checkout, and output writes. It creates approval before checking migration backup prerequisites, hides completed writes on later failure, rejects an unsupported pinned payload only after removing plugins, and approves a changed reader without verifying package hashes. Require plugin-owned setup/sync, installed-path generation, exact migration preserving unrelated bytes, full-scope authorization, read-only check behavior, backup preflight, partial-effect reporting, pre-removal compatibility checks, and setup-time package verification with explicit trusted-cache lifetime limits.",
+      "target": "sync"
+    },
+    {
+      "expected_findings": [
         "empty-mcp-table-treated-as-disabled",
         "app-server-evidence-labelled-native",
         "adapter-success-treated-as-review-completion",
@@ -1695,5 +1711,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.25"
+  "version": "1.26"
 }

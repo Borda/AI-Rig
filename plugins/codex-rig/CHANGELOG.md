@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0
+
+- Manage reusable GitHub-reader approval through explicit plugin setup and sync. Install a dedicated user rules file for the installed wrapper, regenerate its path after plugin upgrades, and remove it during managed teardown. Direct plugin installation remains inert.
+- Back up changed rule files, reject modified or unowned managed content and linked paths, and migrate only canonical two-token legacy reader approvals while preserving unrelated rules. The existing wrapper scope includes GitHub reads, local PR checkout, and output writes; arbitrary Python and direct GitHub CLI commands receive no new approval.
+- Run managed home cleanup before removing the plugins that provide its helpers. Cover install, upgrade, idempotence, legacy migration, removal, and Windows argument spelling with isolated-home regressions.
+- Preflight all migration backups before rules mutation, report completed updates on partial failure, and verify package hashes before granting approval. Validate complete selected source packages before plugin removal and reject configured unsupported pins before marketplace mutation while retaining normal default-branch upgrades; document the trusted-cache lifetime boundary.
+
 ## 0.15.1
 
 - Accept the durable code-remediation table's full workflow column list instead of requiring exactly the nine columns the validator names. `Required table columns` in the skill lists sixteen, so a run that followed the workflow rendered a wider table and was rejected as `code-remediate-final-table-markdown-columns-mismatch`, leaving a complete result stuck as `result.candidate.json` with no way to promote it. The check now reports which required columns are absent and ignores additional ones, matching how the same required set is already checked against the metadata column list and the surrounding prose.

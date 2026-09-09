@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "2f3d991a11280c266709147d7fcf4c148e3116b6c787662841829ca11b27fd52"
+      "sha256": "c3f172c4149b26a9995f96ef4b1aced5471845adafd63bb4f54244470726d165"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "59252e4f5ef7b1cdbb2785229def7170bc6c8495b4d02321e2c7fa8e6f5f9593"
+      "sha256": "798c627bfde594bf05b59a221537a53cd3fb975fa9d17a4dba1d6f9f8364f6b2"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "7b636e50ffdd1fa3fa0a75eca35f1c08d59eae85d6390668d55e580fea12e5a6"
+      "sha256": "762c13af509979e800d1892ea5bf8bcb6fcd0cd0d0f3b47bfca972475c514281"
     },
     {
       "mode": "0644",
@@ -163,12 +163,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "6f526b6a05d925d501f0375d08f27d3e706d795746e7d4fe5a6527ec1e6a9a26"
+      "sha256": "4dad68dbf8877a9fc28cca204088f5c9be5bb4e3d5ac34223cf11989269b8ce4"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "67c3d0c81da4946b05614c8dc24280f31d8ae0eb095c4bbeff44c565e614ae46"
+      "sha256": "08099388970204b4aed5db415a01e801b49da9ca8673df85d4c519c91233a697"
     },
     {
       "mode": "0644",
@@ -243,7 +243,7 @@
     {
       "mode": "0644",
       "path": "scripts/README.md",
-      "sha256": "9a9a3ffb91f77de1c87fa7c7bdaf4c1e499034e53dce3a0227573a2d067f19b9"
+      "sha256": "bc11e0c4b81ff9e2a821a8e1f5a0011515052c91947a2927b0b6afd6fda468b0"
     },
     {
       "mode": "0644",
@@ -302,6 +302,11 @@
     },
     {
       "mode": "0644",
+      "path": "scripts/install_github_read_rules.py",
+      "sha256": "68bc33a58c3703a42ae2332c7b20866223c58172257637d60fd70842ce2d7853"
+    },
+    {
+      "mode": "0644",
       "path": "scripts/install_global_agents.py",
       "sha256": "e05208de1e0bbfd1fbe43c3e33c678aba98827d42ff9fa542ec7b13a29e78b43"
     },
@@ -313,7 +318,7 @@
     {
       "mode": "0755",
       "path": "scripts/sync_codex.py",
-      "sha256": "1985dd96a3f868baa2552f2679125a4eee68d1c57eb17a2decdd5800ebb55af1"
+      "sha256": "2f3ce9bed23c9ab63c7f9c1d029ec74196ca06aaf373a40e9083241f8a8c8bdf"
     },
     {
       "mode": "0755",
@@ -643,7 +648,7 @@
     {
       "mode": "0644",
       "path": "skills/sync/SKILL.md",
-      "sha256": "215836af80f8f027093b7a29ffd2a5fbb3ef4b0fcc39f0e46f7e53cd9e9669de"
+      "sha256": "dca64954e9030905744f1cb87f852d0592313a4655f93fe241f983782ad40798"
     },
     {
       "mode": "0644",
@@ -857,6 +862,11 @@
     },
     {
       "mode": "0644",
+      "path": "tests/test_github_read_rules_installer.py",
+      "sha256": "3118ca3470a92ed0341385dc45764d9f459d3a2eef4dcbe0068bb88fdba240df"
+    },
+    {
+      "mode": "0644",
       "path": "tests/test_global_agents_installer.py",
       "sha256": "279ed9c54824a07d3473af73a7de5ca3690373d6fe712395b3a28b9f60f0604d"
     },
@@ -943,7 +953,7 @@
     {
       "mode": "0644",
       "path": "tests/test_sync_codex.py",
-      "sha256": "020501261dd38f3e6a314b2a399518da897231ef9b7bd145e0b7f840bcdcae21"
+      "sha256": "01c20ddfe97aec2e18e706e42eee620451c2e5663704d62a6764d76c7d7e88b0"
     }
   ],
   "generator": {
@@ -1179,5 +1189,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.15.1"
+  "version": "0.16.0"
 }

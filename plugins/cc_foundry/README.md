@@ -924,7 +924,7 @@ ______________________________________________________________________
 
 One runner (pytest) covers both Python `bin/` scripts and JS hooks. Current test count: `grep -rc 'def test_' plugins/cc_foundry/tests/*.py | awk -F: '{s+=$2} END{print s}'`.
 
-Apply pytest markers and conditional skips directly to test functions or existing test classes, as described in the [bin authoring guide](skills/_shared/bin-authoring-guide.md#bash-script-testing).
+Apply pytest markers and conditional skips directly to test functions or existing test classes, as described in the [bin authoring guide](https://github.com/Borda/AI-Rig/blob/main/plugins/cc_foundry/skills/_shared/bin-authoring-guide.md#bash-script-testing).
 
 **Run locally** (requires Python ≥ 3.10 and Node ≥ 18 — run from repo root):
 

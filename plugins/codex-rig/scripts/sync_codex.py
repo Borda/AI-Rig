@@ -5,13 +5,15 @@
 
 Provide portable local Codex plugin synchronization while preserving explicit action selection and bounded command
 output. It refreshes the canonical Git marketplace registration and clean-installs the managed plugin set so local Codex
-state can be restored predictably.
+state can be restored predictably. Setup also projects reusable GitHub-reader approval from the newly installed version;
+teardown removes that approval before removing the plugin providing its lifecycle helper.
 
 ## Scope
 
 Manages the configured local plugin set only; it neither edits GitHub state nor substitutes for a marketplace
 publication workflow. The script may invoke native local Codex commands, but it does not decide release contents or
-alter remote repositories.
+alter remote repositories. Explicit install includes the reader's existing GitHub reads, local PR checkout, and output
+writes through a dedicated managed user rule; it never grants arbitrary Python or direct GitHub CLI execution.
 
 ## Usage
 
@@ -50,6 +52,8 @@ from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import Path
 from typing import Any, TextIO
+
+from _package_identity import PackageIdentityError, verify_package
 
 
 class SyncAction(str, Enum):
@@ -143,6 +147,30 @@ def _run(run: RunCommand, command: list[str], *, required: bool = True) -> subpr
         detail = (result.stderr or result.stdout or "command failed").strip()[:512]
         raise SyncError(f"command failed ({result.returncode}): {' '.join(command)}: {detail}")
     return result
+
+
+def _run_github_rule_installer(run: RunCommand, command: list[str], stdout: TextIO) -> subprocess.CompletedProcess[str]:
+    """Run the local rule helper without hiding its completed-status output."""
+    result = _run(run, command, required=False)
+    if result.stdout:
+        print(result.stdout.rstrip(), file=stdout)
+    if result.returncode != 0:
+        detail = (result.stderr or "command failed").strip()[:512]
+        raise SyncError(f"GitHub-rule installer failed ({result.returncode}): {detail}")
+    return result
+
+
+def _validate_selected_payload(root: Path) -> Path:
+    """Verify the selected Codex Rig package and required rule helper before cleanup."""
+    plugin_root = root / "plugins" / "codex-rig"
+    try:
+        verify_package(plugin_root)
+    except (OSError, PackageIdentityError) as error:
+        raise SyncError(f"selected Codex Rig package failed verification: {error}") from error
+    rules_installer = plugin_root / "scripts" / "install_github_read_rules.py"
+    if rules_installer.is_symlink() or not rules_installer.is_file():
+        raise SyncError("installed GitHub-rule installer is incomplete or linked")
+    return rules_installer
 
 
 def _json_output(result: subprocess.CompletedProcess[str], label: str) -> dict[str, object]:
@@ -265,15 +293,17 @@ def _remove_managed_plugins(run: RunCommand, stdout: TextIO) -> None:
 
 
 def _clear(run: RunCommand, environ: Mapping[str, str], stdout: TextIO) -> int:
-    """Remove managed plugins and the authenticated global-instruction block."""
+    """Remove owned permissions and instructions before deleting their installed helpers."""
+    for filename in ("install_github_read_rules.py", "install_global_agents.py"):
+        installer = Path(__file__).resolve().with_name(filename)
+        command = [sys.executable, str(installer), "--remove", "--codex-home", str(_codex_home(environ))]
+        if filename == "install_github_read_rules.py":
+            _run_github_rule_installer(run, command, stdout)
+            continue
+        result = _run(run, command)
+        if result.stdout:
+            print(result.stdout.rstrip(), file=stdout)
     _remove_managed_plugins(run, stdout)
-    installer = Path(__file__).resolve().with_name("install_global_agents.py")
-    result = _run(
-        run,
-        [sys.executable, str(installer), "--remove", "--codex-home", str(_codex_home(environ))],
-    )
-    if result.stdout:
-        print(result.stdout.rstrip(), file=stdout)
     return 0
 
 
@@ -302,9 +332,8 @@ def sync_codex(
             raise SyncError(
                 f"marketplace tracks {configured_ref or 'default branch'}, requested {requested_ref or 'default branch'}"
             )
-
-    if not args.no_clean:
-        _remove_managed_plugins(run, stdout)
+        if requested_ref:
+            _validate_selected_payload(root)
 
     if root is not None:
         if source_type == "git":
@@ -321,12 +350,16 @@ def sync_codex(
     root, _source_type = _marketplace_state(run)
     if root is None:
         raise SyncError("marketplace root is unavailable after refresh")
+    rules_installer = _validate_selected_payload(root)
     revision = _run(run, ["git", "-C", str(root), "rev-parse", "HEAD"], required=False)
     revision_text = revision.stdout.strip()
     if revision.returncode == 0 and revision_text:
         print(f"  [ok] marketplace source: {requested_ref or 'default branch'} @ {revision_text[:12]}", file=stdout)
     else:
         print(f"  [warn] marketplace source: {requested_ref or 'default branch'}; revision unavailable", file=stdout)
+
+    if not args.no_clean:
+        _remove_managed_plugins(run, stdout)
 
     for _display_name, plugin_id in MANAGED_PLUGINS:
         _run(run, ["codex", "plugin", "add", plugin_id])
@@ -335,6 +368,17 @@ def sync_codex(
         print(f"  [ok] {display_name} {versions[plugin_id]} installed", file=stdout)
 
     _run_bridge_static_diagnosis(root, run, stdout)
+
+    version = versions[f"codex-rig@{MARKETPLACE}"]
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?", version) is None:
+        raise SyncError("installed Codex Rig version is invalid")
+    home = _codex_home(environ)
+    installed_root = home / "plugins" / "cache" / MARKETPLACE / "codex-rig" / version
+    _run_github_rule_installer(
+        run,
+        [sys.executable, str(rules_installer), "--plugin-root", str(installed_root), "--codex-home", str(home)],
+        stdout,
+    )
 
     if args.no_codex_global_agents:
         print("  [skip] global instructions unchanged", file=stdout)

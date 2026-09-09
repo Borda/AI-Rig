@@ -1,6 +1,6 @@
 # 🧰 Codex Rig Scripts
 
-`scripts/` holds every executable and library module the Codex Rig plugin needs to build, validate, install, and run itself. It contains six public/maintainer CLI entry points, one import-only role generator, and nine underscore-prefixed internal helpers.
+`scripts/` holds every executable and library module the Codex Rig plugin needs to build, validate, install, and run itself. It contains seven public/maintainer CLI entry points, one import-only role generator, and nine underscore-prefixed internal helpers.
 
 <details open>
 <summary><strong>Navigation</strong></summary>
@@ -11,6 +11,7 @@
   - [build_package.py](#build_packagepy)
   - [validate_package.py](#validate_packagepy)
   - [install_global_agents.py](#install_global_agentspy)
+  - [install_github_read_rules.py](#install_github_read_rulespy)
   - [manage_role_agents.py](#manage_role_agentspy)
   - [sync_codex.py](#sync_codexpy)
   - [verify_role_link.py](#verify_role_linkpy)
@@ -107,6 +108,32 @@ python3 plugins/codex-rig/scripts/install_global_agents.py \
 
 </details>
 
+### `install_github_read_rules.py`
+
+<details>
+<summary><strong>Managed GitHub reader-rule lifecycle</strong></summary>
+
+**Purpose:** Installs or removes the Codex Rig GitHub reader rules in the selected `CODEX_HOME`, validating the installed cache location and package identity before approving its wrapper path.
+
+**Usage:**
+
+```bash
+python3 <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
+    --plugin-root <installed-codex-rig-cache-root> --codex-home ~/.codex
+python3 <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
+    --remove --codex-home ~/.codex
+```
+
+`--plugin-root` is the installed Codex Rig cache root, not an arbitrary source-tree path. The helper owns `CODEX_HOME/rules/codex-rig-github-read.rules`; during migration it may also rewrite `CODEX_HOME/rules/default.rules` to remove only exact canonical two-token legacy reader allow entries. Its managed content grants the literal `python`/`python3` launcher union and the installed wrapper-path allow-rule union, including native and POSIX path spellings on Windows. It does not add broad Python or `gh` grants and does not change network settings.
+
+Install validates the selected cache location, `.codex-plugin/plugin.json` name/version, complete package hashes/closure through the existing package verifier, ordinary reader wrapper, and canonical managed-rule body. It is idempotent and regenerates the rule after an installed-package version change. All required existing-file backups are prepared and verified before either rules file changes; creation and no-op need no backup. Migration removes only exact canonical two-token legacy reader allow entries from `default.rules` under the same Codex home/cache and preserves every unrelated byte. Removal deletes only an owned, canonical, integrity-valid rules file; an unverifiable or foreign file blocks rules mutation. Later filesystem failures can leave partial changes: each completed rules update is reported immediately, and the CLI identifies partial failure without claiming rollback.
+
+> Trust boundary: package hashes prove setup-time consistency, not publisher authenticity or immutable code. Reusable approval trusts the installed cache for its lifetime. A same-user process can replace code or rehash its manifest after setup; these checks do not prevent that. Never use an untrusted or shared-writable cache as an approval target.
+
+**When-to-use:** `sync_codex.py install` invokes this helper after successful managed-plugin installation, regardless of `--no-codex-global-agents`; that flag skips only `CODEX_HOME/AGENTS.md`. `sync_codex.py clear` invokes `--remove` alongside removal of the managed global-instruction block. Direct plugin installation remains inert until an explicit setup or sync invokes this helper. Restart existing Codex sessions after rules are installed, regenerated, or removed.
+
+</details>
+
 ### `manage_role_agents.py`
 
 <details>
@@ -138,7 +165,7 @@ python3 plugins/codex-rig/scripts/manage_role_agents.py remove
 <details>
 <summary><strong>Cross-platform install, refresh, and clear</strong></summary>
 
-**Purpose:** Installs, refreshes, or removes Codex Rig and Codemap without depending on a POSIX shell — resolves system commands cross-platform (including Windows batch-file launchers) and drives the marketplace plugin install/clear flow plus Codex Rig's global-agents block.
+**Purpose:** Installs, refreshes, or removes Codex Rig and Codemap without depending on a POSIX shell — resolves system commands cross-platform (including Windows batch-file launchers) and drives the marketplace plugin install/clear flow plus Codex Rig's managed global-instruction block and GitHub reader rules.
 
 **Usage** (verified via `--help`):
 
@@ -162,7 +189,7 @@ python3 plugins/codex-rig/scripts/sync_codex.py install --no-clean
 python3 plugins/codex-rig/scripts/sync_codex.py clear
 ```
 
-**When-to-use:** The top-level entry point for getting Codex Rig, Codemap, and Bridge onto a machine or off it — this is what the repo's `Makefile` calls for the Codex side of installation. Install removes the managed plugins by default, refreshes an existing Git marketplace or replaces a non-Git registration with the canonical Git source, and reinstalls the managed set. Use `--no-clean` to retain installed plugins before reinstalling without suppressing marketplace refresh, `--codex-ref` to pin a specific marketplace ref instead of tracking the default branch, and `--no-codex-global-agents` when you manage `CODEX_HOME/AGENTS.md` yourself and don't want `sync_codex.py` touching it. These remain `sync_codex.py`'s own CLI flags — the Makefile's `install-codex-plugins` target simply calls it without passing any of them.
+**When-to-use:** The top-level entry point for getting Codex Rig, Codemap, and Bridge onto a machine or off it — this is what the repo's `Makefile` calls for the Codex side of installation. Install refreshes or registers the canonical Git marketplace, verifies selected-source package hashes/closure and helper availability, then removes the managed plugins by default, reinstalls them, and installs or regenerates the GitHub reader rules. Unsupported configured pins stop before marketplace/plugin mutation; newly registered sources are inspected before plugin removal/add. Clear removes the owned reader rules and managed global-instruction block before the managed plugins. Use `--no-clean` to retain installed plugins before reinstalling without suppressing marketplace refresh, `--codex-ref` to pin a specific marketplace ref instead of tracking the default branch, and `--no-codex-global-agents` when you manage `CODEX_HOME/AGENTS.md` yourself and don't want `sync_codex.py` touching that file; it does not skip reader-rule installation or removal. These remain `sync_codex.py`'s own CLI flags — the Makefile's `install-codex-plugins` target simply calls it without passing any of them. Restart existing Codex sessions after sync.
 
 </details>
 
