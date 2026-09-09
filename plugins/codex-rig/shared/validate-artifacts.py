@@ -302,12 +302,27 @@ def _require_result_shape(result: dict[str, Any]) -> None:
         raise SystemExit("pass-with-critical-findings")
 
 
+def _anchored_candidates(base: Path, declared: Path) -> list[Path]:
+    """List where a declared path may live, deriving every candidate from `base`.
+
+    A recorded path is data written by an earlier process, and the directory that process ran in is not stored with it.
+    Resolving such a path against the *reader's* directory is what once let one artifact be valid in one place and
+    invalid in another. Current runs record a name relative to the output directory; runs written before that convention
+    recorded one relative to some ancestor of it, and those artifacts are still revalidated long afterwards, so
+    ancestors are offered too. Callers keep their own containment check: widening where a name may resolve must never
+    widen what is accepted as evidence.
+    """
+    if declared.is_absolute():
+        return [declared]
+    return [base / declared, *(ancestor / declared for ancestor in base.resolve().parents)]
+
+
 def _resolve_final_handoff_path(out_dir: Path, raw_path: object, key: str) -> Path:
     """Resolve one declared final-handoff path inside the workflow directory."""
     if not isinstance(raw_path, str) or not raw_path.strip():
         raise SystemExit(f"final-handoff-invalid-path:{key}")
     declared = Path(raw_path)
-    candidates = [declared] if declared.is_absolute() else [out_dir / declared, declared]
+    candidates = _anchored_candidates(out_dir, declared)
     expected_parent = out_dir.resolve()
     expected_name = FINAL_HANDOFF_FILENAMES[key]
     matched_location = False
@@ -332,7 +347,7 @@ def _validate_result_artifact_path(out_dir: Path, raw_path: object) -> None:
     expected = (out_dir / "result.json").resolve()
     if not expected.is_relative_to(run_root):
         raise SystemExit("result-artifact-path-mismatch")
-    candidates = [declared] if declared.is_absolute() else [out_dir / declared, declared]
+    candidates = _anchored_candidates(out_dir, declared)
     if not any(candidate.resolve() == expected for candidate in candidates):
         raise SystemExit("result-artifact-path-mismatch")
 
@@ -650,6 +665,19 @@ def _validate_jsonl(path: Path) -> None:
             raise SystemExit(f"jsonl-row-not-object:{path}:{index}")
 
 
+def _resolve_gate_log(out_dir: Path, recorded: Path) -> Path:
+    """Locate one relative gate log without consulting the caller's working directory.
+
+    Every candidate comes from `_anchored_candidates`, and the caller's containment check still rejects anything
+    resolving outside the output directory.
+    """
+    candidates = _anchored_candidates(out_dir, recorded)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
 def _validate_gates(out_dir: Path) -> dict[str, Any]:
     gates_path = out_dir / "gates.json"
     if not gates_path.exists():
@@ -690,8 +718,8 @@ def _validate_gates(out_dir: Path) -> dict[str, Any]:
             raise SystemExit(f"gate-check-invalid-fail-exit-code:{index}")
         for key in ("command_path", "stdout", "stderr"):
             path = Path(str(check[key]))
-            if not path.is_absolute() and not path.exists():
-                path = out_dir / path
+            if not path.is_absolute():
+                path = _resolve_gate_log(out_dir, path)
             resolved = path.resolve()
             if not resolved.is_relative_to(out_dir.resolve()):
                 raise SystemExit(f"gate-check-log-outside-output:{index}:{key}")

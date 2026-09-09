@@ -18,6 +18,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 COLLECT_DIFF = PLUGIN_ROOT / "shared" / "collect_diff.py"
 RUN_GATES = PLUGIN_ROOT / "shared" / "run_gates.py"
+SHARED_VALIDATOR = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
 REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 
@@ -207,6 +208,158 @@ def test_run_gates_writes_exact_five_gate_artifacts(tmp_path: Path) -> None:
     for gate_id in GATE_IDS:
         for suffix in ("command", "stdout", "stderr"):
             assert (output / "checks" / f"{gate_id}.{suffix}.txt").is_file()
+
+
+def test_run_gates_records_log_paths_relative_to_the_output_directory(tmp_path: Path) -> None:
+    """Record every gate log as a POSIX path under the output directory, never as a host-native one.
+
+    The recorded string is the only coordinate a later reader gets; the producer's working directory is not stored
+    anywhere, so a path that needs it cannot be resolved by anyone else.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = workspace / "run"
+
+    completed = subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", "run", *_skipped_gate_args()],
+        cwd=workspace,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+    for check in payload["checks"]:
+        for key in ("command_path", "stdout", "stderr"):
+            recorded = check[key]
+            assert not Path(recorded).is_absolute()
+            assert "\\" not in recorded
+            assert recorded.startswith("checks/")
+            assert (output / recorded).is_file()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_status"),
+    [
+        pytest.param(["--skip-lint", "not applicable here"], "not-applicable", id="skipped-gate"),
+        pytest.param(["--lint", 'python -c "pass"'], "pass", id="executed-gate"),
+        pytest.param(["--lint", 'python -c "raise SystemExit(3)"'], "fail", id="failed-gate"),
+    ],
+)
+def test_run_gates_records_output_relative_logs_for_every_gate_outcome(
+    tmp_path: Path, arguments: list[str], expected_status: str
+) -> None:
+    """Record output-relative logs whether a gate is skipped, runs and passes, or runs and fails.
+
+    Each outcome returns through a different branch of run_check, so covering only one of them would let a partial
+    revert restore the old host-native paths for gates that actually ran a command — that is, for every real run.
+    """
+    output = tmp_path / "gates"
+    others = [argument for gate_id in GATE_IDS if gate_id != "lint" for argument in (f"--skip-{gate_id}", "n/a")]
+
+    subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", str(output), *arguments, *others],
+        capture_output=True,
+        check=False,
+    )
+
+    payload = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+    lint = next(check for check in payload["checks"] if check["id"] == "lint")
+    assert lint["status"] == expected_status
+    for key in ("command_path", "stdout", "stderr"):
+        assert lint[key] == f"checks/lint.{'command' if key == 'command_path' else key}.txt"
+        assert (output / lint[key]).is_file()
+
+
+def test_gate_validation_ignores_the_callers_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Return the same verdict for one finished artifact from the producing workspace and from elsewhere."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    output = workspace / "run"
+    subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", "run", *_skipped_gate_args()],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+    module = _load_module(SHARED_VALIDATOR, "codex_rig_shared_validate_artifacts")
+
+    verdicts = []
+    for directory in (workspace, elsewhere):
+        monkeypatch.chdir(directory)
+        verdicts.append(module._validate_gates(output)["status"])
+
+    assert verdicts == ["pass", "pass"]
+
+
+def test_gate_validation_accepts_a_legacy_ancestor_relative_log_from_any_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept a gate log recorded relative to an ancestor of the output directory, wherever the reader runs.
+
+    Runs produced before logs were recorded relative to the output directory stored a path relative to whichever
+    directory produced them, and `--complete-run` revalidates such a run long afterwards. Rejecting that form would
+    strand finished work, so it resolves from `out_dir`'s ancestors — never from the reader's own directory, which is
+    what made the verdict vary by caller.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    output = workspace / "run"
+    subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", "run", *_skipped_gate_args()],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+    gates_path = output / "gates.json"
+    payload = json.loads(gates_path.read_text(encoding="utf-8"))
+    payload["checks"][0]["command_path"] = f"run/{payload['checks'][0]['command_path']}"
+    gates_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    module = _load_module(SHARED_VALIDATOR, "codex_rig_shared_validate_artifacts_legacy")
+
+    verdicts = []
+    for directory in (workspace, elsewhere):
+        monkeypatch.chdir(directory)
+        verdicts.append(module._validate_gates(output)["status"])
+
+    assert verdicts == ["pass", "pass"]
+
+
+def test_gate_validation_rejects_a_log_resolving_outside_the_output_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a gate log that exists but sits outside the output directory it claims to document.
+
+    Trying ancestors widens where a relative name may resolve, so the containment check is what keeps a same-named file
+    elsewhere on disk from being accepted as this run's evidence.
+    """
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    output = workspace / "run"
+    subprocess.run(
+        [sys.executable, str(RUN_GATES), "--out", "run", *_skipped_gate_args()],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+    (workspace / "outside.txt").write_text("not this run's evidence\n", encoding="utf-8")
+    gates_path = output / "gates.json"
+    payload = json.loads(gates_path.read_text(encoding="utf-8"))
+    payload["checks"][0]["command_path"] = "outside.txt"
+    gates_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    module = _load_module(SHARED_VALIDATOR, "codex_rig_shared_validate_artifacts_outside")
+    monkeypatch.chdir(workspace)
+
+    with pytest.raises(SystemExit) as failure:
+        module._validate_gates(output)
+
+    assert str(failure.value) == "gate-check-log-outside-output:0:command_path"
 
 
 def test_run_gates_times_out_and_terminates_native_process(tmp_path: Path) -> None:

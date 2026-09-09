@@ -291,11 +291,22 @@ def _load_json_list(path: Path) -> list[Any]:
 
 
 def _resolve_path(out_dir: Path, raw_path: object) -> Path:
+    """Resolve one declared review artifact path without consulting the caller's working directory.
+
+    The recorded path was written by an earlier process whose directory is not stored alongside it, so probing the
+    reader's own directory made a finished review valid in one place and invalid in another. Candidates are derived from
+    `out_dir` — the current relative form first, then its ancestors for runs written before that convention — and the
+    containment check below still rejects anything landing outside the review output.
+    """
     if not isinstance(raw_path, str) or not raw_path:
         raise SystemExit("missing output path")
-    path = Path(raw_path)
-    if not path.is_absolute() and not path.exists():
-        path = out_dir / path
+    declared = Path(raw_path)
+    path = declared if declared.is_absolute() else out_dir / declared
+    if not declared.is_absolute() and not path.is_file():
+        for ancestor in out_dir.resolve().parents:
+            if (ancestor / declared).is_file():
+                path = ancestor / declared
+                break
     resolved = path.resolve()
     if not resolved.is_relative_to(out_dir.resolve()):
         raise SystemExit(f"artifact-path-outside-review-output:{raw_path}")

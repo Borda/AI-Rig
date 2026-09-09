@@ -325,7 +325,16 @@ def validate_artifact_path(out_path: Path, artifact_path: str) -> None:
     expected = (out_path.parent / "result.json").resolve()
     if not expected.is_relative_to(run_root):
         raise SystemExit("result-artifact-path-mismatch")
-    candidates = [declared] if declared.is_absolute() else [out_path.parent / declared, declared]
+    # Anchor on the run directory, never the caller's. The declared path was written by an earlier
+    # process whose directory is not recorded with it, so probing this one made the same artifact
+    # acceptable from one place and rejected from another. Ancestors cover runs written before the
+    # output-relative convention; the equality check below still admits only this run's result.
+    run_directory = out_path.parent
+    candidates = (
+        [declared]
+        if declared.is_absolute()
+        else [run_directory / declared, *(ancestor / declared for ancestor in run_directory.resolve().parents)]
+    )
     if not any(candidate.resolve() == expected for candidate in candidates):
         raise SystemExit("result-artifact-path-mismatch")
 

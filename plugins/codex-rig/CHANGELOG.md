@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.7
+
+- Anchor recorded artifact paths on the run directory instead of the caller's working directory. Validation used to probe the reader's own directory when a recorded path was relative, so whether a finished run was valid depended on where the validator happened to be invoked from — a review that passed inside its workspace failed when `--complete-run` revalidated it from elsewhere. Gate logs, final-handoff paths, declared result paths, and code-review artifact paths now all resolve from the run directory, falling back to its ancestors for runs written before this convention; every accepted path must still resolve inside the run directory, so widening where a name may resolve does not widen what counts as evidence. Existing artifacts keep validating.
+- Record gate logs as POSIX paths relative to `--out` (`checks/<id>.<kind>.txt`) in `run_gates.py`, derived from the file actually written so the recorded name cannot describe a different location. The previous form embedded the producer's own directory and, on Windows, host-native separators that no other operating system could read.
+
 ## 0.14.6
 
 - Require the canonical finding-records marker on every new schema-v2 assessed review candidate. Omitting `finding_records_version` no longer falls back to the bare id/severity record shape, so a new producer cannot skip the canonical title, summary, required change, evidence, and closure fields. The final-handoff validator applies the same requirement and keeps the grouped/concise layout mandatory for those records. Schema-v1 historical results stay readable and exempt.

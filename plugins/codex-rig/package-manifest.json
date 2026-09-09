@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "d156de0694057bbeea720bd73a7a40c401fdcb04b3ecf73f3c2b5b0aa5c4a6ab"
+      "sha256": "4b75ea7215c62c3355e563bc6f7d005d54315c4e35cb82a158cc3ef58b88c928"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "678188b57c8eaf193bd3777eb1306b5b0fc00b6d9132a8bc2400df1737602047"
+      "sha256": "69238d97ec7a4f8eb9d9c64192fe9303fae05f3651e0d1d1dee8a105146df840"
     },
     {
       "mode": "0644",
@@ -413,12 +413,12 @@
     {
       "mode": "0644",
       "path": "shared/quality-gates.md",
-      "sha256": "402e7c6971d6f6a2103263987d4c5be2bd3f552da6df83e8a6dbee8b85968863"
+      "sha256": "37d1a1a086e77dcab3077ff862a84e47eae8f9319080e9f9cbc35a9352b72475"
     },
     {
       "mode": "0755",
       "path": "shared/run_gates.py",
-      "sha256": "af41101d3f2a55fd2ab8bebdde2cb85ecc9ed6b86975166049e346336b3330c2"
+      "sha256": "328a5931542903ed02e4b95352e3beb9a456ea80589c6714269273bf1209ae4b"
     },
     {
       "mode": "0755",
@@ -438,12 +438,12 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "cee7f90756964778fa824ba7a5c88264fe2838988e481ddfe1bcede974bbea0d"
+      "sha256": "621d6d63023133faa6ed6572c1dc396eb21b959c5b72b9414479bf2c91b6cfd4"
     },
     {
       "mode": "0755",
       "path": "shared/write-result.py",
-      "sha256": "8cb44814f37a4d9676a49e8e9598237f4ed27afff887aba9766ab2d174aa9172"
+      "sha256": "58ca688f7d7d37e1fd040d3daf08be0dcaba54dfa10822d9218c58e765ce90ce"
     },
     {
       "mode": "0644",
@@ -518,7 +518,7 @@
     {
       "mode": "0755",
       "path": "skills/code-review/validate_artifacts.py",
-      "sha256": "608c42b5f55092a40faadf7a79462d232d08ae192f843f97440fdd4278dbde85"
+      "sha256": "b0b119937f756703477ee216b59937631dc6fb8ddf95696e8ff0b3172b15722d"
     },
     {
       "mode": "0644",
@@ -893,7 +893,7 @@
     {
       "mode": "0644",
       "path": "tests/test_portable_workflow_helpers.py",
-      "sha256": "b4f5af8420da60cc5758fd878d53e7cdeb37265636a9713a93059760d7a03ee3"
+      "sha256": "fe557d833d89ddec783067c894935743ff07cea67a03804a48d605b0df1a54da"
     },
     {
       "mode": "0644",
@@ -1159,5 +1159,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.14.6"
+  "version": "0.14.7"
 }

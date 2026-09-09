@@ -53,6 +53,7 @@ from typing import Any
 
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 DEFAULT_TIMEOUT_SECONDS = 900
+CHECKS_DIRNAME = "checks"
 
 
 def positive_integer(value: str) -> int:
@@ -212,7 +213,25 @@ def execute_command(command: str, timeout: int, stdout_path: Path, stderr_path: 
             return 124, time.monotonic() - started
 
 
-def skipped_check(gate_id: str, reason: str, paths: dict[str, Path]) -> dict[str, Any]:
+def check_paths(gate_id: str, out_dir: Path) -> tuple[dict[str, Path], dict[str, str]]:
+    """Return the log paths to write plus the names recorded for them in gates.json.
+
+    The recorded names are relative to the run's output directory and always use POSIX separators, so a
+    reader resolves them against ``--out`` alone. A path relative to whoever happened to run this script
+    is not a portable coordinate: the producer's working directory is recorded nowhere, so the same
+    artifact would validate from one directory and fail from another.
+
+    Both mappings come from one directory argument, so the file written and the name recorded for it
+    cannot describe different locations.
+    """
+    names = ("command", "stdout", "stderr")
+    checks_dir = out_dir / CHECKS_DIRNAME
+    paths = {name: checks_dir / f"{gate_id}.{name}.txt" for name in names}
+    recorded = {name: paths[name].relative_to(out_dir).as_posix() for name in names}
+    return paths, recorded
+
+
+def skipped_check(gate_id: str, reason: str, paths: dict[str, Path], recorded: dict[str, str]) -> dict[str, Any]:
     """Write and return one explicit not-applicable gate result."""
     paths["stdout"].write_text("", encoding="utf-8")
     paths["stderr"].write_text(f"not-applicable:{reason}\n", encoding="utf-8")
@@ -222,18 +241,18 @@ def skipped_check(gate_id: str, reason: str, paths: dict[str, Path]) -> dict[str
         "status": "not-applicable",
         "exit_code": 0,
         "duration_seconds": 0.0,
-        "command_path": str(paths["command"]),
-        "stdout": str(paths["stdout"]),
-        "stderr": str(paths["stderr"]),
+        "command_path": recorded["command"],
+        "stdout": recorded["stdout"],
+        "stderr": recorded["stderr"],
         "reason": reason,
     }
 
 
-def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, checks_dir: Path) -> dict[str, Any]:
+def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, out_dir: Path) -> dict[str, Any]:
     """Run one gate or record its explicit not-applicable status."""
-    paths = {name: checks_dir / f"{gate_id}.{name}.txt" for name in ("command", "stdout", "stderr")}
+    paths, recorded = check_paths(gate_id, out_dir)
     if skip_reason:
-        return skipped_check(gate_id, skip_reason, paths)
+        return skipped_check(gate_id, skip_reason, paths, recorded)
     if not command:
         paths["stdout"].write_text("", encoding="utf-8")
         paths["stderr"].write_text("missing command\n", encoding="utf-8")
@@ -243,9 +262,9 @@ def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, checks
             "status": "missing-command",
             "exit_code": 127,
             "duration_seconds": 0.0,
-            "command_path": str(paths["command"]),
-            "stdout": str(paths["stdout"]),
-            "stderr": str(paths["stderr"]),
+            "command_path": recorded["command"],
+            "stdout": recorded["stdout"],
+            "stderr": recorded["stderr"],
             "reason": "no command configured for required gate",
         }
 
@@ -265,9 +284,9 @@ def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, checks
         "status": status,
         "exit_code": exit_code,
         "duration_seconds": duration,
-        "command_path": str(paths["command"]),
-        "stdout": str(paths["stdout"]),
-        "stderr": str(paths["stderr"]),
+        "command_path": recorded["command"],
+        "stdout": recorded["stdout"],
+        "stderr": recorded["stderr"],
     }
     if status == "timeout":
         result["reason"] = f"timeout after {timeout} seconds"
@@ -286,7 +305,7 @@ def main() -> int:
         return 2
 
     output: Path = arguments.out
-    checks_dir = output / "checks"
+    checks_dir = output / CHECKS_DIRNAME
     checks_dir.mkdir(parents=True, exist_ok=True)
     commands = {gate_id: getattr(arguments, gate_id) for gate_id in GATE_IDS}
     defaults = default_commands(sys.platform)
@@ -298,7 +317,7 @@ def main() -> int:
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
 
     checks = [
-        run_check(gate_id, commands[gate_id], skip_reasons[gate_id], arguments.timeout_seconds, checks_dir)
+        run_check(gate_id, commands[gate_id], skip_reasons[gate_id], arguments.timeout_seconds, output)
         for gate_id in GATE_IDS
     ]
     failed = [check["id"] for check in checks if check["status"] in {"fail", "missing-command", "timeout"}]
