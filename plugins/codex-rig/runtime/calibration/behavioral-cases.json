@@ -2,6 +2,17 @@
   "cases": [
     {
       "expected_findings": [
+        "empty-mcp-table-treated-as-disabled",
+        "app-server-evidence-labelled-native",
+        "adapter-success-treated-as-review-completion",
+        "review-route-promotes-sibling-writes"
+      ],
+      "id": "code-review-app-server-boundary",
+      "prompt": "Assess an isolated review route that assumes an empty MCP table removes inherited servers, labels independent App Server root threads as native collaboration children, stops after two response files without canonical validation or promotion, and automatically enables sibling write workflows. Require observed capability checks, explicit parent-owned evidence provenance, unchanged review completion gates, and separate write authorization.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "reviewer-artifact-write-required",
         "readonly-label-overrides-write-grant",
         "parent-probe-labelled-independent"

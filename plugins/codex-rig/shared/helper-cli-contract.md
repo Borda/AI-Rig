@@ -13,6 +13,7 @@ Helper option schemas live in `--help`, not skills. In a plugin, derive `PLUGIN_
 - `python PLUGIN_ROOT/runtime/calibration/run_live_ab.py --help`
 - `python PLUGIN_ROOT/runtime/calibration/score_behavioral.py --help`
 - `python PLUGIN_ROOT/shared/find-review-report.py --help`
+- `python PLUGIN_ROOT/shared/app_server_review.py --help` — explicit paid review route; `--check-host` verifies setup without a model turn, not review completion
 - `python PLUGIN_ROOT/shared/select-git-remote.py --help`
 - `python PLUGIN_ROOT/shared/write-result.py --help`
 - `python PLUGIN_ROOT/shared/final_handoff.py --help`

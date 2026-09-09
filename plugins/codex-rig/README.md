@@ -264,6 +264,10 @@ The canonical policy is `shared/specialist-orchestration.md`.
 
 Read-only specialists return findings or executable probe requests; the parent saves responses and owns authorized scratch execution. Review and investigation do not grant source-edit authority. Implementation and remediation retain their separately authorized writer roles. Parent-run probes remain distinguishable from independent conclusions. Runtime validation rejects explicit filesystem write grants even under a read-only sandbox label; absent contradictory grants still do not prove isolation. Missing child controls remain a process limitation, not a reason to broaden permissions or stop otherwise permitted serial investigation.
 
+When native reviewer controls are unavailable, Code Review has an explicitly approved [isolated App Server route](skills/code-review/app-server-review.md). The parent launches bounded independent read-only threads, disables external tool capabilities for that invocation, saves unchanged responses, and validates schema-4 evidence before the normal completion gates. Its `app-server-parent-observed` evidence is not native child lineage, cryptographic attestation, or credential isolation. This experimental route requires a compatible installed Codex CLI and separate paid-execution approval; it does not automatically promote other skills or enable parallel writes.
+
+Reviewer output must be new and contained beneath the resolved plan directory. Setup failures return bounded errors; when output storage is unavailable, no diagnostic artifact is promised. Completed responses remain retained if a later failure occurs.
+
 1. The parent determines whether the work actually benefits from an independent specialist.
 2. It reads and hashes `roles/<role-id>/ROLE.md`.
 3. It builds a narrow context pack: objective, relevant evidence, exclusions, concrete questions, output contract, and stop rule.

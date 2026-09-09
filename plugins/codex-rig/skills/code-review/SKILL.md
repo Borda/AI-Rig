@@ -191,7 +191,9 @@ Routing rules:
 - `BROAD` and `HIGH_RISK`: always real QA and challenger passes.
 - Non-Sol conditional role only when matching `axis_<role>` signal is true. `solution-architect` and `security-auditor` additionally require valid explicit-user-selection evidence; an axis signal alone fails routing and never selects Sol.
 
-Before every spawned route:
+When the native launcher cannot establish mandatory reviewer controls, the user may explicitly approve the separate [App Server review route](app-server-review.md). Read that contract before preparing its frozen plan. It is a paid, parent-owned local host integration with a distinct evidence schema, not native `spawn_agent`, a fabricated `read_host` declaration, or automatic permission to retry. Without that approval or a passing capability check, preserve the blocker.
+
+Before every native spawned route:
 
 1. Apply the shared [host compatibility check](../../shared/specialist-orchestration.md#host-compatibility-before-dispatch) before preparing specialist context. Role-card defaults, requested profiles, parent controls, or unsupported overrides do not establish compatible child controls. If unavailable, do not dispatch: explicit parallel-read stops with `review-host-controls-unavailable-before-dispatch`; auto may resolve serial only where the independence gate permits it. Never launch work hoping to repair provenance afterward.
 2. For a compatible launcher, prepare/hash the context, freeze the execution plan with `read_host={"source":"runtime-tool-contract","sandbox_mode":"read-only","approval_policy":"never"}` transcribed from that actual launcher's supported child controls, and run `parallel_execution.py preflight --consumer code-review` using its documented arguments before dispatch. Historical `review_host` remains readable.
@@ -207,13 +209,13 @@ For every triggered pass:
 
 Parent owns final severity, duplicate merge, conflict resolution, and decision.
 
-For a spawned attempt:
+For a native spawned attempt:
 
 - Hash completed context before spawn; task name `review_<role_with_underscores>_<first_12_context_sha256>_a<attempt>`.
 - Record full agent path. This binds runtime child identity to role, context artifact, and attempt even when rollout schema leaves `agent_role` null.
 - Runtime encrypts actual inter-agent payload: do not claim cryptographic proof plaintext exactly equals saved context; record residual limit in confidence metadata.
 
-Compute SHA-256 for `diff.patch` and every context pack. Require exact first specialist line (replace placeholders):
+Compute SHA-256 for `diff.patch` and every context pack. Native spawned output requires this exact first specialist line (replace placeholders); App Server output uses its separate byte-binding contract without native provenance claims:
 
 ```text
 <!-- codex-review-provenance role=<role> run=<review_run_id> input=<review_input_sha256> context=<context_sha256> attempt=<n> -->
@@ -232,7 +234,7 @@ Use runtime-provided subagents when independence materially helps and follow the
 - If no safe subagent route exists, write a labeled in-main substitute for each triggered role and set `fanout_substituted=true`. The substitute must be substantive, identify the exact role in its output, use one unique output path, and record no spawn attempts.
 - Substitution lowers confidence and never satisfies independence for critical findings.
 
-`specialist-manifest.json` uses schema version 3 and contains `review_run_id`, `parent_thread_id=$CODEX_THREAD_ID`, `review_input_sha256`, optional exact mirrored `sol_selection`, and triggered passes only. Schema 2 remains readable only for historical artifacts and must not be produced by a new review.
+Native `specialist-manifest.json` uses schema version 3 and contains `review_run_id`, `parent_thread_id=$CODEX_THREAD_ID`, `review_input_sha256`, optional exact mirrored `sol_selection`, and triggered passes only. Schema 2 remains readable only for historical artifacts and must not be produced by a new review. The explicitly approved App Server route uses schema 4 as described in its linked contract; never mix native spawn attempts into it.
 
 - Every pass records `role_card_sha256` for the exact installed `roles/<role>/ROLE.md`. Each spawn additionally records route, attempted routes, fallback reason, requested and observed controls, parent spawn event ID, child thread ID/path, turn ID, actual model/effort, context/output paths/hashes, status, and transient error type when applicable.
 - `selected_attempt` identifies completed output.
@@ -242,7 +244,7 @@ When any pass is spawned, freeze `<run-directory>/execution-plan.json` before di
 
 Use the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for intake, evidence, freeze, approval, dispatch, terminal/join/derivation, integration, verification, and promotion. Code Review may fan out only its validated read-only specialist passes; the parent retains all writes, reconciliation, final gates, verdict, and promotion.
 
-Execution labels are runtime outcomes, not planning claims:
+Native execution labels are runtime outcomes, not planning claims; the App Server contract defines its distinct conservative projection:
 
 - Report `parallel` only when the shared validator binds at least two substantive child intervals that overlap on the observed host timeline.
 - Report `independent-spawned` when multiple validated children run without substantive overlap.
@@ -250,7 +252,7 @@ Execution labels are runtime outcomes, not planning claims:
 - Report `serial-fallback` only when the same frozen plan and gates were attempted as a fallback and the validated child intervals do not overlap.
 - Runtime evidence is limited to the exact portable summary fields `evidence_level=portable-read-restricted`, `network_mode=restricted`, `approval_policy=never`, and `filesystem_credential_isolation=unverified`; it does not claim global network, command, credential, or filesystem denial or that all command behavior was inspected. `write_parallel_eligible` stays false; code review is a read-only pilot. The `host-isolated` tier remains unavailable until authoritative host evidence exists.
 
-Attempt policy:
+Native attempt policy (the App Server route permits no automatic second paid wave):
 
 - At most two attempts/role.
 - Retry only `timeout`, `transport_error`, or `rate_limited`; never retry deterministic findings, validation failures, completed work.
@@ -260,7 +262,7 @@ Attempt policy:
 Independence gate:
 
 - `BROAD`/`HIGH_RISK` pass only with real independent QA/challenger outputs.
-- Set `independence_required=true` only when QA/challenger risk-triggered; set `independence_satisfied=true` only when every triggered required role has validated spawned provenance.
+- Set `independence_required=true` only when QA/challenger risk-triggered; set `independence_satisfied=true` only when every triggered required role has validated native spawned provenance or validated schema-4 App Server evidence. Neither declarations nor parent substitutes satisfy this requirement.
 - If either output is unavailable, fail/timeout with `independence_satisfied=false` and `needs-independent-review`.
 - Risk-triggered `LOCAL` may pass with explicit substitutes only if every triggered axis is covered and confidence is reduced.
 

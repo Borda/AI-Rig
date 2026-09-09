@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0
+
+- Add an explicitly approved, bounded App Server reviewer route for hosts without native child permission controls. Verify invocation-scoped capability restrictions and effective read-only/never thread controls; preserve opaque authentication and parent-owned report persistence.
+- Bind separate schema-4 review evidence to frozen context, canonical roles, independent terminal responses, and cleanup without fabricating native lineage. Keep canonical completion/discovery, non-sensitive scope, write-remediation boundaries, and disclosed credential-isolation limits.
+- Add adapter and canonical review regression coverage plus fixture-only calibration for inherited MCP configuration, evidence tampering, required independence, and incomplete completion paths.
+
 ## 0.14.7
 
 - Anchor recorded artifact paths on the run directory instead of the caller's working directory. Validation used to probe the reader's own directory when a recorded path was relative, so whether a finished run was valid depended on where the validator happened to be invoked from — a review that passed inside its workspace failed when `--complete-run` revalidated it from elsewhere. Gate logs, final-handoff paths, declared result paths, and code-review artifact paths now all resolve from the run directory, falling back to its ancestors for runs written before this convention; every accepted path must still resolve inside the run directory, so widening where a name may resolve does not widen what counts as evidence. Existing artifacts keep validating.

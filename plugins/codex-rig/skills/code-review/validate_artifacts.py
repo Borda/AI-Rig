@@ -60,6 +60,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 from parallel_execution import validate_read_only_runtime  # noqa: E402
+from app_server_review import ReviewRouteError, validate_evidence as validate_app_server_evidence  # noqa: E402
 from review_routing import derive_mechanical_risk  # noqa: E402
 
 REQUIRED_SECTIONS = (
@@ -104,7 +105,7 @@ ALL_MANIFEST_ROLES = {
     "web-explorer",
 }
 INDEPENDENT_PASS_TIERS = {"BROAD", "HIGH_RISK"}
-VALID_MODES = {"spawned", "substituted"}
+VALID_MODES = {"spawned", "substituted", "app-server"}
 TRANSIENT_RETRY_ERRORS = {"rate_limited", "timeout", "transport_error"}
 SOL_ROLES = {"solution-architect", "security-auditor"}
 UNAVAILABLE_NOTE_LINES = (
@@ -1077,7 +1078,9 @@ def _validate_review_runtime(
     codex_home: Path,
     parent_thread_id: str,
 ) -> dict[str, object]:
-    """Bind spawned review passes to the shared read-only runtime validator."""
+    """Validate route-specific execution evidence before granting reviewer independence."""
+    if manifest.get("schema_version") == 4:
+        return _validate_app_server_review(out_dir, manifest, passes)
     spawned = [item for item in passes if item.get("mode") == "spawned"]
     if not spawned:
         if manifest.get("runtime_execution") is not None:
@@ -1152,6 +1155,52 @@ def _validate_review_runtime(
         or summary.get("consumer_id") != "code-review"
     ):
         raise SystemExit("review-runtime-execution-evidence-invalid")
+    return summary
+
+
+def _validate_app_server_review(
+    out_dir: Path, manifest: dict[str, Any], passes: list[dict[str, Any]]
+) -> dict[str, object]:
+    """Bind an isolated review wave without manufacturing native child lineage."""
+    execution = manifest.get("app_server_execution")
+    if not isinstance(execution, dict) or set(execution) != {"plan_path", "evidence_path", "evidence_sha256"}:
+        raise SystemExit("review-app-server-execution-missing")
+    if manifest.get("runtime_execution") is not None or any(item.get("mode") == "spawned" for item in passes):
+        raise SystemExit("review-app-server-native-evidence-forbidden")
+    plan_path = _resolve_path(out_dir, execution["plan_path"])
+    evidence_path = _resolve_path(out_dir, execution["evidence_path"])
+    if not evidence_path.is_file() or _sha256(evidence_path) != execution["evidence_sha256"]:
+        raise SystemExit("review-app-server-evidence-hash-mismatch")
+    try:
+        summary = validate_app_server_evidence(plan_path, evidence_path, PLUGIN_ROOT / "roles")
+    except (ReviewRouteError, ValueError, OSError) as error:
+        raise SystemExit(f"review-app-server-evidence-invalid:{error}") from error
+    evidence = _load_json(evidence_path)
+    for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
+        if evidence.get(key) != manifest.get(key):
+            raise SystemExit(f"review-app-server-identity-mismatch:{key}")
+    isolated = [item for item in passes if item.get("mode") == "app-server"]
+    nodes = {node["role_id"]: node for node in evidence["nodes"]}
+    if not isolated or len(isolated) != len(nodes) or {item.get("role") for item in isolated} != set(nodes):
+        raise SystemExit("review-app-server-role-set-mismatch")
+    for item in isolated:
+        node = nodes[item["role"]]
+        if (
+            item.get("role_card_sha256") != node["role_card_sha256"]
+            or _resolve_path(out_dir, item.get("output_path")) != (evidence_path.parent / node["output_path"]).resolve()
+            or item.get("attempts") not in (None, [])
+            or item.get("selected_attempt") is not None
+        ):
+            raise SystemExit(f"review-app-server-pass-mismatch:{item['role']}")
+    if (
+        summary.get("evidence_level") != "app-server-parent-observed"
+        or summary.get("actual_mode") not in {"parallel", "independent-spawned"}
+        or summary.get("approval_policy") != "never"
+        or summary.get("filesystem_credential_isolation") != "unverified"
+        or summary.get("write_parallel_eligible") is not False
+        or summary.get("consumer_id") != "code-review"
+    ):
+        raise SystemExit("review-app-server-summary-invalid")
     return summary
 
 
@@ -1297,8 +1346,9 @@ def _validate_manifest_entries(
     parent_thread_id: str,
     project_root: Path,
 ) -> dict[str, dict[str, Any]]:
+    """Bind every triggered pass to unique, role-specific evidence for its declared route."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3}:
+    if schema_version not in {2, 3, 4}:
         raise SystemExit("manifest-schema-version")
     for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
@@ -1308,6 +1358,10 @@ def _validate_manifest_entries(
     review_input = out_dir / "diff.patch"
     if not review_input.exists() or _sha256(review_input) != manifest["review_input_sha256"]:
         raise SystemExit("manifest-review-input-hash-mismatch")
+    if schema_version == 4:
+        _validate_app_server_review(out_dir, manifest, passes)
+    elif manifest.get("app_server_execution") is not None or any(item.get("mode") == "app-server" for item in passes):
+        raise SystemExit("review-app-server-schema-required")
     parent_rows: list[dict[str, Any]] | None = None
     used_threads: set[str] = set()
     used_context_paths: set[Path] = set()
@@ -1326,7 +1380,7 @@ def _validate_manifest_entries(
         if role in by_role:
             raise SystemExit(f"manifest-duplicate-role:{role}")
         role_card = _load_role_card(PLUGIN_ROOT / "roles", role)
-        if schema_version == 3 and item.get("role_card_sha256") != role_card["role_card_sha256"]:
+        if schema_version in {3, 4} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
         if not isinstance(axis, str) or not axis.strip():
             raise SystemExit(f"manifest-missing-axis:{role}")
@@ -1355,6 +1409,10 @@ def _validate_manifest_entries(
                 used_context_paths,
                 used_output_paths,
             )
+        elif mode == "app-server":
+            if output_path in used_output_paths:
+                raise SystemExit("manifest-reused-output-path")
+            used_output_paths.add(output_path)
         elif item.get("attempts") not in (None, []):
             raise SystemExit(f"manifest-substitute-has-attempts:{role}")
         else:
@@ -1400,7 +1458,7 @@ def _validate_manifest_preflight(
         parent_thread_id,
         project_root,
     )
-    if manifest.get("schema_version") == 3:
+    if manifest.get("schema_version") in {3, 4}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -1411,6 +1469,7 @@ def _validate_result(
     parent_thread_id: str,
     project_root: Path,
 ) -> None:
+    """Validate a complete review decision against routing, independent evidence, and gates."""
     result = _load_json(result_path)
     status = result.get("status")
     if status not in {"pass", "fail", "timeout"}:
@@ -1588,7 +1647,7 @@ def _validate_result(
     )
     runtime_summary = (
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
-        if manifest.get("schema_version") == 3
+        if manifest.get("schema_version") in {3, 4}
         else {}
     )
     if runtime_summary:
@@ -1637,7 +1696,7 @@ def _validate_result(
     substituted_roles = sorted(role for role in triggered_required if by_role[role]["mode"] == "substituted")
     independence_required = bool(triggered_required)
     required_independent = independence_required and all(
-        by_role[role]["mode"] == "spawned" for role in triggered_required
+        by_role[role]["mode"] in {"spawned", "app-server"} for role in triggered_required
     )
     if risk_tier in INDEPENDENT_PASS_TIERS and status == "pass" and not required_independent:
         raise SystemExit("independent-review-required-for-pass:" + ",".join(substituted_roles))
