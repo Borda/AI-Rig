@@ -2,7 +2,7 @@
 
 # Notebook foundation contract
 
-Generate the header, environment setup, imports, and path constants. Use the variant selected by `composition.md`.
+Generate header, environment setup, imports, and path constants. Use variant selected by `composition.md`.
 
 ## Variant matrix
 
@@ -14,14 +14,14 @@ Generate the header, environment setup, imports, and path constants. Use the var
 
 ## Section 1: Header and setup
 
-Start with a `# %% [markdown]` cell containing the grounded competition title, 2–3 sentences describing the selected scope and approach, and the competition URL when known. In inference-only mode, name the grounded checkpoint path or Kaggle input dataset.
+Start with a `# %% [markdown]` cell containing grounded competition title, 2–3 sentences describing selected scope and approach, and competition URL when known. In inference-only mode, name grounded checkpoint path or Kaggle input dataset.
 
 Follow with one setup cell:
 
 - Online: `# ! pip download -q <library> --dest frozen_packages/`, then install from that directory with online fallback.
-- Offline: `# ! cp -r ../input/python-packages/frozen_packages .`, then install with `--no-index --find-links frozen_packages/` and a clearly disclosed fallback only when internet is allowed.
-- Put modality-specific packages selected by `modality-dispatch.md` here, never later in the notebook.
-- In inference-only mode, exclude training callbacks, logger packages, and training metrics not needed to deserialize the model.
+- Offline: `# ! cp -r ../input/python-packages/frozen_packages .`, then install with `--no-index --find-links frozen_packages/` and clearly disclosed fallback only when internet is allowed.
+- Put modality-specific packages selected by `modality-dispatch.md` here, never later in notebook.
+- In inference-only mode, exclude training callbacks, logger packages, and training metrics not needed to deserialize model.
 
 ## Section 2: Imports and paths
 
@@ -30,7 +30,7 @@ Use one `# %%` cell containing imports and global paths only:
 - Standard library first (`glob`, `os`, `Path` as needed), then NumPy/pandas/plotting, then torch/model packages, then sklearn/XGBoost.
 - Import `tqdm` with `from tqdm.auto import tqdm` and use it for every visible notebook progress bar (data scans, training-adjacent loops, and inference). Never use Rich progress bars.
 - Always import `torch` for neural inference/training notebooks.
-- Suppress only a specific noisy warning category; do not blanket-ignore exceptions.
+- Suppress only specific noisy warning category; do not blanket-ignore exceptions.
 - Define grounded `PATH_DATASET`, `PATH_OUTPUT`, and when needed `PATH_MODELS`/`PATH_CHECKPOINT` as ALL_CAPS.
 - Print package and device versions immediately after imports.
 - For neural training, call `pl.seed_everything(42)` and seed every non-Lightning split/sampler explicitly.

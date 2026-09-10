@@ -330,6 +330,8 @@ From this source checkout, `make sync-codex` performs a broader managed restore:
 
 `make sync-codex` installs from the pushed GitHub remote, not a dirty local tree. Commit and push first when you intentionally want a checkout change to become installable.
 
+The [personal session policy](global-session-policy.md#local-test-execution) keeps ordinary local tests sandboxed and requires evidence for additional capabilities, including local sockets, subprocess communication, and filesystem access. Repeated runs should reuse a verified project test entrypoint with a narrow approval prefix; inline environment assignments and log redirection can otherwise make each changed shell string require its own approval. The policy grants no permissions, installs no test runner, and leaves existing approval rules unchanged. A source edit takes effect in other sessions only after deliberate policy synchronization and loading the updated instructions.
+
 <details>
 <summary><strong>Show sync scope and cleanup boundaries</strong></summary>
 

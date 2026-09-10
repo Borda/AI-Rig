@@ -1264,28 +1264,27 @@ def _validate_code_remediate_production_lifecycle(
         or application.get("applied_paths") != expected_paths
     ):
         raise SystemExit("code-remediate-production-lifecycle-source-application-mismatch")
-    source_patch_path = _code_remediate_run_path(
-        out_dir,
-        application.get("patch_path"),
-        "code-remediate-production-lifecycle-source-patch-path-invalid",
-    )
-    if (
-        source_patch_path.is_symlink()
-        or not source_patch_path.is_file()
-        or application.get("patch_sha256") != hashlib.sha256(source_patch_path.read_bytes()).hexdigest()
+    for path_key, digest_key, path_error, mismatch_error in (
+        (
+            "patch_path",
+            "patch_sha256",
+            "code-remediate-production-lifecycle-source-patch-path-invalid",
+            "code-remediate-production-lifecycle-source-patch-mismatch",
+        ),
+        (
+            "rollback_patch_path",
+            "rollback_patch_sha256",
+            "code-remediate-production-lifecycle-rollback-path-invalid",
+            "code-remediate-production-lifecycle-rollback-mismatch",
+        ),
     ):
-        raise SystemExit("code-remediate-production-lifecycle-source-patch-mismatch")
-    rollback_path = _code_remediate_run_path(
-        out_dir,
-        application.get("rollback_patch_path"),
-        "code-remediate-production-lifecycle-rollback-path-invalid",
-    )
-    if (
-        rollback_path.is_symlink()
-        or not rollback_path.is_file()
-        or application.get("rollback_patch_sha256") != hashlib.sha256(rollback_path.read_bytes()).hexdigest()
-    ):
-        raise SystemExit("code-remediate-production-lifecycle-rollback-mismatch")
+        patch_path = _code_remediate_run_path(out_dir, application.get(path_key), path_error)
+        if (
+            patch_path.is_symlink()
+            or not patch_path.is_file()
+            or application.get(digest_key) != hashlib.sha256(patch_path.read_bytes()).hexdigest()
+        ):
+            raise SystemExit(mismatch_error)
     cleanup = lifecycle.get("cleanup")
     if not isinstance(cleanup, dict) or cleanup.get("status") != "removed" or cleanup.get("force") is not False:
         raise SystemExit("code-remediate-production-lifecycle-cleanup-mismatch")

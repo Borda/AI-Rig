@@ -44,7 +44,7 @@ Require:
 
 Dry-run both before edit:
 
-Execute the configured `metric_cmd` and `guard_cmd` separately with the host-native command runner. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes and stop before editing if either command cannot run.
+Execute configured `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-baseline.txt` and `<run-directory>/guard-baseline.txt`; retain both exit codes and stop before editing if either command cannot run.
 
 ### 03: Record baseline and hypothesis
 
@@ -62,15 +62,15 @@ For `campaign`, noisy metrics, GPU/ML performance, or correctness-sensitive code
 - `qa-specialist`: guard coverage and regression risk.
 - `data-steward`: data pipeline or reproducibility impact.
 - `scientist`: metric validity, ablation design, statistical noise.
-- `challenger`: overfitting to the metric or weakening guard checks.
+- `challenger`: overfitting to metric or weakening guard checks.
 
 No fan-out for one small measured change with stable metric/guard. Never let specialist change metric/guard scripts unless explicitly in `scope_files` and measurement-integrity risk recorded.
 
-**Structural context (optional)**: when `scope_files` resolves to a Python module/symbol, select one task-neutral route and probe codemap-py once before the first iteration: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for an exact localized optimization with no unresolved structural fact, the matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with the hypothesis above. Persist the result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`, never a fresh query.
+**Structural context (optional)**: when `scope_files` resolves to Python module/symbol, select one task-neutral route and probe codemap-py once before first iteration: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category implementation --query-kind <kind> [--target <qname>] --out <run-directory>/codemap-context.json`. Use `skip` for exact localized optimization with no unresolved structural fact, matching single route (`central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling`) for one unresolved fact, and `standard` for broad or unknown scope. Map direct, all, or production caller questions to `callers`; use `blast` only for explicitly transitive caller questions. An explicit user or tool request for structural evidence overrides `skip`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with hypothesis above. Persist result once here, before step 04 applies any change; any triggered specialist consumes `<run-directory>/codemap-context.json`, never fresh query.
 
 Initialize machine-readable iteration log:
 
-Create an empty `<run-directory>/experiments.jsonl` with the filesystem tool before the first iteration.
+Create empty `<run-directory>/experiments.jsonl` with filesystem tool before first iteration.
 
 ### 04: Apply one minimal optimization change per iteration
 
@@ -78,7 +78,7 @@ One independent hypothesis per iteration. Do not optimize unmeasured paths. Befo
 
 ### 05: Re-measure
 
-Re-run the same retained `metric_cmd` and `guard_cmd` separately with the host-native command runner. Write complete combined output to `<run-directory>/metric-after.txt` and `<run-directory>/guard-after.txt`; retain both exit codes.
+Re-run same retained `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-after.txt` and `<run-directory>/guard-after.txt`; retain both exit codes.
 
 ### 06: Compare baseline and after results in `<run-directory>/comparison.md`
 
@@ -155,12 +155,12 @@ On metric/guard-policy change, update calibration:
 
 ## Output Contract
 
-Before writing the result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
+Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
 Use `../../shared/quality-gates.md`.
 
 ### Final chat
 
-Final chat follows the shared frame with `Next steps`. `Outcome`: `kept|reverted|inconclusive|failed`. `Results`: exactly `Iteration | Baseline | After | Delta | Guard | Decision`, one row/material iteration or campaign. Include method, guards, uncertainty, deferred experiments, noise limits.
+Final chat follows shared frame with `Next steps`. `Outcome`: `kept|reverted|inconclusive|failed`. `Results`: exactly `Iteration | Baseline | After | Delta | Guard | Decision`, one row/material iteration or campaign. Include method, guards, uncertainty, deferred experiments, noise limits.
 
 Minimum artifact payload template: `result-template.json`.

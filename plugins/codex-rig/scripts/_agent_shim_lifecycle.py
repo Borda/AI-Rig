@@ -281,8 +281,8 @@ def classify_targets(
         return "unsafe"
     if state is None:
         return "absent" if all(item.kind == "absent" for item in targets.values()) else "foreign"
-    exact = []
-    absent = []
+    modified = False
+    absent_count = 0
     for name, observation in targets.items():
         record = records.get(name)
         if record is None:
@@ -290,10 +290,10 @@ def classify_targets(
                 return "foreign" if state["transaction_status"] == "current" else "removed-conflict"
             continue
         if observation.kind == "absent":
-            absent.append(name)
+            absent_count += 1
             continue
         marker = observation.marker
-        exact.append(
+        is_exact = (
             observation.file_hash == record["file_hash"]
             and marker is not None
             and marker.install_id == state["install_id"]
@@ -301,11 +301,12 @@ def classify_targets(
             and marker.package_hash == state["package_hash"]
             and marker.role_hash == record["role_hash"]
         )
-    if not all(exact):
+        modified = modified or not is_exact
+    if modified:
         return "modified"
     if state["transaction_status"] == "removed":
-        return "removed" if len(absent) == len(records) else "removed-conflict"
-    if not absent:
+        return "removed" if absent_count == len(records) else "removed-conflict"
+    if absent_count == 0:
         return "current"
     return "repairable-missing"
 

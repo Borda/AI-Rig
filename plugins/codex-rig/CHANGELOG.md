@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.16.3
+
+- Reject contradictory App Server turn identities, malformed lifecycle items, and events for completed reviewers while sibling reviews remain active. Preserve already completed output on failure and report a specific reason for duplicate terminal events.
+- Record final App Server evidence-validation failures as failed results after cleanup, preserving the original error reason and existing reviewer files. Cover duplicate identities and changed final output; strengthen the native-approval prohibition regression with a full negated assertion.
+- Simplify target classification and source/rollback patch validation while preserving mixed-state precedence, symlink rejection, and stable error codes. Isolate input-echo lifecycle validation from the review event loop; add regression and characterization coverage.
+- Declare internal reviewer state as a same-module slotted dataclass with keyword-only construction, preserving mutable lifecycle transitions and explicit JSON validation and evidence formats.
+- Show accepted choices or input formats in workflow questions, including `(yes / no)` for binary text confirmations. Preserve native-control options, exact-digest approval, and existing authorization without duplicate prompts.
+- Compress instruction and documentation prose while retaining literals, structure, executable contract wording, and reviewed policy semantics.
+
 ## 0.16.2
 
 - Preserve every skill's standard closing gate and output structure after user intervention, recovery, or repeated invocation. Reuse valid evidence from the first unmet checkpoint; never treat a resumed notes-only run as a completed result or substitute an informal recap for the required final report.

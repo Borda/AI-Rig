@@ -827,6 +827,8 @@ ______________________________________________________________________
 
 These Python helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. They resolve paths, validate plugin documents, prepare reports, or perform bounded deterministic transforms; invoke them through the owning skill or with the installed plugin root.
 
+`propagate_shared.py` and `check_orphaned_bin.py` use ASCII status labels so success, no-op propagation, and orphan warnings work with legacy console encodings such as Windows cp1252.
+
 #### Audit, consistency, and document checks
 
 | Helper                         | Purpose                                                                       |

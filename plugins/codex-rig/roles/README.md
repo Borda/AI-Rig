@@ -1,6 +1,6 @@
 # 🎭 Codex Rig Roles
 
-Each subdirectory under `roles/` holds one `ROLE.md` — a role card that packages a Codex specialist: its model tier, sandbox and approval posture, and the trigger/evidence/execution/handover/confidence contract that keeps it inside its lane. This README explains two things a maintainer needs before touching a role card: the three-tier model-routing schema that decides which model a role runs on, and the schema every `ROLE.md` must satisfy to pass the calibration harness.
+Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages Codex specialist: its model tier, sandbox and approval posture, and trigger/evidence/execution/handover/confidence contract that keeps it inside its lane. This README explains two things maintainer needs before touching role card: three-tier model-routing schema that decides which model role runs on, and schema every `ROLE.md` must satisfy to pass calibration harness.
 
 <details open>
 <summary><strong>Navigation</strong></summary>
@@ -20,31 +20,31 @@ Each subdirectory under `roles/` holds one `ROLE.md` — a role card that packag
 
 ## 🎚️ Three-tier model-routing schema
 
-Every role runs on one of three `gpt-5.6-<tier>` models. All fifteen roles share the same `model_reasoning_effort: high`, `approval_policy: on-request`, and `fallback_modes: [shim, built-in-injected, inline]` — only `model` and `sandbox_mode` vary per role.
+Every role runs on one of three `gpt-5.6-<tier>` models. All fifteen roles share same `model_reasoning_effort: high`, `approval_policy: on-request`, and `fallback_modes: [shim, built-in-injected, inline]` — only `model` and `sandbox_mode` vary per role.
 
-| Tier      | Model           | Purpose                                                                                                                                                                                    | Roles                                                                                             |
-| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| **Sol**   | `gpt-5.6-sol`   | Deepest reasoning — architecture and security decisions that are expensive to get wrong and cheap to slow down.                                                                            | `solution-architect` (read-only), `security-auditor` (read-only)                                  |
-| **Terra** | `gpt-5.6-terra` | Core build-and-verify work, plus the roles that own a final parent-facing decision — implementation, executable acceptance, adversarial review, data integrity, research, and performance. | `sw-engineer`, `qa-specialist`, `challenger`, `curator`, `data-steward`, `scientist`, `squeezer`  |
-| **Luna**  | `gpt-5.6-luna`  | Cost-aware coordination and execution — documentation, CI/CD, static analysis, web evidence, OSS triage, and delegation coordination itself.                                               | `doc-scribe`, `cicd-steward`, `delegation-lead`, `linting-expert`, `oss-shepherd`, `web-explorer` |
+| Tier      | Model           | Purpose                                                                                                                                                                              | Roles                                                                                             |
+| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| **Sol**   | `gpt-5.6-sol`   | Deepest reasoning — architecture and security decisions that are expensive to get wrong and cheap to slow down.                                                                      | `solution-architect` (read-only), `security-auditor` (read-only)                                  |
+| **Terra** | `gpt-5.6-terra` | Core build-and-verify work, plus roles that own final parent-facing decision — implementation, executable acceptance, adversarial review, data integrity, research, and performance. | `sw-engineer`, `qa-specialist`, `challenger`, `curator`, `data-steward`, `scientist`, `squeezer`  |
+| **Luna**  | `gpt-5.6-luna`  | Cost-aware coordination and execution — documentation, CI/CD, static analysis, web evidence, OSS triage, and delegation coordination itself.                                         | `doc-scribe`, `cicd-steward`, `delegation-lead`, `linting-expert`, `oss-shepherd`, `web-explorer` |
 
 ### Rationale
 
 <details>
 <summary><strong>Evidence behind tier and sandbox assignments</strong></summary>
 
-The tier assignment is not a preference guess — it is recorded, evidence-derived routing state in `runtime/calibration/accepted-route-evidence.json`. That file's `active_assignments` block lists the same three tier-to-role mappings above, and its `adjudication` block explains why:
+The tier assignment is not preference guess — it is recorded, evidence-derived routing state in `runtime/calibration/accepted-route-evidence.json`. That file's `active_assignments` block lists same three tier-to-role mappings above, and its `adjudication` block explains why:
 
-- `delegation-lead` runs on Luna by explicit human override: the rationale is "a cost-aware delegation leader that uses Luna for coordination while routing implementation and executable acceptance to Terra and architecture/security to Sol; the strict Luna route failure remains preserved."
-- `cicd-steward`, `doc-scribe`, `linting-expert`, `oss-shepherd`, and `web-explorer` run on Luna by a second override, for the same reason: documentation, CI/CD stewardship, web evidence, OSS triage, and static analysis stay on Luna, while architecture and security stay on Sol and general implementation plus final parent decisions stay on Terra.
-- `adjudication.luna_strict_failure_preserved: true` means the strict-route calibration result — Luna failed the strict quality bar on its own (`luna-score.json` records `strict_status: "fail"`) — is kept on record rather than silently overwritten by the human override. The override changes the assignment; it does not erase the evidence that produced a different strict answer.
-- The adjudication rule itself only accepts an evidence-derived candidate "with zero pair quality regressions and either mean F1 gain >= 0.01 or geometric-mean normalized cost ratio \<= 1.0" — the human overrides above are recorded as explicit exceptions to that rule, not replacements for it.
+- `delegation-lead` runs on Luna by explicit human override: rationale is "a cost-aware delegation leader that uses Luna for coordination while routing implementation and executable acceptance to Terra and architecture/security to Sol; the strict Luna route failure remains preserved."
+- `cicd-steward`, `doc-scribe`, `linting-expert`, `oss-shepherd`, and `web-explorer` run on Luna by second override, for same reason: documentation, CI/CD stewardship, web evidence, OSS triage, and static analysis stay on Luna, while architecture and security stay on Sol and general implementation plus final parent decisions stay on Terra.
+- `adjudication.luna_strict_failure_preserved: true` means strict-route calibration result — Luna failed strict quality bar on its own (`luna-score.json` records `strict_status: "fail"`) — is kept on record rather than silently overwritten by human override. The override changes assignment; it does not erase evidence that produced different strict answer.
+- The adjudication rule itself only accepts evidence-derived candidate "with zero pair quality regressions and either mean F1 gain >= 0.01 or geometric-mean normalized cost ratio \<= 1.0" — human overrides above are recorded as explicit exceptions to that rule, not replacements for it.
 
-`sandbox_mode` is set per role, independent of tier: `read-only` for the six analysis or advisory roles — `challenger`, `security-auditor`, `solution-architect`, `squeezer`, `oss-shepherd`, `web-explorer` — and `workspace-write` for the remaining nine, which are expected to produce or modify artifacts as part of their job.
+`sandbox_mode` is set per role, independent of tier: `read-only` for six analysis or advisory roles — `challenger`, `security-auditor`, `solution-architect`, `squeezer`, `oss-shepherd`, `web-explorer` — and `workspace-write` for remaining nine, which are expected to produce or modify artifacts as part of their job.
 
 ### Task-difficulty selection
 
-Role selection uses the canonical [model-difficulty policy](../shared/specialist-orchestration.md#delegation-lead-and-model-routing), not a model preference. Luna is limited to bounded support; Terra owns behavior and executable verification; Sol is reserved for architecture and security. The routing record must cite the current task boundary or observed lower-tier insufficiency to escalate, and an evidenced scope split to de-escalate; cost alone is insufficient.
+Role selection uses canonical [model-difficulty policy](../shared/specialist-orchestration.md#delegation-lead-and-model-routing), not model preference. Luna is limited to bounded support; Terra owns behavior and executable verification; Sol is reserved for architecture and security. The routing record must cite current task boundary or observed lower-tier insufficiency to escalate, and evidenced scope split to de-escalate; cost alone is insufficient.
 
 </details>
 
@@ -73,30 +73,30 @@ Role selection uses the canonical [model-difficulty policy](../shared/specialist
 <details open>
 <summary><strong>Required frontmatter and body schema</strong></summary>
 
-Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibration/run.py`'s `check_agents()` enforces it mechanically — a role card missing any required field or section fails calibration.
+Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibration/run.py`'s `check_agents()` enforces it mechanically — role card missing any required field or section fails calibration.
 
 **Frontmatter (7 required fields):**
 
-| Field                    | Constraint                                                                        |
-| ------------------------ | --------------------------------------------------------------------------------- |
-| `role_id`                | Must match the containing directory name.                                         |
-| `name`                   | Must be `codex-rig-<role_id>`.                                                    |
-| `model`                  | One of `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` — see the tier table above. |
-| `model_reasoning_effort` | `high` for every role.                                                            |
-| `approval_policy`        | `on-request` for every role.                                                      |
-| `sandbox_mode`           | `read-only` or `workspace-write`.                                                 |
-| `fallback_modes`         | `[shim, built-in-injected, inline]` for every role — see below.                   |
+| Field                    | Constraint                                                                    |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `role_id`                | Must match containing directory name.                                         |
+| `name`                   | Must be `codex-rig-<role_id>`.                                                |
+| `model`                  | One of `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` — see tier table above. |
+| `model_reasoning_effort` | `high` for every role.                                                        |
+| `approval_policy`        | `on-request` for every role.                                                  |
+| `sandbox_mode`           | `read-only` or `workspace-write`.                                             |
+| `fallback_modes`         | `[shim, built-in-injected, inline]` for every role — see below.               |
 
-**Body (5 required `##` sections for most roles, or 6 for Sol roles because the selection boundary is explicit):**
+**Body (5 required `##` sections for most roles, or 6 for Sol roles because selection boundary is explicit):**
 
-1. **Trigger and skip boundaries** — when the role fires, when it skips, and what it explicitly is not for. Keeps routing between roles unambiguous.
-2. **Selection boundary (Sol roles only)** — the explicit-user-selection rule and read-only advisory boundary for `solution-architect` and `security-auditor`.
-3. **Evidence ownership** — what the role must read or establish before acting, and what it must record (rejected alternatives, tradeoffs, verified-vs-assumed state) as it works.
-4. **Execution constraints** — house style, conventions, and hard "do not" rules the role must respect, plus which other role owns adjacent work it must hand off instead of doing itself.
-5. **Handover contract** — the exact ordered content the role must return to its parent or caller.
-6. **Confidence contract** — the 0–1 confidence score the role must report, the ≥0.90 bar for a completion claim, and the instruction to name every material evidence gap rather than omit it.
+1. **Trigger and skip boundaries** — when role fires, when it skips, and what it explicitly is not for. Keeps routing between roles unambiguous.
+2. **Selection boundary (Sol roles only)** — explicit-user-selection rule and read-only advisory boundary for `solution-architect` and `security-auditor`.
+3. **Evidence ownership** — what role must read or establish before acting, and what it must record (rejected alternatives, tradeoffs, verified-vs-assumed state) as it works.
+4. **Execution constraints** — house style, conventions, and hard "do not" rules role must respect, plus which other role owns adjacent work it must hand off instead of doing itself.
+5. **Handover contract** — exact ordered content role must return to its parent or caller.
+6. **Confidence contract** — 0–1 confidence score role must report, ≥0.90 bar for completion claim, and instruction to name every material evidence gap rather than omit it.
 
-A role card that satisfies this contract is portable: any consumer of the calibration harness can parse its frontmatter for routing and its required sections for behavior, without reading role-specific prose.
+A role card that satisfies this contract is portable: any consumer of calibration harness can parse its frontmatter for routing and its required sections for behavior, without reading role-specific prose.
 
 </details>
 
@@ -105,12 +105,12 @@ A role card that satisfies this contract is portable: any consumer of the calibr
 <details open>
 <summary><strong>Three-step portable role routing order</strong></summary>
 
-Role cards expose `fallback_modes: [shim, built-in-injected, inline]`, but that field is not a promise that persistent shims are attempted first. Canonical runtime routing follows this order:
+Role cards expose `fallback_modes: [shim, built-in-injected, inline]`, but that field is not promise that persistent shims are attempted first. Canonical runtime routing follows this order:
 
-1. **Runtime-provided blank/default subagent** — inject the complete exact role-card bytes before the narrow context pack.
-2. **Inline pass** — apply the exact role card in the parent context and report that independence is false.
-3. **`unavailable`** — stop when the runtime cannot provide a safe route or cannot prove a mandatory profile setting.
+1. **Runtime-provided blank/default subagent** — inject complete exact role-card bytes before narrow context pack.
+2. **Inline pass** — apply exact role card in parent context and report that independence is false.
+3. **`unavailable`** — stop when runtime cannot provide safe route or cannot prove mandatory profile setting.
 
-Persistent named shims remain platform-blocked until Codex exposes a verifiable custom-agent selector and a fresh-session probe proves that the selected TOML was consumed. Their lifecycle manager remains available for diagnosis and authenticated cleanup of prior development installations. Do not retry another route because a specialist disagreed, returned a finding, or failed an acceptance gate.
+Persistent named shims remain platform-blocked until Codex exposes verifiable custom-agent selector and fresh-session probe proves that selected TOML was consumed. Their lifecycle manager remains available for diagnosis and authenticated cleanup of prior development installations. Do not retry another route because specialist disagreed, returned finding, or failed acceptance gate.
 
 </details>

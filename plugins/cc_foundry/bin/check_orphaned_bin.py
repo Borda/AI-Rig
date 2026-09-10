@@ -158,7 +158,7 @@ def find_orphans(plugins_dir: Path) -> list[OrphanFinding]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Report orphaned executable scripts for selected plugins."""
+    """Report orphaned executable scripts with ASCII status labels for legacy consoles."""
     parser = argparse.ArgumentParser(
         prog="check_orphaned_bin",
         description="Detect bin/ scripts not referenced in plugin .md files.",
@@ -190,13 +190,13 @@ def main(argv: list[str] | None = None) -> int:
     if orphans:
         for o in orphans:
             print(
-                f"⚠ 32d: {o.script_path}"
-                f" — bin/ script not referenced in any plugins/{o.plugin}/**/*.md file"
+                f"WARN 32d: {o.script_path}"
+                f" - bin/ script not referenced in any plugins/{o.plugin}/**/*.md file"
                 f"\n  hint: wire to SKILL.md caller pattern, or delete if no longer needed"
             )
         return 1
 
-    print("✓: Check 32d — all bin/ scripts referenced in plugin .md files")
+    print("OK: Check 32d - all bin/ scripts referenced in plugin .md files")
     return 0
 
 

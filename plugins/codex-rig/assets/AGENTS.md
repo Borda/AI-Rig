@@ -18,7 +18,7 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 - Prefer smallest reversible change solving actual problem. Fix feels speculative → stop, re-scope before widening blast radius.
 - Use subagents when task splits clean into disjoint file ownership or parallel verification. Prompt tight, task-specific; no dup of main thread full context.
 - Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete.
-- Every resumed skill run, including after user intervention or repeated invocation, retains its normal closing gate and output contract. Recover the first unmet checkpoint, reuse only still-valid evidence, and finish validation before declaring completion; do not replace the required final structure with an informal recap. Existing non-artifact workflows retain their own documented final verification.
+- Every resumed skill run, including after user intervention or repeated invocation, retains its normal closing gate and output contract. Recover first unmet checkpoint, reuse only still-valid evidence, and finish validation before declaring completion; do not replace required final structure with informal recap. Existing non-artifact workflows retain their own documented final verification.
 - Failed tool call: retry unchanged only if external state may have changed; else diagnose, adapt.
 - Multiple agents: handoffs compact, ownership clear. Never redo other agent work unless resolving conflict or explicit gap.
 - Progress stalls or path drifts → re-plan, no forcing current approach.
@@ -33,12 +33,12 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 - Occurrence 1 = initial occurrence; capture symptom + evidence, then proceed normal gates.
 - Occurrence 2 (first recurrence) stops symptom patching. Run `investigate` or equiv root-cause evidence before another fix attempt; record root-cause claim, supporting evidence, falsification check, ≥1 rejected alternative.
-- Occurrence 3 stops attempts on the repeated obstacle, not unrelated authorized work. Ask human for the specific missing decision, incl. attempted actions, current hypotheses/evidence, shared obstacle across differing symptoms, and what can still continue safely.
+- Occurrence 3 stops attempts on repeated obstacle, not unrelated authorized work. Ask human for specific missing decision, incl. attempted actions, current hypotheses/evidence, shared obstacle across differing symptoms, and what can still continue safely.
 - Reset count only when evidence falsifies shared cause or material external-state change occurs. Record reset + evidence.
 
 ### Reasoning-progress escalation policy
 
-- Apply this policy separately to the stalled workstream.
+- Apply this policy separately to stalled workstream.
 - Work cycle records objective, operation/hypothesis, observed output, next decision.
 - Material progress = new falsifiable evidence, decision-changing scope/root-cause narrowing, acceptance-check status change, or user-directed decision; repeated equivalent actions, rewording, elapsed time, token count, confidence claims don't qualify.
 - Closure condition = unchanged result ending workstream: passing acceptance check, resolved decision, or user-approved scope.
@@ -47,17 +47,17 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 1. Pause, request exactly one permitted higher-capability advisory pass: first supported reasoning-effort increase, else next valid model tier.
 2. Advisor route valid only when observed sandbox `read-only`; diagnoses, proposes one bounded recovery action + stop condition, makes no state changes or acceptance claim.
-3. Read-only advisory route unavailable/unverified → ask the human for the missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or an already-permitted source-inspection alternative with its limitations disclosed.
+3. Read-only advisory route unavailable/unverified → ask human for missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or already-permitted source-inspection alternative with its limitations disclosed.
 4. Parent may run that one action.
-5. Action makes no material progress or closure condition unmet → stop that workstream and ask human with the ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and the evidence or decision needed to resume. Explain which unaffected work can continue.
+5. Action makes no material progress or closure condition unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
 6. Never resets/weakens repeated-obstacle policy; closure-attempt count resets only when its condition fulfilled or materially replaced by recorded user direction or external-state evidence; Luna never escalates bounded support to Sol, Sol stays architecture/security-only.
 
 ## Coordination Discipline
 
-- Start every user-facing message with a short plain-English explanation of the outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
+- Start every user-facing message with short plain-English explanation of outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
 - Keep live plan for multi-step work, update as task shape changes. Use as session task ledger.
 - One owner per file set at a time. Other thread/agent owns same surface → coordinate, no overwrite.
-- Broader analysis/review output → durable artifact under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` only for a bounded validated non-sensitive identity, otherwise `.reports/codex/<skill>/<timestamp>/`; never serialize raw arguments into paths. Assessed PR reviews use `pr-<number>`. Final chat summary compact.
+- Broader analysis/review output → durable artifact under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` only for bounded validated non-sensitive identity, otherwise `.reports/codex/<skill>/<timestamp>/`; never serialize raw arguments into paths. Assessed PR reviews use `pr-<number>`. Final chat summary compact.
 - New human-readable reports, handovers, context packs, final summaries use Caveman Ultra: state each fact once; omit filler + repeated context; preserve exact paths, commands, identifiers, evidence, failures, risks, confidence, owner/action. JSON, logs, patches, code, required tables stay lossless. Use clear concise prose if Ultra would make security, irreversible, or ordered instructions ambiguous.
 - Parallel agents: outputs = inputs to consolidation, not interchangeable opinions. Reconcile conflicts explicit.
 - Conclusion depends on unverified assumption → mark hypothesis in summary/artifact.
@@ -66,7 +66,7 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 - Session default, review parent, implementation, verification, data, performance, research, curation, adversarial-challenge specialists use `gpt-5.6-terra` at `high`.
 - Delegation coordination, documentation, CI/CD stewardship, web-evidence, OSS triage, static-analysis specialists use `gpt-5.6-luna` at `high`.
-- Final behavior-changing and executable acceptance decisions stay with the Terra parent/session.
+- Final behavior-changing and executable acceptance decisions stay with Terra parent/session.
 - `gpt-5.6-sol` at `high` stays pinned only for `security-auditor` and `solution-architect`, selected solely when user expressly requests Sol or names one of those agents.
 - Selected Sol pass stays read-only, returns bounded evidence/artifacts, hands next action + final acceptance back to Terra.
 - Luna activation = explicit user preference, kept separate from recorded strict route failure.
@@ -85,7 +85,7 @@ Coding principles = canonical standard for implementation + review:
 
 01. Simplicity, readability, reproducibility first. Complexity = maintenance cost, never evidence of quality; unexplained layers often mask unclear problem or wrong solution. Clear structure beats long docstrings/comments. Simplicity never removes trust-boundary validation, data-loss prevention, security controls, accessibility requirements, or explicit contract behavior.
 02. Understand before minimizing. Read touched flow + callers; solve coherent root cause once. Smaller symptom patch leaving sibling paths broken not simple.
-03. Stop at the first solution that satisfies the contract: no change → existing project code/pattern → standard library/native platform → installed dependency → direct local code → new abstraction or dependency. Prefer maintained standard-library, native-platform, and already-installed package functionality over custom code that duplicates it.
+03. Stop at first solution that satisfies contract: no change → existing project code/pattern → standard library/native platform → installed dependency → direct local code → new abstraction or dependency. Prefer maintained standard-library, native-platform, and already-installed package functionality over custom code that duplicates it.
 04. Every complexity expansion must be justified as unavoidable now. Record the required current behavior and evidence, simpler alternatives considered and why each fails, the maintenance owner/cost, and the rollback or removal path. Missing evidence or a viable simpler option rejects the expansion. New registry, factory, plugin layer, protocol/base class, configuration surface, or dependency needs current demand such as runtime discovery, third-party extension, repeated dispatch, multiple concrete variants, or substantial complexity hidden behind a small stable boundary. Hypothetical future states, risks, scale, reuse, or edge cases do not justify machinery; add it only when verified current evidence proves the simpler solution insufficient.
 05. For small closed choice, prefer explicit condition/mapping over registry. When verified boundary under rule 18 requires local import, prefer conditional/lazy import; catch only expected missing optional dependency, let nested/transitive import failures surface. Use registry when discovery/extension is actual requirement.
 06. Minimize owned concepts: files, layers, public APIs, mutable state, dependencies, dispatch points, config. Prefer deletion, local convention, boring technology, reversible changes. State what maintenance burden new machinery removes and who owns rest.
@@ -155,8 +155,8 @@ Every test must pass The Suspicious Check:
 - No relying on PreToolUse hooks rewriting commands in Codex. Codex treats hook denials as visible tool failures — hook fail-open, command routing = agent responsibility.
 - Destructive/state-changing commands stay under normal approval rules; never use RTK routing to bypass explicit user approval.
 - Keep shell network access blocked by default.
-- For every intentionally networked CLI, execute the complete owning command with runtime-approved external access from first attempt; wrappers own approval for nested subprocesses and HTTPS.
-- In Codex exec calls use `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request broad interpreter prefix, or assume the nested executable's approval covers its parent.
+- For every intentionally networked CLI, execute complete owning command with runtime-approved external access from first attempt; wrappers own approval for nested subprocesses and HTTPS.
+- In Codex exec calls use `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent.
 - This includes every `gh` and `kaggle` invocation, collector-owned `git fetch`/HTTPS, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`; web/browser/MCP/connector tools use their own permission path.
 - Marketplace/plugin listing and `codex plugin add` from existing snapshot stay sandboxed.
 - Missing external CLIs = user-owned prerequisites: explain required install + auth, but never install from workflow.
@@ -183,9 +183,9 @@ Every test must pass The Suspicious Check:
   - Issues, releases, repositories, Discussions use `github_read.py` direct.
   - New collector needs written bundle contract, consumer workflow, regression tests; don't create parity wrappers around single read.
 - `git` CLI allowed for local repo ops + read-only fetch to update local PR branch: status, diff, log, show, fetch, add, commit, local branch creation/deletion/listing, switch/restore/reset/clean, local merge/cherry-pick under normal approval rules.
-  - Prefer the GitHub CLI for GitHub interaction; use the packaged reader/collector boundary and `gh pr checkout <number>` for PR branches, including forks. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On a verified PR branch with verified upstream and a confirmed clean index/worktree, an authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add a redundant pull. Do not merge, rebase, reset, discard user changes, or change tracking configuration merely to refresh a review.
-  - Never `git` for remote mutation/state changes: no push, clone, remote update, ls-remote, submodule remote update, upstream tracking changes, remote config changes. A fast-forward-only pull is a remote read plus local update, not remote publication; it still needs the owning command's network approval.
-- Never run `git`/`gh` with `--force`, `--force-with-lease`, or a command-specific forced update flag automatically. If a forced git/gh operation seems necessary → stop before running, explain exactly why force is needed, what local/remote state it can overwrite, and ask the user for explicit confirmation.
+  - Prefer GitHub CLI for GitHub interaction; use packaged reader/collector boundary and `gh pr checkout <number>` for PR branches, including forks. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On verified PR branch with verified upstream and confirmed clean index/worktree, authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add redundant pull. Do not merge, rebase, reset, discard user changes, or change tracking configuration merely to refresh review.
+  - Never `git` for remote mutation/state changes: no push, clone, remote update, ls-remote, submodule remote update, upstream tracking changes, remote config changes. A fast-forward-only pull is remote read plus local update, not remote publication; it still needs owning command's network approval.
+- Never run `git`/`gh` with `--force`, `--force-with-lease`, or command-specific forced update flag automatically. If forced git/gh operation seems necessary → stop before running, explain exactly why force is needed, what local/remote state it can overwrite, and ask user for explicit confirmation.
 - No escalation requests for forbidden remote/online mutations. Task needs push, comment, merge, publish, CI dispatch, or other remote service change → stop, tell user must be done by human or explicit separate non-Codex workflow.
 
 ______________________________________________________________________
@@ -266,7 +266,7 @@ Parent agent responsibilities:
 
 - Unknown failure/root-cause work starts with `investigate`: failing tests, failing CI, flaky behavior, regressions, tool/environment failures, unexplained metric changes, any symptom-only report where cause not already verified.
 - Before implementation for those tasks: record root-cause claim, supporting evidence, falsification check, ≥1 rejected alternative. Evidence missing → continue investigation, no fix proposal.
-- After `investigate`, hand off to relevant domain agent or `implement`/`code-remediate` with an evidence summary. Temp mitigations only when explicit requested or required to unblock verification; never treated as root fix.
+- After `investigate`, hand off to relevant domain agent or `implement`/`code-remediate` with evidence summary. Temp mitigations only when explicit requested or required to unblock verification; never treated as root fix.
 
 ### Collaboration team patterns
 

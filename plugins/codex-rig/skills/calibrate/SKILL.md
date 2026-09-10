@@ -22,9 +22,9 @@ Run calibration for Codex workflow integrity and behavioral scoring.
 
 ## Workflow
 
-Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, and `shared`; `--root` controls only report output, Git context, and read-only classification work. It must not fall back to a source checkout or project `.codex`.
+Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, and `shared`; `--root` controls only report output, Git context, and read-only classification work. It must not fall back to source checkout or project `.codex`.
 
-Repository maintainers may use `--layout source --root <source-project>` to validate the source `.codex` layout. Do not mix source agents, sync manifests, or project registration checks into an installed-plugin result.
+Repository maintainers may use `--layout source --root <source-project>` to validate source `.codex` layout. Do not mix source agents, sync manifests, or project registration checks into installed-plugin result.
 
 ### 01: Load calibration task set from `../../runtime/calibration/tasks.json`
 
@@ -36,7 +36,7 @@ Repository maintainers may use `--layout source --root <source-project>` to vali
 
 ### 04: Inspect `../../runtime/calibration/run.py --help`, then run plugin layout against the consuming project
 
-Use `--require-live-routes` only for the strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls.
+Use `--require-live-routes` only for strict-live gate. Default offline scoring remains fixture-backed and makes no paid model calls.
 
 ### 05: Inspect `checks_failed`, `leaks_found`, and `behavioral`
 
@@ -55,7 +55,7 @@ Use `--require-live-routes` only for the strict-live gate. Default offline scori
 
 ### 08: Emit measured recommendations for what should be fixed or improved next
 
-- Start with a plain-English explanation of whether calibration passed and what any failure means. Then prioritize failed checks/leaks, naming the exact check, file or pattern, evidence, next-action owner, and gate that must pass to resume acceptance.
+- Start with plain-English explanation of whether calibration passed and what any failure means. Then prioritize failed checks/leaks, naming exact check, file or pattern, evidence, next-action owner, and gate that must pass to resume acceptance.
 - Behavioral recommendations name metric gap/affected cases when available.
 - Separate fixture-only caveats from live-quality claims.
 
@@ -74,7 +74,7 @@ Skill checks:
 - configured skill file exists; frontmatter has unindented `---`, `name:`, `description:`; required sections exist; artifact path `.reports/codex/<skill>/`; examples include `status`, `checks_run`, `checks_failed`, `findings`, `confidence`, `artifact_path`; no external runner-only metadata/cache.
 - CLI checks find every local shebang Python/shell entry point in calibration, shared helpers, code-review, offline harness; each executable, fixed-help-roster registered, authoritative `--help`.
 - every skill references `helper-cli-contract.md`, not complete local CLI invocations.
-- source layout compares `../../runtime/calibration/behavioral-cases.json` version to `HEAD`: dirty tree same or exactly one commit-relative version step; installed plugin layout records the packaged fixture as immutable.
+- source layout compares `../../runtime/calibration/behavioral-cases.json` version to `HEAD`: dirty tree same or exactly one commit-relative version step; installed plugin layout records packaged fixture as immutable.
 
 Role checks:
 
@@ -93,12 +93,12 @@ Role checks:
 - Behavioral metrics measure supplied observations only. `fixture-selftest` validates scoring; live Codex quality requires replacing/appending live-prompt observations.
 - Missing route coverage is `insufficient-evidence`, never acceptance; `require_live_routes=true` exits nonzero.
 - Compare thresholds with `gate_metrics_raw`, not rounded display.
-- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies the full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to the complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run the confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use the verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to the selected run directory; `Retry policy and safe denial outcome`: stop the turn on denial and retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
-- Each live task names a canonical role. Plugin layout prepends the exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept a candidate passing an executable gate when the successfully invoked baseline fails; infrastructure timeout is never a candidate win.
+- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial and retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
+- Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
 - Sol critical-only unless paired quality exceeds Terra configured minimum; tie retains Terra.
 - Do not claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
 - Fixture `version` is committed-history marker: compare `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit.
-- Missing registration/pattern mismatch: inspect the named file and expected registration or pattern first; record the observed mismatch. Apply the smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for the exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
+- Missing registration/pattern mismatch: inspect named file and expected registration or pattern first; record observed mismatch. Apply smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
 
 ## Fail-Fast Rules
 
@@ -110,7 +110,7 @@ Role checks:
 6. Result artifact missing => fail.
 7. Behavioral case-set version >1 step from committed version => fail.
 8. `require_live_routes=true` with incomplete route pairs => fail.
-9. Live row without the strict paired execution schema => fail.
+9. Live row without strict paired execution schema => fail.
 
 ## Quality Gates
 
@@ -141,12 +141,12 @@ Behavioral coverage includes networked CLI owning-command approval for paid live
 
 ## Output Contract
 
-Before writing the result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
+Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
 Use `../../shared/quality-gates.md`.
 
 ### Final chat
 
-Final chat follows the shared ordered frame. `Outcome` is `pass`, `fail`, or `insufficient-evidence`. `Results` has one measured check or metric per row and exactly `Check / metric | Result | Evidence | Next action`. Apply the shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules; include runner mode/coverage, every failed/skipped/deferred check, and calibration recovery evidence.
+Final chat follows shared ordered frame. `Outcome` is `pass`, `fail`, or `insufficient-evidence`. `Results` has one measured check or metric per row and exactly `Check / metric | Result | Evidence | Next action`. Apply shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules; include runner mode/coverage, every failed/skipped/deferred check, and calibration recovery evidence.
 
 Minimum artifact payload template: `result-template.json`.

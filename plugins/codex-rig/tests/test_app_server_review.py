@@ -64,6 +64,30 @@ def test_thread_controls_reject_requested_without_observed_network_denial() -> N
         _adapter()._thread_controls(observed, node)
 
 
+def test_active_review_has_independent_lifecycle_defaults_and_rejects_typos() -> None:
+    """Keep the private fixed-shape reviewer state explicit and independently mutable."""
+    adapter = _adapter()
+    first = adapter._ActiveReview(node={}, thread_id="thread-1", controls={})
+    second = adapter._ActiveReview(node={}, thread_id="thread-2", controls={})
+
+    assert first.turn_id is None
+    assert first.started_at_ms is None
+    assert first.finished_at_ms is None
+    assert first.final is None
+    assert first.input_echo_item_id is None
+    assert first.input_echo_completed is False
+    assert first.output_path is None
+    first.turn_id = "turn-1"
+    first.input_echo_completed = True
+    assert second.turn_id is None
+    assert second.input_echo_completed is False
+    with pytest.raises(AttributeError):
+        first.input_echo_compeleted = True
+    assert first.input_echo_completed is True
+    with pytest.raises(TypeError):
+        adapter._ActiveReview({}, "thread-3", {})
+
+
 class _FakeProcess:
     """Provide one deterministic JSON-RPC stdio process without a host or model."""
 
@@ -384,6 +408,70 @@ def test_run_review_dispatches_all_turns_and_persists_completed_sibling(
     assert requests.count("turn/start") == 2
 
 
+@pytest.mark.parametrize("identity", ["thread", "turn"])
+def test_run_review_records_failed_final_identity_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, identity: str
+) -> None:
+    """Keep rejected final evidence from advertising completed reviewer execution."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    for frame in launches[1]:
+        response_identity = frame.get("result", {}).get(identity)
+        if response_identity and response_identity.get("id") == f"{identity}-1":
+            response_identity["id"] = f"{identity}-0"
+        params = frame.get("params", {})
+        if params.get(f"{identity}Id") == f"{identity}-1":
+            params[f"{identity}Id"] = f"{identity}-0"
+        if identity == "turn" and params.get("turn", {}).get("id") == "turn-1":
+            params["turn"]["id"] = "turn-0"
+    _fake_public_processes(monkeypatch, launches)
+    output = tmp_path / "review-output"
+
+    with pytest.raises(_adapter().ReviewRouteError, match="evidence-thread-or-turn-id-duplicate"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+
+    evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "failed"
+    assert evidence["failure_code"] == "evidence-thread-or-turn-id-duplicate"
+    assert evidence["failure_phase"] == "evidence-validation"
+    assert evidence["cleanup"] == "completed"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
+    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == "second final\n"
+
+
+def test_run_review_records_output_validation_failure_after_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Record final output rejection without rerunning cleanup or hiding its cause."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+    output = tmp_path / "review-output"
+    original_wait = _FakeProcess.wait
+    cleanup_calls: list[int] = []
+
+    def wait_and_empty_output(process: _FakeProcess, timeout: float | None = None) -> int:
+        """Simulate an external output change as the fake server finishes cleanup."""
+        status = original_wait(process, timeout)
+        cleanup_calls.append(process.pid)
+        candidate = output / "challenger.md"
+        if candidate.exists():
+            candidate.write_bytes(b"")
+        return status
+
+    monkeypatch.setattr(_FakeProcess, "wait", wait_and_empty_output)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="evidence-output-empty-or-secret"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+
+    evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "failed"
+    assert evidence["failure_code"] == "evidence-output-empty-or-secret"
+    assert evidence["failure_phase"] == "evidence-validation"
+    assert evidence["cleanup"] == "completed"
+    assert len(cleanup_calls) == 2
+    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == "second final\n"
+
+
 def test_run_review_rejects_output_outside_plan_parent_before_host_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -518,6 +606,117 @@ def test_run_review_separates_noncompleted_turn_status(tmp_path: Path, monkeypat
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-turn-status-invalid"):
         _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+
+@pytest.mark.parametrize("wrong_identity", ["turnId", "turn.id"])
+@pytest.mark.parametrize("method", ["turn/completed", "item/agentMessage/delta", "turn/plan/updated"])
+def test_run_review_rejects_conflicting_turn_ids(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrong_identity: str, method: str
+) -> None:
+    """Reject contradictory turn identities instead of accepting whichever matches."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    completion = next(frame for frame in launches[1] if frame.get("method") == "turn/completed")
+    if method != "turn/completed":
+        event = {
+            "method": method,
+            "params": {**completion["params"], "turn": dict(completion["params"]["turn"])},
+        }
+        launches[1].insert(launches[1].index(completion), event)
+        completion = event
+    completion["params"]["turnId"] = "turn-0"
+    if wrong_identity == "turnId":
+        completion["params"]["turnId"] = "other-turn"
+    else:
+        completion["params"]["turn"]["id"] = "other-turn"
+    _fake_public_processes(monkeypatch, launches)
+    output = tmp_path / "review-output"
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-thread-or-turn-mismatch"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+
+    evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "failed"
+    assert evidence["failure_code"] == "app-server-thread-or-turn-mismatch"
+    assert not (output / "challenger.md").exists()
+
+
+def test_run_review_accepts_agreeing_completion_turn_ids(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept redundant matching identities instead of rejecting every dual-ID frame."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    for frame in launches[1]:
+        if frame.get("method") == "turn/completed":
+            frame["params"]["turnId"] = frame["params"]["turn"]["id"]
+    _fake_public_processes(monkeypatch, launches)
+
+    evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["status"] == "completed"
+
+
+@pytest.mark.parametrize("method", ["item/started", "item/completed"])
+@pytest.mark.parametrize("item", [None, pytest.param([], id="array"), "invalid"])
+def test_run_review_rejects_nonobject_lifecycle_item(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, item: object, method: str
+) -> None:
+    """Reject malformed lifecycle payloads even when valid final events follow."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1].insert(
+        first_final,
+        {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": {"threadId": "thread-0", "turnId": "turn-0", "item": item},
+        },
+    )
+    _fake_public_processes(monkeypatch, launches)
+    output = tmp_path / "review-output"
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-item-not-object"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+
+    evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["failure_code"] == "app-server-event-item-not-object"
+    assert not (output / "challenger.md").exists()
+
+
+@pytest.mark.parametrize("method", ["turn/plan/updated", "item/agentMessage/delta", "turn/completed"])
+def test_run_review_rejects_events_for_completed_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+) -> None:
+    """Freeze a completed review while its sibling continues producing events."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    terminal = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "turn/completed")
+    launches[1].insert(
+        terminal + 1,
+        {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": {
+                "threadId": "thread-0",
+                "turnId": "turn-0",
+                "turn": {"id": "turn-0", "status": "completed"},
+                "plan": [],
+                "itemId": "answer-0",
+                "delta": "late text",
+            },
+        },
+    )
+    _fake_public_processes(monkeypatch, launches)
+    output = tmp_path / "review-output"
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-after-turn-completed"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+
+    evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["status"] == "failed"
+    assert evidence["failure_code"] == "app-server-event-after-turn-completed"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
+    assert not (output / "qa-specialist.md").exists()
 
 
 def test_run_review_separates_incomplete_user_message_lifecycle(

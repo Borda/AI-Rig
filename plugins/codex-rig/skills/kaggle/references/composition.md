@@ -10,6 +10,6 @@ Select exactly one row. Read each named contract once from left to right and gen
 | `eda-only` | `foundation.md(eda-only)` → `eda.md` |
 | `inference-only` | `foundation.md(inference-only)` → `inference.md(standalone)` → `submission.md` |
 
-Apply `style-rules.md` to every row. Load `modality-dispatch.md` only when a selected section requests a modality branch.
+Apply `style-rules.md` to every row. Load `modality-dispatch.md` only when selected section requests modality branch.
 
 Write `.experiments/kaggle/<competition>.py`; add the `-inference` suffix only for `inference-only`.

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -166,6 +169,26 @@ class TestFindOrphans:
 
 
 class TestMain:
+    @pytest.mark.parametrize("encoding", ["cp1252", "ascii"])
+    def test_orphan_diagnostic_survives_legacy_stdout(self, tmp_path: Path, encoding: str) -> None:
+        """Orphans retain a finding and hint instead of crashing while printing a warning."""
+        _make_plugin(tmp_path, "myplugin", ["orphan.py"])
+        script = Path(__file__).resolve().parents[1] / "bin" / "check_orphaned_bin.py"
+        proc = subprocess.run(
+            [sys.executable, str(script), "--plugins-dir", "."],
+            cwd=tmp_path,
+            env={**os.environ, "PYTHONIOENCODING": encoding},
+            capture_output=True,
+            encoding=encoding,
+            timeout=30,
+            check=False,
+        )
+        assert proc.returncode == 1
+        assert proc.stderr == ""
+        assert "WARN 32d:" in proc.stdout
+        assert "myplugin/bin/orphan.py" in proc.stdout
+        assert "hint: wire to SKILL.md caller pattern" in proc.stdout
+
     def test_exit_0_all_referenced(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -176,7 +199,7 @@ class TestMain:
         rc = main(["--plugins-dir", str(tmp_path)])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "✓" in out
+        assert "OK: Check 32d" in out
 
     def test_exit_1_orphans_found(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -186,7 +209,7 @@ class TestMain:
         rc = main(["--plugins-dir", str(tmp_path)])
         assert rc == 1
         out = capsys.readouterr().out
-        assert "⚠ 32d" in out
+        assert "WARN 32d" in out
         assert "orphan.py" in out
 
     def test_exit_1_output_includes_hint(

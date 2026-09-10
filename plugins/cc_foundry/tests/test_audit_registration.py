@@ -15,6 +15,7 @@ closes:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -105,12 +106,14 @@ class TestPropagation:
             f"plugins/{plugin}/{relative}" for plugin in PLUGINS if plugin != "cc_foundry"
         )
 
-    def test_copies_are_identical_to_the_canonical(self) -> None:
-        """Run the propagation gate in its check-only default mode over the whole manifest."""
+    @pytest.mark.parametrize("encoding", ["utf-8", "cp1252", "ascii"])
+    def test_copies_are_identical_to_the_canonical(self, encoding: str) -> None:
+        """Check the whole manifest without crashing on legacy stdout encodings."""
         proc = subprocess.run(
             [sys.executable, str(BIN_DIR / "propagate_shared.py")],
             capture_output=True,
-            text=True,
+            encoding=encoding,
+            env={**os.environ, "PYTHONIOENCODING": encoding},
             cwd=str(REPO_ROOT),
             check=False,
         )
@@ -145,12 +148,14 @@ class TestDocumentationGates:
                 stale.append(path.relative_to(REPO_ROOT).as_posix())
         assert stale == []
 
-    def test_orphaned_bin_gate_passes(self) -> None:
-        """The new verifier must be referenced from a shipped document, not merely exist."""
+    @pytest.mark.parametrize("encoding", ["utf-8", "cp1252", "ascii"])
+    def test_orphaned_bin_gate_passes(self, encoding: str) -> None:
+        """Require shipped references and encoding-safe success output."""
         proc = subprocess.run(
             [sys.executable, str(BIN_DIR / "check_orphaned_bin.py")],
             capture_output=True,
-            text=True,
+            encoding=encoding,
+            env={**os.environ, "PYTHONIOENCODING": encoding},
             cwd=str(REPO_ROOT),
             check=False,
         )
@@ -214,7 +219,7 @@ class TestCoexistenceWithTaskLog:
         before = {path: path.read_bytes() for path in env.log_files()}
         assert before, "the fixture must have written something for the teardown to threaten"
 
-        # Both sides are resolved from the shipped modules, so the assertion tracks the code rather than restating it.
+        # Mirror task-log's sentinel-base selection without invoking its destructive teardown.
         # Invoking the real SessionEnd teardown is not an option: `getSentinelDir()` hardcodes `/tmp` on every
         # non-Windows platform and ignores TMPDIR, and that path also sweeps OTHER sessions' stale directories — a
         # test may not reach outside its sandbox to prove a point.
@@ -232,8 +237,11 @@ class TestCoexistenceWithTaskLog:
         swept = Path(sentinel_base).resolve() / f"claude-state-{session}"
         audit_dir = env.audit_dir.resolve()
         assert not audit_dir.is_relative_to(swept), "the audit log must not live inside a directory task-log.js wipes"
-        assert swept not in audit_dir.parents
-        assert Path(sentinel_base).resolve() not in audit_dir.parents
+        # A temporary HOME is valid; only top-level claude-state-* trees are eligible for the stale-session sweep.
+        sentinel_root = Path(sentinel_base).resolve()
+        if audit_dir.is_relative_to(sentinel_root):
+            relative = audit_dir.relative_to(sentinel_root)
+            assert relative.parts and not relative.parts[0].startswith("claude-state-")
 
         assert {path: path.read_bytes() for path in env.log_files()} == before
         assert not any("claude-audit" in name for name in env.created_paths())

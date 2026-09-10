@@ -8,7 +8,11 @@ real repository manifest.
 from __future__ import annotations
 
 import importlib.util
+import io
+import sys
 from pathlib import Path
+
+import pytest
 
 _MOD_PATH = Path(__file__).resolve().parent.parent / "bin" / "propagate_shared.py"
 _spec = importlib.util.spec_from_file_location("propagate_shared", _MOD_PATH)
@@ -98,3 +102,17 @@ def test_real_manifest_prefixes_migrated_copies() -> None:
         if canonical.endswith(("_shared/quality-stack.md", "_shared/cross-validation-protocol.md")):
             for copy in entry["copies"]:
                 assert Path(str(copy)).name.startswith("foundry--"), copy
+
+
+@pytest.mark.parametrize("encoding", ["cp1252", "ascii"])
+def test_noop_apply_reports_success_on_legacy_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, encoding: str
+) -> None:
+    """No-op propagation must report success without requiring Unicode stdout."""
+    _tree(tmp_path, "X\n", "X\n", "X\n")
+    monkeypatch.setattr(ps, "MANIFEST", _manifest())
+    with io.TextIOWrapper(io.BytesIO(), encoding=encoding, newline="\n") as output:
+        monkeypatch.setattr(sys, "stdout", output)
+        assert ps.main(["--apply", "--root", str(tmp_path)]) == 0
+        output.flush()
+        assert output.buffer.getvalue() == b"OK: all shared copies already in sync\n"

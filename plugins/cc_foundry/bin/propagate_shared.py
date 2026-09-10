@@ -367,7 +367,7 @@ def apply(root: Path, manifest: list[dict[str, object]]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Check or propagate shared files across plugin copies."""
+    """Check or propagate shared files with ASCII status labels for legacy consoles."""
     parser = argparse.ArgumentParser(description="Sync byte-identical cross-plugin shared files")
     parser.add_argument("--apply", action="store_true", help="overwrite copies with canonical (default: check only)")
     parser.add_argument("--root", default=".", help="repository root (default: cwd)")
@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         if updated:
             print("\n".join(f"PROPAGATED: {u}" for u in updated))
         else:
-            print("✓: all shared copies already in sync")
+            print("OK: all shared copies already in sync")
         return 0
 
     findings = check(root, MANIFEST)
@@ -387,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\n".join(f"SHARED-DRIFT: {f}" for f in findings))
         print("  fix: run `python plugins/cc_foundry/bin/propagate_shared.py --apply`")
         return 1
-    print("✓: cross-plugin shared files in sync")
+    print("OK: cross-plugin shared files in sync")
     return 0
 
 

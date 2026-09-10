@@ -55,6 +55,26 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
     assert "denial" in approval_paragraph.lower()
 
 
+def test_user_questions_expose_answers_without_weakening_authorization() -> None:
+    """Keep answer formats explicit while preserving native permission boundaries."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    questions = contract.split("## User Questions\n", 1)[1].split("\n## ", 1)[0]
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+
+    assert "Authorize this local merge and commit? (yes / no)" in questions
+    assert "show all supported choices" in questions
+    assert "state the expected value or format" in questions
+    assert "use the actual supported options in that control" in questions
+    assert (
+        "Do not add a conflicting yes/no suffix, duplicate its choices in another prompt, "
+        "or imply that a chat answer bypasses runtime approval."
+    ) in questions
+    assert "Do not re-ask a decision already supplied" in questions
+    assert "Never treat silence, a preselected option, an example answer, or an unrelated reply as consent" in questions
+    assert "Authorize this local merge and commit? (yes / no)" in skill
+    assert "(approve / revise / parent-only)" in skill
+
+
 def test_shared_contract_covers_known_networked_cli_families() -> None:
     """Prevent a new workflow from narrowing approval to a nested executable."""
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")

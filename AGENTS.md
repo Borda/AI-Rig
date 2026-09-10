@@ -25,6 +25,12 @@ Simplicity and reliability come first. Understand the affected flow and root cau
 
 Verification is part of implementation. Work is not complete until relevant checks pass and failures, residual risks, and deliberately deferred scope are reported accurately.
 
+## Python Record Types
+
+- Prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes.
+- Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity.
+- Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+
 ## Python Documentation Style
 
 - A docstring's opening line must state the documented object's purpose in plain English. Move formulas, assignments, configuration literals, function-call notation, and other code-shaped details into the following description or a relevant section.

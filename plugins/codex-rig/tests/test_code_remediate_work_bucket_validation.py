@@ -11,6 +11,8 @@ from types import ModuleType
 
 import pytest
 
+from _platform import SYMLINKS_AVAILABLE
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
@@ -559,6 +561,52 @@ def test_completed_parallel_remediation_rejects_unbound_patch_evidence(
 
     lifecycle_path.write_text(json.dumps(lifecycle, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     _refresh_production_lifecycle_digest(metadata, lifecycle_path)
+
+    with pytest.raises(SystemExit, match=error):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="symlink capability unavailable")
+@pytest.mark.parametrize(
+    ("source_patch_kind", "rollback_patch_kind", "error"),
+    [
+        pytest.param(
+            "symlink",
+            "regular",
+            "code-remediate-production-lifecycle-source-patch-path-invalid",
+            id="source-symlink",
+        ),
+        pytest.param(
+            "regular",
+            "symlink",
+            "code-remediate-production-lifecycle-rollback-path-invalid",
+            id="rollback-symlink",
+        ),
+        pytest.param(
+            "symlink",
+            "symlink",
+            "code-remediate-production-lifecycle-source-patch-path-invalid",
+            id="source-precedes-rollback",
+        ),
+    ],
+)
+def test_completed_parallel_remediation_rejects_symlinked_source_and_rollback_patch_evidence(
+    tmp_path: Path, source_patch_kind: str, rollback_patch_kind: str, error: str
+) -> None:
+    """Reject symlinked source evidence and preserve source-before-rollback error precedence."""
+    metadata = _parallel_metadata()
+    _write_completed_production_lifecycle(metadata, tmp_path)
+
+    for patch_name, patch_kind in (
+        ("source-application.patch", source_patch_kind),
+        ("rollback.patch", rollback_patch_kind),
+    ):
+        if patch_kind == "symlink":
+            patch_path = tmp_path / patch_name
+            target_path = tmp_path / f"contained-{patch_name}"
+            target_path.write_bytes(patch_path.read_bytes())
+            patch_path.unlink()
+            patch_path.symlink_to(target_path)
 
     with pytest.raises(SystemExit, match=error):
         VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)

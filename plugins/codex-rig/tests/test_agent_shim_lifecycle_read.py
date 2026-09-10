@@ -256,6 +256,46 @@ def test_target_classification_handles_missing_and_removed_tombstones() -> None:
     assert module.classify_targets(removed, missing) == "removed-conflict"
 
 
+@pytest.mark.parametrize(
+    ("status", "unpersisted_kind", "expected"),
+    [
+        pytest.param("current", "regular", "foreign", id="current-foreign-outranks-modified"),
+        pytest.param("removed", "regular", "removed-conflict", id="removed-conflict-outranks-modified"),
+        pytest.param("current", "unsafe", "unsafe", id="current-unsafe-outranks-modified"),
+        pytest.param("removed", "unsafe", "unsafe", id="removed-unsafe-outranks-modified"),
+    ],
+)
+def test_target_classification_preserves_mixed_roster_precedence(
+    status: str,
+    unpersisted_kind: str,
+    expected: str,
+) -> None:
+    """Scan later unknown and unsafe targets before returning an earlier modification."""
+    module = _load_module(LIFECYCLE_PATH, "codex_rig_lifecycle_mixed_targets")
+    state_payload = _state_payload(status=status)
+    unpersisted_role = _role_ids()[-1]
+    state_payload["roles"] = [role for role in state_payload["roles"] if role["role_id"] != unpersisted_role]
+    parsed = module.parse_state(_encode(state_payload))
+    targets = _observations(module, parsed, "regular")
+    modified_name = parsed["roles"][0]["target_name"]
+    targets[modified_name] = module.TargetObservation("regular", "b" * 64, None)
+    unpersisted_name = f"codex-rig-{unpersisted_role}.toml"
+    targets[unpersisted_name] = module.TargetObservation(unpersisted_kind)
+
+    assert module.classify_targets(parsed, targets) == expected
+
+
+def test_target_classification_rejects_an_incomplete_observation_roster() -> None:
+    """Reject a partial roster before interpreting its ownership observations."""
+    module = _load_module(LIFECYCLE_PATH, "codex_rig_lifecycle_target_roster")
+    parsed = module.parse_state(_encode(_state_payload()))
+    targets = _observations(module, parsed, "regular")
+    targets.pop(f"codex-rig-{_role_ids()[-1]}.toml")
+
+    with pytest.raises(module.LifecycleDataError, match="target observation roster mismatch"):
+        module.classify_targets(parsed, targets)
+
+
 def test_recovery_classification_is_single_exact_and_fail_closed() -> None:
     """Reject unknown or competing recovery authority."""
     module = _load_module(LIFECYCLE_PATH, "codex_rig_lifecycle_recovery")

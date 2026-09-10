@@ -68,6 +68,12 @@ Generic marker discipline — semantic markers, never `pytestmark`, `--strict-ma
 - Register selectors in repository **and shipped test** configuration.
 - From the repository root, use `.venv/bin/python -m pytest -m installed_plugin` or `.venv/bin/python -m pytest -m "packaging and not live"`; omit paths for project-wide discovery. On Windows use `.venv\Scripts\python.exe`.
 
+## Python Record Types
+
+- Prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes.
+- Keep dictionaries for dynamic keys, external JSON, and simple mappings. Shared types modules must reduce real complexity.
+- Preserve runtime validation, behavior, and serialized schemas; annotations alone do not enforce types.
+
 ## Python Documentation Style
 
 Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style — including the rule that a docstring's opening line states purpose in plain English, with code-shaped detail moved below. `AGENTS.md` §Python Documentation Style carries it for Codex. No repo-specific addition.

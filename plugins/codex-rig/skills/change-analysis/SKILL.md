@@ -20,7 +20,7 @@ Run evidence-first analysis: truth, risk, next action before implementation, rev
 
 ## Workflow
 
-Codex provides this selected `SKILL.md` path. Resolve `PLUGIN_ROOT` as the directory two levels above the containing skill directory, then use only helpers under `PLUGIN_ROOT/shared/` that are listed in `package-manifest.json`. Never guess a cache version or fall back to a source checkout.
+Codex provides this selected `SKILL.md` path. Resolve `PLUGIN_ROOT` as directory two levels above containing skill directory, then use only helpers under `PLUGIN_ROOT/shared/` that are listed in `package-manifest.json`. Never guess cache version or fall back to source checkout.
 
 ### 01: Create run directory
 
@@ -29,19 +29,19 @@ Run `create_run.py --skill change-analysis` per `../../shared/helper-cli-contrac
 ### 02: Normalize the analysis mode
 
 - `local`: code, local diff/reports, pasted text.
-- `github`: live issue/release/repository metadata through `github_read.py`; use only its audited built-in view groups (`gist`, `issue`, `pr`, `project`, `release`, `repo`, `ruleset`, `run`, `workflow`) or an explicit read-only GraphQL query for Discussions. PR collection uses `collect_pr.py` only. Prefer `gh`; use the public HTTPS fallback only as a final public REST fallback.
+- `github`: live issue/release/repository metadata through `github_read.py`; use only its audited built-in view groups (`gist`, `issue`, `pr`, `project`, `release`, `repo`, `ruleset`, `run`, `workflow`) or explicit read-only GraphQL query for Discussions. PR collection uses `collect_pr.py` only. Prefer `gh`; use public HTTPS fallback only as final public REST fallback.
 - `report`: `.reports/**` or `.reports/codex/**` artifact.
 - `ecosystem`: downstream/API/dependency impact; current external claims need live web evidence. Do not invoke `gh` outside `github_read.py`.
 
-For every `github_read.py` or `collect_pr.py` execution, apply the full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to the complete owning command from its first attempt. The operation-specific brief is: `Action and purpose`: collect current GitHub analysis evidence; `External capability`: read-only GitHub network access; `Credential behavior`: `gh`, when used, is an opaque local credential broker; `Filesystem and worktree effects`: write evidence only to the analysis run directory, except a selected PR collector may create its documented local checkout; `Retry policy and safe denial outcome`: stop the turn on denial and use only already-available local or pasted evidence when the selected mode permits it. Runtime web tools keep their own permission path and receive no shell escalation.
+For every `github_read.py` or `collect_pr.py` execution, apply full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command from its first attempt. The operation-specific brief is: `Action and purpose`: collect current GitHub analysis evidence; `External capability`: read-only GitHub network access; `Credential behavior`: `gh`, when used, is opaque local credential broker; `Filesystem and worktree effects`: write evidence only to analysis run directory, except selected PR collector may create its documented local checkout; `Retry policy and safe denial outcome`: stop turn on denial and use only already-available local or pasted evidence when selected mode permits it. Runtime web tools keep their own permission path and receive no shell escalation.
 
-If the mode is unsupported, explain which supplied value is invalid and list the accepted modes above. If the request is ambiguous, name the missing source or scope decision and ask one concrete question. Continue as `local` when pasted evidence supports the requested analysis, stating its freshness limits; do not request a mode choice that the available evidence already resolves. Resume the affected analysis when the user supplies the missing decision or evidence.
+If mode is unsupported, explain which supplied value is invalid and list accepted modes above. If request is ambiguous, name missing source or scope decision and ask one concrete question with its supported choices or expected input format, such as a PR number/URL, issue number/URL, or local file path. Continue as `local` when pasted evidence supports requested analysis, stating its freshness limits; do not request mode choice that available evidence already resolves. Resume affected analysis when user supplies missing decision or evidence.
 
 ### 03: Capture scope and source inventory before drawing conclusions
 
 Use `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` into `<run-directory>/baseline`. Scan references separately; record failed diff collection.
 
-**Structural context (optional)**: for `local`/`ecosystem` scope naming a Python module or symbol, probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with the evidence above. Persist the result once here; step 05 specialist fan-out consumes `<run-directory>/codemap-context.json`, never a fresh query.
+**Structural context (optional)**: for `local`/`ecosystem` scope naming Python module or symbol, probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with evidence above. Persist result once here; step 05 specialist fan-out consumes `<run-directory>/codemap-context.json`, never fresh query.
 
 ### 04: Gather evidence with a ledger. Write `<run-directory>/evidence.md` with one row per claim:
 
@@ -61,14 +61,14 @@ Evidence rules:
 
 Read and apply `../../shared/specialist-orchestration.md` only for broad/multi-risk PR/issue, ecosystem, or independently challenged conclusions; do not load it when narrow local fan-out would duplicate context.
 
-Write `<run-directory>/orchestration.md` when fan-out is used or intentionally skipped for a broad scope. Include:
+Write `<run-directory>/orchestration.md` when fan-out is used or intentionally skipped for broad scope. Include:
 
 - specialist axes considered
 - context pack per triggered axis
 - skipped axes with rationale
 - consolidation plan
 
-Routes: `qa-specialist` testability; `web-explorer` current ecosystem; `scientist` method; `curator` config/workflow drift; `challenger` high-impact conclusions. Use the Sol-pinned `solution-architect` for architecture/API or `security-auditor` for risk only when the user expressly requests Sol or selects that role; each is a bounded read-only advisory artifact returned to the Terra parent/session for next action and acceptance.
+Routes: `qa-specialist` testability; `web-explorer` current ecosystem; `scientist` method; `curator` config/workflow drift; `challenger` high-impact conclusions. Use Sol-pinned `solution-architect` for architecture/API or `security-auditor` for risk only when user expressly requests Sol or selects that role; each is bounded read-only advisory artifact returned to Terra parent/session for next action and acceptance.
 
 ### 06: Analyze alternatives before recommending action
 
@@ -85,7 +85,7 @@ Required sections in `<run-directory>/analysis.md`:
 
 ### 07: Run the self-review check
 
-Run `git diff --check` as an argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase a nonzero result.
+Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result.
 
 ### 08: Decide gate result
 
@@ -139,12 +139,12 @@ Update calibration when routing or evidence expectations change:
 
 ## Output Contract
 
-Before writing the result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
+Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
 Use `../../shared/quality-gates.md`.
 
 ### Final chat
 
-Final chat follows the shared ordered frame. `Outcome` states the analysis conclusion and recommended decision. `Results` has one ranked finding per row and exactly `Finding | Impact | Decision | Evidence | Next action`. Apply the shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules; remaining analysis limits include open assumptions, unavailable evidence, and the next check.
+Final chat follows shared ordered frame. `Outcome` states analysis conclusion and recommended decision. `Results` has one ranked finding per row and exactly `Finding | Impact | Decision | Evidence | Next action`. Apply shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules; remaining analysis limits include open assumptions, unavailable evidence, and next check.
 
 Minimum artifact payload template: `result-template.json`.

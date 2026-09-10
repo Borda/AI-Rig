@@ -33,7 +33,8 @@ deliberately does not claim native child lineage, global credential isolation, o
 
 Malformed, oversized, secret-bearing, mismatched, noncanonical, or unsafe input raises ``ReviewRouteError`` before model
 work. During a live run, approval requests, non-read-only observed controls, unknown execution events, failed turns,
-duplicate finals, timeout, and unproven cleanup fail closed. Raw configuration, stderr, reasoning, tool payloads, and
+duplicate finals, timeout, and unproven cleanup fail closed. Final evidence-validation errors also record failed status
+after cleanup when the output directory remains writable. Raw configuration, stderr, reasoning, tool payloads, and
 credentials are neither logged nor included in evidence.
 
 ## Used by
@@ -56,6 +57,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Mapping, TextIO
 
@@ -123,6 +125,22 @@ REMOTE_CONTROL_STATUS_CHANGED = "remoteControl/status/changed"
 
 class ReviewRouteError(RuntimeError):
     """Describe evidence or protocol data that cannot prove the review boundary."""
+
+
+@dataclass(slots=True, kw_only=True)
+class _ActiveReview:
+    """Track the fixed lifecycle state for one active reviewer thread."""
+
+    node: dict[str, object]
+    thread_id: str
+    controls: dict[str, object]
+    turn_id: str | None = None
+    started_at_ms: int | None = None
+    finished_at_ms: int | None = None
+    final: str | None = None
+    input_echo_item_id: str | None = None
+    input_echo_completed: bool = False
+    output_path: Path | None = None
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -855,6 +873,33 @@ def check_host(plan_path: Path, codex: Path, timeout_seconds: float) -> dict[str
                     raise
 
 
+def _accept_input_echo(method: object, item: Mapping[str, object], state: _ActiveReview) -> None:
+    """Validate and advance the exact submitted-input echo lifecycle."""
+    node = state.node
+    context = node["_context_bytes"]
+    content = item.get("content")
+    item_id = item.get("id")
+    input_matches = (
+        isinstance(content, list)
+        and len(content) == 1
+        and isinstance(content[0], Mapping)
+        and set(content[0]) <= {"type", "text", "text_elements"}
+        and content[0].get("type") == "text"
+        and isinstance(context, bytes)
+        and content[0].get("text") == context.decode("utf-8")
+        and content[0].get("text_elements", []) == []
+    )
+    if not isinstance(item_id, str) or not item_id or not input_matches:
+        raise ReviewRouteError("app-server-user-message-lifecycle-invalid")
+    if method == "item/started" and state.input_echo_item_id is None:
+        state.input_echo_item_id = item_id
+        return
+    if method == "item/completed" and state.input_echo_item_id == item_id and state.input_echo_completed is False:
+        state.input_echo_completed = True
+        return
+    raise ReviewRouteError("app-server-user-message-lifecycle-invalid")
+
+
 def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds: float) -> Path:
     """Run one explicitly authorized App Server review wave and write bounded local evidence."""
     if (
@@ -901,7 +946,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
             context_path = Path(str(node["_context_file"]))
             if _read_bytes(context_path, "plan-context") != node["_context_bytes"]:
                 raise ReviewRouteError("context-mutated-before-turn")
-        active: dict[str, dict[str, object]] = {}
+        active: dict[str, _ActiveReview] = {}
         for node in nodes:
             result = client.request(
                 "thread/start",
@@ -917,13 +962,13 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
             )
             thread = _mapping(result.get("thread"), "app-server-thread")
             thread_id = _text(thread.get("id"), "app-server-thread-id")
-            active[str(node["role_id"])] = {
-                "node": node,
-                "thread_id": thread_id,
-                "controls": _thread_controls(result, node),
-            }
+            active[str(node["role_id"])] = _ActiveReview(
+                node=node,
+                thread_id=thread_id,
+                controls=_thread_controls(result, node),
+            )
         for role_id, state in active.items():
-            node = _mapping(state["node"], "active-node")
+            node = state.node
             if _read_bytes(plan_path, "plan") != frozen_plan:
                 raise ReviewRouteError("plan-mutated-before-turn")
             role_path = Path(str(node["_role_file"]))
@@ -943,7 +988,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
             turn = client.request(
                 "turn/start",
                 {
-                    "threadId": state["thread_id"],
+                    "threadId": state.thread_id,
                     "cwd": plan["cwd"],
                     "approvalPolicy": "never",
                     "model": node["model"],
@@ -954,12 +999,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
             )
             turns_acknowledged += 1
             turn_data = _mapping(turn.get("turn"), "app-server-turn")
-            state["turn_id"] = _text(turn_data.get("id"), "app-server-turn-id")
-            state["started_at_ms"] = None
-            state["finished_at_ms"] = None
-            state["final"] = None
-            state["input_echo_item_id"] = None
-            state["input_echo_completed"] = False
+            state.turn_id = _text(turn_data.get("id"), "app-server-turn-id")
         pending = set(active)
         failure_phase = "turn-events"
         while pending:
@@ -990,85 +1030,66 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 }
                 raise ReviewRouteError("app-server-event-rejected")
             params = _mapping(message.get("params"), "app-server-event-params")
+            # Every supplied identity must agree; one matching field cannot mask another turn.
+            turn_ids = [params["turnId"]] if "turnId" in params else []
+            if "turn" in params:
+                turn_ids.append(_mapping(params["turn"], "event-turn").get("id"))
             matching = [
                 (role_id, state)
                 for role_id, state in active.items()
-                if params.get("threadId") == state["thread_id"]
-                and (
-                    params.get("turnId") == state.get("turn_id")
-                    or _mapping(params.get("turn", {}), "event-turn").get("id") == state.get("turn_id")
-                )
+                if params.get("threadId") == state.thread_id
+                and turn_ids
+                and state.turn_id is not None
+                and all(turn_id == state.turn_id for turn_id in turn_ids)
             ]
             if not matching:
                 raise ReviewRouteError("app-server-thread-or-turn-mismatch")
             role_id, state = matching[0]
+            if role_id not in pending:
+                raise ReviewRouteError("app-server-event-after-turn-completed")
             if method in PLAN_NOTIFICATION_METHODS:
                 _validate_plan_notification(method, params)
                 continue
             item = params.get("item")
+            if method in {"item/started", "item/completed"} and not isinstance(item, Mapping):
+                raise ReviewRouteError("app-server-event-item-not-object")
             if isinstance(item, Mapping):
                 item_type = item.get("type")
                 if item_type == "userMessage":
-                    node = _mapping(state["node"], "active-node")
-                    context = node["_context_bytes"]
-                    content = item.get("content")
-                    item_id = item.get("id")
-                    input_matches = (
-                        isinstance(content, list)
-                        and len(content) == 1
-                        and isinstance(content[0], Mapping)
-                        and set(content[0]) <= {"type", "text", "text_elements"}
-                        and content[0].get("type") == "text"
-                        and isinstance(context, bytes)
-                        and isinstance(item_id, str)
-                        and bool(item_id)
-                        and content[0].get("text") == context.decode("utf-8")
-                        and content[0].get("text_elements", []) == []
-                    )
-                    if method == "item/started" and state["input_echo_item_id"] is None and input_matches:
-                        state["input_echo_item_id"] = item_id
-                        continue
-                    if (
-                        method == "item/completed"
-                        and state["input_echo_item_id"] == item_id
-                        and state["input_echo_completed"] is False
-                        and input_matches
-                    ):
-                        state["input_echo_completed"] = True
-                        continue
-                    raise ReviewRouteError("app-server-user-message-lifecycle-invalid")
+                    _accept_input_echo(method, item, state)
+                    continue
                 if item_type == "plan" and (
                     not isinstance(item.get("id"), str) or not isinstance(item.get("text"), str)
                 ):
                     raise ReviewRouteError("app-server-plan-item-invalid")
                 if item_type not in ALLOWED_ITEM_TYPES:
                     raise ReviewRouteError("app-server-item-type-rejected")
-                state["started_at_ms"] = state["started_at_ms"] or int(time.monotonic() * 1000)
+                state.started_at_ms = state.started_at_ms or int(time.monotonic() * 1000)
                 if method == "item/completed" and item_type == "agentMessage" and item.get("phase") == "final_answer":
                     final = item.get("text")
                     if (
                         not isinstance(final, str)
                         or not final.strip()
                         or len(final.encode("utf-8")) > MAX_OUTPUT_BYTES
-                        or state["final"] is not None
+                        or state.final is not None
                     ):
                         raise ReviewRouteError("app-server-final-output-invalid-or-duplicate")
                     if _contains_secret(final.encode("utf-8")):
                         raise ReviewRouteError("app-server-final-output-secret")
-                    state["final"] = final
+                    state.final = final
             if message.get("method") == "turn/completed":
                 turn = _mapping(params.get("turn"), "app-server-completed-turn")
                 if turn.get("status") != "completed":
                     raise ReviewRouteError("app-server-turn-status-invalid")
-                if state["final"] is None:
+                if state.final is None:
                     raise ReviewRouteError("app-server-turn-final-missing")
-                if state["input_echo_item_id"] is not None and state["input_echo_completed"] is not True:
+                if state.input_echo_item_id is not None and state.input_echo_completed is not True:
                     raise ReviewRouteError("app-server-user-message-lifecycle-incomplete")
-                state["finished_at_ms"] = int(time.monotonic() * 1000)
+                state.finished_at_ms = int(time.monotonic() * 1000)
                 output = output_root / f"{role_id}.md"
-                final = _text(state["final"], "app-server-final-output")
+                final = _text(state.final, "app-server-final-output")
                 output.write_bytes(final.encode("utf-8"))
-                state["output_path"] = output
+                state.output_path = output
                 pending.remove(role_id)
         if _read_bytes(plan_path, "plan") != frozen_plan:
             raise ReviewRouteError("plan-mutated-during-review")
@@ -1086,10 +1107,11 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
         if cli_version is None:
             raise ReviewRouteError("codex-version-unavailable")
         for role_id, state in active.items():
-            node = _mapping(state["node"], "active-node")
-            output = Path(str(state["output_path"]))
+            node = state.node
+            output = state.output_path
+            assert output is not None
             output_name = output.relative_to(output_root).as_posix()
-            final = _text(state["final"], "app-server-final-output")
+            final = _text(state.final, "app-server-final-output")
             evidence_nodes.append(
                 {
                     "role_id": role_id,
@@ -1098,12 +1120,12 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                     "context_sha256": node["context_sha256"],
                     "output_path": output_name,
                     "output_sha256": _sha256_bytes(final.encode("utf-8")),
-                    "thread_id": state["thread_id"],
-                    "turn_id": state["turn_id"],
-                    "observed_controls": state["controls"],
+                    "thread_id": state.thread_id,
+                    "turn_id": state.turn_id,
+                    "observed_controls": state.controls,
                     "terminal_status": "completed",
-                    "started_at_ms": state["started_at_ms"],
-                    "finished_at_ms": state["finished_at_ms"],
+                    "started_at_ms": state.started_at_ms,
+                    "finished_at_ms": state.finished_at_ms,
                 }
             )
         evidence = {
@@ -1134,6 +1156,16 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 cleanup = "failed"
                 if failure is None:
                     failure = cleanup_error
+    evidence_path = output_root / "evidence.json"
+    if failure is None:
+        failure_phase = "evidence-validation"
+        try:
+            assert evidence is not None
+            _atomic_json(evidence_path, evidence)
+            validate_evidence(plan_path, evidence_path, roles_dir)
+        except Exception as error:
+            # A rejected final artifact must enter the same failure path as rejected events.
+            failure = error
     if failure is not None:
         failure_evidence: dict[str, object] = {
             "schema_version": SCHEMA_VERSION,
@@ -1149,16 +1181,12 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
         if failure_diagnostic is not None:
             failure_evidence["failure_diagnostic"] = failure_diagnostic
         _atomic_json(
-            output_root / "evidence.json",
+            evidence_path,
             failure_evidence,
         )
         if isinstance(failure, ReviewRouteError):
             raise failure
         raise ReviewRouteError("app-server-review-failed") from failure
-    assert evidence is not None
-    evidence_path = output_root / "evidence.json"
-    _atomic_json(evidence_path, evidence)
-    validate_evidence(plan_path, evidence_path, roles_dir)
     return evidence_path
 
 

@@ -56,7 +56,7 @@ For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../sh
 
 - `web-explorer`: current docs, release notes, API and dependency changes.
 - `scientist`: formulas, methodology, metrics, ablations, benchmark claims.
-- `solution-architect`: only when the user expressly requests Sol or selects that role for implementation fit, API boundaries, or migration shape; it returns a bounded read-only design artifact to the Terra parent/session for next action and acceptance.
+- `solution-architect`: only when user expressly requests Sol or selects that role for implementation fit, API boundaries, or migration shape; it returns bounded read-only design artifact to Terra parent/session for next action and acceptance.
 - `squeezer`: performance or resource claims.
 - `data-steward`: datasets, splits, leakage, reproducibility.
 - `challenger`: unsupported recommendation or overconfident source synthesis.
@@ -67,7 +67,7 @@ Do not send full papers, repositories, or all search results to every specialist
 
 Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` scope into `<run-directory>/baseline`. Run topic scan separately; record unavailable paths/collection failures as evidence gaps.
 
-**Structural context (optional)**: for `sota`/`code-fidelity` questions naming a Python module/symbol, also probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with the codebase mapping above. Persist the result once here; any specialist context pack from step 03 includes `<run-directory>/codemap-context.json`, never a fresh query.
+**Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack from step 03 includes `<run-directory>/codemap-context.json`, never fresh query.
 
 ### 05: Produce `<run-directory>/research.md` with:
 
@@ -91,7 +91,7 @@ Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tre
 
 ### 07: Run review gate
 
-Run `git diff --check` as an argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase a nonzero result.
+Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result.
 
 ### 08: Run shared gates and write the validated result artifact
 
@@ -115,7 +115,7 @@ Required:
 
 Conditional:
 
-- `tests`: when research includes an executable validation or code-fidelity probe.
+- `tests`: when research includes executable validation or code-fidelity probe.
 
 ## Calibration Hooks
 
@@ -126,12 +126,12 @@ On source-protocol/recommendation-policy change, update calibration:
 
 ## Output Contract
 
-Before writing the result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
+Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
 Use `../../shared/quality-gates.md`.
 
 ### Final chat
 
-Final chat follows the shared frame with `Next steps`. `Outcome`: recommendation/support level. `Results`: exactly `Recommendation | Evidence | Decision | Caveat / next check`, one row/recommendation. Include source freshness and each gap/caveat's next check.
+Final chat follows shared frame with `Next steps`. `Outcome`: recommendation/support level. `Results`: exactly `Recommendation | Evidence | Decision | Caveat / next check`, one row/recommendation. Include source freshness and each gap/caveat's next check.
 
 Minimum artifact payload template: `result-template.json`.
