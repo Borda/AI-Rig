@@ -216,26 +216,25 @@ class TestDedupKeyMultiRoot:
 class TestDedupModulesRootAware:
     """_dedup_modules resolves collisions using multi-root priority."""
 
-    def test_root_path_beats_stray_copy_deterministically(self):
+    @pytest.mark.parametrize("reverse", [False, True, False])
+    def test_root_path_beats_stray_copy_deterministically(self, reverse: bool):
         """A configured-root path always wins over a stray copy across input orders."""
         entries = [
             {"name": "pkg_b.mod_b", "path": "vendor/pkg_b/mod_b.py"},
             {"name": "pkg_b.mod_b", "path": "services/api/src/pkg_b/mod_b.py"},
         ]
         roots = ("libs/core/src", "services/api/src")
-        winners = set()
-        for order in (entries, list(reversed(entries)), entries):
-            kept, collisions = _dedup_modules(list(order), roots)
-            assert len(kept) == 1
-            winners.add(kept[0]["path"])
-            assert collisions == [
-                {
-                    "name": "pkg_b.mod_b",
-                    "kept": "services/api/src/pkg_b/mod_b.py",
-                    "dropped": ["vendor/pkg_b/mod_b.py"],
-                }
-            ]
-        assert winners == {"services/api/src/pkg_b/mod_b.py"}
+        order = list(reversed(entries)) if reverse else entries
+        kept, collisions = _dedup_modules(list(order), roots)
+        assert len(kept) == 1
+        assert kept[0]["path"] == "services/api/src/pkg_b/mod_b.py"
+        assert collisions == [
+            {
+                "name": "pkg_b.mod_b",
+                "kept": "services/api/src/pkg_b/mod_b.py",
+                "dropped": ["vendor/pkg_b/mod_b.py"],
+            }
+        ]
 
     def test_earlier_root_wins_over_later_root(self):
         """When the same name appears under two roots, the first-listed root wins."""

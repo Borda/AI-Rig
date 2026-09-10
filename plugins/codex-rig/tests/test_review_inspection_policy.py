@@ -26,9 +26,18 @@ def test_every_skill_preserves_its_closing_gate_after_reentry() -> None:
         "agent-shims",
     ):
         assert requirement in section
-    for skill_path in (PLUGIN_ROOT / "skills").glob("*/SKILL.md"):
-        text = skill_path.read_text(encoding="utf-8")
-        assert "helper-cli-contract.md" in text, skill_path.parent.name
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    "skill_path",
+    [pytest.param(path, id=path.parent.name) for path in sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))],
+)
+def test_each_skill_references_the_shared_helper_contract(skill_path: Path) -> None:
+    """Require each packaged skill document to retain its closing helper contract."""
+    text = skill_path.read_text(encoding="utf-8")
+
+    assert "helper-cli-contract.md" in text, skill_path.parent.name
 
 
 @pytest.mark.installed_plugin

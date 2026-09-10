@@ -273,7 +273,10 @@ def test_run_gates_records_output_relative_logs_for_every_gate_outcome(
         assert (output / lint[key]).is_file()
 
 
-def test_gate_validation_ignores_the_callers_working_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("directory_name", ["workspace", "elsewhere"])
+def test_gate_validation_ignores_the_callers_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_name: str
+) -> None:
     """Return the same verdict for one finished artifact from the producing workspace and from elsewhere."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -288,16 +291,15 @@ def test_gate_validation_ignores_the_callers_working_directory(tmp_path: Path, m
     )
     module = _load_module(SHARED_VALIDATOR, "codex_rig_shared_validate_artifacts")
 
-    verdicts = []
-    for directory in (workspace, elsewhere):
-        monkeypatch.chdir(directory)
-        verdicts.append(module._validate_gates(output)["status"])
+    directory = workspace if directory_name == "workspace" else elsewhere
+    monkeypatch.chdir(directory)
 
-    assert verdicts == ["pass", "pass"]
+    assert module._validate_gates(output)["status"] == "pass"
 
 
+@pytest.mark.parametrize("directory_name", ["workspace", "elsewhere"])
 def test_gate_validation_accepts_a_legacy_ancestor_relative_log_from_any_directory(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, directory_name: str
 ) -> None:
     """Accept a gate log recorded relative to an ancestor of the output directory, wherever the reader runs.
 
@@ -323,12 +325,10 @@ def test_gate_validation_accepts_a_legacy_ancestor_relative_log_from_any_directo
     gates_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     module = _load_module(SHARED_VALIDATOR, "codex_rig_shared_validate_artifacts_legacy")
 
-    verdicts = []
-    for directory in (workspace, elsewhere):
-        monkeypatch.chdir(directory)
-        verdicts.append(module._validate_gates(output)["status"])
+    directory = workspace if directory_name == "workspace" else elsewhere
+    monkeypatch.chdir(directory)
 
-    assert verdicts == ["pass", "pass"]
+    assert module._validate_gates(output)["status"] == "pass"
 
 
 def test_gate_validation_rejects_a_log_resolving_outside_the_output_directory(

@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,7 +21,22 @@ except ModuleNotFoundError:
     from benchmarks._bench_common.mutation_isolation import create_patch_task_agent_workspace, execute_patch_task_answer
 
 
-POSIX_SHELL_LAUNCHER_AVAILABLE = os.name != "nt" and Path("/bin/sh").is_file()
+def _shell_launcher_available() -> bool:
+    """Probe whether this host can execute the shell-wrapper fixture directly."""
+    shell = shutil.which("sh")
+    if shell is None:
+        return False
+    try:
+        with tempfile.TemporaryDirectory() as scratch:
+            launcher = Path(scratch) / "launcher"
+            launcher.write_bytes(f"#!{shell}\nexit 0\n".encode())
+            launcher.chmod(0o755)
+            return subprocess.run([str(launcher)], capture_output=True, timeout=10, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+POSIX_SHELL_LAUNCHER_AVAILABLE = _shell_launcher_available()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -194,22 +210,25 @@ def test_patch_test_runtime_accepts_a_launcher_without_a_python_shebang(
 ) -> None:
     """A launcher whose header is not a Python shebang still yields a bound runtime.
 
-    A POSIX shell wrapper stands in for the Windows binary trampoline: both are
-    launchers whose leading bytes name no Python interpreter. Skipped where a
-    ``/bin/sh`` wrapper cannot be executed at all — on Windows the ambient
-    ``pytest.exe`` already exercises this path natively.
+    A shell wrapper stands in for a binary trampoline: neither header names a Python
+    interpreter. Probe actual execution capability; the ambient-launcher test also
+    covers native Windows trampolines. Outer pytest arguments must not contaminate
+    the isolated runtime probe.
     """
-    shell = Path("/bin/sh")
+    shell = shutil.which("sh")
+    assert shell is not None
+    ambient_identity = mutation_isolation.patch_test_runtime_identity()
     launcher = tmp_path / "pytest-wrapper"
-    launcher.write_text(f'#!{shell}\nexec "{_ambient_pytest_launcher()}" "$@"\n', encoding="utf-8")
+    launcher.write_bytes(f'#!{shell}\nexec "{_ambient_pytest_launcher()}" "$@"\n'.encode())
     launcher.chmod(0o755)
-    subprocess.run([str(launcher), "--version"], check=True, capture_output=True, timeout=120)
     monkeypatch.setenv(mutation_isolation.PATCH_PYTEST_ENV, str(launcher))
+    monkeypatch.setenv("PYTEST_ADDOPTS", "--unrecognized-outer-test-option")
 
     identity = mutation_isolation.patch_test_runtime_identity()
 
     assert identity["pytest_executable"] == str(launcher)
-    assert identity["pytest_module_sha256"] == mutation_isolation.patch_test_runtime_identity()["pytest_module_sha256"]
+    assert identity["python_executable"] == ambient_identity["python_executable"]
+    assert identity["pytest_module_sha256"] == ambient_identity["pytest_module_sha256"]
 
 
 def test_patch_test_command_prioritizes_worktree_without_hiding_environment_dependencies(

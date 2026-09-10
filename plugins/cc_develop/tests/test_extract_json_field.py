@@ -158,7 +158,9 @@ class TestMain:
         rc = extract_json_field.main([])
         assert rc == 3
 
-    @pytest.mark.parametrize("argv", [["verdict", "-"], ["verdict"]])
+    @pytest.mark.parametrize(
+        "argv", [pytest.param(["verdict", "-"], id="explicit-stdin"), pytest.param(["verdict"], id="implicit-stdin")]
+    )
     def test_stdin_input(
         self,
         capsys: pytest.CaptureFixture[str],

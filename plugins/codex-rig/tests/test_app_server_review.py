@@ -12,7 +12,7 @@ import sys
 from types import ModuleType
 
 import pytest
-from _platform import SYMLINKS_AVAILABLE
+from _platform import DIRECTORY_SYMLINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -487,7 +487,7 @@ def test_run_review_rejects_output_outside_plan_parent_before_host_start(
     assert factory.processes == []
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="filesystem cannot create symlinks")
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="filesystem cannot create directory symlinks")
 def test_run_review_rejects_output_parent_symlink_escape_before_creation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

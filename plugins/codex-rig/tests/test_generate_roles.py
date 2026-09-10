@@ -16,14 +16,24 @@ from unittest.mock import patch
 
 import pytest
 
+from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
     import tomli as tomllib
 
 
-WINDOWS_POSIX_SKIP_REASON = "requires POSIX filesystem modes, links, and executable semantics"
-POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
+_requires_posix_descriptors = pytest.mark.skipif(
+    not POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
+    reason="host lacks descriptor-relative no-follow reads",
+)
+_requires_posix_file_modes = pytest.mark.skipif(
+    not POSIX_FILE_MODES_AVAILABLE, reason="filesystem does not preserve POSIX file modes"
+)
+_requires_file_symlinks = pytest.mark.skipif(
+    not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"
+)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 GENERATOR_SCRIPT = PLUGIN_ROOT / "scripts" / "generate_roles.py"
 ROLE_IDS = (
@@ -119,7 +129,22 @@ def _generate(module: ModuleType, plugin_root: Path, python_binary: Path, codex_
     )
 
 
-def test_roster_identity_hash_is_canonical_and_rejects_drift() -> None:
+@pytest.mark.parametrize("mutation", ["missing-role", "reordered-role", "changed-role-hash"])
+def test_roster_identity_hash_rejects_drift(mutation: str) -> None:
+    """Reject roster values that differ from the generator-owned canonical preimage."""
+    module = _load_generator()
+    rows = tuple((role_id, f"codex-rig-{role_id}.toml", f"roles/{role_id}/ROLE.md", "a" * 64) for role_id in ROLE_IDS)
+    if mutation == "missing-role":
+        invalid = rows[:-1]
+    elif mutation == "reordered-role":
+        invalid = (rows[1], rows[0], *rows[2:])
+    else:
+        invalid = (*rows[:-1], (*rows[-1][:-1], "A" * 64))
+    with pytest.raises(ValueError):
+        module.roster_identity_hash(invalid)
+
+
+def test_roster_identity_hash_is_canonical() -> None:
     """Keep one generator-owned roster preimage for state and plan consumers."""
     module = _load_generator()
     rows = tuple((role_id, f"codex-rig-{role_id}.toml", f"roles/{role_id}/ROLE.md", "a" * 64) for role_id in ROLE_IDS)
@@ -129,9 +154,6 @@ def test_roster_identity_hash_is_canonical_and_rejects_drift() -> None:
     ).hexdigest()
 
     assert module.roster_identity_hash(rows) == expected
-    for invalid in (rows[:-1], (rows[1], rows[0], *rows[2:]), (*rows[:-1], (*rows[-1][:-1], "A" * 64))):
-        with pytest.raises(ValueError):
-            module.roster_identity_hash(invalid)
 
 
 def _expected_challenger_bytes(
@@ -183,7 +205,8 @@ Never search for another cache, helper, role card, or fallback role body."""
     return text.encode()
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_is_exact_deterministic_and_round_trips_argv(tmp_path: Path) -> None:
     """Freeze all role bytes and preserve difficult paths through TOML and JSON."""
     plugin_root, python_binary, codex_binary = _installed_inputs(tmp_path)
@@ -243,7 +266,8 @@ def test_generation_is_exact_deterministic_and_round_trips_argv(tmp_path: Path) 
         assert b"## Trigger and skip boundaries" not in payload
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generated_roster_exposes_immutable_manager_identities(tmp_path: Path) -> None:
     """Prevent the lifecycle manager from independently reconstructing package metadata."""
     plugin_root, python_binary, codex_binary = _installed_inputs(tmp_path)
@@ -282,7 +306,8 @@ def test_generated_roster_exposes_immutable_manager_identities(tmp_path: Path) -
         pytest.param("plugin-extra-field", "plugin manifest fields mismatch", id="plugin-extra-field"),
     ],
 )
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generated_roster_rejects_inconsistent_plugin_identity(
     tmp_path: Path,
     mutation: str,
@@ -326,7 +351,8 @@ def test_generated_roster_rejects_inconsistent_plugin_identity(
         pytest.param(INSTALL_ID, None, Path("/tmp/control\npython"), "control character", id="control-path"),
     ],
 )
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_rejects_bad_identity_inputs(
     tmp_path: Path,
     install_id: str,
@@ -349,7 +375,8 @@ def test_generation_rejects_bad_identity_inputs(
         )
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_rejects_role_bytes_not_bound_by_manifest(tmp_path: Path) -> None:
     """Prevent modified or linked role cards from entering generated shims."""
     module = _load_generator()
@@ -361,7 +388,9 @@ def test_generation_rejects_role_bytes_not_bound_by_manifest(tmp_path: Path) -> 
         _generate(module, plugin_root, python_binary, codex_binary)
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
+@_requires_file_symlinks
 def test_generation_rejects_symlinked_package_input(tmp_path: Path) -> None:
     """Prevent aliased package files from being treated as installed bytes."""
     module = _load_generator()
@@ -374,7 +403,8 @@ def test_generation_rejects_symlinked_package_input(tmp_path: Path) -> None:
         _generate(module, plugin_root, python_binary, codex_binary)
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_rejects_unresolved_parent_alias(tmp_path: Path) -> None:
     """Prevent unresolved dot-dot aliases from entering verifier arguments."""
     module = _load_generator()
@@ -385,7 +415,8 @@ def test_generation_rejects_unresolved_parent_alias(tmp_path: Path) -> None:
         _generate(module, aliased_root, python_binary, codex_binary)
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_is_read_only_for_installed_inputs(tmp_path: Path) -> None:
     """Prevent the pure generator from changing its package or executable inputs."""
     plugin_root, python_binary, codex_binary = _installed_inputs(tmp_path)
@@ -406,7 +437,8 @@ def test_generation_is_read_only_for_installed_inputs(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("hooks", [False, True])
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_file_modes
 def test_generation_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> None:
     """Keep the pure renderer usable by the declared manager release."""
     module = _load_generator()

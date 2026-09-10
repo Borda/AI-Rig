@@ -12,9 +12,11 @@ with ``plugin_root`` inside the installed cache.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -34,6 +36,26 @@ _EXPECTED_CLAUDE_SKILLS = {
     "integration",
     "debrief-coding",
 }
+
+
+def _launcher_execute_permission_is_enforced() -> bool:
+    """Return whether removing a file's execute mode makes it fail ``os.access(..., X_OK)``."""
+    with tempfile.TemporaryDirectory() as directory:
+        launcher = Path(directory) / "launcher"
+        launcher.write_text("#!/bin/sh\n", encoding="utf-8")
+        try:
+            launcher.chmod(0o755)
+            executable_before = os.access(launcher, os.X_OK)
+            launcher.chmod(0o644)
+        except OSError:
+            return False
+        return executable_before and not os.access(launcher, os.X_OK)
+
+
+_skip_launcher_execute_permission_unenforced = pytest.mark.skipif(
+    not _launcher_execute_permission_is_enforced(),
+    reason="launcher execute permissions are not enforced on this host",
+)
 
 
 def _run_probe(script_name: str) -> dict:
@@ -110,7 +132,7 @@ def _assert_runtime_proof(result: dict) -> None:
     assert checks["query_ok"] is True
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="POSIX executable-bit falsification")
+@_skip_launcher_execute_permission_unenforced
 @pytest.mark.packaging
 def test_runtime_proof_fails_when_launcher_mode_stripped(tmp_path: Path) -> None:
     """Falsification: a non-executable installed launcher makes the runtime proof fail (no fallback)."""

@@ -13,8 +13,8 @@ Proves the shared-index delegation contract:
   a mismatch is ignored with an ``index_root_collision`` diagnostic;
 - a stale index rebuilt through ``_rwgate`` rebuilds exactly once; the waiter reuses.
 
-``_rwgate`` is imported for the gate-driven cases; those are guarded
-with ``pytest.importorskip`` so the identity/reuse coverage stands alone.
+``_rwgate`` is a shipped module required by the gate-driven cases; an import
+failure is an installed-payload failure, not a skippable optional dependency.
 """
 
 from __future__ import annotations
@@ -24,15 +24,36 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
+import _rwgate as rw
 import _index_identity as ii
 import _runtime_log as rl
 
 _BIN = Path(__file__).resolve().parents[2] / "bin"
 SCAN_INDEX = _BIN / "scan-index"
+
+
+def _directory_symlink_is_available() -> bool:
+    """Return whether this host can create and resolve a directory symlink."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        target = root / "target"
+        link = root / "link"
+        target.mkdir()
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except OSError:
+            return False
+        return link.is_symlink() and link.is_dir()
+
+
+_skip_directory_symlink_unavailable = pytest.mark.skipif(
+    not _directory_symlink_is_available(), reason="directory symlink creation is unavailable on this host"
+)
 
 # Scanner-invocation oracle: a thin shim that appends one line per real scan-index
 # launch (via env CODEMAP_TEST_SCAN_COUNTER) then execs the real builder. Append is
@@ -184,8 +205,9 @@ def test_equal_basename_under_one_override_collides_and_is_diagnosed(tmp_path: P
     assert json.loads(ia.index_path.read_text())["tok"] == "A"  # never overwritten by resolution
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink alias identity")
+@_skip_directory_symlink_unavailable
 def test_symlink_alias_same_identity(tmp_path: Path) -> None:
+    """A directory symlink resolves to the same index and root identity as its target."""
     real = tmp_path / "real_proj"
     real.mkdir()
     link = tmp_path / "link_proj"
@@ -238,11 +260,10 @@ def test_split_index_roots_diagnostic(tmp_path: Path) -> None:
     assert ii.diagnose_split_index_roots(a.index_path, a.index_path) is None
 
 
-# ── build once, reuse across cwd + runtime, zero rebuild ──────────────────────
 def test_reuse_across_cwd_and_runtime_no_rebuild(
     project: Path, shim: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    rw = pytest.importorskip("_rwgate")
+    """Both runtimes reuse one built index across working directories without rebuilding."""
     monkeypatch.setenv("CODEMAP_LOGGING", "true")
     counter = tmp_path / "counter.txt"
     log_root = tmp_path / "logs"
@@ -293,7 +314,6 @@ def test_concurrent_scans_are_serialized_and_publish_a_valid_index(project: Path
     counter shows 2. Skipping the second scan is the job of ``--incremental``, whose
     recheck runs inside the exclusive phase and degrades a waiter to a near-noop pass.
     """
-    pytest.importorskip("_rwgate")
     counter = tmp_path / "counter.txt"
     worker = tmp_path / "gate_worker.py"
     worker.write_text(_WORKER_SOURCE, encoding="utf-8")

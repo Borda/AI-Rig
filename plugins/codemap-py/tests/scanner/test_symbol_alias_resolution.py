@@ -156,18 +156,24 @@ def test_clean_proven_alias_remains_complete_without_ambiguous_paths(tmp_path: P
     assert blast["index"]["query_complete"] is True
 
 
-def test_alias_limitations_veto_central_and_target_blast_queries(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("query", "args"),
+    [
+        pytest.param("fn-central", ("--top", "5"), id="central"),
+        pytest.param("fn-blast", ("pkg.impl::target",), id="target-blast"),
+    ],
+)
+def test_alias_limitations_veto_central_and_target_blast_queries(
+    tmp_path: Path, query: str, args: tuple[str, ...]
+) -> None:
     """Centrality is whole-graph, while blast only sees its queried target's limits."""
     _write_project(tmp_path, ambiguous=True)
     index_path = _write_index(tmp_path, scan(tmp_path))
 
-    central = _query(tmp_path, index_path, "fn-central", "--top", "5")
-    blast = _query(tmp_path, index_path, "fn-blast", "pkg.impl::target")
-
-    for data in (central, blast):
-        assert data["index"]["query_complete"] is False
-        assert data["index"]["completeness_reason"] == "symbol_alias_ambiguous"
-        assert data["index"]["symbol_alias_limitations"]
+    data = _query(tmp_path, index_path, query, *args)
+    assert data["index"]["query_complete"] is False
+    assert data["index"]["completeness_reason"] == "symbol_alias_ambiguous"
+    assert data["index"]["symbol_alias_limitations"]
 
 
 @pytest.mark.parametrize(

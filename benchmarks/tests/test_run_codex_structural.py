@@ -18,6 +18,8 @@ from typing import Any
 
 import pytest
 
+from _launcher_capability import _private_filesystem_available
+
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
@@ -29,7 +31,9 @@ from benchmarks._bench_common import provider_parity_contracts as core  # noqa: 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "codex-integration.json"
-POSIX_SECURITY = pytest.mark.skipif(os.name == "nt", reason="requires POSIX private-mode and ownership semantics")
+POSIX_SECURITY = pytest.mark.skipif(
+    not _private_filesystem_available(), reason="requires POSIX private-mode and ownership semantics"
+)
 
 
 def test_public_runner_stays_below_the_250_kilobyte_maintenance_limit() -> None:
@@ -1992,7 +1996,7 @@ def test_historical_runtime_coordinate_uses_patch_baseline_not_main_manifest(
         )
 
 
-@pytest.mark.parametrize("line_ending", [b"\n", b"\r\n"], ids=["lf", "crlf"])
+@pytest.mark.parametrize("line_ending", [pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")])
 def test_fixture_runtime_coordinate_is_distinct_from_graph_admission(
     script_run_codex: Any, tmp_path: Path, line_ending: bytes
 ) -> None:
@@ -4128,7 +4132,14 @@ def test_query_mismatch_does_not_reclassify_successful_transport_or_pooling(
     assert script_run_codex._pooling_ineligibility_reasons(run) == ()
 
 
-def test_all_locked_execution_queries_accept_strict_option_permutations(script_run_codex: Any) -> None:
+@pytest.mark.parametrize(
+    "task_id",
+    json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["preregistered_cells"]["structural_execution_task_ids"],
+)
+@pytest.mark.parametrize("arm", ("B_auto", "C_strict"))
+def test_all_locked_execution_queries_accept_strict_option_permutations(
+    script_run_codex: Any, task_id: str, arm: str
+) -> None:
     """Admit all 68 expected queries from the locked 55-task execution set under strict B/C conformance.
 
     Derive cases from tasks, not the normalizer's option vocabulary.
@@ -4136,9 +4147,8 @@ def test_all_locked_execution_queries_accept_strict_option_permutations(script_r
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     execution_ids = manifest["preregistered_cells"]["structural_execution_task_ids"]
     tasks_by_id = {task["id"]: task for task in core.load_task_suite(SUITE_PATH)}
-    tasks = [tasks_by_id[task_id] for task_id in execution_ids]
-    assert len(tasks) == 55
-    assert sum(len(task.get("expected_queries", [])) for task in tasks) == 68
+    assert len(execution_ids) == 55
+    assert sum(len(tasks_by_id[execution_id].get("expected_queries", [])) for execution_id in execution_ids) == 68
 
     boolean_options = {"--broken", "--exclude-tests", "--with-imports"}
 
@@ -4163,31 +4173,29 @@ def test_all_locked_execution_queries_accept_strict_option_permutations(script_r
             groups.reverse()
         return [token for group in groups for token in group] + positionals
 
-    for task in tasks:
-        task_id = task["id"]
-        queries = task.get("expected_queries", [])
-        actual: list[list[str]] = []
-        for query_index, query in enumerate(queries):
-            assert isinstance(query, dict), (task_id, query_index)
-            command = query.get("cmd")
-            arguments = query.get("args")
-            assert isinstance(command, str) and isinstance(arguments, list), (task_id, query_index, query)
-            assert all(isinstance(argument, str) for argument in arguments), (task_id, query_index, query)
-            actual.append([command, *_permute_options(arguments)])
-        for arm in ("B_auto", "C_strict"):
-            run = script_run_codex.CodexRun(
-                arm=arm,
-                task_id=task_id,
-                task_type="contract-test",
-                model=script_run_codex.PARITY_CODEX_MODEL,
-                successful_query_arguments=actual,
-            )
-            assert script_run_codex._locked_query_conformance(tasks_by_id[task_id], arm, run) is True, (
-                task_id,
-                query_index,
-                arm,
-                actual,
-            )
+    task = tasks_by_id[task_id]
+    queries = task.get("expected_queries", [])
+    actual: list[list[str]] = []
+    for query_index, query in enumerate(queries):
+        assert isinstance(query, dict), (task_id, query_index)
+        command = query.get("cmd")
+        arguments = query.get("args")
+        assert isinstance(command, str) and isinstance(arguments, list), (task_id, query_index, query)
+        assert all(isinstance(argument, str) for argument in arguments), (task_id, query_index, query)
+        actual.append([command, *_permute_options(arguments)])
+    run = script_run_codex.CodexRun(
+        arm=arm,
+        task_id=task_id,
+        task_type="contract-test",
+        model=script_run_codex.PARITY_CODEX_MODEL,
+        successful_query_arguments=actual,
+    )
+    assert script_run_codex._locked_query_conformance(task, arm, run) is True, (
+        task_id,
+        query_index,
+        arm,
+        actual,
+    )
 
 
 def test_input_snapshot_archives_hashes_but_never_credential_bytes(script_run_codex: Any, tmp_path: Path) -> None:

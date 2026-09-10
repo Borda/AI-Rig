@@ -11,7 +11,7 @@ import sys
 from pathlib import Path, PureWindowsPath
 
 import pytest
-from _platform import SYMLINKS_AVAILABLE
+from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_github_read_rules.py"
@@ -231,8 +231,29 @@ def test_windows_rule_arguments_and_legacy_migration_on_every_host(
     assert functions["strip_legacy_rules"](unchanged + legacy, home) == unchanged
 
 
-@pytest.mark.parametrize("component", ["rules", "reader", "default"])
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks; linked targets fail closed")
+@pytest.mark.parametrize(
+    "component",
+    [
+        pytest.param(
+            "rules",
+            id="rules-directory-link",
+            marks=pytest.mark.skipif(
+                not DIRECTORY_SYMLINKS_AVAILABLE,
+                reason="filesystem cannot create directory symlinks",
+            ),
+        ),
+        pytest.param(
+            "reader",
+            id="reader-file-link",
+            marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"),
+        ),
+        pytest.param(
+            "default",
+            id="default-file-link",
+            marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"),
+        ),
+    ],
+)
 def test_install_rejects_linked_rule_or_reader_paths(tmp_path: Path, component: str) -> None:
     """Avoid redirecting either the approved executable or permission writes outside their owned paths."""
     home = tmp_path / "home"

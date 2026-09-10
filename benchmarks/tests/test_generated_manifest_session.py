@@ -18,8 +18,17 @@ REPO_ROOT = BENCHMARKS_DIR.parent
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    "builder",
+    (
+        "build-provider-parity-methodology-manifest.py",
+        "build-codex-integration-manifest.py",
+        "build-codex-agentic-manifest.py",
+    ),
+)
 def test_session_makes_manifests_ready_once_with_byte_stable_outputs(
     generated_manifest_artifacts: Any,
+    builder: str,
 ) -> None:
     """Session generation must make every manifest available and satisfy read-only checks."""
     artifacts = generated_manifest_artifacts
@@ -27,19 +36,14 @@ def test_session_makes_manifests_ready_once_with_byte_stable_outputs(
     assert artifacts.generation_count == 1
     assert all(path.is_file() for path in artifacts.paths)
 
-    for builder in (
-        "build-provider-parity-methodology-manifest.py",
-        "build-codex-integration-manifest.py",
-        "build-codex-agentic-manifest.py",
-    ):
-        result = subprocess.run(
-            [sys.executable, str(BENCHMARKS_DIR / builder), "--check"],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        assert result.returncode == 0, result.stderr
+    result = subprocess.run(
+        [sys.executable, str(BENCHMARKS_DIR / builder), "--check"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_session_hook_recreates_only_absent_outputs_and_cleans_them(

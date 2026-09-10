@@ -3,8 +3,9 @@
 Covers:
   * the shipped context contract carries its version header + every required section;
   * the shipped gates contract carries Gate A / Gate B machinery with all options;
-  * develop/oss wrapper files reference the contract via the sanctioned cache-path pattern,
-    keep a graceful-degradation fallback, and add only their per-plugin surface;
+  * develop/oss wrapper files resolve and read their own byte-identical manifested
+    contract copies, keep a graceful-degradation fallback, and add only their
+    per-plugin surface;
   * stranger-fixture — injecting the block on a fresh project yields a reference line that
     resolves to the shipped contract file.
 
@@ -31,14 +32,13 @@ _SHARED = _PLUGIN_ROOT / "claude-skills" / "_shared"
 _CONTEXT_CONTRACT = _SHARED / "codemap-context.md"
 _GATES_CONTRACT = _SHARED / "codemap-gates.md"
 
-# The sanctioned installed-plugin resolution pattern wrappers must use (never a bare relative path).
-_CACHE_PATTERN = "ls -td ~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/claude-skills/_shared"
-_SOURCE_FALLBACK = "plugins/codemap-py/claude-skills/_shared"
-
 _DEVELOP_CONTEXT = _PLUGINS_DIR / "cc_develop" / "skills" / "_shared" / "codemap-context.md"
 _DEVELOP_FIX = _PLUGINS_DIR / "cc_develop" / "skills" / "fix" / "SKILL.md"
 _DEVELOP_GATES = _PLUGINS_DIR / "cc_develop" / "skills" / "_shared" / "codemap-gates.md"
 _OSS_GATES = _PLUGINS_DIR / "cc_oss" / "skills" / "_shared" / "codemap-gates.md"
+_DEVELOP_CONTEXT_COPY = _DEVELOP_CONTEXT.with_name("codemap-py--codemap-context.md")
+_DEVELOP_GATES_COPY = _DEVELOP_GATES.with_name("codemap-py--codemap-gates.md")
+_OSS_GATES_COPY = _OSS_GATES.with_name("codemap-py--codemap-gates.md")
 
 
 def _find_working_posix_bash() -> str | None:
@@ -263,12 +263,14 @@ class TestGatesContract:
 class TestDevelopWrapper:
     """The develop context wrapper references the contract and keeps only its per-plugin surface."""
 
-    def test_references_contract_via_cache_pattern(self):
-        """Wrapper resolves the contract via the sanctioned cache path with source-tree fallback."""
+    def test_references_own_manifested_contract_copy(self):
+        """Wrapper resolves its own directory and reads the byte-identical context copy."""
         text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        assert _CACHE_PATTERN in text
-        assert _SOURCE_FALLBACK in text
-        assert "codemap-context.md" in text
+        assert "dev_shared_resolve.py" in text
+        assert 'cat "$_DEV_SHARED/codemap-py--codemap-context.md"' in text
+        assert _DEVELOP_CONTEXT_COPY.read_bytes() == _CONTEXT_CONTRACT.read_bytes()
+        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_never_uses_bare_relative_cross_plugin_path(self):
         """Wrapper must not cross-reference the codemap plugin via a bare relative path."""
@@ -308,12 +310,14 @@ class TestDevelopWrapper:
 class TestDevelopGatesWrapper:
     """The develop gates wrapper references the gates contract and supplies its skip flag."""
 
-    def test_references_gates_contract_via_cache_pattern(self):
-        """Wrapper resolves the gates contract via the sanctioned cache path with fallback."""
+    def test_references_own_manifested_gates_copy(self):
+        """Wrapper resolves its own directory and reads the byte-identical gates copy."""
         text = _DEVELOP_GATES.read_text(encoding="utf-8")
-        assert _CACHE_PATTERN in text
-        assert _SOURCE_FALLBACK in text
-        assert "codemap-gates.md" in text
+        assert "dev_shared_resolve.py" in text
+        assert 'cat "$_DEV_SHARED/codemap-py--codemap-gates.md"' in text
+        assert _DEVELOP_GATES_COPY.read_bytes() == _GATES_CONTRACT.read_bytes()
+        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_supplies_develop_skip_flag_and_fallback(self):
         """Wrapper carries develop's skip flag and a graceful fallback."""
@@ -326,12 +330,14 @@ class TestDevelopGatesWrapper:
 class TestOssGatesWrapper:
     """The oss gates wrapper references the gates contract and supplies its skip flag."""
 
-    def test_references_gates_contract_via_cache_pattern(self):
-        """Wrapper resolves the gates contract via the sanctioned cache path with fallback."""
+    def test_references_own_manifested_gates_copy(self):
+        """Wrapper resolves its own directory and reads the byte-identical gates copy."""
         text = _OSS_GATES.read_text(encoding="utf-8")
-        assert _CACHE_PATTERN in text
-        assert _SOURCE_FALLBACK in text
-        assert "codemap-gates.md" in text
+        assert 'resolve_shared_path.py" oss skills/_shared' in text
+        assert 'cat "$_OSS_SHARED/codemap-py--codemap-gates.md"' in text
+        assert _OSS_GATES_COPY.read_bytes() == _GATES_CONTRACT.read_bytes()
+        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_supplies_oss_skip_flag_and_fallback(self):
         """Wrapper carries oss's skip flag and a graceful fallback."""

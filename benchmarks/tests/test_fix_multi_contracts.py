@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
 
 import pytest
 
+from _launcher_capability import _pinned_frozen_checkout_is_available
+
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-multi.json"
-FROZEN_REPO = Path("/private/tmp/codemap-provider-parity-pl-2.6.5")
 BENCHMARKS = Path(__file__).resolve().parents[1]
+FROZEN_REPO = Path(os.environ.get("PL_REPO_PATH", str(BENCHMARKS.parent / ".sandbox" / "pytorch-lightning")))
+FROZEN_REPO_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
 sys.path.insert(0, str(BENCHMARKS))
 
 from _bench_common.edit_patch_contracts import build_fix_multi_contract, run_fix_multi_oracle  # noqa: E402
+
+
+_requires_frozen_repo = pytest.mark.skipif(
+    not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),
+    reason=f"pinned frozen benchmark checkout is unavailable at {FROZEN_REPO}",
+)
 
 
 def _contract(task_id: str) -> object:
@@ -28,6 +38,15 @@ def _contract(task_id: str) -> object:
     """
     tasks = json.loads(SUITE_PATH.read_text(encoding="utf-8"))
     return build_fix_multi_contract(next(task for task in tasks if task["id"] == task_id))
+
+
+def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
+    """A partial Git directory cannot admit source-dependent contract coverage."""
+    source = tmp_path / "source"
+    (source / ".git").mkdir(parents=True)
+
+    assert source.is_dir()
+    assert _pinned_frozen_checkout_is_available(source, FROZEN_REPO_COMMIT) is False
 
 
 def _copy_contract_sources(repo_path: Path, destination: Path, contract: object) -> None:
@@ -197,7 +216,7 @@ def _complete_model_checkpoint_source(source: str) -> str:
     return source
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 @pytest.mark.parametrize("task_id", ("FM-01", "FM-02", "FM-03"))
 def test_frozen_baseline_fails_every_complete_caller_oracle(task_id: str) -> None:
     """Each task begins from a baseline that cannot accidentally satisfy its new contract."""
@@ -238,7 +257,7 @@ def test_fix_multi_prompts_preserve_discovery_as_the_measured_work() -> None:
     assert "use codemap rdeps" not in tasks["FM-03"]["prompt"].lower()
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_early_stopping_contract_requires_explicit_callers_and_observable_decision_log(tmp_path: Path) -> None:
     """FM-01 rejects omitted callers and dry-run logs that do not describe the computed decision."""
     contract = _contract("FM-01")
@@ -317,7 +336,7 @@ def test_early_stopping_contract_requires_explicit_callers_and_observable_decisi
     assert run_fix_multi_oracle(tmp_path, contract) is False
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_early_stopping_contract_accepts_semantically_equivalent_else_branch(tmp_path: Path) -> None:
     """FM-01 must not prefer early-return syntax over an observe-only if/else implementation."""
     contract = _contract("FM-01")
@@ -335,7 +354,7 @@ def test_early_stopping_contract_accepts_semantically_equivalent_else_branch(tmp
     assert run_fix_multi_oracle(tmp_path, contract) is False
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_early_stopping_contract_accepts_semantically_equivalent_negative_guard(tmp_path: Path) -> None:
     """FM-01 accepts a negative guard when all persistent mutations stay inside it."""
     contract = _contract("FM-01")
@@ -357,7 +376,7 @@ def test_early_stopping_contract_accepts_semantically_equivalent_negative_guard(
     assert run_fix_multi_oracle(tmp_path, contract) is False
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_strategy_contract_requires_every_environment_override_to_forward_verbose(tmp_path: Path) -> None:
     """FM-03 accepts cooperative propagation and rejects a missing forward."""
     contract = _contract("FM-03")
@@ -384,7 +403,7 @@ def test_strategy_contract_requires_every_environment_override_to_forward_verbos
     assert run_fix_multi_oracle(tmp_path, contract) is False
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_strategy_contract_ignores_harmless_method_docstring_changes(tmp_path: Path) -> None:
     """FM-03 preserves behavior when only the base environment-method docstring changes."""
     contract = _contract("FM-03")
@@ -410,7 +429,7 @@ def test_strategy_contract_ignores_harmless_method_docstring_changes(tmp_path: P
     assert run_fix_multi_oracle(tmp_path, contract) is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_strategy_contract_rejects_deleted_behavior_and_full_setup_calls(tmp_path: Path) -> None:
     """FM-03 cannot pass by deleting existing behavior or invoking the non-cooperative full setup."""
     contract = _contract("FM-03")
@@ -441,7 +460,7 @@ def test_strategy_contract_rejects_deleted_behavior_and_full_setup_calls(tmp_pat
     assert run_fix_multi_oracle(tmp_path, contract) is False
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_model_checkpoint_contract_requires_exact_reasons_and_a_pre_save_provenance_log(tmp_path: Path) -> None:
     """FM-02 rejects generic labels and logging after the persistence boundary."""
     contract = _contract("FM-02")

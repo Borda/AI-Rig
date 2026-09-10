@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     paths:
+      - ".github/workflows/ci-makefile.yml"
+      - "pyproject.toml"
       - "Makefile"
       - "scripts/run_with_timeout.py"
       - "scripts/sync_*.py"

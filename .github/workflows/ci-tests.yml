@@ -11,6 +11,10 @@ on:
       - "pyproject.toml"
       - "tests/test_github_action_pins.py"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   codex-rig:
     runs-on: ${{ matrix.os }}
@@ -36,7 +40,6 @@ jobs:
 
       - name: 🐧 Verify Codex Rig entrypoints
         if: runner.os != 'Windows'
-        shell: bash
         run: |
           uv run --only-group test python plugins/codex-rig/scripts/build_package.py --check
           uv run --only-group test python plugins/codex-rig/scripts/validate_package.py
@@ -80,7 +83,14 @@ jobs:
       # Pre-commit regenerates these manifests; CI catches a contributor who bypassed it.
       # Every OS leg matters: the manifest must hash byte-identically on Windows too.
       - name: 🧾 Verify blueprint manifest freshness
-        run: uv run --only-group test python plugins/cc_foundry/bin/build_blueprint_manifest.py --scan-dir plugins --check
+        run: |
+          uv run --only-group test \
+            python plugins/cc_foundry/bin/build_blueprint_manifest.py \
+            --scan-dir plugins --check
 
+      # Two workers fit private standard Linux/Windows runners and leave capacity for Node, coverage, and subprocess tests.
+      # pytest-randomly is installed with the test group and records a seed for reproducing order-dependent failures.
       - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
-        run: uv run --only-group test pytest -W error::DeprecationWarning --durations=100
+        run: |
+          uv run --only-group test pytest -n 3 \
+            -W error::DeprecationWarning --durations=100

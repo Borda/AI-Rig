@@ -151,7 +151,8 @@ class TestSkillPrefixes:
         offenders = [p.name for p in _SKILL_MD if retired.search(p.read_text(encoding="utf-8"))]
         assert offenders == [], f"retired `codemap:` skill prefix in: {offenders}"
 
-    def test_build_path_is_the_gated_launcher(self) -> None:
+    @pytest.mark.parametrize("skill", ["review", "resolve"])
+    def test_build_path_is_the_gated_launcher(self, skill: str) -> None:
         """Gate wrappers name the gated binary and forbid model-invoking the skill.
 
         The former contract named ``scan-index`` while consumers used the gated launcher, so the wrapper once had to
@@ -163,6 +164,5 @@ class TestSkillPrefixes:
         assert "codemap-py index" in gates
         assert "scan-index" not in gates, "the retired alias has no reason to appear in a wrapper"
         assert "with one binding" not in gates, "the contract no longer disagrees"
-        for skill in ("review", "resolve"):
-            text = _OSS_ROOT.joinpath(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
-            assert "disable-model-invocation" in text, f"{skill}: build path must state the skill is not invocable"
+        text = _OSS_ROOT.joinpath(f"skills/{skill}/SKILL.md").read_text(encoding="utf-8")
+        assert "disable-model-invocation" in text, f"{skill}: build path must state the skill is not invocable"

@@ -222,20 +222,22 @@ def _assert_value_matches_contract(schema: Mapping[str, object], value: object) 
             _assert_value_matches_contract(schema["additionalProperties"], item)
 
 
-def test_codex_skills_retain_the_runtime_safety_contract() -> None:
+@pytest.mark.parametrize("name", sorted(CODEX_SKILL_CONTRACTS))
+def test_codex_skills_retain_the_runtime_safety_contract(name: str) -> None:
     """Prevent prompt compression from dropping Bridge's caller and safety boundaries."""
     skills_root = PLUGIN_ROOT / "codex-skills"
-    for name, requirements in CODEX_SKILL_CONTRACTS.items():
-        skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-        assert not [requirement for requirement in requirements if requirement not in skill], name
+    skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
+    requirements = CODEX_SKILL_CONTRACTS[name]
+    assert not [requirement for requirement in requirements if requirement not in skill], name
 
 
-def test_claude_skills_retain_the_runtime_safety_contract() -> None:
+@pytest.mark.parametrize("name", sorted(CLAUDE_SKILL_CONTRACTS))
+def test_claude_skills_retain_the_runtime_safety_contract(name: str) -> None:
     """Prevent prompt compression from dropping Bridge's caller and safety boundaries."""
     skills_root = PLUGIN_ROOT / "claude-skills"
-    for name, requirements in CLAUDE_SKILL_CONTRACTS.items():
-        skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-        assert not [requirement for requirement in requirements if requirement not in skill], name
+    skill = (skills_root / name / "SKILL.md").read_text(encoding="utf-8")
+    requirements = CLAUDE_SKILL_CONTRACTS[name]
+    assert not [requirement for requirement in requirements if requirement not in skill], name
 
 
 @pytest.mark.parametrize(
@@ -475,7 +477,8 @@ def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> No
         )
 
 
-def test_reverse_timeout_limit_leaves_a_response_margin_before_the_mcp_deadline() -> None:
+@pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
+def test_reverse_timeout_limit_leaves_a_response_margin_before_the_mcp_deadline(name: str) -> None:
     """Prevent the complete retry policy from outliving the MCP host that returns the envelope."""
     schema = _read_json(MCP_SCHEMA_PATH)
     config = _read_json(MCP_CONFIG_PATH)
@@ -491,12 +494,13 @@ def test_reverse_timeout_limit_leaves_a_response_margin_before_the_mcp_deadline(
         "bridge_advise": 350,
         "bridge_review": 350,
     }
-    for name, timeout_seconds in timeout_limits.items():
-        worst_case = maximum_attempts[name] * (timeout_seconds * 1.2 + 9)
-        assert worst_case + 30 < config["mcpServers"]["bridge"]["tool_timeout_sec"]
+    timeout_seconds = timeout_limits[name]
+    worst_case = maximum_attempts[name] * (timeout_seconds * 1.2 + 9)
+    assert worst_case + 30 < config["mcpServers"]["bridge"]["tool_timeout_sec"]
 
 
-def test_mcp_python_constants_match_the_shipped_transport_config() -> None:
+@pytest.mark.parametrize("name", ["bridge_implement", "bridge_advise", "bridge_review"])
+def test_mcp_python_constants_match_the_shipped_transport_config(name: str) -> None:
     """Prevent the server's deadline model from drifting away from the declared MCP config."""
     import sys
 
@@ -509,6 +513,7 @@ def test_mcp_python_constants_match_the_shipped_transport_config() -> None:
     schema = _read_json(MCP_SCHEMA_PATH)
 
     assert bridge_mcp.MCP_HOST_DEADLINE_SECONDS == config["mcpServers"]["bridge"]["tool_timeout_sec"]
-    for name, verb in bridge_mcp.TOOL_NAMES.items():
-        schema_maximum = schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
-        assert bridge_mcp.MAX_MCP_TIMEOUT_SECONDS_BY_VERB[verb] == schema_maximum
+    assert set(bridge_mcp.TOOL_NAMES) == {"bridge_implement", "bridge_advise", "bridge_review"}
+    verb = bridge_mcp.TOOL_NAMES[name]
+    schema_maximum = schema["$defs"][name]["properties"]["timeout_seconds"]["maximum"]
+    assert bridge_mcp.MAX_MCP_TIMEOUT_SECONDS_BY_VERB[verb] == schema_maximum

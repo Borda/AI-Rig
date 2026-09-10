@@ -67,7 +67,14 @@ def test_missing_pr_number_exits_1(fake_git: list[list[str]], capsys: pytest.Cap
     assert fake_git == []
 
 
-@pytest.mark.parametrize("args", [["123", "abc", "0", "0"], ["123", "5", "abc", "0"], ["123", "5", "5", "abc"]])
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param(["123", "abc", "0", "0"], id="first-count-invalid"),
+        pytest.param(["123", "5", "abc", "0"], id="second-count-invalid"),
+        pytest.param(["123", "5", "5", "abc"], id="third-count-invalid"),
+    ],
+)
 def test_non_integer_count_exits_2(
     fake_git: list[list[str]],
     capsys: pytest.CaptureFixture[str],

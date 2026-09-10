@@ -20,6 +20,8 @@ from typing import Any
 
 import pytest
 
+from _launcher_capability import _private_filesystem_available
+
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
@@ -28,7 +30,9 @@ from _bench_common import mutation_isolation  # noqa: E402
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "codex-integration.json"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
-POSIX_SECURITY = pytest.mark.skipif(os.name == "nt", reason="requires POSIX private-mode and ownership semantics")
+POSIX_SECURITY = pytest.mark.skipif(
+    not _private_filesystem_available(), reason="requires POSIX private-mode and ownership semantics"
+)
 
 
 def _write_runtime_snapshot_metadata(
@@ -253,7 +257,7 @@ def test_exact_suite_counterbalances_arm_ordinals_at_one_repetition(script_run_c
 def test_permission_profiles_replace_legacy_sandbox_and_grant_only_coordination_write(
     script_run_codex: Any, tmp_path: Path
 ) -> None:
-    """Reject legacy sandbox flags, missing profiles, and writes outside Codemap's lock root.
+    """Plain profile rejects legacy sandbox flags and writes outside Codemap's lock root.
 
     Exact config assertions prevent implicit or overly broad permissions.
     """
@@ -292,40 +296,50 @@ def test_permission_profiles_replace_legacy_sandbox_and_grant_only_coordination_
     for denied_root in script_run_codex._untrusted_host_agent_roots(home, "A_plain"):
         assert f'"{denied_root}" = "deny"' in plain_text
 
-    for arm in ("B_auto", "C_strict"):
-        treatment_home_path = tmp_path / f"codex-home-{arm}"
-        treatment_home_path.mkdir()
-        treatment_auth_path = treatment_home_path / "auth.json"
-        treatment_auth_path.write_text("fixture-auth", encoding="utf-8")
-        treatment_home = script_run_codex.ArmHome(
-            arm,
-            treatment_home_path,
-            {"PATH": "/fixture/bin"},
-            True,
-            True,
-        )
-        marketplace_root = tmp_path / "marketplace"
-        treatment_config = script_run_codex._write_permission_config(
-            treatment_home,
-            arm,
-            index_path,
-            marketplace_root=marketplace_root,
-        )
-        treatment_text = treatment_config.read_text(encoding="utf-8")
-        coordination_root = index_path.parent / ".index-rw"
 
-        assert treatment_config == treatment_home_path / "config.toml"
-        assert 'default_permissions = "provider-parity-codemap"' in treatment_text
-        assert "[permissions.provider-parity-codemap]" in treatment_text
-        assert 'extends = ":read-only"' in treatment_text
-        assert f'"{treatment_auth_path.resolve()}" = "deny"' in treatment_text
-        assert f'"{coordination_root.resolve()}" = "write"' in treatment_text
-        assert "[permissions.provider-parity-codemap.network]" in treatment_text
-        assert "enabled = false" in treatment_text
-        assert "sandbox_mode" not in treatment_text
-        assert "sandbox_workspace_write" not in treatment_text
-        for denied_root in script_run_codex._untrusted_host_agent_roots(treatment_home, arm, marketplace_root):
-            assert f'"{denied_root}" = "deny"' in treatment_text
+@POSIX_SECURITY
+@pytest.mark.parametrize("arm", ("B_auto", "C_strict"))
+def test_codemap_permission_profiles_grant_only_coordination_write(
+    script_run_codex: Any, tmp_path: Path, arm: str
+) -> None:
+    """Codemap treatment profiles deny private roots while granting only the coordination lock root."""
+    repo_path = tmp_path / "target"
+    index_path = repo_path / ".cache" / "codemap" / "locked-index.json"
+    index_path.parent.mkdir(parents=True)
+    index_path.write_text("{}", encoding="utf-8")
+    treatment_home_path = tmp_path / f"codex-home-{arm}"
+    treatment_home_path.mkdir()
+    treatment_auth_path = treatment_home_path / "auth.json"
+    treatment_auth_path.write_text("fixture-auth", encoding="utf-8")
+    treatment_home = script_run_codex.ArmHome(
+        arm,
+        treatment_home_path,
+        {"PATH": "/fixture/bin"},
+        True,
+        True,
+    )
+    marketplace_root = tmp_path / "marketplace"
+    treatment_config = script_run_codex._write_permission_config(
+        treatment_home,
+        arm,
+        index_path,
+        marketplace_root=marketplace_root,
+    )
+    treatment_text = treatment_config.read_text(encoding="utf-8")
+    coordination_root = index_path.parent / ".index-rw"
+
+    assert treatment_config == treatment_home_path / "config.toml"
+    assert 'default_permissions = "provider-parity-codemap"' in treatment_text
+    assert "[permissions.provider-parity-codemap]" in treatment_text
+    assert 'extends = ":read-only"' in treatment_text
+    assert f'"{treatment_auth_path.resolve()}" = "deny"' in treatment_text
+    assert f'"{coordination_root.resolve()}" = "write"' in treatment_text
+    assert "[permissions.provider-parity-codemap.network]" in treatment_text
+    assert "enabled = false" in treatment_text
+    assert "sandbox_mode" not in treatment_text
+    assert "sandbox_workspace_write" not in treatment_text
+    for denied_root in script_run_codex._untrusted_host_agent_roots(treatment_home, arm, marketplace_root):
+        assert f'"{denied_root}" = "deny"' in treatment_text
 
 
 def test_executable_workspace_permission_grants_only_the_disposable_worktree(

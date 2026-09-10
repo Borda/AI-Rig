@@ -4,6 +4,8 @@ OSS workflow plugin for Python/ML open-source projects. Four agents (two user-fa
 
 Public actions stay maintainer-owned: replies, merges, pushes, tags, and releases are drafted or prepared here, never posted or published automatically.
 
+Optional Codemap index-gate guidance ships with oss, so loading it does not depend on another plugin's private shared directory. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
+
 > Works standalone — `foundry` not required. Without it, agent dispatches fall back to `general-purpose` with role descriptions and less specialization. Installing `foundry` unlocks the specialized agent roster.
 
 ______________________________________________________________________

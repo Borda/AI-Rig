@@ -68,7 +68,7 @@
     {
       "mode": "0755",
       "path": "hooks/session_start.py",
-      "sha256": "0b0563c71f27dbf132ffdafd8377516ed8a3aa430bada288a4f4c0403d1bb106"
+      "sha256": "ccc2b23239272497a9763480ba9bec03259ea3b6714daf8034c08d9a4691fce8"
     },
     {
       "mode": "0644",
@@ -658,7 +658,7 @@
     {
       "mode": "0644",
       "path": "tests/_platform.py",
-      "sha256": "8465bd05e07077d2f0f4df67ee6c8b71e915599c0cbf3cc9ce1e299fbef2ad81"
+      "sha256": "38d09f251de433a70fd99b48318168ede2760e1c989333edc0d4b6557c4721a3"
     },
     {
       "mode": "0644",
@@ -678,12 +678,12 @@
     {
       "mode": "0644",
       "path": "tests/test_agent_shim_approval.py",
-      "sha256": "e16e511190a8b18dddea2017586aac9387af643431b72cb517c9892cba427247"
+      "sha256": "7f3c0c953c9ad0b7c22af162cec98f5a39a74e3af979e3322491b76fdb9ca68b"
     },
     {
       "mode": "0644",
       "path": "tests/test_agent_shim_journal.py",
-      "sha256": "074e00aa9729e1b6ca084dd89b9c4d95d6b31c19231082390539bba17c2659aa"
+      "sha256": "6a44ce0b445f12a111075f59ff64b01744d2ec93d86c1fc7b7e12d4a5ed9d030"
     },
     {
       "mode": "0644",
@@ -693,17 +693,17 @@
     {
       "mode": "0644",
       "path": "tests/test_agent_shim_lifecycle_read.py",
-      "sha256": "dad0080071a783b1162243905fffb0a3a0a4acd9f5629a63ccd4b0f1fe62c8e8"
+      "sha256": "2f1aa0ade3f66d2b9e51c14f7d67a5becca0c6ba725e7b5e63bbd93ac4aa22c6"
     },
     {
       "mode": "0644",
       "path": "tests/test_agent_shim_observe.py",
-      "sha256": "6815017e07511dd97cf4127edbab70749cdffd2dbdecbe163c454f2fc63dd986"
+      "sha256": "7d7025df74f140658369965b8a81eeeb7a86019ffa9d2bd2cabcd1f8ed409f7a"
     },
     {
       "mode": "0644",
       "path": "tests/test_agent_shim_plan.py",
-      "sha256": "0d1f7e6c96ec0e9417d02b1aed8b8dc2046c6c74e3facbbcf13453352e8ed906"
+      "sha256": "048b39eb38a2c3c74d3bf6b2eba2de64d3b546f111b2c30c6f6dd687c86fe860"
     },
     {
       "mode": "0644",
@@ -718,12 +718,12 @@
     {
       "mode": "0644",
       "path": "tests/test_app_server_denial_protocol.py",
-      "sha256": "36acd8b3841ee7f3d12a079d314196e0220250334dd0327002c5a2c12a23c1cb"
+      "sha256": "7ae67647bc7902a3503c858347e2ac6c0c1dfe67e204a7a0a91af73dc81738e5"
     },
     {
       "mode": "0644",
       "path": "tests/test_app_server_review.py",
-      "sha256": "a7fe4958045afc310a94ccb732a7fd22d5d65d347de0b3784a40d5b96ce5d573"
+      "sha256": "fbcaa8ecfb84d24e4d6af313e3f2c3d4fe5728978336ed1e977623a83dc149bb"
     },
     {
       "mode": "0644",
@@ -733,7 +733,7 @@
     {
       "mode": "0644",
       "path": "tests/test_build_package.py",
-      "sha256": "8fa784490d27c96ff312e624f1b43b96ec5005f8bff133541bc08627cbf8029d"
+      "sha256": "5074b8708d1d8459e466f4e2ad0e3b5d5b617b3936458122f6c7549bb2a6edac"
     },
     {
       "mode": "0644",
@@ -758,7 +758,7 @@
     {
       "mode": "0644",
       "path": "tests/test_code_remediate_work_bucket_validation.py",
-      "sha256": "0e0c01b6eda4299ffc5c26aa93e8cb63de2db8d8df20bac3ecf2172bad1af93a"
+      "sha256": "0e001ab02abe384f257b89e39a1bda5e64749c587c64ee362b28828383f4feb0"
     },
     {
       "mode": "0644",
@@ -773,7 +773,7 @@
     {
       "mode": "0644",
       "path": "tests/test_code_review_final_handoff_validation.py",
-      "sha256": "547ead59a29a8b35e44b498eb1ac4eddf030739a2d37f01e7e79c1904be782f0"
+      "sha256": "3bf57d9d4259fc0e8a754690b5ed071f1e40f2d420f92664249d31edd9d6d9bd"
     },
     {
       "mode": "0644",
@@ -823,7 +823,7 @@
     {
       "mode": "0644",
       "path": "tests/test_confidence_gap_integrity.py",
-      "sha256": "2c1e228dfcbe6ea1c759b0edf25854f11f1b7380c7091a974692caec84798eb3"
+      "sha256": "d0f41e1abe2b74e6fb742008c1d1550d6c5279cbfc832dbc8edd51be179bf11f"
     },
     {
       "mode": "0644",
@@ -843,7 +843,7 @@
     {
       "mode": "0644",
       "path": "tests/test_final_handoff.py",
-      "sha256": "1aee66b245194444fd9136524f2b2cc916e37cdde3514e96704b56e705c76929"
+      "sha256": "663279138709d6a9d794efe46521b141aa9fea463c0f76956edef20133eeefe8"
     },
     {
       "mode": "0644",
@@ -853,32 +853,32 @@
     {
       "mode": "0644",
       "path": "tests/test_finding_presentation.py",
-      "sha256": "6b4a0ba7bd2c54b95c5524c58c708b6421314551216d455701a95cda7ff8f4de"
+      "sha256": "3f060c8bcbde2ff7d6cdf7ca0d841353e2179d54769a127ecf6e294563d225ca"
     },
     {
       "mode": "0644",
       "path": "tests/test_generate_roles.py",
-      "sha256": "3bab62ac9afee089aa822f1a73c43b87a6e336b75a42a7fcb0c0e3ec8d7b7217"
+      "sha256": "e1eb8c45d1088af92f2f4030a1d4f080c1d2a82de5c0c1b2399332b651a81896"
     },
     {
       "mode": "0644",
       "path": "tests/test_github_read.py",
-      "sha256": "450261e2346d5e78a4405881546c15fb63edc95d8a90d925a98a55ee0d7b82f5"
+      "sha256": "6bfe90dce45454213fdaef6167dd50ca5e1698e6e599b6811eecedfc351fcad1"
     },
     {
       "mode": "0644",
       "path": "tests/test_github_read_rules_installer.py",
-      "sha256": "3118ca3470a92ed0341385dc45764d9f459d3a2eef4dcbe0068bb88fdba240df"
+      "sha256": "cfbc4510bdf9617dc993da16fa741f1c3b6ff0e275070cc6d50b59cd71675c3a"
     },
     {
       "mode": "0644",
       "path": "tests/test_global_agents_installer.py",
-      "sha256": "279ed9c54824a07d3473af73a7de5ca3690373d6fe712395b3a28b9f60f0604d"
+      "sha256": "0c9dee3e38845a011bb8dea0e5aa1e6b7793309ac67e78260467dea433aca072"
     },
     {
       "mode": "0644",
       "path": "tests/test_installed_cache_scaffold.py",
-      "sha256": "56d2dd7e8158237632366727d986488907d342275f9490164ca1bd8a6a084a95"
+      "sha256": "dbd89a261c319f15bd8a03483ca09d5d925df1d9adb69e8464f5edfc57e4bdb2"
     },
     {
       "mode": "0644",
@@ -888,7 +888,7 @@
     {
       "mode": "0644",
       "path": "tests/test_manage_role_agents.py",
-      "sha256": "196ba28c41a78802257ca56441d1caa507b63e247582ea3d4c03a9de6031a20a"
+      "sha256": "737cf1acac6317a83fa8dbc326b50e522ae5c81aede86647443e4b19c3e9e8ee"
     },
     {
       "mode": "0644",
@@ -903,17 +903,17 @@
     {
       "mode": "0644",
       "path": "tests/test_package_identity.py",
-      "sha256": "d3420260b1ef1a00c2027358136093b2a6c1d3776960f69e7059cc9a3bfd8c17"
+      "sha256": "89f2aea7dca33a898c883fbcd626ca566d811f29a4917822411e1823287d773b"
     },
     {
       "mode": "0644",
       "path": "tests/test_parallel_execution.py",
-      "sha256": "387acc95985b1481a6c737bf817dfaed876d714f674a3b964a5e43d83bf6b129"
+      "sha256": "d342c123b0b1ebe1aead03c8ceae0a9bc147ba098282031ffc6d004883fd9f63"
     },
     {
       "mode": "0644",
       "path": "tests/test_parallel_telemetry.py",
-      "sha256": "0c70d5b5291027e66c47534b5d19e26190f3c7b0c3b9e7f74a09a63e040df12e"
+      "sha256": "981ed9cabf66041ee0193ffd835b31015e93ca0b425102a1b2dd28b8741e87e1"
     },
     {
       "mode": "0644",
@@ -923,12 +923,12 @@
     {
       "mode": "0644",
       "path": "tests/test_plugin_only_release.py",
-      "sha256": "8c02469c0f284d3ca91e36dfe424bdc6c2f207b255db459db034aff431637c86"
+      "sha256": "0a0c087466702d3a29779f94724db9fdb02381231944770292d459c371c080a2"
     },
     {
       "mode": "0644",
       "path": "tests/test_portable_workflow_helpers.py",
-      "sha256": "fe557d833d89ddec783067c894935743ff07cea67a03804a48d605b0df1a54da"
+      "sha256": "6118b06ad40485cecfd31fb351d64b9a8083b22c50c27b559a94b3f12e525374"
     },
     {
       "mode": "0644",
@@ -953,12 +953,12 @@
     {
       "mode": "0644",
       "path": "tests/test_review_inspection_policy.py",
-      "sha256": "59fe62674d2e1d66f83f709592dae0ce5ec9a768fb0b7ce2513373112ddcef1b"
+      "sha256": "1585c3c0badbaa1c22c949144c5cc7b86bde18ef2c0226340aed61697e520288"
     },
     {
       "mode": "0644",
       "path": "tests/test_session_start_hook.py",
-      "sha256": "4ff9c197b0a542ef2759b00d7d03946282ecaf11c2abbb59e8221419872928e6"
+      "sha256": "6a0db17a132e5285edff464d90618570814fe1a5635bc28cd9bf1d1594d2d6d1"
     },
     {
       "mode": "0644",

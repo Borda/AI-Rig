@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -12,6 +14,36 @@ from parse_deprecate_args import (
     format_shell_assignments,
     main,
     parse_deprecate_args as parse,
+)
+
+
+def _file_symlink_is_available() -> bool:
+    """Return whether this host can create and resolve a file symlink."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        target = root / "target"
+        link = root / "link"
+        target.write_text("target\n", encoding="utf-8")
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return False
+        return link.is_symlink() and link.read_text(encoding="utf-8") == "target\n"
+
+
+def _private_file_mode_is_preserved() -> bool:
+    """Return whether ``mkstemp`` records its private ``0o600`` mode on this host."""
+    with tempfile.TemporaryDirectory() as directory:
+        descriptor, filename = tempfile.mkstemp(dir=directory)
+        os.close(descriptor)
+        return os.stat(filename).st_mode & 0o777 == 0o600
+
+
+_skip_file_symlink_unavailable = pytest.mark.skipif(
+    not _file_symlink_is_available(), reason="file symlink creation is unavailable on this host"
+)
+_skip_private_mode_unavailable = pytest.mark.skipif(
+    not _private_file_mode_is_preserved(), reason="private 0o600 file modes are unavailable on this host"
 )
 
 
@@ -302,10 +334,9 @@ class TestSentinelSymlinkSafety:
     pre-plant a symlink and have its write follow through to an arbitrary target.
     """
 
+    @_skip_file_symlink_unavailable
     def test_preplanted_symlink_is_not_followed(self, tmp_path: Path) -> None:
         """A symlink at the exact guessed old-style pid name is never written through."""
-        import os
-
         victim = tmp_path / "victim.txt"
         victim.write_text("IMPORTANT ORIGINAL CONTENT\n", encoding="utf-8")
         preplanted = tmp_path / f"codemap-deprecate-flag-{os.getpid()}"
@@ -316,11 +347,9 @@ class TestSentinelSymlinkSafety:
         assert flag_path != preplanted
         assert victim.read_text(encoding="utf-8") == "IMPORTANT ORIGINAL CONTENT\n"
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX private-mode semantics")
+    @_skip_private_mode_unavailable
     def test_written_files_are_mode_0600(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Both sentinel files are created owner-only readable/writable."""
-        import os
-
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         flag_path, decorator_path = parse_deprecate_args._write_temp_vars(True, "@deprecated")
         assert (os.stat(flag_path).st_mode & 0o777) == 0o600

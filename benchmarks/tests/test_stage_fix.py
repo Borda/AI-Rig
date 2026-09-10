@@ -875,7 +875,7 @@ def test_executable_paid_stages_route_every_arm_row_through_shared_renderer(
     assert f" - metadata={tmp_path / study / 'run-metadata.json'}" in output
 
 
-@pytest.mark.parametrize("captured_diff", (None, "", "not a diff", {"not": "a diff"}))
+@pytest.mark.parametrize("captured_diff", (None, "", "not a diff", pytest.param({"not": "a diff"}, id="mapping")))
 def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
     stage_fix: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, captured_diff: object
 ) -> None:
@@ -899,13 +899,19 @@ def test_rescore_fix_stage_rejects_missing_or_invalid_captured_diff(
 @pytest.mark.parametrize(
     "observed_arguments",
     (
-        ["symbol", "EarlyStopping._run_early_stopping_check"],
-        ["fn-rdeps", "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check"],
-        [
-            "fn-rdeps",
-            "--exclude-tests",
-            "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check",
-        ],
+        pytest.param(["symbol", "EarlyStopping._run_early_stopping_check"], id="wrong-query-command"),
+        pytest.param(
+            ["fn-rdeps", "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check"],
+            id="missing-required-flags",
+        ),
+        pytest.param(
+            [
+                "fn-rdeps",
+                "--exclude-tests",
+                "lightning.pytorch.callbacks.early_stopping::EarlyStopping._run_early_stopping_check",
+            ],
+            id="partial-required-flags",
+        ),
     ),
 )
 def test_strict_executable_patch_rejects_noncanonical_query_use_from_pooling(
@@ -1132,15 +1138,15 @@ def test_fix_multi_strict_prompt_and_conformance_use_task_specific_argv(
     assert row["pooling_eligible"] is True
 
 
-def test_executable_prompt_discloses_unavailable_git_and_project_test_boundaries(stage_fix: Any) -> None:
+@pytest.mark.parametrize("arm", ("A_plain", "B_auto", "C_strict"))
+def test_executable_prompt_discloses_unavailable_git_and_project_test_boundaries(stage_fix: Any, arm: str) -> None:
     """All arms avoid wasting turns on intentionally inaccessible workspace facilities."""
     task = next(task for task in stage_fix.load_task_suite(stage_fix.FIX_MULTI_TASKS_PATH) if task["id"] == "FM-01")
 
-    for arm in stage_fix.ARMS:
-        prompt = stage_fix.fix_multi_prompt(arm, task)
-        assert "Git metadata is intentionally inaccessible" in prompt
-        assert "Do not invoke Git" in prompt
-        assert "project dependencies are intentionally unavailable" in prompt
+    prompt = stage_fix.fix_multi_prompt(arm, task)
+    assert "Git metadata is intentionally inaccessible" in prompt
+    assert "Do not invoke Git" in prompt
+    assert "project dependencies are intentionally unavailable" in prompt
 
 
 def test_fix_multi_changed_path_boundary_uses_unordered_set_semantics(

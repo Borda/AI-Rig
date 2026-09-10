@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
+import tempfile
 from enum import Enum
 from pathlib import Path
 
@@ -32,6 +32,25 @@ from codemap_py import integration
 
 _PATH_CLASSES = {"normal": "repo", "spaces_nonascii": "a repo café"}
 _SOURCE_CHECKOUT = (Path(__file__).resolve().parents[4] / integration.PROVIDER_DIR).is_dir()
+
+
+def _file_symlink_is_available() -> bool:
+    """Return whether this host can create and resolve a file symlink."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        target = root / "target.md"
+        link = root / "link.md"
+        target.write_text("target\n", encoding="utf-8")
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return False
+        return link.is_symlink() and link.read_text(encoding="utf-8") == "target\n"
+
+
+_skip_file_symlink_unavailable = pytest.mark.skipif(
+    not _file_symlink_is_available(), reason="file symlink creation is unavailable on this host"
+)
 
 
 # --------------------------------------------------------------------------------------
@@ -1099,7 +1118,7 @@ def test_apply_refuses_path_escape(repo: Path) -> None:
     _assert_refused(repo, plan, "path_escape", None)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="symlink creation needs elevated privileges on Windows")
+@_skip_file_symlink_unavailable
 def test_apply_refuses_symlink_target(repo: Path) -> None:
     """A target path traversing a symlink is refused, even though the plan itself is unmodified.
 

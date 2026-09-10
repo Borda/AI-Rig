@@ -102,11 +102,25 @@ def _health_message(result: dict[str, object], classification: str) -> str:
         top_detail = result.get("detail")
         if isinstance(top_detail, str) and top_detail:
             reason = top_detail
-    reason = reason.replace("\n", " ")[:MAX_REASON_CHARS]
+    reason = _bounded_reason(reason.replace("\n", " "))
     return (
         f"Codex Rig shim health: {classification} — {reason}. No files changed. "
         "Run $codex-rig:agent-shims status for all checks and safe next steps."
     )
+
+
+def _bounded_reason(reason: str) -> str:
+    """Keep a bounded diagnostic while retaining its final observed value."""
+    if len(reason) <= MAX_REASON_CHARS:
+        return reason
+    prefix, separator, observed = reason.rpartition(", observed ")
+    if not separator:
+        return reason[:MAX_REASON_CHARS]
+    suffix = f"{separator}{observed}"
+    head_length = MAX_REASON_CHARS - len(suffix) - 1
+    if head_length <= 0:
+        return suffix[-MAX_REASON_CHARS:]
+    return f"{prefix[:head_length]}…{suffix}"
 
 
 def main() -> int:

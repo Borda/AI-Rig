@@ -15,6 +15,13 @@ from types import ModuleType
 
 import pytest
 
+from _platform import (
+    DIRECTORY_SYMLINKS_AVAILABLE,
+    FILE_SYMLINKS_AVAILABLE,
+    POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
+    POSIX_FILE_MODES_AVAILABLE,
+    POSIX_OBSERVER_PRIMITIVES_AVAILABLE,
+)
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
@@ -101,7 +108,14 @@ def _executable(tmp_path: Path) -> Path:
 
 
 _skip_windows_posix = pytest.mark.skipif(
-    sys.platform == "win32", reason="agent-shim lifecycle requires POSIX primitives"
+    not (POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE and POSIX_FILE_MODES_AVAILABLE and POSIX_OBSERVER_PRIMITIVES_AVAILABLE),
+    reason="host lacks agent-shim descriptor, ownership, or POSIX file-mode primitives",
+)
+_requires_directory_symlinks = pytest.mark.skipif(
+    not DIRECTORY_SYMLINKS_AVAILABLE, reason="filesystem cannot create directory symlinks"
+)
+_requires_file_symlinks = pytest.mark.skipif(
+    not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"
 )
 
 
@@ -257,6 +271,7 @@ def test_install_is_platform_blocked_before_plan_or_approval(
 
 
 @_skip_windows_posix
+@_requires_directory_symlinks
 def test_doctor_refuses_symlinked_home_alias(tmp_path: Path) -> None:
     """Block unresolved home aliases instead of silently changing authority."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_alias")
@@ -337,6 +352,7 @@ def test_internal_approved_install_reinstall_remove_converges(tmp_path: Path) ->
 
 
 @_skip_windows_posix
+@_requires_file_symlinks
 def test_large_symlinked_codex_executable_uses_package_binary_bound(tmp_path: Path) -> None:
     """Accept a stable Codex executable above the obsolete 256 MiB limit."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_large_codex")
@@ -355,6 +371,7 @@ def test_large_symlinked_codex_executable_uses_package_binary_bound(tmp_path: Pa
 
 
 @_skip_windows_posix
+@_requires_file_symlinks
 def test_codex_executable_accepts_exact_package_binary_bound(tmp_path: Path) -> None:
     """Accept the inclusive 512 MiB package-wide executable boundary."""
     module = _load_module(MANAGER_PATH, "codex_rig_manager_exact_binary_bound")

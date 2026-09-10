@@ -550,20 +550,27 @@ def test_historical_target_union_must_remain_complete() -> None:
         )
 
 
-def test_namespace_inventory_must_be_complete_and_empty() -> None:
-    """Reject incomplete scans and any unmanaged namespace evidence."""
+@pytest.mark.parametrize("status", ["unavailable", "overflow", "malformed", "unreadable"])
+def test_namespace_inventory_must_be_complete_and_empty(status: str) -> None:
+    """Reject each incomplete namespace scan status."""
     loaded = _modules()
     _, observer, _, approval = loaded
     roster, candidate, observation = _candidate_and_observation(loaded)
 
-    for status in ("unavailable", "overflow", "malformed", "unreadable"):
-        with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
-            approval.build_convergence_approval(
-                candidate,
-                roster,
-                replace(observation, namespace_inventory_status=status),
-                _runtime(approval),
-            )
+    with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):
+        approval.build_convergence_approval(
+            candidate,
+            roster,
+            replace(observation, namespace_inventory_status=status),
+            _runtime(approval),
+        )
+
+
+def test_namespace_inventory_rejects_unmanaged_namespace_evidence() -> None:
+    """Reject a complete scan that still reports an unmanaged namespace entry."""
+    loaded = _modules()
+    _, observer, _, approval = loaded
+    roster, candidate, observation = _candidate_and_observation(loaded)
 
     candidate_evidence = (observer.NamespaceCandidateObservation("codex-rig-retired.toml", "regular"),)
     with pytest.raises(approval.ApprovalBindingError, match="approval-eligible"):

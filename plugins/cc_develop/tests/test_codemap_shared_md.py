@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _DEVELOP = _REPO_ROOT / "plugins" / "cc_develop"
 _GATES = _DEVELOP / "skills" / "_shared" / "codemap-gates.md"
@@ -64,18 +66,30 @@ def test_no_cwd_relative_index_dir_anywhere_in_the_plugin():
     assert offenders == [], f"CWD-relative codemap index dir in: {offenders}"
 
 
-def test_every_index_dir_override_is_root_anchored():
+@pytest.mark.parametrize(
+    ("path", "default"),
+    [
+        pytest.param(
+            path,
+            default,
+            id=f"{path.relative_to(_DEVELOP).as_posix()}:{default}",
+        )
+        for path in _tracked_text_files(_DEVELOP)
+        for default in re.findall(r"\$\{CODEMAP_INDEX_DIR:-([^}]*)\}", path.read_text(encoding="utf-8"))
+    ],
+)
+def test_every_index_dir_override_is_root_anchored(path: Path, default: str) -> None:
     """Each surviving `CODEMAP_INDEX_DIR:-` default must name the resolved repository root."""
-    for path in _tracked_text_files(_DEVELOP):
-        for default in re.findall(r"\$\{CODEMAP_INDEX_DIR:-([^}]*)\}", path.read_text(encoding="utf-8")):
-            assert default.startswith("$_ROOT/"), f"{path.name}: unanchored default {default!r}"
+    assert default.startswith("$_ROOT/"), f"{path.name}: unanchored default {default!r}"
 
 
 def test_gates_resolve_and_read_the_shipped_contract():
-    """The wrapper must load the shipped contract rather than transcribe it."""
+    """The wrapper must load its propagated contract rather than transcribe it."""
     text = _GATES.read_text(encoding="utf-8")
 
-    assert 'cat "$_CM_SHARED/codemap-gates.md"' in text
+    assert "dev_shared_resolve.py" in text
+    assert 'cat "$_DEV_SHARED/codemap-py--codemap-gates.md"' in text
+    assert "codemap-py/*/claude-skills/_shared" not in text
     assert re.search(r"Contract \(`v\d+`\)", text)
     assert "Fallback when codemap-py plugin absent" in text
 

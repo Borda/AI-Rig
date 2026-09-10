@@ -311,11 +311,13 @@ class TestDedupKey:
 class TestDedupModules:
     """_dedup_modules produces a deterministic winner and records collisions."""
 
-    def test_deterministic_winner_across_shuffles(self):
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_deterministic_winner_across_shuffles(self, reverse: bool):
         """Same qualname at two paths yields the same winner regardless of input order."""
         entries = [{"name": "pkg.mod", "path": "copy/pkg/mod.py"}, {"name": "pkg.mod", "path": "src/pkg/mod.py"}]
         winners = set()
-        for order in (entries, list(reversed(entries)), entries, list(reversed(entries)), entries):
+        order = list(reversed(entries)) if reverse else entries
+        for _ in range(5):
             kept, collisions = _dedup_modules(list(order), "src")
             assert len(kept) == 1
             winners.add(kept[0]["path"])

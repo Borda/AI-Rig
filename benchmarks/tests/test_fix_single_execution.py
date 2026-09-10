@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 import pytest
 
+from _launcher_capability import _pinned_frozen_checkout_is_available
+
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-single.json"
-FROZEN_REPO = Path("/private/tmp/codemap-provider-parity-pl-2.6.5")
 BENCHMARKS = Path(__file__).resolve().parents[1]
+FROZEN_REPO = Path(os.environ.get("PL_REPO_PATH", str(BENCHMARKS.parent / ".sandbox" / "pytorch-lightning")))
+FROZEN_REPO_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
 sys.path.insert(0, str(BENCHMARKS))
+
+
+_requires_frozen_repo = pytest.mark.skipif(
+    not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),
+    reason=f"pinned frozen benchmark checkout is unavailable at {FROZEN_REPO}",
+)
 
 
 def _runner() -> object:
@@ -46,7 +57,7 @@ def _contract() -> object:
     return build_fix_single_contract(next(task for task in tasks if task["id"] == "FS-01"))
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_candidate_patch_is_applied_scored_and_cleaned(tmp_path: Path) -> None:
     """A known behavioral patch proves baseline, path boundary, oracle, and rollback evidence."""
     contract = _contract()
@@ -82,17 +93,53 @@ def test_candidate_patch_is_applied_scored_and_cleaned(tmp_path: Path) -> None:
     assert result.error is None
 
 
-def test_dirty_or_wrong_source_is_rejected_before_creating_a_cell(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("source_kind", "expected_error"),
+    [
+        pytest.param("missing-checkout", "Git checkout", id="missing-checkout"),
+        pytest.param("wrong-baseline-checkout", "does not match", id="wrong-baseline-checkout"),
+    ],
+)
+def test_invalid_source_is_rejected_before_creating_a_cell(
+    tmp_path: Path, source_kind: str, expected_error: str
+) -> None:
     """The executor never mutates a source repository that fails baseline admission."""
     contract = _contract()
-    source = tmp_path / "source"
-    source.mkdir()
+    source = tmp_path / "source" if source_kind == "missing-checkout" else BENCHMARKS.parent
+    if source_kind == "missing-checkout":
+        source.mkdir()
+    else:
+        worktrees_before = subprocess.run(
+            ["git", "-C", str(source), "worktree", "list", "--porcelain"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=10,
+        ).stdout
 
-    with pytest.raises(ValueError, match="Git checkout"):
+    with pytest.raises(ValueError, match=expected_error):
         execute_fix_single_patch(source, contract, "diff --git a/a b/a\n")
+    if source_kind == "wrong-baseline-checkout":
+        worktrees_after = subprocess.run(
+            ["git", "-C", str(source), "worktree", "list", "--porcelain"],
+            capture_output=True,
+            check=True,
+            text=True,
+            timeout=10,
+        ).stdout
+        assert worktrees_after == worktrees_before
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+def test_pinned_frozen_checkout_rejects_git_directory_without_head(tmp_path: Path) -> None:
+    """A partial Git directory cannot admit source-dependent lifecycle coverage."""
+    source = tmp_path / "source"
+    (source / ".git").mkdir(parents=True)
+
+    assert source.is_dir()
+    assert _pinned_frozen_checkout_is_available(source, FROZEN_REPO_COMMIT) is False
+
+
+@_requires_frozen_repo
 def test_rejected_patch_still_reports_verified_cleanup() -> None:
     """A failed apply cannot erase the worktree-cleanup evidence from the result."""
     result = execute_fix_single_patch(FROZEN_REPO, _contract(), "diff --git a/a b/a\n")
@@ -104,7 +151,7 @@ def test_rejected_patch_still_reports_verified_cleanup() -> None:
     assert result.cleanup_verified is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_hunk_count_error_is_diagnostic_only() -> None:
     """A recount-valid candidate stays primary-ineligible when ordinary apply rejects it."""
     contract = _contract()

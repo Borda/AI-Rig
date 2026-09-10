@@ -236,50 +236,66 @@ def test_skill_roster_names_and_manifest_records_are_exact() -> None:
     assert discovered == set(EXPECTED_SKILLS)
     assert {"review", "resolve"}.isdisjoint(discovered)
 
-    for skill_id in EXPECTED_SKILLS:
-        fields = _parse_frontmatter(skill_root / skill_id / "SKILL.md")
-        assert fields["name"] == skill_id
-        assert fields["description"]
-
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     assert manifest["skills"] == [
         {"id": skill_id, "path": f"skills/{skill_id}/SKILL.md"} for skill_id in EXPECTED_SKILLS
     ]
 
 
-def test_installed_markdown_has_no_source_checkout_only_paths() -> None:
-    """Keep shipped skill and shared documentation usable from an installed cache."""
-    markdown_files = [*sorted((PLUGIN_ROOT / "skills").rglob("*.md")), *sorted((PLUGIN_ROOT / "shared").rglob("*.md"))]
-    for path in markdown_files:
-        text = path.read_text(encoding="utf-8")
-        assert "plugins/codex-rig/" not in text, path
-        assert ".developments/" not in text, path
+@pytest.mark.parametrize("skill_id", EXPECTED_SKILLS)
+def test_skill_frontmatter_has_its_declared_name_and_description(skill_id: str) -> None:
+    """Require each packaged skill card to identify its own public contract."""
+    fields = _parse_frontmatter(PLUGIN_ROOT / "skills" / skill_id / "SKILL.md")
+
+    assert fields["name"] == skill_id
+    assert fields["description"]
 
 
-def test_skill_dependencies_are_cache_local_and_manifested() -> None:
-    """Prevent installed skills from referring to missing or source-tree-only dependencies."""
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(path, id=path.relative_to(PLUGIN_ROOT).as_posix())
+        for path in [*sorted((PLUGIN_ROOT / "skills").rglob("*.md")), *sorted((PLUGIN_ROOT / "shared").rglob("*.md"))]
+    ],
+)
+def test_installed_markdown_has_no_source_checkout_only_paths(path: Path) -> None:
+    """Keep each shipped Markdown document usable from an installed cache."""
+    text = path.read_text(encoding="utf-8")
+
+    assert "plugins/codex-rig/" not in text, path
+    assert ".developments/" not in text, path
+
+
+def test_packaged_skill_dependencies_match_the_manifest_inventory() -> None:
+    """Keep the manifest equal to the builder's complete publication inventory."""
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     recorded_paths = {record["path"] for record in manifest["files"]}
 
-    for skill_id in EXPECTED_SKILLS:
-        skill_path = PLUGIN_ROOT / "skills" / skill_id / "SKILL.md"
-        text = skill_path.read_text(encoding="utf-8")
-        if skill_id == "agent-shims":
-            assert "../../scripts/manage_role_agents.py" in text
-            continue
-        assert "../_shared/" not in text
-        assert "../../shared/" in text
-
-        dependencies = set(RELATIVE_DEPENDENCY.findall(text)) | {"result-template.json"}
-        if skill_id == "code-review":
-            dependencies.add("validate_artifacts.py")
-        for relative in dependencies:
-            dependency = (skill_path.parent / relative).resolve()
-            assert dependency.is_relative_to(PLUGIN_ROOT), (skill_id, relative)
-            assert dependency.is_file(), (skill_id, relative)
-            assert dependency.relative_to(PLUGIN_ROOT).as_posix() in recorded_paths, (skill_id, relative)
-
     assert recorded_paths == _package_files()
+
+
+@pytest.mark.parametrize("skill_id", EXPECTED_SKILLS)
+def test_skill_dependencies_are_cache_local_and_manifested(skill_id: str) -> None:
+    """Prevent one installed skill document from referring to missing dependencies."""
+    manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
+    recorded_paths = {record["path"] for record in manifest["files"]}
+
+    skill_path = PLUGIN_ROOT / "skills" / skill_id / "SKILL.md"
+    text = skill_path.read_text(encoding="utf-8")
+    if skill_id == "agent-shims":
+        assert "../../scripts/manage_role_agents.py" in text
+        return
+    assert "../_shared/" not in text
+    assert "../../shared/" in text
+
+    dependencies = set(RELATIVE_DEPENDENCY.findall(text)) | {"result-template.json"}
+    if skill_id == "code-review":
+        dependencies.add("validate_artifacts.py")
+    for relative in dependencies:
+        dependency = (skill_path.parent / relative).resolve()
+        assert dependency.is_relative_to(PLUGIN_ROOT), (skill_id, relative)
+        assert dependency.is_file(), (skill_id, relative)
+        assert dependency.relative_to(PLUGIN_ROOT).as_posix() in recorded_paths, (skill_id, relative)
 
 
 def test_kaggle_reference_set_is_exact_and_manifested() -> None:
@@ -294,8 +310,8 @@ def test_kaggle_reference_set_is_exact_and_manifested() -> None:
     assert expected_paths <= recorded_paths
 
 
-def test_role_roster_frontmatter_and_runtime_records_are_exact() -> None:
-    """Prevent specialist identity or execution defaults from drifting independently."""
+def test_role_roster_runtime_records_are_exact() -> None:
+    """Prevent the manifest's complete role-record aggregate from drifting."""
     role_root = PLUGIN_ROOT / "roles"
     discovered = {path.parent.name for path in role_root.glob("*/ROLE.md")}
     assert discovered == set(EXPECTED_ROLES)
@@ -303,16 +319,6 @@ def test_role_roster_frontmatter_and_runtime_records_are_exact() -> None:
     expected_records = []
     for role_id, (model, sandbox_mode) in EXPECTED_ROLES.items():
         role_path = role_root / role_id / "ROLE.md"
-        fields = _parse_frontmatter(role_path)
-        assert fields == {
-            "role_id": role_id,
-            "name": f"codex-rig-{role_id}",
-            "model": model,
-            "model_reasoning_effort": "high",
-            "approval_policy": "on-request",
-            "sandbox_mode": sandbox_mode,
-            "fallback_modes": "[shim, built-in-injected, inline]",
-        }
         expected_records.append(
             {
                 "id": role_id,
@@ -329,6 +335,28 @@ def test_role_roster_frontmatter_and_runtime_records_are_exact() -> None:
 
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     assert manifest["roles"] == expected_records
+
+
+@pytest.mark.parametrize(
+    ("role_id", "model", "sandbox_mode"),
+    [
+        pytest.param(role_id, model, sandbox_mode, id=role_id)
+        for role_id, (model, sandbox_mode) in EXPECTED_ROLES.items()
+    ],
+)
+def test_role_frontmatter_matches_its_declared_runtime(role_id: str, model: str, sandbox_mode: str) -> None:
+    """Require each role document's frontmatter to match its declared runtime."""
+    fields = _parse_frontmatter(PLUGIN_ROOT / "roles" / role_id / "ROLE.md")
+
+    assert fields == {
+        "role_id": role_id,
+        "name": f"codex-rig-{role_id}",
+        "model": model,
+        "model_reasoning_effort": "high",
+        "approval_policy": "on-request",
+        "sandbox_mode": sandbox_mode,
+        "fallback_modes": "[shim, built-in-injected, inline]",
+    }
 
 
 def test_release_profile_declares_only_packaged_lifecycle_features() -> None:
@@ -512,21 +540,29 @@ def test_commit_contract_keeps_verification_change_specific_and_compact() -> Non
         assert required in contract
 
 
-def test_approval_contract_keeps_runtime_reason_short_and_prefix_safe() -> None:
-    """Prevent approval UI prompts from duplicating commands or detailed pre-briefs."""
-    native_contract = _normalized_text(PLUGIN_ROOT / "shared" / "native-skill-contract.md").lower()
-    agent_contract = _normalized_text(PLUGIN_ROOT / "assets" / "AGENTS.md").lower()
-    for contract in (native_contract, agent_contract):
-        for required in (
-            "all intentional approval requests",
-            "short plain-english question",
-            "outcome or material effect",
-            "must not repeat the command, argv, flags, paths, multiline content, or full approval brief",
-            "short categorical safe prefix",
-            "omit `prefix_rule` for one-time or high-risk commands",
-        ):
-            assert required in contract
+@pytest.mark.parametrize(
+    "contract_path",
+    [
+        pytest.param(PLUGIN_ROOT / "shared" / "native-skill-contract.md", id="native-skill-contract"),
+        pytest.param(PLUGIN_ROOT / "assets" / "AGENTS.md", id="agent-contract"),
+    ],
+)
+def test_approval_contract_keeps_runtime_reason_short_and_prefix_safe(contract_path: Path) -> None:
+    """Prevent either approval contract from duplicating commands or detailed pre-briefs."""
+    contract = _normalized_text(contract_path).lower()
+    for required in (
+        "all intentional approval requests",
+        "short plain-english question",
+        "outcome or material effect",
+        "must not repeat the command, argv, flags, paths, multiline content, or full approval brief",
+        "short categorical safe prefix",
+        "omit `prefix_rule` for one-time or high-risk commands",
+    ):
+        assert required in contract
 
+
+def test_commit_contract_applies_the_shared_approval_boundary() -> None:
+    """Keep commit approval wording aligned with the general approval contract."""
     commit_contract = _normalized_text(PLUGIN_ROOT / "shared" / "commit-response-template.md").lower()
     assert "application of the general approval contract" in commit_contract
     assert "do not create a temporary or persistent commit-message file" in commit_contract
@@ -745,8 +781,41 @@ def test_archived_route_evidence_is_not_promoted_after_skill_rename(
     assert len(follow_up) == 2
 
 
+@pytest.mark.parametrize(
+    ("source", "relative", "is_role", "remove_link"),
+    [
+        pytest.param(
+            PLUGIN_ROOT / "skills" / "implement" / "SKILL.md",
+            Path("skills/implement/SKILL.md"),
+            False,
+            True,
+            id="retry-owner-skill-missing-link",
+        ),
+        pytest.param(
+            PLUGIN_ROOT / "skills" / "manage" / "SKILL.md",
+            Path("skills/manage/SKILL.md"),
+            False,
+            False,
+            id="linear-skill-extra-link",
+        ),
+        pytest.param(
+            PLUGIN_ROOT / "roles" / "delegation-lead" / "ROLE.md",
+            Path("roles/delegation-lead/ROLE.md"),
+            True,
+            True,
+            id="retry-owner-role-missing-link",
+        ),
+        pytest.param(
+            PLUGIN_ROOT / "roles" / "sw-engineer" / "ROLE.md",
+            Path("roles/sw-engineer/ROLE.md"),
+            True,
+            False,
+            id="linear-role-extra-link",
+        ),
+    ],
+)
 def test_calibration_recurrence_policy_link_is_limited_to_retry_owners(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Path, relative: Path, is_role: bool, remove_link: bool
 ) -> None:
     """Reject both missing owner links and redundant links on linear workflows."""
     calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"
@@ -771,30 +840,19 @@ def test_calibration_recurrence_policy_link_is_limited_to_retry_owners(
     assert linked_roles == {"delegation-lead"}
     assert runner.find_misplaced_packaged_recurrence_policy_links(packaged_skills, packaged_roles) == []
 
-    for source, relative, is_role, remove_link in (
-        (PLUGIN_ROOT / "skills" / "implement" / "SKILL.md", Path("skills/implement/SKILL.md"), False, True),
-        (PLUGIN_ROOT / "skills" / "manage" / "SKILL.md", Path("skills/manage/SKILL.md"), False, False),
-        (
-            PLUGIN_ROOT / "roles" / "delegation-lead" / "ROLE.md",
-            Path("roles/delegation-lead/ROLE.md"),
-            True,
-            True,
-        ),
-        (PLUGIN_ROOT / "roles" / "sw-engineer" / "ROLE.md", Path("roles/sw-engineer/ROLE.md"), True, False),
-    ):
-        target = tmp_path / relative
-        target.parent.mkdir(parents=True)
-        shutil.copy2(source, target)
-        skill_files = () if is_role else (target,)
-        role_files = (target,) if is_role else ()
-        assert runner.find_misplaced_packaged_recurrence_policy_links(skill_files, role_files) == []
-        content = target.read_text(encoding="utf-8")
-        if remove_link:
-            content = content.replace(runner.RECURRENCE_POLICY_LINK, "")
-        else:
-            content += f"\n{runner.RECURRENCE_POLICY_LINK}\n"
-        target.write_text(content, encoding="utf-8")
-        assert runner.find_misplaced_packaged_recurrence_policy_links(skill_files, role_files) == [target]
+    target = tmp_path / relative
+    target.parent.mkdir(parents=True)
+    shutil.copy2(source, target)
+    skill_files = () if is_role else (target,)
+    role_files = (target,) if is_role else ()
+    assert runner.find_misplaced_packaged_recurrence_policy_links(skill_files, role_files) == []
+    content = target.read_text(encoding="utf-8")
+    if remove_link:
+        content = content.replace(runner.RECURRENCE_POLICY_LINK, "")
+    else:
+        content += f"\n{runner.RECURRENCE_POLICY_LINK}\n"
+    target.write_text(content, encoding="utf-8")
+    assert runner.find_misplaced_packaged_recurrence_policy_links(skill_files, role_files) == [target]
 
 
 def test_code_remediate_accepts_only_completed_intent_first_merge_states(tmp_path: Path) -> None:
@@ -976,8 +1034,7 @@ class TestParallelExecutionDocumentation:
 
     def test_has_canonical_gate_definitions(self, canonical_parallel_flow: tuple[Path, str, str]) -> None:
         """Keep gate definitions self-contained and linked from every consumer."""
-        architecture, architecture_text, _ = canonical_parallel_flow
-        canonical_anchor = "#canonical-g0g8-execution-flow"
+        _, architecture_text, _ = canonical_parallel_flow
 
         gate_definitions = re.findall(r"^- \*\*G([0-8])\b", architecture_text, flags=re.MULTILINE)
         assert gate_definitions == [str(index) for index in range(9)]
@@ -985,19 +1042,26 @@ class TestParallelExecutionDocumentation:
         assert re.findall(r"^  - \*\*G5b\b.*join", architecture_text, flags=re.IGNORECASE | re.MULTILINE)
         assert re.findall(r"^  - \*\*G5c\b.*derivation", architecture_text, flags=re.IGNORECASE | re.MULTILINE)
 
-        committed_docs = (
-            architecture,
-            PLUGIN_ROOT / "README.md",
-            PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md",
-            PLUGIN_ROOT / "skills" / "implement" / "SKILL.md",
-            PLUGIN_ROOT / "skills" / "manage" / "SKILL.md",
-        )
-        for path in committed_docs:
-            text = path.read_text(encoding="utf-8")
-            assert ".plans/" not in text, path
-            assert "plan_multi-agent-parallelization" not in text, path
-            if path != architecture:
-                assert canonical_anchor in text, path
+    @pytest.mark.parametrize(
+        ("path", "requires_canonical_anchor"),
+        [
+            pytest.param(PLUGIN_ROOT / "ARCHITECTURE.md", False, id="architecture"),
+            pytest.param(PLUGIN_ROOT / "README.md", True, id="readme"),
+            pytest.param(PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md", True, id="code-review-skill"),
+            pytest.param(PLUGIN_ROOT / "skills" / "implement" / "SKILL.md", True, id="implement-skill"),
+            pytest.param(PLUGIN_ROOT / "skills" / "manage" / "SKILL.md", True, id="manage-skill"),
+        ],
+    )
+    def test_committed_document_avoids_private_plan_references(
+        self, path: Path, requires_canonical_anchor: bool
+    ) -> None:
+        """Keep each published parallel-execution document free of private plan links."""
+        text = path.read_text(encoding="utf-8")
+
+        assert ".plans/" not in text, path
+        assert "plan_multi-agent-parallelization" not in text, path
+        if requires_canonical_anchor:
+            assert "#canonical-g0g8-execution-flow" in text, path
 
     def test_has_centered_two_column_gate_cells(self, canonical_parallel_flow: tuple[Path, str, str]) -> None:
         """Keep every bounded gate and endpoint centered inside its cells."""

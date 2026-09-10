@@ -4,6 +4,8 @@ codemap-py builds a local, static index of a Python project so maintainers can a
 
 The package ships the same six skills for Claude Code and Codex: scan the project, query the index, find affected tests, rename references, inspect integration, and debrief Claude telemetry. The runtime adapters share the capability contract but keep their host-specific invocation and path rules.
 
+Consumer plugins ship synchronized copies of the shared context and gate guidance; they never load private files from another installed plugin. The reference context batch resolves its default index from the repository root, including when invoked from a subdirectory.
+
 <details>
 <summary><strong>Contents</strong></summary>
 

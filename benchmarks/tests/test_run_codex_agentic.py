@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from _launcher_capability import _private_filesystem_available
+
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
@@ -27,7 +29,9 @@ AGENTIC_TASK_IDS = tuple(
 AGENTIC_ARMS = ("A_plain", "B_auto", "C_strict")
 #: One repetition of every suite coordinate — the default no-model plan and paid scope size.
 AGENTIC_CELLS = len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS)
-POSIX_SECURITY = pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX private-mode semantics")
+
+
+POSIX_SECURITY = pytest.mark.skipif(not _private_filesystem_available(), reason="requires POSIX private-mode semantics")
 
 
 def _load_agentic() -> Any:

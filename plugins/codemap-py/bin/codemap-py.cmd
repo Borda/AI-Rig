@@ -7,11 +7,14 @@ set "ENTRY=%HERE%..\scripts\codemap_py_entry.py"
 set "PROBE=import sys;v=sys.version_info;raise SystemExit(0 if sys.implementation.name=='cpython' and v.major==3 and 11<=v.minor<15 else 127)"
 
 rem CODEMAP_PYTHON is quoted as a single token so a path with spaces is not
-rem split (F9); the multi-word `py -3` form is used only for the built-ins below.
+rem split (F9); a nested batch wrapper needs `call` to return to this launcher.
 if not defined CODEMAP_PYTHON goto :defaults
-"%CODEMAP_PYTHON%" -c "%PROBE%" >nul 2>&1
+set "OVERRIDE_CALL="
+if /I "%CODEMAP_PYTHON:~-4%"==".bat" set "OVERRIDE_CALL=call"
+if /I "%CODEMAP_PYTHON:~-4%"==".cmd" set "OVERRIDE_CALL=call"
+%OVERRIDE_CALL% "%CODEMAP_PYTHON%" -c "%PROBE%" >nul 2>&1
 if errorlevel 1 goto :nointerp
-"%CODEMAP_PYTHON%" "%ENTRY%" %*
+%OVERRIDE_CALL% "%CODEMAP_PYTHON%" "%ENTRY%" %*
 exit /b %errorlevel%
 
 :defaults

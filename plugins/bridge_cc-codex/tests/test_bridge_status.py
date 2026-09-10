@@ -97,7 +97,14 @@ def test_bridge_status_is_read_only_and_bound_to_the_host_workspace(
     assert PurePath(foreign_workspace.resolve()).as_posix() != payload["workspace"]
 
 
-@pytest.mark.parametrize("arguments", [{"workspace": "/untrusted"}, {"task": "No provider call."}, []])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"workspace": "/untrusted"}, id="workspace-override"),
+        pytest.param({"task": "No provider call."}, id="provider-task"),
+        pytest.param([], id="non-object-arguments"),
+    ],
+)
 def test_bridge_status_rejects_all_arguments_without_provider_execution(
     tmp_path: Path, arguments: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:

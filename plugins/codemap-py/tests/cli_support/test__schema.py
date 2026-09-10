@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from enum import Enum
 
+import pytest
+
 import _schema
 from _schema import EntityType, SCAN_VERSION, Resolution, SymbolType, VALID_CALL_RESOLUTIONS
 
@@ -12,16 +14,20 @@ from _schema import EntityType, SCAN_VERSION, Resolution, SymbolType, VALID_CALL
 class TestSchemaStringEnums:
     """Persisted-schema enum types retain their plain-string JSON contract."""
 
-    def test_members_are_direct_str_enum_subclasses_and_serialize_as_values(self) -> None:
+    @pytest.mark.parametrize(
+        ("enum_type", "values"),
+        [
+            pytest.param(EntityType, ["pkg", "test", "docs", "example"], id="entity-type"),
+            pytest.param(SymbolType, ["class", "function", "method"], id="symbol-type"),
+            pytest.param(Resolution, ["import", "local", "self", "builtin", "star", "unresolved"], id="resolution"),
+        ],
+    )
+    def test_members_are_direct_str_enum_subclasses_and_serialize_as_values(
+        self, enum_type: type[Enum], values: list[str]
+    ) -> None:
         """Schema enums use Python 3.10-compatible base classes and original wire values."""
-        expected_values = {
-            EntityType: ["pkg", "test", "docs", "example"],
-            SymbolType: ["class", "function", "method"],
-            Resolution: ["import", "local", "self", "builtin", "star", "unresolved"],
-        }
-        for enum_type, values in expected_values.items():
-            assert enum_type.__bases__ == (str, Enum)
-            assert json.loads(json.dumps(list(enum_type))) == values
+        assert enum_type.__bases__ == (str, Enum)
+        assert json.loads(json.dumps(list(enum_type))) == values
 
 
 class TestResolutionEnum:

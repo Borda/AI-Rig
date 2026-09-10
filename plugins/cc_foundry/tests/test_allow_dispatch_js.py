@@ -101,7 +101,9 @@ class TestEffectiveVerdict:
         assert verdicts["blueprint"]["decision"] == "passthrough"
         assert verdicts["shape"] == {"lane": "shape", "decision": "none", "why": "not-applicable"}
 
-    @pytest.mark.parametrize("command", [42, ["ls"], {"cmd": "ls"}, True], ids=["int", "list", "object", "bool"])
+    @pytest.mark.parametrize(
+        "command", [42, pytest.param(["ls"], id="list"), pytest.param({"cmd": "ls"}, id="object"), True]
+    )
     def test_a_non_string_command_is_none_not_module_error(self, env, command) -> None:
         """A malformed host payload must never be recorded as a broken module.
 

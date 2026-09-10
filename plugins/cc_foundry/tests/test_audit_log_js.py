@@ -19,6 +19,7 @@ import json
 import shutil
 import stat
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -66,41 +67,64 @@ def _call_lib(audit_env) -> Callable[..., object]:
     return _call
 
 
-def _mode_bits_are_enforced(tmp_path: Path) -> bool:
+def _mode_bits_are_enforced() -> bool:
     """Probe whether the filesystem actually honours POSIX mode bits.
 
     A capability probe rather than a platform test: native Windows has no mode bits, but so does a POSIX filesystem
     mounted without them, and the interesting question is the capability either way.
     """
-    probe = tmp_path / "mode-probe"
-    probe.mkdir()
-    probe.chmod(0o700)
-    return stat.S_IMODE(probe.stat().st_mode) == 0o700
+    with tempfile.TemporaryDirectory() as scratch:
+        probe = Path(scratch) / "mode-probe"
+        try:
+            probe.mkdir()
+            probe.chmod(0o700)
+            regular_file = probe / "file"
+            regular_file.write_bytes(b"")
+            regular_file.chmod(0o600)
+            return stat.S_IMODE(probe.stat().st_mode) == 0o700 and stat.S_IMODE(regular_file.stat().st_mode) == 0o600
+        except OSError:
+            return False
 
 
-def _owner_can_be_denied(tmp_path: Path) -> bool:
+def _owner_can_be_denied() -> bool:
     """Probe whether clearing the write bit actually denies this process."""
-    probe = tmp_path / "deny-probe"
-    probe.mkdir()
-    probe.chmod(0o500)
-    try:
-        (probe / "file").write_text("x", encoding="utf-8")
-    except OSError:
-        return True
-    finally:
-        probe.chmod(0o700)
-    return False
-
-
-def _symlinks_available(tmp_path: Path) -> bool:
-    """Probe whether this process may create a directory symlink."""
-    target = tmp_path / "symlink-target"
-    target.mkdir()
-    try:
-        (tmp_path / "symlink-probe").symlink_to(target, target_is_directory=True)
-    except (OSError, NotImplementedError):
+    with tempfile.TemporaryDirectory() as scratch:
+        probe = Path(scratch) / "deny-probe"
+        probe.mkdir()
+        try:
+            probe.chmod(0o500)
+        except OSError:
+            return False
+        try:
+            (probe / "file").write_text("x", encoding="utf-8")
+        except OSError:
+            return True
+        finally:
+            probe.chmod(0o700)
         return False
-    return True
+
+
+def _symlinks_available() -> bool:
+    """Probe whether this process may create a directory symlink."""
+    with tempfile.TemporaryDirectory() as scratch:
+        target = Path(scratch) / "symlink-target"
+        target.mkdir()
+        try:
+            (Path(scratch) / "symlink-probe").symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            return False
+        return True
+
+
+_skip_mode_bits_unavailable = pytest.mark.skipif(
+    not _mode_bits_are_enforced(), reason="this filesystem does not enforce POSIX mode bits"
+)
+_skip_owner_write_denial_unavailable = pytest.mark.skipif(
+    not _owner_can_be_denied(), reason="this filesystem does not deny the owner a write"
+)
+_skip_symlinks_unavailable = pytest.mark.skipif(
+    not _symlinks_available(), reason="this process may not create directory symlinks"
+)
 
 
 def _vector_params() -> list:
@@ -254,11 +278,10 @@ class TestAppendOnly:
         forbidden = ("unlinkSync", "rmSync", "rmdirSync", "renameSync", "truncateSync", "writeFileSync", "ftruncate")
         assert [name for name in forbidden if name in source] == []
 
+    @_skip_mode_bits_unavailable
     def test_append_creates_the_directory_private(self, audit_env, call_lib: Callable[..., object]) -> None:
         """The log directory is 0700 and the file 0600 — nothing here is meant to be shared."""
         call_lib('lib.appendRecord({"session_id": "s", "action_type": "tool.bash"})')
-        if not _mode_bits_are_enforced(audit_env.home):
-            pytest.skip("this filesystem does not enforce POSIX mode bits")
         assert stat.S_IMODE(audit_env.audit_dir.stat().st_mode) == 0o700
         assert stat.S_IMODE(audit_env.log_files()[0].stat().st_mode) == 0o600
 
@@ -280,10 +303,9 @@ class TestFailureIsReturnedNeverRaised:
         assert result["_unwritten"] is True and result["reason"] == "disabled"
         assert not audit_env.audit_dir.exists()
 
+    @_skip_owner_write_denial_unavailable
     def test_unwritable_directory_returns_instead_of_throwing(self, audit_env, call_lib) -> None:
         """An unusable log directory degrades to no-audit; it never raises into the hook that called it."""
-        if not _owner_can_be_denied(audit_env.home):
-            pytest.skip("this filesystem does not deny the owner a write")
         audit_env.audit_dir.mkdir(parents=True)
         audit_env.audit_dir.chmod(0o500)
         try:
@@ -293,10 +315,9 @@ class TestFailureIsReturnedNeverRaised:
         finally:
             audit_env.audit_dir.chmod(0o700)
 
+    @_skip_symlinks_unavailable
     def test_symlinked_log_directory_degrades(self, audit_env, call_lib: Callable[..., object]) -> None:
         """A symlinked log directory is refused rather than followed."""
-        if not _symlinks_available(audit_env.home):
-            pytest.skip("this process may not create directory symlinks")
         elsewhere = audit_env.home / "elsewhere"
         elsewhere.mkdir(parents=True)
         (audit_env.home / ".claude" / "logs").mkdir(parents=True)

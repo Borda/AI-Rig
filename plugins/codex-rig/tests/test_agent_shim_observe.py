@@ -14,8 +14,17 @@ from types import ModuleType
 
 import pytest
 
+import _platform
 
-WINDOWS_POSIX_SKIP_REASON = "requires POSIX filesystem modes, links, and executable semantics"
+from _platform import (
+    DIRECTORY_SYMLINKS_AVAILABLE,
+    FILE_SYMLINKS_AVAILABLE,
+    HARD_LINKS_AVAILABLE,
+    POSIX_FILE_MODES_AVAILABLE,
+    POSIX_OBSERVER_PRIMITIVES_AVAILABLE,
+    mode_is_retainable,
+)
+
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = PLUGIN_ROOT / "scripts"
 GENERATOR_PATH = SCRIPTS / "generate_roles.py"
@@ -52,15 +61,6 @@ def _canonical(value: object) -> bytes:
         b'{"a":1,"z":0}'
     """
     return json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
-
-
-def _mode_is_retainable(mode: int) -> bool:
-    """Return whether the host filesystem preserves one requested permission mode."""
-    with tempfile.TemporaryDirectory() as temporary:
-        path = Path(temporary) / "mode-probe"
-        path.mkdir(mode=0o700)
-        path.chmod(mode)
-        return stat.S_IMODE(path.stat().st_mode) == mode
 
 
 def _fifo_is_creatable() -> bool:
@@ -298,7 +298,28 @@ def _observe(module: ModuleType, codex_home: Path, plugin_root: Path) -> object:
     return module.observe_filesystem(codex_home=codex_home, plugin_root=plugin_root)
 
 
-_skip_windows_posix = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
+_skip_windows_posix = pytest.mark.skipif(
+    not (POSIX_OBSERVER_PRIMITIVES_AVAILABLE and POSIX_FILE_MODES_AVAILABLE),
+    reason="host lacks observer descriptor primitives or exact POSIX file modes",
+)
+_requires_fifo = pytest.mark.skipif(FIFO_UNAVAILABLE, reason="FIFO creation is unavailable")
+_requires_hard_links = pytest.mark.skipif(not HARD_LINKS_AVAILABLE, reason="filesystem cannot create hard links")
+_requires_file_symlinks = pytest.mark.skipif(
+    not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"
+)
+_requires_directory_symlinks = pytest.mark.skipif(
+    not DIRECTORY_SYMLINKS_AVAILABLE, reason="filesystem cannot create directory symlinks"
+)
+
+
+@pytest.mark.parametrize("target_is_directory", [False, True])
+def test_symlink_capability_probe_reports_unavailable_for_an_occupied_target(
+    tmp_path: Path, target_is_directory: bool
+) -> None:
+    """Keep failed file and directory link creation from enabling either capability marker."""
+    (tmp_path / "target").write_bytes(b"occupied\n")
+
+    assert not _platform._symlinks_available(target_is_directory=target_is_directory, root=tmp_path)
 
 
 @_skip_windows_posix
@@ -389,9 +410,9 @@ def test_existing_empty_lock_and_partial_state_root_are_bound_read_only(tmp_path
 @pytest.mark.parametrize(
     "node",
     [
-        "symlink",
+        pytest.param("symlink", marks=_requires_file_symlinks),
         "directory",
-        pytest.param("fifo", marks=pytest.mark.skipif(FIFO_UNAVAILABLE, reason="FIFO creation is unavailable")),
+        pytest.param("fifo", marks=_requires_fifo),
         "nonempty",
         "mode",
     ],
@@ -423,6 +444,7 @@ def test_unsafe_coordination_lock_blocks(node: str, tmp_path: Path) -> None:
 
 
 @_skip_windows_posix
+@_requires_fifo
 def test_lock_swap_to_fifo_is_nonblocking_and_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -456,6 +478,7 @@ def test_lock_swap_to_fifo_is_nonblocking_and_fails_closed(
 
 
 @_skip_windows_posix
+@_requires_fifo
 def test_target_swap_to_fifo_is_nonblocking_and_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -556,9 +579,9 @@ def test_historical_roster_and_old_cache_identity_are_migration_evidence(tmp_pat
 @pytest.mark.parametrize(
     "node",
     [
-        "symlink",
+        pytest.param("symlink", marks=_requires_file_symlinks),
         "directory",
-        pytest.param("fifo", marks=pytest.mark.skipif(FIFO_UNAVAILABLE, reason="FIFO creation is unavailable")),
+        pytest.param("fifo", marks=_requires_fifo),
     ],
 )
 def test_hostile_target_nodes_fail_closed(tmp_path: Path, node: str) -> None:
@@ -639,9 +662,9 @@ def test_namespace_candidate_preserves_exact_current_role_observations(tmp_path:
 @pytest.mark.parametrize(
     "node",
     [
-        "symlink",
+        pytest.param("symlink", marks=_requires_file_symlinks),
         "directory",
-        pytest.param("fifo", marks=pytest.mark.skipif(FIFO_UNAVAILABLE, reason="FIFO creation is unavailable")),
+        pytest.param("fifo", marks=_requires_fifo),
     ],
 )
 def test_unsafe_namespace_candidate_remains_visible(tmp_path: Path, node: str) -> None:
@@ -737,7 +760,14 @@ def test_target_root_inventory_overflow_is_bounded_and_visible(
 @_skip_windows_posix
 @pytest.mark.parametrize(
     "evidence",
-    ["corrupt-state", "huge-integer-state", "deep-state", "oversized-state", "oversized-target", "state-symlink"],
+    [
+        "corrupt-state",
+        "huge-integer-state",
+        "deep-state",
+        "oversized-state",
+        "oversized-target",
+        pytest.param("state-symlink", marks=_requires_file_symlinks),
+    ],
 )
 def test_corrupt_oversized_and_aliased_evidence_blocks(tmp_path: Path, evidence: str) -> None:
     """Bound state and target reads and reject unsafe lifecycle evidence."""
@@ -792,7 +822,7 @@ def test_owned_protected_target_root_mode_0755_is_accepted(tmp_path: Path) -> No
             mode,
             id=case_id,
             marks=pytest.mark.skipif(
-                not _mode_is_retainable(mode), reason=f"filesystem does not retain mode {mode:04o}"
+                not mode_is_retainable(mode), reason=f"filesystem does not retain mode {mode:04o}"
             ),
         )
         for mode, case_id in ((0o4700, "setuid"), (0o2700, "setgid"), (0o1700, "sticky"))
@@ -894,6 +924,7 @@ def test_initial_preparation_residue_is_recognized_without_parsing_partial_bytes
 
 
 @_skip_windows_posix
+@_requires_hard_links
 def test_dual_link_initial_journal_crash_is_recognized(tmp_path: Path) -> None:
     """Recognize the durable window before the initial journal link retires."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_linked_initial_journal")
@@ -1007,6 +1038,7 @@ def test_prepared_transaction_accepts_one_legal_journal_successor(tmp_path: Path
 
 
 @_skip_windows_posix
+@_requires_hard_links
 @pytest.mark.parametrize("same_inode", [True, False])
 def test_prepared_transaction_binds_state_publish_inode(tmp_path: Path, same_inode: bool) -> None:
     """Accept a staged state publication only when it links the after-state inode."""
@@ -1028,6 +1060,7 @@ def test_prepared_transaction_binds_state_publish_inode(tmp_path: Path, same_ino
 
 
 @_skip_windows_posix
+@_requires_hard_links
 @pytest.mark.parametrize("journal_state", ["MUTATING", "RECOVERY_REQUIRED"])
 def test_recovery_accepts_one_unjournaled_create_publication(tmp_path: Path, journal_state: str) -> None:
     """Recognize a published exact target when recovery authority lags one step."""
@@ -1108,17 +1141,26 @@ def test_nonprivate_transactions_container_blocks_even_when_empty(tmp_path: Path
 
 
 @_skip_windows_posix
-def test_observer_rejects_relative_and_symlinked_supplied_roots(tmp_path: Path) -> None:
-    """Require explicit canonical absolute roots and no-follow every component."""
+def test_observer_rejects_relative_supplied_roots(tmp_path: Path) -> None:
+    """Require explicit canonical roots before opening any supplied path."""
     module = _load_module(OBSERVER_PATH, "codex_rig_observe_roots")
     codex_home, plugin_root, _, _ = _make_roots(tmp_path)
-    linked_plugin = tmp_path / "linked-plugin"
-    linked_plugin.symlink_to(plugin_root, target_is_directory=True)
 
     with pytest.raises(ValueError, match="absolute canonical"):
         module.observe_filesystem(codex_home=Path("relative"), plugin_root=plugin_root)
     with pytest.raises(ValueError, match="absolute canonical"):
         module.observe_filesystem(codex_home="/tmp/\udcff", plugin_root=plugin_root)
+
+
+@_skip_windows_posix
+@_requires_directory_symlinks
+def test_observer_rejects_symlinked_supplied_roots(tmp_path: Path) -> None:
+    """Reject a supplied root whose path traversal encounters a symlink."""
+    module = _load_module(OBSERVER_PATH, "codex_rig_observe_symlinked_root")
+    codex_home, plugin_root, _, _ = _make_roots(tmp_path)
+    linked_plugin = tmp_path / "linked-plugin"
+    linked_plugin.symlink_to(plugin_root, target_is_directory=True)
+
     result = _observe(module, codex_home, linked_plugin)
 
     assert result.classification == "blocked"
@@ -1181,6 +1223,7 @@ def test_group_writable_home_returns_blocked(tmp_path: Path) -> None:
 
 
 @_skip_windows_posix
+@_requires_directory_symlinks
 def test_unsafe_state_path_closes_an_already_open_target_descriptor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -336,23 +336,23 @@ class TestProviderParityTaskIntegration:
         assert "must use Codemap at least once" not in runner._system_prompt("fix", "B_auto")
         assert "must use Codemap at least once" in runner._system_prompt("fix", "C_strict")
 
+    @pytest.mark.parametrize("task_type", ("read_crop", "fix_single", "fix_multicaller"))
     def test_canonical_stage_prompts_use_one_current_skill_contract(
-        self, script_run_agentic: Any, tmp_path: Path
+        self, script_run_agentic: Any, tmp_path: Path, task_type: str
     ) -> None:
         """Canonical Claude stages must not mix legacy launchers with the installed Skill contract."""
         runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path)
 
-        for task_type in ("read_crop", "fix_single", "fix_multicaller"):
-            auto = runner._system_prompt(task_type, "B_auto")
-            strict = runner._system_prompt(task_type, "C_strict")
+        auto = runner._system_prompt(task_type, "B_auto")
+        strict = runner._system_prompt(task_type, "C_strict")
 
-            assert "/codemap-py:query-code" in auto
-            assert "scan-query" not in auto
-            assert "/codemap:query-code" not in auto
-            assert "loading the Skill alone" in strict
-            # The scorer credits adherence only for a successful compact query, so the arm text must ask for one:
-            # a strict prompt that omits `--compact` scores its own contract against a requirement it never stated.
-            assert "`codemap-py query --compact`" in strict
+        assert "/codemap-py:query-code" in auto
+        assert "scan-query" not in auto
+        assert "/codemap:query-code" not in auto
+        assert "loading the Skill alone" in strict
+        # The scorer credits adherence only for a successful compact query, so the arm text must ask for one:
+        # a strict prompt that omits `--compact` scores its own contract against a requirement it never stated.
+        assert "`codemap-py query --compact`" in strict
 
     def test_default_dry_run_schedules_the_full_canonical_matrix(
         self, tmp_index: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], script_run_agentic: Any

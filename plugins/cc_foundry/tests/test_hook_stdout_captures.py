@@ -112,20 +112,18 @@ class TestDecisionModuleDrivers:
         """Replay the blueprint module over every command of one manifest scenario."""
         replay(scenario, BLUEPRINT_HOOK, lambda command: CAPTURES["blueprint"][scenario][command])
 
-    def test_shape_driver_bytes_unchanged(self, replay: Callable[..., None]) -> None:
+    @pytest.mark.parametrize("command", sorted(CAPTURES["shape"]["bash"]))
+    def test_shape_driver_bytes_unchanged(self, command: str, replay: Callable[..., None]) -> None:
         """Replay the shape module, which reads no manifest, over the whole corpus.
 
         The shape module gained a ``require.main`` guard and had its driver body moved into a function. Both are exactly
         the kind of change that silently alters what reaches stdout, which is why the comparison is on bytes.
         """
-        captured = CAPTURES["shape"]["bash"]
         replay.env.write_manifest(None)
-        mismatches = []
-        for command, expected in captured.items():
-            proc = replay.env.run(SENTINEL_HOOK, replay.payload(command, "bash"), RIG_AUDIT="0")
-            if base64.b64encode(proc.stdout).decode() != expected["stdout_b64"] or proc.returncode != expected["exit"]:
-                mismatches.append((command, proc.stdout))
-        assert mismatches == [], f"{len(mismatches)} shape case(s) diverged: {mismatches[:3]}"
+        expected = CAPTURES["shape"]["bash"][command]
+        proc = replay.env.run(SENTINEL_HOOK, replay.payload(command, "bash"), RIG_AUDIT="0")
+        assert base64.b64encode(proc.stdout).decode() == expected["stdout_b64"]
+        assert proc.returncode == expected["exit"]
 
     @pytest.mark.parametrize("case", sorted(RAW_STDIN))
     @pytest.mark.parametrize("module", [BLUEPRINT_HOOK, SENTINEL_HOOK, DISPATCH_HOOK])

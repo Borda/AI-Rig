@@ -526,21 +526,29 @@ def test_execution_mode_precedence_and_shipped_default() -> None:
     )
 
 
-def test_auto_default_never_selects_an_unpromoted_or_write_only_capability() -> None:
+@pytest.mark.parametrize(
+    ("read_parallel_promoted", "write_parallel_promoted"),
+    [
+        pytest.param(False, False, id="neither-promoted"),
+        pytest.param(False, True, id="write-only-promoted"),
+    ],
+)
+def test_auto_default_never_selects_an_unpromoted_or_write_only_capability(
+    read_parallel_promoted: bool, write_parallel_promoted: bool
+) -> None:
     """Keep the auto default serial unless the portable read route is promoted."""
     resolver = _load_validator().resolve_execution_mode
 
-    for read_parallel_promoted, write_parallel_promoted in ((False, False), (False, True)):
-        resolution = resolver(
-            None,
-            environment={},
-            read_parallel_promoted=read_parallel_promoted,
-            write_parallel_promoted=write_parallel_promoted,
-        )
+    resolution = resolver(
+        None,
+        environment={},
+        read_parallel_promoted=read_parallel_promoted,
+        write_parallel_promoted=write_parallel_promoted,
+    )
 
-        assert resolution["requested_mode"] == "auto"
-        assert resolution["effective_mode"] == "serial"
-        assert resolution["write_approval_required"] is False
+    assert resolution["requested_mode"] == "auto"
+    assert resolution["effective_mode"] == "serial"
+    assert resolution["write_approval_required"] is False
 
 
 @pytest.mark.parametrize("mode", ["parallel-read", "parallel-write"])
@@ -805,8 +813,46 @@ def test_resource_locks_use_the_validated_vocabulary(tmp_path: Path) -> None:
         _validate(manifest, run_dir, roles_dir)
 
 
-def test_every_serial_write_requires_exact_frozen_plan_approval(tmp_path: Path) -> None:
-    """Prevent serial execution from bypassing the universal write-approval gate."""
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("plan_sha256", "0" * 64, id="mismatched-plan-digest"),
+        pytest.param("response", "deny", id="denied-response"),
+        pytest.param("source", "environment", id="noninteractive-source"),
+    ],
+)
+def test_every_serial_write_requires_exact_frozen_plan_approval(tmp_path: Path, field: str, value: str) -> None:
+    """Reject an approval whose frozen plan, response, or source differs."""
+    run_dir = tmp_path / "run"
+    roles_dir = tmp_path / "roles"
+    run_dir.mkdir()
+    manifest = _parallel_manifest(run_dir, roles_dir)
+    manifest["claimed_mode"] = "serial"
+    manifest["stages"][0]["nodes"] = manifest["stages"][0]["nodes"][:1]  # type: ignore[index]
+    node = manifest["stages"][0]["nodes"][0]  # type: ignore[index]
+    node["mutation"] = "write"
+    node["owned_paths"] = ["src/feature.py"]
+    controls = {
+        "sandbox_mode": "workspace-write",
+        "write_paths": ["src/feature.py"],
+        "network": False,
+        "credentials": False,
+    }
+    node["requested_controls"] = controls
+    node["observed_controls"] = {**controls, "enforced": True}
+
+    valid_approval = {
+        "plan_sha256": manifest["plan_sha256"],
+        "response": "approve",
+        "source": "explicit-input",
+    }
+    manifest["write_approval"] = {**valid_approval, field: value}
+    with pytest.raises(ValueError, match="^write-approval-invalid$"):
+        _validate(manifest, run_dir, roles_dir)
+
+
+def test_serial_write_requires_then_accepts_exact_frozen_plan_approval(tmp_path: Path) -> None:
+    """Require explicit approval before accepting the exact frozen serial write plan."""
     run_dir = tmp_path / "run"
     roles_dir = tmp_path / "roles"
     run_dir.mkdir()
@@ -833,14 +879,6 @@ def test_every_serial_write_requires_exact_frozen_plan_approval(tmp_path: Path) 
         "response": "approve",
         "source": "explicit-input",
     }
-    for field, value in (
-        ("plan_sha256", "0" * 64),
-        ("response", "deny"),
-        ("source", "environment"),
-    ):
-        manifest["write_approval"] = {**valid_approval, field: value}
-        with pytest.raises(ValueError, match="^write-approval-invalid$"):
-            _validate(manifest, run_dir, roles_dir)
 
     manifest["write_approval"] = valid_approval
 
@@ -2069,15 +2107,20 @@ def test_token_budget_rejects_unsafe_or_incoherent_admission_state(
         _load_validator().admit_wave_token_budget(**arguments)
 
 
-def test_parallel_rollback_contract_preserves_identity_evidence_and_gates() -> None:
-    """Prevent operator rollback wording from authorizing replay or weaker serial checks."""
-    architecture = (PLUGIN_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
-    readme = (PLUGIN_ROOT / "README.md").read_text(encoding="utf-8")
-    for text in (architecture, readme):
-        for contract in (
-            "Disable the affected skill's parallel opt-in without changing the frozen plan or its digest.",
-            "Preserve completed outputs, terminal child evidence, parent joins, and the original quality gates.",
-            "Serially execute only unfinished work; never replay completed nodes.",
-            "Retain failed or conflicted worktrees and stop when cleanup or repository state is ambiguous.",
-        ):
-            assert contract in text
+@pytest.mark.parametrize(
+    "document",
+    [
+        pytest.param(PLUGIN_ROOT / "ARCHITECTURE.md", id="architecture"),
+        pytest.param(PLUGIN_ROOT / "README.md", id="readme"),
+    ],
+)
+def test_parallel_rollback_contract_preserves_identity_evidence_and_gates(document: Path) -> None:
+    """Prevent either published rollback document from authorizing weaker recovery."""
+    text = document.read_text(encoding="utf-8")
+    for contract in (
+        "Disable the affected skill's parallel opt-in without changing the frozen plan or its digest.",
+        "Preserve completed outputs, terminal child evidence, parent joins, and the original quality gates.",
+        "Serially execute only unfinished work; never replay completed nodes.",
+        "Retain failed or conflicted worktrees and stop when cleanup or repository state is ambiguous.",
+    ):
+        assert contract in text

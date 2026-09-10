@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from _platform import SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -225,7 +225,7 @@ def test_global_agents_installer_refuses_untrusted_managed_state(tmp_path: Path,
     assert "refusing" in result.stderr.lower()
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks")
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks")
 def test_global_agents_installer_refuses_symlink_target(tmp_path: Path) -> None:
     """Prevent optional installation from following a target outside Codex home."""
     source = tmp_path / "template.md"

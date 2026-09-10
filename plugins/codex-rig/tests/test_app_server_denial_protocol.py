@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 import app_server_denial_probe as denial_probe
-from _platform import SYMLINKS_AVAILABLE
+from _platform import DIRECTORY_SYMLINKS_AVAILABLE
 from app_server_denial_probe import (
     APPROVAL_METHOD,
     COMPLETED_METHOD,
@@ -1876,7 +1876,7 @@ def test_matrix_rejects_cross_scenario_boundary_overlap(tmp_path: Path) -> None:
         run_live_scenarios((first, second, third), run_one=lambda config: config.evidence_dir)
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks")
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="host cannot create directory symlinks")
 def test_matrix_rejects_cross_scenario_symlink_alias(tmp_path: Path) -> None:
     """Prevent distinct lexical roots from reusing one physical mutable boundary."""
     first = replace(_live_probe_config(tmp_path / "a"), scenario=LiveScenario.TEXT_CONTROL)

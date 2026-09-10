@@ -54,7 +54,16 @@ def test_isolated_cell_restores_baseline_after_success_error_and_timeout(
     assert cell.last_evidence.restored is True
 
 
-def test_retry_and_test_or_scorer_failure_each_receive_a_fresh_baseline(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("error_type", "message"),
+    [
+        pytest.param(AssertionError, "target test failed", id="target-test-failure"),
+        pytest.param(ValueError, "scorer failed", id="scorer-failure"),
+    ],
+)
+def test_retry_and_test_or_scorer_failure_each_receive_a_fresh_baseline(
+    tmp_path: Path, error_type: type[Exception], message: str
+) -> None:
     """Retries and downstream failures cannot reuse a mutated previous cell."""
     created: list[Path] = []
     restored: list[Path] = []
@@ -67,9 +76,10 @@ def test_retry_and_test_or_scorer_failure_each_receive_a_fresh_baseline(tmp_path
         return worktree
 
     cell = IsolatedMutationCell(_create, restored.append)
-    for error in (AssertionError("target test failed"), ValueError("scorer failed")):
-        with pytest.raises(type(error), match=str(error)):
-            cell.run(lambda _worktree, failure=error: (_ for _ in ()).throw(failure))
+    with pytest.raises(error_type, match=message):
+        cell.run(lambda _worktree: (_ for _ in ()).throw(error_type(message)))
+    with pytest.raises(error_type, match=message):
+        cell.run(lambda _worktree: (_ for _ in ()).throw(error_type(message)))
 
     assert created == restored
     assert created[0] != created[1]

@@ -13,7 +13,7 @@ from types import ModuleType
 
 import pytest
 
-from _platform import SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -153,7 +153,7 @@ def test_verify_package_rejects_nonportable_record_paths(tmp_path: Path, unsafe_
         identity.verify_package(tmp_path)
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks")
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks")
 @pytest.mark.packaging
 def test_verify_package_rejects_symlink_payload(tmp_path: Path) -> None:
     """Reject links before any verified payload bytes are consumed."""

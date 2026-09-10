@@ -209,8 +209,15 @@ def test_reverse_queries_return_all_names_without_a_limit(
 
 
 @pytest.mark.skipif(_PYTHON_311 is None, reason="codemap-py public-launcher test needs CPython 3.11 on PATH")
+@pytest.mark.parametrize(
+    ("query", "target", "result_key"),
+    [
+        pytest.param("rdeps", "leaf", "imported_by", id="module-reverse-dependencies"),
+        pytest.param("fn-rdeps", "leaf::target", "called_by", id="function-reverse-dependencies"),
+    ],
+)
 def test_compact_reverse_queries_only_reduce_metadata_not_result_arrays(
-    wide_reverse_graph: tuple[Path, Path, set[str], set[str]],
+    wide_reverse_graph: tuple[Path, Path, set[str], set[str]], query: str, target: str, result_key: str
 ) -> None:
     """The public compact mode preserves all reverse names and required honesty fields.
 
@@ -219,47 +226,48 @@ def test_compact_reverse_queries_only_reduce_metadata_not_result_arrays(
     """
     root, index_path, expected_modules, expected_callers = wide_reverse_graph
     env = _supported_codemap_env()
-    compact_rdeps = subprocess.run(
-        [str(_CODEMAP_CLI), "query", "--compact", "--index", str(index_path), "rdeps", "leaf"],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    compact_fn_rdeps = subprocess.run(
-        [str(_CODEMAP_CLI), "query", "--compact", "--index", str(index_path), "fn-rdeps", "leaf::target"],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    default_rdeps = subprocess.run(
-        [str(_CODEMAP_CLI), "query", "--index", str(index_path), "rdeps", "leaf"],
+    compact = subprocess.run(
+        [str(_CODEMAP_CLI), "query", "--compact", "--index", str(index_path), query, target],
         cwd=root,
         env=env,
         capture_output=True,
         text=True,
     )
 
-    assert compact_rdeps.returncode == 0, compact_rdeps.stderr
-    assert compact_fn_rdeps.returncode == 0, compact_fn_rdeps.stderr
-    assert default_rdeps.returncode == 0, default_rdeps.stderr
-    compact_rdeps_payload = json.loads(compact_rdeps.stdout)
-    compact_fn_payload = json.loads(compact_fn_rdeps.stdout)
-    default_rdeps_payload = json.loads(default_rdeps.stdout)
-    assert set(compact_rdeps_payload["imported_by"]) == expected_modules
-    assert {entry["caller"] for entry in compact_fn_payload["called_by"]} == expected_callers
-    assert compact_fn_payload["count"] == len(expected_callers)
-    for payload in (compact_rdeps_payload, compact_fn_payload):
-        coverage = payload["index"]
-        assert coverage["compact"] is True
-        assert coverage["query_complete"] is True
-        assert coverage["stale"] is False
-        assert coverage["root_mismatch"] is False
-        assert coverage["method"] in {"import-graph", "static-ast"}
-    assert "compact" not in default_rdeps_payload["index"]
-    assert "total_modules" in default_rdeps_payload["index"]
-    assert set(default_rdeps_payload["imported_by"]) == expected_modules
+    assert compact.returncode == 0, compact.stderr
+    payload = json.loads(compact.stdout)
+    expected = expected_modules if result_key == "imported_by" else expected_callers
+    if result_key == "imported_by":
+        assert set(payload[result_key]) == expected
+    else:
+        assert {entry["caller"] for entry in payload[result_key]} == expected
+        assert payload["count"] == len(expected)
+    coverage = payload["index"]
+    assert coverage["compact"] is True
+    assert coverage["query_complete"] is True
+    assert coverage["stale"] is False
+    assert coverage["root_mismatch"] is False
+    assert coverage["method"] in {"import-graph", "static-ast"}
+
+
+@pytest.mark.skipif(_PYTHON_311 is None, reason="codemap-py public-launcher test needs CPython 3.11 on PATH")
+def test_default_reverse_query_keeps_full_result_metadata(
+    wide_reverse_graph: tuple[Path, Path, set[str], set[str]],
+) -> None:
+    """Default reverse queries retain full metadata and module names after compact cases are split."""
+    root, index_path, expected_modules, _ = wide_reverse_graph
+    result = subprocess.run(
+        [str(_CODEMAP_CLI), "query", "--index", str(index_path), "rdeps", "leaf"],
+        cwd=root,
+        env=_supported_codemap_env(),
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert "compact" not in payload["index"]
+    assert "total_modules" in payload["index"]
+    assert set(payload["imported_by"]) == expected_modules
 
 
 @pytest.mark.skipif(_PYTHON_311 is None, reason="codemap-py public-launcher test needs CPython 3.11 on PATH")

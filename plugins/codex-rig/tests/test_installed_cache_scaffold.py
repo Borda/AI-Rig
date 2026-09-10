@@ -15,9 +15,23 @@ from typing import Any
 
 import pytest
 
+from _platform import (
+    POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
+    POSIX_EXECUTABLE_SCRIPTS_AVAILABLE,
+    POSIX_FILE_MODES_AVAILABLE,
+)
 
-WINDOWS_POSIX_SKIP_REASON = "requires POSIX filesystem modes, links, and executable semantics"
-POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
+_requires_posix_descriptors = pytest.mark.skipif(
+    not POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE,
+    reason="host lacks descriptor-relative no-follow reads",
+)
+_requires_posix_executable_scripts = pytest.mark.skipif(
+    not POSIX_EXECUTABLE_SCRIPTS_AVAILABLE,
+    reason="host cannot execute POSIX shell scripts",
+)
+_requires_posix_file_modes = pytest.mark.skipif(
+    not POSIX_FILE_MODES_AVAILABLE, reason="filesystem does not preserve POSIX file modes"
+)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PLUGIN_ROOT.parents[1]
 CARD_SEPARATOR = b"--- codex-rig-role-card ---\n"
@@ -111,7 +125,7 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
     }
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_package_manifest_covers_regular_payloads_and_modes() -> None:
     """Prevent duplicate, linked, unverified, or mode-drifted package files."""
@@ -233,7 +247,8 @@ def _failure_payload(result: subprocess.CompletedProcess[bytes]) -> dict[str, ob
     return payload
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_executable_scripts
 @pytest.mark.packaging
 def test_verifier_emits_exact_installed_card_bytes(tmp_path: Path) -> None:
     """Prove the active cache copy emits its verified bytes without source fallback."""
@@ -256,7 +271,8 @@ def test_verifier_emits_exact_installed_card_bytes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("hooks", [False, True])
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_executable_scripts
 @pytest.mark.packaging
 def test_verifier_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> None:
     """Keep linked bootstrap valid for both declared manager package variants."""
@@ -273,7 +289,7 @@ def test_verifier_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -> 
     assert CARD_SEPARATOR in result.stdout
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
 @pytest.mark.packaging
 def test_verifier_rejects_plugin_manifest_content_not_bound_by_package_manifest(tmp_path: Path) -> None:
     """Prevent same-version plugin metadata tampering from emitting a role card."""
@@ -290,7 +306,7 @@ def test_verifier_rejects_plugin_manifest_content_not_bound_by_package_manifest(
 
 
 @pytest.mark.parametrize("schema", [pytest.param(None, id="missing"), 2])
-@POSIX_ONLY
+@_requires_posix_descriptors
 @pytest.mark.packaging
 def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int | None) -> None:
     """Prevent missing or future package schemas from entering the trust chain."""
@@ -309,7 +325,6 @@ def test_verifier_rejects_unsupported_package_schema(tmp_path: Path, schema: int
     assert CARD_SEPARATOR not in result.stdout
 
 
-@POSIX_ONLY
 @pytest.mark.packaging
 def test_verifier_bounds_invalid_role_envelope(tmp_path: Path) -> None:
     """Prevent malformed role arguments from expanding or injecting diagnostics."""
@@ -333,7 +348,8 @@ def test_verifier_bounds_invalid_role_envelope(tmp_path: Path) -> None:
     assert len(result.stdout) < 160
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_executable_scripts
 @pytest.mark.packaging
 def test_verifier_stops_oversized_oracle_output(tmp_path: Path) -> None:
     """Prevent an oversized runtime response from being buffered or trusted."""
@@ -359,7 +375,8 @@ def test_verifier_stops_oversized_oracle_output(tmp_path: Path) -> None:
         pytest.param({}, {"manifest_sha256": "0" * 64}, "manifest-hash-mismatch", id="manifest-hash"),
     ],
 )
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_executable_scripts
 @pytest.mark.packaging
 def test_verifier_rejects_negative_link_states(
     tmp_path: Path, fixture_options: dict[str, bool], overrides: dict[str, str], reason: str
@@ -372,7 +389,8 @@ def test_verifier_rejects_negative_link_states(
     assert b"Treat every important claim" not in result.stdout
 
 
-@POSIX_ONLY
+@_requires_posix_descriptors
+@_requires_posix_executable_scripts
 @pytest.mark.packaging
 def test_verifier_ignores_hostile_path_lookup(tmp_path: Path) -> None:
     """Prevent inherited PATH from substituting the active-package oracle."""
@@ -391,15 +409,26 @@ def test_verifier_ignores_hostile_path_lookup(tmp_path: Path) -> None:
 
 
 @pytest.mark.packaging
-def test_committed_runtime_payload_has_no_private_machine_paths() -> None:
-    """Prevent local cache paths and obvious secret material from publication."""
+def test_committed_runtime_payload_manifest_has_non_test_files() -> None:
+    """Keep the runtime payload check meaningful when the manifest changes."""
     manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
-    for record in manifest["files"]:
-        relative = Path(record["path"])
-        if "tests" in relative.parts:
-            continue
-        path = PLUGIN_ROOT / relative
-        payload = path.read_bytes()
-        assert b"/Users/" not in payload
-        assert b"/home/" not in payload
-        assert b"BEGIN " + b"PRIVATE KEY" not in payload
+
+    assert any("tests" not in Path(record["path"]).parts for record in manifest["files"])
+
+
+@pytest.mark.packaging
+@pytest.mark.parametrize(
+    "relative",
+    tuple(
+        record["path"]
+        for record in json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))["files"]
+        if "tests" not in Path(record["path"]).parts
+    ),
+)
+def test_committed_runtime_payload_has_no_private_machine_paths(relative: str) -> None:
+    """Prevent each published runtime file from carrying private local material."""
+    payload = (PLUGIN_ROOT / relative).read_bytes()
+
+    assert b"/Users/" not in payload
+    assert b"/home/" not in payload
+    assert b"BEGIN " + b"PRIVATE KEY" not in payload

@@ -619,7 +619,8 @@ def _run_batch_tty(mode: str, env: dict[str, str], *args: str) -> subprocess.Com
 
 
 @_skip_windows_posix
-def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str, str], Path]) -> None:
+@pytest.mark.parametrize("obsolete", ("all", "full", "refresh", "unknown"))
+def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str, str], Path], obsolete: str) -> None:
     """Reject missing, obsolete, or extra modes before any setup command runs."""
     env, call_log = batch_env
 
@@ -635,11 +636,10 @@ def test_batch_entrypoint_accepts_exactly_three_modes(batch_env: tuple[dict[str,
     assert missing.returncode == 2
     assert "smoke | claude" in missing.stderr
     assert "| codex" in missing.stderr
-    for obsolete in ("all", "full", "refresh", "unknown"):
-        rejected = _run_batch(obsolete, env)
-        assert rejected.returncode == 2
-        assert "smoke | claude" in rejected.stderr
-        assert "| codex" in rejected.stderr
+    rejected = _run_batch(obsolete, env)
+    assert rejected.returncode == 2
+    assert "smoke | claude" in rejected.stderr
+    assert "| codex" in rejected.stderr
     rejected = _run_batch("smoke", env, "--dry-run")
     assert rejected.returncode == 2
     rejected = _run_batch("claude", env, "--unknown")

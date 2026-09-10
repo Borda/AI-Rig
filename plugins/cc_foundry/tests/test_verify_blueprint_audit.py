@@ -79,6 +79,8 @@ def _probe_unreadable_file() -> bool:
 
 #: Whether permission-denied cases can run here, resolved once at collection time.
 _CAN_DENY_READ = _probe_unreadable_file()
+_skip_read_denial_unavailable = pytest.mark.skipif(not _CAN_DENY_READ, reason="this process can read a mode-000 file")
+_skip_symlinks_unavailable = pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
 
 
 class _DyingHandle:
@@ -482,6 +484,7 @@ class TestReadPath:
         assert "limit-exceeded" in captured.out, "the partial read must be visible as a read that stopped early"
         assert "Input/output error" in captured.err
 
+    @_skip_read_denial_unavailable
     def test_a_file_that_could_not_be_opened_is_named_on_stdout_too(self, tmp_path: Path, capsys) -> None:
         """A skip only on stderr becomes a silent all-clear for anyone reading stdout or piping the report.
 
@@ -491,8 +494,6 @@ class TestReadPath:
         shutil.copy(LOGS / "clean-single-plugin.jsonl", tmp_path / f"s-{'a' * 32}.jsonl")
         denied = tmp_path / f"s-{'b' * 32}.jsonl"
         shutil.copy(LOGS / "clean-single-plugin.jsonl", denied)
-        if not _CAN_DENY_READ:
-            pytest.skip("this process can read a mode-000 file")
         denied.chmod(0o000)
 
         try:
@@ -504,7 +505,7 @@ class TestReadPath:
         assert "files read: 1" in report
         assert "files SKIPPED: 1" in report
 
-    @pytest.mark.skipif(not _CAN_DENY_READ, reason="this process can read a mode-000 file")
+    @_skip_read_denial_unavailable
     def test_a_directory_that_cannot_be_listed_is_not_reported_as_clean(self, tmp_path: Path, capsys) -> None:
         """``glob`` swallows the error, so an unlistable directory would otherwise read as an empty one.
 
@@ -539,7 +540,7 @@ class TestReadPath:
         assert verifier.main(["verify", str(tmp_path)]) == 0
         assert f"s-{'a' * 32}.jsonl" in capsys.readouterr().out, "the real file must still be reported"
 
-    @pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+    @_skip_symlinks_unavailable
     def test_a_dangling_symlink_does_not_become_a_false_corruption_alarm(self, tmp_path: Path, capsys) -> None:
         """Same for a dead link: ``FileNotFoundError`` out of the read loop would read as corruption."""
         shutil.copy(LOGS / "clean-single-plugin.jsonl", tmp_path / f"s-{'a' * 32}.jsonl")
@@ -548,7 +549,7 @@ class TestReadPath:
         assert verifier.main(["verify", str(tmp_path)]) == 0
         assert f"s-{'a' * 32}.jsonl" in capsys.readouterr().out
 
-    @pytest.mark.skipif(not _CAN_DENY_READ, reason="this process can read a mode-000 file")
+    @_skip_read_denial_unavailable
     def test_one_unreadable_file_does_not_abort_the_scan(self, tmp_path: Path, capsys) -> None:
         """A file this process may not open must not cost every other file its report.
 
@@ -572,14 +573,13 @@ class TestReadPath:
         assert "files read: 1" in captured.out
         assert f"s-{'b' * 32}.jsonl" in captured.err, "the file that was skipped must be named"
 
+    @_skip_symlinks_unavailable
     def test_an_explicitly_named_symlink_is_scanned_not_skipped(self, tmp_path: Path, capsys) -> None:
         """Refusing a link the caller named would answer "clean" about a file nobody read.
 
         Reading through a symlink is harmless — that is why the read path differs from ``prune``, which refuses links
         because it deletes. Skipping it silently is the one way this function could lie.
         """
-        if not _CAN_SYMLINK:
-            pytest.skip("this process may not create symlinks")
         real = tmp_path / "real.jsonl"
         shutil.copy(LOGS / "corrupt-hash.jsonl", real)
         link = tmp_path / f"s-{'9' * 32}.jsonl"
@@ -595,7 +595,7 @@ class TestReadPath:
         assert verifier.main(["verify", str(tmp_path)]) == 0
         assert f"s-{'b' * 32}.jsonl" in capsys.readouterr().err
 
-    @pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+    @_skip_symlinks_unavailable
     def test_a_skipped_symlink_is_reported_as_a_link_not_as_damage(self, tmp_path: Path, capsys) -> None:
         """A link to a healthy log is skipped because it is a link, and the message has to say that.
 
@@ -697,7 +697,7 @@ class TestPrune:
         assert directory.is_dir()
         assert not aged["old"].exists(), "the real session log must still be pruned"
 
-    @pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+    @_skip_symlinks_unavailable
     def test_a_symlink_is_never_followed_or_removed(self, aged: dict, capsys) -> None:
         """A symlink would be judged on its target's age and then unlinked — deleting a link this writer never made."""
         outside = aged["old"].parent.parent / "outside.jsonl"
@@ -712,7 +712,7 @@ class TestPrune:
         assert link.is_symlink()
         assert outside.exists()
 
-    @pytest.mark.skipif(not _CAN_SYMLINK, reason="this process may not create symlinks")
+    @_skip_symlinks_unavailable
     def test_one_unreadable_entry_does_not_abort_the_sweep(self, aged: dict, capsys) -> None:
         """A dangling symlink used to raise out of the loop, silently leaving every later file unpruned.
 

@@ -15,6 +15,7 @@ VALIDATOR_PATHS = {
     "shared": PLUGIN_ROOT / "shared" / "validate-artifacts.py",
     "review": PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py",
 }
+VALIDATOR_CASES = [pytest.param(name, path, id=name) for name, path in VALIDATOR_PATHS.items()]
 
 
 def _load_validator(name: str, path: Path) -> ModuleType:
@@ -57,27 +58,35 @@ def _validate(module: ModuleType, name: str, metadata: dict[str, object], gaps: 
         pytest.param(["Environment missing"], [], id="environment-missing-punctuation"),
     ],
 )
+@pytest.mark.parametrize(("name", "path"), VALIDATOR_CASES)
 def test_every_validator_rejects_ambiguous_or_incomplete_confidence_closures(
-    gaps: list[str], closures: list[dict[str, str]]
+    gaps: list[str], closures: list[dict[str, str]], name: str, path: Path
 ) -> None:
     """Prevent blank, duplicate, undeclared, or missing closure provenance in every writer path."""
     metadata: dict[str, object] = {"confidence_gap_closures": closures}
-    for name, path in VALIDATOR_PATHS.items():
-        with pytest.raises(SystemExit):
-            _validate(_load_validator(name, path), name, metadata, gaps)
+    with pytest.raises(SystemExit):
+        _validate(_load_validator(name, path), name, metadata, gaps)
 
 
 @pytest.mark.parametrize(
     "closure",
     [
-        {"gap": "Environment missing", "status": "closed", "evidence": "environment.log"},
-        {"gap": "Environment missing", "status": "unresolved", "rationale": "Host access is unavailable."},
-        {"gap": "Environment missing", "status": "deferred", "rationale": "The user deferred host access."},
+        pytest.param({"gap": "Environment missing", "status": "closed", "evidence": "environment.log"}, id="closed"),
+        pytest.param(
+            {"gap": "Environment missing", "status": "unresolved", "rationale": "Host access is unavailable."},
+            id="unresolved",
+        ),
+        pytest.param(
+            {"gap": "Environment missing", "status": "deferred", "rationale": "The user deferred host access."},
+            id="deferred",
+        ),
     ],
 )
-def test_every_validator_accepts_one_valid_closure_per_declared_gap(closure: dict[str, str]) -> None:
+@pytest.mark.parametrize(("name", "path"), VALIDATOR_CASES)
+def test_every_validator_accepts_one_valid_closure_per_declared_gap(
+    closure: dict[str, str], name: str, path: Path
+) -> None:
     """Keep all three supported closure states usable when provenance is unambiguous."""
     metadata: dict[str, object] = {"confidence_gap_closures": [closure]}
     gaps = ["Environment missing"]
-    for name, path in VALIDATOR_PATHS.items():
-        _validate(_load_validator(name, path), name, metadata, gaps)
+    _validate(_load_validator(name, path), name, metadata, gaps)

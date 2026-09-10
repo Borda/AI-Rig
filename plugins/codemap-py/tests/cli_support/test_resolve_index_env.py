@@ -19,6 +19,7 @@ import importlib.util
 import os
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,36 @@ _own_plugin_root = _mod._own_plugin_root
 _validate_plugin_root = _mod._validate_plugin_root
 _validate_output_prefix = _mod._validate_output_prefix
 _write_sentinel_file = _mod._write_sentinel_file
+
+
+def _file_symlink_is_available() -> bool:
+    """Return whether this host can create and resolve a file symlink."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        target = root / "target"
+        link = root / "link"
+        target.write_text("target\n", encoding="utf-8")
+        try:
+            link.symlink_to(target)
+        except OSError:
+            return False
+        return link.is_symlink() and link.read_text(encoding="utf-8") == "target\n"
+
+
+def _private_file_mode_is_preserved() -> bool:
+    """Return whether ``mkstemp`` records its private ``0o600`` mode on this host."""
+    with tempfile.TemporaryDirectory() as directory:
+        descriptor, filename = tempfile.mkstemp(dir=directory)
+        os.close(descriptor)
+        return os.stat(filename).st_mode & 0o777 == 0o600
+
+
+_skip_file_symlink_unavailable = pytest.mark.skipif(
+    not _file_symlink_is_available(), reason="file symlink creation is unavailable on this host"
+)
+_skip_private_mode_unavailable = pytest.mark.skipif(
+    not _private_file_mode_is_preserved(), reason="private 0o600 file modes are unavailable on this host"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -336,6 +367,7 @@ class TestSentinelSymlinkSafety:
     invoking user can write.
     """
 
+    @_skip_file_symlink_unavailable
     def test_preplanted_symlink_is_not_followed(self, tmp_path: Path) -> None:
         """Writing to a path that is a symlink raises instead of truncating the target."""
         victim = tmp_path / "victim.txt"
@@ -348,7 +380,7 @@ class TestSentinelSymlinkSafety:
 
         assert victim.read_text(encoding="utf-8") == "IMPORTANT ORIGINAL CONTENT\n"
 
-    @pytest.mark.skipif(os.name == "nt", reason="requires POSIX private-mode semantics")
+    @_skip_private_mode_unavailable
     def test_written_file_is_mode_0600(self, tmp_path: Path) -> None:
         """A freshly written sentinel is owner-only readable/writable regardless of umask."""
         target = tmp_path / "codemap-resolve-index-shared"

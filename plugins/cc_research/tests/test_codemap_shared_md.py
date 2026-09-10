@@ -78,11 +78,12 @@ def _bash_blocks(path: Path) -> list[str]:
 
 
 def test_gates_resolve_and_read_the_shipped_contract():
-    """An inline transcription cannot follow the provider; the wrapper must cat the contract."""
+    """An inline transcription cannot replace the plugin-local propagated contract."""
     text = _GATES.read_text(encoding="utf-8")
 
-    assert "claude-skills/_shared" in text, "no installed-cache resolution block"
-    assert 'cat "$_CM_SHARED/codemap-gates.md"' in text, "contract is never loaded"
+    assert "resolve_shared.py" in text, "no own shared-directory resolver"
+    assert 'cat "$_RESEARCH_SHARED/codemap-py--codemap-gates.md"' in text, "contract is never loaded"
+    assert "codemap-py/*/claude-skills/_shared" not in text, "sibling cache reach-in reintroduced"
     assert re.search(r"Contract \(`v\d+`\)", text), "no contract version marker"
     assert "Fallback when codemap-py plugin absent" in text, "no graceful degradation"
 
@@ -109,14 +110,21 @@ def test_build_command_is_applied_from_the_contract_without_an_override():
     assert "scan-index" not in text, "the retired alias has no reason to appear in a wrapper"
 
 
-def test_no_retired_codemap_skill_prefix():
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(_GATES, id="gates"),
+        pytest.param(_CONTEXT, id="context"),
+        pytest.param(_SCIENTIST, id="scientist"),
+    ],
+)
+def test_no_retired_codemap_skill_prefix(path: Path) -> None:
     """The plugin is `codemap-py:`; the bare `codemap:<skill>` prefix is retired.
 
     The skill name must follow the colon immediately, so a prose colon is not flagged.
     """
-    for path in (_GATES, _CONTEXT, _SCIENTIST):
-        text = path.read_text(encoding="utf-8")
-        assert not re.search(r"(?<![\w-])codemap:[a-z]", text), f"retired `codemap:<skill>` prefix in {path.name}"
+    text = path.read_text(encoding="utf-8")
+    assert not re.search(r"(?<![\w-])codemap:[a-z]", text), f"retired `codemap:<skill>` prefix in {path.name}"
 
 
 # --------------------------------------------------------------------------------------

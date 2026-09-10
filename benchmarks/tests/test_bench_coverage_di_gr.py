@@ -22,6 +22,13 @@ from typing import Any
 import pytest
 
 SUITE = Path(__file__).resolve().parent.parent / "suites" / "tasks-bench.json"
+TASK_ROWS: tuple[dict[str, Any], ...] = tuple(json.loads(SUITE.read_text(encoding="utf-8"))["tasks"])
+_MB_TASK_CASES = tuple(pytest.param(task, id=task["id"]) for task in TASK_ROWS if task["id"].startswith("MB-"))
+_DI_TASK_CASES = tuple(pytest.param(task, id=task["id"]) for task in TASK_ROWS if task["id"].startswith("DI-"))
+_GRAPH_PATH_TASK_CASES = tuple(pytest.param(task, id=task["id"]) for task in TASK_ROWS if task["type"] == "graph_path")
+_DI_GR_TASK_CASES = tuple(
+    pytest.param(task, id=task["id"]) for task in TASK_ROWS if task["id"].startswith(("DI-", "GR-"))
+)
 
 
 # ---------------------------------------------------------------------------
@@ -77,9 +84,9 @@ class TestDiGrTaskSchema:
 
     @pytest.fixture(name="tasks", scope="class")
     @staticmethod
-    def _tasks() -> list[dict]:
+    def _tasks() -> list[dict[str, Any]]:
         """Provide the task collection used by this selection or coverage scenario."""
-        return json.loads(SUITE.read_text())["tasks"]
+        return list(TASK_ROWS)
 
     def test_suite_is_valid_json_object(self) -> None:
         """tasks-bench.json is an object with repo header + tasks list."""
@@ -87,42 +94,44 @@ class TestDiGrTaskSchema:
         assert set(data) >= {"repo", "tasks"}
         assert isinstance(data["tasks"], list)
 
-    def test_has_six_di_tasks(self, tasks: list[dict]) -> None:
+    def test_has_six_di_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        """DI roster contains exactly six diff-impact records."""
         di = [t for t in tasks if t["id"].startswith("DI-")]
         assert len(di) == 6
         assert all(t["type"] == "diff_impact" for t in di)
 
-    def test_has_four_gr_tasks(self, tasks: list[dict]) -> None:
+    def test_has_four_gr_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        """GR roster contains declared graph types and its graph-path record."""
         gr = [t for t in tasks if t["id"].startswith("GR-")]
         assert len(gr) == 4
         assert {t["type"] for t in gr} == {"graph_central", "graph_path", "graph_fn_blast"}
+        assert [task["id"] for task in gr if task["type"] == "graph_path"] == ["GR-02"]
 
-    def test_has_five_mb_tasks(self, tasks: list[dict]) -> None:
+    def test_has_five_mb_tasks(self, tasks: list[dict[str, Any]]) -> None:
+        """MB roster contains exactly five module-blast-radius records."""
         mb = [t for t in tasks if t["id"].startswith("MB-")]
         assert len(mb) == 5
         assert all(t["type"] == "module_blast_radius" for t in mb)
 
-    def test_mb_tasks_have_materialized_importer_gt(self, tasks: list[dict]) -> None:
+    @pytest.mark.parametrize("task", _MB_TASK_CASES)
+    def test_mb_tasks_have_materialized_importer_gt(self, task: dict[str, Any]) -> None:
         """MB tasks ship materialized (non-pending, non-empty) importer ground truth."""
-        mb = [t for t in tasks if t["id"].startswith("MB-")]
-        assert mb
-        for t in mb:
-            gt = t["ground_truth"]
-            assert gt.get("gt_pending") is False, t["id"]
-            assert gt["importers"], t["id"]
-            assert gt["importer_count"] == len(gt["importers"]), t["id"]
-            assert t.get("workflow_type") == "query", t["id"]
-            assert t["primary_module"], t["id"]
-            # Test modules must never appear among production importers.
-            assert not any(m.startswith("tests.") for m in gt["importers"]), t["id"]
+        gt = task["ground_truth"]
+        assert gt.get("gt_pending") is False, task["id"]
+        assert gt["importers"], task["id"]
+        assert gt["importer_count"] == len(gt["importers"]), task["id"]
+        assert task.get("workflow_type") == "query", task["id"]
+        assert task["primary_module"], task["id"]
+        assert not any(module.startswith("tests.") for module in gt["importers"]), task["id"]
 
-    def test_di_tasks_have_stage_spec_and_primary_fn(self, tasks: list[dict]) -> None:
-        for t in (t for t in tasks if t["id"].startswith("DI-")):
-            assert "::" in t["primary_fn"], t["id"]
-            assert isinstance(t.get("stage"), list) and t["stage"], t["id"]
-            for edit in t["stage"]:
-                assert edit.get("file"), t["id"]
-                assert ("append" in edit) or ("find" in edit and "replace" in edit), t["id"]
+    @pytest.mark.parametrize("task", _DI_TASK_CASES)
+    def test_di_tasks_have_stage_spec_and_primary_fn(self, task: dict[str, Any]) -> None:
+        """Each DI task exposes a callable target and executable stage specification."""
+        assert "::" in task["primary_fn"], task["id"]
+        assert isinstance(task.get("stage"), list) and task["stage"], task["id"]
+        for edit in task["stage"]:
+            assert edit.get("file"), task["id"]
+            assert ("append" in edit) or ("find" in edit and "replace" in edit), task["id"]
 
     def test_di_gr_tasks_have_materialized_gt(self, tasks: list[dict]) -> None:
         """The locked target materializes every DI/GR independent-oracle answer."""
@@ -130,16 +139,16 @@ class TestDiGrTaskSchema:
         assert new
         assert all(t["ground_truth"].get("gt_pending") is False for t in new)
 
-    def test_graph_path_task_declares_source_and_target(self, tasks: list[dict]) -> None:
-        gp = [t for t in tasks if t["type"] == "graph_path"]
-        assert gp
-        for t in gp:
-            assert t["ground_truth"]["source"]
-            assert t["ground_truth"]["target"]
+    @pytest.mark.parametrize("task", _GRAPH_PATH_TASK_CASES)
+    def test_graph_path_task_declares_source_and_target(self, task: dict[str, Any]) -> None:
+        """Each graph-path task declares both ground-truth endpoints."""
+        assert task["ground_truth"]["source"]
+        assert task["ground_truth"]["target"]
 
-    def test_di_gr_tasks_are_scoreable(self, tasks: list[dict]) -> None:
-        for t in (t for t in tasks if t["id"].startswith(("DI-", "GR-"))):
-            assert t.get("scoreable") is True, t["id"]
+    @pytest.mark.parametrize("task", _DI_GR_TASK_CASES)
+    def test_di_gr_tasks_are_scoreable(self, task: dict[str, Any]) -> None:
+        """Each DI/GR task is eligible for benchmark scoring."""
+        assert task.get("scoreable") is True, task["id"]
 
 
 # ---------------------------------------------------------------------------
@@ -295,9 +304,12 @@ class TestGtPending:
         assert script_gen_bench.gt_is_pending({"ground_truth": {"gt_pending": False}}) is False
         assert script_gen_bench.gt_is_pending({"ground_truth": {}}) is False
 
-    def test_new_types_are_oracle_backed(self, script_gen_bench: Any) -> None:
-        for ttype in ("diff_impact", "graph_central", "graph_path", "graph_fn_blast", "module_blast_radius"):
-            assert script_gen_bench._update_is_oracle_backed({"type": ttype}) is True
+    @pytest.mark.parametrize(
+        "ttype", ("diff_impact", "graph_central", "graph_path", "graph_fn_blast", "module_blast_radius")
+    )
+    def test_new_types_are_oracle_backed(self, script_gen_bench: Any, ttype: str) -> None:
+        """Each new benchmark task type uses an oracle-backed update path."""
+        assert script_gen_bench._update_is_oracle_backed({"type": ttype}) is True
 
     def test_new_types_registered_in_validators(self, script_gen_bench: Any) -> None:
         for ttype in ("diff_impact", "graph_central", "graph_path", "graph_fn_blast", "module_blast_radius"):

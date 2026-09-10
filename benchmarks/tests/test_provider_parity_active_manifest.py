@@ -403,7 +403,8 @@ def test_methodology_manifest_uses_policy_seed_and_current_suite_inputs() -> Non
         assert methodology["preregistered_cells"][field] == policy["preregistered_cells"][field]
 
 
-def test_methodology_manifest_binds_every_review_subquestion_in_provider_prompt() -> None:
+@pytest.mark.parametrize("task_id", ("RV-01", "RV-02", "RV-03", "RV-04", "RV-05"))
+def test_methodology_manifest_binds_every_review_subquestion_in_provider_prompt(task_id: str) -> None:
     """Review follow-ups must be hashed as delivered provider input, not evaluator-only metadata."""
     methodology = _load(METHODOLOGY_MANIFEST)
     suite = _suites_by_path(methodology)[REPAIRED_SUITE_PATH]
@@ -413,27 +414,30 @@ def test_methodology_manifest_binds_every_review_subquestion_in_provider_prompt(
     }
 
     assert source_tasks.keys() == {"RV-01", "RV-02", "RV-03", "RV-04", "RV-05"}
-    for task_id, task in source_tasks.items():
-        delivered = core.materialize_task_prompt(task)
-        assert delivered != task["prompt"]
-        for sub_question in task["sub_questions"]:
-            assert sub_question["prompt"] in delivered
-        assert manifest_tasks[task_id]["prompt_sha256"] == core.prompt_hash(task)
+    task = source_tasks[task_id]
+    delivered = core.materialize_task_prompt(task)
+    assert delivered != task["prompt"]
+    for sub_question in task["sub_questions"]:
+        assert sub_question["prompt"] in delivered
+    assert manifest_tasks[task_id]["prompt_sha256"] == core.prompt_hash(task)
 
 
-def test_review_caller_tasks_lock_production_fn_rdeps_queries() -> None:
+@pytest.mark.parametrize(
+    ("task_id", "target"),
+    [
+        pytest.param(
+            "RV-03", "lightning.pytorch.trainer.call::_call_lightning_module_hook", id="lightning-module-hook"
+        ),
+        pytest.param("RV-04", "lightning.pytorch.trainer.call::_call_callback_hooks", id="callback-hooks"),
+    ],
+)
+def test_review_caller_tasks_lock_production_fn_rdeps_queries(task_id: str, target: str) -> None:
     """RV-03/RV-04 must exclude tests, exactly as their prompts and counts require."""
     tasks = {task["id"]: task for task in core.load_task_suite(ROOT / REPAIRED_SUITE_PATH)}
-    expected_targets = {
-        "RV-03": "lightning.pytorch.trainer.call::_call_lightning_module_hook",
-        "RV-04": "lightning.pytorch.trainer.call::_call_callback_hooks",
-    }
-
-    assert expected_targets.keys() <= tasks.keys()
-    for task_id, target in expected_targets.items():
-        task = tasks[task_id]
-        assert task["expected_queries"] == [{"cmd": "fn-rdeps", "args": [target, "--exclude-tests"]}]
-        assert "production functions (excluding test files)" in core.materialize_task_prompt(task)
+    assert task_id in tasks
+    task = tasks[task_id]
+    assert task["expected_queries"] == [{"cmd": "fn-rdeps", "args": [target, "--exclude-tests"]}]
+    assert "production functions (excluding test files)" in core.materialize_task_prompt(task)
 
 
 def test_methodology_manifest_locks_luna_high_and_exact_implementation_identities() -> None:

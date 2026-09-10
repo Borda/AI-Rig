@@ -16,6 +16,37 @@ import pytest
 from benchmarks._bench_common import agentic_contracts
 
 
+_AGENTIC_TASK_IDS = (
+    "BA-01",
+    "BA-02",
+    "BA-03",
+    "BA-04",
+    "BA-05",
+    "BA-06",
+    "BA-07",
+    "BA-08",
+    "BA-09",
+    "BA-10",
+    "BA-11",
+    "BA-12",
+    "BA-13",
+    "BA-14",
+    "BA-15",
+    "BA-16",
+    "BA-17",
+    "BA-18",
+    "BA-19",
+    "BA-20",
+)
+
+
+@pytest.fixture(name="agentic_tasks", scope="module")
+def _agentic_tasks() -> list[dict[str, Any]]:
+    """Load the shared agentic suite once for read-only prompt checks."""
+    suite_path = Path(__file__).parents[1] / "suites" / "tasks-agentic.json"
+    return json.loads(suite_path.read_text(encoding="utf-8"))["tasks"]
+
+
 def _task(**overrides: Any) -> dict[str, Any]:
     """Build a production-importer task, replacing defaults with explicit overrides.
 
@@ -157,25 +188,24 @@ def test_import_convention_is_disclosed_in_the_scored_prompt() -> None:
     assert "a.b.c" in instruction
 
 
-def test_oracle_population_convention_is_disclosed_in_every_agentic_prompt() -> None:
-    """Every shared task exposes the oracle's production and naming rules."""
-    suite_path = Path(__file__).parents[1] / "suites" / "tasks-agentic.json"
-    tasks = json.loads(suite_path.read_text(encoding="utf-8"))["tasks"]
+def test_agentic_prompt_suite_matches_the_explicit_cases(agentic_tasks: list[dict[str, Any]]) -> None:
+    """Every declared task has exactly one static prompt case in suite order."""
+    assert tuple(task["id"] for task in agentic_tasks) == _AGENTIC_TASK_IDS
 
-    # Counted from the file rather than pinned: this test asserts a property of every task, so a literal here only
-    # duplicates the suite-size lock that the manifest tests already own.
-    assert tasks
-    assert all(
-        agentic_contracts.ORACLE_POPULATION_INSTRUCTION in agentic_contracts.materialize_agentic_prompt(task)
-        for task in tasks
-    )
+
+@pytest.mark.parametrize("task_id", _AGENTIC_TASK_IDS)
+def test_oracle_population_convention_is_disclosed_in_every_agentic_prompt(
+    agentic_tasks: list[dict[str, Any]], task_id: str
+) -> None:
+    """Every shared task exposes the oracle's production and naming rules."""
+    task = next(task for task in agentic_tasks if task["id"] == task_id)
     assert "never `a.b.__init__`" in agentic_contracts.ORACLE_POPULATION_INSTRUCTION
     assert "leading `src` layout directory is stripped" in agentic_contracts.ORACLE_POPULATION_INSTRUCTION
-    for task in tasks:
-        prompt = agentic_contracts.materialize_agentic_prompt(task)
-        assert "interpreter stdin" in prompt
-        assert "not scratch work" in prompt
-        assert "deterministic code for counts, set filtering and ranking" in prompt
+    prompt = agentic_contracts.materialize_agentic_prompt(task)
+    assert agentic_contracts.ORACLE_POPULATION_INSTRUCTION in prompt
+    assert "interpreter stdin" in prompt
+    assert "not scratch work" in prompt
+    assert "deterministic code for counts, set filtering and ranking" in prompt
 
 
 def test_duplicate_ranking_is_rejected_before_semantic_grading() -> None:
@@ -199,11 +229,9 @@ def test_src_layout_directory_does_not_prefix_oracle_module_names(mixed_import_t
     assert oracle.expected["production_importers"] == ("pkg.consumer",)
 
 
-def test_ba12_defers_to_the_shared_test_module_convention() -> None:
+def test_ba12_defers_to_the_shared_test_module_convention(agentic_tasks: list[dict[str, Any]]) -> None:
     """BA-12 cannot contradict the common test-module definition the oracle applies."""
-    suite_path = Path(__file__).parents[1] / "suites" / "tasks-agentic.json"
-    tasks = json.loads(suite_path.read_text(encoding="utf-8"))["tasks"]
-    prompt = next(task["prompt"] for task in tasks if task["id"] == "BA-12")
+    prompt = next(task["prompt"] for task in agentic_tasks if task["id"] == "BA-12")
 
     assert "Use the shared test-module convention" in prompt
     assert "filename merely starts with `test_`" not in prompt

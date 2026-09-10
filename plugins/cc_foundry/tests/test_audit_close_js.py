@@ -112,7 +112,10 @@ class TestLifecycleRows:
 
     @pytest.mark.parametrize(
         ("event", "action_type"),
-        [("SessionStart", "session.start"), ("SessionEnd", "session.end")],
+        [
+            pytest.param("SessionStart", "session.start", id="session-start"),
+            pytest.param("SessionEnd", "session.end", id="session-end"),
+        ],
     )
     def test_lifecycle_row_is_written(self, env, event: str, action_type: str) -> None:
         """Each lifecycle event appends exactly one row and carries no tool identifier."""
@@ -156,7 +159,16 @@ class TestLifecycleRows:
         assert built["detail"] == {"reason": "clear"}
         assert built["bad"] is None
 
-    @pytest.mark.parametrize("event", [["PostToolUse"], ["SessionEnd"], 42, None, {"a": 1}])
+    @pytest.mark.parametrize(
+        "event",
+        [
+            pytest.param(["PostToolUse"], id="tool-event-list"),
+            pytest.param(["SessionEnd"], id="session-event-list"),
+            42,
+            None,
+            pytest.param({"a": 1}, id="mapping"),
+        ],
+    )
     def test_a_non_string_event_writes_nothing(self, env, event) -> None:
         """A property lookup coerces its key, so ``["PostToolUse"]`` would pass the membership tests unnoticed.
 
@@ -245,11 +257,11 @@ class TestSilenceAndFootprint:
         env.run(CLOSE_HOOK, _event("PreCompact"))
         assert env.rows() == []
 
-    def test_malformed_stdin_never_crashes(self, env) -> None:
+    @pytest.mark.parametrize("payload", ["not json", "", "null", "[]"])
+    def test_malformed_stdin_never_crashes(self, env, payload: str) -> None:
         """A logging hook must not interfere with execution, whatever arrives on stdin."""
-        for payload in ("not json", "", "null", "[]"):
-            proc = env.run(CLOSE_HOOK, payload)
-            assert proc.returncode == 0 and proc.stdout == b""
+        proc = env.run(CLOSE_HOOK, payload)
+        assert proc.returncode == 0 and proc.stdout == b""
 
     def test_creates_and_removes_nothing_outside_the_log(self, env) -> None:
         """No state directory, no tombstone, no sweep — a session teardown has nothing here to collide with."""

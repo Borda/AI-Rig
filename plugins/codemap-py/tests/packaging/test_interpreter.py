@@ -130,14 +130,16 @@ def test_launcher_invalid_override_returns_127_empty_stdout() -> None:
     assert completed.stderr.strip() != ""
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX sh word-splitting; the .cmd path is CI-validated")
 @pytest.mark.skipif(not _RUNNING_SUPPORTED, reason="wrapper delegates to this interpreter; must be supported")
 def test_launcher_accepts_codemap_python_with_space(tmp_path: Path) -> None:
     """A CODEMAP_PYTHON path containing a space is a single argv element."""
-    wrapper = tmp_path / "py wrap"  # the space in the name is the whole point
-    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
-    wrapper.chmod(0o755)
-    launcher = _PLUGIN_ROOT / "bin" / "codemap-py"
+    wrapper = tmp_path / ("py wrap.cmd" if sys.platform == "win32" else "py wrap")
+    if sys.platform == "win32":
+        wrapper.write_text(f'@echo off\n"{sys.executable}" %*\n', encoding="utf-8", newline="\r\n")
+    else:
+        wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+        wrapper.chmod(0o755)
+    launcher = _PLUGIN_ROOT / "bin" / ("codemap-py.cmd" if sys.platform == "win32" else "codemap-py")
     merged = {**os.environ, "CODEMAP_PYTHON": str(wrapper)}
     completed = subprocess.run(
         [str(launcher), "doctor", "--json"], capture_output=True, text=True, timeout=30, check=False, env=merged

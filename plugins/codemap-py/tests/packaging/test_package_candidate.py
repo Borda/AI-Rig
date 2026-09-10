@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,23 @@ _TEXT_LAUNCHERS = (
     "bin/scan-query",
 )
 _TEXT_PACKAGE_METADATA = ("LICENSE", "NOTICE")
+
+
+def _executable_mode_is_preserved() -> bool:
+    """Return whether this host preserves an executable mode set by ``chmod``."""
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "candidate"
+        candidate.write_text("candidate\n", encoding="utf-8")
+        try:
+            candidate.chmod(0o755)
+        except OSError:
+            return False
+        return os.stat(candidate).st_mode & 0o777 == 0o755
+
+
+_skip_executable_mode_unavailable = pytest.mark.skipif(
+    not _executable_mode_is_preserved(), reason="chmod cannot preserve executable mode on this host"
+)
 
 
 def _plugin_identity() -> tuple[str, str]:
@@ -331,7 +350,7 @@ def test_builder_mutates_nothing_tracked(tmp_path: Path) -> None:
     assert _git_porcelain() == before
 
 
-@pytest.mark.skipif(sys.platform.startswith("win"), reason="executable bit is unreliable off POSIX")
+@_skip_executable_mode_unavailable
 @pytest.mark.packaging
 def test_check_flags_tampered_reference_exec_mode(tmp_path: Path) -> None:
     """Reject a reference file whose mode differs from its manifest entry."""

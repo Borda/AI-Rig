@@ -315,17 +315,26 @@ def test_distinct_independent_oracle_tasks_allow_repository_reads_after_required
         assert "codemap" in prompt
 
 
-def test_query_skills_require_with_imports_for_source_requests_that_name_imports() -> None:
-    """Prevent source-with-imports tasks from falling back to redundant repository reads."""
+def test_source_with_imports_tasks_name_imports() -> None:
+    """Source-with-imports task prompts explicitly name imports."""
     task_by_id = {task["id"]: task for task in core.load_task_suite(SUITE_PATH)}
 
     for task_id in ("SE-01", "SE-02"):
         assert "import" in task_by_id[task_id]["prompt"].lower()
 
-    for skill_path in (CODEX_QUERY_SKILL_PATH, CLAUDE_QUERY_SKILL_PATH):
-        skill = skill_path.read_text(encoding="utf-8")
-        assert "symbol <name> --with-imports" in skill
-        assert "query_complete" in skill
+
+@pytest.mark.parametrize(
+    "skill_path",
+    [
+        pytest.param(CODEX_QUERY_SKILL_PATH, id="codex-query-skill"),
+        pytest.param(CLAUDE_QUERY_SKILL_PATH, id="claude-query-skill"),
+    ],
+)
+def test_query_skills_require_with_imports_for_source_requests_that_name_imports(skill_path: Path) -> None:
+    """Prevent source-with-imports tasks from falling back to redundant repository reads."""
+    skill = skill_path.read_text(encoding="utf-8")
+    assert "symbol <name> --with-imports" in skill
+    assert "query_complete" in skill
 
 
 def test_uncovered_task_prompts_and_views_match_the_independent_ast_oracle() -> None:

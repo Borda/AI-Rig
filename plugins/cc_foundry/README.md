@@ -2,6 +2,8 @@
 
 OSS Claude Code configuration for Python/ML projects: 10 specialist agents, 11 skills, event-driven hooks, and repeatable audit and calibration workflows.
 
+Optional Codemap guidance is shipped locally with foundry; loading it does not read another plugin's private shared directory. Codemap queries still require the `codemap-py` plugin, with file-read fallback when the CLI or local contract is unavailable.
+
 > Optional integrations: `/oss:review` and `/oss:release` add release/review workflows (requires the `oss` plugin); `/develop:feature` and `/develop:fix` add implementation workflows (requires the `develop` plugin); `/research:run` and `/research:topic` add ML research workflows (requires the `research` plugin).
 
 ______________________________________________________________________
@@ -609,6 +611,8 @@ ______________________________________________________________________
 ### foundry:curator
 
 **Role**: quality guardian of Claude config markdown files — agents, skills, rules.
+
+Plugin-layout audits require new executable helpers to use Python and treat legacy shell helpers as portability debt.
 
 **Use for**: auditing `.claude/` config files — verbosity creep, cross-agent duplication, broken cross-references, structural violations, outdated content, roster overlap. Used internally by `/foundry:audit` and `/foundry:manage`.
 

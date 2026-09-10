@@ -387,14 +387,14 @@ class TestTaskPolicies:
         with pytest.raises(AttributeError):
             policies["FN-02"].scoreable = False
 
-    def test_manifest_policy_keeps_known_diagnostic_tasks_out_of_headline_pairing(self) -> None:
+    @pytest.mark.parametrize("task_id", ("SE-01", "RV-05", "CQ-02", "CQ-03", "CQ-04", "CQ-05", "RI-05"))
+    def test_manifest_policy_keeps_known_diagnostic_tasks_out_of_headline_pairing(self, task_id: str) -> None:
         """Policy, not optional record flags, blocks approved diagnostic and unscoreable tasks."""
         policies = core.load_task_policies(MANIFEST_PATH)
 
         assert policies["SE-01"].oracle_class == "static_reference"
         assert policies["RI-05"].scoreable is False
-        for task_id in ("SE-01", "RV-05", "CQ-02", "CQ-03", "CQ-04", "CQ-05", "RI-05"):
-            assert core.result_eligibility(_record(task_id=task_id), policies) is False
+        assert core.result_eligibility(_record(task_id=task_id), policies) is False
 
 
 class TestEvaluatorRegistry:

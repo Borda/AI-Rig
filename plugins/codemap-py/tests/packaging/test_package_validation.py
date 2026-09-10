@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,23 @@ _MEMBERS: dict[str, tuple[bytes, bool]] = {
     "bin/scan-index": (b"#!/usr/bin/env python3\nprint('index')\n", True),
     "bin/_schema.py": (b"SCAN_VERSION = 11\n", False),
 }
+
+
+def _executable_mode_is_preserved() -> bool:
+    """Return whether this host preserves an executable mode set by ``chmod``."""
+    with tempfile.TemporaryDirectory() as directory:
+        candidate = Path(directory) / "candidate"
+        candidate.write_text("candidate\n", encoding="utf-8")
+        try:
+            candidate.chmod(0o755)
+        except OSError:
+            return False
+        return os.stat(candidate).st_mode & 0o777 == 0o755
+
+
+_skip_executable_mode_unavailable = pytest.mark.skipif(
+    not _executable_mode_is_preserved(), reason="chmod cannot preserve executable mode on this host"
+)
 
 
 def _write_valid_package(package: Path) -> None:
@@ -299,7 +317,7 @@ def test_codex_roster_mismatch_flagged(valid_package: Path) -> None:
 # --- executable-mode drift --------------------------------------------
 
 
-@pytest.mark.skipif(os.name != "posix", reason="executable bit is unreliable off POSIX")
+@_skip_executable_mode_unavailable
 @pytest.mark.packaging
 def test_exec_flag_mismatch_flagged(valid_package: Path) -> None:
     """A data file made executable on disk disagrees with its manifest exec flag."""

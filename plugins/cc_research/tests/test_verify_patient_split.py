@@ -9,13 +9,14 @@ Covers:
 
 from __future__ import annotations
 
+from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
-pd = pytest.importorskip("pandas")
+import verify_patient_split as vps
 
-import verify_patient_split as vps  # noqa: E402  (imported after pandas availability gate)
+_skip_pandas_unavailable = pytest.mark.skipif(find_spec("pandas") is None, reason="requires pandas to read CSV files")
 
 
 # ---------- Pure function: format_verdict ----------
@@ -45,6 +46,7 @@ class TestFormatVerdict:
 # ---------- I/O glue: compute_overlap ----------
 
 
+@_skip_pandas_unavailable
 class TestComputeOverlap:
     """CSV reading and set-intersection contract."""
 
@@ -128,6 +130,7 @@ class TestComputeOverlap:
 class TestMainCLI:
     """End-to-end argv/stdout/exit-code contract."""
 
+    @_skip_pandas_unavailable
     def test_disjoint_splits_exit_zero_prints_clean(
         self,
         tmp_path: Path,
@@ -144,6 +147,7 @@ class TestMainCLI:
         assert captured.out == "No patient overlap\n"
         assert captured.err == ""
 
+    @_skip_pandas_unavailable
     def test_overlap_exits_zero_prints_count(
         self,
         tmp_path: Path,
@@ -172,6 +176,7 @@ class TestMainCLI:
         assert exit_code == 2
         assert "train CSV not found" in captured.err
 
+    @_skip_pandas_unavailable
     def test_missing_column_exits_two(
         self,
         tmp_path: Path,
@@ -187,6 +192,7 @@ class TestMainCLI:
         assert exit_code == 2
         assert "missing required column" in captured.err
 
+    @_skip_pandas_unavailable
     def test_custom_column_via_cli(
         self,
         tmp_path: Path,

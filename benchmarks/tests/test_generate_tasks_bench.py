@@ -94,20 +94,23 @@ class TestTaskContractValidation:
         """Malformed execution metadata fails before any benchmark coordinate runs."""
         assert script_gen_bench._expected_query_contract_errors([task]) == [expected_error]
 
-    def test_every_diff_impact_task_requires_both_direct_query_components(self, script_gen_bench: Any) -> None:
+    @pytest.mark.parametrize("task_id", ("DI-01", "DI-02", "DI-03", "DI-04", "DI-05", "DI-06"))
+    def test_every_diff_impact_task_requires_both_direct_query_components(
+        self, script_gen_bench: Any, task_id: str
+    ) -> None:
         """Diff-impact compliance must prove callers and direct test importers.
 
         A nearby module or a generic symbol search can look useful while failing to establish the requested blast-radius
         evidence.
         """
         tasks = json.loads(script_gen_bench.TASKS_FILE.read_text(encoding="utf-8"))["tasks"]
-        for task in (task for task in tasks if task["type"] == "diff_impact"):
-            assert task["expected_query_policy"] == "all_required"
-            assert {
-                "cmd": "fn-rdeps",
-                "args": [task["primary_fn"], "--exclude-tests"],
-            } in task["expected_queries"]
-            assert {"cmd": "rdeps", "args": [task["primary_module"]]} in task["expected_queries"]
+        task = next(task for task in tasks if task["id"] == task_id)
+        assert task["expected_query_policy"] == "all_required"
+        assert {
+            "cmd": "fn-rdeps",
+            "args": [task["primary_fn"], "--exclude-tests"],
+        } in task["expected_queries"]
+        assert {"cmd": "rdeps", "args": [task["primary_module"]]} in task["expected_queries"]
 
 
 # ===========================================================================

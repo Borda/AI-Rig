@@ -4,6 +4,8 @@ Six development workflows — `plan`, `feature`, `fix`, `refactor`, `debug`, and
 
 The gates narrow the failure surface — they do not replace developer judgment on whether a generated change is correct or production-safe.
 
+Optional Codemap context and index-gate guidance ship with develop, so loading them does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
+
 > Works standalone — `foundry` is not required. Without it, agent dispatches fall back to `general-purpose` with role descriptions; with it, the same workflows can route to named specialists such as `foundry:sw-engineer` and `foundry:qa-specialist`.
 
 ______________________________________________________________________

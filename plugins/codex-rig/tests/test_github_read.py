@@ -30,9 +30,9 @@ def _load_reader() -> ModuleType:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["gh", "issue", "view", "17", "--json", "title"],
-        ["gh", "release", "view", "v1.2.3", "--json", "name"],
-        ["gh", "repo", "view", "Borda/AI-Rig", "--json", "name"],
+        pytest.param(["gh", "issue", "view", "17", "--json", "title"], id="issue-view"),
+        pytest.param(["gh", "release", "view", "v1.2.3", "--json", "name"], id="release-view"),
+        pytest.param(["gh", "repo", "view", "Borda/AI-Rig", "--json", "name"], id="repo-view"),
     ],
 )
 def test_run_gh_read_allows_view_commands(argv: list[str]) -> None:
@@ -52,14 +52,17 @@ def test_run_gh_read_allows_view_commands(argv: list[str]) -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["gh", "auth", "status"],
-        ["gh", "pr", "merge", "17"],
-        ["gh", "pr", "checkout", "--detach", "17"],
-        ["gh", "issue", "view", "17", "--web"],
-        ["gh", "issue", "view", "17", "--web=true"],
-        ["gh", "issue", "view", "17", "-w=true"],
-        ["gh", "api", "/repos/Borda/AI-Rig/issues", "--method", "POST"],
-        ["gh", "api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { issue { id } } }"],
+        pytest.param(["gh", "auth", "status"], id="auth-status"),
+        pytest.param(["gh", "pr", "merge", "17"], id="pr-merge"),
+        pytest.param(["gh", "pr", "checkout", "--detach", "17"], id="pr-checkout"),
+        pytest.param(["gh", "issue", "view", "17", "--web"], id="web-flag"),
+        pytest.param(["gh", "issue", "view", "17", "--web=true"], id="web-assignment"),
+        pytest.param(["gh", "issue", "view", "17", "-w=true"], id="short-web-assignment"),
+        pytest.param(["gh", "api", "/repos/Borda/AI-Rig/issues", "--method", "POST"], id="rest-post"),
+        pytest.param(
+            ["gh", "api", "graphql", "-f", "query=mutation { closeIssue(input: {}) { issue { id } } }"],
+            id="graphql-mutation",
+        ),
     ],
 )
 def test_run_gh_read_rejects_non_read_only_commands(argv: list[str]) -> None:
@@ -101,7 +104,10 @@ def test_default_gh_transport_rejects_oversized_output_without_returning_it(monk
 
 @pytest.mark.parametrize(
     "argv",
-    [["gh", "api", "/repos/Borda/AI-Rig/issues/17"], ["gh", "api", "/repos/Borda/AI-Rig/issues/17", "--method", "GET"]],
+    [
+        pytest.param(["gh", "api", "/repos/Borda/AI-Rig/issues/17"], id="implicit-get"),
+        pytest.param(["gh", "api", "/repos/Borda/AI-Rig/issues/17", "--method", "GET"], id="explicit-get"),
+    ],
 )
 def test_run_gh_read_allows_rest_get_commands(argv: list[str]) -> None:
     """Allow REST GET requests through the shared read boundary."""
@@ -268,10 +274,10 @@ def test_read_with_fallback_rejects_non_github_url() -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["gh", "evil", "view", "17"],
-        ["gh", "auth", "view"],
-        ["gh", "api", "graphql", "-F", "query=@/private/secret"],
-        ["gh", "api", "/repos/Borda/AI-Rig/issues", "-F", "body=@/private/secret"],
+        pytest.param(["gh", "evil", "view", "17"], id="unknown-group"),
+        pytest.param(["gh", "auth", "view"], id="credential-group"),
+        pytest.param(["gh", "api", "graphql", "-F", "query=@/private/secret"], id="graphql-file-field"),
+        pytest.param(["gh", "api", "/repos/Borda/AI-Rig/issues", "-F", "body=@/private/secret"], id="rest-file-field"),
     ],
 )
 def test_run_gh_read_rejects_extensions_and_file_backed_fields(argv: list[str]) -> None:

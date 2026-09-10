@@ -8,18 +8,16 @@ on:
     paths:
       - "plugins/*/README.md"
       - "docs/**"
+      - "overrides/**"
+      - ".github/workflows/docs.yml"
       - "mkdocs.yml"
       - "pyproject.toml"
   workflow_dispatch:
 
-# Least-privilege permissions required for OIDC-based Pages deploy.
-# contents:read  — checkout
-# pages:write    — upload pages artifact
-# id-token:write — request OIDC JWT for trusted deploy (no PAT needed)
+# Build steps read repository and Pages metadata; only deployment requests OIDC.
 permissions:
   contents: read
-  pages: write
-  id-token: write
+  pages: read
 
 # Only one Pages deploy may run at a time.
 # cancel-in-progress:false ensures an in-flight deploy is never killed mid-publish.
@@ -76,6 +74,9 @@ jobs:
 
   deploy:
     needs: build
+    permissions:
+      pages: write
+      id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 5
     # "github-pages" is the reserved environment name for Pages OIDC deploys.

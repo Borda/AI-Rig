@@ -94,9 +94,14 @@ def test_missing_session_uses_invocation_not_bare_cli(tmp_path: Path) -> None:
     assert files[0].name.startswith("cli_")
 
 
-def test_resolve_runtime_allowlist() -> None:
-    for runtime in rl.RUNTIME_ALLOWLIST:
-        assert rl.resolve_runtime(runtime) == (runtime, None)
+@pytest.mark.parametrize("runtime", sorted(rl.RUNTIME_ALLOWLIST))
+def test_resolve_runtime_allowlist(runtime: str) -> None:
+    """Every supported runtime resolves to itself without a diagnostic."""
+    assert rl.resolve_runtime(runtime) == (runtime, None)
+
+
+def test_resolve_runtime_missing_falls_back_to_direct() -> None:
+    """A missing runtime resolves to direct and reports the bounded diagnostic."""
     runtime, diag = rl.resolve_runtime(None)
     assert runtime == "direct"
     assert diag is not None and diag.code == rl.INVALID_RUNTIME

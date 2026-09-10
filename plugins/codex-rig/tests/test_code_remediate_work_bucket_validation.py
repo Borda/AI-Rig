@@ -11,7 +11,7 @@ from types import ModuleType
 
 import pytest
 
-from _platform import SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -566,7 +566,7 @@ def test_completed_parallel_remediation_rejects_unbound_patch_evidence(
         VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="symlink capability unavailable")
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="file symlink capability unavailable")
 @pytest.mark.parametrize(
     ("source_patch_kind", "rollback_patch_kind", "error"),
     [

@@ -21,7 +21,9 @@ dev = [
 test = [
   "pytest",
   "pytest-cov",
+  # "pytest-randomly",
   "pytest-timeout",
+  "pytest-xdist",
   "scipy",
   { include-group = "bench" },
 ]

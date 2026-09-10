@@ -14,9 +14,14 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from _platform import FILE_SYMLINKS_AVAILABLE, POSIX_FILE_MODES_AVAILABLE
 
-WINDOWS_POSIX_SKIP_REASON = "requires POSIX filesystem modes, links, and executable semantics"
-POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason=WINDOWS_POSIX_SKIP_REASON)
+_requires_posix_file_modes = pytest.mark.skipif(
+    not POSIX_FILE_MODES_AVAILABLE, reason="filesystem does not preserve POSIX file modes"
+)
+_requires_file_symlinks = pytest.mark.skipif(
+    not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"
+)
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = PLUGIN_ROOT / "scripts" / "build_package.py"
 
@@ -54,7 +59,7 @@ def _copied_plugin(tmp_path: Path) -> Path:
     return destination
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_generation_is_deterministic_and_current() -> None:
     """Prevent nondeterministic fields or a stale committed package manifest."""
@@ -133,7 +138,7 @@ def test_check_uses_verified_manifest_without_posix_mode_enforcement(
     assert capsys.readouterr().out == "Package manifest is current.\n"
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_manifest_binds_the_pure_role_generator() -> None:
     """Prevent installed managers from importing unbound generator bytes."""
@@ -154,7 +159,7 @@ def test_manifest_binds_the_pure_role_generator() -> None:
     }
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_generation_checks_source_independent_installed_copy(tmp_path: Path) -> None:
     """Prove manifest validation does not require the repository source tree."""
@@ -166,7 +171,7 @@ def test_generation_checks_source_independent_installed_copy(tmp_path: Path) -> 
     assert result.stdout == "Package manifest is current.\n"
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_update_rewrites_stale_manifest(tmp_path: Path) -> None:
     """Prevent the explicit update mode from leaving stale package hashes."""
@@ -184,7 +189,7 @@ def test_update_rewrites_stale_manifest(tmp_path: Path) -> None:
     assert current.returncode == 0, current.stderr
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
 @pytest.mark.packaging
 def test_update_is_idempotent_after_normalizing_stale_manifest(tmp_path: Path) -> None:
     """Prevent platform normalization from causing repeated manifest rewrites."""
@@ -254,7 +259,8 @@ def test_generation_excludes_runtime_report_debris(tmp_path: Path) -> None:
     assert result.stdout == "Package manifest is current.\n"
 
 
-@POSIX_ONLY
+@_requires_posix_file_modes
+@_requires_file_symlinks
 @pytest.mark.packaging
 def test_generation_rejects_symlinked_payload(tmp_path: Path) -> None:
     """Prevent a generated manifest from blessing a payload symlink."""

@@ -161,6 +161,25 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_develop/skills/_shared/foundry--quality-stack.md",
         ],
     },
+    {
+        # Consumer wrappers keep their own flags and fallbacks, while this
+        # provider contract stays identical in every plugin that loads it.
+        # The prefixed copies cannot overwrite the consumer-owned wrapper.
+        "canonical": "plugins/codemap-py/claude-skills/_shared/codemap-context.md",
+        "copies": [
+            "plugins/cc_foundry/skills/_shared/codemap-py--codemap-context.md",
+            "plugins/cc_develop/skills/_shared/codemap-py--codemap-context.md",
+        ],
+    },
+    {
+        # Same isolated-copy rule for the shared missing/stale-index gates.
+        "canonical": "plugins/codemap-py/claude-skills/_shared/codemap-gates.md",
+        "copies": [
+            "plugins/cc_develop/skills/_shared/codemap-py--codemap-gates.md",
+            "plugins/cc_oss/skills/_shared/codemap-py--codemap-gates.md",
+            "plugins/cc_research/skills/_shared/codemap-py--codemap-gates.md",
+        ],
+    },
     # No rules/*.md entries here, deliberately. Cross-cutting standards (python-code.md,
     # python-testing.md, git-commit.md) are single-homed in cc_foundry because rules reach
     # Claude only as symlinks in ~/.claude/rules/, created by foundry:setup — that flat

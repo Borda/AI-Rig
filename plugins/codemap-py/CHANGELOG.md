@@ -2,6 +2,10 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.35.1
+
+- Make shared guidance independently installable through synchronized consumer-owned copies, and anchor the reference context batch's default index to the repository root.
+
 ## 0.35.0
 
 - Add `query central --among <modules>`, which ranks only the named modules by their own in-degree instead of the whole repository. It answers the question left over after an importer query — order or threshold *these* modules — which previously had no query behind it: callers either issued one `rdeps` call per candidate and counted the returned lists, or filtered a repository-wide `central` ranking against their candidate set by hand. Requested modules the ranking does not cover are returned as `unmatched`, and `candidate_count` states the scoped set's size, so neither a typo nor an explicit `--top` can drop a candidate silently. Without `--top`, a scoped ranking returns every candidate rather than the repository-wide default of ten.

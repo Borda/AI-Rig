@@ -377,21 +377,22 @@ def test_untrusted_targets_fail_closed(kind: str) -> None:
         _build(module, action="install", roster=roster, state=state, targets=targets)
 
 
-def test_partial_extra_and_reordered_rosters_fail_closed() -> None:
+@pytest.mark.parametrize("variant", ["partial", "extra", "reordered"])
+def test_partial_extra_and_reordered_rosters_fail_closed(variant: str) -> None:
     """Reject any deviation from the exact generator-owned role order."""
     module = _load_module(PLAN_PATH, "codex_rig_plan_roster_refusal")
     lifecycle = _load_module(LIFECYCLE_PATH, "_agent_shim_lifecycle")
     roster = _generated_roster()
     exact = _absent_targets(lifecycle)
-    variants = [
-        dict(list(exact.items())[:-1]),
-        {**exact, "codex-rig-extra.toml": lifecycle.TargetObservation("absent")},
-        dict(reversed(tuple(exact.items()))),
-    ]
+    if variant == "partial":
+        targets = dict(list(exact.items())[:-1])
+    elif variant == "extra":
+        targets = {**exact, "codex-rig-extra.toml": lifecycle.TargetObservation("absent")}
+    else:
+        targets = dict(reversed(tuple(exact.items())))
 
-    for targets in variants:
-        with pytest.raises(module.CandidateError):
-            _build(module, action="install", roster=roster, state=None, targets=targets)
+    with pytest.raises(module.CandidateError):
+        _build(module, action="install", roster=roster, state=None, targets=targets)
 
 
 def test_unhashable_candidate_inputs_fail_with_stable_error() -> None:

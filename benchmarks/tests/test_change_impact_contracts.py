@@ -51,24 +51,29 @@ def test_fixture_suite_has_five_unlabelled_prediction_tasks(tasks: list[dict[str
     assert all("BEGIN_CHANGE_IMPACT_JSON" in contracts.materialize_change_impact_prompt(task) for task in tasks)
 
 
-def test_oracle_has_four_balanced_sets_and_distinct_reason_codes(oracles: dict[str, Any]) -> None:
+@pytest.mark.parametrize(
+    ("task_id", "expected_reason"),
+    [
+        pytest.param("CI-01", "positional-after-keyword-only", id="positional-after-keyword-only-first"),
+        pytest.param("CI-02", "renamed-keyword", id="renamed-keyword-first"),
+        pytest.param("CI-03", "positional-after-keyword-only", id="positional-after-keyword-only-second"),
+        pytest.param("CI-04", "missing-required-argument", id="missing-required-argument"),
+        pytest.param("CI-05", "renamed-keyword", id="renamed-keyword-second"),
+    ],
+)
+def test_oracle_has_four_balanced_sets_and_distinct_reason_codes(
+    oracles: dict[str, Any], task_id: str, expected_reason: str
+) -> None:
     """Each task must penalize both false positives and false negatives with exact reasons."""
-    expected_reasons = {
-        "CI-01": "positional-after-keyword-only",
-        "CI-02": "renamed-keyword",
-        "CI-03": "positional-after-keyword-only",
-        "CI-04": "missing-required-argument",
-        "CI-05": "renamed-keyword",
-    }
-    for task_id, oracle in oracles.items():
-        for field in (
-            "must_update_callsites",
-            "compatible_callsites",
-            "must_update_tests",
-            "compatible_tests",
-        ):
-            assert len(oracle.expected[field]) == 2
-        assert expected_reasons[task_id] in oracle.expected["reasons"].values()
+    oracle = oracles[task_id]
+    for field in (
+        "must_update_callsites",
+        "compatible_callsites",
+        "must_update_tests",
+        "compatible_tests",
+    ):
+        assert len(oracle.expected[field]) == 2
+    assert expected_reason in oracle.expected["reasons"].values()
 
 
 def test_aliases_are_credited_and_same_name_decoy_is_excluded(oracles: dict[str, Any]) -> None:

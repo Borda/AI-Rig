@@ -15,6 +15,9 @@ from typing import Any
 import pytest
 
 
+GENERIC_TITLES = ("bug", "question", "help", "feature request", "feature", "issue", "error")
+
+
 # ===========================================================================
 # Fixtures
 # ===========================================================================
@@ -131,15 +134,15 @@ class TestDifficultyFor:
         """
         assert script_gen_real_issues.difficulty_for(0) == "simple"
 
-    def test_difficulty_for_returns_string(self, script_gen_real_issues: Any) -> None:
+    @pytest.mark.parametrize("count", (1, 2, 4))
+    def test_difficulty_for_returns_string(self, script_gen_real_issues: Any, count: int) -> None:
         """Verify return type is always str for representative inputs.
 
         Scenario: caller downstream writes the value into a JSON dict without
         type-checking; must be a plain str, not e.g. an Enum.
         """
-        for count in (1, 2, 4):
-            result = script_gen_real_issues.difficulty_for(count)
-            assert isinstance(result, str), f"expected str for count={count}, got {type(result)}"
+        result = script_gen_real_issues.difficulty_for(count)
+        assert isinstance(result, str), f"expected str for count={count}, got {type(result)}"
 
 
 # ===========================================================================
@@ -427,17 +430,18 @@ class TestIsMeaningfulIssue:
         """
         assert script_gen_real_issues.is_meaningful_issue("  bug  ", "Detailed body.") is False
 
-    def test_is_meaningful_issue_generic_title_exhaustive(self, script_gen_real_issues: Any) -> None:
+    @pytest.mark.parametrize("generic", GENERIC_TITLES)
+    def test_is_meaningful_issue_generic_title_exhaustive(self, script_gen_real_issues: Any, generic: str) -> None:
         """Verify every entry in GENERIC_TITLES is rejected with a valid body.
 
-        Scenario: GENERIC_TITLES may gain new entries; this test always covers
-        the full current set without manual enumeration.
+        Scenario: an added generic title must make the explicit parameter set
+        fail closed until its rejection case is added.
         """
         body = "Non-trivial body that would normally qualify."
-        for generic in script_gen_real_issues.GENERIC_TITLES:
-            assert script_gen_real_issues.is_meaningful_issue(generic, body) is False, (
-                f"Generic title {generic!r} should be rejected"
-            )
+        assert set(GENERIC_TITLES) == script_gen_real_issues.GENERIC_TITLES
+        assert script_gen_real_issues.is_meaningful_issue(generic, body) is False, (
+            f"Generic title {generic!r} should be rejected"
+        )
 
 
 # ===========================================================================

@@ -174,7 +174,16 @@ def test_review_handoff_rejects_a_new_candidate_missing_the_canonical_marker() -
         VALIDATOR._validate_code_review_final_handoff(result, handoff)
 
 
-def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "invalid_action",
+    [
+        "Repair the checkout and retry. Resume only after a fresh collector run produces and validates the PR source bundle.",
+        "Rerun CI. Resume only after a fresh collector run produces and validates the PR source bundle.",
+    ],
+)
+def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
+    tmp_path: Path, invalid_action: str
+) -> None:
     """Reject a generic checkout-repair message that omits the observed collection failure."""
     code = "command-failed:local-pr-checkout"
     (tmp_path / "pr-error.txt").write_text(code + "\n", encoding="utf-8")
@@ -249,14 +258,10 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(t
 
     review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
 
-    for invalid_action in (
-        "Repair the checkout and retry. Resume only after a fresh collector run produces and validates the PR source bundle.",
-        "Rerun CI. Resume only after a fresh collector run produces and validates the PR source bundle.",
-    ):
-        handoff["remaining"][0]["next_action"] = invalid_action
-        (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
-        with pytest.raises(SystemExit, match="unavailable-review-final-handoff-recovery-mismatch"):
-            review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
+    handoff["remaining"][0]["next_action"] = invalid_action
+    (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
+    with pytest.raises(SystemExit, match="unavailable-review-final-handoff-recovery-mismatch"):
+        review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
 
     handoff["remaining"][0]["next_action"] = (
         "Code-review must inspect the classified `local-pr-checkout` collector failure and local checkout state before "

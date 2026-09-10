@@ -11,10 +11,11 @@ from pathlib import Path
 
 import pytest
 
+from _platform import POSIX_FILE_MODES_AVAILABLE
 
 _posix_doctor_only = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="POSIX filesystem permission diagnostic",
+    not POSIX_FILE_MODES_AVAILABLE,
+    reason="filesystem does not preserve POSIX permission modes",
 )
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -114,7 +115,7 @@ def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path) -> N
 @_posix_doctor_only
 def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path) -> None:
     """Explain the first failed invariant instead of repeating only blocked."""
-    home = tmp_path / "home"
+    home = tmp_path / ("home-" + "x" * 180)
     home.mkdir(mode=0o700)
     agents = home / "agents"
     agents.mkdir(mode=0o700)

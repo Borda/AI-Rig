@@ -4,15 +4,25 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 from pathlib import Path
 import sys
 
 import pytest
 
+from _launcher_capability import _pinned_frozen_checkout_is_available
+
 SUITE_PATH = Path(__file__).resolve().parents[1] / "suites" / "tasks-fix-multi.json"
-FROZEN_REPO = Path("/private/tmp/codemap-provider-parity-pl-2.6.5")
 BENCHMARKS = Path(__file__).resolve().parents[1]
+FROZEN_REPO = Path(os.environ.get("PL_REPO_PATH", str(BENCHMARKS.parent / ".sandbox" / "pytorch-lightning")))
+FROZEN_REPO_COMMIT = "be98784a1a03581b7051a355ae1084fd352d7cea"
 sys.path.insert(0, str(BENCHMARKS))
+
+
+_requires_frozen_repo = pytest.mark.skipif(
+    not _pinned_frozen_checkout_is_available(FROZEN_REPO, FROZEN_REPO_COMMIT),
+    reason=f"pinned frozen benchmark checkout is unavailable at {FROZEN_REPO}",
+)
 
 
 def _runner() -> object:
@@ -162,7 +172,7 @@ def _patch_for_sources(before: dict[str, str], after: dict[str, str]) -> str:
     )
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_complete_multi_file_candidate_is_applied_scored_and_cleaned() -> None:
     """A known complete patch proves apply, caller completeness, and rollback evidence together."""
     contract = _contract()
@@ -180,7 +190,7 @@ def test_complete_multi_file_candidate_is_applied_scored_and_cleaned() -> None:
     assert result.cleanup_verified is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_incomplete_early_stopping_patch_is_scored_false_and_cleaned() -> None:
     """FM-01 lifecycle scoring rejects a patch with one stale internal caller."""
     contract = _contract()
@@ -198,7 +208,7 @@ def test_incomplete_early_stopping_patch_is_scored_false_and_cleaned() -> None:
     assert result.cleanup_verified is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_complete_strategy_environment_patch_is_applied_scored_and_cleaned() -> None:
     """A six-file FM-03 patch proves lifecycle scoring requires every cooperative override."""
     contract = _contract_for("FM-03")
@@ -223,7 +233,7 @@ def test_complete_strategy_environment_patch_is_applied_scored_and_cleaned() -> 
     assert result.cleanup_verified is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_incomplete_strategy_environment_patch_is_scored_false_and_cleaned() -> None:
     """FM-03 lifecycle scoring rejects one stale cooperative override."""
     contract = _contract_for("FM-03")
@@ -252,7 +262,7 @@ def test_incomplete_strategy_environment_patch_is_scored_false_and_cleaned() -> 
     assert result.cleanup_verified is True
 
 
-@pytest.mark.skipif(not FROZEN_REPO.is_dir(), reason="frozen benchmark repository is unavailable")
+@_requires_frozen_repo
 def test_complete_model_checkpoint_patch_is_applied_scored_and_cleaned() -> None:
     """A complete FM-02 patch proves four exact labels reach the pre-save log boundary."""
     contract = _contract_for("FM-02")

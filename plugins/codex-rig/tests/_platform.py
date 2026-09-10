@@ -5,31 +5,149 @@ from __future__ import annotations
 import ctypes
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
 
 
-def _symlinks_available() -> bool:
-    """Return whether the current host permits creating a file symlink.
+def _symlinks_available(*, target_is_directory: bool, root: Path | None = None) -> bool:
+    """Return whether the current host permits one requested symlink type.
 
-    Windows can, given Developer Mode or an elevated session, and the hosted CI runner does — so the question concerns
-    host capability, not platform identity. Asking it by attempting the operation keeps the answer honest on both sides
-    instead of writing Windows off wholesale.
+    A caller may supply a disposable root to exercise the unavailable result without altering host APIs. File and
+    directory targets remain distinct because Windows can grant one capability without granting the other.
     """
+    if root is None:
+        with tempfile.TemporaryDirectory() as scratch:
+            return _symlinks_available(target_is_directory=target_is_directory, root=Path(scratch))
+    source = root / "source"
+    target = root / "target"
+    if target_is_directory:
+        source.mkdir()
+    else:
+        source.write_text("fixture\n", encoding="utf-8")
+    try:
+        target.symlink_to(source, target_is_directory=target_is_directory)
+    except (OSError, NotImplementedError):
+        return False
+    return target.is_symlink()
+
+
+FILE_SYMLINKS_AVAILABLE = _symlinks_available(target_is_directory=False)
+DIRECTORY_SYMLINKS_AVAILABLE = _symlinks_available(target_is_directory=True)
+
+
+def mode_is_retainable(mode: int) -> bool:
+    """Return whether the temporary filesystem preserves one requested directory mode."""
+    with tempfile.TemporaryDirectory() as scratch:
+        path = Path(scratch) / "mode-probe"
+        path.mkdir(mode=0o700)
+        try:
+            path.chmod(mode)
+        except OSError:
+            return False
+        return stat.S_IMODE(path.stat().st_mode) == mode
+
+
+def _posix_file_modes_available() -> bool:
+    """Return whether regular and directory POSIX permission modes round-trip exactly."""
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        directory = root / "directory"
+        regular_file = root / "file"
+        directory.mkdir(mode=0o700)
+        regular_file.write_bytes(b"fixture\n")
+        try:
+            directory.chmod(0o755)
+            regular_file.chmod(0o600)
+        except OSError:
+            return False
+        return stat.S_IMODE(directory.stat().st_mode) == 0o755 and stat.S_IMODE(regular_file.stat().st_mode) == 0o600
+
+
+POSIX_FILE_MODES_AVAILABLE = _posix_file_modes_available()
+
+
+def _posix_descriptor_primitives_available() -> bool:
+    """Return whether descriptor-relative no-follow directory reads are available."""
+    required = ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")
+    if any(not hasattr(os, name) for name in required):
+        return False
+    with tempfile.TemporaryDirectory() as scratch:
+        root = Path(scratch)
+        child = root / "child"
+        child.mkdir()
+        try:
+            root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        except OSError:
+            return False
+        try:
+            child_fd = os.open(
+                child.name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=root_fd,
+            )
+        except OSError:
+            return False
+        finally:
+            os.close(root_fd)
+        try:
+            return stat.S_ISDIR(os.fstat(child_fd).st_mode)
+        finally:
+            os.close(child_fd)
+
+
+POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE = _posix_descriptor_primitives_available()
+
+
+def _posix_observer_primitives_available() -> bool:
+    """Return whether the observer's ownership and nonblocking descriptor contract is supported."""
+    return (
+        POSIX_DESCRIPTOR_PRIMITIVES_AVAILABLE
+        and hasattr(os, "geteuid")
+        and hasattr(os, "O_NONBLOCK")
+        and os.geteuid() >= 0
+    )
+
+
+POSIX_OBSERVER_PRIMITIVES_AVAILABLE = _posix_observer_primitives_available()
+
+
+def _hard_links_available() -> bool:
+    """Return whether the temporary filesystem permits hard links between regular files."""
+    if not hasattr(os, "link"):
+        return False
     with tempfile.TemporaryDirectory() as scratch:
         root = Path(scratch)
         source = root / "source"
         target = root / "target"
-        source.write_text("fixture\n", encoding="utf-8")
+        source.write_bytes(b"fixture\n")
         try:
-            target.symlink_to(source)
-        except (OSError, NotImplementedError):
+            os.link(source, target)
+        except OSError:
             return False
-        return target.is_symlink()
+        return source.stat().st_ino == target.stat().st_ino and source.stat().st_nlink == 2
 
 
-SYMLINKS_AVAILABLE = _symlinks_available()
+HARD_LINKS_AVAILABLE = _hard_links_available()
+
+
+def _posix_executable_scripts_available() -> bool:
+    """Return whether a chmod-marked POSIX shell script can be executed directly."""
+    if shutil.which("sh") is None:
+        return False
+    with tempfile.TemporaryDirectory() as scratch:
+        script = Path(scratch) / "executable-probe"
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        try:
+            script.chmod(0o700)
+            completed = subprocess.run([str(script)], check=False, capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return completed.returncode == 0
+
+
+POSIX_EXECUTABLE_SCRIPTS_AVAILABLE = _posix_executable_scripts_available()
 
 
 def _bash_candidates() -> list[str]:

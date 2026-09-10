@@ -12,6 +12,10 @@
       "kind": "block",
       "src": "skills/session/SKILL.md:93"
     },
+    "00762d027e2ec9f88fd234c6155b1bbd739a5692b51cd71f5559bfb5d0995e1f": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-context.md:7"
+    },
     "007de7990a6acc070dc2036cbc69b157cda18c0a7a6de973f12f035fc399f4e6": {
       "kind": "command",
       "src": "skills/calibrate/templates/routing-pipeline-prompt.md:16"
@@ -412,6 +416,10 @@
       "kind": "block",
       "src": "skills/distill/modes/prune.md:13"
     },
+    "11e1383965a2544adfd01cb89a3038bf9c5261f54585e8c9511996ad02a78bd4": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "11f98a719893cf238fcbcb79900cd03c550b9ea13fbbca937e08d8b9d0670c82": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:127"
@@ -451,6 +459,10 @@
     "136605a601b8226b2bf4068ad78b30beb46cb0a8efee607180433d7b2113ff87": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:187"
+    },
+    "136e51b27a34d46710d3644d0450a908d5bb005980b1a0afeb771752ee603979": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "13c45af2bfd86c234176358617e5c59c3fed1bb58c4fa5e29e0720df940e027c": {
       "kind": "command",
@@ -568,9 +580,9 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:542"
     },
-    "1926355ae8afd1aed9d3b8d583216f7d76922297fddd3fbe30d8f2b8e2ec7b92": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-context.md:7"
+    "18e9bf795843f78402264aa9df3641b177b24669493f633dc1fa1d4660386880": {
+      "kind": "block",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "1954312be7da9733342403deab76d4319a565d8c81d3fd0904f880b503d4007d": {
       "kind": "command",
@@ -679,6 +691,10 @@
     "1de2f50a4c3182794132a23bc5af7cf59d4a88ead5c03bf9e4cd3b5377ac0c39": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:11"
+    },
+    "1e1f7d29831880443c97ad61e20c873cc9f68d24b1e74fd23cd89a88b40e5126": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "1ea782db4ac50adc0fe755e6728637eb81ad1c8b16525820c5da1f53c1251212": {
       "kind": "command",
@@ -886,7 +902,7 @@
     },
     "28d86778615f6af47bb1bc4f40face756749768e5111f114cfa234a5060c25af": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-skills.md:579"
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "28d8a3f04a2a07c097291da36622a23ab3775a78c8ca4f0d2857427353cb599e": {
       "kind": "command",
@@ -955,10 +971,6 @@
     "2b1620afb8b9c40abf5c762e32c16b81ed12aa25a20187aec9b28e642cfe3a6b": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:531"
-    },
-    "2b2cb1587f5f0453f1cea3ca09033bca23f128834545fd53726e4aae6b2e18ba": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-context.md:7"
     },
     "2b4c6bfc23321863214722863065a7575a51a0841243f1e3fac881af642fd214": {
       "kind": "command",
@@ -1123,6 +1135,10 @@
     "346021b8a9895c29cc2987eeb181576589825403939ad3c998835523f1291fe4": {
       "kind": "command",
       "src": "skills/manage/SKILL.md:521"
+    },
+    "357ea775052a190ba374c9c043cea2c74c43e52896665f69c5627d916c8e77fd": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "3586297311b145e14395eeb98519c25726382a103a39a56090e41816c26c9959": {
       "kind": "command",
@@ -1319,6 +1335,10 @@
     "3cd0e0c0aa7d3ca16232aae576e569c074207f14de7cbd9749a0fb65e1141cb8": {
       "kind": "command",
       "src": "skills/audit/templates/checks-install.md:98"
+    },
+    "3ce33ddac2c1fa0531b57edb33456d87ba49218f2a0c92f3f097e9e25e6e9252": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-context.md:7"
     },
     "3d0a91608e49cfcdcaf2afa8bf01b5c211707687984b3ce6e2404d7555d7cb5a": {
       "kind": "command",
@@ -1608,6 +1628,10 @@
       "kind": "block",
       "src": "skills/audit/modes/fix.md:144"
     },
+    "4c05386bb1a7c126d19c7f3d04154012808193643c6868c708208083b78fcf82": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "4c40c70fe0024ac2bf8016477af56e7606dfe55d12f6bea28eaeb236614efad6": {
       "kind": "command",
       "src": "skills/_shared/quality-stack.md:11"
@@ -1747,6 +1771,10 @@
     "52a34a97d7251b4e9b03cdcc471f68e4353815695ba1ac5662f96ba2049185e7": {
       "kind": "command",
       "src": "skills/audit/templates/checks-security.md:69"
+    },
+    "52b18cbcfca039c9c1dbfe508e9257f39e2b9f00b996fc0a58ab908fbae84049": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "52c48f0f2f447d8b40b2fa99f76bf0619c2ad876f96a0ba89e0de128783b6529": {
       "kind": "block",
@@ -1936,6 +1964,10 @@
       "kind": "command",
       "src": "skills/calibrate/SKILL.md:169"
     },
+    "5a3c12271c4aa785a492cff17052511c52e6abdff9b2789ed77421023133510d": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "5a683775e5b70bed2156577c3b46de58e928dd0167415081060873083cfd2c1a": {
       "kind": "command",
       "src": "skills/distill/SKILL.md:66"
@@ -1951,10 +1983,6 @@
     "5b06c2d5d93d829469374d368120b5cc7def46d12b344a4be536fafbefa44da0": {
       "kind": "command",
       "src": "skills/distill/modes/memory.md:13"
-    },
-    "5b81b6482ffce92b0be5761911e6f20d789322b3538b5d19e8f465fd71f20ba9": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-context.md:7"
     },
     "5b8720b31b96e52442ea3c47a1a8fc605fc7f59975ef2818076837b9418cba84": {
       "kind": "command",
@@ -2044,10 +2072,6 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:59"
     },
-    "5e972da9051eda00dfe5df5bb1ea662c7dc36f4f2989543ea7c1d4bd99e35bd4": {
-      "kind": "block",
-      "src": "skills/_shared/codemap-context.md:7"
-    },
     "5eabef76963df94477c68b66c6746330780dd2b7fc4c48c427b623401cb60f61": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:53"
@@ -2059,6 +2083,10 @@
     "5ef66bdc7e0121c4a11d6dafaf355ff5b8c4c5624e3790e6601fbb1f5863d71d": {
       "kind": "command",
       "src": "skills/calibrate/modes/rules.md:45"
+    },
+    "5efdcc0efb98a24def631aebe81b07ecb1ec0a7d03ccc23739af4e7960f980da": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "5f0fee6740ebe8fba63617a20101ed9da05eaa49b81053698afe2eede2c8f0a5": {
       "kind": "command",
@@ -2200,6 +2228,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:542"
     },
+    "648b20df8bcd33d49f4518f43380679a4f8e9978e2ee8157708bade8776ba191": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "64ab676cac50f67d4b7f9546d17166d5f26fd41758c27d6ac51c47d148f0bed5": {
       "kind": "command",
       "src": "skills/calibrate/templates/routing-pipeline-prompt.md:16"
@@ -2210,7 +2242,7 @@
     },
     "65219f2364d658fcff1947dbdcab1c8dae4b8f0fe2c4f2dccdb0b4ac182c2970": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-install.md:98"
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "655a2d954e7eadad6791ac26d236bdeefdaacfd7368c536b32052eb14be93a52": {
       "kind": "command",
@@ -2316,6 +2348,10 @@
       "kind": "command",
       "src": "skills/distill/modes/memory.md:13"
     },
+    "689c65afe4ef836de2194cab5c1b64c5d701b44ce9828da153ad98c6c9740924": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "68e1908274101f9e23a8175a903ddc1487a49c23aad666f5ec3ad60c40d96039": {
       "kind": "block",
       "src": "skills/manage/SKILL.md:658"
@@ -2347,6 +2383,10 @@
     "6aa450b4ccebd170d448afec8905be291d5d85d551c79ae3d98059779c97dd6e": {
       "kind": "command",
       "src": "skills/brainstorm/SKILL.md:352"
+    },
+    "6ab2669a13310c789ac0cf285b13a598b2a0d0b9ae7d6700818202eeb9acb064": {
+      "kind": "block",
+      "src": "skills/_shared/codemap-py--codemap-context.md:111"
     },
     "6ad6a587f81964493841956ef0522f3d8c42b3b377b3ae3337dc15b98c3458ac": {
       "kind": "block",
@@ -2448,6 +2488,10 @@
       "kind": "block",
       "src": "skills/distill/SKILL.md:226"
     },
+    "6f5d06ea5c7d1fb14bc8a8467f6923cb78919f468d78a6bcde9b114a3b776c30": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "6f777df5fdb88a37f57fe19136e566fa48a094316fa3ef017249bd109a305fd6": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:693"
@@ -2468,9 +2512,17 @@
       "kind": "command",
       "src": "agents/doc-scribe.md:180"
     },
+    "70760f41ac3aeace04ca86c63444197c379e1ac3e58601e193c5919ea4948126": {
+      "kind": "block",
+      "src": "skills/_shared/codemap-context.md:7"
+    },
     "708a35b8d8ff2948cab4e822229bfc914f29cbf810396600411c3f15f8960769": {
       "kind": "command",
       "src": "skills/distill/modes/memory.md:13"
+    },
+    "70e25bbd30a5ee84f40a1d17bf57ac9b468dbc02e4e6de5cd9d3f4709f46714d": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "7117eaf55f49ee595f10688112e2bec406dcb3e3b675bb702701d1cc203af84b": {
       "kind": "command",
@@ -2495,6 +2547,10 @@
     "7224028dba7fc1432392dcc4ec7c9f73fbc2e35e0b2efa67f819e5f7f2ce71a1": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:59"
+    },
+    "72341963c3b02a7deccbd0384cf7c661b6c8a03491131a75f004b42d9da11640": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-context.md:7"
     },
     "728b9b775fa6956a82cca3824897a7241f4a53f2ade40815fd404d7b146bdfad": {
       "kind": "command",
@@ -2599,6 +2655,10 @@
     "7785e6fa89fe5b5fa5bdd19267a7a1ee44f92e30b519cd6b6069357fd1770f05": {
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:391"
+    },
+    "77a17cc9e5d65cdf6e2b4dab593eb9fc5c7c5c32adf21ab6d7423627f1521483": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "77a4e3aa504197a1fbb92f8c9ffdcee2856fdfeed4c893bd3d338492fdb108fb": {
       "kind": "command",
@@ -2748,6 +2808,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:669"
     },
+    "7f0c72106ce26222f3d39269e3fd7a5ecd61662a85a962d8e94336da1d6abc6a": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "7f79325d6b72a65b01e527daedcc74bb526399b2efd968b37decc7aad5d4557e": {
       "kind": "command",
       "src": "skills/audit/templates/checks-install.md:98"
@@ -2779,6 +2843,10 @@
     "803c9e29fcc59f3a8ae3678b0a834b3ff6145df4fd112df6fb6e2ed6bb24de02": {
       "kind": "command",
       "src": "skills/brainstorm/SKILL.md:54"
+    },
+    "808e059a7df12f9b9aa2e7094177ae70edba0777495f6aa7ad93a936053a98ed": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "80aa700d6e5dd29b2213c5cc6a803759fbd42e34e5d08ba813a7d61fac91740b": {
       "kind": "command",
@@ -2843,6 +2911,10 @@
     "841cd252c8963b95943088f1ee8ee89d00c873e8bde6af5718f32b0c6d30eebc": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:748"
+    },
+    "8422063615c84968853e3cb50ecddb2e9ef7ac9a759b0031b60b786d5069779e": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "8429d982575081ee55acb60d848b8949529a9a12b912bb7c2c61ec3be61234f2": {
       "kind": "command",
@@ -3348,6 +3420,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-install.md:39"
     },
+    "98cc4ab92cd064325258abc43d3f583fc022e8c1fd92daaac8ab36cb45f3f37c": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "98dbd71a63d315f252ebd8f4ae0eb9fe67333b76b51999622a2fdbeaf14e4c10": {
       "kind": "command",
       "src": "skills/distill/modes/executables.md:9"
@@ -3419,6 +3495,10 @@
     "9bd77e74e907ae5afd8fa266caa863012f992e0c7a45e27ff583a610c9603d82": {
       "kind": "command",
       "src": "skills/calibrate/SKILL.md:274"
+    },
+    "9c5bb326fa34fb8742692c02ac652a49f62baf30f202ce96207c154ca34d52a8": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "9c7400a6a83f80c087e45354a03723cb4a0e3183608e76766bd29a271003f689": {
       "kind": "command",
@@ -3607,6 +3687,10 @@
     "a46c9da21db3bd97fe04ce6c127e2c0b9f8e8d7edb6c823798b24917f3a29f5c": {
       "kind": "command",
       "src": "agents/perf-optimizer.md:73"
+    },
+    "a47cd91c93b50ebb2c4689cc0211971966760e8105e8ae1c5e9653241f7908f2": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "a4ad59429ce4db8484beb1fcabd38acdcdd4b8f943a42fd1329d9744861d0460": {
       "kind": "command",
@@ -3880,6 +3964,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-install.md:39"
     },
+    "aec5c9a6600e70e973459833aa6ede59022fe92c5cc3f4afa0feff40ba1d2c94": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "aecebf04e1a1b948531e075c88374d612db5257270564c002121a1f44c4889e1": {
       "kind": "block",
       "src": "skills/audit/templates/checks-skills.md:805"
@@ -3995,6 +4083,10 @@
     "b303be532fedc5be43d4467bf7224a26972bf9ebeca72e9efa6c22d986209968": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:68"
+    },
+    "b32f2a8628f250e4a02c2448a2292cfc984eab335bfe18a6279715ad9f4d7983": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "b376ee6b4cc1922f214922074854721ff20604350e06670e4e041637286e51c6": {
       "kind": "block",
@@ -4164,9 +4256,17 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-agents.md:43"
     },
+    "b9facda17d094c97882fa2082ee94c9787c5bdf6a2e1a6d36eabe8081c5b3fd3": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-context.md:7"
+    },
     "ba79556a4ee4806d38eba699ab6945596e1c6c65c3f35f15b7f8317f8bae20c6": {
       "kind": "block",
       "src": "skills/audit/templates/checks-skills.md:748"
+    },
+    "bacb38a300dd5dc3bca1bce5d085cfc8a76b6e34975a03c4a6e83abeb5cb54ca": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "bb46b5fd1b404eae4c7a16f8b2bad1dc7bdd5b899506297aed7bcd1208efc8ae": {
       "kind": "command",
@@ -4260,6 +4360,10 @@
       "kind": "command",
       "src": "skills/audit/modes/efficiency.md:60"
     },
+    "bec5c12142fe161f28afc60af48bc1e85953ee869a8c40410c8e7c5dca6c76d7": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:111"
+    },
     "bef9cdbc073eab17c64244b783681684a78369a9951d0b17e618b63cd19c24b1": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:777"
@@ -4276,6 +4380,14 @@
       "kind": "command",
       "src": "skills/investigate/SKILL.md:200"
     },
+    "bfd0dcf26c8e59a0df97a47303e83a982490db948b5b35deb8288a3c0b1aee6d": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
+    "bfd204cc86128e8e4af5057b538415eb99dd5586af3fbde14fdfc720cb5f2fa6": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "c0092557fbd805450e2a1bef450875dd2cd0cf1f4df6705387681dbb2daca3ff": {
       "kind": "command",
       "src": "skills/distill/modes/memory.md:159"
@@ -4283,6 +4395,10 @@
     "c0551417e2813e5f980edea3de40f612f71f4a89326a3090fd4d3e1d2eedca57": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:505"
+    },
+    "c08dcd88c7f5aab2a33f3e986efb11ac658fe9ff41427040571266c32d2541f4": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "c0c98a4f12cefe3bf439f22344b1eedf78153b3790fe7f24bb1cade355fccf38": {
       "kind": "command",
@@ -4540,6 +4656,10 @@
       "kind": "command",
       "src": "agents/linting-expert.md:127"
     },
+    "cd6410ccbe9b9bcf014daea89a3fed845f7eea8de7653ae9119fae20d0e48b32": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "cda00cc3240de83e3557753b94e4f9ad58ff701fa1e961b4c196cc2f58bdeb41": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:127"
@@ -4696,6 +4816,10 @@
       "kind": "block",
       "src": "skills/manage/SKILL.md:108"
     },
+    "d4d90bd4c09832410e174c0fcefc834510d66b935c0723c1afad1738ad9383b2": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "d4f8251af227f8a2fba2c97cfd84f8f91f83a54865534cea0ca15e403b6d933f": {
       "kind": "block",
       "src": "skills/_shared/quality-stack.md:184"
@@ -4731,6 +4855,10 @@
     "d6cd9e244d6ce4d3a043824b1b4ca4a5f3cb6201297e0da695d0987e7f53f01c": {
       "kind": "command",
       "src": "skills/profile/SKILL.md:46"
+    },
+    "d725d5ac2cc3c8ed73f3e86e09485797740e5a219e8aa6eb81cc969d6bb84df1": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "d7744d6cc2871b589770e8aef32f0bec7e3e94bc0af4bc926c19a40c903a61e2": {
       "kind": "command",
@@ -4779,6 +4907,10 @@
     "d9df1a4a43360cf3a74ef92589373b614fcd44e6b8ac975ea36837e3745f6fdc": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:100"
+    },
+    "da4ffa8212b23534d72f34a756c64b5469719db34306535e56cc0432c36451b5": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "da892c88c8435788696d8971350c399154be6569c30b55fc845c8e56c85c183a": {
       "kind": "block",
@@ -4912,6 +5044,10 @@
       "kind": "block",
       "src": "skills/_shared/bin-authoring-guide.md:239"
     },
+    "e22c1de34de83d9d3f9a2a083b2343cedb4b925b6a8cd7b2cea3458e6e694b41": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "e23dd88467c0c380ca83899f64eefaf5f082f0d3da12e0e86d05661dd10f2567": {
       "kind": "block",
       "src": "skills/distill/SKILL.md:66"
@@ -4951,6 +5087,10 @@
     "e3770ec4914544edcbe3cb6c57566a945b4c06e14e6cd5ddb1d17eb9210cca45": {
       "kind": "block",
       "src": "skills/calibrate/SKILL.md:251"
+    },
+    "e3b2bbc4130bc08041697c40f10e98b0b682611d6e7c36e8a723185d5e497cfa": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "e450abd4aafc551371a9ef0b6bb0a76c6db9afb01204a32ec07c5324e2b708ae": {
       "kind": "command",
@@ -5027,6 +5167,10 @@
     "e749d9a4f767a7c12449aeda8a132f0885d8de3d15362b7cd5401e099974ead0": {
       "kind": "block",
       "src": "skills/distill/SKILL.md:102"
+    },
+    "e75c208173ae18b157cb88b751fd6a6839090916fbcbd9693ec01cf16b644d18": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "e7a7607e2a7334abfcdf0f7d66dc65c8727b8403503a70959046a950469d9e9f": {
       "kind": "command",
@@ -5416,6 +5560,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:380"
     },
+    "f9c599750cf09b44d07f106cc9ddd931b232510b52a40445c3bbac776953ac8c": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "fa3be802d3f82dd8cd8cb8761b82a147d91ee88dfda70c04890bb823a084133d": {
       "kind": "command",
       "src": "skills/audit/templates/checks-setup.md:27"
@@ -5464,6 +5612,10 @@
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:11"
     },
+    "fcc839ebb5509ebab1033e8c6a559e04cb7421b7197bb67b0f14492d75da726d": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "fcefa42b07def9554afdc751c2a73f4735c6ea0b6a44bd686b2e724531394841": {
       "kind": "command",
       "src": "skills/calibrate/templates/pipeline-prompt.md:37"
@@ -5483,6 +5635,10 @@
     "fd9fe28f976e5764ed10e1128ba972342f2f5be79e99dc4d36c37d571f95e596": {
       "kind": "command",
       "src": "skills/audit/templates/checks-shared.md:195"
+    },
+    "fda086c3497f2d882f5f3b53acdb0a5ca910fe6961debaa69b7608863d4d35fd": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "fda652ab9f4c58e779de3f0e9bb70090117c868c526c7f11f3f3f2ab4f2d6c77": {
       "kind": "command",
@@ -5520,6 +5676,10 @@
       "kind": "block",
       "src": "skills/audit/templates/checks-install.md:328"
     },
+    "febfce9fe11c33e68123418044861737ad80ae7a58acd8620762b311cfc464e6": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:111"
+    },
     "fedd7db9c390846e55ef319aa1c76feb7f1f9252089f17e7831bf3639943ac40": {
       "kind": "command",
       "src": "skills/profile/SKILL.md:46"
@@ -5553,6 +5713,6 @@
       "src": "skills/investigate/SKILL.md:100"
     }
   },
-  "plugin": "cc_foundry@0.54.0",
+  "plugin": "cc_foundry@0.54.1",
   "schema": 1
 }

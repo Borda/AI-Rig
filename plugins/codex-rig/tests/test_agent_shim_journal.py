@@ -59,6 +59,15 @@ def _load_module() -> ModuleType:
     return _load_script(JOURNAL_PATH, "codex_rig_agent_shim_journal")
 
 
+_JOURNAL = _load_module()
+_ILLEGAL_JOURNAL_TRANSITIONS = tuple(
+    pytest.param(source, target, id=f"{source.lower()}-to-{target.lower()}")
+    for source, allowed in _JOURNAL.JOURNAL_STATE_SUCCESSORS.items()
+    for target in _JOURNAL.JOURNAL_STATES
+    if target != source and target not in allowed
+)
+
+
 def _root(path: str) -> dict[str, object]:
     """Build one exact root identity fixture.
 
@@ -321,18 +330,15 @@ def test_install_retire_uses_remove_artifacts_progress_and_rollback() -> None:
         module.validate_journal(forbidden)
 
 
-def test_every_illegal_journal_state_jump_is_rejected() -> None:
+@pytest.mark.parametrize(("source", "target"), _ILLEGAL_JOURNAL_TRANSITIONS)
+def test_every_illegal_journal_state_jump_is_rejected(source: str, target: str) -> None:
     """Reject every distinct state transition absent from the contract graph."""
     module = _load_module()
-    for source, allowed in module.JOURNAL_STATE_SUCCESSORS.items():
-        for target in module.JOURNAL_STATES:
-            if target == source or target in allowed:
-                continue
-            before = _journal(state=source)
-            after = copy.deepcopy(before)
-            after["journal_state"] = target
-            with pytest.raises(module.JournalTransitionError):
-                module.validate_successor(before, after)
+    before = _journal(state=source)
+    after = copy.deepcopy(before)
+    after["journal_state"] = target
+    with pytest.raises(module.JournalTransitionError):
+        module.validate_successor(before, after)
 
 
 def test_illegal_progress_jumps_and_multiple_dimensions_are_rejected() -> None:
@@ -433,23 +439,23 @@ def test_noop_observation_depends_on_action() -> None:
         module.validate_journal(remove)
 
 
-def test_zero_write_convergence_never_creates_a_journal() -> None:
+@pytest.mark.parametrize("action", ["install", "remove"])
+def test_zero_write_convergence_never_creates_a_journal(action: str) -> None:
     """Keep pristine or already-converged actions outside transaction state."""
     module = _load_module()
-    for action in ("install", "remove"):
-        value = _journal(action=action, intent="noop")
-        if action == "install":
-            for item in value["operations"]:
-                item.update(
-                    before_exists=True,
-                    before_hash=DIGEST,
-                    before_mode="0600",
-                    after_exists=True,
-                    after_hash=DIGEST,
-                    after_mode="0600",
-                )
-        with pytest.raises(module.JournalDataError, match="zero-write"):
-            module.validate_journal(value)
+    value = _journal(action=action, intent="noop")
+    if action == "install":
+        for item in value["operations"]:
+            item.update(
+                before_exists=True,
+                before_hash=DIGEST,
+                before_mode="0600",
+                after_exists=True,
+                after_hash=DIGEST,
+                after_mode="0600",
+            )
+    with pytest.raises(module.JournalDataError, match="zero-write"):
+        module.validate_journal(value)
 
 
 def test_progress_is_confined_to_its_journal_phase() -> None:

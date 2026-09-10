@@ -86,9 +86,9 @@ Use after editing any agent or skill file. Reviews whether roles still distinct 
 (applies when auditing plugin source files under `plugins/*/`)
 
 - Valid plugin directories: `agents/`, `skills/`, `bin/`, `rules/` (foundry), `hooks/` (foundry), `.claude-plugin/`
-- `bin/` = standalone executables (`.sh`, `.py`) auto-added to Bash PATH by Claude Code; invoked via `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/<script>`; NOT for LLM instruction
-- Shell/Python scripts found in `skills/_shared/` or `commands/` → misplaced; flag P2; fix: move to plugin's `bin/` dir
-- Skills using `$_SHARED/script.sh`, `$_COMMANDS/script.sh`, or inline `python -c` blocks → update to `${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/<script>`
+- `bin/` = standalone Python executables (`.py`), invoked via `python "${CLAUDE_PLUGIN_ROOT}/bin/<script>.py"`; NOT for LLM instruction. Existing legacy `.sh` files are portability debt, never precedent for new executables.
+- Shell/Python scripts found in `skills/_shared/` or `commands/` → misplaced; flag P2; move Python helpers into the owning plugin's `bin/` and port shell logic to Python before moving it.
+- Skills using `$_SHARED/script.sh`, `$_COMMANDS/script.sh`, or extractable inline `python -c` blocks → use the owning plugin's Python `bin/` helper after applying the extraction gate below.
 - `_shared/` is for markdown reference docs only — agent-resolution tables, protocol files, voice guides
 
 ## Code Block Authoring

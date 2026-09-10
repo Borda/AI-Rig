@@ -1514,8 +1514,20 @@ def test_codex_diagnostic_baseline_covers_every_runtime_argv_flag(tmp_path: Path
     assert runtime_flags <= set(baseline["codex"]["required"])
 
 
+@pytest.mark.parametrize(
+    ("verb", "expected_sandbox"),
+    (
+        pytest.param("implement", "workspace-write", id="implement-write"),
+        pytest.param("advise", "read-only", id="advise-read-only"),
+        pytest.param("review", "read-only", id="review-read-only"),
+    ),
+)
 def test_cli_implement_is_the_only_write_capable_verb(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    verb: str,
+    expected_sandbox: str,
 ) -> None:
     """Prevent implement from becoming read-only or a read-only verb from gaining write access."""
     commands: dict[str, list[str]] = {}
@@ -1527,16 +1539,15 @@ def test_cli_implement_is_the_only_write_capable_verb(
 
     monkeypatch.setattr(bridge_call, "_run_child", _fake_child)
 
-    for verb in ("implement", "advise", "review"):
-        exit_code = bridge_call.main([verb, "--task", "Make the bounded change.", "--workspace", str(tmp_path)])
-        envelope = json.loads(capsys.readouterr().out)
+    exit_code = bridge_call.main([verb, "--task", "Make the bounded change.", "--workspace", str(tmp_path)])
+    envelope = json.loads(capsys.readouterr().out)
 
-        assert exit_code == 0
-        assert envelope["status"] == "complete"
-        assert envelope["verb"] == verb
+    assert exit_code == 0
+    assert envelope["status"] == "complete"
+    assert envelope["verb"] == verb
 
-    sandbox = {verb: command[command.index("-s") + 1] for verb, command in commands.items()}
-    assert sandbox == {"implement": "workspace-write", "advise": "read-only", "review": "read-only"}
+    sandbox = commands[verb][commands[verb].index("-s") + 1]
+    assert sandbox == expected_sandbox
     with pytest.raises(SystemExit):
         bridge_call.main(["delegate", "--task", "Rejected.", "--workspace", str(tmp_path)])
 
@@ -1613,50 +1624,58 @@ def test_mcp_handshake_tools_call_and_recursion_guard_preserve_run_id(
     assert envelope["run_id"] == "tree-fixed"
 
 
-def test_mcp_rejects_model_supplied_workspace_and_reverse_session(tmp_path: Path) -> None:
+@pytest.mark.parametrize("unsupported_kind", ["workspace", "background", "session"])
+def test_mcp_rejects_model_supplied_workspace_and_reverse_session(tmp_path: Path, unsupported_kind: str) -> None:
     """Prevent a write-capable MCP call from widening host authority or faking resume."""
-    for unsupported in (
-        {"workspace": str(tmp_path.parent)},
-        {"background": True},
-        {"session_id": "session-fixed"},
-    ):
-        result = bridge_mcp.handle_message(
-            {
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {"name": "bridge_implement", "arguments": {"task": "No write.", **unsupported}},
-            },
-            trusted_workspace=tmp_path,
-        )
+    unsupported = {
+        "workspace": {"workspace": str(tmp_path.parent)},
+        "background": {"background": True},
+        "session": {"session_id": "session-fixed"},
+    }[unsupported_kind]
+    result = bridge_mcp.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "bridge_implement", "arguments": {"task": "No write.", **unsupported}},
+        },
+        trusted_workspace=tmp_path,
+    )
 
-        assert result["error"]["code"] == -32602
-        assert "unsupported tool arguments" in result["error"]["message"]
+    assert result["error"]["code"] == -32602
+    assert "unsupported tool arguments" in result["error"]["message"]
 
 
+@pytest.mark.parametrize(
+    ("request_id", "timeout"),
+    (
+        pytest.param(1, float("nan"), id="nan"),
+        pytest.param(2, float("inf"), id="positive-infinity"),
+        pytest.param(3, float("-inf"), id="negative-infinity"),
+    ),
+)
 def test_mcp_rejects_nonfinite_timeout_before_provider_dispatch(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request_id: int, timeout: float
 ) -> None:
     """Prevent non-finite MCP deadlines from bypassing the provider dispatch boundary."""
     monkeypatch.setattr(
         bridge_mcp, "run_request", lambda *args, **kwargs: pytest.fail("non-finite timeout dispatched a provider")
     )
 
-    for request_id, timeout in enumerate((float("nan"), float("inf"), float("-inf")), start=1):
-        response = bridge_mcp.handle_message(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "tools/call",
-                "params": {
-                    "name": "bridge_advise",
-                    "arguments": {"task": "Reject this malformed deadline.", "timeout_seconds": timeout},
-                },
+    response = bridge_mcp.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {
+                "name": "bridge_advise",
+                "arguments": {"task": "Reject this malformed deadline.", "timeout_seconds": timeout},
             },
-            trusted_workspace=tmp_path,
-        )
+        },
+        trusted_workspace=tmp_path,
+    )
 
-        assert response["error"]["code"] == -32602
+    assert response["error"]["code"] == -32602
 
 
 @pytest.mark.parametrize("task", (pytest.param("a" * 70000, id="ascii"), pytest.param("🙂" * 20000, id="multibyte")))
@@ -1723,16 +1742,19 @@ def test_windows_batch_shim_uses_a_stricter_resolved_command_budget(
         bridge_call.validate_request_transport_budget(request)
 
 
-def test_mcp_rejects_invalid_request_shapes_with_the_standard_error_code() -> None:
+@pytest.mark.parametrize(
+    "message",
+    (
+        pytest.param({"jsonrpc": "1.0", "id": 1, "method": "tools/list"}, id="wrong-version"),
+        pytest.param({"jsonrpc": "2.0", "id": 2}, id="missing-method"),
+        pytest.param({"jsonrpc": "2.0", "id": 3, "method": ["tools/list"]}, id="method-not-string"),
+    ),
+)
+def test_mcp_rejects_invalid_request_shapes_with_the_standard_error_code(message: dict[str, object]) -> None:
     """Prevent malformed JSON-RPC requests from being treated as unknown methods."""
-    for message in (
-        {"jsonrpc": "1.0", "id": 1, "method": "tools/list"},
-        {"jsonrpc": "2.0", "id": 2},
-        {"jsonrpc": "2.0", "id": 3, "method": ["tools/list"]},
-    ):
-        response = bridge_mcp.handle_message(message)
+    response = bridge_mcp.handle_message(message)
 
-        assert response["error"]["code"] == -32600
+    assert response["error"]["code"] == -32600
 
 
 def test_mcp_notifications_never_reply_or_execute_a_provider_request(

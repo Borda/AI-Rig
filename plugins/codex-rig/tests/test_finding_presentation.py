@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 import pytest
-from _platform import SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE
 from rich.console import Console
 from rich.markdown import Markdown
 
@@ -412,7 +412,7 @@ def test_selection_cli_never_overwrites_its_input(tmp_path: Path) -> None:
     assert inventory.read_bytes() == original
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="filesystem cannot create symlinks")
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks")
 def test_selection_cli_rejects_output_symlinks(tmp_path: Path) -> None:
     """Do not follow an output link even when it stays within the run directory."""
     inventory = tmp_path / "selection.json"

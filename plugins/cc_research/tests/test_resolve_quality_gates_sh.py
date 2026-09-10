@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -21,8 +20,11 @@ SCRIPT = Path(__file__).parent.parent / "bin" / "resolve-quality-gates.sh"
 def _sh(*args: str, env: dict | None = None, cwd: str | None = None) -> subprocess.CompletedProcess:
     """Run the script under test and capture stdout/stderr."""
     e = {**os.environ, **(env or {})}
+    for name in ("HOME", "GIT_ROOT"):
+        if name in e:
+            e[name] = Path(e[name]).as_posix()
     return subprocess.run(
-        ["bash", str(SCRIPT), *args],
+        ["bash", SCRIPT.as_posix(), *args],
         capture_output=True,
         text=True,
         env=e,
@@ -30,10 +32,19 @@ def _sh(*args: str, env: dict | None = None, cwd: str | None = None) -> subproce
     )
 
 
-_skip_windows_posix = pytest.mark.skipif(sys.platform == "win32", reason="requires bash")
+def _bash_available() -> bool:
+    """Probe whether Bash executes commands instead of merely existing on PATH."""
+    try:
+        result = subprocess.run(["bash", "-c", "printf ok"], capture_output=True, text=True, timeout=15, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and result.stdout == "ok"
 
 
-@_skip_windows_posix
+_skip_bash_unavailable = pytest.mark.skipif(not _bash_available(), reason="requires working bash")
+
+
+@_skip_bash_unavailable
 def test_local_claude_rules_preferred(tmp_path: Path) -> None:
     """Project-local ``.claude/rules/quality-gates.md`` takes priority over cache."""
     project = tmp_path / "project"
@@ -49,10 +60,10 @@ def test_local_claude_rules_preferred(tmp_path: Path) -> None:
 
     result = _sh(env={"HOME": str(tmp_path), "GIT_ROOT": str(project)}, cwd=str(project))
     assert result.returncode == 0
-    assert result.stdout.strip() == str(local_file)
+    assert result.stdout.strip() == local_file.as_posix()
 
 
-@_skip_windows_posix
+@_skip_bash_unavailable
 def test_cache_fallback_when_local_absent(tmp_path: Path) -> None:
     """No local ``.claude/rules/`` → resolver falls back to foundry plugin cache."""
     project = tmp_path / "project"
@@ -66,10 +77,10 @@ def test_cache_fallback_when_local_absent(tmp_path: Path) -> None:
 
     result = _sh(env={"HOME": str(tmp_path), "GIT_ROOT": str(project)}, cwd=str(project))
     assert result.returncode == 0
-    assert result.stdout.strip() == str(cache_file)
+    assert result.stdout.strip() == cache_file.as_posix()
 
 
-@_skip_windows_posix
+@_skip_bash_unavailable
 def test_neither_location_exits_nonzero(tmp_path: Path) -> None:
     """No local and no cached file → exit 1 with stderr warning, empty stdout."""
     project = tmp_path / "project"
@@ -81,7 +92,7 @@ def test_neither_location_exits_nonzero(tmp_path: Path) -> None:
     assert "quality-gates.md not found" in result.stderr
 
 
-@_skip_windows_posix
+@_skip_bash_unavailable
 def test_git_root_env_override(tmp_path: Path) -> None:
     """Prefer an explicit repository root over Git discovery."""
     explicit_root = tmp_path / "explicit"
@@ -93,4 +104,4 @@ def test_git_root_env_override(tmp_path: Path) -> None:
     # cwd is unrelated; GIT_ROOT must win.
     result = _sh(env={"HOME": str(tmp_path), "GIT_ROOT": str(explicit_root)}, cwd=str(tmp_path))
     assert result.returncode == 0
-    assert result.stdout.strip() == str(local_file)
+    assert result.stdout.strip() == local_file.as_posix()

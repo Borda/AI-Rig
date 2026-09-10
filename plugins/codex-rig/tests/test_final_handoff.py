@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from _platform import SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -542,7 +542,7 @@ def test_schema_v2_rejects_noncanonical_result_artifact_paths(tmp_path: Path, ar
         _load_shared_validator().validate("change-analysis", tmp_path, result_path)
 
 
-@pytest.mark.skipif(not SYMLINKS_AVAILABLE, reason="host cannot create symlinks")
+@pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks")
 def test_schema_v2_rejects_canonical_result_symlink_escaping_the_run_directory(tmp_path: Path) -> None:
     """Prevent a canonical result name from resolving to evidence outside its run directory."""
     result_path = _write_schema_v2_change_analysis(tmp_path)

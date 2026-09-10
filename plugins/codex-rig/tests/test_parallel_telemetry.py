@@ -448,20 +448,20 @@ def test_expiry_enforcement_deletes_only_the_fixed_sanitized_diagnostic_and_is_i
     assert other_diagnostic.read_text(encoding="utf-8") == '{"other":true}\n'
 
 
-def test_expiry_enforcement_never_deletes_unresolved_failure_diagnostics(tmp_path: Path) -> None:
+@pytest.mark.parametrize("status", ["failed", "cancelled", "conflicted"])
+def test_expiry_enforcement_never_deletes_unresolved_failure_diagnostics(tmp_path: Path, status: str) -> None:
     """Leave failed, cancelled, and conflicted records untouched until explicitly resolved."""
     diagnostics = tmp_path / "diagnostics"
     diagnostics.mkdir()
-    for status in ("failed", "cancelled", "conflicted"):
-        record = _retained_record(status=status)
-        artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
-        artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
+    record = _retained_record(status=status)
+    artifact = diagnostics / f"{record['wave_id_hmac']}.diagnostic.json"
+    artifact.write_text("sanitized\n", encoding="utf-8", newline="\n")
 
-        audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2030-01-01T00:00:00Z")
-        assert audit["action"] == "retained-unresolved"
-        assert audit["deleted"] is False
-        assert artifact.is_file()
-        assert _expiry_audit_rows(diagnostics)[-1] == audit
+    audit = enforce_diagnostic_expiry(record, diagnostics_directory=diagnostics, now="2030-01-01T00:00:00Z")
+    assert audit["action"] == "retained-unresolved"
+    assert audit["deleted"] is False
+    assert artifact.is_file()
+    assert _expiry_audit_rows(diagnostics)[-1] == audit
 
 
 def test_expiry_enforcement_deletes_expired_resolved_failure_diagnostic(tmp_path: Path) -> None:

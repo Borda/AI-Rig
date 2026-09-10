@@ -155,13 +155,22 @@ def test_marker_parser_accepts_current_and_historical_role_ids() -> None:
 
     assert marker == module.Marker(INSTALL_ID, "challenger", DIGEST, DIGEST)
     assert historical.role_id == "retired-specialist"
-    for payload in (
-        _marker_line("challenger") + b"\n",
-        _marker_line("1unknown"),
-        b" " + _marker_line("challenger"),
-    ):
-        with pytest.raises(module.LifecycleDataError):
-            module.parse_marker(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param(_marker_line("challenger") + b"\n", id="trailing-newline"),
+        pytest.param(_marker_line("1unknown"), id="invalid-role-id"),
+        pytest.param(b" " + _marker_line("challenger"), id="leading-whitespace"),
+    ],
+)
+def test_marker_parser_rejects_noncanonical_payload(payload: bytes) -> None:
+    """Reject trailing, malformed-role, and whitespace marker payloads."""
+    module = _load_module(LIFECYCLE_PATH, "codex_rig_lifecycle_marker")
+
+    with pytest.raises(module.LifecycleDataError):
+        module.parse_marker(payload)
 
 
 def test_state_parser_accepts_complete_current_and_removed_state() -> None:

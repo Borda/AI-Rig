@@ -2,17 +2,20 @@
 
 **Structural context (codemap-py)** — run only when caller sets `CODEMAP_ENABLED=true`; skip if flag absent. Callers pre-set `TARGET_MODULE` (dotted), `TARGET_FN` (bare function name), and `CODEMAP_QUERY_KIND`. Use `skip` for a fully localized edit, a task-fit kind for one unresolved structural fact, and `standard` only when broader context is justified.
 
-**Wrapper** — query mechanics, batch pre-flight bash, evidence-line contract, completeness/staleness semantics, coverage-metadata rules, targeted-edit pattern, and effort tiers live in codemap-shipped contract. Resolve and read it:
+**Wrapper** — query mechanics, batch pre-flight bash, evidence-line contract, completeness/staleness semantics, coverage-metadata rules, targeted-edit pattern, and effort tiers live in codemap-shipped contract. Resolve this plugin's local propagated copy and read it:
 
 ```bash
-_CM_SHARED="$(ls -td ~/.claude/plugins/cache/borda-ai-rig/codemap-py/*/claude-skills/_shared 2>/dev/null | head -1)"
-[ -z "$_CM_SHARED" ] && _CM_SHARED="plugins/codemap-py/claude-skills/_shared"
-[ -f "$_CM_SHARED/codemap-context.md" ] && cat "$_CM_SHARED/codemap-context.md" || echo "codemap contract absent — use fallback below"
+_DEV_SHARED="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/_shared}"
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED=$(python "plugins/cc_develop/bin/dev_shared_resolve.py" 2>/dev/null)
+[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+if ! command -v codemap-py >/dev/null 2>&1 || ! cat "$_DEV_SHARED/codemap-py--codemap-context.md" 2>/dev/null; then
+    echo "codemap contract absent — use fallback below"
+fi
 ```
 
 Contract (`v3`) — follow §Batch pre-flight pattern (run with `TARGET_MODULE`/`TARGET_FN`/`CODEMAP_QUERY_KIND`), §Evidence-line contract, §Coverage metadata, §Targeted-edit pattern, §Effort-tier guidance.
 
-**Fallback when codemap plugin absent** (`$_CM_SHARED/codemap-context.md` missing): when `CODEMAP_QUERY_KIND=skip`, run no Codemap command. Otherwise run only the task-fit query when known, falling back to `codemap-py query --timeout 5 central --top 5 2>/dev/null`; treat any non-empty output as usable, skip evidence-line/completeness logic, and proceed with file reads for the rest. Never break load.
+**Fallback when codemap plugin absent**: when `CODEMAP_QUERY_KIND=skip`, run no Codemap command. Otherwise run only the task-fit query when known, falling back to `codemap-py query --timeout 5 central --top 5 2>/dev/null`; treat any non-empty output as usable, skip evidence-line/completeness logic, and proceed with file reads for the rest. Never break load.
 
 ## Per-agent query map (develop dimension)
 
