@@ -48,7 +48,8 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "neither `PR Evidence Collection Recovery` nor `Review Findings and Merge Blocks` applies" in terminal_gate
     assert "`review_status=unavailable`" in terminal_gate
     assert "`collection_failure=" in terminal_gate
-    assert "immediately state `Reason:`" in terminal_gate
+    assert "Start with a plain-English explanation of the stopped operation and its effect" in terminal_gate
+    assert "`Reason:` with the classified failure before verification" in terminal_gate
     assert "worktree-preflight.json" in terminal_gate
     assert "`overlapping_paths`" in terminal_gate
     assert "For retryable `github-network`, `github-rate-limit`, or `command-timeout`" in skill

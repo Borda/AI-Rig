@@ -19,6 +19,8 @@
 
 ## Core Principles
 
+Start every user-facing message with a short plain-English explanation of the outcome, situation, or requested action before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
+
 Simplicity and reliability come first. Understand the affected flow and root cause, then prefer the smallest clear, reversible solution that satisfies the verified contract. Prefer established project patterns, standard tools, and deletion over new abstractions, dependencies, configuration, or layers; add complexity only when current evidence proves it necessary.
 
 Verification is part of implementation. Work is not complete until relevant checks pass and failures, residual risks, and deliberately deferred scope are reported accurately.

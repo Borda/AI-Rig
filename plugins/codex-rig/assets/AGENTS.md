@@ -18,6 +18,7 @@ Docs, deps, CI/CD, releases, security, deprecations → prefer current primary s
 - Prefer smallest reversible change solving actual problem. Fix feels speculative → stop, re-scope before widening blast radius.
 - Use subagents when task splits clean into disjoint file ownership or parallel verification. Prompt tight, task-specific; no dup of main thread full context.
 - Verification = part of work, not follow-up. No task done until relevant lint/tests/gates run and result explainable concrete.
+- Every resumed skill run, including after user intervention or repeated invocation, retains its normal closing gate and output contract. Recover the first unmet checkpoint, reuse only still-valid evidence, and finish validation before declaring completion; do not replace the required final structure with an informal recap. Existing non-artifact workflows retain their own documented final verification.
 - Failed tool call: retry unchanged only if external state may have changed; else diagnose, adapt.
 - Multiple agents: handoffs compact, ownership clear. Never redo other agent work unless resolving conflict or explicit gap.
 - Progress stalls or path drifts → re-plan, no forcing current approach.
@@ -32,7 +33,7 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 - Occurrence 1 = initial occurrence; capture symptom + evidence, then proceed normal gates.
 - Occurrence 2 (first recurrence) stops symptom patching. Run `investigate` or equiv root-cause evidence before another fix attempt; record root-cause claim, supporting evidence, falsification check, ≥1 rejected alternative.
-- Occurrence 3 stops all attempts. Ask human for next steps, incl. attempted actions, current hypotheses/evidence, shared obstacle across differing symptoms.
+- Occurrence 3 stops attempts on the repeated obstacle, not unrelated authorized work. Ask human for the specific missing decision, incl. attempted actions, current hypotheses/evidence, shared obstacle across differing symptoms, and what can still continue safely.
 - Reset count only when evidence falsifies shared cause or material external-state change occurs. Record reset + evidence.
 
 ### Reasoning-progress escalation policy
@@ -46,13 +47,14 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 1. Pause, request exactly one permitted higher-capability advisory pass: first supported reasoning-effort increase, else next valid model tier.
 2. Advisor route valid only when observed sandbox `read-only`; diagnoses, proposes one bounded recovery action + stop condition, makes no state changes or acceptance claim.
-3. Read-only route unavailable/unverified → go direct to human.
+3. Read-only advisory route unavailable/unverified → ask the human for the missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or an already-permitted source-inspection alternative with its limitations disclosed.
 4. Parent may run that one action.
-5. Action makes no material progress or closure condition unmet → stop, ask human with the ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives.
+5. Action makes no material progress or closure condition unmet → stop that workstream and ask human with the ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and the evidence or decision needed to resume. Explain which unaffected work can continue.
 6. Never resets/weakens repeated-obstacle policy; closure-attempt count resets only when its condition fulfilled or materially replaced by recorded user direction or external-state evidence; Luna never escalates bounded support to Sol, Sol stays architecture/security-only.
 
 ## Coordination Discipline
 
+- Start every user-facing message with a short plain-English explanation of the outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
 - Keep live plan for multi-step work, update as task shape changes. Use as session task ledger.
 - One owner per file set at a time. Other thread/agent owns same surface → coordinate, no overwrite.
 - Broader analysis/review output → durable artifact under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` only for a bounded validated non-sensitive identity, otherwise `.reports/codex/<skill>/<timestamp>/`; never serialize raw arguments into paths. Assessed PR reviews use `pr-<number>`. Final chat summary compact.
@@ -181,7 +183,8 @@ Every test must pass The Suspicious Check:
   - Issues, releases, repositories, Discussions use `github_read.py` direct.
   - New collector needs written bundle contract, consumer workflow, regression tests; don't create parity wrappers around single read.
 - `git` CLI allowed for local repo ops + read-only fetch to update local PR branch: status, diff, log, show, fetch, add, commit, local branch creation/deletion/listing, switch/restore/reset/clean, local merge/cherry-pick under normal approval rules.
-  - Never `git` for remote mutation/state changes: no push, pull, clone, remote update, ls-remote, submodule remote update, upstream tracking changes, remote config changes.
+  - Prefer the GitHub CLI for GitHub interaction; use the packaged reader/collector boundary and `gh pr checkout <number>` for PR branches, including forks. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On a verified PR branch with verified upstream and a confirmed clean index/worktree, an authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add a redundant pull. Do not merge, rebase, reset, discard user changes, or change tracking configuration merely to refresh a review.
+  - Never `git` for remote mutation/state changes: no push, clone, remote update, ls-remote, submodule remote update, upstream tracking changes, remote config changes. A fast-forward-only pull is a remote read plus local update, not remote publication; it still needs the owning command's network approval.
 - Never run `git`/`gh` with `--force`, `--force-with-lease`, or a command-specific forced update flag automatically. If a forced git/gh operation seems necessary → stop before running, explain exactly why force is needed, what local/remote state it can overwrite, and ask the user for explicit confirmation.
 - No escalation requests for forbidden remote/online mutations. Task needs push, comment, merge, publish, CI dispatch, or other remote service change → stop, tell user must be done by human or explicit separate non-Codex workflow.
 

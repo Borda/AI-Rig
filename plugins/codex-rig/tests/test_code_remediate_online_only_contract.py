@@ -29,4 +29,9 @@ def test_missing_findings_source_does_not_fail_bare_pr_route() -> None:
     assert "must not fail or request `code-review` merely because no assessed review artifact exists" in fail_fast
     assert "A bare PR target must not run this helper, scan prior review reports" in skill
     assert "For bare PR online-only intake, do not create `<run-directory>/findings-input.txt`" in skill
-    assert "When `REQUESTED_REPORT=true`, no matching code-review report => fail" in skill
+    assert (
+        "When `REQUESTED_REPORT=true`, no matching code-review report means the requested assessed findings are missing"
+        in skill
+    )
+    assert "Explain that first" in skill
+    assert "Inspect that run's classified error and retained checkout diagnostics, perform permitted recovery" in skill

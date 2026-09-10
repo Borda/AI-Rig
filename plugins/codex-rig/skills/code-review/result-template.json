@@ -16,7 +16,7 @@
     "medium": 0
   },
   "follow_up": [
-    "needs-independent-review when independence_satisfied=false"
+    "When explicitly required independence is unmet, state the cause, governing rule, owner/action, and resume condition; otherwise disclose unavailable independent coverage."
   ],
   "metadata": {
     "close_decision": {
@@ -65,8 +65,9 @@
       ],
       "status": "shared-confidence-band-status"
     },
-    "execution_evidence_level": "portable-read-restricted",
+    "execution_evidence_level": "instruction-bounded-review",
     "execution_mode": "parallel|independent-spawned|serial|serial-fallback",
+    "execution_observed_controls": {},
     "fanout_substituted": false,
     "final_handoff": {
       "branch": "assessed|unavailable|closed|caller-contract",
@@ -78,8 +79,9 @@
       "validation_path": "<run-directory>/final-handoff.validation.json"
     },
     "finding_records_version": 1,
-    "independence_required": true,
-    "independence_satisfied": true,
+    "independence_required": false,
+    "independence_requirement_evidence": null,
+    "independence_satisfied": false,
     "operational_blockers": [],
     "review_decision": {
       "rationale": "why the recommendation follows from findings, gates, and scope",
@@ -107,6 +109,7 @@
             "model": "actual model from child turn_context",
             "output_path": "<run-directory>/specialists/qa-specialist.md",
             "output_sha256": "sha256",
+            "spawn_call_id": "parent spawn_agent call ID",
             "status": "completed",
             "turn_id": "child turn ID"
           }
@@ -114,7 +117,7 @@
         "axis": "tests",
         "blocking_findings": 0,
         "confidence": 0.0,
-        "mode": "spawned|substituted",
+        "mode": "inspection|substituted",
         "output_path": "<run-directory>/specialists/qa-specialist.md",
         "role": "qa-specialist",
         "role_card_sha256": "sha256 of installed ROLE.md",

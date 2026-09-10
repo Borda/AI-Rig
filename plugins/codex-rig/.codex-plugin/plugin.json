@@ -32,5 +32,5 @@
   "name": "codex-rig",
   "repository": "https://github.com/Borda/AI-Rig",
   "skills": "./skills/",
-  "version": "0.16.1"
+  "version": "0.16.2"
 }

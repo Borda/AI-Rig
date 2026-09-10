@@ -7,6 +7,8 @@
 
 ## Instruction Layering
 
+Start every user-facing message with a short plain-English explanation of the outcome, situation, or requested action before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
+
 Repository-wide policy belongs in this top-level file. Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy.
 
 When a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.

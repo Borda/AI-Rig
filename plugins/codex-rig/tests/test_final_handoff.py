@@ -142,6 +142,64 @@ def test_standard_handoff_renders_complete_deterministic_markdown() -> None:
     assert finalizer.render_handoff(_handoff_payload()) == rendered
 
 
+def test_v2_handoff_leads_with_plain_english_and_omits_empty_or_duplicate_sections() -> None:
+    """Keep new reports useful when only one recovery action and no executable checks exist."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["presentation_version"] = 2
+    payload["skill"] = "code-review"
+    payload["branch"] = "unavailable"
+    payload["outcome"] = {
+        "title": "PR Review Availability",
+        "summary": "I could not retrieve the PR metadata, so the review has not started. Reason: `github-network:gh-pr-view`.",
+    }
+    payload["tables"] = []
+    payload["source_records"] = []
+    payload["source_coverage"] = {
+        "source_records_total": 0,
+        "represented_source_records_total": 0,
+        "omitted_source_records_total": 0,
+    }
+    payload["verification"] = [
+        {"check": gate_id, "status": "not-applicable", "evidence": "gates.json"}
+        for gate_id in ("lint", "format", "types", "tests", "review")
+    ]
+    payload["remaining"] = [
+        {
+            "row_id": "collection-recovery",
+            "item": "PR collection stopped at `github-network:gh-pr-view`.",
+            "owner": "code-review",
+            "next_action": (
+                "Code-review must inspect the classified `gh-pr-view` collector failure and record a permitted recovery "
+                "before retrying. "
+                "Resume only after a fresh collector run produces and validates the PR source bundle."
+            ),
+        }
+    ]
+    payload["next_steps"] = ["collection-recovery"]
+
+    rendered = finalizer.render_handoff(payload)
+
+    assert rendered.startswith("I could not retrieve the PR metadata, so the review has not started.\n")
+    assert "**Results**" not in rendered
+    assert "- Checks were not run; no executable verification applies to this branch." in rendered
+    assert "gates.json" not in rendered
+    assert "**Remaining**" not in rendered
+    assert rendered.count("Resume only after a fresh collector run") == 1
+    assert rendered.count("PR collection stopped at `github-network:gh-pr-view`.") == 1
+    assert "**Next steps**\n\n- PR collection stopped at `github-network:gh-pr-view`. — owner: code-review" in rendered
+
+
+def test_v2_handoff_rejects_non_integer_presentation_version() -> None:
+    """Prevent JSON numeric equality from accepting a noncanonical presentation version."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["presentation_version"] = 2.0
+
+    with pytest.raises(finalizer.HandoffError, match="handoff-presentation-version-invalid"):
+        finalizer.validate_handoff(payload)
+
+
 def test_handoff_renders_symbol_details_immediately_below_table() -> None:
     """Keep long table text readable through validated under-table references."""
     finalizer = _load_finalizer()

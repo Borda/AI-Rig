@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.16.2
+
+- Preserve every skill's standard closing gate and output structure after user intervention, recovery, or repeated invocation. Reuse valid evidence from the first unmet checkpoint; never treat a resumed notes-only run as a completed result or substitute an informal recap for the required final report.
+- Start all user-facing communication with a plain-English explanation. New handoffs remove empty result sections, collapse unrun checks, and avoid repeating recovery actions while retaining complete machine evidence and historical rendering compatibility.
+- Fetch fork PR commits before checkout-overlap checks while keeping GitHub CLI metadata and `gh pr checkout <number>` primary. Make fresh PR/target source and safe failure diagnosis agent-owned; report the actual failed operation, classified error, and available checkout evidence instead of generic repair instructions.
+- Fix App Server rejection of documented planning and warning events; retain safe rejection classification and recovery guidance without storing raw event data. Repeated launcher failures stop that launcher, not permitted source inspection; retain recurrence evidence and use an available review route without redundant approval.
+- Fix blocked source reviews by allowing supplied-context inspection for native parallel reviewers without requiring child read-only/never attestation. Validate frozen source contexts before dispatch and bind reviewer lineage, tool-free activity, terminal responses, and actual overlap without claiming enforced isolation. Keep repository execution parent-owned and preserve existing strict execution routes.
+- Stop classifying public API changes as automatically HIGH_RISK. Let review depth follow actual behavior and permit honestly disclosed serial inspection when parallel reviewers are unavailable; an explicit user requirement for independent review still gates completion.
+- Require every workflow pause to identify the stopped action, concrete cause and evidence, governing rule, continuing work, next action and owner, and exact resume condition. Reuse existing authorization and keep unsafe execution pauses separate from available source review.
+
 ## 0.16.1
 
 - Let PR collection continue when tracked local edits are unrelated to the requested checkout or the current HEAD already exactly matches the PR head. Retain a deterministic `worktree-preflight.json` and block only the dirty paths checkout would overwrite.

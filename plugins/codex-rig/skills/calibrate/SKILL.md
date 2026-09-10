@@ -55,7 +55,7 @@ Use `--require-live-routes` only for the strict-live gate. Default offline scori
 
 ### 08: Emit measured recommendations for what should be fixed or improved next
 
-- Failed checks/leaks first.
+- Start with a plain-English explanation of whether calibration passed and what any failure means. Then prioritize failed checks/leaks, naming the exact check, file or pattern, evidence, next-action owner, and gate that must pass to resume acceptance.
 - Behavioral recommendations name metric gap/affected cases when available.
 - Separate fixture-only caveats from live-quality claims.
 
@@ -98,7 +98,7 @@ Role checks:
 - Sol critical-only unless paired quality exceeds Terra configured minimum; tie retains Terra.
 - Do not claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
 - Fixture `version` is committed-history marker: compare `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit.
-- Missing registration/pattern mismatch: minimal config fix then rerun before widening.
+- Missing registration/pattern mismatch: inspect the named file and expected registration or pattern first; record the observed mismatch. Apply the smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for the exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
 
 ## Fail-Fast Rules
 

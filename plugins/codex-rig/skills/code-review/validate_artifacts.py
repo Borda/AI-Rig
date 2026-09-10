@@ -43,6 +43,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -59,7 +60,7 @@ SHARED_DIRECTORY = PLUGIN_ROOT / "shared"
 if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
-from parallel_execution import validate_read_only_runtime  # noqa: E402
+from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
 from app_server_review import ReviewRouteError, validate_evidence as validate_app_server_evidence  # noqa: E402
 from review_routing import derive_mechanical_risk  # noqa: E402
 
@@ -105,7 +106,7 @@ ALL_MANIFEST_ROLES = {
     "web-explorer",
 }
 INDEPENDENT_PASS_TIERS = {"BROAD", "HIGH_RISK"}
-VALID_MODES = {"spawned", "substituted", "app-server"}
+VALID_MODES = {"spawned", "substituted", "app-server", "inspection"}
 TRANSIENT_RETRY_ERRORS = {"rate_limited", "timeout", "transport_error"}
 SOL_ROLES = {"solution-architect", "security-auditor"}
 UNAVAILABLE_NOTE_LINES = (
@@ -133,7 +134,7 @@ UNAVAILABLE_METADATA_KEYS = {
     "confidence_recovery",
     "final_handoff",
 }
-UNAVAILABLE_FORBIDDEN_ARTIFACTS = {"specialist-manifest.json"}
+UNAVAILABLE_FORBIDDEN_ARTIFACTS = {"local-checkout.json", "specialist-manifest.json"}
 UNAVAILABLE_CONFIDENCE_GAP = (
     "Core PR source verification did not complete; no source review or merge decision was made."
 )
@@ -173,6 +174,19 @@ UNAVAILABLE_RECOVERY_ACTIONS = {
     "report": "Stop and report this Codex Rig collector failure with sanitized artifacts.",
 }
 CHECKOUT_STATE_RECOVERY_SUFFIX = " Inspect the local checkout state before retrying."
+SAFE_DIAGNOSTIC_IDENTIFIER = re.compile(r"[a-z][a-z0-9-]*\Z")
+UNAVAILABLE_HUMAN_SUMMARIES = {
+    "gh-pr-view": "I could not retrieve the PR metadata, so the review has not started.",
+    "local-pr-checkout": "I could not check out the latest PR commit, so the review has not started.",
+    "checkout-paths": "I could not compare your local files with the latest PR commit, so the review has not started.",
+    "checkout-branch": "I could not verify the local PR checkout, so the review has not started.",
+    "checkout-head": "I could not verify the local PR checkout, so the review has not started.",
+    "local-pr-diff": "I could not compare the checked-out PR files, so the review has not started.",
+    "dirty-tracked-worktree-overlap-before-pr-checkout": (
+        "I stopped before checkout because it could overwrite your local files, so the review has not started."
+    ),
+}
+UNAVAILABLE_GENERIC_SUMMARY = "Source collection stopped before I could verify which PR revision to review."
 
 
 def _load_role_card(roles_dir: Path, role: str) -> dict[str, str]:
@@ -716,21 +730,7 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
 
     notes_path = out_dir / "review-notes.md"
     notes = notes_path.read_text(encoding="utf-8")
-    category = code.split(":", maxsplit=1)[0]
-    action_key = (
-        "retry"
-        if category in {"github-network", "github-rate-limit", "command-timeout"}
-        else "auth"
-        if category in {"github-auth", "github-permission"}
-        else "install"
-        if code == "missing-command:gh"
-        else "identity"
-        if category == "github-not-found"
-        else "report"
-    )
-    recovery_action = UNAVAILABLE_RECOVERY_ACTIONS[action_key]
-    if checkout_state is not None:
-        recovery_action += CHECKOUT_STATE_RECOVERY_SUFFIX
+    recovery_action = _unavailable_recovery_action(code, checkout_state is not None)
     if any(line.strip().startswith("|") for line in notes.splitlines()):
         raise SystemExit("unavailable-review-process-table-forbidden")
     expected_notes = (
@@ -776,6 +776,164 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
     }
     if metadata.get("confidence_recovery") != expected_recovery:
         raise SystemExit("unavailable-review-confidence-recovery-must-be-canonical")
+    _validate_unavailable_final_handoff(out_dir, metadata)
+
+
+def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any]) -> None:
+    """Bind a v2 unavailable-review explanation to classified, non-secret local diagnostics."""
+    binding = metadata.get("final_handoff")
+    if not isinstance(binding, dict) or not isinstance(binding.get("handoff_path"), str):
+        return
+    handoff_path = _resolve_path(out_dir, binding["handoff_path"])
+    if not handoff_path.is_file():
+        return
+    handoff = _load_json(handoff_path)
+    if handoff.get("presentation_version") != 2:
+        return
+    failure = metadata["collection_failure"]
+    code = failure["code"]
+    if handoff.get("branch") != "unavailable" or handoff.get("tables") != []:
+        raise SystemExit("unavailable-review-final-handoff-branch-mismatch")
+    outcome = handoff.get("outcome")
+    if not isinstance(outcome, dict) or outcome.get("title") != "PR Review Availability":
+        raise SystemExit("unavailable-review-final-handoff-outcome-invalid")
+    artifacts = handoff.get("artifacts")
+    if not isinstance(artifacts, list):
+        raise SystemExit("unavailable-review-final-handoff-artifacts-invalid")
+    artifact_paths = {
+        _resolve_path(out_dir, artifact.get("path"))
+        for artifact in artifacts
+        if isinstance(artifact, dict) and isinstance(artifact.get("path"), str)
+    }
+    required_paths = {out_dir / "pr-error.txt"}
+    command_record = _unavailable_command_diagnostic(out_dir, code)
+    command_diagnostic = command_record[0] if command_record is not None else None
+    command_reason = command_record[1] if command_record is not None else None
+    if command_diagnostic is not None:
+        required_paths.add(out_dir / "command-failure.json")
+    checkout_diagnostic = _unavailable_checkout_diagnostic(out_dir)
+    if checkout_diagnostic is not None:
+        required_paths.add(out_dir / "checkout-state.json")
+    preflight_diagnostic = _unavailable_preflight_diagnostic(out_dir)
+    if preflight_diagnostic is not None:
+        required_paths.add(out_dir / "worktree-preflight.json")
+    if {path.resolve() for path in required_paths} - artifact_paths:
+        raise SystemExit("unavailable-review-final-handoff-artifact-binding-mismatch")
+    label = code.rsplit(":", maxsplit=1)[-1]
+    human_summary = UNAVAILABLE_HUMAN_SUMMARIES.get(label, UNAVAILABLE_GENERIC_SUMMARY)
+    expected_summary = f"{human_summary} Reason: `{code}`."
+    if command_diagnostic is not None:
+        expected_summary += f" {command_diagnostic}"
+    if checkout_diagnostic is not None:
+        expected_summary += f" {checkout_diagnostic}"
+    if preflight_diagnostic is not None:
+        expected_summary += f" {preflight_diagnostic}"
+    if command_reason in {None, "unclassified"}:
+        expected_summary += " The collector did not retain a more specific cause."
+    if outcome.get("summary") != expected_summary:
+        raise SystemExit("unavailable-review-final-handoff-summary-mismatch")
+    remaining = handoff.get("remaining")
+    if not isinstance(remaining, list) or len(remaining) != 1 or not isinstance(remaining[0], dict):
+        raise SystemExit("unavailable-review-final-handoff-recovery-mismatch")
+    recovery = remaining[0]
+    row_id = recovery.get("row_id")
+    next_action = recovery.get("next_action")
+    resume_condition = "Resume only after a fresh collector run produces and validates the PR source bundle."
+    if (
+        not isinstance(row_id, str)
+        or recovery.get("owner") != "code-review"
+        or recovery.get("item") != f"PR collection stopped at `{code}`."
+        or not isinstance(next_action, str)
+        or f"`{label}`" not in next_action
+        or resume_condition not in next_action
+        or handoff.get("next_steps") != [row_id]
+    ):
+        raise SystemExit("unavailable-review-final-handoff-recovery-mismatch")
+
+
+def _unavailable_recovery_action(code: str, checkout_started: bool) -> str:
+    """Return the canonical safe recovery for one classified collection failure."""
+    category = code.split(":", maxsplit=1)[0]
+    action_key = (
+        "retry"
+        if category in {"github-network", "github-rate-limit", "command-timeout"}
+        else "auth"
+        if category in {"github-auth", "github-permission"}
+        else "install"
+        if code == "missing-command:gh"
+        else "identity"
+        if category == "github-not-found"
+        else "report"
+    )
+    recovery_action = UNAVAILABLE_RECOVERY_ACTIONS[action_key]
+    return recovery_action + (CHECKOUT_STATE_RECOVERY_SUFFIX if checkout_started else "")
+
+
+def _unavailable_command_diagnostic(out_dir: Path, code: str) -> tuple[str, str | None] | None:
+    """Render only fixed-shape collector diagnostics that cannot contain command output or credentials."""
+    path = out_dir / "command-failure.json"
+    if not path.is_file():
+        return None
+    diagnostic = _load_json(path)
+    allowed = {"exit_code", "failure_class", "failure_reason", "label"}
+    if set(diagnostic) - allowed or not {"exit_code", "failure_class", "label"} <= set(diagnostic):
+        raise SystemExit("unavailable-review-command-diagnostic-invalid")
+    exit_code = diagnostic["exit_code"]
+    failure_class = diagnostic["failure_class"]
+    label = diagnostic["label"]
+    reason = diagnostic.get("failure_reason")
+    if (
+        type(exit_code) is not int
+        or not isinstance(failure_class, str)
+        or not SAFE_DIAGNOSTIC_IDENTIFIER.fullmatch(failure_class)
+        or not isinstance(label, str)
+        or not SAFE_DIAGNOSTIC_IDENTIFIER.fullmatch(label)
+        or (reason is not None and (not isinstance(reason, str) or not SAFE_DIAGNOSTIC_IDENTIFIER.fullmatch(reason)))
+    ):
+        raise SystemExit("unavailable-review-command-diagnostic-invalid")
+    if label != code.rsplit(":", maxsplit=1)[-1]:
+        raise SystemExit("unavailable-review-command-diagnostic-code-mismatch")
+    reason_detail = f"; reason `{reason}`" if reason is not None else ""
+    return f"Command diagnostic: `{label}` exited {exit_code} (`{failure_class}`{reason_detail}).", reason
+
+
+def _unavailable_checkout_diagnostic(out_dir: Path) -> str | None:
+    """Render the existing conservative checkout-state record without inferring a failure cause."""
+    path = out_dir / "checkout-state.json"
+    if not path.is_file():
+        return None
+    state = _load_json(path)
+    if state not in (
+        {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+        {"status": "checkout-command-succeeded-unverified", "local_state": "changed-or-unknown"},
+    ):
+        raise SystemExit("unavailable-review-command-diagnostic-invalid")
+    return f"Checkout diagnostic: local worktree state is changed or unknown after `{state['status']}`."
+
+
+def _unavailable_preflight_diagnostic(out_dir: Path) -> str | None:
+    """Render only the collector's fixed worktree head identifiers when that preflight exists."""
+    path = out_dir / "worktree-preflight.json"
+    if not path.is_file():
+        return None
+    preflight = _load_json(path)
+    expected_keys = {"status", "current_head", "expected_head", "dirty_paths", "checkout_paths", "overlapping_paths"}
+    head_pattern = re.compile(r"[0-9a-f]{7,64}\Z")
+    if (
+        set(preflight) != expected_keys
+        or preflight.get("status")
+        not in {"already-at-pr-head", "blocked-overlapping-dirty-paths", "clean", "safe-unrelated-dirty-paths"}
+        or not isinstance(preflight.get("current_head"), str)
+        or not head_pattern.fullmatch(preflight["current_head"])
+        or not isinstance(preflight.get("expected_head"), str)
+        or not head_pattern.fullmatch(preflight["expected_head"])
+        or any(
+            not isinstance(preflight.get(key), list) or not all(isinstance(item, str) for item in preflight[key])
+            for key in expected_keys - {"status", "current_head", "expected_head"}
+        )
+    ):
+        raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    return f"Worktree preflight: local head `{preflight['current_head']}`; expected PR head `{preflight['expected_head']}`."
 
 
 def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
@@ -1079,6 +1237,8 @@ def _validate_review_runtime(
     parent_thread_id: str,
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
+    if manifest.get("schema_version") == 5:
+        return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id)
     if manifest.get("schema_version") == 4:
         return _validate_app_server_review(out_dir, manifest, passes)
     spawned = [item for item in passes if item.get("mode") == "spawned"]
@@ -1158,6 +1318,248 @@ def _validate_review_runtime(
     return summary
 
 
+def _validate_inspection_plan(
+    out_dir: Path, manifest: dict[str, Any], parent_thread_id: str
+) -> tuple[dict[str, Any], dict[str, Path], bool, str | None]:
+    """Bind schema-five inspection evidence to its exact no-execution plan."""
+    execution = manifest.get("inspection_execution")
+    if not isinstance(execution, dict) or set(execution) != {"plan_path", "plan_sha256"}:
+        raise SystemExit("review-inspection-plan-missing")
+    plan_path = _resolve_path(out_dir, execution["plan_path"])
+    if not plan_path.is_file() or _sha256(plan_path) != execution["plan_sha256"]:
+        raise SystemExit("review-inspection-plan-hash-mismatch")
+    plan = _load_json(plan_path)
+    required_keys = {
+        "consumer_policy",
+        "review_operation",
+        "write_policy",
+        "review_run_id",
+        "parent_thread_id",
+        "review_input_sha256",
+        "source_sensitivity",
+        "contexts",
+        "independent_review_required",
+        "independence_requirement_evidence",
+    }
+    if set(plan) != required_keys:
+        raise SystemExit("review-inspection-plan-shape-invalid")
+    if plan["consumer_policy"] != {
+        "consumer_id": "code-review",
+        "capability": "instruction-bounded-review",
+        "promotion_status": "promoted",
+        "parent_mutations": "serial",
+        "canonical_gates": "serial",
+    }:
+        raise SystemExit("review-inspection-plan-policy-invalid")
+    if plan["review_operation"] != "inspection-only" or plan["write_policy"] != {
+        "parent_writes": "none",
+        "approval_requirement": "not-required",
+    }:
+        raise SystemExit("review-inspection-plan-operation-invalid")
+    if plan["source_sensitivity"] != "non-sensitive":
+        raise SystemExit("review-inspection-plan-source-sensitivity-invalid")
+    for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
+        if plan[key] != manifest.get(key):
+            raise SystemExit(f"review-inspection-plan-identity-mismatch:{key}")
+    if plan["parent_thread_id"] != parent_thread_id:
+        raise SystemExit("review-inspection-plan-parent-thread-mismatch")
+    independent_required = plan["independent_review_required"]
+    evidence = plan["independence_requirement_evidence"]
+    if type(independent_required) is not bool:
+        raise SystemExit("review-inspection-plan-independence-required-invalid")
+    if independent_required:
+        if not isinstance(evidence, str) or not evidence.strip():
+            raise SystemExit("review-inspection-plan-independence-evidence-missing")
+    elif evidence is not None:
+        raise SystemExit("review-inspection-plan-independence-evidence-unexpected")
+    try:
+        contexts = validate_inspection_contexts(plan, plan_path)
+    except ValueError as error:
+        raise SystemExit(f"review-inspection-contexts-invalid:{error}") from error
+    return plan, contexts, independent_required, evidence
+
+
+def _child_controls(child_rows: list[dict[str, Any]], turn_id: str) -> dict[str, str]:
+    """Report observed child controls without treating them as an isolation guarantee."""
+    contexts = [
+        row["payload"]
+        for row in child_rows
+        if row.get("type") == "turn_context"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("turn_id") == turn_id
+    ]
+    if len(contexts) != 1:
+        raise SystemExit("review-inspection-turn-context-missing")
+    context = contexts[0]
+    sandbox = context.get("sandbox_mode")
+    if sandbox is None and isinstance(context.get("sandbox_policy"), dict):
+        sandbox = context["sandbox_policy"].get("type")
+    approval = context.get("approval_policy")
+    return {
+        "sandbox_mode": sandbox if isinstance(sandbox, str) and sandbox else "unknown",
+        "approval_policy": approval if isinstance(approval, str) and approval else "unknown",
+    }
+
+
+def _inspection_child_called_tool(child_rows: list[dict[str, Any]]) -> bool:
+    """Reject every child tool-call or tool-result record for supplied-context inspection."""
+    for row in child_rows:
+        payload = row.get("payload")
+        if row.get("type") == "response_item" and isinstance(payload, dict):
+            if payload.get("type") not in {"agent_message", "message", "reasoning"}:
+                return True
+        elif row.get("type") == "event_msg" and isinstance(payload, dict):
+            if payload.get("type") == "item_completed":
+                item = payload.get("item")
+                if not isinstance(item, dict) or item.get("type") not in {
+                    "AgentMessage",
+                    "Reasoning",
+                    "ContextCompaction",
+                }:
+                    return True
+            elif payload.get("type") not in {"task_started", "task_complete", "token_count", "thread_settings_applied"}:
+                return True
+    return False
+
+
+def _joined_terminal_result(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> bool:
+    """Require one parent-visible child final message matching the bound output exactly."""
+    joined = 0
+    for row in parent_rows:
+        payload = row.get("payload")
+        if row.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "agent_message" or payload.get("author") != agent_path:
+            continue
+        content = payload.get("content")
+        if not isinstance(content, list):
+            continue
+        texts = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "input_text"]
+        if (
+            len(texts) == 1
+            and isinstance(texts[0], str)
+            and texts[0].startswith("Message Type: FINAL_ANSWER\n")
+            and texts[0].split("Payload:\n", 1)[-1].strip() == message
+        ):
+            joined += 1
+    return joined == 1
+
+
+def _validate_instruction_bounded_review(
+    out_dir: Path,
+    manifest: dict[str, Any],
+    passes: list[dict[str, Any]],
+    codex_home: Path,
+    parent_thread_id: str,
+) -> dict[str, object]:
+    """Validate supplied-context inspection without claiming host-enforced isolation."""
+    if manifest.get("runtime_execution") is not None or manifest.get("app_server_execution") is not None:
+        raise SystemExit("review-inspection-runtime-evidence-forbidden")
+    _, frozen_contexts, independent_required, _ = _validate_inspection_plan(out_dir, manifest, parent_thread_id)
+    inspections = [item for item in passes if item.get("mode") == "inspection"]
+    if {item["role"] for item in inspections} != set(frozen_contexts):
+        raise SystemExit("review-inspection-context-role-set-mismatch")
+    if not inspections:
+        return {
+            "actual_mode": "serial-fallback",
+            "evidence_level": "instruction-bounded-review",
+            "write_parallel_eligible": False,
+            "independence_satisfied": False,
+            "independence_required": independent_required,
+            "observed_controls": {},
+        }
+
+    parent_rows = _read_jsonl(_find_rollout(codex_home, parent_thread_id))
+    controls: dict[str, dict[str, str]] = {}
+    intervals: list[tuple[int | float, int | float]] = []
+    for item in inspections:
+        role = item["role"]
+        role_card_path = PLUGIN_ROOT / "roles" / role / "ROLE.md"
+        role_card = role_card_path.read_text(encoding="utf-8")
+        selected = item["selected_attempt"]
+        for attempt in item["attempts"]:
+            context_path = _resolve_path(out_dir, attempt["context_path"])
+            if context_path != frozen_contexts[role]:
+                raise SystemExit(f"review-inspection-attempt-context-mismatch:{role}")
+            context = context_path.read_text(encoding="utf-8")
+            if any(pattern.search(context) for pattern in _SECRET_PATTERNS):
+                raise SystemExit(f"review-inspection-context-sensitive-material:{role}")
+            if not context.startswith(role_card):
+                raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
+            child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
+            if _inspection_child_called_tool(child_rows):
+                raise SystemExit(f"review-inspection-child-tool-use:{role}")
+        attempt = item["attempts"][selected - 1]
+        context = _resolve_path(out_dir, attempt["context_path"]).read_text(encoding="utf-8")
+        spawn_calls = [
+            row["payload"]
+            for row in parent_rows
+            if row.get("type") == "response_item"
+            and isinstance(row.get("payload"), dict)
+            and row["payload"].get("type") == "function_call"
+            and row["payload"].get("name") == "spawn_agent"
+        ]
+        matching_calls = []
+        for call in spawn_calls:
+            try:
+                arguments = json.loads(call.get("arguments", ""))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if (
+                isinstance(arguments, dict)
+                and call.get("call_id") == attempt.get("spawn_call_id")
+                and arguments.get("message") == context
+                and arguments.get("task_name") == Path(attempt["agent_path"]).name
+                and arguments.get("fork_turns") == "none"
+            ):
+                matching_calls.append(call)
+        if len(matching_calls) != 1:
+            raise SystemExit(f"review-inspection-context-not-sent:{role}")
+        child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
+        controls[role] = _child_controls(child_rows, attempt["turn_id"])
+        completions = [
+            event
+            for event in _event_payloads(child_rows, "task_complete")
+            if event.get("turn_id") == attempt["turn_id"]
+        ]
+        if len(completions) != 1:
+            raise SystemExit(f"review-inspection-child-terminal-missing:{role}")
+        started_at, completed_at = completions[0].get("started_at"), completions[0].get("completed_at")
+        if (
+            isinstance(started_at, bool)
+            or isinstance(completed_at, bool)
+            or not isinstance(started_at, int | float)
+            or not isinstance(completed_at, int | float)
+            or not math.isfinite(started_at)
+            or not math.isfinite(completed_at)
+            or started_at >= completed_at
+        ):
+            raise SystemExit(f"review-inspection-child-timing-invalid:{role}")
+        message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
+        if any(pattern.search(message) for pattern in _SECRET_PATTERNS):
+            raise SystemExit(f"review-inspection-output-sensitive-material:{role}")
+        if not _joined_terminal_result(parent_rows, attempt["agent_path"], message):
+            raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+        intervals.append((started_at, completed_at))
+
+    overlaps = any(
+        max(first[0], second[0]) < min(first[1], second[1])
+        for index, first in enumerate(intervals)
+        for second in intervals[index + 1 :]
+    )
+    actual_mode = "parallel" if overlaps else "independent-spawned" if len(inspections) > 1 else "serial"
+    required_roles = REQUIRED_ROLES & {item["role"] for item in passes}
+    independence_satisfied = bool(required_roles) and required_roles <= {item["role"] for item in inspections}
+    return {
+        "actual_mode": actual_mode,
+        "evidence_level": "instruction-bounded-review",
+        "write_parallel_eligible": False,
+        "independence_satisfied": independence_satisfied,
+        "independence_required": independent_required,
+        "observed_controls": controls,
+    }
+
+
 def _validate_app_server_review(
     out_dir: Path, manifest: dict[str, Any], passes: list[dict[str, Any]]
 ) -> dict[str, object]:
@@ -1233,6 +1635,7 @@ def _validate_spawn_attempts(
         raise SystemExit(f"manifest-invalid-selected-attempt:{role}")
 
     parent_events = _event_payloads(parent_rows, "sub_agent_activity")
+    role_context_paths: set[Path] = set()
     for attempt in attempts:
         thread_id = attempt.get("agent_thread_id")
         event_id = attempt.get("event_id")
@@ -1240,9 +1643,12 @@ def _validate_spawn_attempts(
         if not all(isinstance(value, str) and value for value in (thread_id, event_id, agent_path)):
             raise SystemExit(f"manifest-attempt-identity-missing:{role}")
         context_path = _resolve_path(out_dir, attempt.get("context_path"))
-        if context_path in used_context_paths:
+        if context_path in used_context_paths and not (
+            manifest.get("schema_version") == 5 and context_path in role_context_paths
+        ):
             raise SystemExit("manifest-reused-context-path")
         used_context_paths.add(context_path)
+        role_context_paths.add(context_path)
         context_sha256 = attempt.get("context_sha256")
         if not context_path.exists() or _sha256(context_path) != context_sha256:
             raise SystemExit(f"provenance-context-hash-mismatch:{role}")
@@ -1348,7 +1754,7 @@ def _validate_manifest_entries(
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to unique, role-specific evidence for its declared route."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3, 4}:
+    if schema_version not in {2, 3, 4, 5}:
         raise SystemExit("manifest-schema-version")
     for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
@@ -1380,12 +1786,16 @@ def _validate_manifest_entries(
         if role in by_role:
             raise SystemExit(f"manifest-duplicate-role:{role}")
         role_card = _load_role_card(PLUGIN_ROOT / "roles", role)
-        if schema_version in {3, 4} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
+        if schema_version in {3, 4, 5} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
         if not isinstance(axis, str) or not axis.strip():
             raise SystemExit(f"manifest-missing-axis:{role}")
         if mode not in VALID_MODES:
             raise SystemExit(f"manifest-invalid-mode:{role}:{mode!r}")
+        if (schema_version == 5 and mode not in {"inspection", "substituted"}) or (
+            schema_version != 5 and mode == "inspection"
+        ):
+            raise SystemExit(f"manifest-mode-schema-mismatch:{role}")
         if not isinstance(trigger, str) or not trigger.strip():
             raise SystemExit(f"manifest-missing-trigger:{role}")
         if not isinstance(confidence, int | float) or not 0.0 <= float(confidence) <= 1.0:
@@ -1395,7 +1805,7 @@ def _validate_manifest_entries(
         output_path = _resolve_path(out_dir, item.get("output_path"))
         if not output_path.exists():
             raise SystemExit(f"manifest-missing-output:{role}:{output_path}")
-        if mode == "spawned":
+        if mode in {"spawned", "inspection"}:
             if parent_rows is None:
                 parent_rows = _read_jsonl(_find_rollout(codex_home, parent_thread_id))
             _validate_spawn_attempts(
@@ -1458,7 +1868,7 @@ def _validate_manifest_preflight(
         parent_thread_id,
         project_root,
     )
-    if manifest.get("schema_version") in {3, 4}:
+    if manifest.get("schema_version") in {3, 4, 5}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -1647,7 +2057,7 @@ def _validate_result(
     )
     runtime_summary = (
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
-        if manifest.get("schema_version") in {3, 4}
+        if manifest.get("schema_version") in {3, 4, 5}
         else {}
     )
     if runtime_summary:
@@ -1658,6 +2068,9 @@ def _validate_result(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
+        if manifest.get("schema_version") == 5:
+            if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
+                raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
         raise SystemExit("metadata-review-run-id-mismatch")
     if metadata.get("review_input_sha256") != manifest.get("review_input_sha256"):
@@ -1694,12 +2107,27 @@ def _validate_result(
 
     triggered_required = REQUIRED_ROLES & triggered_roles
     substituted_roles = sorted(role for role in triggered_required if by_role[role]["mode"] == "substituted")
-    independence_required = bool(triggered_required)
-    required_independent = independence_required and all(
-        by_role[role]["mode"] in {"spawned", "app-server"} for role in triggered_required
-    )
-    if risk_tier in INDEPENDENT_PASS_TIERS and status == "pass" and not required_independent:
-        raise SystemExit("independent-review-required-for-pass:" + ",".join(substituted_roles))
+    if manifest.get("schema_version") == 5:
+        _, _, independence_required, requirement_evidence = _validate_inspection_plan(
+            out_dir, manifest, parent_thread_id
+        )
+        routing_requirement = routing.get("independent_review_required")
+        if routing_requirement is not independence_required:
+            raise SystemExit("routing-inspection-independence-required-mismatch")
+        if routing.get("independence_requirement_evidence") != requirement_evidence:
+            raise SystemExit("routing-inspection-independence-evidence-mismatch")
+        required_independent = bool(runtime_summary.get("independence_satisfied"))
+        if metadata.get("independence_requirement_evidence") != requirement_evidence:
+            raise SystemExit("metadata-independence-requirement-evidence-mismatch")
+        if independence_required and status == "pass" and not required_independent:
+            raise SystemExit("independent-review-required-for-pass:" + ",".join(sorted(triggered_required)))
+    else:
+        independence_required = bool(triggered_required)
+        required_independent = independence_required and all(
+            by_role[role]["mode"] in {"spawned", "app-server"} for role in triggered_required
+        )
+        if risk_tier in INDEPENDENT_PASS_TIERS and status == "pass" and not required_independent:
+            raise SystemExit("independent-review-required-for-pass:" + ",".join(substituted_roles))
 
     fanout_substituted = any(item["mode"] == "substituted" for item in passes)
     if metadata.get("fanout_substituted") is not fanout_substituted:

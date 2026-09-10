@@ -732,42 +732,33 @@ def _checkout(
         _write_json(output / "pr-head-fetch.json", head)
         if head_local != head_oid:
             raise CollectionError(f"pr-head-oid-mismatch:{head_local}:{head_oid}")
-    elif routing.get("pr_state") != "OPEN" and isinstance(number, int):
-        historical_head_ref = f"refs/remotes/{remote_name}/pull/{number}/head"
+    elif isinstance(number, int):
+        # Fork commits may be absent locally; fetch before inspecting checkout overlap, not during checkout.
+        pull_head_ref = f"refs/remotes/{remote_name}/pull/{number}/head"
+        historical = routing.get("pr_state") != "OPEN"
+        head_label = "historical-pr-head" if historical else "pr-head"
         _run(
             run,
-            ["git", "fetch", "--no-tags", remote_name, f"refs/pull/{number}/head:{historical_head_ref}"],
+            ["git", "fetch", "--no-tags", remote_name, f"refs/pull/{number}/head:{pull_head_ref}"],
             timeout,
-            "historical-pr-head-fetch",
+            f"{head_label}-fetch",
         )
-        head_local = (
-            _run(run, ["git", "rev-parse", historical_head_ref], timeout, "historical-pr-head-rev-parse")
-            .decode()
-            .strip()
-        )
+        head_local = _run(run, ["git", "rev-parse", pull_head_ref], timeout, f"{head_label}-rev-parse").decode().strip()
         head = {
             "status": "fetched",
             "remote": remote_name,
-            "head_ref": historical_head_ref,
+            "head_ref": pull_head_ref,
             "local_head": head_local,
             "expected_head_oid": head_oid,
             "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags {remote_name} refs/pull/{number}/head:{historical_head_ref}",
-            "source_policy": "historical PR head is refreshed from GitHub's pull ref and verified against metadata before detached local checkout",
+            "command": f"git fetch --no-tags {remote_name} refs/pull/{number}/head:{pull_head_ref}",
+            "source_policy": "PR head is refreshed from GitHub's pull ref and verified against metadata before checkout preflight",
         }
         _write_json(output / "pr-head-fetch.json", head)
         if head_local != head_oid:
-            raise CollectionError(f"historical-pr-head-oid-mismatch:{head_local}:{head_oid}")
+            raise CollectionError(f"{head_label}-oid-mismatch:{head_local}:{head_oid}")
     else:
-        _write_json(
-            output / "pr-head-fetch.json",
-            {
-                "status": "skipped",
-                "same_repo": routing.get("same_repo"),
-                "head_ref": head_ref,
-                "reason": "cross-repository PR head is refreshed by gh pr checkout",
-            },
-        )
+        raise CollectionError("missing-pr-checkout-identity")
 
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
     dirty_paths = _git_path_list(

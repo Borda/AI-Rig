@@ -664,6 +664,39 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
     assert checkout["diff_head_oid"] == HEAD_OID
 
 
+def test_collect_pr_fetches_fork_head_before_comparing_checkout_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Make a fresh fork commit available before the non-mutating checkout-overlap check."""
+    module = _load_collector()
+    runner = FakeRunner(cross_repository=True)
+    fork_fetch = ["git", "fetch", "--no-tags", "origin", "refs/pull/17/head:refs/remotes/origin/pull/17/head"]
+    checkout_diff = ["git", "diff", "--name-only", "-z", "d" * 40, HEAD_OID, "--"]
+
+    def run_with_unfetched_fork(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Model Git rejecting a commit that has not yet been fetched from a fork."""
+        if argv == checkout_diff and not any(call == fork_fetch for call, _ in runner.calls):
+            return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"unknown revision")
+        return runner(argv, **kwargs)
+
+    _configure_collector(monkeypatch, module, runner)
+    monkeypatch.setattr(module.subprocess, "run", run_with_unfetched_fork)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    calls = [argv for argv, _ in runner.calls]
+    target_fetch = ["git", "fetch", "--no-tags", "origin", "main:refs/remotes/origin/main"]
+    assert calls.index(target_fetch) < calls.index(fork_fetch) < calls.index(checkout_diff)
+    assert calls.index(checkout_diff) < calls.index(["gh", "pr", "checkout", "17"])
+    head = json.loads((output / "pr-head-fetch.json").read_text(encoding="utf-8"))
+    assert head["status"] == "fetched"
+    assert head["local_head"] == head["expected_head_oid"] == HEAD_OID
+    assert head["head_matches_pr_metadata"] is True
+    assert not any("--force" in argv or argv[:2] == ["git", "pull"] for argv in calls)
+
+
 def test_collect_pr_reuses_already_exact_pr_head_for_local_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

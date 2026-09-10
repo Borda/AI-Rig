@@ -5,6 +5,8 @@ description: 'Safely manage Codex Rig role-agent shims: doctor, status, install,
 
 # Agent Shims
 
+After user intervention or a repeated invocation, follow [Resume And Re-entry](../../shared/helper-cli-contract.md#resume-and-re-entry): complete the selected action's verification and the diagnostic instructions below. This manager keeps its non-artifact lifecycle; it does not skip its closing checks or replace the final explanation with raw JSON.
+
 This is an experimental lifecycle tool. Installing authenticated standalone agent TOML does not prove that the active collaboration interface can select that custom profile. A task name or child path matching the role name is not proof. Use installed shims only when the runtime exposes an explicit custom-agent selector and observed child metadata plus verifier output prove selection; otherwise use blank-agent role-card injection.
 
 Accept exactly one action: `doctor`, `status`, `install`, or `remove`. Reject missing, extra, or unknown arguments without writes.
@@ -20,7 +22,7 @@ Preserve the manager's exit contract: `0` success/converged, `2` usage, `3` canc
 
 For `doctor` and `status`, do not return only the raw JSON or a generic safety label:
 
-1. Lead with `Healthy`, `Degraded`, or `Blocked`, followed by the first non-pass check and its exact detail.
+1. Start with a plain-English explanation of whether the shims are usable and what needs attention. Then give `Healthy`, `Degraded`, or `Blocked`, followed by the first non-pass check and its exact detail; never expose raw diagnostic JSON as the whole answer.
 2. List every other non-pass check once, then summarize `state`, `targets`, `recovery`, and namespace candidates.
 3. State `No files changed.`
 4. Give the narrow safe next step. For package or active-package failures, refresh or reinstall Codex Rig and start a fresh session. For executable failures, report the selected path and rerun from a fresh session with stable Python and Codex selection. For permission, owner, type, or link failures, inspect only the named path and verify its metadata before changing anything. For corrupt, inconsistent, modified, or foreign evidence, back it up and do not adopt, edit, or delete it automatically. For recognized recovery residue, use `remove` and review its authenticated approval digest.

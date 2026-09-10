@@ -774,15 +774,25 @@ def _validated_runtime_consumer_policy(plan: Mapping[str, Any], expected_consume
         raise ValueError("runtime-consumer-policy-invalid")
     if policy.get("consumer_id") != expected_consumer_id:
         raise ValueError("runtime-consumer-id-mismatch")
-    if policy.get("capability") != "portable-read-only":
+    capability = policy.get("capability")
+    if capability == "instruction-bounded-review" and expected_consumer_id == "code-review":
+        if plan.get("review_operation") != "inspection-only":
+            raise ValueError("review-inspection-operation-invalid")
+        if plan.get("source_sensitivity") != "non-sensitive":
+            raise ValueError("review-inspection-source-sensitivity-invalid")
+        if "read_host" in plan or "review_host" in plan:
+            raise ValueError("review-inspection-host-claim-forbidden")
+    elif capability != "portable-read-only":
         raise ValueError("runtime-consumer-capability-invalid")
+    elif "review_operation" in plan:
+        raise ValueError("review-inspection-capability-required")
     if policy.get("promotion_status") != "promoted":
         raise ValueError("runtime-consumer-promotion-required")
     if policy.get("parent_mutations") != "serial":
         raise ValueError("runtime-consumer-parent-mutations-invalid")
     if policy.get("canonical_gates") != "serial":
         raise ValueError("runtime-consumer-canonical-gates-invalid")
-    return {"consumer_id": expected_consumer_id, "capability": "portable-read-only"}
+    return {"consumer_id": expected_consumer_id, "capability": capability}
 
 
 def _runtime_plan_consumer_policy(plan_path: Path, expected_consumer_id: str) -> dict[str, str]:
@@ -793,7 +803,11 @@ def _runtime_plan_consumer_policy(plan_path: Path, expected_consumer_id: str) ->
         raise ValueError("runtime-consumer-policy-missing") from error
     if not isinstance(plan, dict):
         raise ValueError("runtime-consumer-policy-missing")
-    return _validated_runtime_consumer_policy(plan, expected_consumer_id)
+    policy = _validated_runtime_consumer_policy(plan, expected_consumer_id)
+    # Inspection admission never certifies the strict runtime's enforced permission contract.
+    if policy["capability"] != "portable-read-only":
+        raise ValueError("runtime-consumer-capability-invalid")
+    return policy
 
 
 def _runtime_write_policy(plan: Mapping[str, Any]) -> bool:
@@ -810,6 +824,41 @@ def _runtime_write_policy(plan: Mapping[str, Any]) -> bool:
     raise ValueError("runtime-write-policy-invalid")
 
 
+def validate_inspection_contexts(plan: Mapping[str, Any], plan_path: Path) -> dict[str, Path]:
+    """Bind and scan review context before dispatch, returning its unique role-to-file mapping.
+
+    Paths stay under the frozen plan directory and hashes bind the exact UTF-8 source bytes. Common-secret detection
+    rejects a context without printing its contents; it is not a guarantee that arbitrary sensitive data is absent. An
+    empty list represents a parent-only review with no child dispatch.
+    """
+    contexts = plan.get("contexts")
+    if not isinstance(contexts, list) or len(contexts) > 4:
+        raise ValueError("review-inspection-contexts-invalid")
+    by_role: dict[str, Path] = {}
+    for entry in contexts:
+        if not isinstance(entry, dict) or set(entry) != {"role_id", "context_path", "context_sha256"}:
+            raise ValueError("review-inspection-context-entry-invalid")
+        role = entry["role_id"]
+        if not isinstance(role, str) or re.fullmatch(r"[a-z][a-z0-9-]*", role) is None:
+            raise ValueError("review-inspection-context-role-invalid")
+        if role in by_role:
+            raise ValueError("review-inspection-context-role-duplicate")
+        context_path = _relative_path(plan_path.parent, entry["context_path"], "review-inspection-context", role)
+        if context_path in by_role.values():
+            raise ValueError("review-inspection-context-path-duplicate")
+        _sha256(context_path, "review-inspection-context", role, entry["context_sha256"])
+        try:
+            context = context_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as error:
+            raise ValueError(f"review-inspection-context-unreadable:{role}") from error
+        if not context.strip():
+            raise ValueError(f"review-inspection-context-empty:{role}")
+        if any(pattern.search(context) for pattern in _SECRET_PATTERNS):
+            raise ValueError(f"review-inspection-context-sensitive-material:{role}")
+        by_role[role] = context_path
+    return by_role
+
+
 def resolve_consumer_execution_mode(
     consumer_id: str,
     explicit: str | None,
@@ -818,11 +867,13 @@ def resolve_consumer_execution_mode(
     plan_path: Path,
     approval_path: Path | None,
 ) -> dict[str, object]:
-    """Admit compatible read plans or serial fallback without certifying runtime controls.
+    """Admit review inspection or compatible restricted reads without certifying runtime controls.
 
     Host declarations are compatibility inputs transcribed from the actual launcher contract. They never replace
     authoritative post-run control validation. Explicit parallel reads fail closed; automatic mode retains serial work
-    when compatible child controls are unavailable. Review independence remains a separate completion gate.
+    when compatible child controls are unavailable. Supplied-context code review may use an instruction-bounded
+    inspection plan without permission attestation; its separate review validator checks actual child activity and
+    provenance. This exception never authorizes executable probes, writes, or another consumer's dispatch.
     """
     try:
         plan_bytes = plan_path.read_bytes()
@@ -833,6 +884,11 @@ def resolve_consumer_execution_mode(
         raise ValueError("runtime-consumer-plan-invalid")
     consumer_policy = _validated_runtime_consumer_policy(plan, consumer_id)
     writes_planned = _runtime_write_policy(plan)
+    inspection_only = consumer_policy["capability"] == "instruction-bounded-review"
+    if inspection_only and writes_planned:
+        raise ValueError("review-inspection-writes-forbidden")
+    if inspection_only:
+        validate_inspection_contexts(plan, plan_path)
     plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
     write_approval_validated = False
     if writes_planned:
@@ -854,7 +910,7 @@ def resolve_consumer_execution_mode(
         read_parallel_promoted=True,
         write_parallel_promoted=False,
     )
-    if resolution["effective_mode"] == "parallel-read":
+    if resolution["effective_mode"] == "parallel-read" and not inspection_only:
         # Retain historical review plans; a new declaration cannot be rescued by a conflicting legacy value.
         host = plan.get("read_host", plan.get("review_host") if consumer_id == "code-review" else None)
         if host != {

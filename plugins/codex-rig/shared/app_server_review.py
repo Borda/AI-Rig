@@ -95,7 +95,7 @@ DISABLED_CAPABILITIES = frozenset(
         "live_web",
     }
 )
-ALLOWED_ITEM_TYPES = frozenset({"reasoning", "agentMessage", "commandExecution"})
+ALLOWED_ITEM_TYPES = frozenset({"reasoning", "agentMessage", "commandExecution", "plan"})
 HARMLESS_LIFECYCLE_METHODS = frozenset(
     {
         "thread/started",
@@ -106,6 +106,7 @@ HARMLESS_LIFECYCLE_METHODS = frozenset(
         "account/rateLimits/updated",
     }
 )
+HARMLESS_TEXT_NOTIFICATION_FIELDS = {"warning": "message", "configWarning": "summary"}
 ALLOWED_STREAM_METHODS = frozenset(
     {
         "item/agentMessage/delta",
@@ -115,6 +116,8 @@ ALLOWED_STREAM_METHODS = frozenset(
         "item/commandExecution/outputDelta",
     }
 )
+PLAN_NOTIFICATION_METHODS = frozenset({"turn/plan/updated", "item/plan/delta"})
+PLAN_STEP_STATUSES = frozenset({"pending", "inProgress", "completed"})
 REMOTE_CONTROL_STATUS_CHANGED = "remoteControl/status/changed"
 
 
@@ -185,6 +188,9 @@ def _is_harmless_lifecycle(message: Mapping[str, object]) -> bool:
     method = message.get("method")
     if method in HARMLESS_LIFECYCLE_METHODS:
         return True
+    if method in HARMLESS_TEXT_NOTIFICATION_FIELDS:
+        params = message.get("params")
+        return isinstance(params, Mapping) and isinstance(params.get(HARMLESS_TEXT_NOTIFICATION_FIELDS[method]), str)
     if method != REMOTE_CONTROL_STATUS_CHANGED:
         return False
     params = message.get("params")
@@ -195,6 +201,24 @@ def _validate_control_notification(message: Mapping[str, object]) -> None:
     """Reject every remote-control state except the schema-defined disabled notification."""
     if message.get("method") == REMOTE_CONTROL_STATUS_CHANGED and not _is_harmless_lifecycle(message):
         raise ReviewRouteError("app-server-remote-control-status-invalid")
+
+
+def _validate_plan_notification(method: object, params: Mapping[str, object]) -> None:
+    """Require the documented shape of a planning notification without retaining its text."""
+    if method == "turn/plan/updated":
+        plan = params.get("plan")
+        if not isinstance(plan, list) or not all(
+            isinstance(step, Mapping) and isinstance(step.get("step"), str) and step.get("status") in PLAN_STEP_STATUSES
+            for step in plan
+        ):
+            raise ReviewRouteError("app-server-plan-notification-invalid")
+        explanation = params.get("explanation")
+        if explanation is not None and not isinstance(explanation, str):
+            raise ReviewRouteError("app-server-plan-notification-invalid")
+        return
+    if method == "item/plan/delta" and all(isinstance(params.get(field), str) for field in ("itemId", "delta")):
+        return
+    raise ReviewRouteError("app-server-plan-notification-invalid")
 
 
 def _digest(value: object, label: str) -> str:
@@ -865,6 +889,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
     evidence: dict[str, object] | None = None
     failure: Exception | None = None
     failure_phase = "preparation"
+    failure_diagnostic: dict[str, str] | None = None
     turns_attempted = 0
     turns_acknowledged = 0
     cleanup = "not-started"
@@ -946,7 +971,23 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 continue
             if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
                 raise ReviewRouteError("app-server-approval-requested")
-            if method not in {"item/started", "item/completed", "turn/completed", *ALLOWED_STREAM_METHODS}:
+            if method not in {
+                "item/started",
+                "item/completed",
+                "turn/completed",
+                *ALLOWED_STREAM_METHODS,
+                *PLAN_NOTIFICATION_METHODS,
+            }:
+                failure_diagnostic = {
+                    "stage": "turn-events",
+                    "reason": "method-not-allowlisted",
+                    "method_category": "unrecognized",
+                    "recovery": (
+                        "Continue permitted source inspection using native instruction-bounded reviewers or disclosed "
+                        "parent-serial review; resume this launcher only after protocol-maintainer triage validates a "
+                        "supported event schema."
+                    ),
+                }
                 raise ReviewRouteError("app-server-event-rejected")
             params = _mapping(message.get("params"), "app-server-event-params")
             matching = [
@@ -961,6 +1002,9 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
             if not matching:
                 raise ReviewRouteError("app-server-thread-or-turn-mismatch")
             role_id, state = matching[0]
+            if method in PLAN_NOTIFICATION_METHODS:
+                _validate_plan_notification(method, params)
+                continue
             item = params.get("item")
             if isinstance(item, Mapping):
                 item_type = item.get("type")
@@ -993,6 +1037,10 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                         state["input_echo_completed"] = True
                         continue
                     raise ReviewRouteError("app-server-user-message-lifecycle-invalid")
+                if item_type == "plan" and (
+                    not isinstance(item.get("id"), str) or not isinstance(item.get("text"), str)
+                ):
+                    raise ReviewRouteError("app-server-plan-item-invalid")
                 if item_type not in ALLOWED_ITEM_TYPES:
                     raise ReviewRouteError("app-server-item-type-rejected")
                 state["started_at_ms"] = state["started_at_ms"] or int(time.monotonic() * 1000)
@@ -1087,19 +1135,22 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 if failure is None:
                     failure = cleanup_error
     if failure is not None:
+        failure_evidence: dict[str, object] = {
+            "schema_version": SCHEMA_VERSION,
+            "route": "app-server",
+            "status": "failed",
+            "failure_code": str(failure).split(":", 1)[0]
+            if isinstance(failure, ReviewRouteError)
+            else "app-server-review-failed",
+            "failure_phase": failure_phase,
+            "turn_dispatch": {"attempted": turns_attempted, "acknowledged": turns_acknowledged},
+            "cleanup": cleanup,
+        }
+        if failure_diagnostic is not None:
+            failure_evidence["failure_diagnostic"] = failure_diagnostic
         _atomic_json(
             output_root / "evidence.json",
-            {
-                "schema_version": SCHEMA_VERSION,
-                "route": "app-server",
-                "status": "failed",
-                "failure_code": str(failure).split(":", 1)[0]
-                if isinstance(failure, ReviewRouteError)
-                else "app-server-review-failed",
-                "failure_phase": failure_phase,
-                "turn_dispatch": {"attempted": turns_attempted, "acknowledged": turns_acknowledged},
-                "cleanup": cleanup,
-            },
+            failure_evidence,
         )
         if isinstance(failure, ReviewRouteError):
             raise failure

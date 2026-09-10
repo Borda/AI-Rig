@@ -489,6 +489,10 @@
       "helper-cli-contract.md"
     ],
     "code-review": [
+      "instruction-bounded-review",
+      "inspection-only",
+      "schema version 5",
+      "Actionable Pauses",
       "review-host-controls-unavailable-before-dispatch",
       "find-review-report.py --complete-run",
       "Review handoff blocked",

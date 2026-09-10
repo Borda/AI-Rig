@@ -2,6 +2,76 @@
   "cases": [
     {
       "expected_findings": [
+        "resumed-skill-skips-closing-gate",
+        "notes-only-run-presented-complete",
+        "required-final-structure-replaced",
+        "reentry-replays-valid-completed-work",
+        "reentry-resets-approval-or-retry-boundary"
+      ],
+      "id": "workflow-resume-closing-gate",
+      "prompt": "Assess any Codex Rig skill that failed, resumed after user intervention or a repeated invocation, completed substantive work, then returned an informal bullet recap without its normal closing checks or required final structure. Passing tests and saved notes are treated as a finalized result, while valid completed work is replayed and the repeated-failure counter or approval boundary is reset. Recover the first unmet checkpoint from retained evidence, revalidate changed inputs, reuse still-valid work, and finish the selected skill's normal verification/render/validate/promote/output contract. Code Review also needs its completion/discovery check. Non-artifact manager workflows retain their own verification and final structure, not invented artifacts. A request to continue is not an exact-output override or new authority.",
+      "target": "implement"
+    },
+    {
+      "expected_findings": [
+        "technical-first-user-message",
+        "generic-recovery-without-diagnosis",
+        "empty-or-duplicate-report-sections",
+        "historical-report-render-drift"
+      ],
+      "id": "workflow-plain-explanation-diagnostics",
+      "prompt": "Assess a workflow whose updates, questions, approvals, and final report start with status codes or headings instead of a plain-English explanation. It forwards raw helper errors and tells the user to repair checkout without inspecting retained diagnostics or naming the observed cause, responsible next action, or resume condition. It renders an empty results table, five not-applicable checks, and the same recovery action twice, then silently rerenders historical digest-bound reports with the new format. Explain first in every user-facing message, preserve machine protocols and explicitly requested exact formats, inspect permitted evidence before asking for action, and use the versioned concise presentation only for new handoffs.",
+      "target": "investigate"
+    },
+    {
+      "expected_findings": [
+        "fork-head-compared-before-fetch",
+        "routine-source-preparation-delegated-to-user",
+        "checkout-cause-invented",
+        "unverified-upstream-pull"
+      ],
+      "id": "code-review-agent-owned-fork-freshness",
+      "prompt": "Assess an open fork PR collector that fetches only the target before comparing the unfetched PR head with local files, then calls gh pr checkout. Its handoff tells the user to create a local branch and repair checkout, invents dirty files as the cause without inspecting retained command and checkout state, and blindly pulls the current upstream. Use fresh GH CLI metadata and gh pr checkout as primary workflow, fetch and verify both required refs before overlap comparison, preserve user changes, diagnose the exact failed operation, and perform permitted routine preparation yourself. Pull only with verified branch/upstream and fast-forward-only behavior when authorized; commits and remote publication require their own authority.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "launcher-failure-stops-available-review",
+        "unchanged-paid-wave-retried",
+        "failed-wave-output-reused",
+        "historical-rejected-event-invented",
+        "required-independence-silently-dropped"
+      ],
+      "id": "code-review-protocol-failure-continuation",
+      "prompt": "A verified-source review has two failed, explicitly approved App Server waves with the same event rejection and no retained event payload. Assess a handoff that forces the user to repair the protocol, change hosts, or find a manual reviewer despite an available native text-only route. It then retries an unchanged paid wave, reuses rejected output as independent findings, invents the original event type, and silently drops an explicit independence requirement. Stop the failed launcher and retain its recurrence ledger; continue source inspection through an authorized instruction-bounded native route or honestly disclosed parent review. Only an unmet explicit independence requirement needs a user decision after remaining inspection. New protocol fixtures can prove documented omissions, not the unrecoverable historical event.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "public-api-automatically-high-risk",
+        "inspection-blocked-by-missing-host-controls",
+        "inspection-authorizes-repository-execution",
+        "instruction-boundary-labelled-enforced-isolation",
+        "serial-review-labelled-independent"
+      ],
+      "id": "code-review-inspection-execution-separation",
+      "prompt": "Assess a review that treats an ordinary public API addition as automatically HIGH_RISK and refuses independent source inspection because native child read-only controls are unavailable. Its proposed fallback then runs repository tests from an inspection-only child, claims instructions enforce filesystem isolation, and labels a parent-only review independent. Keep accessible source inspection available, use supplied-context reviewers without child tools, assess compatibility normally, validate actual context/output/lineage and overlap, and leave executable probes to separately authorized safe parent work. Serial substitutes disclose missing independence; an explicit user independence requirement remains unmet.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "pause-cause-or-rule-missing",
+        "pause-recovery-owner-missing",
+        "pause-resume-condition-missing",
+        "pause-blocks-unaffected-work",
+        "pause-repeats-existing-approval"
+      ],
+      "id": "workflow-actionable-pause",
+      "prompt": "Assess a workflow that says only blocked, never identifies the concrete cause or governing rule, gives no feasible recovery or responsible actor, and never states what evidence or decision would permit resuming. It stops all source inspection because one executable probe is unsafe and asks for approval already granted. Every pause must name the stopped action, cause/evidence, exact rule/source, continuing work, feasible next step and owner, and resume condition. Use existing authorization first; distinguish a new approval, code/configuration change, missing evidence, or human decision. Approval alone cannot make unsafe execution safe; preserve denial boundaries and give a human-owned alternative when no safe route exists.",
+      "target": "investigate"
+    },
+    {
+      "expected_findings": [
         "sync-reader-approval-bypasses-managed-lifecycle",
         "sync-reader-rule-does-not-follow-installed-version",
         "sync-reader-migration-overwrites-user-rules",
@@ -121,7 +191,7 @@
         "stale-review-fallback"
       ],
       "id": "code-review-completion-handoff",
-      "prompt": "Assess a workflow that spawns review specialists using incompatible host controls, retains assessed notes when promotion fails, emits a normal verdict with the failure buried at the end, and lets remediation select an older report because no current result exists. Host admission must precede dispatch; only validated promoted and discoverable results may complete review.",
+      "prompt": "Assess a workflow that selects the strict portable-read-restricted reviewer route with incompatible host controls, retains assessed notes when promotion fails, emits a normal verdict with the failure buried at the end, and lets remediation select an older report because no current result exists. Apply the selected route's admission before dispatch; instruction-bounded supplied-context inspection has a separate admission contract and must not claim strict isolation. Only validated promoted and discoverable results may complete review, and pauses explain the exact cause, rule, recovery and resume condition.",
       "target": "code-review"
     },
     {
@@ -233,7 +303,7 @@
         "needs-independent-review"
       ],
       "id": "code-review-high-risk-substituted-fanout",
-      "prompt": "Review a HIGH_RISK security/API diff where qa-specialist and challenger were substituted in-main and the final status is marked pass.",
+      "prompt": "Review a HIGH_RISK security diff where the user explicitly requires independent QA and challenger review, both passes were substituted in-main, and the final status is marked pass without meeting that user requirement. Continue available inspection but disclose the missing independent coverage and provide a concrete recovery. Without an explicit independence requirement, honest serial substitution is permitted in the inspection route; public API changes alone do not force HIGH_RISK.",
       "target": "code-review"
     },
     {
@@ -1730,5 +1800,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.26"
+  "version": "1.27"
 }

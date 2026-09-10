@@ -35,7 +35,7 @@ Run `create_run.py --skill change-analysis` per `../../shared/helper-cli-contrac
 
 For every `github_read.py` or `collect_pr.py` execution, apply the full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to the complete owning command from its first attempt. The operation-specific brief is: `Action and purpose`: collect current GitHub analysis evidence; `External capability`: read-only GitHub network access; `Credential behavior`: `gh`, when used, is an opaque local credential broker; `Filesystem and worktree effects`: write evidence only to the analysis run directory, except a selected PR collector may create its documented local checkout; `Retry policy and safe denial outcome`: stop the turn on denial and use only already-available local or pasted evidence when the selected mode permits it. Runtime web tools keep their own permission path and receive no shell escalation.
 
-Unsupported/ambiguous mode => fail with usage note, unless pasted evidence supports `local`.
+If the mode is unsupported, explain which supplied value is invalid and list the accepted modes above. If the request is ambiguous, name the missing source or scope decision and ask one concrete question. Continue as `local` when pasted evidence supports the requested analysis, stating its freshness limits; do not request a mode choice that the available evidence already resolves. Resume the affected analysis when the user supplies the missing decision or evidence.
 
 ### 03: Capture scope and source inventory before drawing conclusions
 

@@ -710,6 +710,27 @@ def test_run_review_discards_rate_limit_notification_before_turns(
     _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
 
 
+@pytest.mark.parametrize(
+    ("method", "params"),
+    [
+        pytest.param("warning", {"message": "Ignored warning."}, id="warning"),
+        pytest.param("configWarning", {"summary": "Ignored configuration warning."}, id="config-warning"),
+    ],
+)
+def test_run_review_discards_schema_warning_notification_before_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, params: dict[str, str]
+) -> None:
+    """Discard only documented warning notifications without retaining their text."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    launches[1][2] = {"jsonrpc": "2.0", "method": method, "params": params}
+    _fake_public_processes(monkeypatch, launches)
+
+    evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    assert params[next(iter(params))] not in evidence_path.read_text(encoding="utf-8")
+
+
 def test_run_review_preserves_terminal_output_when_sibling_requests_approval(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -745,6 +766,109 @@ def test_run_review_rejects_unknown_execution_bearing_event(tmp_path: Path, monk
     _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    evidence = json.loads((tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8"))
+    assert evidence["failure_diagnostic"] == {
+        "stage": "turn-events",
+        "reason": "method-not-allowlisted",
+        "method_category": "unrecognized",
+        "recovery": (
+            "Continue permitted source inspection using native instruction-bounded reviewers or disclosed "
+            "parent-serial review; resume this launcher only after protocol-maintainer triage validates a "
+            "supported event schema."
+        ),
+    }
+    assert "shellCommand/executed" not in json.dumps(evidence)
+
+
+def test_run_review_accepts_schema_planning_events_bound_to_active_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept the documented planning notifications without retaining their text."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    plan_item = {"id": "plan-0", "type": "plan", "text": "Inspect the supplied source."}
+    launches[1][first_final:first_final] = [
+        {
+            "jsonrpc": "2.0",
+            "method": "turn/plan/updated",
+            "params": {
+                "threadId": "thread-0",
+                "turnId": "turn-0",
+                "plan": [{"step": "Inspect the supplied source.", "status": "inProgress"}],
+            },
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "item/started",
+            "params": {"threadId": "thread-0", "turnId": "turn-0", "item": plan_item},
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "item/plan/delta",
+            "params": {"threadId": "thread-0", "turnId": "turn-0", "itemId": "plan-0", "delta": "Inspect"},
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {"threadId": "thread-0", "turnId": "turn-0", "item": plan_item},
+        },
+    ]
+    _fake_public_processes(monkeypatch, launches)
+
+    _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    evidence = (tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8")
+    assert "Inspect the supplied source." not in evidence
+
+
+def test_run_review_rejects_schema_planning_event_for_other_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep planning events bound to the active reviewer turns."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1].insert(
+        first_final,
+        {
+            "jsonrpc": "2.0",
+            "method": "turn/plan/updated",
+            "params": {
+                "threadId": "other-thread",
+                "turnId": "turn-0",
+                "plan": [{"step": "Inspect the supplied source.", "status": "pending"}],
+            },
+        },
+    )
+    _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-thread-or-turn-mismatch"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+
+def test_run_review_rejects_malformed_schema_planning_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a plan update whose step status is outside the generated schema."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_final = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1].insert(
+        first_final,
+        {
+            "jsonrpc": "2.0",
+            "method": "turn/plan/updated",
+            "params": {
+                "threadId": "thread-0",
+                "turnId": "turn-0",
+                "plan": [{"step": "Inspect the supplied source.", "status": "unreviewed"}],
+            },
+        },
+    )
+    _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-plan-notification-invalid"):
         _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
 
 

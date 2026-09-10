@@ -13,7 +13,9 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-Run ``render`` after gates and handoff creation, then run ``check`` directly or through the shared artifact validator
+New workflow handoffs set ``presentation_version=2`` before ``render``; omitted presentation version remains available
+only for validating historical v1 artifacts. Run ``render`` after gates and handoff creation, then run ``check``
+directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
 --out-scope resolution-scope.md`` to validate source ownership and render the scope; add ``--check`` for a read-only
 byte comparison. Grouped review/remediation views retain the same machine identity and evidence bindings.
@@ -85,6 +87,14 @@ HANDOFF_FIELDS = {
     "confidence",
     "artifacts",
     "caller_contract",
+}
+PRESENTATION_VERSION = 2
+REVIEW_PLAIN_SUMMARIES = {
+    "accept-as-is": "This review found no blocking change requests.",
+    "minor-changes": "This review can proceed after minor changes.",
+    "needs-more-work": "This review needs more work before it can be accepted.",
+    "reject": "This review recommends rejecting the proposed change.",
+    "not-aligned": "This review is not aligned with the requested goal.",
 }
 
 
@@ -357,8 +367,14 @@ def _validate_caller_contract(payload: dict[str, Any], branch: str) -> None:
 def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
     handoff = _require_object(payload, "handoff")
-    if set(handoff) != HANDOFF_FIELDS:
+    presentation_version = handoff.get("presentation_version")
+    expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
+    if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
+    if presentation_version is not None and (
+        type(presentation_version) is not int or presentation_version != PRESENTATION_VERSION
+    ):
+        raise HandoffError("handoff-presentation-version-invalid")
     if handoff.get("schema_version") != SCHEMA_VERSION:
         raise HandoffError("handoff-schema-version-invalid")
     skill = _require_string(handoff.get("skill"), "skill")
@@ -640,6 +656,9 @@ def render_handoff(payload: object) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
+    if handoff.get("presentation_version") == PRESENTATION_VERSION:
+        return _render_v2_handoff(handoff)
+
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
     lines.extend(("", "**Results**"))
     if handoff["tables"]:
@@ -668,6 +687,52 @@ def render_handoff(payload: object) -> str:
         )
     else:
         lines.append("None")
+
+    confidence = handoff["confidence"]
+    lines.extend(("", "**Confidence**", "", f"{confidence['score']:.2f} ({confidence['band']})."))
+    if confidence["limits"]:
+        lines.append("Limits: " + "; ".join(confidence["limits"]))
+    for gap in confidence["gaps"]:
+        detail = gap.get("evidence") or gap.get("rationale")
+        lines.append(f"Gap [{gap['status']}]: {gap['gap']} — {detail}")
+
+    lines.extend(("", "**Artifact**", ""))
+    lines.extend(f"{artifact['label']}: {artifact['path']}" for artifact in handoff["artifacts"])
+    return "\n".join(lines) + "\n"
+
+
+def _render_v2_handoff(handoff: dict[str, Any]) -> str:
+    """Render a plain-English-first report while retaining the validated machine fields."""
+    outcome = handoff["outcome"]
+    if handoff["skill"] == "code-review" and handoff["branch"] == "assessed":
+        recommendation = outcome["summary"].removeprefix("Recommendation: ").removesuffix(".")
+        plain_summary = REVIEW_PLAIN_SUMMARIES[recommendation]
+        technical_summary = None
+    else:
+        plain_summary, separator, technical_detail = outcome["summary"].partition(" Reason: ")
+        technical_summary = f"Reason: {technical_detail}" if separator else None
+    lines = [plain_summary, "", "**Outcome**", "", outcome["title"]]
+    if technical_summary:
+        lines.extend(("", technical_summary))
+    if handoff["tables"]:
+        lines.extend(("", "**Results**"))
+        for table in handoff["tables"]:
+            lines.extend(("", *_render_table(table)))
+
+    visible_checks = [entry for entry in handoff["verification"] if entry["status"] != "not-applicable"]
+    lines.extend(("", "**Verification**", ""))
+    if visible_checks:
+        lines.extend(f"- {entry['check']}: {entry['status']} — {entry['evidence']}" for entry in visible_checks)
+    else:
+        lines.append("- Checks were not run; no executable verification applies to this branch.")
+
+    remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
+    if remaining_by_id:
+        lines.extend(("", "**Next steps**", ""))
+        lines.extend(
+            f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
+            for item in remaining_by_id.values()
+        )
 
     confidence = handoff["confidence"]
     lines.extend(("", "**Confidence**", "", f"{confidence['score']:.2f} ({confidence['band']})."))
