@@ -33,6 +33,34 @@ def _load_collector() -> ModuleType:
     return module
 
 
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        pytest.param(["--target", "18"], id="separate-target-override"),
+        pytest.param(["--target=18"], id="joined-target-override"),
+        pytest.param(["--tar", "18"], id="abbreviated-target-override"),
+    ],
+)
+def test_collector_rejects_approval_target_override(suffix: list[str], capsys: pytest.CaptureFixture[str]) -> None:
+    """Prevent later arguments from overriding a PR-bound approval prefix."""
+    module = _load_collector()
+    with pytest.raises(SystemExit) as error:
+        module.parse_args(["--target", "https://github.com/example/project/pull/17", "--out", "report", *suffix])
+    assert error.value.code == 2
+    assert "error:" in capsys.readouterr().err
+
+
+def test_collector_accepts_one_approval_target() -> None:
+    """Keep dynamic report destinations and checkout behind one stable target prefix."""
+    module = _load_collector()
+    arguments = module.parse_args(
+        ["--target", "https://github.com/example/project/pull/17", "--out", "report", "--checkout"]
+    )
+    assert arguments.target == "https://github.com/example/project/pull/17"
+    assert arguments.out == Path("report")
+    assert arguments.checkout is True
+
+
 def _pr_payload(*, state: str = "OPEN", cross_repository: bool = False) -> dict[str, Any]:
     """Return one complete same-repository PR metadata fixture.
 

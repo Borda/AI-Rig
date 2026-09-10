@@ -62,8 +62,8 @@
     },
     {
       "goal": "Produce scoped analysis with confidence",
-      "id": "change-analysis-001",
-      "skill": "change-analysis",
+      "id": "assess-001",
+      "skill": "assess",
       "success": "findings and confidence are present"
     },
     {

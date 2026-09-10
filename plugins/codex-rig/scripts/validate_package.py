@@ -53,7 +53,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = PACKAGE_ROOT / "scripts" / "build_package.py"
 EXPECTED_SKILLS = {
     "agent-shims",
-    "change-analysis",
+    "assess",
     "audit",
     "calibrate",
     "code-remediate",

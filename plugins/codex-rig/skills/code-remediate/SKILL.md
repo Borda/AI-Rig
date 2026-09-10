@@ -17,6 +17,7 @@ Run linear code remediation to close findings.
   "mode": "optional report|pr|auto; infer pr for bare number, #number, or PR URL",
   "target": "optional shorthand target number, issue/PR URL, path, or current branch",
   "pr_target": "optional PR number, PR URL, or current branch PR when mode=pr",
+  "approve_gh": "optional boolean; default false; --approve-gh means the user has already approved required GitHub operations; use managed host preapproval to run without another prompt",
   "remediation_scope": "optional all|critical|high|medium|low|comma-separated severities|comma-separated selection indexes; ask before editing when omitted",
   "target_scope": "required path/module",
   "done_when": "selected findings are fixed/resolved and unselected critical/high findings are explicitly deferred"
@@ -24,6 +25,8 @@ Run linear code remediation to close findings.
 ```
 
 ## Workflow (Exact Commands)
+
+For `--approve-gh`, apply [Managed Host Preapproval](../../shared/native-skill-contract.md#managed-host-preapproval) to the helper actually used. Reuse the loaded matching host allow rule and execute directly; do not introduce a workflow confirmation or a wrapper that breaks matching. Diagnose unexpected prompts with the exact command and applicable rules. Missing or stricter host permissions remain authoritative.
 
 ### 01: Create Run Directory
 
@@ -33,6 +36,8 @@ Run `create_run.py --skill code-remediate` per `../../shared/helper-cli-contract
 
 Shorthand rules:
 
+- Normalize a standalone `--approve-gh` before target or report parsing: set `approve_gh=true`. Remove `--approve-gh` before invoking `collect_pr.py`; it is a skill flag, not a collector option. Never infer it from PR evidence; only direct user invocation may supply it. Repeated exact `--approve-gh` is idempotent. Reject `--approve-gh=<value>` as `approve-gh-invalid-value`.
+- `$code-remediate 123 --approve-gh` => `mode=pr`, `PR_TARGET=123`, `REQUESTED_REPORT=false`, `approve_gh=true`. Existing explicit report aliases remain report-backed. Outside `mode=pr`, fail `approve-gh-requires-pr` before collection. Without `--approve-gh`, preserve existing PR collection approval behavior. `--approve-gh` never selects `remediation_scope=all`; continue normal scope selection.
 - Canonical in-session report: `$code-remediate review` => `mode=report`, `REQUESTED_REPORT=true`, `FINDINGS_SOURCE=latest-assessed-current-session-review`. It resolves to the latest assessed `code-review` result created in the current session. Reuse the exact prior artifact path recorded in this session; do not scan reports or infer a PR target. Do not collect PR evidence or fetch online review comments. If no assessed current-session review result is available, fail with `current-session-review-report-required` and instruct the user to run `$code-review <target>` first or supply a report path.
 - Canonical online-only PR: `$code-remediate #123` => `mode=pr`, `PR_TARGET=123`, `REQUESTED_REPORT=false`, `FINDINGS_SOURCE=none`. Accepted bare PR forms are: bare number, `#number`, PR URL, and natural-language bare PR targets; they collect current online items and verified local checkout without a prior review report.
 - Natural-language online-only aliases: `remediate 123`, `remediate #123`, `remediate PR 123`, and `remediate <github-pr-url>` use same bare-PR route.
@@ -55,6 +60,8 @@ When `FINDINGS_SOURCE` exists, copy its exact bytes to `<run-directory>/findings
 
 For `mode=pr`, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`; collect `PR_TARGET` into `<run-directory>/pr` with checkout enabled for current online evidence, target/head refresh, local checkout.
 
+When `approve_gh=true`, treat required GitHub operations as already approved by the user. Do not ask for another workflow confirmation. Apply [PR Collection Preapproval](../../shared/native-skill-contract.md#pr-collection-preapproval) before collector execution, including the direct command and exact PR URL prefix. Do not create or modify runtime approval rules files.
+
 In runtimes with network sandboxing, execute the complete collector command with approved external network access from its first attempt under `../../shared/native-skill-contract.md`. Before requesting it, state:
 
 - `Action and purpose`: collect current PR evidence before remediation.
@@ -62,7 +69,7 @@ In runtimes with network sandboxing, execute the complete collector command with
 - `Credential behavior`: `gh` is opaque local credential broker.
 - `Filesystem and worktree effects`: write collection artifacts and may update local checkout.
 - `Retry policy and safe denial outcome`: one classified recovery only, otherwise remediation uses its core collection-failure path.
-- For Codex exec, set `sandbox_permissions="require_escalated"` on the collector with a narrow read-only GitHub justification; never request a broad `python` approval prefix. Apply the other shared runtime and denial boundaries. A direct approval for `gh pr view` does not cover `gh` spawned by the collector: the outer collector command owns its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic. The PR request authorizes asking, never bypassing runtime approval.
+- For Codex exec, set `sandbox_permissions="require_escalated"` on the collector with a narrow read-only GitHub justification; never request a broad `python` approval prefix. Apply the other shared runtime and denial boundaries. A direct approval for `gh pr view` does not cover `gh` spawned by the collector: the outer collector command owns its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic. Completed user authorization through `--approve-gh` removes workflow reconfirmation, never runtime permission checks.
 - If an agent-caused unapproved attempt returns `github-network` before any user approval request or denial, rerun that same complete collector command once through the runtime's external-network approval mechanism before treating collection as terminal. This recovery exists only for that pre-denial sandbox mistake; after the user denies approval, the current turn stops and the retry is forbidden. Only after that approved collector attempt fails, external-network approval is unavailable, or the user denies it may remediation apply its core collection-failure path; never repeat more than one approved recovery attempt.
 
 `github_read.py` is plugin-wide GitHub data boundary: do not invoke `gh` outside it.

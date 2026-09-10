@@ -22,7 +22,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
 EXPECTED_SKILLS = (
     "agent-shims",
-    "change-analysis",
+    "assess",
     "audit",
     "calibrate",
     "code-remediate",

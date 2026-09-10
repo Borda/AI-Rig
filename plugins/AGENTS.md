@@ -17,6 +17,14 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - There is no shared automatic release command. Update the owning manifests and CHANGELOG, validate the package, and leave remote publication to the human workflow.
 - Completion requires relevant tests, lint/format where applicable, package validation where available, README synchronization, the SemVer gate, and `git diff --check`.
 
+## Change Consistency
+
+- Before any plugin addition, edit, or deletion, ask which other uses share the same behavior or contract, then scan the owning plugin and other plugins for similar implementations, invocation patterns, consumers, documentation, tests, and calibration cases. Do not limit the scan to exact names or already-touched files.
+- Record relevant counterparts before implementation. Apply the change to every counterpart that shares the contract, including removal of obsolete references after deletions; extend file ownership and verification scope explicitly when needed.
+- Preserve intentional differences in behavior, permissions, platform support, and plugin independence. Similar wording alone does not justify identical changes, a shared abstraction, or a new cross-plugin dependency.
+- Ask the user when evidence cannot establish whether a difference is intentional, the correct common behavior is ambiguous, or a counterpart requires authority outside the requested scope. Present the concrete counterparts and recommended treatment; continue unaffected authorized work.
+- Before completion, repeat the scan for missed or stale uses, run affected contract/calibration/package checks, and summarize synchronized counterparts plus intentional exclusions with reasons. A confirmed applicable counterpart left inconsistent keeps the task incomplete unless the user explicitly defers it.
+
 ## Markdown Annotation Convention
 
 - In plugin Markdown, write prose annotations, notes, and load directives as `>` blockquotes.

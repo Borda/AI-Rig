@@ -110,6 +110,10 @@ python3 plugins/codex-rig/scripts/install_global_agents.py \
 
 ### `install_github_read_rules.py`
 
+Optional collector preapproval: pass repeatable `--approve-pr https://github.com/example/project/pull/7` with `--plugin-root` and `--codex-home` during explicitly authorized setup. This adds exact PR URLs to `rules/codex-rig-pr-collection.rules`; existing managed targets carry forward during approved sync even when the option is omitted. No collector grant exists by default. The reader-wide approval is also managed by this command, so setup must disclose both scopes. `--remove` clears both owned files; edited/unowned files stop the operation before any permission change. Unrelated UI-saved collector rules are never migrated or removed.
+
+After setup, restart Codex. Code Review, Code Remediate, and PR-mode Assess with `--approve-gh` use the exact direct collector prefix; generic Assess/Release reads use the managed reader prefix. Loaded matching allow rules suppress runtime prompts unless a stricter rule or managed host restriction applies. Dynamic report paths follow the prefix. Grants trust the installed helper and its supported trailing arguments, including output writes and safe local checkout; they also cover matching unflagged calls. Never grant broad Python or `gh` execution, and never run setup automatically from a workflow to satisfy a pending runtime prompt. Check unexpected prompts using `codex execpolicy check` and the exact command; on-disk matches alone do not prove active-session loading.
+
 <details>
 <summary><strong>Managed GitHub reader-rule lifecycle</strong></summary>
 

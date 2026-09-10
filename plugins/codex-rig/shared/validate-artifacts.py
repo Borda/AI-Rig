@@ -172,6 +172,8 @@ PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; 
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
 
 SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
+    "assess": {"files": {}},
+    # Historical reports retain their original skill identity and artifact paths.
     "change-analysis": {"files": {}},
     "audit": {
         "files": {

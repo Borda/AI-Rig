@@ -30,7 +30,7 @@ def _load_validator(name: str, path: Path) -> ModuleType:
 def _validate(module: ModuleType, name: str, metadata: dict[str, object], gaps: list[str]) -> None:
     """Call one validator's intentionally equivalent confidence-closure contract."""
     if name == "shared":
-        module._validate_confidence_gap_closures(metadata, gaps, "change-analysis")
+        module._validate_confidence_gap_closures(metadata, gaps, "assess")
     else:
         module.validate_confidence_gap_closures(
             metadata, gaps

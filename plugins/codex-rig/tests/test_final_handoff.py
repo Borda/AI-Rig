@@ -377,7 +377,7 @@ def test_cli_render_and_check_bind_exact_file_digests(tmp_path: Path) -> None:
     assert "rendered-final-mismatch" in drifted.stderr
 
 
-def _write_schema_v2_change_analysis(tmp_path: Path) -> Path:
+def _write_schema_v2_assess(tmp_path: Path) -> Path:
     """Write one minimal schema-v2 result with a real rendered handoff."""
     checks = []
     verification = []
@@ -404,7 +404,7 @@ def _write_schema_v2_change_analysis(tmp_path: Path) -> Path:
     gap = "External production behavior was not exercised."
     handoff = {
         "schema_version": 1,
-        "skill": "change-analysis",
+        "skill": "assess",
         "branch": "standard",
         "outcome": {"title": "Analysis", "summary": "The requested contract is defined."},
         "tables": [
@@ -488,19 +488,19 @@ def _write_schema_v2_change_analysis(tmp_path: Path) -> Path:
 
 def test_schema_v2_result_requires_digest_bound_final_output(tmp_path: Path) -> None:
     """Accept an intact final handoff and reject post-render presentation drift."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     validator = _load_shared_validator()
 
-    validator.validate("change-analysis", tmp_path, result_path)
+    validator.validate("assess", tmp_path, result_path)
 
     (tmp_path / "final.md").write_text("truncated\n", encoding="utf-8")
     with pytest.raises(SystemExit, match="final-handoff-validation-failed:.*rendered-final-mismatch"):
-        validator.validate("change-analysis", tmp_path, result_path)
+        validator.validate("assess", tmp_path, result_path)
 
 
 def test_schema_v2_candidate_promotes_to_the_canonical_result_path(tmp_path: Path) -> None:
     """Allow a candidate to bind the final result path before its atomic promotion."""
-    candidate_path = _write_schema_v2_change_analysis(tmp_path)
+    candidate_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(candidate_path.read_text(encoding="utf-8"))
     canonical_path = tmp_path / "result.json"
     result["artifact_path"] = str(canonical_path)
@@ -516,15 +516,15 @@ def test_schema_v2_candidate_promotes_to_the_canonical_result_path(tmp_path: Pat
     candidate_path.write_text(json.dumps(result), encoding="utf-8")
 
     validator = _load_shared_validator()
-    validator.validate("change-analysis", tmp_path, candidate_path)
+    validator.validate("assess", tmp_path, candidate_path)
     candidate_path.replace(canonical_path)
-    validator.validate("change-analysis", tmp_path, canonical_path)
+    validator.validate("assess", tmp_path, canonical_path)
 
 
 @pytest.mark.parametrize("artifact_path", ["not-the-result.json", "../result.json"])
 def test_schema_v2_rejects_noncanonical_result_artifact_paths(tmp_path: Path, artifact_path: str) -> None:
     """Keep digest-bound presentation from naming an unrelated result artifact."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["artifact_path"] = artifact_path
     binding = result["metadata"]["final_handoff"]
@@ -539,13 +539,13 @@ def test_schema_v2_rejects_noncanonical_result_artifact_paths(tmp_path: Path, ar
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="result-artifact-path-mismatch"):
-        _load_shared_validator().validate("change-analysis", tmp_path, result_path)
+        _load_shared_validator().validate("assess", tmp_path, result_path)
 
 
 @pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks")
 def test_schema_v2_rejects_canonical_result_symlink_escaping_the_run_directory(tmp_path: Path) -> None:
     """Prevent a canonical result name from resolving to evidence outside its run directory."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     escaped_result = tmp_path.parent / "escaped-result.json"
     escaped_result.write_text("outside\n", encoding="utf-8")
     canonical_result = tmp_path / "result.json"
@@ -554,12 +554,12 @@ def test_schema_v2_rejects_canonical_result_symlink_escaping_the_run_directory(t
     with pytest.raises(SystemExit, match="result-artifact-path-mismatch"):
         _load_result_writer().validate_artifact_path(result_path, str(canonical_result))
     with pytest.raises(SystemExit, match="result-artifact-path-mismatch"):
-        _load_shared_validator().validate("change-analysis", tmp_path, result_path)
+        _load_shared_validator().validate("assess", tmp_path, result_path)
 
 
 def test_schema_v2_rejects_duplicate_confidence_gaps_and_closures(tmp_path: Path) -> None:
     """Reject ambiguous provenance rather than retaining an arbitrary last closure."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     metadata = result["metadata"]
     gap = metadata["confidence_gaps"][0]
@@ -571,14 +571,14 @@ def test_schema_v2_rejects_duplicate_confidence_gaps_and_closures(tmp_path: Path
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="duplicate-confidence-gap"):
-        _load_shared_validator().validate("change-analysis", tmp_path, result_path)
+        _load_shared_validator().validate("assess", tmp_path, result_path)
 
 
 def test_schema_v2_accepts_documented_workspace_relative_handoff_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Resolve template-style run paths relative to the invoking workspace."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     binding = result["metadata"]["final_handoff"]
     run_path = Path(tmp_path.name)
@@ -588,15 +588,33 @@ def test_schema_v2_accepts_documented_workspace_relative_handoff_paths(
     result_path.write_text(json.dumps(result), encoding="utf-8")
     monkeypatch.chdir(tmp_path.parent)
 
+    _load_shared_validator().validate("assess", tmp_path, result_path)
+
+
+def test_historical_change_analysis_handoff_remains_valid(tmp_path: Path) -> None:
+    """Keep a retired skill name readable without retaining a discoverable alias."""
+    result_path = _write_schema_v2_assess(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    binding = result["metadata"]["final_handoff"]
+    handoff_path = Path(binding["handoff_path"])
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["skill"] = "change-analysis"
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _load_finalizer().render_files(
+        handoff_path, Path(binding["rendered_path"]), Path(binding["validation_path"])
+    )
+    binding.update(handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"])
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
     _load_shared_validator().validate("change-analysis", tmp_path, result_path)
 
 
 def test_historical_schema_v1_result_remains_readable_without_final_handoff(tmp_path: Path) -> None:
     """Keep pre-migration artifacts valid while schema-v2 creation fails closed."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result.pop("schema_version")
     result["metadata"].pop("final_handoff")
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
-    _load_shared_validator().validate("change-analysis", tmp_path, result_path)
+    _load_shared_validator().validate("assess", tmp_path, result_path)

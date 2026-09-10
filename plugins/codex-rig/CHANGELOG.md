@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0
+
+- Fix managed runtime preapproval for every `--approve-gh` consumer: retain existing reader grants for Assess/Release and add explicit canonical-PR collector grants for Code Review, Code Remediate, and PR-mode Assess. Preserve approved targets across verified setup/sync upgrades, reject modified rules before writes, and back up/remove owned grants through the existing lifecycle. Loaded allow rules avoid another prompt; setup/restart and stricter host policies remain explicit requirements. Keep skill invocation separate from permission installation.
+
+- Define `--approve-gh` in Code Review and Code Remediate as completed user authorization for the required GitHub collection, so the workflow does not re-ask for consent. Preserve the reusable direct collector prefix of the actual Python executable, installed `collect_pr.py`, `--target`, and canonical repository-qualified PR URL; keep dynamic report paths outside it and do not wrap it in `rtk`. Runtime permission remains separate: the host may still prompt or deny, and the flag cannot bypass prompts or denials, create or modify saved rules, or authorize remote mutation. Remediation finding selection remains separate.
+
+- Support the same completed-user-authorization meaning for `--approve-gh` in Assess and Release. Required generic GitHub reads use the direct actual-Python-plus-installed-`github_read.py` prefix, with reader-wide scope across repositories and its output-file and allowlisted local-checkout capabilities disclosed; PR analysis retains PR-scoped collection. Preserve local-only workflows, runtime prompt and denial controls, and the prohibition on publication or permission-rule changes.
+
+- Rename `change-analysis` to `assess` across discovery, routing, templates, metadata, calibration, and documentation. New reports use `.reports/codex/assess/`; existing `change-analysis` report artifacts remain readable, but the former skill name is no longer registered.
+
+- Reject repeated PR collector targets and abbreviated options so trailing arguments cannot override the target bound by a reusable runtime prefix. The flag supplies completed user authorization for the workflow; runtime rules remain host-owned and the workflow cannot install, change, or bypass them.
+
 ## 0.16.3
 
 - Reject contradictory App Server turn identities, malformed lifecycle items, and events for completed reviewers while sibling reviews remain active. Preserve already completed output on failure and report a specific reason for duplicate terminal events.

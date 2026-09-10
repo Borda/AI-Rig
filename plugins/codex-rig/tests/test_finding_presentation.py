@@ -16,7 +16,7 @@ from rich.markdown import Markdown
 from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer
 from test_code_remediate_final_outcome_validation import VALIDATOR
 from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata, _write_action_items
-from test_final_handoff import _write_schema_v2_change_analysis
+from test_final_handoff import _write_schema_v2_assess
 from test_review_finding_identity import _load_validator, _metadata, _result
 
 
@@ -503,7 +503,7 @@ def test_grouped_review_gate_intake_does_not_depend_on_display_words(tmp_path: P
 @pytest.mark.parametrize("item_type", ["code", "review-gate"])
 def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path, item_type: str) -> None:
     """Exercise the outer validator, not just the no-selectable renderer branch."""
-    result_path = _write_schema_v2_change_analysis(tmp_path)
+    result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     metadata = result["metadata"]
     metadata.update(resolution_metadata())

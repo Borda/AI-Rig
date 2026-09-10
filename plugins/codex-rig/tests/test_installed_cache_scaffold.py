@@ -92,7 +92,7 @@ def test_repository_marketplace_contract() -> None:
 @pytest.mark.packaging
 def test_representative_skill_and_role_are_cache_portable() -> None:
     """Prevent representative payloads from depending on the source checkout."""
-    skill = (PLUGIN_ROOT / "skills" / "change-analysis" / "SKILL.md").read_text(encoding="utf-8")
+    skill = (PLUGIN_ROOT / "skills" / "assess" / "SKILL.md").read_text(encoding="utf-8")
     role = (PLUGIN_ROOT / "roles" / "challenger" / "ROLE.md").read_text(encoding="utf-8")
 
     assert "../../shared/" in skill

@@ -8,6 +8,14 @@ Any policy change in one listed instruction file must trigger a relevance review
 
 Plugins under `plugins/`. See `README.md` for user-facing detail. Sections below with a "Full ... : `AUTHORING.md` §X" pointer have narrow-trigger detail (worked checklists, mechanism rationale, precedent, catalogues) in `plugins/AUTHORING.md`, same directory — load on demand, not needed for routine edits.
 
+## Change Consistency
+
+- Before any plugin addition, edit, or deletion, ask which other uses share the same behavior or contract, then scan the owning plugin and other plugins for similar implementations, invocation patterns, consumers, documentation, tests, and calibration cases. Do not limit the scan to exact names or already-touched files.
+- Record relevant counterparts before implementation. Apply the change to every counterpart that shares the contract, including removal of obsolete references after deletions; extend file ownership and verification scope explicitly when needed.
+- Preserve intentional differences in behavior, permissions, platform support, and plugin independence. Similar wording alone does not justify identical changes, a shared abstraction, or a new cross-plugin dependency.
+- Ask the user when evidence cannot establish whether a difference is intentional, the correct common behavior is ambiguous, or a counterpart requires authority outside the requested scope. Present the concrete counterparts and recommended treatment; continue unaffected authorized work.
+- Before completion, repeat the scan for missed or stale uses, run affected contract/calibration/package checks, and summarize synchronized counterparts plus intentional exclusions with reasons. A confirmed applicable counterpart left inconsistent keeps the task incomplete unless the user explicitly defers it.
+
 ## Markdown Annotation Convention
 
 In `.md` plugin files, prose annotations, notes, and load directives use `>` blockquotes. Use `#` only for real Markdown headings and, inside fenced `bash`/`python` blocks, code comments — never as a fake prose comment or load directive, since that changes heading hierarchy.

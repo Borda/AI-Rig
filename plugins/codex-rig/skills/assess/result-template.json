@@ -1,5 +1,5 @@
 {
-  "artifact_path": ".reports/codex/change-analysis/<timestamp>/result.json",
+  "artifact_path": ".reports/codex/assess/<timestamp>/result.json",
   "checks_failed": [],
   "checks_run": [
     "lint",
@@ -34,12 +34,12 @@
     },
     "final_handoff": {
       "branch": "standard",
-      "handoff_path": ".reports/codex/change-analysis/<timestamp>/final-handoff.json",
+      "handoff_path": ".reports/codex/assess/<timestamp>/final-handoff.json",
       "handoff_sha256": "sha256",
-      "rendered_path": ".reports/codex/change-analysis/<timestamp>/final.md",
+      "rendered_path": ".reports/codex/assess/<timestamp>/final.md",
       "rendered_sha256": "sha256",
       "schema_version": 1,
-      "validation_path": ".reports/codex/change-analysis/<timestamp>/final-handoff.validation.json"
+      "validation_path": ".reports/codex/assess/<timestamp>/final-handoff.validation.json"
     }
   },
   "schema_version": 2,

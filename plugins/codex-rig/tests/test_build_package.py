@@ -221,7 +221,7 @@ def test_update_is_idempotent_after_normalizing_stale_manifest(tmp_path: Path) -
             id="missing-role",
         ),
         pytest.param(
-            lambda root: (root / "skills" / "change-analysis" / "SKILL.md").unlink(),
+            lambda root: (root / "skills" / "assess" / "SKILL.md").unlink(),
             "missing workflow skill",
             id="missing-skill",
         ),

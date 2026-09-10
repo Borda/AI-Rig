@@ -232,6 +232,21 @@
       "Confidence",
       "Raw JSON alone never substitutes for the outcome"
     ],
+    "assess": [
+      "## Input Schema",
+      "evidence.md",
+      "github_read.py",
+      "public HTTPS fallback",
+      "Self-Critical Gate",
+      "result-template.json",
+      "## Quality Gates",
+      "## Calibration Hooks",
+      "Final chat follows",
+      "Next steps",
+      "Finding \\| Impact \\| Decision \\| Evidence \\| Next action",
+      "shared ordered frame",
+      "helper-cli-contract.md"
+    ],
     "audit": [
       "## Input Schema",
       "Runtime Leaks",
@@ -274,21 +289,6 @@
       "Final chat follows",
       "Next steps",
       "Check / metric \\| Result \\| Evidence \\| Next action",
-      "shared ordered frame",
-      "helper-cli-contract.md"
-    ],
-    "change-analysis": [
-      "## Input Schema",
-      "evidence.md",
-      "github_read.py",
-      "public HTTPS fallback",
-      "Self-Critical Gate",
-      "result-template.json",
-      "## Quality Gates",
-      "## Calibration Hooks",
-      "Final chat follows",
-      "Next steps",
-      "Finding \\| Impact \\| Decision \\| Evidence \\| Next action",
       "shared ordered frame",
       "helper-cli-contract.md"
     ],

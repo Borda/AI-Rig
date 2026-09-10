@@ -21,9 +21,9 @@ or standard), repository root, timeout, and ``--out`` path; it always prints the
 
 ## Used by
 
-The ``change-analysis``, ``implement``, ``audit``, and ``code-review`` skills consume these observations; see the
-adjacent ``codemap-contract.md`` for the category/query mapping. The module is also exercised by portable helper tests
-that verify status reduction and the public CLI contract.
+The ``assess``, ``implement``, ``audit``, and ``code-review`` skills consume these observations; see the adjacent
+``codemap-contract.md`` for the category/query mapping. The module is also exercised by portable helper tests that
+verify status reduction and the public CLI contract.
 
 ## Outputs
 

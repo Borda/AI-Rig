@@ -4,7 +4,7 @@ title: "Borda's AI-Rig"
 type: software
 authors:
   - family-names: Borovec
-    given-names: Jirka
+    given-names: Jiri
     alias: Borda
 license: Apache-2.0
 repository-code: "https://github.com/Borda/AI-Rig"

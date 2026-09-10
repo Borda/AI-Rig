@@ -1,4 +1,4 @@
-<!-- file: codemap-contract.md — consumers: skills/{change-analysis,audit,code-review,code-remediate,implement,investigate,optimize,release,research}/SKILL.md, shared/codemap_adapter.py -->
+<!-- file: codemap-contract.md — consumers: skills/{assess,audit,code-review,code-remediate,implement,investigate,optimize,release,research}/SKILL.md, shared/codemap_adapter.py -->
 
 # Codemap-py structural-context contract — codex-rig
 
@@ -74,7 +74,7 @@ Absence and incompatibility are non-fatal: workflow proceeds with its normal bou
 
 | Category | Consuming skills | Queries (`codemap-py query <subcommand>`) |
 | -- | -- | -- |
-| `analysis` | change-analysis, research | `central` (no target) + `deps <target>` |
+| `analysis` | assess, research | `central` (no target) + `deps <target>` |
 | `implementation` | implement, investigate, optimize | `rdeps <target>` + `coupled` (no target) + `test-impact <target>` |
 | `review` | code-review, code-remediate | `diff-impact` (no target — reads working-tree/PR diff once) |
 | `audit` | audit, release | `undocumented --all` + `dead-modules` (no target) |
@@ -90,7 +90,7 @@ Passing `--query-kind` is per-workflow decision, not migration every consumer ow
 | `implement` | `implementation` | adaptive — passes `--query-kind` | resolves one module/symbol at its decision point, so single fact usually settles open structural question |
 | `investigate` | `implementation` | adaptive — passes `--query-kind` | same decision point, reached only when `scope` names Python module/symbol |
 | `optimize` | `implementation` | adaptive — passes `--query-kind` | same decision point, reached only when `scope_files` resolves to Python module/symbol |
-| `change-analysis` | `analysis` | standard batch — no `--query-kind` | its decision point is broad or unknown scope, which routing rule above already assigns to `standard` |
+| `assess` | `analysis` | standard batch — no `--query-kind` | its decision point is broad or unknown scope, which routing rule above already assigns to `standard` |
 | `research` | `analysis` | standard batch — no `--query-kind` | same broad-scope decision point |
 | `code-review` | `review` | standard batch — no `--query-kind` | category's only query is `diff-impact`, which has no equivalent in closed fact-kind vocabulary; sole alternative kind would be `skip` |
 | `code-remediate` | `review` | standard batch — no `--query-kind` | same single-query category |

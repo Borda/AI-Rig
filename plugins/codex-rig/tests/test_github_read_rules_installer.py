@@ -6,6 +6,7 @@ import ast
 import hashlib
 import json
 import runpy
+import shutil
 import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
@@ -15,6 +16,7 @@ from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_github_read_rules.py"
+CODEX = shutil.which("codex")
 
 
 def _installed_plugin(home: Path, version: str) -> Path:
@@ -26,6 +28,7 @@ def _installed_plugin(home: Path, version: str) -> Path:
     )
     (root / "shared").mkdir()
     (root / "shared" / "github_read.py").write_text('"""Unused fixture reader."""\n', encoding="utf-8")
+    (root / "shared" / "collect_pr.py").write_bytes(b"# Unused fixture collector.\n")
     records = [
         {
             "path": path.relative_to(root).as_posix(),
@@ -368,3 +371,121 @@ def test_setup_rejects_unverified_package_bytes(tmp_path: Path, component: str) 
 
     assert result.returncode == 2
     assert not (home / "rules").exists()
+
+
+def test_explicit_pr_approval_survives_upgrade_and_is_removed_on_clear(tmp_path: Path) -> None:
+    """Keep collector grants PR-specific, opt-in, backed up, and refreshable without new consent."""
+    home = tmp_path / "home"
+    first = _installed_plugin(home, "1.2.3")
+    target = "https://github.com/example/project/pull/7"
+    managed = home / "rules" / "codex-rig-pr-collection.rules"
+    assert _run(home, "--plugin-root", str(first)).returncode == 0
+    assert not managed.exists()
+    result = _run(home, "--plugin-root", str(first), "--approve-pr", target)
+    assert result.returncode == 0, result.stderr
+    pattern = _rule_pattern(managed)
+    assert pattern[0] == ["python", "python3"]
+    collector = first / "shared" / "collect_pr.py"
+    paths = list(dict.fromkeys([str(collector), collector.as_posix()]))
+    assert pattern[1] == (paths[0] if len(paths) == 1 else paths)
+    assert pattern[2:] == ["--target", [target]]
+    original = managed.read_bytes()
+    assert _run(home, "--plugin-root", str(first), "--approve-pr", target).returncode == 0
+    assert managed.read_bytes() == original
+    assert not (home / "backups").exists()
+    second = _installed_plugin(home, "1.2.4")
+    assert _run(home, "--plugin-root", str(second)).returncode == 0
+    assert _rule_pattern(managed)[2:] == ["--target", [target]]
+    assert "1.2.4" in managed.read_text(encoding="utf-8")
+    assert "1.2.3" not in managed.read_text(encoding="utf-8")
+    assert original in [path.read_bytes() for path in (home / "backups/codex-rig").iterdir()]
+    assert _run(home, "--remove").returncode == 0
+    assert not managed.exists()
+
+
+@pytest.mark.parametrize(
+    "target", ["7", "https://github.com/example/project/pull/0", "https://github.com/example/project/pull/7?x=1", "*"]
+)
+def test_pr_setup_rejects_noncanonical_targets_before_any_permission_write(tmp_path: Path, target: str) -> None:
+    """Reject ambiguous identities and URL suffixes before granting any reader or collector access."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home, "1.2.3")
+    result = _run(home, "--plugin-root", str(root), "--approve-pr", target)
+    assert result.returncode == 2
+    assert not (home / "rules").exists()
+
+
+def test_pr_setup_refuses_modified_rules_before_updating_reader(tmp_path: Path) -> None:
+    """Do not partially expand permissions when the PR allowlist has unrecognized content."""
+    home = tmp_path / "home"
+    first = _installed_plugin(home, "1.2.3")
+    target = "https://github.com/example/project/pull/7"
+    assert _run(home, "--plugin-root", str(first), "--approve-pr", target).returncode == 0
+    managed = home / "rules" / "codex-rig-pr-collection.rules"
+    modified = managed.read_bytes() + b"# user edit\n"
+    managed.write_bytes(modified)
+    reader = home / "rules" / "codex-rig-github-read.rules"
+    original_reader = reader.read_bytes()
+    second = _installed_plugin(home, "1.2.4")
+    result = _run(home, "--plugin-root", str(second))
+    assert result.returncode == 2
+    assert managed.read_bytes() == modified
+    assert reader.read_bytes() == original_reader
+
+
+@pytest.mark.skipif(CODEX is None, reason="Codex policy checker is unavailable")
+@pytest.mark.integration
+def test_real_policy_engine_matches_only_approved_collector_and_pr(tmp_path: Path) -> None:
+    """Prove emitted Starlark grants the approved command while preserving unrelated boundaries."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home, "1.2.3")
+    target = "https://github.com/example/project/pull/7"
+    assert _run(home, "--plugin-root", str(root), "--approve-pr", target).returncode == 0
+    rules = home / "rules" / "codex-rig-pr-collection.rules"
+    collector = str(root / "shared" / "collect_pr.py")
+    cases = [
+        (["python", collector, "--target", target, "--out", "report-one", "--checkout"], True),
+        (["python3", collector, "--target", target, "--out", "report-two"], True),
+        (["python", collector, "--target", "https://github.com/example/project/pull/8"], False),
+        (["python", collector, "--target", "https://github.com/example/other/pull/7"], False),
+        (["python", collector, "--target", "7"], False),
+        (["python", str(root / "shared" / "github_read.py"), "--target", target], False),
+        (["rtk", "python", collector, "--target", target], False),
+    ]
+    for command, allowed in cases:
+        result = subprocess.run(
+            [CODEX, "execpolicy", "check", "--rules", str(rules), "--", *command],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert (payload.get("decision") == "allow") is allowed, command
+
+    restriction = home / "rules" / "admin.rules"
+    for decision in ("prompt", "forbidden"):
+        restriction.write_bytes(f'prefix_rule(pattern=["python"], decision="{decision}")\n'.encode("utf-8"))
+        result = subprocess.run(
+            [CODEX, "execpolicy", "check", "--rules", str(rules), "--rules", str(restriction), "--", *cases[0][0]],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["decision"] == decision
+
+
+def test_pr_grants_reject_rehashed_broad_pattern(tmp_path: Path) -> None:
+    """A checksum does not turn an arbitrary collector-wide rule into an owned PR grant."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home, "1.2.3")
+    managed = home / "rules" / "codex-rig-pr-collection.rules"
+    managed.parent.mkdir()
+    body = b'prefix_rule(pattern=["python"], decision="allow")\n'
+    original = b"# codex-rig:pr-collection sha256=" + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
+    managed.write_bytes(original)
+    result = _run(home, "--plugin-root", str(root))
+    assert result.returncode == 2
+    assert managed.read_bytes() == original
+    assert not (managed.parent / "codex-rig-github-read.rules").exists()

@@ -56,6 +56,8 @@ GAP_STATUSES = {"closed", "unresolved", "deferred"}
 STANDARD_COLUMNS = {
     "audit": ("Item", "Severity / impact", "Decision", "Evidence", "Next action"),
     "calibrate": ("Check / metric", "Result", "Evidence", "Next action"),
+    "assess": ("Finding", "Impact", "Decision", "Evidence", "Next action"),
+    # Keep pre-rename report handoffs readable without registering a second skill.
     "change-analysis": ("Finding", "Impact", "Decision", "Evidence", "Next action"),
     "code-remediate": ("Item", "Severity", "Finding", "Sources", "Outcome", "Evidence / next action"),
     "implement": ("Surface", "Outcome", "Verification", "Remaining limit"),

@@ -30,11 +30,13 @@ For v2 unavailable review, bind `outcome.summary` to actual `metadata.collection
 
 ## Exact table columns
 
+Historical `change-analysis` artifacts retain their original skill identity and use the `assess` column contract. This is report-reading compatibility only; the installed skill is named `assess`.
+
 | Skill | Columns |
 | -- | -- |
 | `audit` | `Item \| Severity / impact \| Decision \| Evidence \| Next action` |
 | `calibrate` | `Check / metric \| Result \| Evidence \| Next action` |
-| `change-analysis` | `Finding \| Impact \| Decision \| Evidence \| Next action` |
+| `assess` | `Finding \| Impact \| Decision \| Evidence \| Next action` |
 | `code-remediate` | `Item \| Severity \| Finding \| Sources \| Outcome \| Evidence / next action` |
 | `implement` | `Surface \| Outcome \| Verification \| Remaining limit` |
 | `investigate` | `Hypothesis \| Evidence \| Disposition \| Next action` |

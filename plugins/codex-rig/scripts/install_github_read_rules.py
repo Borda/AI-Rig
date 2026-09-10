@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Manage the installed GitHub reader's reusable Codex command approval.
+"""Manage reusable Codex approvals for GitHub evidence helpers.
 
 ## Purpose
 
 Keep GitHub evidence approval under the plugin's explicit setup and sync lifecycle. Regenerate the literal installed
 reader path after upgrades so changing log destinations and job identifiers does not require new command approvals.
+Explicit PR opt-in also preserves exact collector targets across verified installed-package upgrades.
 
 ## Scope
 
 Manage only ``rules/codex-rig-github-read.rules`` in the selected Codex home and migrate exact canonical legacy reader
 allow entries from ``rules/default.rules``. Preserve unrelated default-rule bytes. The approval covers the reader's
 existing GitHub reads, local PR checkout, and output writes; it does not grant arbitrary Python or GitHub CLI execution.
+Optional ``rules/codex-rig-pr-collection.rules`` grants only the installed collector with explicitly approved PR URLs.
 
 ## Usage
 
 Run with ``--plugin-root`` pointing to the installed Codex Rig cache and ``--codex-home`` after an explicitly approved
-setup. Use ``--remove --codex-home`` for teardown. Direct plugin installation does not execute this helper.
+setup. Use ``--remove --codex-home`` for teardown. Direct plugin installation does not execute this helper. Supply
+repeatable ``--approve-pr
+https://github.com/owner/repository/pull/number``
+during explicit setup to add PRs.
+The skill flag ``--approve-gh`` never runs setup or writes rules. Restart Codex after setup to load grants.
 
 ## Outputs
 
-Write one checksum-marked rule file, unique byte-exact backups under ``backups/codex-rig``, and concise per-file status.
+Write checksum-marked rule files, unique byte-exact backups under ``backups/codex-rig``, and concise per-file status.
 Prepare all required backups before changing rules. Repeated setup is idempotent. Each changed file is replaced
-atomically; the two-file migration is not transactional, and completed operations are reported before later failures.
+atomically; the multi-file migration is not transactional, and completed operations are reported before later failures.
 
 ## Failure
 
@@ -56,6 +62,9 @@ from _package_identity import verify_package
 CACHE_PARTS = ("plugins", "cache", "borda-ai-rig", "codex-rig")
 RULE_NAME = "codex-rig-github-read.rules"
 MARKER = b"# codex-rig:github-read sha256="
+PR_RULE_NAME = "codex-rig-pr-collection.rules"
+PR_MARKER = b"# codex-rig:pr-collection sha256="
+PR_URL = re.compile(r"https://github\.com/[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*/pull/[1-9][0-9]*")
 MAX_BYTES = 4 * 1024 * 1024
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?")
 LEGACY_RULE = re.compile(rb'prefix_rule\(pattern=(\["python(?:3)?", "(?:[^"\\]|\\.)*"\]), decision="allow"\)')
@@ -93,6 +102,40 @@ def strip_legacy_rules(existing: bytes, home: PurePath) -> bytes:
                 continue
         kept.append(line)
     return b"".join(kept)
+
+
+def render_pr_rules(collector: PurePath, targets: list[str]) -> bytes:
+    """Render exact PR grants without allowing numeric, wildcard, or query-bearing targets."""
+    if not targets or any(not isinstance(target, str) or not PR_URL.fullmatch(target) for target in targets):
+        raise UnsafeRulesState("PR approvals require canonical https://github.com/owner/repository/pull/number URLs")
+    paths = list(dict.fromkeys((str(collector), collector.as_posix())))
+    pattern = [["python", "python3"], paths[0] if len(paths) == 1 else paths, "--target", sorted(set(targets))]
+    body = f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'.encode("utf-8")
+    return PR_MARKER + hashlib.sha256(body).hexdigest().encode("ascii") + b"\n" + body
+
+
+def _approved_prs(existing: bytes | None, home: Path) -> list[str]:
+    """Recover only a canonical managed PR allowlist, refusing edited or foreign rules."""
+    if existing is None:
+        return []
+    header, separator, body = existing.partition(b"\n")
+    if not separator or header != PR_MARKER + hashlib.sha256(body).hexdigest().encode("ascii"):
+        raise UnsafeRulesState("managed PR rules are unowned or modified; refusing change")
+    try:
+        pattern = json.loads(body.removeprefix(b"prefix_rule(pattern=").removesuffix(b', decision="allow")\n'))
+        if not isinstance(pattern, list) or len(pattern) != 4 or not isinstance(pattern[3], list):
+            raise ValueError("not a four-position PR pattern")
+        path = pattern[1][0] if isinstance(pattern[1], list) and pattern[1] else pattern[1]
+        if not isinstance(path, str):
+            raise ValueError("not a collector path")
+        collector = Path(path)
+        if collector.name != "collect_pr.py" or not _is_reader_path(collector.with_name("github_read.py"), home):
+            raise ValueError("not this home's installed collector")
+        if existing != render_pr_rules(collector, pattern[3]):
+            raise ValueError("not canonical PR rules")
+    except (ValueError, UnicodeError) as error:
+        raise UnsafeRulesState("managed PR rules have an unrecognized body") from error
+    return pattern[3]
 
 
 def _is_reader_path(reader: PurePath, home: PurePath) -> bool:
@@ -227,17 +270,22 @@ def _apply_change(target: Path, payload: bytes | None, existing: bytes | None) -
     return "created" if existing is None else "updated"
 
 
-def sync_github_read_rules(home: Path, plugin_root: Path | None = None) -> Iterator[tuple[str, Path, Path | None]]:
+def sync_github_read_rules(
+    home: Path, plugin_root: Path | None = None, approve_pr: list[str] | None = None
+) -> Iterator[tuple[str, Path, Path | None]]:
     """Yield completed approval updates while migrating recognized legacy entries.
 
     Exhaust the iterator to complete the operation. A missing ``plugin_root`` selects removal. Verify inputs and prepare
     every required backup before modifying rules; report each completed update before another filesystem operation can
-    fail.
+    fail. Explicit ``approve_pr`` adds exact PRs; later upgrades retain only this managed allowlist, never infer grants
+    from UI rules. Removal clears both owned files. No PR rule is created by default.
     """
     home = Path(os.path.abspath(home))
     if home == Path(home.anchor):
         raise UnsafeRulesState("a filesystem root cannot be used as Codex home")
     _require_directory(home)
+    if approve_pr and plugin_root is None:
+        raise UnsafeRulesState("PR approvals require --plugin-root")
     desired = None if plugin_root is None else render_rules(_installed_reader(Path(os.path.abspath(plugin_root)), home))
     managed = home / "rules" / RULE_NAME
     default = home / "rules" / "default.rules"
@@ -246,9 +294,21 @@ def sync_github_read_rules(home: Path, plugin_root: Path | None = None) -> Itera
     legacy = _read_regular(default)
     cleaned = None if legacy is None else strip_legacy_rules(legacy, home)
 
+    pr_rules = home / "rules" / PR_RULE_NAME
+    existing_pr = _read_regular(pr_rules)
+    targets = _approved_prs(existing_pr, home) + (approve_pr or [])
+    desired_pr = None
+    if plugin_root is not None and targets:
+        collector = Path(os.path.abspath(plugin_root)) / "shared" / "collect_pr.py"
+        if _read_regular(collector) is None:
+            raise UnsafeRulesState("installed PR collector is missing")
+        desired_pr = render_pr_rules(collector, targets)
+
     changes = [(managed, desired, existing)]
     if cleaned != legacy:
         changes.append((default, cleaned, legacy))
+    if existing_pr is not None or desired_pr is not None:
+        changes.append((pr_rules, desired_pr, existing_pr))
     # Stage backups for the entire migration before granting or removing approval.
     # Replacement remains per-file, so yield each effect before attempting the next.
     backups = [_backup_change(target, payload, original, home) for target, payload, original in changes]
@@ -259,15 +319,16 @@ def sync_github_read_rules(home: Path, plugin_root: Path | None = None) -> Itera
 
 def main(argv: list[str] | None = None) -> int:
     """Run the explicit rule lifecycle and report each resulting local file action."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--plugin-root", type=Path, help="installed Codex Rig cache root to approve")
     action.add_argument("--remove", action="store_true", help="remove owned and recognized legacy reader approvals")
     parser.add_argument("--codex-home", type=Path, required=True, help="Codex home receiving managed rules")
+    parser.add_argument("--approve-pr", action="append", help="explicitly authorize one canonical PR URL; repeatable")
     args = parser.parse_args(argv)
     completed_changes = 0
     try:
-        for status, target, backup in sync_github_read_rules(args.codex_home, args.plugin_root):
+        for status, target, backup in sync_github_read_rules(args.codex_home, args.plugin_root, args.approve_pr):
             print(f"  [ok] GitHub reader rules {status}: {target}", flush=True)
             if backup is not None:
                 print(f"    backup: {backup}", flush=True)

@@ -44,6 +44,8 @@ For one active installation, resolve selected cache path reported or implied by 
 
 Inspect managed reader-rule state without writing: report absent, current, stale-version, or unverifiable. Absence is valid before setup and does not authorize installing rules during `check`.
 
+Inspect optional `rules/codex-rig-pr-collection.rules` with the same ownership/integrity discipline. Record its exact approved PR URLs; absent is the default. Approved refresh carries forward only those managed targets to the new verified installed collector. New targets require explicit setup with repeatable `--approve-pr <canonical-pr-url>` on the rule helper; never infer targets from PR metadata or migrate UI-saved collector grants. Disclose collector fetch, supported output writes, and safe local checkout in addition to existing reader-wide scope. Teardown removes both owned files. Any invalid managed PR file blocks all permission updates before backups or writes.
+
 ### 03: Report external-agent residue without touching it
 
 Read-only scan user agent directory for exact `codex-rig-*.toml` names. Record names and hashes, never file bodies. Classify every match `unmanaged-or-unknown` unless compatible lifecycle manager and its ownership state are available and verified. Plugin-only sync never deletes or overwrites match.
@@ -84,6 +86,7 @@ The helper has no positional install verb:
 - Regenerate for installed version; repeated setup is idempotent. Allow only literal `python`/`python3` launcher union and installed wrapper-path union, including native and POSIX spellings on Windows. Never grant broad Python or `gh` access or change network settings.
 - `--no-codex-global-agents` skips only global `AGENTS.md` block. Native `sync_codex.py clear` invokes `--remove --codex-home <CODEX_HOME>` before removing plugins and migrates recognized legacy entries while removing owned, canonical, integrity-valid rules file.
 - Prepare every required existing-file backup before changing either rules file. Restart existing Codex sessions after sync. Report completed updates and later failures accurately: each replacement is atomic, but migration across two files and overall sync are not transactional.
+- When managed PR grants exist, include their third rule file in the same preflight and backup phase; refresh exact targets only, never broaden them. Restart remains required for file-based rules. Report partial updates without claiming a transactional rollback.
 
 ### 06: Recheck exact active identity
 

@@ -27,7 +27,7 @@ APPROVAL_BRIEF_FIELDS = (
 @pytest.mark.parametrize(
     ("skill_name", "network_marker"),
     [
-        pytest.param("change-analysis", "github_read.py", id="change-analysis"),
+        pytest.param("assess", "github_read.py", id="assess"),
         pytest.param("calibrate", "run_live_ab.py", id="calibrate"),
         pytest.param("code-remediate", "collect_pr.py", id="code-remediate"),
         pytest.param("code-review", "collect_pr.py", id="code-review"),

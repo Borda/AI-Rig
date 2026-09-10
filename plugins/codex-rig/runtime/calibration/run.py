@@ -67,7 +67,7 @@ SKILLS = (
     "investigate",
     "sync",
     "manage",
-    "change-analysis",
+    "assess",
     "optimize",
     "research",
 )
@@ -2873,7 +2873,7 @@ def write_result(run: CalibrationRun) -> None:
                 "rationale": "the archived evidence roster includes retired skill names and is preserved only as history",
             }
         )
-        remaining_limits.append("current implement and change-analysis routes lack fresh paid live evidence")
+        remaining_limits.append("current implement and assess routes lack fresh paid live evidence")
     confidence = 0.95 if accepted_route_evidence else 0.9
     payload = {
         "status": status,

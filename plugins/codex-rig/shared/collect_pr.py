@@ -148,13 +148,17 @@ class CollectionError(RuntimeError):
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse the portable PR collector command line."""
-    parser = argparse.ArgumentParser(description=__doc__)
+    """Parse collector options without allowing a saved approval target to be overridden."""
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--out", required=True, type=Path, help="Artifact directory")
     parser.add_argument("--target", default="", help="PR number, canonical GitHub URL, or empty for current branch")
     parser.add_argument("--checkout", action="store_true", help="Fetch and update the verified local PR checkout")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Per-command timeout")
-    arguments = parser.parse_args(argv)
+    tokens = sys.argv[1:] if argv is None else argv
+    # A later target must not override the PR identity in a runtime-approved command prefix.
+    if sum(token == "--target" or token.startswith("--target=") for token in tokens) > 1:
+        parser.error("--target must be supplied at most once")
+    arguments = parser.parse_args(tokens)
     if arguments.timeout_seconds < 1:
         parser.error("--timeout-seconds must be positive")
     return arguments
