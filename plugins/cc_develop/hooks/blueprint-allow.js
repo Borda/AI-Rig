@@ -462,6 +462,25 @@ function matchBlueprint(command, entries) {
   return first;
 }
 
+/** Return the `src` provenance label of a matched manifest record. */
+function recordSrc(record) {
+  return typeof record.src === "string" ? record.src : "unknown";
+}
+
+/**
+ * Build the allow payload for a matched manifest record.
+ * Shared by `decide` and `evaluate` so the two can never disagree on a byte of stdout.
+ */
+function allowPayload(record) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      permissionDecisionReason: "plugin blueprint — verbatim block from " + recordSrc(record),
+    },
+  };
+}
+
 /** Build the hook's stdout payload for a raw stdin string, or null for passthrough. */
 function decide(raw) {
   let data;
@@ -478,14 +497,50 @@ function decide(raw) {
   if (!entries) return null;
   const record = matchBlueprint(command, entries);
   if (!record) return null;
-  const src = typeof record.src === "string" ? record.src : "unknown";
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "allow",
-      permissionDecisionReason: "plugin blueprint — verbatim block from " + src,
-    },
-  };
+  return allowPayload(record);
+}
+
+/**
+ * Classify what this module did with `raw`, for the audit record the dispatcher writes.
+ * Same checks in the same order as `decide` — nothing is moved, added or skipped — with each outcome labelled:
+ *
+ *   decision "allow"        the module produced an allow payload;
+ *   decision "passthrough"  the module reached a decision and declined, `why` naming which check declined it;
+ *   decision "none"         the module returned before deciding anything at all.
+ *
+ * `none` is the ABSENCE of an opinion, not an abstention, and the two stay distinct everywhere downstream.
+ *
+ * `digest` is present exactly when the command was normalized, i.e. whenever a decision was reached. A `none` result
+ * carries no digest because nothing normalized the command — that is correct, not a gap.
+ *
+ * Never calls `process.exit`, and never writes an audit record: only the dispatcher does that.
+ *
+ * @returns {{payload: object|null, decision: string, lane: string, rank: number, digest?: string, src?: string,
+ *   why?: string}}
+ */
+function evaluate(raw) {
+  const lane = { lane: "blueprint", rank: 1 };
+  const none = (why) => ({ ...lane, payload: null, decision: "none", why });
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (_) {
+    return none("not-applicable");
+  }
+  if (!data || data.tool_name !== "Bash") return none("not-applicable");
+  const command = data.tool_input && data.tool_input.command;
+  if (typeof command !== "string" || !command) return none("not-applicable");
+  const normalized = normalize(command);
+  const digest = sha256Text(normalized);
+  const declined = (why) => ({ ...lane, payload: null, decision: "passthrough", why, digest });
+  if (isDangerous(normalized)) return declined("danger");
+  const entries = loadEntries();
+  if (!entries) return declined("manifest-unavailable");
+  const record = matchBlueprint(command, entries);
+  // `needsBailout` is pure and is consulted only to LABEL a decline that has already happened; a digest hit returns
+  // above, so this can never turn an allow into a passthrough.
+  if (!record) return declined(needsBailout(normalized) ? "bailout" : "no-match");
+  return { ...lane, payload: allowPayload(record), decision: "allow", digest, src: recordSrc(record) };
 }
 
 if (require.main === module) {
@@ -511,4 +566,5 @@ module.exports = {
   sha256Text,
   matchBlueprint,
   decide,
+  evaluate,
 };

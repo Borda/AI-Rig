@@ -82,6 +82,7 @@ nav:
       - OSS: cc_oss.md
       - Develop: cc_develop.md
       - Research: cc_research.md
+      - Audit records: audit-records.md
   - Codex Rig: codex-rig.md
   - Codemap-py: codemap-py.md
   - bridge_CC-Codex: bridge_cc-codex.md

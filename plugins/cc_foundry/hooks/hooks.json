@@ -1,5 +1,5 @@
 {
-  "description": "foundry plugin hooks: task/agent tracking, teammate quality gates, and tool preprocessing",
+  "description": "foundry plugin hooks: task/agent tracking, teammate quality gates, tool preprocessing, and Bash auto-allow dispatch with audit records",
   "hooks": {
     "PostToolUse": [
       {
@@ -33,6 +33,15 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
       }
     ],
     "PostToolUseFailure": [
@@ -43,6 +52,15 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
       }
     ],
     "PreCompact": [
@@ -103,16 +121,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sentinel-read-allow.js\"",
-            "type": "command"
-          }
-        ],
-        "matcher": "Bash"
-      },
-      {
-        "hooks": [
-          {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/blueprint-allow.js\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/allow-dispatch.js\"",
             "type": "command"
           }
         ],
@@ -181,6 +190,14 @@
             "type": "command"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ]
       }
     ],
     "SessionStart": [
@@ -209,6 +226,14 @@
           }
         ],
         "matcher": "clear"
+      },
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ]
       }
     ],
     "Stop": [

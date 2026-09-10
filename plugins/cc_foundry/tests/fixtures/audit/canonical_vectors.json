@@ -1,0 +1,209 @@
+{
+  "_comment": "Cross-language canonicalization contract. Consumed by the JavaScript audit library's suite and by the Python verifier's suite; both must reproduce `canonical` byte-for-byte and `sha256` exactly. `record_hash` is excluded from its own input, which the record-hash-excluded vector pins.",
+  "vectors": [
+    {
+      "canonical": "{\"a\":1,\"b\":null}",
+      "id": "minimal",
+      "record": {
+        "a": 1,
+        "b": null
+      },
+      "sha256": "46e0ff59f6164548317489fbea1133a48f7a83c325c3535e44559c9619afb76b"
+    },
+    {
+      "canonical": "{\"a\":2,\"m\":3,\"z\":1}",
+      "id": "key-order",
+      "record": {
+        "a": 2,
+        "m": 3,
+        "z": 1
+      },
+      "sha256": "ebba85cfdc0a724b6cc327ecc545faeb38b9fe02eca603b430eb872f5cf75370"
+    },
+    {
+      "canonical": "{\"parent_record_id\":null,\"prev_hash\":null}",
+      "id": "null-explicit-vs-absent",
+      "record": {
+        "parent_record_id": null,
+        "prev_hash": null
+      },
+      "sha256": "229056c95fbd691344b5630c606eca217e1ad5cd9c4e4863937064a249d1f24d"
+    },
+    {
+      "canonical": "{\"action_detail\":{\"decision\":\"allow\",\"lane\":\"blueprint\",\"rank\":1}}",
+      "id": "nested-object",
+      "record": {
+        "action_detail": {
+          "decision": "allow",
+          "lane": "blueprint",
+          "rank": 1
+        }
+      },
+      "sha256": "7acbc5c81d5fda3f7586e06dd9d9b4b018d300d9c232e26538049dff48ad3832"
+    },
+    {
+      "canonical": "{\"verdicts\":[{\"decision\":\"allow\",\"lane\":\"blueprint\"},{\"decision\":\"none\",\"lane\":\"shape\"}]}",
+      "id": "nested-array",
+      "record": {
+        "verdicts": [
+          {
+            "decision": "allow",
+            "lane": "blueprint"
+          },
+          {
+            "decision": "none",
+            "lane": "shape"
+          }
+        ]
+      },
+      "sha256": "e5c68c58f7895c3516ab93bde59b2b21d201d612185fc807cd4dde0e21f5e494"
+    },
+    {
+      "canonical": "{\"project\":\"/home/ex\u00e4mple/\u00fcn\u00efcode/\u65e5\u672c\u8a9e\"}",
+      "id": "non-ascii-unescaped",
+      "record": {
+        "project": "/home/ex\u00e4mple/\u00fcn\u00efcode/\u65e5\u672c\u8a9e"
+      },
+      "sha256": "6ea1df69c8bda9316e056c8adde520d8abec7d50139550f714f4745dc4c2da8c"
+    },
+    {
+      "canonical": "{\"project\":\"/home/example/\ud83d\ude80/repo\"}",
+      "id": "emoji-above-bmp",
+      "record": {
+        "project": "/home/example/\ud83d\ude80/repo"
+      },
+      "sha256": "687262fd8abf15a013518430d9cc597c5ac2e019e5fd09493ab310ac02e92471"
+    },
+    {
+      "canonical": "{\"src\":\"a/b\\\"c\\\\d\"}",
+      "id": "solidus-and-quotes",
+      "record": {
+        "src": "a/b\"c\\d"
+      },
+      "sha256": "a0e16bee99af77768507e1d1e26052edcee7217563eafc651803a467594eff36"
+    },
+    {
+      "canonical": "{\"src\":\"line\\nnext\\ttab\"}",
+      "id": "control-characters",
+      "record": {
+        "src": "line\nnext\ttab"
+      },
+      "sha256": "ad2394a436ade3d5b241a29b4f09d9ac0ede55fa6d66ff28baa85b72d0bfdb69"
+    },
+    {
+      "canonical": "{\"hi\":9007199254740991,\"lo\":-9007199254740991}",
+      "id": "integer-bounds",
+      "record": {
+        "hi": 9007199254740991,
+        "lo": -9007199254740991
+      },
+      "sha256": "9de90938b1329f1749f32422c9e7ff27b012a0103749ec3c3e817204e64d2d5d"
+    },
+    {
+      "canonical": "{\"action_detail\":{},\"verdicts\":[]}",
+      "id": "empty-object-and-array",
+      "record": {
+        "action_detail": {},
+        "verdicts": []
+      },
+      "sha256": "bcd0d2ec9be77bce4d436d8c8f2f5dee0fe8451f53cc115f2c17f0b4081f5971"
+    },
+    {
+      "canonical": "{\"a\":1}",
+      "id": "record-hash-excluded",
+      "record": {
+        "a": 1,
+        "record_hash": "ffff"
+      },
+      "sha256": "015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862"
+    },
+    {
+      "canonical": "{\"action_detail\":{\"decision\":\"allow\",\"digest\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"lane\":\"blueprint\",\"rank\":1,\"src\":\"skills/review/SKILL.md:12\",\"verdicts\":[{\"decision\":\"allow\",\"lane\":\"blueprint\",\"src\":\"skills/review/SKILL.md:12\"},{\"decision\":\"passthrough\",\"lane\":\"shape\",\"why\":\"shape-mismatch\"}]},\"action_type\":\"tool.bash\",\"agent_id\":\"cc_foundry/allow-dispatch\",\"agent_version\":\"0.53.0\",\"outcome\":\"pending\",\"parent_record_id\":null,\"prev_hash\":null,\"project\":\"/home/example/workspace/demo\",\"record_id\":\"6ed2e7cf-e7e5-4bf3-a9c9-fc644575dab9\",\"record_phase\":\"pre_execution\",\"session_id\":\"11111111-2222-3333-4444-555555555555\",\"timestamp\":\"2026-09-09T10:15:30.000Z\",\"tool_use_id\":\"toolu_01vector\",\"trust_level\":\"plugin\"}",
+      "id": "full-before-row",
+      "record": {
+        "action_detail": {
+          "decision": "allow",
+          "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "lane": "blueprint",
+          "rank": 1,
+          "src": "skills/review/SKILL.md:12",
+          "verdicts": [
+            {
+              "decision": "allow",
+              "lane": "blueprint",
+              "src": "skills/review/SKILL.md:12"
+            },
+            {
+              "decision": "passthrough",
+              "lane": "shape",
+              "why": "shape-mismatch"
+            }
+          ]
+        },
+        "action_type": "tool.bash",
+        "agent_id": "cc_foundry/allow-dispatch",
+        "agent_version": "0.53.0",
+        "outcome": "pending",
+        "parent_record_id": null,
+        "prev_hash": null,
+        "project": "/home/example/workspace/demo",
+        "record_hash": "29592a2076a2a303cb3522a22188da1b25968b7b0921f86abc64297cdfae279e",
+        "record_id": "6ed2e7cf-e7e5-4bf3-a9c9-fc644575dab9",
+        "record_phase": "pre_execution",
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "timestamp": "2026-09-09T10:15:30.000Z",
+        "tool_use_id": "toolu_01vector",
+        "trust_level": "plugin"
+      },
+      "sha256": "29592a2076a2a303cb3522a22188da1b25968b7b0921f86abc64297cdfae279e"
+    },
+    {
+      "canonical": "{\"action_detail\":{\"event\":\"PostToolUse\",\"status\":\"ok\"},\"action_type\":\"tool.bash\",\"agent_id\":\"cc_oss/audit-close\",\"agent_version\":\"0.34.2\",\"outcome\":\"success\",\"parent_record_id\":null,\"prev_hash\":null,\"project\":\"/home/example/workspace/demo\",\"record_id\":\"eab4ea5e-c605-474f-a9ea-6ba6b1495f0d\",\"record_phase\":\"post_execution\",\"session_id\":\"11111111-2222-3333-4444-555555555555\",\"timestamp\":\"2026-09-09T10:15:30.000Z\",\"tool_use_id\":\"toolu_01vector\",\"trust_level\":\"unknown\"}",
+      "id": "full-after-row",
+      "record": {
+        "action_detail": {
+          "event": "PostToolUse",
+          "status": "ok"
+        },
+        "action_type": "tool.bash",
+        "agent_id": "cc_oss/audit-close",
+        "agent_version": "0.34.2",
+        "outcome": "success",
+        "parent_record_id": null,
+        "prev_hash": null,
+        "project": "/home/example/workspace/demo",
+        "record_hash": "6d469f474deb0ff507af5ae181bbffc779437e2ace78bcc882dc5483ce76b754",
+        "record_id": "eab4ea5e-c605-474f-a9ea-6ba6b1495f0d",
+        "record_phase": "post_execution",
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "timestamp": "2026-09-09T10:15:30.000Z",
+        "tool_use_id": "toolu_01vector",
+        "trust_level": "unknown"
+      },
+      "sha256": "6d469f474deb0ff507af5ae181bbffc779437e2ace78bcc882dc5483ce76b754"
+    },
+    {
+      "canonical": "{\"action_detail\":{\"reason\":\"clear\"},\"action_type\":\"session.end\",\"agent_id\":\"cc_develop/audit-close\",\"agent_version\":\"0.28.1\",\"outcome\":\"success\",\"parent_record_id\":null,\"prev_hash\":null,\"project\":\"/home/example/workspace/demo\",\"record_id\":\"45068036-d7e5-47c1-a988-8983a5bcab7b\",\"record_phase\":\"post_execution\",\"session_id\":\"11111111-2222-3333-4444-555555555555\",\"timestamp\":\"2026-09-09T10:15:30.000Z\",\"trust_level\":\"unknown\"}",
+      "id": "full-lifecycle-row",
+      "record": {
+        "action_detail": {
+          "reason": "clear"
+        },
+        "action_type": "session.end",
+        "agent_id": "cc_develop/audit-close",
+        "agent_version": "0.28.1",
+        "outcome": "success",
+        "parent_record_id": null,
+        "prev_hash": null,
+        "project": "/home/example/workspace/demo",
+        "record_hash": "e63cbc643f8b4a02204a450a95f58efa5c3fa20af5a88f8f53e54c46ddf27a35",
+        "record_id": "45068036-d7e5-47c1-a988-8983a5bcab7b",
+        "record_phase": "post_execution",
+        "session_id": "11111111-2222-3333-4444-555555555555",
+        "timestamp": "2026-09-09T10:15:30.000Z",
+        "trust_level": "unknown"
+      },
+      "sha256": "e63cbc643f8b4a02204a450a95f58efa5c3fa20af5a88f8f53e54c46ddf27a35"
+    }
+  ]
+}

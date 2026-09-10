@@ -1,0 +1,138 @@
+{
+  "_no-session.jsonl": {
+    "buckets": {
+      "unjoinable": 2
+    },
+    "exit": 0
+  },
+  "clean-four-plugin.jsonl": {
+    "buckets": {},
+    "exit": 0
+  },
+  "clean-single-plugin.jsonl": {
+    "buckets": {},
+    "exit": 0
+  },
+  "completion-unobserved.jsonl": {
+    "buckets": {
+      "completion-unobserved": 1
+    },
+    "exit": 0
+  },
+  "corrupt-hash.jsonl": {
+    "buckets": {
+      "corrupt-record": 1,
+      "no-decision-evidence": 1
+    },
+    "exit": 1
+  },
+  "dual-close.jsonl": {
+    "buckets": {
+      "dual-close": 1,
+      "incomplete-evidence": 0
+    },
+    "exit": 0
+  },
+  "four-plugin-shape-allow.jsonl": {
+    "buckets": {
+      "multi-allow": 1
+    },
+    "exit": 0
+  },
+  "in-flight-or-hard-kill.jsonl": {
+    "buckets": {
+      "in-flight-or-hard-kill": 1
+    },
+    "exit": 0
+  },
+  "incomplete-closure.jsonl": {
+    "buckets": {
+      "incomplete-closure": 1,
+      "observed-abstention": 2
+    },
+    "exit": 0
+  },
+  "incomplete-evidence.jsonl": {
+    "buckets": {
+      "incomplete-closure": 1,
+      "incomplete-evidence": 1
+    },
+    "exit": 0
+  },
+  "interleaved-lifecycle.jsonl": {
+    "buckets": {},
+    "exit": 0
+  },
+  "multi-allow.jsonl": {
+    "buckets": {
+      "multi-allow": 1
+    },
+    "exit": 0
+  },
+  "no-decision-evidence.jsonl": {
+    "buckets": {
+      "no-decision-evidence": 1
+    },
+    "exit": 0
+  },
+  "observed-abstention.jsonl": {
+    "buckets": {
+      "observed-abstention": 1
+    },
+    "exit": 0
+  },
+  "repeat-observation.jsonl": {
+    "buckets": {
+      "repeat-observation": 1
+    },
+    "exit": 0
+  },
+  "same-agent-duplicate-after.jsonl": {
+    "buckets": {
+      "same-agent-duplicate-after-row": 1
+    },
+    "exit": 0
+  },
+  "schema-invalid.jsonl": {
+    "buckets": {
+      "completion-unobserved": 1,
+      "schema-invalid": 4
+    },
+    "exit": 0
+  },
+  "truncated-final-line.jsonl": {
+    "buckets": {
+      "truncated": 1
+    },
+    "exit": 0
+  },
+  "truncated-mid-file.jsonl": {
+    "buckets": {
+      "completion-unobserved": 1,
+      "truncated": 1
+    },
+    "exit": 0
+  },
+  "unjoinable-tool-use-id.jsonl": {
+    "buckets": {
+      "unjoinable": 2
+    },
+    "exit": 0
+  },
+  "verdicts-mixed-and-module-error.jsonl": {
+    "buckets": {
+      "observed-abstention": 1
+    },
+    "exit": 0,
+    "lane_counts": {
+      "blueprint": {
+        "none": 1,
+        "passthrough": 1
+      },
+      "shape": {
+        "none": 1,
+        "passthrough": 1
+      }
+    }
+  }
+}

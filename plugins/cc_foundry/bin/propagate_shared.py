@@ -248,6 +248,54 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_research/bin/sync_rules.py",
         ],
     },
+    {
+        # The single registered Bash auto-allow hook. It calls the two decision
+        # modules above as libraries in rank order, emits the first allow, and
+        # records what both of them said. Every plugin registers its own, for the
+        # same standalone-install reason the two modules are propagated.
+        "canonical": "plugins/cc_foundry/hooks/allow-dispatch.js",
+        "copies": [
+            "plugins/cc_oss/hooks/allow-dispatch.js",
+            "plugins/cc_develop/hooks/allow-dispatch.js",
+            "plugins/cc_research/hooks/allow-dispatch.js",
+        ],
+    },
+    {
+        # Observation half of the audit log: one row per completed Bash call and
+        # per session boundary. All four plugins write their own rows with nothing
+        # coordinating them, so a stale copy would silently change the record
+        # format on one plugin's rows only — exactly the drift this gate exists
+        # to catch.
+        "canonical": "plugins/cc_foundry/hooks/audit-close.js",
+        "copies": [
+            "plugins/cc_oss/hooks/audit-close.js",
+            "plugins/cc_develop/hooks/audit-close.js",
+            "plugins/cc_research/hooks/audit-close.js",
+        ],
+    },
+    {
+        # The record format itself. Its canonical serialization is a cross-language
+        # contract with bin/verify_blueprint_audit.py, so two copies that disagree
+        # would produce records whose hashes each other's verifier reports as
+        # corrupt.
+        "canonical": "plugins/cc_foundry/hooks/lib/audit-log.js",
+        "copies": [
+            "plugins/cc_oss/hooks/lib/audit-log.js",
+            "plugins/cc_develop/hooks/lib/audit-log.js",
+            "plugins/cc_research/hooks/lib/audit-log.js",
+        ],
+    },
+    {
+        # Reader for the log the three files above write, and the only component
+        # permitted to delete one. Shipped everywhere so a standalone install can
+        # read and prune its own records.
+        "canonical": "plugins/cc_foundry/bin/verify_blueprint_audit.py",
+        "copies": [
+            "plugins/cc_oss/bin/verify_blueprint_audit.py",
+            "plugins/cc_develop/bin/verify_blueprint_audit.py",
+            "plugins/cc_research/bin/verify_blueprint_audit.py",
+        ],
+    },
 ]
 
 

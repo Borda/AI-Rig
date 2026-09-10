@@ -63,7 +63,7 @@ Wrong-form examples in full + verified token facts (env var name, `$$`/`$PPID` b
 **Sentinel READS use `read`, never `$(cat ...)`** — command substitution makes prefix allow-rules fail-closed → "Contains expansion" permission prompt in every subagent:
 
 ```bash
-# ✓ correct — no substitution, allow rules match, sentinel-read-allow hook covers compounds
+# ✓ correct — no substitution, allow rules match, shape lane of allow-dispatch covers compounds
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 
 # ✗ wrong — $() triggers "Contains expansion" prompt regardless of allow list

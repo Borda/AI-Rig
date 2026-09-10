@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """audit_hook_coverage.py — measure how often the auto-allow hooks fire in real sessions.
 
-Two hooks grant Bash calls a permission bypass: ``blueprint-allow.js`` (exact
-normalized-text match against a plugin's committed ``blueprint-manifest.json``) and
-``sentinel-read-allow.js`` (shape match on read-only compounds). Both were validated
-against *committed text* — the share of fenced blueprint blocks each one covers. That
-is not the same population as the commands sessions actually execute, and nothing
-guaranteed the first predicts the second.
+Two decision modules can grant a Bash call a permission bypass: ``blueprint-allow.js``
+(exact normalized-text match against a plugin's committed ``blueprint-manifest.json``)
+and ``sentinel-read-allow.js`` (shape match on read-only compounds). Neither is
+registered as a hook of its own any more — each plugin registers ``allow-dispatch.js``,
+which calls both as libraries in rank order and emits the first allow. Both modules keep
+their standalone entry points, which is what lets this tool subprocess one of them
+directly. Both were validated against *committed text* — the share of fenced blueprint
+blocks each one covers. That is not the same population as the commands sessions
+actually execute, and nothing guaranteed the first predicts the second.
 
 This tool measures the second directly. It replays every Bash command recorded in the
 local session transcripts through the installed hooks and reports what fraction would
@@ -14,11 +17,11 @@ be auto-allowed, split by mechanism.
 
 Two properties matter for the number to mean anything:
 
-1. **Every installed manifest counts.** All installed plugins register their own
-   ``blueprint-allow.js``, each reading its own manifest, and the first allow wins —
-   so the effective coverage set is the UNION of the manifests. Probing a single
-   plugin's copy under-reports: a block owned by ``foundry`` is passed through by
-   ``oss``, ``develop`` and ``research`` alike.
+1. **Every installed manifest counts.** All installed plugins run their own dispatcher,
+   each consulting its own manifest, and any one allow is enough for the call to run
+   without a prompt — so the effective coverage set is the UNION of the manifests.
+   Probing a single plugin's copy under-reports: a block owned by ``foundry`` is passed
+   through by ``oss``, ``develop`` and ``research`` alike.
 2. **Sessions predating a hook must be excluded.** A transcript recorded before a hook
    shipped contains commands generated when there was nothing to match, against skill
    text that has since changed. Including them measures history, not behaviour — pass

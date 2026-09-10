@@ -2473,6 +2473,6 @@
       "src": "skills/verify/SKILL.md:134"
     }
   },
-  "plugin": "cc_research@0.21.1",
+  "plugin": "cc_research@0.22.0",
   "schema": 1
 }

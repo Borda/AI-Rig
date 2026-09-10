@@ -631,3 +631,99 @@ class TestRuntimeInvariance:
         """
         result = _run(command)
         assert result == {}, f"{command!r} must passthrough, got: {result}"
+
+
+# ── Library entry points added for the dispatcher ─────────────────────────────
+
+
+def _node_eval_sentinel(expression: str) -> object:
+    """Require the hook as a module and return the JSON-encoded value of ``expression``."""
+    script = (
+        f"const h = require({json.dumps(str(HOOK))});process.stdout.write(JSON.stringify({expression}) ?? 'undefined');"
+    )
+    proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=15, check=False)
+    assert proc.returncode == 0, f"node failed: {proc.stderr}"
+    return None if proc.stdout == "undefined" else json.loads(proc.stdout)
+
+
+def _stdin(command: str, tool_name: str = "Bash") -> str:
+    """Return a PreToolUse stdin payload as a JSON string literal for embedding in a node expression."""
+    return json.dumps(json.dumps({"tool_name": tool_name, "tool_input": {"command": command}}))
+
+
+@pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hook")
+class TestImportIsSideEffectFree:
+    """Requiring the module must do nothing at all.
+
+    The dispatcher requires this file as a library, while ``bin/audit_hook_coverage.py`` still runs it as a standalone
+    hook. Before the ``require.main`` guard the driver was top-level: importing it attached stdin listeners and could
+    call ``process.exit``, which is precisely what makes a module unusable from another process's entry point.
+    """
+
+    def test_require_attaches_no_stdin_listeners_and_does_not_exit(self) -> None:
+        """Count listeners before and after the require; both must be zero, and the process must survive it."""
+        script = (
+            "const before = process.stdin.listenerCount('data') + process.stdin.listenerCount('end');"
+            f"require({json.dumps(str(HOOK))});"
+            "const after = process.stdin.listenerCount('data') + process.stdin.listenerCount('end');"
+            "process.stdout.write(JSON.stringify([before, after]));"
+        )
+        proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=15, check=False)
+        assert proc.returncode == 0, f"requiring the module exited or crashed: {proc.stderr}"
+        assert json.loads(proc.stdout) == [0, 0]
+
+    def test_module_exports_the_library_surface(self) -> None:
+        """``decide`` and ``evaluate`` are the dispatcher's entry points; ``isAllowable`` stays exported for tests."""
+        assert sorted(_node_eval_sentinel(f"Object.keys(require({json.dumps(str(HOOK))}))")) == [
+            "decide",
+            "evaluate",
+            "isAllowable",
+        ]
+
+
+@pytest.mark.skipif(NODE_UNAVAILABLE, reason="requires node to execute the hook")
+class TestEvaluateClassification:
+    """``evaluate`` labels what the module did, without changing what it decides."""
+
+    def test_allow_reports_the_shape_lane_at_rank_two(self) -> None:
+        """A shape allow is rank 2: it outranks nothing, and blueprint provenance beats it wherever both fire."""
+        result = _node_eval_sentinel(f"h.evaluate({_stdin(f'V=$(cat {SENTINEL})')})")
+        assert (result["decision"], result["lane"], result["rank"]) == ("allow", "shape", 2)
+        assert result["payload"]["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_examined_and_declined_is_a_passthrough(self) -> None:
+        """A command the matcher looked at and refused is an abstention with a reason."""
+        result = _node_eval_sentinel(f"h.evaluate({_stdin('ls -la')})")
+        assert (result["decision"], result["why"], result["payload"]) == ("passthrough", "shape-mismatch", None)
+
+    @pytest.mark.parametrize(
+        ("expression", "case"),
+        [
+            pytest.param('h.evaluate("not json")', "unparsable stdin", id="parse-failure"),
+            pytest.param(f"h.evaluate({_stdin('ls', 'Read')})", "not a Bash call", id="non-bash-tool"),
+            pytest.param(f"h.evaluate({_stdin('   ')})", "empty after trimming", id="whitespace-only"),
+        ],
+    )
+    def test_returning_before_deciding_is_none_not_passthrough(self, expression: str, case: str) -> None:
+        """``none`` is the absence of an opinion, and must never be read as an abstention.
+
+        The distinction is load-bearing downstream: an abstention is evidence the command was examined and refused, and
+        counting a module that never looked at it as one would overstate what the log establishes.
+        """
+        result = _node_eval_sentinel(expression)
+        assert (result["decision"], result["why"]) == ("none", "not-applicable"), case
+
+    def test_evaluate_returns_the_same_payload_object_decide_produces(self) -> None:
+        """One payload builder, so the two entry points can never disagree on a byte of stdout."""
+        command = _stdin(f"V=$(cat {SENTINEL})")
+        assert _node_eval_sentinel(f"h.evaluate({command}).payload") == _node_eval_sentinel(f"h.decide({command})")
+
+    def test_evaluate_never_exits_the_process(self) -> None:
+        """A library that calls ``process.exit`` takes its caller's other lane down with it."""
+        script = (
+            f"const h = require({json.dumps(str(HOOK))});"
+            f"h.evaluate({_stdin('ls', 'Read')}); h.evaluate('not json'); h.evaluate({_stdin('ls -la')});"
+            "process.stdout.write('survived');"
+        )
+        proc = subprocess.run(["node", "-e", script], capture_output=True, encoding="utf-8", timeout=15, check=False)
+        assert proc.stdout == "survived"

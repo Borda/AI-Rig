@@ -438,3 +438,138 @@ class TestRealManifest:
         mutated = normalized[:-1] + ("y" if normalized[-1] == "x" else "x")
         assert _is_allowed(_hook(raw)), f"committed block should be allowed: {raw!r}"
         assert _hook(mutated) == {}, f"mutated block was allowed: {mutated!r}"
+
+
+# ── Library entry point added for the dispatcher ──────────────────────────────
+
+
+@_skip_node_unavailable
+class TestEvaluateClassification:
+    """``evaluate`` labels what the module did, running the same checks in the same order as ``decide``.
+
+    The labels are what the audit record carries, so a mislabelled decline is a mis-recorded history. Three distinctions
+    matter and each is asserted separately:
+
+    * ``passthrough`` versus ``none`` — examined and declined, versus never examined at all;
+    * which check declined it — a danger refusal, a missing manifest and a plain miss are different facts;
+    * digest presence — the digest exists exactly when the command was normalized, and is never invented.
+    """
+
+    @staticmethod
+    def _evaluate(plugin_root: Path, command: str, *, tool_name: str = "Bash", raw: str | None = None) -> dict:
+        """Require the copied hook as a module and return ``evaluate``'s result for one payload."""
+        stdin = raw if raw is not None else json.dumps({"tool_name": tool_name, "tool_input": {"command": command}})
+        script = (
+            f"const h = require({json.dumps(str(plugin_root / 'hooks' / HOOK.name))});"
+            f"process.stdout.write(JSON.stringify(h.evaluate({json.dumps(stdin)})));"
+        )
+        proc = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            encoding="utf-8",
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": str(plugin_root)},
+            timeout=10,
+        )
+        assert proc.returncode == 0, f"node failed: {proc.stderr}"
+        return json.loads(proc.stdout)
+
+    def test_allow_carries_lane_rank_src_and_digest(self, plugin_root: Path, seeded: bytes) -> None:
+        """A digest hit is rank 1 and reports the plugin file the text came from."""
+        (plugin_root / "blueprint-manifest.json").write_bytes(seeded)
+        result = self._evaluate(plugin_root, SINGLE)
+        assert (result["decision"], result["lane"], result["rank"]) == ("allow", "blueprint", 1)
+        assert result["src"] == "skills/review/SKILL.md:12"
+        assert result["digest"] and "digest" in result
+
+    def test_danger_refusal_is_labelled_as_such(self, plugin_root: Path) -> None:
+        """The independent danger re-check is a decision, and the record must say which check refused.
+
+        A refusal on a digest hit means the manifest held something it should not — a generator bug, a stale manifest or
+        an edited one. Recording it as a plain miss would hide the one case worth investigating.
+        """
+        command = 'BUILD=$(rm -rf "$HOME/build")'
+        (plugin_root / "blueprint-manifest.json").write_bytes(_manifest_bytes({"t.md:1": bbm.normalize(command)}))
+        result = self._evaluate(plugin_root, command)
+        assert (result["decision"], result["why"], result["payload"]) == ("passthrough", "danger", None)
+
+    def test_missing_manifest_is_distinguished_from_a_miss(self, plugin_root: Path) -> None:
+        """An unreadable manifest is a different fact from a command that simply is not in one."""
+        result = self._evaluate(plugin_root, SINGLE)
+        assert (result["decision"], result["why"]) == ("passthrough", "manifest-unavailable")
+
+    def test_plain_miss_is_a_passthrough_with_a_digest(self, plugin_root: Path, seeded: bytes) -> None:
+        """The command was normalized and looked up, so the digest belongs on the record."""
+        (plugin_root / "blueprint-manifest.json").write_bytes(seeded)
+        result = self._evaluate(plugin_root, "ls -la")
+        assert (result["decision"], result["why"]) == ("passthrough", "no-match")
+        assert result["digest"] == bbm.sha256_text(bbm.normalize("ls -la"))
+
+    @pytest.mark.parametrize("vector", [v for v in VECTORS["needs_bailout"] if v["expected"]])
+    def test_bailout_is_labelled_separately_from_a_miss(self, plugin_root: Path, seeded: bytes, vector: dict) -> None:
+        """Text the per-command splitter refuses to reason about is a bailout, not a miss.
+
+        The bailout check is consulted only to LABEL a decline that already happened — a digest hit returns before it —
+        so labelling can never turn an allow into a passthrough.
+        """
+        (plugin_root / "blueprint-manifest.json").write_bytes(seeded)
+        result = self._evaluate(plugin_root, vector["input"])
+        assert result["decision"] == "passthrough"
+        assert result["why"] in ("bailout", "no-match")
+
+    @pytest.mark.parametrize(
+        ("kwargs", "case"),
+        [
+            pytest.param({"raw": "not json"}, "unparsable stdin", id="parse-failure"),
+            pytest.param({"command": SINGLE, "tool_name": "Read"}, "not a Bash call", id="non-bash-tool"),
+            pytest.param({"command": ""}, "no command at all", id="empty-command"),
+        ],
+    )
+    def test_returning_before_deciding_is_none_with_no_digest(self, plugin_root: Path, kwargs: dict, case: str) -> None:
+        """Nothing normalized the command, so there is no digest to record — and no opinion either."""
+        result = self._evaluate(plugin_root, kwargs.pop("command", ""), **kwargs)
+        assert (result["decision"], result["why"]) == ("none", "not-applicable"), case
+        assert "digest" not in result
+
+    def test_whitespace_only_reaches_a_decision_here(self, plugin_root: Path, seeded: bytes) -> None:
+        """The two decision modules genuinely diverge on whitespace, and the record keeps both answers.
+
+        This module normalizes first and reaches ``no-match``; the shape module trims and returns before deciding. One
+        is an abstention and the other is the absence of an opinion.
+        """
+        (plugin_root / "blueprint-manifest.json").write_bytes(seeded)
+        assert self._evaluate(plugin_root, "   ")["decision"] == "passthrough"
+
+    def test_evaluate_returns_the_same_payload_decide_produces(self, plugin_root: Path, seeded: bytes) -> None:
+        """One payload builder, so the two entry points can never disagree on a byte of stdout."""
+        (plugin_root / "blueprint-manifest.json").write_bytes(seeded)
+        stdin = json.dumps({"tool_name": "Bash", "tool_input": {"command": SINGLE}})
+        script = (
+            f"const h = require({json.dumps(str(plugin_root / 'hooks' / HOOK.name))});"
+            f"process.stdout.write(JSON.stringify([h.evaluate({json.dumps(stdin)}).payload,"
+            f" h.decide({json.dumps(stdin)})]));"
+        )
+        proc = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            encoding="utf-8",
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": str(plugin_root)},
+            timeout=10,
+        )
+        from_evaluate, from_decide = json.loads(proc.stdout)
+        assert from_evaluate == from_decide
+
+    def test_evaluate_never_exits_the_process(self, plugin_root: Path) -> None:
+        """A library that calls ``process.exit`` takes its caller's other lane down with it."""
+        script = (
+            f"const h = require({json.dumps(str(plugin_root / 'hooks' / HOOK.name))});"
+            'h.evaluate("not json"); h.evaluate(JSON.stringify({tool_name: "Bash", tool_input: {command: "ls"}}));'
+            "process.stdout.write('survived');"
+        )
+        proc = subprocess.run(
+            ["node", "-e", script],
+            capture_output=True,
+            encoding="utf-8",
+            env={**os.environ, "CLAUDE_PLUGIN_ROOT": str(plugin_root)},
+            timeout=10,
+        )
+        assert proc.stdout == "survived"

@@ -1,6 +1,28 @@
 {
-  "description": "develop plugin hooks: agent routing fallback + blueprint sentinel-read auto-allow + develop:review report-header gate",
+  "description": "develop plugin hooks: agent routing fallback + Bash auto-allow dispatch with audit records + develop:review report-header gate",
   "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash"
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [
@@ -24,16 +46,7 @@
       {
         "hooks": [
           {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/sentinel-read-allow.js\"",
-            "type": "command"
-          }
-        ],
-        "matcher": "Bash"
-      },
-      {
-        "hooks": [
-          {
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/blueprint-allow.js\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/allow-dispatch.js\"",
             "type": "command"
           }
         ],
@@ -65,6 +78,26 @@
           }
         ],
         "matcher": "NotebookEdit"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "type": "command"
+          }
+        ]
       }
     ]
   }

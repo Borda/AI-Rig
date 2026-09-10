@@ -47,7 +47,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 
 - Each file added under a skill's `modes/`, `templates/`, or `_shared/` must either have its basename as a literal string in a consumer Markdown file or carry a `<!-- file: <basename> — consumers: ... -->` header.
 - Add the consumer reference before creating the shared file.
-- Manifested shared files are byte-identical copies: edit the canonical file, run `plugins/cc_foundry/bin/propagate_shared.py --apply`, and verify with its default `--check` mode.
+- Manifested shared files are byte-identical copies: edit the canonical file, run `plugins/cc_foundry/bin/propagate_shared.py --apply`, and verify by running the script with no flag at all. Check mode is the default and has no flag; passing `--check` exits 2 with `unrecognized arguments`.
 - Keep resilience code in the plugin whose users need the fallback, not in the plugin that may be absent.
 - Every plugin resolves its own `skills/_shared` through its own resolver and reads only files it ships itself.
 - Never use `$HOME/.claude/skills/_shared/...` or a bare `.claude/skills/_shared/...` path. `/foundry:setup` symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`, and purges any leftover `~/.claude/skills/` link; a directory carrying `SKILL.md` there registers as a user-level skill and shadows Claude Code's bundled skill of the same name.
@@ -89,7 +89,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - Before editing policy, inspect the document-level `policy-sibling-sync` contract and any section-specific `policy-sibling` marker.
 - Review every listed instruction sibling even when no synchronized edit is ultimately needed, and update applicable shared policy in either direction.
 - Before completion, verify the intended README and cross-references.
-- Run `plugins/cc_foundry/bin/propagate_shared.py --check` when shared files are involved.
+- Run `plugins/cc_foundry/bin/propagate_shared.py` with no flag when shared files are involved — check mode is the default.
 - Run `check_orphaned_bin.py` when `bin/` files are involved.
 - Run the relevant tests or lint checks.
 - Run `git diff --check` on every owned file and confirm added prose paragraphs are not hard-wrapped.

@@ -395,32 +395,93 @@ function isAllowable(cmd) {
   return segmentsAreReadOnly(noRedirects);
 }
 
-let raw = "";
-process.stdin.setEncoding("utf8");
-process.stdin.on("data", (d) => (raw += d));
-process.stdin.on("end", () => {
+/**
+ * Build the hook's stdout payload for a raw stdin string, or null for passthrough.
+ * Same checks in the same order the top-level driver used before this became a function: parse, Bash-only, trim,
+ * empty-command early exit, `isAllowable`, and the fixed reason string. Returns; never calls `process.exit`.
+ */
+function decide(raw) {
+  const cmd = commandOf(raw);
+  return cmd !== null && isAllowable(cmd) ? allowPayload() : null;
+}
+
+/**
+ * Return the trimmed Bash command carried by `raw`, or null when there is none to examine.
+ * Collapses the four ways stdin can fail to name a command — unparsable, not an object, not a Bash call, and a
+ * `command` that is absent, empty or not a string. The type test matters: a non-string `command` used to reach
+ * `.trim()` and throw, which the dispatcher then recorded as `module-error`, making a malformed host payload
+ * indistinguishable in the log from a module that actually broke.
+ */
+function commandOf(raw) {
+  let data;
   try {
-    const data = JSON.parse(raw);
-    if (data.tool_name !== "Bash") {
-      process.exit(0);
-    }
-    const cmd = ((data.tool_input && data.tool_input.command) || "").trim();
-    if (!cmd || !isAllowable(cmd)) {
-      process.exit(0);
-    }
-    process.stdout.write(
-      JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "allow",
-          permissionDecisionReason:
-            "plugin blueprint idiom — ${TMPDIR:-/tmp} sentinel read (subst or read-form) / date stamp only, all segments read-only",
-        },
-      }),
-    );
-    process.exit(0);
+    data = JSON.parse(raw);
   } catch (_) {
-    // Never crash or block Claude due to a hook bug
-    process.exit(0);
+    return null;
   }
-});
+  if (!data || data.tool_name !== "Bash") return null;
+  const command = data.tool_input && data.tool_input.command;
+  if (typeof command !== "string") return null;
+  return command.trim() || null;
+}
+
+/**
+ * Return this module's allow payload.
+ * One builder shared by `decide` and `evaluate`, so the two cannot disagree on a byte of what the host is told.
+ */
+function allowPayload() {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      permissionDecisionReason:
+        "plugin blueprint idiom — ${TMPDIR:-/tmp} sentinel read (subst or read-form) / date stamp only, all segments read-only",
+    },
+  };
+}
+
+/**
+ * Classify what this module did with `raw`, for the audit record the dispatcher writes.
+ *
+ *   decision "allow"        the shape matched and an allow payload was produced;
+ *   decision "passthrough"  the command was examined and the shape did not match;
+ *   decision "none"         the module returned before examining any shape at all.
+ *
+ * `isAllowable` returns a bare boolean and gains no per-rejection reason here: deriving one would mean reaching into
+ * the matcher, which stays untouched. Every decline is therefore `shape-mismatch`.
+ *
+ * No digest: normalization belongs to the blueprint module, and a second implementation of it here would be a second
+ * definition of what a command IS. Never calls `process.exit`.
+ *
+ * @returns {{payload: object|null, decision: string, lane: string, rank: number, why?: string}}
+ */
+function evaluate(raw) {
+  const lane = { lane: "shape", rank: 2 };
+  const cmd = commandOf(raw);
+  if (cmd === null) return { ...lane, payload: null, decision: "none", why: "not-applicable" };
+  if (!isAllowable(cmd)) return { ...lane, payload: null, decision: "passthrough", why: "shape-mismatch" };
+  return { ...lane, payload: allowPayload(), decision: "allow" };
+}
+
+// Requiring this module must attach no stdin listener and must not exit — the dispatcher requires it as a library,
+// and `bin/audit_hook_coverage.py` still subprocesses it as a standalone hook. Both entry points stay supported.
+if (require.main === module) {
+  let raw = "";
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (d) => (raw += d));
+  process.stdin.on("end", () => {
+    try {
+      const payload = decide(raw);
+      if (payload) process.stdout.write(JSON.stringify(payload));
+    } catch (_) {
+      // Never crash or block Claude due to a hook bug
+    }
+    process.exit(0);
+  });
+}
+
+module.exports = {
+  isAllowable,
+  decide,
+  evaluate,
+};
