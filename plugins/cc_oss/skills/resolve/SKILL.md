@@ -217,24 +217,7 @@ echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeou
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-[ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "n/a" ] || exit 0
-REPORTS=$(ls -t .reports/review/*/review-report.md 2>/dev/null)
-[ -n "$REPORTS" ] || exit 0
-MATCH_REPORT=$(grep -lE "^PR: *#${PR_NUMBER}\$" $REPORTS 2>/dev/null | head -1)  # newest-first (ls -t), first match wins
-[ -n "$MATCH_REPORT" ] || exit 0
-GATE_LINE=$(grep -E '^Gate:' "$MATCH_REPORT" | head -1)
-case "$GATE_LINE" in
-*REJECT_*)
-    REJECT_SHA=$(echo "$GATE_LINE" | grep -oE '@[0-9a-f]{7,40}' | tr -d '@')
-    CURRENT_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid 2>/dev/null)  # timeout: 6000
-    if [ -n "$REJECT_SHA" ] && [ -n "$CURRENT_SHA" ] && [ "$REJECT_SHA" != "$CURRENT_SHA" ]; then
-        echo "⚠ PR #$PR_NUMBER rejected ($GATE_LINE), head moved $REJECT_SHA→$CURRENT_SHA — state changed, proceeding. Re-run /oss:review $PR_NUMBER after to confirm the ground is gone."
-    else
-        echo "⛔ BLOCKED — PR #$PR_NUMBER rejected ($GATE_LINE), head unchanged (or unverifiable) — premise problem, resolve can't fix it. Address the ground, then /oss:review $PR_NUMBER again."
-        exit 1
-    fi
-    ;;
-esac
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER"  # timeout: 6000
 ```
 
 ## Step 1b: Create all workflow tasks upfront
@@ -457,31 +440,16 @@ command -v gh >/dev/null 2>&1 || { echo "! BLOCKED — gh CLI required; install:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# local-first; network fallback; hard-fail if neither
-DEFAULT_BRANCH=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||')  # timeout: 3000
-[ -z "$DEFAULT_BRANCH" ] && DEFAULT_BRANCH=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}')  # timeout: 6000
-[ -z "$DEFAULT_BRANCH" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }
-# Step3b bound fields model-level only, no shell binding — ONE combined fetch here, at Step-4 time (3d human wait can span minutes; stale headRefOid would poison the SHA-first skip below); read by post-checkout assert, Step10 push gate, conflict-resolution.md
-PR_META=$(gh pr view "<PR#>" --json headRefName,baseRefName,isCrossRepository,headRefOid,headRepositoryOwner --jq '[.headRefName, .baseRefName, (.isCrossRepository|tostring), .headRefOid, (.headRepositoryOwner.login // "")] | join(" ")' 2>/dev/null)  # timeout: 6000
-set -- $PR_META
-PR_HEAD_REF="${1:-}"; BASE_REF="${2:-}"; IS_CROSS_REPO="${3:-}"; PR_HEAD_OID="${4:-}"; HEAD_REPO_OWNER="${5:-}"
-[ -n "$BASE_REF" ] || BASE_REF="$DEFAULT_BRANCH"
-[ -n "$IS_CROSS_REPO" ] || IS_CROSS_REPO=false
-if [ "$PR_HEAD_REF" = "$DEFAULT_BRANCH" ]; then
-    echo "⛔ PR HEAD ref ($PR_HEAD_REF) equals default branch — refusing to check out and commit on default branch"
-    exit 1
-fi
-HEAD_REF="$PR_HEAD_REF"
-echo "$HEAD_REF" > "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}"
-echo "$BASE_REF" > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"
-echo "$IS_CROSS_REPO" > "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}"
-echo "$HEAD_REPO_OWNER" > "${TMPDIR:-/tmp}/resolve-head-repo-owner-${CSID}"  # read by FORK_REMOTE block — no re-fetch
-SAVED_BRANCH=$(git rev-parse --abbrev-ref HEAD)  # timeout: 3000
-echo "$SAVED_BRANCH" > "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "<PR#>"  # timeout: 15000
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# fresh shell (Check 41) — reload what resolve_pr_refs.py persisted above
+IFS= read -r PR_HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || PR_HEAD_REF=""
+IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
 # SHA-first: skip if at PR head — avoids worktree conflict (gh pr checkout aliases pr-N-slug if branch active elsewhere)
-LOCAL_SHA=$(git rev-parse HEAD 2>/dev/null)  # timeout: 3000
-# reflog trace (cf. investigate 2026-06-13T11-00-00Z: pr195 alias, opaque state)
->&2 echo "→ Step 4 state: SAVED_BRANCH=$SAVED_BRANCH PR_HEAD_REF=$PR_HEAD_REF PR_HEAD_OID=${PR_HEAD_OID:-<empty>} LOCAL_SHA=${LOCAL_SHA:-<empty>}"
+IFS= read -r LOCAL_SHA < "${TMPDIR:-/tmp}/resolve-local-sha-${CSID}" 2>/dev/null || LOCAL_SHA=""
 if [ -n "$PR_HEAD_OID" ] && [ "$LOCAL_SHA" = "$PR_HEAD_OID" ]; then
     echo "→ Already at PR head ($LOCAL_SHA) — skipping gh pr checkout"
     # SHA match, diff branch (e.g. pr<N> alias) — force-align to PR_HEAD_REF so Step8/10 land correct branch
@@ -662,14 +630,7 @@ IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=${_PR_NUMBER}, items-implemented; next: lint/push/report"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: oss:resolve · phase: lint-qa (after implementation loop)"
-    echo "- run-dir: n/a"
-    echo "- preserve: ${_PRESERVE}"
-    echo "- next: lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "n/a" "${_PRESERVE}" "lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"  # timeout: 5000
 ```
 
 ## Step 9: Lint and QA gate
@@ -710,25 +671,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}" 2>/dev/null || FORK_REMOTE=""
 IFS= read -r HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || HEAD_REF=""
 IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
-[ -n "$FORK_REMOTE" ] && [ -n "$HEAD_REF" ] || { echo "⛔ Step 10: FORK_REMOTE/HEAD_REF unresolved — refusing to present an empty push-authorization prompt"; exit 1; }
-if ! git remote get-url "$FORK_REMOTE" &>/dev/null; then # timeout: 3000
-    REPO_NAME=$(git remote get-url origin | sed 's|.*/||' | sed 's|\.git$||')
-    ORIGIN_URL=$(git remote get-url origin 2>/dev/null || echo "")
-    # mirror SSH/HTTPS — SSH-only lacks HTTPS creds; hardcoding breaks push silently
-    if [[ "$ORIGIN_URL" == git@* ]]; then
-        FORK_URL="git@github.com:$FORK_REMOTE/$REPO_NAME.git"
-    else
-        FORK_URL="https://github.com/$FORK_REMOTE/$REPO_NAME.git"
-    fi
-    git remote add "$FORK_REMOTE" "$FORK_URL" # timeout: 3000
-    echo "→ Added remote $FORK_REMOTE → $FORK_URL"
-fi
-git branch --set-upstream-to="$FORK_REMOTE/$HEAD_REF" 2>/dev/null || true # timeout: 3000
-PUSH_COUNT=$(git rev-list "$FORK_REMOTE/$HEAD_REF..HEAD" --count 2>/dev/null || git rev-list "origin/$BASE_REF..HEAD" --count) # timeout: 3000
-PUSH_STAT=$(git diff "$FORK_REMOTE/$HEAD_REF..HEAD" --stat 2>/dev/null | tail -1 || git diff "origin/$BASE_REF..HEAD" --stat | tail -1) # timeout: 3000
-LAST_SUBJECT=$(git log -1 --format=%s 2>/dev/null) # timeout: 3000
-[ -n "$PUSH_COUNT" ] || { echo "⛔ Step 10: push scope could not be computed — refusing to present an authorization prompt with no diff stat or commit count"; exit 1; }
-echo "→ $PUSH_COUNT commits ready to push to $FORK_REMOTE/$HEAD_REF ($PUSH_STAT); last commit: \"$LAST_SUBJECT\""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
 ```
 
 <!-- branch: main-path — push-auth (call 3 of 4 normal / 4 of 5 with codex-cap) -->
@@ -776,13 +719,7 @@ IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-{
-    echo "## Active Skill Contract"
-    echo "- skill: oss:resolve · phase: final-report (after push)"
-    echo "- run-dir: n/a"
-    echo "- preserve: ${_PRESERVE}"
-    echo "- next: write final report → post-PR action gate"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "n/a" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```

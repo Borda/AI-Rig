@@ -9,35 +9,7 @@ Thresholds: agents > 300 lines (~4 k tokens) · skill SKILL.md > 600 lines (~8 k
 > **Line count = human-readable proxy; token count = true measure.** Thresholds guide human review — not actual context budget. Short sentences + short lines preferred: easier to read AND cheaper per logical unit. Collapsing multiple short lines into one long line does NOT reduce token cost and destroys readability. Fix = remove or distill content. Collapsing lines is not a fix.
 
 ```bash
-# bytes / 3 ≈ tokens (current tokenizer; /4 under-reports ~30%)
-printf "%-52s %8s %8s\n" "FILE" "~TOKENS" "LINES"
-for f in .claude/agents/*.md; do # timeout: 5000
-    [ -f "$f" ] || continue
-    lines=$(wc -l <"$f" | tr -d ' ')
-    bytes=$(wc -c <"$f" | tr -d ' ')
-    est=$((bytes / 3))
-    [ "$est" -gt 4000 ] &&
-    printf "⚠ OVER BUDGET: agents/%s — ~%d tokens / %d lines (limit: ~4 k)\n" "$(basename "$f")" "$est" "$lines" ||
-    printf "  %-50s %8d %8d\n" "agents/$(basename "$f")" "$est" "$lines"
-done
-for f in .claude/skills/*/SKILL.md; do
-    [ -f "$f" ] || continue
-    lines=$(wc -l <"$f" | tr -d ' ')
-    bytes=$(wc -c <"$f" | tr -d ' ')
-    est=$((bytes / 3))
-    [ "$est" -gt 8000 ] &&
-    printf "⚠ OVER BUDGET: skills/%s/SKILL.md — ~%d tokens / %d lines (limit: ~8 k)\n" "$(basename "$(dirname "$f")")" "$est" "$lines" ||
-    printf "  %-50s %8d %8d\n" "skills/$(basename "$(dirname "$f")")/SKILL.md" "$est" "$lines"
-done
-for f in .claude/rules/*.md; do
-    [ -f "$f" ] || continue
-    lines=$(wc -l <"$f" | tr -d ' ')
-    bytes=$(wc -c <"$f" | tr -d ' ')
-    est=$((bytes / 3))
-    [ "$est" -gt 2500 ] &&
-    printf "⚠ OVER BUDGET: rules/%s — ~%d tokens / %d lines (limit: ~2.5 k)\n" "$(basename "$f")" "$est" "$lines" ||
-    printf "  %-50s %8d %8d\n" "rules/$(basename "$f")" "$est" "$lines"
-done
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/measure_config_size.py" --mode inventory  # timeout: 10000
 ```
 
 **Severity**: **medium** — report only, never auto-fix. When flagging, remind fixer: only content removal or distillation counts; collapsing lines not acceptable.
@@ -222,30 +194,7 @@ Block count across all .md files in scope. NxN similarity analysis is expensive 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-# patterns go straight to find, never a variable — zsh doesn't word-split/glob unquoted $VAR, would read as one literal string
-if [ "$LOCAL_MODE" = "true" ]; then
-    # ! -path guards keep sweep one level deep, matching flat globs replaced — sidecar fragments live in references/<parent>/ (outside agent tree), rules/_full/ holds long-form rule bodies
-    find plugins \( \
-        -path "*/skills/*/SKILL.md" -o \
-        -path "*/skills/*/modes/*.md" -o \
-        -path "*/skills/_shared/*.md" -o \
-        -path "*/skills/*/templates/*.md" -o \
-        \( -path "*/agents/*.md" ! -path "*/agents/*/*" \) -o \
-        \( -path "*/rules/*.md" ! -path "*/rules/*/*" \) \) 2>/dev/null | sort
-else
-    find .claude \( -path "*/skills/*/SKILL.md" -o \
-        \( -path "*/agents/*.md" ! -path "*/agents/*/*" \) \) 2>/dev/null | sort
-fi > "${TMPDIR:-/tmp}/audit-state-${CSID}/c17-files"
-printf "%-55s %s\n" "FILE" "BLOCKS"
-while IFS= read -r f; do # timeout: 5000
-    [ -f "$f" ] || continue
-    name="${f#plugins/}"
-    name="${name#.claude/}"
-    # no || echo 0 — grep -c prints 0 AND exits 1 on no match, fallback would double-fire, "0\n0" aborts arithmetic
-    blocks=$(grep -c '^\`\`\`' "$f" 2>/dev/null) || blocks=0
-    blocks=$(( blocks / 2 ))
-    printf "%-55s %d\n" "$name" "$blocks"
-done < "${TMPDIR:-/tmp}/audit-state-${CSID}/c17-files"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
 ```
 
 Flag files with block count ≥ 10 as extraction candidates — recommend `--efficiency` run for full NxN analysis.

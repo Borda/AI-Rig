@@ -149,26 +149,7 @@ Validate both envelopes:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-STATUS_A=$(echo "$ENVELOPE_A" | jq -r '.status' 2>/dev/null)
-CHANGELOG_AUDIT_FILE=$(echo "$ENVELOPE_A" | jq -r '.file' 2>/dev/null)
-CHANGELOG_FILE_FROM_A=$(echo "$ENVELOPE_A" | jq -r '.changelog_file // ""' 2>/dev/null)
-STATUS_B=$(echo "$ENVELOPE_B" | jq -r '.status' 2>/dev/null)
-CONTRIBUTORS_FILE=$(echo "$ENVELOPE_B" | jq -r '.file' 2>/dev/null)
-if [ "$STATUS_A" != "done" ] || [ -z "$CHANGELOG_AUDIT_FILE" ] || [ ! -f "$CHANGELOG_AUDIT_FILE" ]; then
-    echo "Error: changelog-audit delegation failed — status=$STATUS_A, file=$CHANGELOG_AUDIT_FILE" >&2; exit 1
-fi
-if [ "$STATUS_B" != "done" ] || [ -z "$CONTRIBUTORS_FILE" ] || [ ! -f "$CONTRIBUTORS_FILE" ]; then
-    echo "Error: contributors delegation failed — status=$STATUS_B, file=$CONTRIBUTORS_FILE" >&2; exit 1
-fi
-# re-persist — subagent may canonicalize paths
-echo "${CHANGELOG_AUDIT_FILE:-}" > "${TMPDIR:-/tmp}/release-changelog-audit-${CSID}"
-echo "${CONTRIBUTORS_FILE:-}" > "${TMPDIR:-/tmp}/release-contributors-${CSID}"
-[ -n "$CHANGELOG_FILE_FROM_A" ] && echo "${CHANGELOG_FILE_FROM_A}" > "${TMPDIR:-/tmp}/release-changelog-file-${CSID}"
-ADDED=$(echo "$ENVELOPE_A" | jq -r '.added // 0' 2>/dev/null)
-FLAGGED=$(echo "$ENVELOPE_A" | jq -r '.flagged // 0' 2>/dev/null)
-SCOPE_FLAGGED=$(echo "$ENVELOPE_A" | jq -r '.scope_flagged // 0' 2>/dev/null)
-COUNT=$(echo "$ENVELOPE_B" | jq -r '.count // 0' 2>/dev/null)
-echo "Phases 5–6 delegated: $ADDED changelog entries added, $FLAGGED flagged, $SCOPE_FLAGGED scope-flagged (non-PR branch merge); $COUNT contributors extracted."  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_release_envelopes.py" --envelope-a "$ENVELOPE_A" --envelope-b "$ENVELOPE_B"  # timeout: 5000
 ```
 
 `$SCOPE_FLAGGED` > 0 → read the "Scope check" section of `$CHANGELOG_AUDIT_FILE`; every row there (critical = already-released commit landed a second time, medium = unreviewed branch merge) must reach the Findings summary table in `audit`/`prepare` modes — see `templates/audit-checks.md` Output, "Changelog scope" row — never left inside the audit file only. This is the check the reviewer needs surfaced before approving the PR, not something to bury in a report nobody opens.

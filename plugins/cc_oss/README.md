@@ -702,59 +702,67 @@ ______________________________________________________________________
 
 <details>
 
-<summary><strong>🧰 Bin helper inventory (33 shipped deterministic helpers)</strong></summary>
+<summary><strong>🧰 Bin helper inventory (43 shipped deterministic helpers)</strong></summary>
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the orchestration; the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation.
 
 #### Analysis, signals, and structural context
 
-| Helper                           | Purpose                                                               |
-| -------------------------------- | --------------------------------------------------------------------- |
-| `assemble_vitality_scores.py`    | Merge three vitality-axis partials into one health score.             |
-| `build_triage_batch.py`          | Build a codemap query batch from triaged identifiers.                 |
-| `check_agent.py`                 | Probe whether a plugin agent is installed.                            |
-| `check_oss_pr_signals.py`        | Collect read-only OSS signals from a pull-request diff.               |
-| `classify_breaking.py`           | Label changed public symbols as Breaking or internal.                 |
-| `classify_pr_scope.py`           | Classify a pull request as CHORE, FIX, REFACTOR, FEATURE, or MIXED.   |
-| `codemap_cache.py`               | Materialize review-to-resolve codemap pre-flight cache artifacts.     |
-| `detect_codemap.py`              | Detect codemap availability, index presence, and currency.            |
-| `detect_thread_type.py`          | Detect GitHub thread type and report drift.                           |
-| `extract_changed_symbols.py`     | Extract changed public Python symbols from a diff.                    |
-| `extract_diff_impact_qnames.py`  | Extract qualified names from codemap diff-impact JSON.                |
-| `extract_vitality_vars.py`       | Emit shell assignments from vitality-score JSON.                      |
-| `fetch_gh_data_group1.py`        | Fetch independent GitHub datasets for vitality scoring.               |
-| `fetch_gh_data_group2.py`        | Fetch dependent repository and workflow content for vitality scoring. |
-| `resolve_centrality.py`          | Convert codemap centrality output into a worktree resolver map.       |
-| `search_downstream_consumers.py` | Find GitHub repositories importing changed symbols.                   |
+| Helper                           | Purpose                                                                              |
+| -------------------------------- | ------------------------------------------------------------------------------------ |
+| `assemble_vitality_scores.py`    | Merge three vitality-axis partials into one health score.                            |
+| `build_analyse_paths.py`         | Derive the `/oss:analyse` report path or GitHub cache path for a thread.             |
+| `build_triage_batch.py`          | Build a codemap query batch from triaged identifiers.                                |
+| `build_vitality_paths.py`        | Derive the vitality report path and the provenance metadata written into its header. |
+| `check_agent.py`                 | Probe whether a plugin agent is installed.                                           |
+| `check_oss_pr_signals.py`        | Collect read-only OSS signals from a pull-request diff.                              |
+| `classify_breaking.py`           | Label changed public symbols as Breaking or internal.                                |
+| `classify_pr_scope.py`           | Classify a pull request as CHORE, FIX, REFACTOR, FEATURE, or MIXED.                  |
+| `codemap_cache.py`               | Materialize review-to-resolve codemap pre-flight cache artifacts.                    |
+| `detect_codemap.py`              | Detect codemap availability, index presence, and currency.                           |
+| `detect_thread_type.py`          | Detect GitHub thread type and report drift.                                          |
+| `extract_changed_symbols.py`     | Extract changed public Python symbols from a diff.                                   |
+| `extract_diff_impact_qnames.py`  | Extract qualified names from codemap diff-impact JSON.                               |
+| `extract_vitality_vars.py`       | Emit shell assignments from vitality-score JSON.                                     |
+| `fetch_gh_data_group1.py`        | Fetch independent GitHub datasets for vitality scoring.                              |
+| `fetch_gh_data_group2.py`        | Fetch dependent repository and workflow content for vitality scoring.                |
+| `parse_analyse_args.py`          | Classify the `/oss:analyse` argument and resolve the vitality repository.            |
+| `resolve_centrality.py`          | Convert codemap centrality output into a worktree resolver map.                      |
+| `search_downstream_consumers.py` | Find GitHub repositories importing changed symbols.                                  |
 
 #### Review, resolve, and argument helpers
 
-| Helper                       | Purpose                                                            |
-| ---------------------------- | ------------------------------------------------------------------ |
-| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.  |
-| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items.            |
-| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit.         |
-| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path.      |
-| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.            |
-| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.         |
-| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.             |
-| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                   |
-| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts. |
-| `resolve_preflight.py`       | Verify tools, authentication, and remote state before resolve.     |
-| `resolve_shared_path.py`     | Resolve the plugin's shared directory portably.                    |
+| Helper                       | Purpose                                                                          |
+| ---------------------------- | -------------------------------------------------------------------------------- |
+| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                |
+| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items.                          |
+| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit.                       |
+| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path.                    |
+| `derive_fork_remote.py`      | Ensure the contributor's fork remote exists, then report the pending push scope. |
+| `find_review_report.py`      | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.  |
+| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.                          |
+| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.                       |
+| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.                           |
+| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                                 |
+| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts.               |
+| `resolve_pr_refs.py`         | Resolve the default branch and the PR's head/base/fork metadata before checkout. |
+| `resolve_preflight.py`       | Verify tools, authentication, and remote state before resolve.                   |
+| `resolve_shared_path.py`     | Resolve the plugin's shared directory portably.                                  |
 
 #### Release, installation, and path helpers
 
-| Helper                       | Purpose                                                    |
-| ---------------------------- | ---------------------------------------------------------- |
-| `extract_contributors.py`    | List unique non-bot contributors in a Git range.           |
-| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.     |
-| `release_append_marker.py`   | Persist and resolve the release `--append` baseline.       |
-| `release_setup.py`           | Resolve shared setup values for release modes.             |
-| `run_audit_checks.py`        | Gather raw readiness evidence for release audit.           |
-| `setup_release_dir.py`       | Create a release directory and protect existing artifacts. |
-| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.  |
-| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                 |
+| Helper                       | Purpose                                                                           |
+| ---------------------------- | --------------------------------------------------------------------------------- |
+| `extract_contributors.py`    | List unique non-bot contributors in a Git range.                                  |
+| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                            |
+| `parse_release_envelopes.py` | Validate the changelog-audit and contributors agent envelopes for `/oss:release`. |
+| `release_append_marker.py`   | Persist and resolve the release `--append` baseline.                              |
+| `release_setup.py`           | Resolve shared setup values for release modes.                                    |
+| `run_audit_checks.py`        | Gather raw readiness evidence for release audit.                                  |
+| `setup_release_dir.py`       | Create a release directory and protect existing artifacts.                        |
+| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                         |
+| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                        |
+| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.      |
 
 </details>
 

@@ -106,74 +106,7 @@ Surface progress at milestones: after system-wide checks ("✓ Checks 1-20 compl
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-# grep+sed, not `[[ =~ ]]` — zsh leaves BASH_REMATCH empty on match, silently dropping the user's --keep list
-KEEP_ITEMS=$(printf '%s' "$ARGUMENTS" | grep -o -- '--keep[[:space:]]"[^"]*"' | head -1 | sed 's/^--keep[[:space:]]"//; s/"$//')
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--keep "[^"]*"//g')
-rm -f .temp/state/skill-contract.md  # clear stale contract (compaction-contract.md §Lifecycle)  # timeout: 5000
-LOCAL_MODE=false;       [[ " $ARGUMENTS " == *" --local "* ]]       && LOCAL_MODE=true
-ADVERSARIAL_MODE=false; [[ " $ARGUMENTS " == *" --adversarial "* ]] && ADVERSARIAL_MODE=true; [[ " $ARGUMENTS " == *" --challenge "* ]] && ADVERSARIAL_MODE=true
-EFFICIENCY_MODE=false;  [[ " $ARGUMENTS " == *" --efficiency "* ]]  && EFFICIENCY_MODE=true
-UPGRADE_MODE=false;     [[ " $ARGUMENTS " == *" --upgrade "* ]]     && UPGRADE_MODE=true
-SKIP_GATE=false;        [[ " $ARGUMENTS " == *" --skip-gate "* ]]   && SKIP_GATE=true
-FAST_MODE=false;        [[ " $ARGUMENTS " == *" --fast "* ]]         && FAST_MODE=true
-ARGUMENTS=" $ARGUMENTS "
-ARGUMENTS="${ARGUMENTS// --local / }"; ARGUMENTS="${ARGUMENTS// --adversarial / }"
-ARGUMENTS="${ARGUMENTS// --efficiency / }"; ARGUMENTS="${ARGUMENTS// --upgrade / }"
-ARGUMENTS="${ARGUMENTS// --skip-gate / }"; ARGUMENTS="${ARGUMENTS// --challenge / }"
-ARGUMENTS="${ARGUMENTS// --fast / }"
-ARGUMENTS=$(echo "$ARGUMENTS" | tr -s ' '); ARGUMENTS="${ARGUMENTS# }"; ARGUMENTS="${ARGUMENTS% }"
-
-if [ "$UPGRADE_MODE" = "true" ] && { [ "$ADVERSARIAL_MODE" = "true" ] || [ "$EFFICIENCY_MODE" = "true" ]; }; then
-    printf "! --upgrade is mutually exclusive with --adversarial and --efficiency\n"
-    exit 1
-fi
-
-# preflight helpers defined inline — fresh shell per Bash() call; sourced functions unavailable
-preflight_ok()   { local f=".temp/state/preflight/$1.ok"; [ -f "$f" ] && [ $(($(date +%s) - $(cat "$f"))) -lt 14400 ]; }
-preflight_pass() { mkdir -p .temp/state/preflight; date +%s >".temp/state/preflight/$1.ok"; }
-
-if [ ! -d ".claude" ]; then
-    printf "! BREAKING: .claude/ directory not found — nothing to audit\n"
-    exit 1
-fi
-
-# jq — Check 4 depends on it
-if preflight_ok jq; then
-    JQ_AVAILABLE=true
-elif command -v jq &>/dev/null; then # timeout: 5000
-    preflight_pass jq
-    JQ_AVAILABLE=true
-else
-    printf "⚠ MISSING: jq not found — Check 4 (permissions-guide drift) will be skipped\n"
-    JQ_AVAILABLE=false
-fi
-
-if ! preflight_ok git && ! command -v git &>/dev/null; then # timeout: 5000
-    printf "⚠ MISSING: git not found — path portability check may miss repo-root references\n"
-else
-    preflight_ok git || preflight_pass git
-fi
-
-# node — Check 10 (RTK prefix parsing) + upgrade hook syntax check depend on it
-if preflight_ok node; then
-    NODE_AVAILABLE=true
-elif command -v node &>/dev/null; then # timeout: 5000
-    preflight_pass node
-    NODE_AVAILABLE=true
-else
-    printf "⚠ MISSING: node not found — Check 10 (RTK hook parsing) and upgrade hook syntax check will be skipped\n"
-    NODE_AVAILABLE=false
-fi
-
-AUDIT_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" )) || { printf "! BREAKING: audit/templates not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
-
-# Persist LOCAL_MODE + AUDIT_TPL — fresh-shell state loss
-# Re-derive at each Step start — see ADV-M1
-mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
-echo "$LOCAL_MODE" > "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode"
-echo "$AUDIT_TPL"  > "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl"
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_preflight.py" --arguments "$ARGUMENTS"  # timeout: 20000
 ```
 
 If `.claude/` missing, abort immediately. Missing `jq` is warning — audit continues with Check 4 skipped.

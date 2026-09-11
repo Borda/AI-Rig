@@ -339,14 +339,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-refactor-keep-items-${CSID}" 2>/dev/nu
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:refactor · phase: characterize+edit (after coverage audit)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: add characterization tests (Step 3) → refactor with safety net (Step 4)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:refactor" "characterize+edit (after coverage audit)" "$_DEV_DIR" "$_PRESERVE" "add characterization tests (Step 3) → refactor with safety net (Step 4)"  # timeout: 5000
 ```
 
 ## Step 3: Add characterization tests (if needed)
@@ -452,14 +445,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:refactor · phase: review+quality (after refactor edits applied)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD"
-    echo "- next: review and close gaps (Step 5) → Final Report"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:refactor" "review+quality (after refactor edits applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 5) → Final Report"  # timeout: 5000
 ```
 
 ## Step 5: Review and close gaps

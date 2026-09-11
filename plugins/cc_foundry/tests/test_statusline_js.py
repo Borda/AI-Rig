@@ -166,7 +166,7 @@ class TestAgentDisplay:
         """A non-worktree agent (since-only, no ``last_active``) past the old 10-min cutoff stays visible.
 
         Non-worktree agents (plain ``Agent()`` calls, the common case) get no per-agent liveness signal — the tool event
-        payload carries no agent_id, so ``last_active`` is never refreshed for them. They use the longer 60-minute
+        payload carries no agent_id, so ``last_active`` is never refreshed for them. They use the longer 30-minute
         backstop instead of the worktree-only 10-min one, so a genuinely still-working 20-min background task (e.g. a
         multi-file refactor) is not hidden.
         """
@@ -180,8 +180,8 @@ class TestAgentDisplay:
         assert "sw-engineer" in rendered
         assert "🤖 none" not in rendered
 
-    def test_non_worktree_agent_dropped_after_60_min(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """A non-worktree agent past the 60-min backstop is dropped → ``🤖 none`` rendered."""
+    def test_non_worktree_agent_dropped_after_30_min(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A non-worktree agent past the 30-min backstop is dropped → ``🤖 none`` rendered."""
         stale = (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat()
         _write_agent(sid, "a-stale", since=stale)
 
@@ -260,7 +260,7 @@ class TestCodexDisplay:
         assert "🤖 none" not in rendered
 
     def test_stale_codex_dir_agent_dropped(self, sid: str, tmp_home: Path, run_hook) -> None:
-        """Codex/ entry (non-worktree, since-only) older than the 60-min backstop is dropped → ``🤖 none`` rendered."""
+        """Codex/ entry (non-worktree, since-only) older than the 30-min backstop is dropped → ``🤖 none`` rendered."""
         stale = (datetime.now(timezone.utc) - timedelta(minutes=70)).isoformat()
         _write_codex(sid, "tu-cdx-stale", since=stale)
 

@@ -411,18 +411,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-debug-keep-items-${CSID}" 2>/dev/null 
 _TRIED=$(head -6 "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}" 2>/dev/null)  # cap keeps contract ≤12 lines
 _PRESERVE="mode=$_DEBUG_MODE, ci-run=${_CI_RUN:-none}"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:debug · phase: hypothesis+handoff (after evidence gathered and pattern analysis)"
-    echo "- run-dir: .plans/active/"
-    echo "- preserve: $_PRESERVE"
-    if [ -n "$_TRIED" ]; then
-        echo "- tried (do NOT re-test refuted/ruled-out):"
-        echo "$_TRIED" | sed 's/^/    - /'
-    fi
-    echo "- next: state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out above."
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:debug" "hypothesis+handoff (after evidence gathered and pattern analysis)" ".plans/active/" "$_PRESERVE" "state hypothesis with evidence (Step 3) → confirm root cause → write diagnosis → handoff to /develop:fix. Skip any candidate marked refuted/ruled-out in the tried list below." "tried (do NOT re-test refuted/ruled-out)" "$_TRIED"  # timeout: 5000
 ```
 
 ## Step 3: Hypothesis and gate

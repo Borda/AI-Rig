@@ -209,34 +209,10 @@ Scope + non-Python impact check + Python filter in ONE pass — a single `git di
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS="$ARGUMENTS"   # re-derive — bash state lost between Bash() calls
-_DIFF_FILES=$(git diff --name-only HEAD 2>/dev/null)
-if [ -n "$REVIEW_ARGS" ]; then
-    TARGET="$REVIEW_ARGS"
-    echo "Reviewing: $TARGET"
-    PYTHON_FILES=$(find "$REVIEW_ARGS" -name '*.py' -type f 2>/dev/null | head -1)
-else
-    echo "$_DIFF_FILES"
-    TARGET="working-tree diff ($(echo "$_DIFF_FILES" | grep -c '\.py$' | tr -d ' ') Python files)"
-    PYTHON_FILES=$(echo "$_DIFF_FILES" | grep '\.py$' | head -1)
-fi
-NON_PY_WARNINGS=""
-echo "$_DIFF_FILES" | grep -qE '(pyproject\.toml|setup\.cfg|requirements.*\.txt)' && NON_PY_WARNINGS="${NON_PY_WARNINGS}⚠ dependency changes detected — not reviewed; verify Python imports still resolve\n"
-echo "$_DIFF_FILES" | grep -qE '(Dockerfile|docker-compose.*\.yml)' && NON_PY_WARNINGS="${NON_PY_WARNINGS}⚠ container config changes detected — not reviewed\n"
-if [ -z "$REVIEW_ARGS" ]; then
-    # diff-mode only — explicit tests/ path in REVIEW_ARGS is deliberate, never warned
-    _PY_DIFF=$(echo "$_DIFF_FILES" | grep '\.py$')
-    [ -n "$_PY_DIFF" ] && ! echo "$_PY_DIFF" | grep -qv '^tests/' && NON_PY_WARNINGS="${NON_PY_WARNINGS}⚠ diff contains only test files (tests/) — no src/ changes; review may be uninformative\n"
-fi
-# warnings print BEFORE the early exit — they must emit even when no Python file exists
-if [ -z "$PYTHON_FILES" ]; then
-    echo "! Diff contains non-Python files only. This skill is scoped to Python. For other languages, use a general-purpose code reviewer."
-    [ -n "$NON_PY_WARNINGS" ] && printf "$NON_PY_WARNINGS"
-    exit 0
-fi
-[ -n "$NON_PY_WARNINGS" ] && printf "$NON_PY_WARNINGS"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_review_target.py" -- "$REVIEW_ARGS"
 ```
 
-If `$NON_PY_WARNINGS` non-empty: include in report header regardless of whether Python files exist. No Python files → the bash `exit 0` above is the enforceable stop (DMI skill — prose "stop" not executable).
+Any `⚠` line printed above: include in report header regardless of whether Python files exist. No Python files → `resolve_review_target.py` prints `! Diff contains non-Python files only.` and Step 1 ends there (DMI skill — prose "stop" not executable).
 
 ### Scope pre-check
 
@@ -531,14 +507,7 @@ IFS= read -r _TARGET < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/nu
 _FINDING_FILES=$(ls "$_RUN_DIR/"*.md 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, finding-files=$_FINDING_FILES"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:review · phase: consolidation (after parallel review-agent fan-out)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: cross-validate critical findings (Step 4) → consolidate → final report"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "cross-validate critical findings (Step 4) → consolidate → final report"  # timeout: 5000
 ```
 
 ## Step 4: Cross-validate critical/blocking findings
@@ -600,13 +569,7 @@ TaskUpdate "Step 5b: Print report header" → `in_progress`.
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:review · phase: follow-up (after consolidation)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: final-report=$_REPORT_DIR/review-report.md"
-    echo "- next: optional Codex delegation → follow-up gate"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "optional Codex delegation → follow-up gate"  # timeout: 5000
 ```
 
 ## Step 6: Delegate implementation follow-up (optional)

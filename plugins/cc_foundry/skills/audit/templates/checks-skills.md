@@ -128,28 +128,7 @@ Rules:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
-printf "=== Check 23b: # timeout: comment without shell enforcement ===\n"
-# python exempt — --timeout default enforces internally; colon separates comment from real timeout cmd
-find "$_ROOT" \( -path "*/skills/*/SKILL.md" -o -path "*/agents/*.md" -o -path "*/rules/*.md" \) \
-  -exec grep -Hn '# timeout: [0-9]' {} + 2>/dev/null |
-  grep -v '^Binary' |
-  grep -v '^\s*#' |
-  grep -v 'timeout [0-9][0-9]* ' |
-  grep -v 'python ' &&
-printf "  hint: prepend 'timeout S' (S = ms ÷ 1000) — e.g. 'timeout 5 \$(command 2>/dev/null || echo fallback)'\n" || true
-
-printf "=== Check 23b: Python subprocess missing timeout= ===\n"
-find "$_ROOT" -path "*/bin/*.py" -exec grep -Hn 'subprocess\.\(check_output\|run\|call\|Popen\)' {} + 2>/dev/null |
-  grep -v 'timeout=' |
-  grep -v '^\s*#' &&
-printf "  hint: add timeout=args.timeout to every subprocess call; --timeout default must equal # timeout: N ÷ 1000\n" || true
-
-printf "=== Check 23b: Python --timeout default compliance ===\n"
-find "$_ROOT" -path "*/bin/*.py" -exec grep -l 'subprocess\.' {} + 2>/dev/null | sort -u | while IFS= read -r f; do
-  grep -q 'add_argument.*--timeout' "$f" ||
-    printf "  %s: --timeout argparse argument absent; add with default= matching call site # timeout: N ÷ 1000\n" "$f"
-done || true
-printf "✓: Check 23b scan complete\n"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_skill_contracts.py" --check 23b --root "$_ROOT"  # timeout: 30000
 ```
 
 After scan, apply model reasoning — exclude lines inside illustration/example code blocks (marked `# ✗`, surrounded by explanatory prose, or not reachable as actual tool-call commands). Flag only live executable lines. Severity: **medium** — bash comment-only timeout silently ignored at runtime; Python script missing `--timeout` default has no internal enforcement.
@@ -805,31 +784,7 @@ Detects the "extraction done but inline twin survived" topology: `modes/<name>.m
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-printf "=== Check 32f: mode-file body shadowed in SKILL.md ===\n"
-if [ "$LOCAL_MODE" != "true" ]; then
-    printf "✓: Check 32f skipped in non-local mode (no plugin source tree)\n"
-else
-    _C32F_FINDINGS=0
-    for skill_md in plugins/*/skills/*/SKILL.md; do
-        skill_dir=$(dirname "$skill_md")
-        modes_dir="$skill_dir/modes"
-        [ -d "$modes_dir" ] || continue
-        for mode_file in "$modes_dir"/*.md; do
-            basename_mode=$(basename "$mode_file")
-            grep -qF "$basename_mode" "$skill_md" || continue
-            # grep -c prints 0 AND exits 1 on no match — || echo 0 would double-fire
-            mode_lines=$(grep -c -v '^[[:space:]]*$\|^#' "$mode_file" 2>/dev/null) || mode_lines=0
-            [ "$mode_lines" -lt 20 ] && continue
-            overlap=$(grep -Fxf <(grep -v '^[[:space:]]*$\|^#' "$mode_file") "$skill_md" 2>/dev/null | wc -l | tr -d ' ')
-            if [ "$overlap" -ge 20 ]; then
-                printf "⚠ 32f [medium] %s — body of %s shadowed inline (%d overlapping lines); delete inline twin\n" \
-                    "$skill_md" "$basename_mode" "$overlap"
-                _C32F_FINDINGS=$(( _C32F_FINDINGS + 1 ))
-            fi
-        done
-    done
-    [ "$_C32F_FINDINGS" -eq 0 ] && printf "✓: Check 32f — no mode-body shadows found\n"
-fi  # timeout: 15000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_skill_contracts.py" --check 32f $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 30000
 ```
 
 Severity: **medium** — inline twin diverges silently from canonical mode file on every future edit. Auto-fix: delete inline block from SKILL.md; replace with bash+read pattern matching other modes.
@@ -869,7 +824,7 @@ Full-spectrum detection of duplicate or near-duplicate fenced code blocks across
 
 **Check 33a — Within-file repetition**: delegate to Phase A foundry:curator (has full file context). Curator prompt must include:
 
-> "Extract every fenced code block (any language marker — ```` ```bash ````, ```` ```python ````, ```` ```sh ````, ```` ```perl ````, ```` ```ruby ````, ```` ```js ````, etc.) from this file. For each pair of blocks, compute normalized similarity: strip comments → normalize variable names to `<VAR>` → normalize string literals to `<STR>` → compare structure. Report any pair with similarity ≥ 0.8 that appears 3+ times (within this file) as a 33a finding. For each candidate: block language, purpose, occurrence count, similarity score, what differs between instances, and suggested extraction (bash function / `bin/<name>.sh` / `bin/<name>.py`). Context saving estimate: (block_lines − 1) × occurrence_count. Skip: blocks marked `# audit-skip: resilience-replication` (first line of block) or prose annotation matching 'intentional resilience replication'."
+> "Extract every fenced code block (any language marker — ```` ```bash ````, ```` ```python ````, ```` ```sh ````, ```` ```perl ````, ```` ```ruby ````, ```` ```js ````, etc.) from this file. For each pair of blocks, compute normalized similarity: strip comments → normalize variable names to `<VAR>` → normalize string literals to `<STR>` → compare structure. Report any pair with similarity ≥ 0.8 that appears 3+ times (within this file) as a 33a finding. For each candidate: block language, purpose, occurrence count, similarity score, what differs between instances, and suggested extraction (bash function defined once in pre-flight, or `bin/<name>.py` — bin/ scripts are Python only). Context saving estimate: (block_lines − 1) × occurrence_count. Skip: blocks marked `# audit-skip: resilience-replication` (first line of block) or prose annotation matching 'intentional resilience replication'."
 
 **33b — Cross-file NxN** — two phases: bash quick scan identifies known hotspots; curator NxN delegation runs when clusters found. Scope: all .md files in plugin tree (SKILL.md, agents, rules, templates, modes).
 
@@ -891,7 +846,7 @@ printf "=== Check 33b: scope=%s files=%d ===\n" "$_C33_DIR" \
 printf "=== Check 33b Phase 1: Cross-file code block quick scan ===\n"
 
 MODE_DISPATCH=$(grep -rl 'find.*plugins/cache.*-path.*modes/' "$_C33_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-[ "${MODE_DISPATCH:-0}" -ge 3 ] && printf "⚠ 33b: bash mode-dispatch pattern in %s files — bin/ extraction candidate: resolve-skill-mode.sh <mode>\n" "$MODE_DISPATCH"
+[ "${MODE_DISPATCH:-0}" -ge 3 ] && printf "⚠ 33b: bash mode-dispatch pattern in %s files — bin/ extraction candidate: resolve_skill_mode.py <mode>\n" "$MODE_DISPATCH"
 
 SHARED_RES=$(grep -rl '=\$(find.*plugins/cache.*_shared\|=\$(ls -td.*plugins/cache' "$_C33_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
 [ "${SHARED_RES:-0}" -ge 3 ] && printf "⚠ 33b: bash _shared resolution pattern in %s files (variants may be inconsistent) — bin/ extraction candidate\n" "$SHARED_RES"
@@ -931,6 +886,8 @@ printf "✓: Check 33b Phase 1 complete\n"  # timeout: 5000
 >
 > Table 2 format: `| Cluster | ParamSlots | Tokens | Gate | Score | Verdict | Differs-by | Recommended extraction |`
 >
+> **Never-extract list — checked before the gate.** A cluster matching any of these is not a candidate: replacement costs more tokens than the block (a one-command block becomes a longer invocation line); the block is marked `# audit-skip` or declared an intentional replication in prose beside it; its only purpose is echoing values for the model to read; it is one-off glue under ~10 lines in a single file; its body carries model-substituted placeholders (`<changed_files>`, `<TARGET>`) rather than shell variables; it is an `Agent(...)` prompt, an output template, or a prompt string assigned to a shell variable; it is a propagated copy owned by another plugin's MANIFEST entry (extract at the canonical); or its shape is load-bearing for a permission hook — `IFS= read -r VAR < "${TMPDIR:-/tmp}/…-${CSID}"` passes `sentinel-read-allow.js` by shape, and a `$(python …)` replacement reintroduces the prompt it exists to avoid. Record each in Table 1 with its reason and omit it from Table 2.
+>
 > Where: **ParamSlots** = count of distinct `<ARG>` slots after normalization; **Tokens** = estimated token count of block; **Gate** = `G1:P/F · G2:P/F · G3:P/F` (all must pass or Verdict = HOLD) — G1 (Size OR execution cost): block > 100 tokens, **or** block launches an external interpreter process (subprocess/heredoc/`-c` — python/node/perl/ruby/etc) **and** occurs ≥3× in cluster (repeated process-fork cost is real even when each instance is token-small — a tiny `python -c "..."` one-liner repeated 84× must not gate out on size alone); G2 (Independence): no branch on prior LLM decision that cannot become explicit arg; G3 (Identity): has computational meaning outside orchestration prose (high CallerScopeDeps = G3 fail indicator); **Score** = sum of applicable positive-dimension weights when gate passes — Testable (deterministic I/O, writable pytest/shellcheck test) +2 · Reuse (same logic in 2+ .md files) +2 · Token drain (block > 300 tokens) +2 · Process overhead (external interpreter launched ≥3× in cluster) +2 · Lintable (shellcheck/ruff applicable) +1 · Run frequency (executes >1× per skill invocation) +1 · Standalone debuggable (runnable with no SKILL.md context) +1; **Verdict** = HOLD (any gate fail) · LOW (0–1) · MEDIUM (2–3) · HIGH (≥4); **Differs-by** = concrete `<ARG>` slot values varying across instances (become CLI parameters in extracted script).
 >
 > Return ONLY: `{\"status\":\"done\",\"file\":\"$RUN_DIR/similarity-check33.md\",\"clusters\":N,\"duplicates\":N,\"similar\":N,\"findings\":N,\"confidence\":0.N}`"
@@ -939,8 +896,7 @@ Severity: **medium** for actionable extraction candidates (mode-dispatch, \_shar
 
 Auto-fix guidance:
 
-- **Bin/ shell script**: bash/sh blocks that are self-contained (stdout output, no function defs, no shell state mutation) → `plugins/cc_foundry/bin/<name>.sh` with full fallback chain; callers: `$( ${CLAUDE_PLUGIN_ROOT}/bin/<name>.sh 2>/dev/null || echo "fallback-path")`
-- **Bin/ python script**: python blocks repeated 3+ times → `plugins/cc_foundry/bin/<name>.py`; callers: `python ${CLAUDE_PLUGIN_ROOT}/bin/<name>.py`
+- **Bin/ script**: any self-contained block (stdout output, no function defs, no shell state mutation) → `plugins/<plugin>/bin/<name>.py`; callers: `python "${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/<name>.py"`. Python only — never `.sh`, which does not execute on native Windows (`plugins/CLAUDE.md` §Installability). Prefer the bare invocation over a `$(...)` capture: the bare form is covered by each plugin's `Bash(python:*)` allow entry, while a capture needs an exact-text entry in that plugin's `blueprint-manifest.json`.
 - **Inline function**: for within-skill bash duplication where block uses caller shell state → define bash function once in pre-flight, call at each site
 - **Never extract**: blocks explicitly marked as resilience replications (unsupported-flag-check, health-monitoring constants)
 

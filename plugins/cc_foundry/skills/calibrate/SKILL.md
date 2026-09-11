@@ -278,14 +278,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items" 2>/dev
 _RUN_DIR=".reports/calibrate/$_TIMESTAMP"
 _PRESERVE="run-dir=$_RUN_DIR, timestamp=$_TIMESTAMP"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:calibrate · phase: collect+synthesize (after pipeline fan-out)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: collect pipeline results → combined report → follow-up gate (Step 3) → log (Step 4) → signals (Step 5)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:calibrate" "collect+synthesize (after pipeline fan-out)" "$_RUN_DIR" "$_PRESERVE" "collect pipeline results → combined report → follow-up gate (Step 3) → log (Step 4) → signals (Step 5)"  # timeout: 5000
 ```
 
 ## Step 3: Collect results and print combined report
@@ -419,57 +412,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TIMESTAMP < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/timestamp" 2>/dev/null || TIMESTAMP=""
 [ -z "$TIMESTAMP" ] && { echo "! TIMESTAMP state lost — re-invoke /foundry:calibrate"; exit 1; }
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-# e.g. "oss:shepherd" → plugin="oss", agent="shepherd"; bare "curator" → plugin="foundry" (default); leading "/" (skill target) stripped before split
-NAME_BARE=$(echo "<name>" | sed 's|^/||')
-PLUGIN_PREFIX=$(echo "$NAME_BARE" | grep -o '^[^:]*:' | tr -d ':')
-AGENT_BARE=$(echo "$NAME_BARE" | sed 's/^[^:]*://')
-[ -z "$PLUGIN_PREFIX" ] && PLUGIN_PREFIX="foundry"
-if [[ "<name>" == /* ]]; then
-    REL="skills/$AGENT_BARE/SKILL.md"
-else
-    REL="agents/$AGENT_BARE.md"
-fi
-if [ "$LOCAL_MODE" = "true" ]; then
-    AGENT_FILE="plugins/cc_$PLUGIN_PREFIX/$REL"
-    [ -f "$AGENT_FILE" ] || AGENT_FILE="plugins/$PLUGIN_PREFIX/$REL"
-    if [ ! -f "$AGENT_FILE" ]; then
-        MATCHES=$(find plugins -mindepth 3 -maxdepth 4 -path "*/$REL" 2>/dev/null)
-        MATCH_COUNT=$(echo "$MATCHES" | grep -c .)
-        if [ "$MATCH_COUNT" -eq 1 ]; then
-            AGENT_FILE="$MATCHES"
-        elif [ "$MATCH_COUNT" -gt 1 ]; then
-            AGENT_FILE=$(echo "$MATCHES" | grep "/$PLUGIN_PREFIX[^/]*/" | head -1)
-        else
-            AGENT_FILE=""
-        fi
-    fi
-    if [ -z "$AGENT_FILE" ] || [ ! -f "$AGENT_FILE" ]; then
-        echo "⚠ --local: no source file resolved for <name> (tried plugins/cc_$PLUGIN_PREFIX/$REL, plugins/$PLUGIN_PREFIX/$REL, plugins/*/$REL) — skipping, never falling back to installed cache"
-        AGENT_FILE=""
-    fi
-else
-    AGENT_FILE="plugins/cc_$PLUGIN_PREFIX/$REL"
-    [ -f "$AGENT_FILE" ] || AGENT_FILE="plugins/$PLUGIN_PREFIX/$REL"
-    if [ ! -f "$AGENT_FILE" ]; then
-        MATCHES=$(find plugins -mindepth 3 -maxdepth 4 -path "*/$REL" 2>/dev/null)
-        MATCH_COUNT=$(echo "$MATCHES" | grep -c .)
-        if [ "$MATCH_COUNT" -eq 1 ]; then
-            AGENT_FILE="$MATCHES"
-        elif [ "$MATCH_COUNT" -gt 1 ]; then
-            AGENT_FILE=$(echo "$MATCHES" | grep "/$PLUGIN_PREFIX[^/]*/" | head -1)
-        else
-            AGENT_FILE=""
-        fi
-    fi
-    if [ -z "$AGENT_FILE" ] || [ ! -f "$AGENT_FILE" ]; then
-        echo "⚠ no source file resolved for <name> (tried plugins/cc_$PLUGIN_PREFIX/$REL, plugins/$PLUGIN_PREFIX/$REL, plugins/*/$REL) — skipping, never falling back to installed cache"
-        AGENT_FILE=""
-    fi
-fi
-PROPOSAL_PATH=".reports/calibrate/$TIMESTAMP/<name>/proposal.md"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "$TIMESTAMP" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
 ```
 
-If `$AGENT_FILE` is empty after resolution failure (either branch): skip that target — do not spawn curator for it — the warning above already covers it. Never fall through to a cache path for a write target.
+The script prints `agent-file=` and `proposal-path=` on stdout; read the values from there, not from shell variables. An empty `agent-file=` means resolution failed: skip that target — do not spawn curator for it — the warning the script already printed covers it. Never fall through to a cache path for a write target.
 
 Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<PROPOSAL_PATH>`, `<AGENT_FILE>` — resolved paths from above):
 

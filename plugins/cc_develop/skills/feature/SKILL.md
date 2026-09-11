@@ -389,14 +389,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-feature-keep-items-${CSID}" 2>/dev/nul
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:feature · phase: demo+edit (after scope analysis and plan)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: write demo test (Step 2) → TDD loop (Step 3) → review (Step 4)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "demo+edit (after scope analysis and plan)" "$_DEV_DIR" "$_PRESERVE" "write demo test (Step 2) → TDD loop (Step 3) → review (Step 4)"  # timeout: 5000
 ```
 
 ## Step 2: Write a demo use-case
@@ -566,14 +559,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-feature-keep-items-${CSID}" 2>/dev/nul
 _CHANGED=$( { git diff --name-only HEAD 2>/dev/null; git ls-files --others --exclude-standard 2>/dev/null; } | sort -u | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, plan-file=${_PLAN_FILE:-none}, checkpoint=$_DEV_DIR/checkpoint.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:feature · phase: TDD loop in progress (Step 3)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "TDD loop in progress (Step 3)" "$_DEV_DIR" "$_PRESERVE" "re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."  # timeout: 5000
 ```
 
 At each cycle start, read back, increment, check — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop the loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here:
@@ -600,14 +586,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-feature-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:feature · phase: review+quality (after TDD loop complete)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD"
-    echo "- next: review and close gaps (Step 4) → docs (Step 5) → Final Report"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "review+quality (after TDD loop complete)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 4) → docs (Step 5) → Final Report"  # timeout: 5000
 ```
 
 ## Step 4: Review and close gaps

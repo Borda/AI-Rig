@@ -333,14 +333,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/brainstorm-state-keep-items-${CSID}" 2>/de
 _PRESERVE="tree-file=$_TREE_FILE"
 [ -n "$_SIDECAR" ] && _PRESERVE="$_PRESERVE, sidecar=$_SIDECAR"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:brainstorm · phase: tree-review (after tree saved to disk)"
-    echo "- run-dir: n/a"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: curator tree review (Step 5) → approval gate (Step 6)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:brainstorm" "tree-review (after tree saved to disk)" "n/a" "$_PRESERVE" "curator tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
 ```
 
 **Sidecar finalise** (skip if `$SIDECAR` is empty — viewer opt-out): using Write tool, write full current JSON content (same as `$SIDECAR`) with `session_status: "complete"` to `.plans/blueprint/<final-slug>.json` (same slug as `.md` file, `.json` extension). Then also overwrite `$SIDECAR` with `session_status: "complete"`. Do NOT move or rename `$SIDECAR` — open browser tabs keep polling original timestamp-slug path.

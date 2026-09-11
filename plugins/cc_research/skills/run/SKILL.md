@@ -665,7 +665,7 @@ _ITER=$(jq -r '.iteration // 0' "$_STATE_JSON" 2>/dev/null || echo "?")
 _BEST=$(jq -r '.best_metric // "?"' "$_STATE_JSON" 2>/dev/null || echo "?")
 _PROG=$(jq -r '.program_file // ""' "$_STATE_JSON" 2>/dev/null || echo "")
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:run" "iteration-loop (after iter ${_ITER})" ".experiments/${_RUN_ID}" "state-json=${_STATE_JSON}, program=${_PROG}, iter=${_ITER}, best-metric=${_BEST}, cat-once-files=_shared/codemap-context.md + modes/compute-docker.md + modes/codex-copilot.md + modes/phase5-metric.md (re-cat after compaction only)${_KEEP_APPEND}" "continue R5 from iter $(( _ITER + 1 )) or proceed to R6 when loop done"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:run" "iteration-loop (after iter ${_ITER})" ".experiments/${_RUN_ID}" "state-json=${_STATE_JSON}, program=${_PROG}, iter=${_ITER}, best-metric=${_BEST}, cat-once-files=_shared/codemap-context.md + modes/compute-docker.md + modes/codex-copilot.md + modes/phase5-metric.md (re-cat after compaction only)${_KEEP_APPEND}" "continue R5 from iter $(( _ITER + 1 )) or proceed to R6 when loop done"  # timeout: 5000
 ```
 
 #### Phase 9 — Progress checks

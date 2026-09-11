@@ -116,29 +116,7 @@ echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload CLEAN_ARGS (Check 41)
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-DIRECT_PATH_MODE=false
-REPORT_FILE=""
-# .md check must skip vitality/ecosystem; also reject plan/todo files
-if [[ "$CLEAN_ARGS" == *.md ]] && [[ "$CLEAN_ARGS" != vitality* ]] && [[ "$CLEAN_ARGS" != ecosystem* ]]; then
-    if [[ "$CLEAN_ARGS" == .plans/* ]] || [[ "$CLEAN_ARGS" == *todo_*.md ]]; then
-        echo "! Invalid report path: '$CLEAN_ARGS' — plan/todo files are not valid report paths."
-        echo "Usage: /oss:analyse <path/to/report.md> --reply  (use a .reports/ path)"
-        exit 1
-    fi
-    DIRECT_PATH_MODE=true
-    REPORT_FILE="$CLEAN_ARGS"
-fi
-# persist DIRECT_PATH_MODE/REPORT_FILE (Check 41)
-echo "$DIRECT_PATH_MODE" > "${TMPDIR:-/tmp}/analyse-direct-path-mode-${CSID}"
-echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/analyse-report-file-${CSID}" # timeout: 5000
-# persist TODAY — repeated `date +%Y-%m-%d` may roll over midnight, mismatching cache/report paths
-_TODAY_FILE="${TMPDIR:-/tmp}/analyse-today-${CSID}"
-if [ -f "$_TODAY_FILE" ]; then
-    IFS= read -r TODAY < "$_TODAY_FILE" 2>/dev/null || TODAY=""
-else
-    TODAY=$(date +%Y-%m-%d)
-    echo "$TODAY" > "$_TODAY_FILE"
-fi
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --mode classify --args "$CLEAN_ARGS"  # timeout: 5000
 ```
 
 `DIRECT_PATH_MODE=true` only valid when `REPLY_MODE=true` — if combined without `--reply`, Step 2 prints plain-text error and stops; execution never reaches Step 5 mode dispatch.
@@ -147,54 +125,7 @@ fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload CLEAN_ARGS (Check 41)
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
-GH_OWNER=""
-GH_REPO=""
-if [[ "$CLEAN_ARGS" == vitality* ]]; then
-    VITALITY_EXTRA="${CLEAN_ARGS#vitality}"
-    VITALITY_EXTRA="${VITALITY_EXTRA# }"
-
-    if [ -n "$VITALITY_EXTRA" ]; then
-        if [[ "$VITALITY_EXTRA" =~ ^https?:// ]]; then
-            if [[ "$VITALITY_EXTRA" != *"github.com"* ]]; then
-                echo "⚠ Not a GitHub URL — this skill supports GitHub only."
-                echo "Other providers (GitLab, Bitbucket, Azure DevOps) are not supported."
-                echo "Usage: /oss:analyse vitality https://github.com/owner/repo"
-                exit 0
-            fi
-            VITALITY_REPO=$(echo "$VITALITY_EXTRA" | sed 's|https\?://github\.com/||' | cut -d'/' -f1-2)  # timeout: 5000
-        elif [[ "$VITALITY_EXTRA" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-            VITALITY_REPO="$VITALITY_EXTRA"
-        else
-            echo "⚠ Unrecognised vitality argument: '$VITALITY_EXTRA'"
-            echo "Usage: /oss:analyse vitality [owner/repo | https://github.com/owner/repo]"
-            exit 0
-        fi
-    else
-        VITALITY_REPO=$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null)  # timeout: 10000
-        if [ -z "$VITALITY_REPO" ]; then
-            REMOTE_URL=$(git remote get-url origin 2>/dev/null || echo "")  # timeout: 5000
-            if [[ "$REMOTE_URL" == *"github.com"* ]]; then
-                VITALITY_REPO=$(echo "$REMOTE_URL" | sed 's|.*github\.com[:/]||' | sed 's|\.git$||')  # timeout: 5000
-            elif [ -n "$REMOTE_URL" ]; then
-                echo "⚠ Remote '$REMOTE_URL' is not a GitHub repository."
-                echo "This skill supports GitHub only. Other providers are not supported."
-                echo "Tip: /oss:analyse vitality https://github.com/owner/repo"
-                exit 0
-            else
-                echo "⚠ No GitHub repository detected. Pass a URL:"
-                echo "  /oss:analyse vitality https://github.com/owner/repo"
-                exit 0
-            fi
-        fi
-    fi
-    GH_OWNER=$(echo "$VITALITY_REPO" | cut -d'/' -f1)  # timeout: 5000
-    GH_REPO=$(echo "$VITALITY_REPO" | cut -d'/' -f2)  # timeout: 5000
-    CLEAN_ARGS="vitality"  # normalise for mode dispatch
-fi
-# persist CLEAN_ARGS/GH_OWNER/GH_REPO (Check 41); vitality.md reloads
-echo "${CLEAN_ARGS:-}" > "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}"
-echo "${GH_OWNER:-}" > "${TMPDIR:-/tmp}/analyse-gh-owner-${CSID}"
-echo "${GH_REPO:-}" > "${TMPDIR:-/tmp}/analyse-gh-repo-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse_analyse_args.py" --args "$CLEAN_ARGS"  # timeout: 15000
 ```
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for any remaining `--<token>` tokens. If found: invoke `AskUserQuestion` with:
@@ -246,23 +177,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
 # Numeric mode only — vitality/ecosystem set REPORT_FILE in their mode files; DIRECT_PATH_MODE already set above.
-SUBDIR="thread"  # default for numeric args; overridden in vitality/ecosystem mode files
-_REPO_SLUG=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null | tr '/' '-' | tr -cd '[:alnum:]-')
-[ -z "$_REPO_SLUG" ] && _REPO_SLUG="local"
-REPORT_FILE=".reports/analyse/$SUBDIR/output-analyse-$SUBDIR-${_REPO_SLUG}-$CLEAN_ARGS-$TODAY.md"
-DRIFT=false
-FAST_PATH=false
-FAST_PATH_TENTATIVE=false
-
-if [ -f "$REPORT_FILE" ]; then
-    REPORT_MTIME=$(stat -f %m "$REPORT_FILE" 2>/dev/null || stat -c %Y "$REPORT_FILE")  # timeout: 5000
-    FAST_PATH_TENTATIVE=true  # drift check deferred to Step 4 — type must be known first
-fi
-# persist (Check 41)
-echo "$DRIFT" > "${TMPDIR:-/tmp}/analyse-drift-${CSID}"
-echo "$FAST_PATH" > "${TMPDIR:-/tmp}/analyse-fast-path-${CSID}"
-echo "$FAST_PATH_TENTATIVE" > "${TMPDIR:-/tmp}/analyse-fast-path-tentative-${CSID}"
-echo "${REPORT_MTIME:-0}" > "${TMPDIR:-/tmp}/analyse-report-mtime-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_analyse_paths.py" --clean-args "$CLEAN_ARGS" --today "$TODAY"  # timeout: 10000
 ```
 
 - `FAST_PATH_TENTATIVE=true` → continue to Steps 3–4 for type detection and type-aware drift check. If no new activity confirmed: `FAST_PATH=true` → print `[resume] reusing existing report for #$CLEAN_ARGS` → jump to Step 7.
@@ -277,25 +192,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload vars (Check 41)
 IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 IFS= read -r TODAY < "${TMPDIR:-/tmp}/analyse-today-${CSID}" 2>/dev/null || TODAY=$(date +%Y-%m-%d)
-CACHE_DIR=".cache/gh"
-# repo slug in key prevents cross-repo cache poisoning (same issue#, diff repo)
-_CACHE_REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null | tr '/' '-')
-if [ -z "$_CACHE_REPO" ]; then
-    # no stable repo ID — disable caching, fallback key risks cross-repo collision
-    CACHE_FILE=""
-else
-    CACHE_FILE="$CACHE_DIR/$_CACHE_REPO-$CLEAN_ARGS-$TODAY.json"
-fi
-# persist CACHE_FILE (Check 41)
-echo "${CACHE_FILE:-}" > "${TMPDIR:-/tmp}/analyse-cache-file-${CSID}"
-mkdir -p "$CACHE_DIR" # timeout: 5000
-# Thread mode requires git+GitHub context for {owner}/{repo} substitution
-if [ -z "$_CACHE_REPO" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
-    echo "⚠ No GitHub repository context — cannot resolve repository for thread mode."
-    echo "Run from inside a git repository with a GitHub remote:"
-    echo "  cd /path/to/repo && /oss:analyse $CLEAN_ARGS"
-    exit 0
-fi
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_analyse_paths.py" --mode cache --clean-args "$CLEAN_ARGS" --today "$TODAY"  # timeout: 10000
 ```
 
 **Cache hit** — if `$CACHE_FILE` exists:
@@ -409,14 +306,7 @@ IFS= read -r _REPLY_MODE < "${TMPDIR:-/tmp}/analyse-reply-mode-${CSID}" 2>/dev/n
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/analyse-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="target=#${_CLEAN_ARGS}, cache-dir=.cache/gh, report=${_REPORT_FILE}, reply-mode=${_REPLY_MODE}"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: oss:analyse · phase: synthesis (after gather/fetch)"
-    echo "- run-dir: .cache/gh"
-    echo "- preserve: ${_PRESERVE}"
-    echo "- next: reply gate (Step 6) or shepherd reply (Step 7)"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:analyse" "synthesis (after gather/fetch)" ".cache/gh" "${_PRESERVE}" "reply gate (Step 6) or shepherd reply (Step 7)"  # timeout: 5000
 ```
 
 ## Step 6: Reply gate — STOP CHECK

@@ -45,6 +45,8 @@ codex plugin list
 
 Direct plugin installation changes only Codex's plugin configuration and cache. It does not copy this repository's `.codex/config.toml`, personal policy, global `AGENTS.md`, or `rules/codex-rig-github-read.rules` into your Codex home. Reader rules are inert until explicit setup or repository sync invokes the installed helper.
 
+Explicit setup can also approve individual canonical PR URLs using the installed rule helper's repeatable `--approve-pr` option. The optional owned `rules/codex-rig-pr-collection.rules` retains only those PRs across approved sync upgrades; normal sync never selects new targets. After restarting Codex, matching collector commands used by `--approve-gh` can run without another prompt, subject to stricter host policy. Generic Assess/Release evidence uses the existing managed reader approval. Neither skill invocation nor plugin installation grants itself runtime permission; see [rule setup](../plugins/codex-rig/scripts/README.md#install_github_read_rulespy).
+
 ## ⚡ First five minutes
 
 Verify Codex Rig without writing:

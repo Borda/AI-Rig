@@ -91,26 +91,7 @@ Extract flags:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# extract --out unquoted path token (mirrors --keep idiom at :107-111)
-OUT=""
-if [[ "$ARGUMENTS" =~ --out[[:space:]]+([^[:space:]]+) ]]; then
-    OUT="${BASH_REMATCH[1]}"
-fi
-# POSIX path-traversal check (avoids bash-specific [[ ]])
-case "$OUT" in
-  *..*)
-    [ -n "$OUT" ] && { echo "sweep: invalid --out path (path traversal not allowed): $OUT" >&2; exit 2; }
-    ;;
-esac
-
-# Verify path stays within project root (macOS-compatible)
-if [ -n "$OUT" ]; then
-    _PROJ_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-    if ! python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_output_within_root.py" "$OUT" "$_PROJ_ROOT" 2>/dev/null; then  # timeout: 5000
-        echo "sweep: --out path escapes project root: $OUT" >&2; exit 2
-    fi
-fi
-echo "${OUT:-program.md}" > "${TMPDIR:-/tmp}/sweep-out-path-${CSID}"  # persist for S2/S3 contract writes (Check 41: fresh shell)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/check_output_within_root.py" --parse-out="$ARGUMENTS" --sentinel sweep-out-path  # timeout: 5000 — traversal + project-root guard; persists for S2/S3 contract writes (Check 41: fresh shell)
 ```
 
 ```bash
@@ -171,7 +152,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/sweep-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:sweep" "judge-gate (after S2 plan written)" "n/a" "program-path=${_OUT}${_KEEP_APPEND}" "S3 judge+refinement loop against ${_OUT}"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "judge-gate (after S2 plan written)" "n/a" "program-path=${_OUT}${_KEEP_APPEND}" "S3 judge+refinement loop against ${_OUT}"  # timeout: 5000
 ```
 
 ### Step S3: Judge + refinement loop
@@ -218,7 +199,7 @@ Repeat up to `MAX_REFINE` times:
        # WHY: no post-fix refresh → compaction here resumes boundary-1 (pre-loop), re-judges from iter 1. Placed after fixes so "applied through iteration N" holds.
        export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
        IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
-       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:sweep" "judge+refinement loop (S3, iteration <REFINE_ITER>/<MAX_REFINE> — fixes applied)" "n/a" "program-path=${_OUT}, refine-iter=<REFINE_ITER>, no-fixes-iter=<NO_FIXES_ITER>, last-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>" "re-judge ${_OUT} (it carries the fixes applied through iteration <REFINE_ITER>) → continue loop; do NOT reset REFINE_ITER. Exit on APPROVED/BLOCKED or REFINE_ITER==MAX_REFINE."
+       python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "judge+refinement loop (S3, iteration <REFINE_ITER>/<MAX_REFINE> — fixes applied)" "n/a" "program-path=${_OUT}, refine-iter=<REFINE_ITER>, no-fixes-iter=<NO_FIXES_ITER>, last-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>" "re-judge ${_OUT} (it carries the fixes applied through iteration <REFINE_ITER>) → continue loop; do NOT reset REFINE_ITER. Exit on APPROVED/BLOCKED or REFINE_ITER==MAX_REFINE."
        ```
 
      - Continue next iteration (loop item 1 will re-judge).
@@ -234,7 +215,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT="program.md"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/sweep-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:sweep" "run-gate (after S3 judge+refinement)" "n/a" "program-path=${_OUT}, judge-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>${_KEEP_APPEND}" "S4 gate on verdict → S5 run program if approved"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "run-gate (after S3 judge+refinement)" "n/a" "program-path=${_OUT}, judge-verdict=<VERDICT>, judge-report=<JUDGE_REPORT>${_KEEP_APPEND}" "S4 gate on verdict → S5 run program if approved"  # timeout: 5000
 ```
 
 > A `<VERDICT>` or `<JUDGE_REPORT>` placeholder surviving verbatim into the written contract means substitution was skipped — treat the resumed verdict as unsettled and re-judge; never read it as `approved`.

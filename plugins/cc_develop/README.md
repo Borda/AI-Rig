@@ -759,31 +759,34 @@ plugins/cc_develop/
 
 <details>
 
-<summary><strong>🧰 Bin helper inventory (17 shipped deterministic helpers)</strong></summary>
+<summary><strong>🧰 Bin helper inventory (22 shipped deterministic helpers)</strong></summary>
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the development workflow; the helpers handle bounded flag parsing, Codemap context, test execution, worktree setup, path resolution, and state extraction.
 
-| Helper                       | Purpose                                                                    |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                    |
-| `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                            |
-| `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.               |
-| `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                  |
-| `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.           |
-| `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.             |
-| `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel. |
-| `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                       |
-| `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                           |
-| `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                    |
-| `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                |
-| `find-polluter.py`           | Binary-search test isolation contamination.                                |
-| `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                      |
-| `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                      |
-| `pytest_gate.py`             | Run an allow-listed pytest command with full output.                       |
-| `run_pytest_short.py`        | Run an allow-listed pytest command and show its final output lines.        |
-| `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.   |
-| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                  |
-| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                 |
+| Helper                       | Purpose                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                      |
+| `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                              |
+| `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                 |
+| `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                    |
+| `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.             |
+| `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.               |
+| `dev_run_dir.py`             | Create a timestamped `.developments/` run directory and optional sentinel.   |
+| `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                         |
+| `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                             |
+| `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                      |
+| `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                  |
+| `find-polluter.py`           | Binary-search test isolation contamination.                                  |
+| `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                        |
+| `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                        |
+| `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.               |
+| `pytest_gate.py`             | Run an allow-listed pytest command with full output.                         |
+| `resolve_review_target.py`   | Resolve a review target and its changed Python files.                        |
+| `run_pytest_short.py`        | Run an allow-listed pytest command and show its final output lines.          |
+| `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.     |
+| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                    |
+| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                   |
+| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim. |
 
 </details>
 

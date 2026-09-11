@@ -229,26 +229,7 @@ fi
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-CODEMAP_QUERY_KIND=""  # REPLACE with the route decision above before running; empty fails safe to standard
-if [[ "$ARGUMENTS" == *"::"* ]]; then
-    _QNAME=$(printf '%s\n' "$ARGUMENTS" | grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' | head -1)
-    TARGET_MODULE="${_QNAME%%::*}"
-    TARGET_FN="${_QNAME##*::}"           # bare fn — codemap-context.md builds module::fn
-    TARGET_QUALIFIED="$_QNAME"
-else
-    TARGET_MODULE=""
-    TARGET_FN=""                         # suspect unknown until Step 1 — auto-derive below
-    TARGET_QUALIFIED=""
-fi
-if [ -z "$CODEMAP_QUERY_KIND" ]; then
-    CODEMAP_QUERY_KIND="standard"
-    echo "! CODEMAP_QUERY_KIND unresolved — using standard structural context"
-fi
-export CODEMAP_QUERY_KIND TARGET_MODULE TARGET_FN TARGET_QUALIFIED
-echo "$CODEMAP_QUERY_KIND" > "${TMPDIR:-/tmp}/dev-fix-codemap-query-kind-${CSID}"
-echo "$TARGET_MODULE"    > "${TMPDIR:-/tmp}/dev-fix-target-module-${CSID}"
-echo "$TARGET_FN"        > "${TMPDIR:-/tmp}/dev-fix-target-fn-${CSID}"
-echo "$TARGET_QUALIFIED" > "${TMPDIR:-/tmp}/dev-fix-target-qualified-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse_target_qname.py" --query-kind "" -- "$ARGUMENTS"  # REPLACE --query-kind "" with the route decided above; empty fails safe to standard
 ```
 
 **If `CODEMAP_ENABLED=true` or `SEMBLE_ENABLED=true`**:
@@ -470,14 +451,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-fix-keep-items-${CSID}" 2>/dev/null ||
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _PRESERVE="dev-dir=$_DEV_DIR, plan-file=${_PLAN_FILE:-none}, pytest-cmd=$_PYTEST_CMD"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:fix · phase: edit (after reproduction test written)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: apply minimal fix (Step 3) → review+quality stack (Step 4)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "edit (after reproduction test written)" "$_DEV_DIR" "$_PRESERVE" "apply minimal fix (Step 3) → review+quality stack (Step 4)"  # timeout: 5000
 ```
 
 ## Step 3: Apply the fix
@@ -556,14 +530,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_DIR < "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}" 2>/dev/null || _DEV_DIR=""
 IFS= read -r _PYTEST_CMD < "${TMPDIR:-/tmp}/dev-pytest-cmd-${CSID}" 2>/dev/null || _PYTEST_CMD=""
 _CHANGED=$(git diff --name-only HEAD 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: develop:fix · phase: review+quality (after fix applied)"
-    echo "- run-dir: $_DEV_DIR"
-    echo "- preserve: dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD"
-    echo "- next: review and close gaps (Step 4) → Final Report"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:fix" "review+quality (after fix applied)" "$_DEV_DIR" "dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD" "review and close gaps (Step 4) → Final Report"  # timeout: 5000
 ```
 
 ## Step 4: Review and close gaps

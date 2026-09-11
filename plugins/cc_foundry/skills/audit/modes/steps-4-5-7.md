@@ -85,14 +85,7 @@ IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_RUN_DIR, static-findings=${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl, finding-files=$_RUN_DIR/*.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:audit · phase: aggregate (after parallel curator+system-checks fan-out)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: consolidate findings → aggregate.md + summary.jsonl → Step 7 report"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "aggregate (after parallel curator+system-checks fan-out)" "$_RUN_DIR" "$_PRESERVE" "consolidate findings → aggregate.md + summary.jsonl → Step 7 report"  # timeout: 5000
 ```
 
 ## Step 5: Aggregate and classify findings
@@ -160,14 +153,7 @@ IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_RUN_DIR, aggregate=$_RUN_DIR/aggregate.md, summary=$_RUN_DIR/summary.jsonl"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:audit · phase: report (after aggregate complete)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "report (after aggregate complete)" "$_RUN_DIR" "$_PRESERVE" "emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"  # timeout: 5000
 ```
 
 Before emitting, read current `$RUN_DIR/summary.jsonl` (may have been updated by Step 5b with net-new promoted findings) and recompute severity totals. Then emit report (omit Upgrade Proposals if none passed genuine-value filter):

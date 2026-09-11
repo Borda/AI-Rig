@@ -35,6 +35,16 @@ from pathlib import Path
 # Each entry: the canonical file, and the copies that must equal it byte-for-byte.
 MANIFEST: list[dict[str, object]] = [
     {
+        # Every skill that writes a compaction boundary contract needs this, and a
+        # plugin may be installed alone, so each ships its own byte-identical copy.
+        "canonical": "plugins/cc_foundry/bin/write_skill_contract.py",
+        "copies": [
+            "plugins/cc_oss/bin/write_skill_contract.py",
+            "plugins/cc_develop/bin/write_skill_contract.py",
+            "plugins/cc_research/bin/write_skill_contract.py",
+        ],
+    },
+    {
         "canonical": "plugins/cc_foundry/hooks/agent-router.js",
         "copies": [
             "plugins/cc_oss/hooks/agent-router.js",

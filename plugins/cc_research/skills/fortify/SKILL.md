@@ -88,26 +88,8 @@ Triggered by `fortify` or `fortify <run-id|program.md>`.
 Extract flags: `--venue <VENUE>`, `--max-ablations <N>`, `--skip-run`, `--keep "<items>"`.
 
 ```bash
-# --keep value (compaction-contract.md §keep)
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# stale contract cleanup (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md  # timeout: 5000
-echo "${KEEP_ITEMS:-}" > "${TMPDIR:-/tmp}/fortify-keep-items-${CSID}"  # for F2/F4 contract
-
-# empty = no --venue → F6 skip rule fires; no default venue
-VENUE=""
-if [[ "$ARGUMENTS" =~ --venue[[:space:]]+([^[:space:]]+) ]]; then
-    VENUE="${BASH_REMATCH[1]}"
-fi
-case "$VENUE" in
-  ""|CVPR|NeurIPS|ICML|workshop) ;;
-  *) echo "fortify: invalid --venue '$VENUE' — valid: CVPR, NeurIPS, ICML, workshop"; exit 2 ;;
-esac
-echo "$VENUE" > "${TMPDIR:-/tmp}/fortify-venue-${CSID}"  # for F6 (Check 41)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" fortify "$ARGUMENTS" --venue-choices CVPR,NeurIPS,ICML,workshop  # timeout: 5000 — keep-items + venue sentinels; empty venue → F6 skip rule; exit 2 on an invalid venue
 ```
 
 **Unsupported flag check**: load and follow the protocol below. Supported flags for this skill: `--venue`, `--max-ablations`, `--skip-run`, `--keep`.
@@ -179,39 +161,8 @@ echo "$GUARD_CMD" > "${TMPDIR:-/tmp}/fortify-guard-cmd-${CSID}"    # for 4e (Che
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"  # default (Check 41)
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || RUN_ID=""  # reload (Check 41)
-JUDGE_VERDICT_FILE=$(ls -t .reports/research/judge-*.md 2>/dev/null | head -1)  # timeout: 5000
-if [ -z "$JUDGE_VERDICT_FILE" ]; then
-  echo "fortify: BLOCKED — no judge verdict found in .reports/research/."
-  echo "Ablation studies require an approved baseline. Run: /research:judge <program.md>"
-  exit 1
-fi
-JUDGE_VERDICT=$(grep -i '^[*]*[Vv]erdict[*]*:' "$JUDGE_VERDICT_FILE" | head -1 | sed 's/\*\*//g' | sed -E 's/.*[Vv]erdict[: ]+//' | sed 's/[[:space:]]*$//')  # trailing strip only — keep internal spaces ("NEEDS REVISION")
-
-PROGRAM_FILE=$(grep -iE '^[*]*(Program(_file)?|Program file)[*]*:' "$JUDGE_VERDICT_FILE" | head -1 | sed 's/\*\*//g' | sed -E 's/.*:[[:space:]]*//' | sed 's/[[:space:]]*$//')
-# F-02: empty PROGRAM_FILE — no program metadata, can't verify
-if [ -z "$PROGRAM_FILE" ]; then
-    echo "fortify: BLOCKED — judge verdict missing Program: field; cannot verify verdict applies to current experiment."
-    echo "Re-run: /research:judge <program.md> to generate a fresh verdict with required metadata."
-    exit 1
-fi
-# explicit state.json path — never CWD-relative
-STATE_PROGRAM=$(jq -r '.program_file // ""' "$STATE_DIR_BASE/$RUN_ID/state.json" 2>/dev/null)
-# realpath both — judge report may be relative, state.json absolute; raw compare would false-BLOCK
-_PF_ABS=$(realpath "$PROGRAM_FILE" 2>/dev/null || echo "$PROGRAM_FILE")
-_SP_ABS=$(realpath "$STATE_PROGRAM" 2>/dev/null || echo "$STATE_PROGRAM")
-if [ -n "$STATE_PROGRAM" ] && [ -n "$PROGRAM_FILE" ] && [ "$_PF_ABS" != "$_SP_ABS" ]; then
-    printf "! BLOCKED — judge verdict references program '%s' but current experiment is for '%s'\n" "$PROGRAM_FILE" "$STATE_PROGRAM"
-    printf "Run: /research:judge %s\n" "$STATE_PROGRAM"
-    exit 1
-fi
-if [ -n "$PROGRAM_FILE" ] && [ ! -f "$PROGRAM_FILE" ]; then
-    printf "! BLOCKED — program file %s referenced by judge verdict not found on disk\n" "$PROGRAM_FILE"
-    exit 1
-fi
-echo "$PROGRAM_FILE" > "${TMPDIR:-/tmp}/fortify-program-file-${CSID}"  # for F6 (Check 41)
-echo "$JUDGE_VERDICT" > "${TMPDIR:-/tmp}/fortify-judge-verdict-${CSID}"  # for gate block; echo not printf — newline keeps read exit 0 (Check 41)
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/find_judge_verdict.py" --state-dir-base "${STATE_DIR_BASE:-.experiments/state}" --run-id "$RUN_ID"  # timeout: 5000 — writes program-file + judge-verdict sentinels; exit 1 = BLOCKED
 ```
 
 Verify `JUDGE_VERDICT == "APPROVED"`. The program cross-match above guarantees the verdict was issued for the current experiment — fortify cannot ablate against a different program's verdict. Apply explicit bash gate — prose alone never halts execution:
@@ -302,14 +253,7 @@ IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || _
 IFS= read -r _FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FORTIFY_DIR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/fortify-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: research:fortify · phase: ablation-execution (after F2 candidates identified)"
-    echo "- run-dir: ${_FORTIFY_DIR}"
-    echo "- preserve: run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, candidates=${_FORTIFY_DIR}/ablation-candidates.jsonl, variants=${_FORTIFY_DIR}/variants.jsonl${_KEEP_APPEND}"
-    echo "- next: F3 generate variants → F4 run worktrees sequentially"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "ablation-execution (after F2 candidates identified)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, candidates=${_FORTIFY_DIR}/ablation-candidates.jsonl, variants=${_FORTIFY_DIR}/variants.jsonl${_KEEP_APPEND}" "F3 generate variants → F4 run worktrees sequentially"  # timeout: 5000
 ```
 
 **`--skip-run` early exit**: if `--skip-run` flag present, print candidate table (component_id, name, description, files, expected_importance) and exit. No ablation execution. Mark tasks F3, F4, F5, F6, F7 as `skipped` via TaskUpdate. Print all three lines (no `.reports/research/fortify-*.md` is written in `--skip-run` mode — only `ablation-candidates.jsonl` lives under `$FORTIFY_DIR`; surface `$FORTIFY_DIR` explicitly so the user can locate the candidate list):
@@ -372,35 +316,7 @@ Each Bash call costs a ~12 s round-trip, so adjacent steps that share a first to
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || FORTIFY_DIR=""  # reload (Check 41)
-IFS= read -r _VIDX < "${TMPDIR:-/tmp}/fortify-variant-idx-${CSID}" 2>/dev/null || _VIDX=1
-_TOTAL=$(grep -c . "$FORTIFY_DIR/variants.jsonl" 2>/dev/null) || _TOTAL=0  # `|| echo 0` appends a second 0: grep -c prints 0 *and* exits 1 on zero matches, and the 2>/dev/null below then hides the resulting bad-number error
-if [ "$_VIDX" -gt "$_TOTAL" ] 2>/dev/null; then
-    echo "FORTIFY_LOOP_DONE=1 — all $_TOTAL variants processed; proceed to post-loop delta computation"
-    exit 0
-fi
-_RAW_NAME=$(sed -n "${_VIDX}p" "$FORTIFY_DIR/variants.jsonl" 2>/dev/null | jq -r '.variant_name // empty' 2>/dev/null)
-# no invented fallback — synthesized name would collapse every iteration onto one worktree path
-if [ -z "$_RAW_NAME" ] || [ "$_RAW_NAME" = "null" ]; then
-    echo "! BLOCKED — variants.jsonl line ${_VIDX} has no readable .variant_name; check F3 output. Halting F4."
-    exit 1
-fi
-VARIANT_NAME="variant-$(echo "$_RAW_NAME" | tr ' ' '-' | tr '[:upper:]' '[:lower:]' | sed 's/^variant-//')"
-echo "$VARIANT_NAME" > "${TMPDIR:-/tmp}/fortify-variant-name-${CSID}"  # for 4a–4f this iteration (Check 41)
-# resume guard — w/o it, compact+resume re-runs completed ablations. Non-timeout terminal only; timeout still retries.
-_VN_RAW="${VARIANT_NAME#variant-}"
-_RESULTS="$FORTIFY_DIR/results.jsonl"
-if [ -f "$_RESULTS" ] && grep -E "\"variant\":\"(variant-)?$_VN_RAW\"" "$_RESULTS" 2>/dev/null | grep -qE '"status":"(completed|revert-conflict|revert-missing|metric-failed)"'; then
-    echo "$((_VIDX + 1))" > "${TMPDIR:-/tmp}/fortify-variant-idx-${CSID}"  # advance so skip is real, not just printed
-    echo "→ $_VN_RAW already terminal (non-timeout) in results.jsonl — skipping (resume)"
-    echo "FORTIFY_SKIP_VARIANT=1"
-    exit 0
-fi
-# pre-register the worktree path in the cleanup accumulator BEFORE creation — closes the interrupt gap
-# between `worktree add` and a later append; sweep skips paths with no directory, so over-registering is safe
-IFS= read -r WORKTREE_PATHS_FILE < "${TMPDIR:-/tmp}/fortify-paths-ptr-${CSID}" 2>/dev/null || WORKTREE_PATHS_FILE=""
-[ -z "$WORKTREE_PATHS_FILE" ] && WORKTREE_PATHS_FILE="${TMPDIR:-/tmp}/fortify-worktree-paths-fallback-${CSID}"
-echo "${FORTIFY_WORKTREE:-$FORTIFY_DIR/worktrees/$VARIANT_NAME}" >> "$WORKTREE_PATHS_FILE"  # file persists across Bash calls; array vars don't
-echo "→ variant ${_VIDX}/${_TOTAL}: $VARIANT_NAME"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fortify_next_variant.py" -- "$FORTIFY_DIR"  # timeout: 5000 — cursor + resume guard + cleanup pre-registration
 ```
 
 `! BLOCKED` or `FORTIFY_LOOP_DONE=1` printed → do NOT run 4a–4g for this iteration; halt the loop and continue at the post-loop step. `FORTIFY_SKIP_VARIANT=1` printed → the cursor is already advanced: go straight back to 4a-init for the next variant.
@@ -558,14 +474,7 @@ IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || _
 IFS= read -r _FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FORTIFY_DIR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/fortify-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: research:fortify · phase: post-ablation (after F4 worktrees complete)"
-    echo "- run-dir: ${_FORTIFY_DIR}"
-    echo "- preserve: run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl${_KEEP_APPEND}"
-    echo "- next: F5 rank importance → F6 reviewer Q&A → F7 report"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "post-ablation (after F4 worktrees complete)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl${_KEEP_APPEND}" "F5 rank importance → F6 reviewer Q&A → F7 report"  # timeout: 5000
 ```
 
 **Post-loop delta computation**: read `results.jsonl`, find `full` variant metric. For each completed `no-<component>` variant:

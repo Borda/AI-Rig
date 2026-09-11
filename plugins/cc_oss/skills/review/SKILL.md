@@ -658,14 +658,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/oss-review-keep-items-${CSID}" 2>/dev/null
 _FINDING_FILES=$(ls "$_RUN_DIR/"*.md 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
 _PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, pr=$_PR_TAG, finding-files=$_FINDING_FILES"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: oss:review · phase: consolidation (after parallel review-agent fan-out)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: consolidate findings → final report (→ draft --reply if reply-mode)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "consolidate findings → final report (→ draft --reply if reply-mode)"  # timeout: 5000
 ```
 
 ## Step 3: Post-agent checks (concurrent with Step 2 — after PR_BASE available)
@@ -803,13 +796,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="unknown"
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
-{
-    echo "## Active Skill Contract"
-    echo "- skill: oss:review · phase: reply (after consolidation)"
-    echo "- run-dir: $_RUN_DIR"
-    echo "- preserve: final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG"
-    echo "- next: draft contributor reply (--reply) or stop at Step 7"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
 ```
 
 ## Step 6: Delegate implementation follow-up (optional)

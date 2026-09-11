@@ -470,7 +470,6 @@ After writing any `bin/` script, delegate to these agents:
 
 - `ruff check` + `ruff format` — style, imports, security, 120-char lines
 - `mypy` — type annotation correctness
-- `shellcheck bin/<name>.sh` for bash scripts
 - Note: `bin/` scripts use `print()` for output — intentional, not stray. Add `"bin/**" = ["T20"]` to `[tool.ruff.lint.per-file-ignores]` in `pyproject.toml`
 
 **`foundry:qa-specialist`** — for test coverage review and edge-case matrix:

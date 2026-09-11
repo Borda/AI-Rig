@@ -152,7 +152,7 @@ IFS= read -r _DATE < "${TMPDIR:-/tmp}/topic-date-${CSID}" 2>/dev/null || _DATE="
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/topic-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _REPORT_OUT < "${TMPDIR:-/tmp}/topic-report-out-${CSID}" 2>/dev/null || _REPORT_OUT=".reports/research/topic-${_BRANCH}-${_DATE}.md"
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:topic" "synthesis (after Step 2 literature gathered)" "n/a" "agent-out=${_AGENT_OUT}, report-out=${_REPORT_OUT}, branch=${_BRANCH}${_KEEP_APPEND}" "Step 3 synthesize agent findings into report → follow-up gate"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:topic" "synthesis (after Step 2 literature gathered)" "n/a" "agent-out=${_AGENT_OUT}, report-out=${_REPORT_OUT}, branch=${_BRANCH}${_KEEP_APPEND}" "Step 3 synthesize agent findings into report → follow-up gate"  # timeout: 5000
 ```
 
 ## Step 3: Report

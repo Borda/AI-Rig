@@ -221,7 +221,7 @@ IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/judge-run-dir-${CSID}" 2>/dev/null || _
 IFS= read -r _PROG_PATH < "${TMPDIR:-/tmp}/judge-program-path-${CSID}" 2>/dev/null || _PROG_PATH=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/judge-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write-skill-contract.py" "research:judge" "validation-verdict (after J3 review agents complete)" "${_RUN_DIR}" "run-dir=${_RUN_DIR}, program=${_PROG_PATH}, methodology=${_RUN_DIR}/methodology.md, scientific-review=${_RUN_DIR}/scientific-review.md${_KEEP_APPEND}" "J4 local validation → J5 Codex review → J6 verdict and report"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:judge" "validation-verdict (after J3 review agents complete)" "${_RUN_DIR}" "run-dir=${_RUN_DIR}, program=${_PROG_PATH}, methodology=${_RUN_DIR}/methodology.md, scientific-review=${_RUN_DIR}/scientific-review.md${_KEEP_APPEND}" "J4 local validation → J5 Codex review → J6 verdict and report"  # timeout: 5000
 ```
 
 ## Step J4: Local validation

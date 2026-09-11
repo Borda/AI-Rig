@@ -79,42 +79,7 @@ COMPETITORS_DIR:  resources/competitors/  # optional user-project path, not ship
 ```bash
 # loads: compaction-contract.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-ARGS="$ARGUMENTS"
-COMPETITION_NAME=$(echo "$ARGS" | awk '{print $1}')
-RESUME_FLAG=""
-EDA_ONLY=false
-INFERENCE_ONLY=false
-OFFLINE_SETUP=false
-PROBLEM_TYPE=""
-
-[[ "$ARGS" == *"--eda-only"* ]]      && EDA_ONLY=true
-[[ "$ARGS" == *"--inference-only"* ]] && INFERENCE_ONLY=true
-[[ "$ARGS" == *"--offline-setup"* ]]  && OFFLINE_SETUP=true
-[[ "$ARGS" =~ --type[[:space:]]([a-z]+) ]] && PROBLEM_TYPE="${BASH_REMATCH[1]}"
-[[ "$ARGS" =~ --resume[[:space:]]([^[:space:]]+) ]] && RESUME_FLAG="${BASH_REMATCH[1]}"
-
-# inference always offline; EDA always online (overrides --offline-setup)
-[ "$INFERENCE_ONLY" = "true" ] && OFFLINE_SETUP=true
-[ "$EDA_ONLY" = "true" ]       && OFFLINE_SETUP=false
-
-echo "Competition: $COMPETITION_NAME"
-echo "Type: ${PROBLEM_TYPE:-auto-detect}"
-echo "EDA only: $EDA_ONLY | Inference only: $INFERENCE_ONLY | Offline setup: $OFFLINE_SETUP"
-
-# Persist for Steps 3+4 (bash state lost across Bash() calls)
-echo "$COMPETITION_NAME" > "${TMPDIR:-/tmp}/kaggle-competition-name-${CSID}"
-echo "$EDA_ONLY"         > "${TMPDIR:-/tmp}/kaggle-eda-only-${CSID}"
-echo "$INFERENCE_ONLY"   > "${TMPDIR:-/tmp}/kaggle-inference-only-${CSID}"
-echo "$OFFLINE_SETUP"    > "${TMPDIR:-/tmp}/kaggle-offline-setup-${CSID}"
-
-mkdir -p .experiments/kaggle/  # timeout: 3000
-KEEP_ITEMS=""
-if [[ "$ARGS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-# Clear stale contract from any prior incomplete run (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md  # timeout: 5000
-echo "${KEEP_ITEMS:-}" > "${TMPDIR:-/tmp}/kaggle-keep-items-${CSID}"  # persist for Step 3 contract write
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse_kaggle_args.py" -- "$ARGUMENTS"  # timeout: 5000 — mode flags + keep-items; persists sentinels for Steps 3+4, clears a stale contract
 ```
 
 **Flag mutual-exclusion check** — if `EDA_ONLY` and `INFERENCE_ONLY` are both `true` (both `--eda-only` and `--inference-only` passed): print `` ! Conflicting flags: `--eda-only` and `--inference-only` are mutually exclusive (`--eda-only` is always-online with no training; `--inference-only` is always-offline/frozen-package with no EDA — see `foundation.md`). Pick one. `` then invoke `AskUserQuestion` — (a) **Abort** · (b) **Continue ignoring both** (falls back to full mode: neither eda-only nor inference-only applied). On Abort: stop.
@@ -344,14 +309,7 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/kaggle-keep-items-${CSID}" 2>/dev/null || 
 _SUFFIX=""; [ "$_INF" = "true" ] && _SUFFIX="-inference"
 _OUTFILE=".experiments/kaggle/${_COMPETITION}${_SUFFIX}.py"
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: research:kaggle · phase: verify (after Step 3 notebook generated)"
-    echo "- run-dir: .experiments/kaggle"
-    echo "- preserve: outfile=${_OUTFILE}, competition=${_COMPETITION}${_KEEP_APPEND}"
-    echo "- next: Step 4 verify structure, follow-up gate, package distillation"
-} > .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:kaggle" "verify (after Step 3 notebook generated)" ".experiments/kaggle" "outfile=${_OUTFILE}, competition=${_COMPETITION}${_KEEP_APPEND}" "Step 4 verify structure, follow-up gate, package distillation"  # timeout: 5000
 ```
 
 ## Step 4: Verify and report

@@ -60,47 +60,8 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
-# Scan root is a plain path, never a glob held in a variable: under zsh an unquoted $VAR is
-# neither word-split nor filename-expanded, so `for f in $_SKILL_GLOB` would iterate once over
-# the literal pattern and match nothing. `find` piped to `read` behaves the same in zsh and bash.
 [ "$LOCAL_MODE" = "true" ] && _SCAN_DIR="plugins/" || _SCAN_DIR=".claude/"
-
-echo "=== Unbounded spawn patterns ==="
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  if grep -q 'Agent(' "$f" 2>/dev/null; then
-    grep -B5 'Agent(' "$f" 2>/dev/null | grep -qE '^\s*(for|while)\b' || continue
-    grep -q 'BATCH_SIZE\|EFFECTIVE_BATCH\|head -n [0-9]\|head -[0-9]' "$f" 2>/dev/null && continue
-    echo "UNBOUNDED_SPAWN: $f — Agent() inside for/while without BATCH_SIZE guard"
-  fi
-done < <(find "$_SCAN_DIR" -name "*.md" 2>/dev/null)
-
-echo "=== Missing model declarations ==="
-# Frontmatter-scoped: a whole-file grep matches these fields in prose discussing other skills.
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  # No disable-model-invocation exemption: such a skill is still user-invocable and still inherits.
-  awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q "^model:" || echo "NO_MODEL: $f"
-done < <(find "$_SCAN_DIR" -path "*/skills/*/SKILL.md" 2>/dev/null | sort)
-
-# -path "*/agents/*.md" also reaches agents/<subdir>/<file>.md; a */agents/*.md glob does not.
-while IFS= read -r f; do
-  [ -f "$f" ] || continue
-  awk '/^---$/{c++} c<2' "$f" 2>/dev/null | grep -q "^model:" || echo "NO_MODEL: $f"
-done < <(find "$_SCAN_DIR" -path "*/agents/*.md" 2>/dev/null | sort)
-
-echo "=== Boilerplate duplication ==="
-AGENT_RES=$(grep -rl "=\$(ls -td.*plugins/cache" "$_SCAN_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-FLAG_CHECK=$(grep -rl "Unknown flag" "$_SCAN_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-HEALTH_MON=$(grep -rl "MONITOR_INTERVAL=" "$_SCAN_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-echo "agent-resolution boilerplate: $AGENT_RES files"
-echo "unsupported-flag-check boilerplate: $FLAG_CHECK files"
-echo "health-monitoring constants: $HEALTH_MON files"
-echo "=== Bin/ extraction candidates ==="
-MODE_DISPATCH=$(grep -rl 'find.*plugins/cache.*-path.*modes/' "$_SCAN_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-echo "mode-dispatch pattern: $MODE_DISPATCH files"
-SHARED_RES=$(grep -rl '=\$(find.*plugins/cache.*_shared\|=\$(ls -td.*plugins/cache' "$_SCAN_DIR" --include="*.md" 2>/dev/null | wc -l | tr -d ' ')
-echo "_shared resolution pattern: $SHARED_RES files"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/scan_efficiency_signals.py" --scan-dir "$_SCAN_DIR"  # timeout: 60000
 ```
 
 **Phase B2 — Code block purpose-grouping + extraction feasibility (Check 33, parallel with Phase A+B)**:
@@ -135,6 +96,15 @@ Spawn **foundry:curator** per plugin with this prompt:
 >
 > - **ParamSlots**: count of distinct `<ARG>` placeholder slots after normalization = how many CLI parameters the extracted script would need.
 > - **Tokens**: estimated token count of one block instance.
+> - **Never-extract list — checked first, before the gate.** A cluster matching any of these is not a candidate at all; record it in Table 1 with the reason and omit it from Table 2:
+>   - Replacement costs more than the block. A one-command block (`rm -f .temp/state/skill-contract.md`) becomes a longer invocation line — extraction is a net token loss.
+>   - The block is marked `# audit-skip` on its first line, or prose beside it declares the duplication intentional.
+>   - The block's only purpose is echoing values for the model to read, with no computation behind them.
+>   - One-off glue under ~10 lines that appears in a single file.
+>   - The body carries model-substituted placeholders (`<changed_files>`, `<TARGET>`) rather than shell variables — it is a template, not executable code.
+>   - The block is an `Agent(...)` prompt, an output template, or a prompt string assigned to a shell variable.
+>   - The block is a propagated copy owned by another plugin's MANIFEST entry — extract at the canonical, never at a copy.
+>   - The shape is load-bearing for a permission hook: `IFS= read -r VAR < "${TMPDIR:-/tmp}/…-${CSID}"` sentinel reads pass `sentinel-read-allow.js` by shape, and a `$(python …)` replacement reintroduces the prompt they exist to avoid.
 > - **Gate** = `G1:P/F · G2:P/F · G3:P/F` — all must pass or Verdict = HOLD:
 >   - G1 (Size OR execution cost): block > 100 tokens (payload cost), **OR** block launches an external interpreter process (subprocess/heredoc/`-c` invocation of python/node/perl/ruby/etc) **and** occurs ≥3× in cluster (execution cost — N forked interpreters is real overhead even when each instance is token-small; a tiny `python -c "..."` one-liner repeated 84× must not gate out on size alone)
 >   - G2 (Independence): no branch on prior LLM decision that cannot become explicit arg

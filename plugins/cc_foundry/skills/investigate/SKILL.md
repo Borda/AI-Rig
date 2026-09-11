@@ -134,14 +134,7 @@ IFS= read -r _INVESTIGATE_RUN < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/investigate-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_INVESTIGATE_RUN, symptom=$_INVESTIGATE_RUN/symptom.txt, signals=$_INVESTIGATE_RUN/signals.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:investigate · phase: hypothesise+probe (after signal gather)"
-    echo "- run-dir: $_INVESTIGATE_RUN"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: rank hypotheses (Step 3) → adversarial review (Step 4) → probe (Step 5) → report (Step 6)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "hypothesise+probe (after signal gather)" "$_INVESTIGATE_RUN" "$_PRESERVE" "rank hypotheses (Step 3) → adversarial review (Step 4) → probe (Step 5) → report (Step 6)"  # timeout: 5000
 ```
 
 ## Step 3: Rank hypotheses
@@ -169,14 +162,7 @@ IFS= read -r _IR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null ||
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/investigate-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=$_IR, symptom=$_IR/symptom.txt, signals=$_IR/signals.md, hypotheses=$_IR/hypotheses.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:investigate · phase: adversarial+probe (after hypotheses ranked)"
-    echo "- run-dir: $_IR"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: adversarial review (Step 4, unless --fast) → probe hypotheses (Step 5) → report (Step 6). Resume from hypotheses.md — do NOT re-rank."
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "adversarial+probe (after hypotheses ranked)" "$_IR" "$_PRESERVE" "adversarial review (Step 4, unless --fast) → probe hypotheses (Step 5) → report (Step 6). Resume from hypotheses.md — do NOT re-rank."  # timeout: 5000
 ```
 
 Common categories:
@@ -272,18 +258,7 @@ echo "<hypothesis> :: <Confirmed|Ruled-out|Inconclusive>" >> ${TMPDIR:-/tmp}/inv
 IFS= read -r _IR < "${TMPDIR:-/tmp}/investigate-run-path-${CSID}" 2>/dev/null || _IR=""
 _VERDICTS=$(tail -8 "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}" 2>/dev/null)  # cap keeps contract compact; tail keeps most-recent verdicts
 _REVIEW=""; [ -f "$_IR/codex-review.md" ] && _REVIEW="$_IR/codex-review.md"; [ -f "$_IR/challenger-review.md" ] && _REVIEW="$_IR/challenger-review.md"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:investigate · phase: probe (Step 5)"
-    echo "- run-dir: $_IR"
-    echo "- preserve: hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}"
-    if [ -n "$_VERDICTS" ]; then
-        echo "- probed (do NOT re-probe):"
-        echo "$_VERDICTS" | sed 's/^/    - /'
-    fi
-    echo "- next: probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out above."
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "probe (Step 5)" "$_IR" "hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}" "probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out in the probed list below." "probed (do NOT re-probe)" "$_VERDICTS"  # timeout: 5000
 ```
 
 Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (expand to lower-ranked candidates).

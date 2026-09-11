@@ -115,34 +115,9 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload GH_OWNER/GH_REPO (Check 41) — empty pair names an unfindable report
 IFS= read -r GH_OWNER < "${TMPDIR:-/tmp}/vitality-gh-owner-${CSID}" 2>/dev/null || GH_OWNER=""
 IFS= read -r GH_REPO < "${TMPDIR:-/tmp}/vitality-gh-repo-${CSID}" 2>/dev/null || GH_REPO=""
-REPORT_TIMESTAMP=$(TZ=UTC date +%Y-%m-%dT%H-%M-%SZ)  # timeout: 5000
-REPORT_FILE=".reports/analyse/vitality/output-analyse-vitality-${GH_OWNER}-${GH_REPO}-${REPORT_TIMESTAMP}.md"
-# sentinel rewritten before report exists — gates SKILL.md Step6a (enforce-analyse-header.js)
-echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/analyse-report-file-${CSID}"  # timeout: 5000
-
-# provenance metadata — self-complete, deterministic output
-_VER_FILE=$(ls ~/.claude/plugins/cache/borda-ai-rig/oss/*/.claude-plugin/plugin.json 2>/dev/null | sort | tail -1)  # timeout: 5000
-[ -z "$_VER_FILE" ] && _VER_FILE="plugins/cc_oss/.claude-plugin/plugin.json"
-SKILL_VERSION=$(jq -r '.version // "unknown"' "$_VER_FILE" 2>/dev/null || echo "unknown")  # timeout: 5000
-
-REPORT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")  # timeout: 5000
-
-# bridge check — frontmatter agents list must be accurate at write time
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")  # timeout: 5000
-[ "$CODEX_STATUS" = "available" ] && CODEX_AVAILABLE=1 || CODEX_AVAILABLE=0
-
 # --quick: reload from Step1 flag parse (Check 41) — skips Steps 5+6 (codex review, adversarial loop)
 IFS= read -r QUICK_MODE < "${TMPDIR:-/tmp}/analyse-quick-mode-${CSID}" 2>/dev/null || QUICK_MODE="false"
-
-# agents list for frontmatter — reflects actual contributors
-if [ "$QUICK_MODE" = "true" ]; then
-    REPORT_AGENTS_YAML="  - oss:analyse (orchestrator, --quick: core scoring only)"
-else
-    REPORT_AGENTS_YAML="  - oss:analyse (orchestrator)
-  - foundry:challenger (adversarial review)"
-    [ "$CODEX_AVAILABLE" = "1" ] && REPORT_AGENTS_YAML="$REPORT_AGENTS_YAML
-  - bridge:review (independent repo review + adversarial review)"
-fi
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_vitality_paths.py" --owner "$GH_OWNER" --repo "$GH_REPO" --quick "$QUICK_MODE"  # timeout: 10000
 ```
 
 > `--quick` note: in quick mode the single-pass scorecard is un-reviewed — confidence is capped lower and the report's Adversarial Review section records "skipped (--quick)". Rerun without `--quick` for a merge/release-grade assessment.
@@ -179,7 +154,13 @@ REPORT_TPL="$_OSS_ANALYSE/templates/vitality-report.md"
 cat "$REPORT_TPL"  # timeout: 5000
 ```
 
-Full report structure (loaded above). Write `$REPORT_FILE` using that structure as scaffold — substitute all `{VARIABLE}` placeholders with bash variables set above (`REPORT_TIMESTAMP`, `GH_OWNER`, `GH_REPO`, `SKILL_VERSION`, `REPORT_COMMIT`, `TOTAL_PASSES`, `CONFIDENCE_HISTORY`, `REPORT_AGENTS_YAML`, etc.). Do not print full analysis to terminal.
+Full report structure (loaded above). Write `$REPORT_FILE` using that structure as scaffold — substitute every `{VARIABLE}` placeholder. Values come from three places, none of them interchangeable:
+
+- `REPORT_FILE`, `REPORT_TIMESTAMP`, `SKILL_VERSION`, `REPORT_COMMIT`, `CODEX_AVAILABLE`, `REPORT_AGENTS_YAML` — read off `build_vitality_paths.py` stdout in Step 4 as `KEY=value` lines. `REPORT_AGENTS_YAML` is the block between `REPORT_AGENTS_YAML<<END` and the closing `END`, inserted verbatim. These are **not** shell variables; `$SKILL_VERSION` expands to nothing.
+- `GH_OWNER`, `GH_REPO` — shell variables, re-read from sentinels at the top of Step 4.
+- `TOTAL_PASSES`, `CONFIDENCE_HISTORY` — filled from the Step 6 loop as prose.
+
+The header line `**Skill:** oss:analyse v{SKILL_VERSION} · **Commit:** {REPORT_COMMIT} · **Generated:** {REPORT_TIMESTAMP}` is gated by `hooks/enforce-analyse-header.js` and ships to the user — a blank value fails the gate. Do not print full analysis to terminal.
 
 ## Step 5 — Codex Independent Repo Review · Step 6 — Adversarial Rework Loop
 

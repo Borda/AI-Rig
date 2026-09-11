@@ -18,7 +18,7 @@
 //   4. Build Line 2 skills segment (⚡): read state/skills/*.json; render each active skill in
 //      bright yellow; shows "none" when idle (consistent with agents/tools segments)
 //   5. Build Line 2 agent segment (🤖): read state/agents/*.json; skip entries idle > 10 min
-//      (worktree agents, real last_active signal) or > 60 min (non-worktree agents, no per-agent
+//      (worktree agents, real last_active signal) or > 30 min (non-worktree agents, no per-agent
 //      liveness signal exists — see line ~228); group by type; color from frontmatter; codex:* here
 //   6. Build Line 2 tool segment (🛠️): read state/tools/*.json; skip entries older than 30 s;
 //      render per-type call counts with fixed TOOL_COLORS palette
@@ -60,11 +60,11 @@
 //               tight 10-min cutoff (last_active is a real per-agent signal). Non-worktree agents
 //               (the common case — plain Agent() calls with no isolation:"worktree") have no
 //               per-agent liveness signal at all (CC's PreToolUse payload carries no agent_id), so
-//               a tight cutoff would hide genuinely still-working agents; they get a 60-min cutoff
+//               a tight cutoff would hide genuinely still-working agents; they get a 30-min cutoff
 //               instead — long enough to cover normal multi-file coding runs. This is a backstop,
 //               not the primary reaper: task-log.js's SubagentStart re-keys the record from
 //               tool_use_id to agent_id (renameAgentFile) so SubagentStop's unlink matches and
-//               removes it promptly on actual completion; the 60-min cutoff only catches entries
+//               removes it promptly on actual completion; the 30-min cutoff only catches entries
 //               that never got a SubagentStop at all (crash, dropped session).
 //   🛠️ tools    reads /tmp/claude-state-<session_id>/tools/*.json written by task-log.js
 //               PreToolUse. Shows tool types active within the last 30 s with per-type
@@ -240,11 +240,12 @@ process.stdin.on("end", () => {
       // time). A worktree agent with fresh last_active is a real liveness signal → tight 10-min
       // cutoff. A non-worktree agent has no such signal — since is only ever dispatch time, so a
       // still-working 20-30 min conversion/refactor task looks identical to a crashed one; use a
-      // longer 60-min cutoff so normal long-running background agents don't vanish from the badge
+      // 30-min cutoff so normal long-running background agents don't vanish from the badge
       // while they're still working (was 10 min for both — hid genuinely active agents, see
-      // .temp/investigate/2026-08-07T16-51-33Z/hypotheses.md).
+      // .temp/investigate/2026-08-07T16-51-33Z/hypotheses.md; widened to 60 then tightened back
+      // to 30 on 2026-09-10 per user request — reassess if this hides active agents again).
       const WORKTREE_MAX_AGE_MS = 10 * 60 * 1000;
-      const NON_WORKTREE_MAX_AGE_MS = 60 * 60 * 1000;
+      const NON_WORKTREE_MAX_AGE_MS = 30 * 60 * 1000;
       const allAgents = files.flatMap((f) => {
         try {
           return [JSON.parse(fs.readFileSync(path.join(agentsDir, f), "utf8"))];

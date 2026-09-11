@@ -131,14 +131,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items" 2>/dev/null || _KEEP=""
 _PRESERVE="run-dir=n/a"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-mkdir -p .temp/state  # timeout: 5000
-{
-    echo "## Active Skill Contract"
-    echo "- skill: foundry:distill · phase: gap-analysis (after work-pattern scan)"
-    echo "- run-dir: n/a"
-    echo "- preserve: $_PRESERVE"
-    echo "- next: gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"
-} > .temp/state/skill-contract.md
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:distill" "gap-analysis (after work-pattern scan)" "n/a" "$_PRESERVE" "gap analysis (Step 3) → duplication check (Step 4) → report (Step 5)"  # timeout: 5000
 ```
 
 ## Step 3: Gap analysis
