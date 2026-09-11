@@ -170,6 +170,12 @@ class TestCheckLinks:
         assert "foundry symlink must not exist" in out
         assert "Step 10 Phase 1 purges" in out
 
+    def test_foundry_target_with_windows_separators_is_high(self) -> None:
+        """A Windows-form cache target remains Foundry-owned for link-health checks."""
+        target = r"C:\Users\runner\.claude\plugins\cache\borda-ai-rig\foundry\0.1\agents\x.md"
+
+        assert cis._is_foundry_target(target) is True
+
     def test_unrelated_symlink_ignored(self, tmp_path: Path) -> None:
         """A symlink to a non-foundry target under agents/ is not a finding."""
         agents = tmp_path / ".claude" / "agents"

@@ -150,6 +150,17 @@ def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         cai.main(["42", "3", "1", "0"])
 
 
+def test_windows_sentinel_uses_native_tempdir(
+    fake_git: list[list[str]], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A POSIX TMPDIR inherited by Windows cannot redirect the commit sentinel."""
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    monkeypatch.setattr(cai.sys, "platform", "win32")
+    monkeypatch.setattr(cai.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    assert cai._sentinel_path("/fake/git") == tmp_path / "claude-commit-auth-my-project-main"
+
+
 @pytest.mark.parametrize("flag", ["-h", "--help"])
 def test_help_exits_0_without_git(monkeypatch: pytest.MonkeyPatch, flag: str) -> None:
     """Print help without invoking Git or another subprocess."""

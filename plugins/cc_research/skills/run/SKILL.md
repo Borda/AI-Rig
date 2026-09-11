@@ -312,7 +312,7 @@ else
     VERIFY_TIMEOUT_SEC="${VERIFY_TIMEOUT_SEC:-120}"
 fi
 VERIFY_TIMEOUT_MS=$((VERIFY_TIMEOUT_SEC * 1000))
-# Ideation Agent() calls are synchronous — no mid-flight poll; after each returns, check its output file and mark timed_out (⏱) if empty.
+# Ideation Agent() calls run in background — spawn, end turn, no filler call; on each notification check its output file, mark timed_out (⏱) if empty.
 ```
 
 **Initialize `sandbox_mode`**:

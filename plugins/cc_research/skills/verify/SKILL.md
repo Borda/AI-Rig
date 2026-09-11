@@ -10,7 +10,7 @@ disable-model-invocation: true
 <constants>
 
 ```yaml
-HARD_CUTOFF: 900  # seconds — advisory; Agent() calls are synchronous and cannot be interrupted mid-flight
+HARD_CUTOFF: 900  # seconds — advisory; Agent() runs in background and cannot be interrupted mid-flight
 ```
 
 </constants>
@@ -175,7 +175,7 @@ Execute its block (leave `TARGET_MODULE`/`TARGET_FN` empty for `central` baselin
 
 Codemap output non-empty: prepend this **codemap-first protocol** to the same heading (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use the Structural Context above for import/caller/coverage questions before any supplementary Grep on the same target; this does NOT relax the mandatory "Read each file listed in Codebase scope files" instruction below — formula (F) and hyperparameter (H) fidelity require the actual file contents, codemap cannot substitute for that line-level comparison. (2) **Bounded call budget** — up to 5 additional `codemap-py query` calls this audit (raised from the plugin default of 3: a verify pass spans up to 100 scope files across 5 dimensions, wider surface than a single-file edit). (3) **Hard stop on `query_complete: true`** (or legacy `exhaustive: true`) — that result is final for its direction, no follow-up Grep/query to re-confirm it. Codemap output empty: omit this paragraph — scientist proceeds with the full-file-read protocol below unchanged.
 
-<!-- Agent call is synchronous — no Bash file-activity poll available during Agent(...) execution. HARD_CUTOFF (900s) is declared as a reference constant but is NOT enforceable within the skill — Agent() has no timeout parameter. After Agent() returns, apply the single timeout policy declared in `<constants>`: check `$RUN_DIR/audit-raw.md`; if absent or empty, set `fidelity = null`, `status = TIMED_OUT`, mark ⏱ in report; if present, parse normally. Same limitation as research:topic. -->
+<!-- Agent call runs in the background: spawn, end the turn, resume on the completion notification — never a filler call, a "waiting" line, or a sleep. HARD_CUTOFF (900s) is declared as a reference constant but is NOT enforceable within the skill — Agent() has no timeout parameter. On the notification, apply the single timeout policy declared in `<constants>`: check `$RUN_DIR/audit-raw.md`; if absent or empty, set `fidelity = null`, `status = TIMED_OUT`, mark ⏱ in report; if present, parse normally. Same limitation as research:topic. -->
 
 **Scientist prompt** — before constructing the Agent() call, substitute the actual computed value of `$RUN_DIR` (e.g. `.experiments/verify-2026-05-13T10-00-00Z`) into every path in the prompt below; an unexpanded `$RUN_DIR` reaches the agent as literal dollar-sign text, the audit lands in a directory literally named `$RUN_DIR`, and the post-call check reports a false `TIMED_OUT`:
 
@@ -224,7 +224,7 @@ Include ## Confidence block.
 Return ONLY: {"status":"done","claims_verified":N,"mismatches":N,"high":N,"medium":N,"low":N,"fidelity":0.N,"file":"$RUN_DIR/audit-raw.md","confidence":0.N}
 ```
 
-`timeout` is not a valid parameter on `Agent()` — do NOT pass it. The `HARD_CUTOFF: 900` constant is advisory only (see `<constants>`); synchronous `Agent()` calls cannot be polled or interrupted mid-flight.
+`timeout` is not a valid parameter on `Agent()` — do NOT pass it. The `HARD_CUTOFF: 900` constant is advisory only (see `<constants>`); a background `Agent()` call cannot be polled or interrupted mid-flight.
 
 **Single timeout policy** (matches `<constants>`): after `Agent()` returns, read `$RUN_DIR/audit-raw.md`. If absent or empty → set `fidelity = null`, status = `TIMED_OUT`, continue to V4 with ⏱ marker in the report. If present → parse normally regardless of nominal budget. Never defer handling to a "next turn" or rely on context compaction.
 
@@ -367,7 +367,7 @@ echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # the `|| ...=false` fallba
 
 <notes>
 
-- **Timeout advisory**: 900s HARD_CUTOFF is advisory only — synchronous `Agent()` cannot be interrupted mid-flight; after Agent() returns, check `$RUN_DIR/audit-raw.md`; if absent/empty → TIMED_OUT, mark ⏱.
+- **Timeout advisory**: 900s HARD_CUTOFF is advisory only — a background `Agent()` cannot be interrupted mid-flight; on its completion notification check `$RUN_DIR/audit-raw.md`; if absent/empty → TIMED_OUT, mark ⏱.
 - Verify read-only — never modifies code, commits, or writes to `.experiments/state/`
 - `.experiments/verify-<timestamp>/` stores scientist agent's full audit output for reference
 - Verify run dirs don't write `result.jsonl` — exempt from 30-day TTL cleanup (exempt per `.claude/rules/foundry-artifact-lifecycle.md` — no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/verify-*/`)

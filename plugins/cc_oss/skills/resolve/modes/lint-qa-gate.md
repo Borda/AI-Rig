@@ -25,7 +25,7 @@ Agent(subagent_type="foundry:linting-expert", maxTurns=15, prompt="Review all fi
 Agent(subagent_type="foundry:qa-specialist", maxTurns=15, prompt="Review all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run tests for changed modules only — do not run the full test suite unless $CHANGE_SCOPE=full. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
 ```
 
-> **Health monitoring**: synchronous. No response ~15 min → surface partial results from `$RUN_DIR` ⏱.
+> **Health monitoring**: both spawns run in the background. Issue them in one message, then **end the turn** — the completion notification is the resume signal. Never hold the turn open with `Bash(true)`, a "waiting" line, or a poll. On notification read each output file; empty or missing → surface partial results from `$RUN_DIR` with ⏱.
 
 - `foundry:linting-expert` made file changes → commit:
 

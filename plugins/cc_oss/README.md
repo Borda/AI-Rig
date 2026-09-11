@@ -732,22 +732,22 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 #### Review, resolve, and argument helpers
 
-| Helper                       | Purpose                                                                          |
-| ---------------------------- | -------------------------------------------------------------------------------- |
-| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                |
-| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items.                          |
-| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit.                       |
-| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path.                    |
-| `derive_fork_remote.py`      | Ensure the contributor's fork remote exists, then report the pending push scope. |
-| `find_review_report.py`      | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.  |
-| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.                          |
-| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.                       |
-| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.                           |
-| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                                 |
-| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts.               |
-| `resolve_pr_refs.py`         | Resolve the default branch and the PR's head/base/fork metadata before checkout. |
-| `resolve_preflight.py`       | Verify tools, authentication, and remote state before resolve.                   |
-| `resolve_shared_path.py`     | Resolve the plugin's shared directory portably.                                  |
+| Helper                       | Purpose                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                                 |
+| `commit_all_items.py`        | Create a bulk commit summarizing resolved review items with a native temp-root sentinel.          |
+| `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit with a native temp-root sentinel.       |
+| `compute_commit_sentinel.py` | Print the current repository and branch commit-sentinel path using the native Windows temp root.  |
+| `derive_fork_remote.py`      | Ensure the contributor's fork remote exists, then report the pending push scope.                  |
+| `find_review_report.py`      | Enforce the `/oss:review` reject gate before `/oss:resolve` starts fixing a PR.                   |
+| `heal_git_artifacts.py`      | Reclaim stale resolve locks and orphaned git worktrees.                                           |
+| `merge_specialist_batch.py`  | Cherry-pick specialist worktree commits in priority order.                                        |
+| `parse-resolve-args.py`      | Parse `/oss:resolve` arguments into shell assignments.                                            |
+| `parse-skill-flags.py`       | Parse shared skill flags into shell assignments.                                                  |
+| `parse_audit_json.py`        | Summarize `pip-audit` JSON as dependency and vulnerability counts.                                |
+| `resolve_pr_refs.py`         | Resolve the default branch and the PR's head/base/fork metadata before checkout.                  |
+| `resolve_preflight.py`       | Verify tools, authentication, remote state, and native temporary preflight output before resolve. |
+| `resolve_shared_path.py`     | Resolve the plugin's shared directory portably.                                                   |
 
 #### Release, installation, and path helpers
 

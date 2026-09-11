@@ -43,7 +43,10 @@ _MODEL_FIELD = re.compile(r"^model:", re.MULTILINE)
 BOILERPLATE: dict[str, str] = {
     "agent-resolution boilerplate": r"=\$\(ls -td.*plugins/cache",
     "unsupported-flag-check boilerplate": r"Unknown flag",
-    "health-monitoring constants": r"MONITOR_INTERVAL=",
+    # Keyed on HARD_CUTOFF, not the retired MONITOR_INTERVAL: spawns are background and the
+    # orchestrator ends its turn, so no skill declares a poll interval any more. Matching the
+    # old token would count zero files and quietly retire the section.
+    "health-monitoring constants": r"HARD_CUTOFF=",
 }
 
 EXTRACTION: dict[str, str] = {

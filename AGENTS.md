@@ -69,6 +69,35 @@ Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and n
 - Keep indivisible or very small work in the main agent.
 - The main agent owns integration, reviews every handoff against its gates, resolves conflicts, and retains final acceptance for behavior-changing or executable results.
 
+## Adversarial Convergence Loop
+
+Governs every cycle where an independent review produces findings and those findings get fixed: pre-commit review, review-then-fix skill pairs, root-cause fix loops, report revision. It decides when to stop, and stopping on a plateau is a result, not a failure. Claude receives the same rule through `foundry:rules/quality-gates.md` §Adversarial Convergence Loop; this section is the Codex counterpart and must stay semantically identical.
+
+Run at most **3** review + fix iterations by default. Each iteration uses an independent reviewer that receives the diff, the spec, and the symptom — never the implementation narrative, and never a fork of the implementing agent, which would inherit its reasoning trail and review toward confirming it.
+
+Score each iteration by summing the weights of the findings still open:
+
+| security | critical | high | medium | low | nit |
+| -------- | -------- | ---- | ------ | --- | --- |
+| 20       | 10       | 6    | 4      | 2   | 1   |
+
+`W_n` is the score after iteration *n*; `r_n = W_n / W_{n−1}` is the trend.
+
+| Condition         | Reading        | Action                                                   |
+| ----------------- | -------------- | -------------------------------------------------------- |
+| `W_n == 0`        | clean          | Done. Proceed.                                           |
+| `r_n ≤ 0.5`       | converging     | Continue if iterations remain.                           |
+| `0.5 < r_n < 1.0` | plateau        | Stop. More iterations will not clear it.                 |
+| `r_n ≥ 1.0`       | non-converging | Stop immediately. The approach is wrong, not incomplete. |
+
+Fix each finding where it sits, with the smallest change that closes it — converging fixes are local, touching one file, one predicate, one call site. A finding is never licence to restructure what surrounds it.
+
+A structural finding is flagged, never fixed inside the loop. A finding is structural when closing it would change a contract rather than an implementation: a script's argument or output shape, a module boundary, a shared file's schema, a skill's step order, or any fix that reaches files the finding does not name. Applying one invalidates the review that produced it and reopens the tree to a fresh wave of findings, so the remaining iterations measure churn rather than progress. Stop the loop at once, leave the finding unapplied, report it with its blast radius beside the current score series, and ask the user how to proceed; it resumes only on explicit approval, scoped as its own piece of work. This overrides the trend table — a structural finding stops the loop even at `r_n ≤ 0.5`, and even when it is the only finding open.
+
+Two hard blocks apply whatever the trend shows: never declare done and never commit while a `security` or `critical` finding is open, and stop at once when the same finding signature appears twice running rather than waiting for the iteration cap.
+
+On any stop with findings still open, report the score series (`W_0 → W_1 → W_2`) with per-tier counts, name what remains, and ask the user how to proceed. Never pass a plateau silently.
+
 ## Markdown Policy
 
 - Never hard-wrap prose in any Markdown file.
@@ -121,6 +150,9 @@ Plugin-specific authoring, installability, cross-reference, versioning, and veri
 - Python minimum: 3.10. The repository root is an environment anchor, not an installable package.
 - Bootstrap test tooling with `uv sync --only-group test`; benchmark-only dependencies use `uv sync --only-group bench`.
 - Run focused tests with `.venv/bin/python -m pytest <paths>` and broaden to the affected suite before completion.
+- Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
+- Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
+- A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, a fixed port, a written file outside `tmp_path`). Fix the isolation; never pin that suite serial to hide it.
 - Lint/format edits via the pinned pre-commit hooks, never the bare tool: `pre-commit run ruff-check --files <changed-python-paths>`, `pre-commit run ruff-format --files <changed-python-paths>`, and `pre-commit run mdformat --files <changed-markdown-paths>`; direct `ruff` or `mdformat` invocation drifts from the version/config pinned in `.pre-commit-config.yaml`.
 - Use `pre-commit run --all-files` only when the task requires the repository-wide gate; preserve unrelated working-tree changes.
 - Release and build entry points are plugin-specific; follow `plugins/AGENTS.md` and the owning plugin's scripts and README. Remote publication remains human-owned.

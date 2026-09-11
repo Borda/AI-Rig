@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -1511,6 +1512,12 @@ def test_live_probe_rejects_oversized_json_rpc_without_persisting_payload(
     config = _live_probe_config(tmp_path)
     fake = FakeProcess([])
     fake.stdout = io.StringIO(oversized_payload + "\n")
+    # Package identity is covered by live-config tests; this test isolates the hostile-stdio reader boundary.
+    monkeypatch.setattr(
+        denial_probe.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(args=[], returncode=0),
+    )
     monkeypatch.setattr(denial_probe, "terminate_process", lambda process: None)
 
     with pytest.raises(ProtocolViolation, match="app-server-message-too-large"):

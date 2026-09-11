@@ -244,7 +244,7 @@ Include ## Confidence block per quality-gates rules.
 Return ONLY: {"status":"done","hypotheses":N,"file":"<RUN_DIR>/retrospective.md","confidence":0.N}
 ```
 
-**Health monitoring note** (CLAUDE.md §6 deviation): research:scientist agent here spawned synchronously (not `run_in_background=true`), so CLAUDE.md §6 sentinel polling unreachable mid-call. Health monitoring approximated post-hoc: if Agent() call returns after >15 min with no output file, treat as timed out. CLAUDE.md §6 full protocol applies only to background agents.
+**Health monitoring note** (CLAUDE.md §6): the research:scientist agent runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep. If the completion notification arrives with no output file, or nothing appears for >15 min, treat as timed out.
 
 **Post-call timeout check**: after Agent() returns, verify:
 

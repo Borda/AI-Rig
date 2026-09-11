@@ -372,9 +372,9 @@ Then the full findings below.
 Return ONLY a compact JSON envelope: {"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"<path>","confidence":0.N,"summary":"<one-line>"}
 ```
 
-**Passive health monitoring**: Agent tool is synchronous — Claude awaits curator's response natively. If foundry:curator does not return within 15 min, surface any partial output already written to `$OUTPUT_PATH` (under `.temp/brainstorm/`) with ⏱ marker and continue to Step 6 with incomplete review noted.
+**Passive health monitoring**: the Agent tool runs in the background — spawn the curator, end the turn, and resume on its completion notification (no filler call, no "waiting" line, no sleep). If nothing arrives within 15 min, surface any partial output already written to `$OUTPUT_PATH` (under `.temp/brainstorm/`) with ⏱ marker and continue to Step 6 with incomplete review noted.
 
-> Note: synchronous Agent calls do not support mid-call extensions per CLAUDE.md §6 — simplified monitoring is intentional for synchronous spawns.
+> Note: a spawned agent cannot be extended mid-flight per CLAUDE.md §6 — the simplified monitoring above is intentional.
 
 If `findings > 0`: add missing details, improve closure reasons, or add open threads as needed — loop back to Step 5 (max 2 revision cycles per Step 6 approval cycle; counter resets each time Step 3 re-entry is triggered from Step 6 option b). After 2 cycles with remaining findings, surface unresolved issues to user and proceed to Step 6 anyway.
 

@@ -718,7 +718,7 @@
     {
       "mode": "0644",
       "path": "tests/test_app_server_denial_protocol.py",
-      "sha256": "7ae67647bc7902a3503c858347e2ac6c0c1dfe67e204a7a0a91af73dc81738e5"
+      "sha256": "bda493f87818c5afe1a8b0da1c7c83fbcc0397003495f283cba6806455f88403"
     },
     {
       "mode": "0644",

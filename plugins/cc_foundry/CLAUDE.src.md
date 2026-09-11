@@ -36,15 +36,16 @@
 
 Trivial/mechanical (typo, single-file): fix it — logs, errors, failing tests; no hand-holding. Multi-file or behaviour-changing: Root Cause protocol (`rules/debugging.md`).
 
-### 6. Background Agent Health Monitoring
+### 6. Agent Health Monitoring
 
-Harness runs one Bash call at a time (foreground `sleep` blocked, ~10 min per-call cap) — skill **cannot** busy-wait polling background agent. Monitoring event-driven, post-hoc.
+Harness runs one Bash call at a time (foreground `sleep` blocked, ~10 min per-call cap) — skill **cannot** busy-wait polling an agent. Monitoring event-driven, post-hoc.
 
 **Protocol**:
 
-- **Background spawn** (`run_in_background=true`): harness **completion notification** = primary liveness signal — act on arrival, don't block. Optional between-turn liveness: `Monitor` tool, or single `find <run-dir> -newer <sentinel>` probe per turn (no sleep loop).
-- **Synchronous spawn** (blocking `Agent()`): returns only when done — read output file after.
-- **On completion / return**: read agent output file; empty or missing → mark `timed_out`, record `{"verdict":"timed_out"}`, surface with ⏱ — never omit stalled agent.
+- **Every spawn is background.** `Agent()` never blocks; no `run_in_background` parameter exists. Spawn, **end the turn**, resume on the harness completion notification.
+- **Never hold the turn open**: no no-op call (`Bash(true)`, `Bash(:)`, re-`ls`), no text-only "Waiting."/"Standing by." turn, no `sleep`, no fixed-interval poll. Each costs a full model turn and returns nothing.
+- **Optional between-turn liveness**: `Monitor` tool, or a single `find <run-dir> -newer <sentinel>` probe per turn — one probe, then end the turn again.
+- **On notification**: read agent output file; empty or missing → mark `timed_out`, record `{"verdict":"timed_out"}`, surface with ⏱ — never omit stalled agent.
 
 Canonical helper: `_FOUNDRY_SHARED/agent-spawn-protocol.md`. Skills may tighten timeouts in own `<constants>` block.
 

@@ -2,7 +2,9 @@
 
 **Finding evidence standard — applies to every agent, every finding:** Every finding must cite `file:line` from diff. Training knowledge never sufficient. External standard claims (OWASP, PEP, CVE) cite authoritative document. Tier 2 sources (blog, tutorial, forum) need ≥3 genuinely independent origins OR experimental validation; N posts citing same original = 1 source. Citation tracing mandatory: for each Tier 2 source, follow its citations one level; if tracing reveals Tier 1 source (official doc, CVE, spec) confirming claim, treat as Tier 1 verified (sufficient alone); if multiple Tier 2 sources share one origin, merge into one; count distinct origins only. Distinct-origin count < 3 and no experiment → downgrade to LOW or drop; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone.
 
-**Run-dir resolution preamble — prepend to every agent prompt:**
+**Spawn label — first line of every agent prompt below.** FleetView shows the prompt's leading chars as the agent's row, truncating the tail. Every agent here reviews the same PR, so the PR is not the label — the dimension is. Lead with the dimension, ≤10 words, no verb, no boilerplate; append `— PR <N> <owner>/<repo>` only if it fits one terminal line. Merged units name both dimensions (`perf + API design`), the issue agent names its issues (`issues 41, 44 — root cause`), the consolidator names its job (`consolidate 5 review files`). Everything below — preamble included — comes after that line.
+
+**Run-dir resolution preamble — insert after the spawn-label line, ahead of the rest of the prompt:**
 
 > "First run Bash `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; cat "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"` (plain `cat`, no `$()` command substitution — substitution triggers Claude Code's compound-command permission prompt even when `cat` itself is allow-listed) to read the exact run-dir path as plain text. Treat that text as `$RUN_DIR` for every file you read or write below — substitute it literally, never retype by hand (the leading `.` in `.temp` is easy to drop, which scatters output into a stray `temp/` dir)."
 

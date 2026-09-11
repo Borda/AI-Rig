@@ -44,7 +44,7 @@ Spawn **foundry:curator** per file with efficiency-specific prompt:
 >
 > <!-- GUARD-RAILS: never flag as E8/E9 — these look verbose but are load-bearing -->
 >
-> <!-- (a) Structural protocols: convergence limits, iteration caps, loop bounds, health monitoring constants (MONITOR_INTERVAL, HARD_CUTOFF), security gates (adversarial pre-apply validation, AskUserQuestion before destructive ops), NON_AUTO_FIXABLE bypass lists, confidence block requirements, task hygiene protocols, JSON envelope contracts, file-based handoff requirements, batch-size guards, Fix Action Hierarchy multi-step rules, post-fix verification protocols, reversibility checks, <antipatterns-to-flag> curator rules. -->
+> <!-- (a) Structural protocols: convergence limits, iteration caps, loop bounds, health monitoring constants (HARD_CUTOFF, EXTENSION), security gates (adversarial pre-apply validation, AskUserQuestion before destructive ops), NON_AUTO_FIXABLE bypass lists, confidence block requirements, task hygiene protocols, JSON envelope contracts, file-based handoff requirements, batch-size guards, Fix Action Hierarchy multi-step rules, post-fix verification protocols, reversibility checks, <antipatterns-to-flag> curator rules. -->
 >
 > <!-- (b) High-stakes path reinforcement: 3+ restatements on irreversible operations, destructive edits, security boundaries are expected and exempt — any section whose heading or surrounding context names git push, settings.json mutation, external messages, force operations, or dropping data. -->
 >

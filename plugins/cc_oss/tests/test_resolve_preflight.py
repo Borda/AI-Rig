@@ -100,6 +100,24 @@ def test_gh_ok_codex_absent_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert (tmp_path / "resolve-preflight-GH_OK-shared").read_text() == "true"
 
 
+def test_windows_preflight_uses_native_tempdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Preflight output avoids a POSIX TMPDIR inherited by Windows CI."""
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    monkeypatch.setattr(rp.sys, "platform", "win32")
+    monkeypatch.setattr(rp.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(rp, "which", lambda cmd: "/fake/" + cmd)
+    monkeypatch.setattr(rp.Path, "home", classmethod(lambda _cls: tmp_path / "home"))
+    monkeypatch.setattr(
+        rp.subprocess,
+        "run",
+        _dispatch({"gh auth": (0, ""), "git remote": (0, ""), "git rev-parse": (1, "")}),
+    )
+    monkeypatch.chdir(tmp_path)
+
+    assert rp.main([]) == 0
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false"
+
+
 def _install_bridge(home: Path, *, enabled: bool = True) -> None:
     """Write a plugin registry (and optional opt-out) describing an installed bridge.
 

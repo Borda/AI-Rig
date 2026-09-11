@@ -36,7 +36,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -289,12 +289,12 @@ def main(argv: list[str] | None = None) -> int:
     # Prefer per-user temp dirs over a world-readable `/tmp` (macOS `/tmp`
     # is mode 1777 — sentinel name leaks branch metadata). Order: TMPDIR
     # (per-user on macOS) → XDG_RUNTIME_DIR (per-user on Linux) → fallback.
-    # On Windows, `tempfile.gettempdir()` already returns the per-user temp dir.
-    if sys.platform == "win32":
-        _tmp = Path(tempfile.gettempdir())
-    else:
-        _tmp_str = os.environ.get("TMPDIR") or os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-        _tmp = Path(_tmp_str)
+    # A candidate counts only when absolute for this host: Windows CI inherits a
+    # POSIX-style TMPDIR with no native directory, and a drive-less path would
+    # resolve against whatever drive the process happens to run on.
+    _native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
+    _candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
+    _tmp = Path(next((c for c in _candidates if c and _native(c).is_absolute()), tempfile.gettempdir()))
     sentinel = _tmp / f"claude-commit-auth-{repo_slug}-{branch_slug}"
 
     # Touch sentinel and register cleanup (mirrors bash `trap EXIT INT TERM`).

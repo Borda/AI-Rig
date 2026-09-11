@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -214,7 +214,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # --- write vars to TMPDIR files for safe cross-block consumption ------------
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmpdir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
+    # TMPDIR counts only when absolute for this host: Windows CI inherits a POSIX-style
+    # value with no native directory, and a drive-less path would resolve against
+    # whatever drive the process happens to run on.
+    native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
+    env_tmpdir = os.environ.get("TMPDIR")
+    tmpdir = Path(env_tmpdir if env_tmpdir and native(env_tmpdir).is_absolute() else tempfile.gettempdir())
     (tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}").write_text(str(codex_available).lower())
     (tmpdir / f"resolve-preflight-GH_OK-{csid}").write_text("true")
     return 0

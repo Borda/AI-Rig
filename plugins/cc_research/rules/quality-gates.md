@@ -4,6 +4,37 @@ paths:
   - '**'
 ---
 
+## Adversarial Convergence Loop (any review → fix cycle)
+
+<!-- policy-sibling: plugins/cc_foundry/rules/quality-gates.md (canonical), plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, AGENTS.md -->
+
+Governs every cycle where an independent review produces findings and those findings get fixed — `/research:judge` refinement loops, `/research:verify` fix rounds, pre-commit review. Decides when to stop; stopping on a plateau is a result, not a failure.
+
+**Loop**: up to **3** review + fix iterations. Each dispatches an independent reviewer — `foundry:challenger` via `Agent()` (requires `foundry` plugin), or `bridge:review` when the bridge plugin is available. Never `subagent_type: "fork"`: a fork inherits the implementer's reasoning trail and reviews toward confirming it. Reviewer gets diff + spec + symptom, never the implementation narrative.
+
+**Severity weights**:
+
+| security | critical | high | medium | low | nit |
+| -- | -- | -- | -- | -- | -- |
+| 20 | 10 | 6 | 4 | 2 | 1 |
+
+**Score**: `W_n = Σ weight(open findings)` after iteration *n*. **Trend**: `r_n = W_n / W_{n−1}`.
+
+| Condition | Reading | Action |
+| -- | -- | -- |
+| `W_n == 0` | clean | Done. Proceed. |
+| `r_n ≤ 0.5` | converging | Continue if iterations remain. |
+| `0.5 < r_n < 1.0` | plateau | Stop. More iterations will not clear it. |
+| `r_n ≥ 1.0` | non-converging | Stop immediately — the approach is wrong, not incomplete. |
+
+**Fix scope — targeted only**: fix a finding where it is, with the smallest change that closes it. Converging fixes are local — one file, one predicate, one call site. A finding is not licence to restructure what surrounds it.
+
+**Structural findings are flagged, never fixed inside the loop.** Structural = closing it changes a contract, not an implementation: a script's argument or output shape, a module boundary, a shared file's schema, a skill's step order, or any fix reaching files the finding does not name. Such a fix invalidates the review that produced it and reopens the tree to a fresh wave of findings, so the iteration budget measures churn instead of progress. Stop the loop at once, leave the finding unapplied, report it with its blast radius beside the current score series, and invoke `AskUserQuestion`. It resumes only on explicit user approval, scoped as its own work. Overrides the trend table — a structural finding stops the loop at `r_n ≤ 0.5` and when it is the only one open.
+
+**Hard blocks, whatever the trend**: any open `security` or `critical` finding means never declare done and never commit. Same finding signature twice running → stop at once.
+
+**On any stop with `W_n > 0`**: report the score series (`W_0 → W_1 → W_2`) with per-tier counts, name what remains, invoke `AskUserQuestion`. Never pass a plateau silently.
+
 ## Confidence Block (required on all analysis tasks)
 
 <!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_foundry/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md -->

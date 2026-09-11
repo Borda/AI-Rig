@@ -151,7 +151,7 @@ Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invok
 
 Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
 
-**Health monitoring**: Agent calls synchronous — framework awaits each response natively. No Bash polling possible during active Agent call. Agent no return within 15 min: use Read tool on `$RUN_DIR/<agent-name>.md` to surface partial results. Mark timed-out agents with ⏱ in final report.
+**Health monitoring**: Agent calls run in background. Spawn, end turn, resume on completion notification — no filler tool call, no "waiting" turn, no sleep. No file activity across wake-ups for 15 min: use Read tool on `$RUN_DIR/<agent-name>.md` to surface partial results. Mark timed-out agents with ⏱ in final report.
 
 - Skip agents clean in Cycle 1
 - Collect envelopes to update review state (don't read full finding files into context — check envelopes to determine if critical/high remain)

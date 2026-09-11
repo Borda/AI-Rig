@@ -283,7 +283,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "
 
 ## Step 3: Collect results and print combined report
 
-**Completion handling** — pipeline spawns are synchronous, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). When a batch returns, read each target's compact JSON; when absent, read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per the pipeline's graceful-exit protocol). Neither present → record `{"verdict":"timed_out"}` and mark the target `⏱` in the report; never omit a stalled target.
+**Completion handling** — pipeline spawns run in the background: issue the batch, end the turn, and resume on the completion notifications; never a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). As each returns, read that target's compact JSON; when absent, read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per the pipeline's graceful-exit protocol). Neither present → record `{"verdict":"timed_out"}` and mark the target `⏱` in the report; never omit a stalled target.
 
 **On timeout**: read `tail -100 <output_file>` for partial JSON; if none use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
 

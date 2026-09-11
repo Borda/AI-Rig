@@ -142,7 +142,7 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 ")
 ```
 
-> **Health monitoring**: synchronous; Claude awaits natively. No response ~15 min → surface partial results ⏱, proceed with staged files.
+> **Health monitoring**: the spawn runs in the background — spawn, end the turn, resume on the completion notification; no filler call, no "waiting" line, no sleep. Nothing after ~15 min → surface partial results ⏱, proceed with staged files.
 
 ### 7b: Verify and complete merge
 

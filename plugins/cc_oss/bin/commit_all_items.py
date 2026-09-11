@@ -27,7 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -71,8 +71,14 @@ def _sentinel_path(git: str) -> Path:
     branch = subprocess.run(
         [git, "branch", "--show-current"], capture_output=True, text=True, check=False
     ).stdout.strip()
-    base = os.environ.get("TMPDIR") or os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return Path(base.rstrip("/")) / f"claude-commit-auth-{_slug(Path(root).name)}-{_slug(branch)}"
+    # Prefer a per-user temp dir over a world-readable default, but only when the value is
+    # absolute for this host. Windows CI inherits a POSIX-style TMPDIR that has no native
+    # directory, and a drive-less path would resolve against whatever drive the process
+    # happens to run on; the system temp dir is the interoperable fallback there.
+    native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
+    candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
+    base = Path(next((c for c in candidates if c and native(c).is_absolute()), tempfile.gettempdir()))
+    return base / f"claude-commit-auth-{_slug(Path(root).name)}-{_slug(branch)}"
 
 
 def _resolve(cmd: str) -> str:

@@ -46,11 +46,10 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 SEMBLE_ENABLED=false    # set to true via --semble
 ```
 
-> Background agent health monitoring (CLAUDE.md §6) — applies to Step 3 parallel agent spawns
+> Agent health monitoring (CLAUDE.md §6) — applies to Step 3 parallel agent spawns. Spawns are background; the orchestrator ends its turn and resumes on the completion notification. The constants below bound how long a run may stay silent — they are not a poll cadence, and nothing sleeps.
 
 ```text
-MONITOR_INTERVAL=300   # 5 minutes between polls
-HARD_CUTOFF=900        # 15 minutes of no file activity → declare timed out
+HARD_CUTOFF=900        # no file activity for this long across wake-ups → declare timed out
 EXTENSION=300          # one +5 min extension if output file explains delay
 ```
 
@@ -601,7 +600,7 @@ fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 REVIEW_CHECKPOINT="${TMPDIR:-/tmp}/review-check-$(date +%s)-${CSID}"
 touch "$REVIEW_CHECKPOINT"
-# read back by poll block (separate invocation)
+# read back on a later wake-up (separate invocation)
 echo "$REVIEW_CHECKPOINT" > "${TMPDIR:-/tmp}/oss-review-checkpoint-${CSID}"
 ```
 
@@ -622,7 +621,7 @@ Two stages, in order — never collapse them:
 
 Launch the bridge review, the issue agent (one spawn for all linked issues), and all review agents in one message batch. Call `Skill(skill="bridge:review", args="Read-only adversarial review of <REVIEW_TARGET>, using changed files and <RUN_DIR>/codemap-context.md when present. Identify bugs, missed edge cases, and inconsistencies with exact file:line evidence; write findings to <RUN_DIR>/foundry--codex.md and do not apply fixes.")` when `CODEX_AVAILABLE=1` and DOCS_TYPING_MODE/TESTS_CI_MODE are false. Then launch the selected Foundry agents and rank survivors under `FANOUT_MAX` as before.
 
-Poll for expected output files per `$MONITOR_INTERVAL` / `$HARD_CUTOFF` until all present or each hits hard cutoff.
+Spawns are background: issue the whole batch in one message, then **end the turn**. Each agent's completion notification wakes the orchestrator; check expected output files then. Never `Bash(true)`, a "waiting" line, or a sleep to hold the turn open.
 
 Persist the monitor list from the **actual launch batch** — never re-derive it from scope/mode flags (flag-derived lists include ranking-dropped dimensions; the monitor then waits ~15 min HARD_CUTOFF per never-spawned agent). In the same turn as the launch message, use the **Write tool** (the lineup is a ranking decision the shell cannot see) to create `$RUN_DIR/.expected-files`: one absolute path per line, exactly one line per output file of every agent actually spawned:
 
@@ -640,9 +639,9 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null 
 POLL_START=$(date +%s)
 ```
 
-Later poll blocks read paths back via `while read -r path; do [ -f "$path" ] || PENDING=1; done <"$RUN_DIR/.expected-files"` — no in-memory array required.
+Later wake-ups read paths back via `while read -r path; do [ -f "$path" ] || PENDING=1; done <"$RUN_DIR/.expected-files"` — no in-memory array required.
 
-Every `$MONITOR_INTERVAL` seconds, in the poll bash block, rehydrate both the run dir and the checkpoint path first (fresh shell — an unbound `$RUN_DIR` makes the `find` scan `/`): `IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""` and `IFS= read -r REVIEW_CHECKPOINT < "${TMPDIR:-/tmp}/oss-review-checkpoint-${CSID}" 2>/dev/null || REVIEW_CHECKPOINT=""` then `find "$RUN_DIR" -newer "$REVIEW_CHECKPOINT" -type f | wc -l` — non-zero = agents alive (refresh checkpoint: `touch "$REVIEW_CHECKPOINT"`); zero since last refresh for `$HARD_CUTOFF` seconds = stalled. One `$EXTENSION` if `tail -20` output file explains delay; second stall = cutoff. On timeout: read partial results from stalled agent's file; surface with ⏱ in report. Never omit timed-out agents.
+On each wake-up — a completion notification, or one optional liveness probe per turn — rehydrate both the run dir and the checkpoint path first (fresh shell — an unbound `$RUN_DIR` makes the `find` scan `/`): `IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""` and `IFS= read -r REVIEW_CHECKPOINT < "${TMPDIR:-/tmp}/oss-review-checkpoint-${CSID}" 2>/dev/null || REVIEW_CHECKPOINT=""` then `find "$RUN_DIR" -newer "$REVIEW_CHECKPOINT" -type f | wc -l` — non-zero = agents alive (refresh checkpoint: `touch "$REVIEW_CHECKPOINT"`); zero since last refresh for `$HARD_CUTOFF` seconds = stalled. One `$EXTENSION` if `tail -20` output file explains delay; second stall = cutoff. On timeout: read partial results from stalled agent's file; surface with ⏱ in report. Never omit timed-out agents.
 
 After all outputs collected (or timed out):
 
@@ -663,7 +662,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 ## Step 3: Post-agent checks (concurrent with Step 2 — after PR_BASE available)
 
-Step 3a/3b may run concurrently with still-executing Step 2 agents — issue in same response turn as final Step 2 polls. Do NOT issue before `PR_BASE` is bound.
+Step 3a/3b may run concurrently with still-executing Step 2 agents — issue them on a Step 2 wake-up rather than opening a turn of their own. Do NOT issue before `PR_BASE` is bound.
 
 ```bash
 TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}') # timeout: 6000

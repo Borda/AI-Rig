@@ -2125,6 +2125,6 @@
       "src": "skills/verify/SKILL.md:134"
     }
   },
-  "plugin": "cc_research@0.22.2",
+  "plugin": "cc_research@0.23.0",
   "schema": 1
 }

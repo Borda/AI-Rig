@@ -148,9 +148,19 @@ def _foundry_symlinks(home: Path) -> list[tuple[Path, str]]:
         if not path.is_symlink():
             continue
         target = str(Path(path).readlink())
-        if "borda-ai-rig/foundry/" in target:
+        if _is_foundry_target(target):
             found.append((path, target))
     return found
+
+
+def _is_foundry_target(target: str) -> bool:
+    """Return whether a stored link target belongs to the Foundry cache.
+
+    Windows stores a symlink target with backslashes, while the cache marker is intentionally a portable POSIX-style
+    fragment.
+    """
+    marker = "borda-ai-rig/foundry/"
+    return marker in target or marker in target.replace("\\", "/")
 
 
 def _rule_links(home: Path) -> list[tuple[Path, str, bool]]:

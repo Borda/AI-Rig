@@ -6,7 +6,7 @@ paths:
 
 ## Root-Cause Discipline (stub)
 
-**Never patch symptom.** Diagnosis loop: observe ALL symptoms → hypothesize specific mechanism → **confirm with evidence** (code/logs/tests — no confirmation = no fix) → fix mechanism, not signal → validate ALL original symptoms. Max 3 iterations, then stop + AskUserQuestion.
+**Never patch symptom.** Diagnosis loop: observe ALL symptoms → hypothesize specific mechanism → **confirm with evidence** (code/logs/tests — no confirmation = no fix) → fix mechanism, not signal → validate ALL original symptoms. The loop bound and its stop conditions are the Adversarial Convergence Loop in `quality-gates.md` — 3 iterations, weighted findings, stop on plateau or non-convergence, `AskUserQuestion` on any stop with findings still open.
 
 - Memory/training knowledge ≠ evidence — every premise grounded in source read now; "Where is this documented?" before building on it
 - Falsification before closing: could a second independent root cause remain? If yes, diagnose it too

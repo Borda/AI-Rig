@@ -6,7 +6,7 @@ Usage:
     touch "$SENTINEL"  # timeout: 3000
     trap 'rm -f "$SENTINEL"' EXIT INT TERM
 
-Sentinel path format: /tmp/claude-commit-auth-<repo-slug>-<branch-slug>
+Sentinel path format: <temp-dir>/claude-commit-auth-<repo-slug>-<branch-slug>
 
 Slug algorithm: lowercase, runs of non-alphanumeric chars → single '-',
 trailing '-' stripped — mirrors the ``tr``/``sed`` pipeline documented in
@@ -31,6 +31,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 
 def to_slug(value: str) -> str:
@@ -88,12 +89,14 @@ def get_sentinel_path() -> str:
 
     branch = subprocess.check_output(["git", "branch", "--show-current"], text=True).strip()
 
-    # Prefer per-user temp dirs over `/tmp`. macOS's `/tmp` is world-readable
-    # (mode 1777) — the sentinel name leaks branch/repo metadata to other
-    # users on shared hosts. Order: TMPDIR (per-user on macOS) →
-    # XDG_RUNTIME_DIR (per-user on Linux) → tempfile.gettempdir() fallback.
-    base = os.environ.get("TMPDIR") or os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return f"{base.rstrip('/')}/claude-commit-auth-{to_slug(repo_name)}-{to_slug(branch)}"
+    # Prefer a per-user temp dir over a world-readable default, but only when the value is
+    # absolute for this host. Windows CI inherits a POSIX-style TMPDIR that has no native
+    # directory, and a drive-less path would resolve against whatever drive the process
+    # happens to run on; the system temp dir is the interoperable fallback there.
+    native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
+    candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
+    base = Path(next((c for c in candidates if c and native(c).is_absolute()), tempfile.gettempdir()))
+    return str(base / f"claude-commit-auth-{to_slug(repo_name)}-{to_slug(branch)}")
 
 
 def main(argv: list[str] | None = None) -> int:

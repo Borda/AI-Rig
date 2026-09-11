@@ -8,17 +8,18 @@ cat "$_FOUNDRY_SHARED/agent-spawn-protocol.md"
 
 Apply monitoring for `<skill-name>` run.
 
-Claude Code harness runs one Bash call at a time (max ~10 min per call, foreground `sleep` blocked). Skill therefore **cannot** sit in a `while true; do sleep … done` poll loop waiting on a background agent — that loop never runs. Monitoring is event-driven and post-hoc, not a busy-wait.
+Claude Code harness runs one Bash call at a time (max ~10 min per call, foreground `sleep` blocked). Skill therefore **cannot** sit in a `while true; do sleep … done` poll loop waiting on an agent — that loop never runs. Monitoring is event-driven and post-hoc, not a busy-wait.
 
-## Background spawns — `Agent(..., run_in_background=true)`
+## Every spawn is a background spawn
 
-1. Harness delivers a **completion notification** when the background agent finishes — the primary liveness signal. Act on it when it arrives; do not block waiting for it.
-2. Optional between-turn liveness: the `Monitor` tool, or a **single** `health_sentinel.py` probe per turn (one `find` call, no sleep loop) — see §8b.
-3. On completion: read the agent's output file. Empty or missing after completion → mark `timed_out` with ⏱ and record `{"verdict":"timed_out"}`; never silently omit a stalled agent.
+`Agent()` does not block. There is no `run_in_background` parameter and no synchronous mode — the call returns immediately and the harness re-invokes the orchestrator with a **completion notification** when the agent finishes.
 
-## Synchronous spawns — blocking `Agent(...)`
+1. Spawn, finish the turn, **stop**. The notification is the resume signal; there is nothing to wait through.
+2. Never hold the turn open with no-op calls (`Bash(true)`, `Bash(:)`, a re-`ls`), text-only "Waiting."/"Standing by." turns, any `sleep`, or a fixed-interval poll. Each one is a full model turn that re-reads the whole live context to produce nothing.
+3. Need a real signal between turns? **One** probe per turn — the `Monitor` tool, or a single `health_sentinel.py`/`find` call (§8b) — then end the turn again.
+4. On the notification: read the agent's output file. Empty or missing → mark `timed_out` with ⏱ and record `{"verdict":"timed_out"}`; never silently omit a stalled agent.
 
-A blocking `Agent()` call returns only when the agent finishes; no polling possible or needed. After it returns, read the agent's output file. Empty or missing → `timed_out`, surface with ⏱.
+Skill prose still claiming spawns are "synchronous" or that "the framework awaits each response natively" describes a harness that no longer exists; this protocol is current. Canonical rule: `rules/task-lifecycle.md` §After spawning: end the turn.
 
 ## §8b health_sentinel.py liveness helper (optional)
 

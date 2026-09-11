@@ -40,7 +40,8 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - Do not hardcode sibling-plugin paths, `plugins/<name>/` directories, or absolute user or temporary paths.
 - Use `~/`, `$(git rev-parse --show-toplevel)`, or `$CLAUDE_PLUGIN_ROOT` as appropriate.
 - Use a bare `plugins/` path only as the final fallback after resolving the installed cache path.
-- A skill that starts background agents must provide the sentinel, five-minute polling, and fifteen-minute cutoff required by the shared agent-spawn protocol.
+- Every agent spawn runs in the background: the skill spawns, ends its turn, and resumes on the harness completion notification. Never hold a turn open with a no-op call, a text-only waiting line, a sleep, or a fixed-interval poll.
+- A skill that spawns agents must provide the sentinel, a single liveness probe per turn, and the fifteen-minute cutoff required by the shared agent-spawn protocol.
 
 ## Independent Plugins and Cross-References
 

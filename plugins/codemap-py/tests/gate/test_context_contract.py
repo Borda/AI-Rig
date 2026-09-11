@@ -34,6 +34,7 @@ _GATES_CONTRACT = _SHARED / "codemap-gates.md"
 
 _DEVELOP_CONTEXT = _PLUGINS_DIR / "cc_develop" / "skills" / "_shared" / "codemap-context.md"
 _DEVELOP_FIX = _PLUGINS_DIR / "cc_develop" / "skills" / "fix" / "SKILL.md"
+_DEVELOP_QNAME = _PLUGINS_DIR / "cc_develop" / "bin" / "parse_target_qname.py"
 _DEVELOP_GATES = _PLUGINS_DIR / "cc_develop" / "skills" / "_shared" / "codemap-gates.md"
 _OSS_GATES = _PLUGINS_DIR / "cc_oss" / "skills" / "_shared" / "codemap-gates.md"
 _DEVELOP_CONTEXT_COPY = _DEVELOP_CONTEXT.with_name("codemap-py--codemap-context.md")
@@ -290,12 +291,27 @@ class TestDevelopWrapper:
 
         assert "CODEMAP_QUERY_KIND" in wrapper
         assert "CODEMAP_QUERY_KIND=skip" in wrapper
-        for marker in ("CODEMAP_QUERY_KIND", "exact file/symbol", "explicit structural/tool request", '"standard"'):
+        for marker in ("CODEMAP_QUERY_KIND", "exact file/symbol", "explicit structural/tool request", "`standard`"):
             assert marker in fix
 
         route_guidance = fix.split("**Codemap route and target derivation**", 1)[1].split("```bash", 1)[0]
         assert "`imports`" not in route_guidance
         assert "`source`" not in route_guidance
+
+    @pytest.mark.skipif(not _DEVELOP_QNAME.is_file(), reason="develop plugin sibling tree absent")
+    def test_fix_route_fails_safe_to_standard(self) -> None:
+        """An unresolved route must fall back to `standard`, wherever that fallback now lives.
+
+        The fallback used to be an inline `CODEMAP_QUERY_KIND="standard"` assignment in the SKILL.md; it moved into
+        `parse_target_qname.py` when the block was extracted. Pin it at its current home so this gate keeps testing the
+        contract rather than a shell spelling.
+        """
+        fix = _DEVELOP_FIX.read_text(encoding="utf-8")
+        assert "fails safe to standard" in fix
+
+        qname = _DEVELOP_QNAME.read_text(encoding="utf-8")
+        assert '_DEFAULT_QUERY_KIND = "standard"' in qname
+        assert "query_kind = _DEFAULT_QUERY_KIND" in qname
 
     @pytest.mark.parametrize(
         "surface",

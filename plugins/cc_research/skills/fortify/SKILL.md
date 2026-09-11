@@ -242,7 +242,7 @@ Return ONLY: {\"status\":\"done\",\"components\":N,\"file\":\"${FORTIFY_DIR}/abl
 
 Pass `$F2_PROMPT` (fully expanded) as the `prompt=` argument to `Agent(...)`.
 
-**Synchronous spawn note**: the F2 scientist is spawned synchronously (not `run_in_background=true`), so CLAUDE.md §6 sentinel polling is unreachable mid-call. Timeout is handled post-hoc — after Agent() returns, check `$FORTIFY_DIR/ablation-candidates.jsonl`; if missing or empty, stop with `"fortify: Scientist timed out. Check $FORTIFY_DIR/ for partial output."` and surface with ⏱.
+**Spawn note**: the F2 scientist runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout is handled post-hoc — on the completion notification, check `$FORTIFY_DIR/ablation-candidates.jsonl`; if missing or empty, stop with `"fortify: Scientist timed out. Check $FORTIFY_DIR/ for partial output."` and surface with ⏱.
 
 Read `ablation-candidates.jsonl` after scientist completes. If `--max-ablations <M>` specified and component count + 1 (for full variant) exceeds M: sort by `expected_importance` (HIGH first, then MEDIUM, then LOW), keep top M-1 components plus always include `full` sanity-check variant. **Log dropped components**: print a warning listing each dropped component by `component_id` and `expected_importance` so users can verify the scientist's importance estimates before proceeding. Include this list in the F7 report under `## Dropped Variants`.
 
@@ -538,7 +538,7 @@ Include warning prominently in F7 report.
 
 Skip entirely if no `--venue` flag. Supported venues: `CVPR`, `NeurIPS`, `ICML`, `workshop`.
 
-Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")`. **Synchronous spawn note**: spawned synchronously (not `run_in_background=true`) — CLAUDE.md §6 sentinel polling is unreachable mid-call. After Agent() returns, check `$FORTIFY_DIR/reviewer-qa.md`; if missing or empty, treat as timed out and surface with ⏱.
+Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")`. **Spawn note**: runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On the completion notification, check `$FORTIFY_DIR/reviewer-qa.md`; if missing or empty, treat as timed out and surface with ⏱.
 
 Before building the prompt, substitute all bash variables into a single concrete string — never pass literal `<FORTIFY_DIR>`, `<path>`, or `<venue>` placeholders to the agent:
 

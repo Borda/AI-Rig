@@ -52,6 +52,9 @@ Hook ids (from `.pre-commit-config.yaml`): `ruff-check`, `ruff-format`, `eslint`
 - Python minimum 3.10. Repository root is an environment anchor, not an installable package.
 - Bootstrap test tooling with `uv sync --only-group test`; benchmark-only dependencies use `uv sync --only-group bench`.
 - Run tests with `.venv/bin/python -m pytest <paths>` — **not** `uv run pytest` or a bare `pytest`; the project venv is the pinned environment. Start focused, broaden to the affected suite before completion.
+- Broad local runs go parallel: `.venv/bin/python -m pytest -n 4 <paths>` (pytest-xdist, already in the test group). Measured on the full suite: 11556 tests in ~5 min at `-n 4`, several times faster than the same run serial. Use `-n 4` for any run wide enough to be worth waiting on; keep focused single-file runs serial, where worker startup costs more than it saves.
+- Drop `-n` when the failure itself is what you are reading: xdist interleaves worker output, hides `-x` ordering, and breaks `--pdb`. Reproduce a failure serially before diagnosing it.
+- A test that passes serially and fails only under `-n` is a real defect, not an xdist artifact — usually shared machine-global state (a `${TMPDIR}` sentinel without its `-${CSID}` suffix, a fixed port, a written file outside `tmp_path`). Fix the isolation; never paper over it by pinning that suite serial.
 
 ## Test Parametrization
 
@@ -77,6 +80,10 @@ Generic marker discipline — semantic markers, never `pytestmark`, `--strict-ma
 ## Python Documentation Style
 
 Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style — including the rule that a docstring's opening line states purpose in plain English, with code-shaped detail moved below. `AGENTS.md` §Python Documentation Style carries it for Codex. No repo-specific addition.
+
+## Adversarial Convergence Loop
+
+The stop rule for any review → fix cycle — at most three iterations, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`, stop on plateau or non-convergence, hard block on any open security or critical finding — lives in `foundry:rules/quality-gates.md` §Adversarial Convergence Loop, with the worked example in its `_full/` companion. `AGENTS.md` §Adversarial Convergence Loop carries it for Codex, which receives no foundry rules. The weights and their examples are one artifact with the ladder in `plugins/cc_foundry/skills/audit/severity-table.md`; changing either means changing both. No repo-specific addition.
 
 ## Markdown Policy
 

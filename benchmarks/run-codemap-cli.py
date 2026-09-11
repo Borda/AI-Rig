@@ -796,7 +796,7 @@ def module_to_source_file(module: str, repo_root: Path) -> Path | None:
         found.
 
     Examples:
-        >>> module_to_source_file("nope.not.here", Path("/tmp")) is None
+        >>> module_to_source_file("nope.not.here", getfixture("tmp_path")) is None
         True
     """
     parts = module.replace(".", "/")

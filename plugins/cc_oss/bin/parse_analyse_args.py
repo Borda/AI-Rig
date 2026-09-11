@@ -82,10 +82,15 @@ def _sentinel_path(name: str) -> Path:
         Path of the form ``<tmpdir>/<name>-<csid>``.
 
     Examples:
-        >>> import os
-        >>> os.environ["TMPDIR"] = os.environ.get("TMPDIR", "/tmp")
         >>> _sentinel_path("analyse-today").name.startswith("analyse-today-")
         True
+
+    Note:
+        This doctest must never assign ``os.environ["TMPDIR"]``. A doctest shares the
+        interpreter with every other test in the same pytest worker, so an assignment
+        here outlives it: on Windows, where ``TMPDIR`` is normally unset, planting the
+        POSIX literal ``/tmp`` made an unrelated ``parse_scan_args`` doctest resolve its
+        temp root to the drive-relative ``D:\\tmp`` and reject a valid write target.
     """
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()

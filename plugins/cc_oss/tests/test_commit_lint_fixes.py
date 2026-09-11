@@ -6,6 +6,7 @@ path (empty diff) and the stage-and-commit path, including commit-failure forwar
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 import subprocess
 
@@ -194,3 +195,17 @@ def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(clf, "which", lambda _: None)
     with pytest.raises(FileNotFoundError, match="git"):
         clf.main()
+
+
+def test_windows_sentinel_uses_native_tempdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A POSIX TMPDIR inherited by Windows cannot redirect the commit sentinel."""
+    monkeypatch.setenv("TMPDIR", "/tmp")
+    monkeypatch.setattr(clf.sys, "platform", "win32")
+    monkeypatch.setattr(clf.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(
+        clf.subprocess,
+        "run",
+        lambda cmd, **_kwargs: _FakeCompleted(stdout="/repo/my-project\n" if cmd[1] == "rev-parse" else "main\n"),
+    )
+
+    assert clf._sentinel_path("/fake/git") == tmp_path / "claude-commit-auth-my-project-main"

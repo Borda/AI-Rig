@@ -589,18 +589,18 @@ Severity: **medium** for `effort:` (no default documented); **low** for `when_to
 
 CLAUDE.md §6 requires every skill spawning background agents to implement: (1) launch sentinel creation, (2) 5-min file-activity poll, (3) 15-min hard cutoff. Absence = stalled agents silently drop findings.
 
-**Step 1 — Find skills with background agent spawns**:
+**Step 1 — Find skills that spawn agents**. Every spawn is a background spawn now: `Agent()` never blocks and there is no `run_in_background` parameter, so matching that dead token would make this check silently N/A everywhere.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
-printf "=== Check C35: Background agent health monitoring ===\n"
+printf "=== Check C35: Agent health monitoring ===\n"
 mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
-find "$_ROOT" -path "*/skills/*/SKILL.md" -exec grep -l 'run_in_background.*true\|run_in_background=true' {} + 2>/dev/null |
+find "$_ROOT" -path "*/skills/*/SKILL.md" -exec grep -l 'Agent(subagent_type' {} + 2>/dev/null |
   sort > "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills"
 if [ ! -s "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills" ]; then
-    printf "✓: No background agent spawns found — C35 N/A\n"
+    printf "✓: No agent spawns found — C35 N/A\n"
 else
     cat "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills"
 fi  # timeout: 5000
@@ -621,21 +621,25 @@ while IFS= read -r f; do  # timeout: 5000
     fi
     # grep -c prints 0 AND exits 1 on no match — || echo 0 double-fires, "0\n0" breaks numeric tests below
     has_sentinel=$(grep -c 'LAUNCH_AT\|touch /tmp/' "$f" 2>/dev/null) || has_sentinel=0
-    has_poll=$(grep -c 'find.*-newer.*-type f.*wc -l\|MONITOR_INTERVAL' "$f" 2>/dev/null) || has_poll=0
+    has_probe=$(grep -c 'find.*-newer.*-type f.*wc -l\|completion notification' "$f" 2>/dev/null) || has_probe=0
     has_cutoff=$(grep -c 'HARD_CUTOFF\|timed.out\|15 min\|900' "$f" 2>/dev/null) || has_cutoff=0
-    [ "$has_sentinel" -eq 0 ] && printf "⚠ C35a: %s — no launch sentinel (CLAUDE.md §6 step 1)\n" "$skill"
-    [ "$has_poll" -eq 0 ]    && printf "⚠ C35b: %s — no 5-min file-activity poll (§8 step 2)\n" "$skill"
-    [ "$has_cutoff" -eq 0 ]  && printf "⚠ C35c: %s — no 15-min hard cutoff (§8 step 3)\n" "$skill"
+    # MONITOR_INTERVAL is now a defect, not evidence: nothing sleeps, so an interval has no clock to run on
+    has_interval=$(grep -c 'MONITOR_INTERVAL\|every 5 min\|poll every' "$f" 2>/dev/null) || has_interval=0
+    [ "$has_sentinel" -eq 0 ] && printf "⚠ C35a: %s — no launch sentinel (CLAUDE.md §6)\n" "$skill"
+    [ "$has_probe" -eq 0 ]   && printf "⚠ C35b: %s — no liveness probe and no completion-notification handling (CLAUDE.md §6)\n" "$skill"
+    [ "$has_cutoff" -eq 0 ]  && printf "⚠ C35c: %s — no 15-min hard cutoff (CLAUDE.md §6)\n" "$skill"
+    [ "$has_interval" -gt 0 ] && printf "⚠ C35d: %s — prescribes a fixed-interval poll; spawns are background, the turn ends and resumes on notification\n" "$skill"
 done < "${TMPDIR:-/tmp}/audit-state-${CSID}/c35-bg-skills"
 ```
 
-Severity: **high** for C35a/b/c — stalled background agents drop findings with no user-visible signal. Fix: reference `$_FOUNDRY_SHARED/agent-spawn-protocol.md` (preferred once file exists) or inline all three §8 elements in skill.
+Severity: **high** for C35a/b/c — stalled agents drop findings with no user-visible signal. **medium** for C35d — a dead interval wastes turns rather than losing findings. Fix: reference `$_FOUNDRY_SHARED/agent-spawn-protocol.md` (preferred) or inline the elements in the skill.
 
 | Sub-check | Pattern | Severity | Auto-fix |
 | -- | -- | -- | -- |
-| C35a — no launch sentinel | no `touch /tmp/<sentinel>` after background spawn | high | no |
-| C35b — no file-activity poll | no 5-min `find -newer` loop | high | no |
+| C35a — no launch sentinel | no `touch /tmp/<sentinel>` after spawn | high | no |
+| C35b — no liveness probe | no `find -newer` probe, no completion-notification handling | high | no |
 | C35c — no hard cutoff | no `HARD_CUTOFF` / 15-min signal | high | no |
+| C35d — fixed-interval poll | `MONITOR_INTERVAL`, "every 5 min", "poll every" — no clock exists to run it | medium | no |
 
 ## Check 32 — Dead file detection
 

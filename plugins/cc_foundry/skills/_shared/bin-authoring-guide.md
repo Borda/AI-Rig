@@ -494,8 +494,8 @@ Example:
 
 ```bash
 # audit-skip: resilience-replication
-MONITOR_INTERVAL=${MONITOR_INTERVAL:-300}
 HARD_CUTOFF=${HARD_CUTOFF:-900}
+EXTENSION=${EXTENSION:-300}
 ```
 
 **When to use**: block appears in 2+ plugin files with only constant differences AND is not a bin/ extraction candidate — e.g. health-monitoring constants, plugin-availability checks, unsupported-flag resilience boilerplate. See `plugins/CLAUDE.md` §Fallback / Resilience Infrastructure for design rationale.

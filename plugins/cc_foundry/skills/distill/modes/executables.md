@@ -50,7 +50,7 @@ Spawn **foundry:curator** per plugin directory found under `$_SCAN_DIR` (one spa
 
 After all spawns complete: update `CHECK33_FILES` to point to the new files in `$RUN_DIR`.
 
-**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md` — synchronous spawns, no `run_in_background=true` here): each curator `Agent()` call is blocking and returns only when that plugin's scan finishes — no polling possible or needed. After each spawn returns, read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing → mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
+**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md`): the curator spawns run in the background. Issue them, end the turn, and resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing → mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
 
 ## Step E2: Parse candidates
 
@@ -69,8 +69,14 @@ Bin/ extraction candidates:
 
 | Cluster | Type  | Verdict | Blocks | Language | Purpose | Recommended target |
 |---------|-------|---------|--------|----------|---------|--------------------|
-| C1      | bin/  | HIGH    | 3      | bash     | resolves _shared/ path | bin/find-shared.sh |
+| C1      | bin/  | HIGH    | 3      | bash     | resolves _shared/ path | bin/resolve_shared_path.py |
 | C2      | prose | PROSE   | 1      | bash     | sets STALE var used only in prose conditions | replace with 2-row table |
+```
+
+**Before-numbers** — capture the pre-extraction measurement now, so the summary in Step E6 can quote a real delta rather than an estimate:
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
 ```
 
 Then call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool call arguments:
@@ -102,22 +108,22 @@ Cluster: purpose=<purpose>, language=<lang>, param slots=<differs-by values>.
 Source files: <list of source .md files>.
 **SURGICAL EDIT CONSTRAINT — mandatory**: modify ONLY the identified target block in each source file. Do NOT edit frontmatter, surrounding prose, other code blocks, check tables, or any content outside the target block. If you notice other issues in the file, record them in the summary — do not fix them.
 Steps:
-1. Create bin/<recommended-target> as standalone executable following bin-authoring-guide.md: module docstring, type hints, __name__ guard (Python) or shebang+set -euo pipefail (bash). CLI params: one named arg per param slot.
-2. In each source .md file replace ONLY the target inline block with one-liner invocation:
+1. Create bin/<recommended-target> as a standalone Python executable following bin-authoring-guide.md: module docstring with Usage and Exit codes, argparse, type hints, __name__ guard. NEVER a .sh file — these plugins run on native Windows, where .sh does not execute (plugins/CLAUDE.md §Installability). Portability: pathlib, temp dir via os.environ.get(\"TMPDIR\") or tempfile.gettempdir(), session token via os.environ.get(\"CSID\") or os.environ.get(\"CLAUDE_CODE_SESSION_ID\") or \"shared\", never os.getppid(). CLI params: one named arg per param slot.
+2. In each source .md file replace ONLY the target inline block with a one-line invocation:
    \`\`\`bash
-   RESULT=$(\"\${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/<script>\" --param1 val1 ...)  # timeout: <estimated_ms>
+   python \"\${CLAUDE_PLUGIN_ROOT:-plugins/<plugin>}/bin/<script>.py\" --param1 val1 ...  # timeout: <estimated_ms>
    \`\`\`
-   Preserve surrounding variable assignments consuming block output.
+   Prefer this bare form — every plugin allow-lists Bash(python:*), so it never prompts. A capture form (VAR=$(python ...)) trips the \"Contains expansion\" gate and passes only via an exact-text entry in that plugin's blueprint-manifest.json; when one is unavoidable, name the call site in the summary so the manifest is regenerated in the same commit. Preserve surrounding sentinel reads and variable assignments consuming block output.
 3. Diff gate — for each modified source file run: git diff HEAD -- <file> | grep "^[+-]" | grep -v "^[+-][+-][+-]"
    Count non-target changed lines. If any lines outside the target block changed: revert the file (git checkout HEAD -- <file>) and re-apply edit targeting only the block. Report diff line counts in summary.
-4. Verify: grep source files to confirm old block body absent; confirm bin/ script exists; run python plugins/cc_foundry/bin/check_orphaned_bin.py and confirm exit 0.
+4. Verify: grep source files to confirm old block body absent; confirm bin/ script exists; run all three gates and confirm each exits 0 — python plugins/cc_foundry/bin/check_orphaned_bin.py, python plugins/cc_foundry/bin/check_cli_flag_drift.py, and python plugins/cc_foundry/bin/check_fence_symmetry.py <changed .md files>.
 5. Create test file: write `plugins/<plugin>/tests/test_<script-basename>.py` (or the matching `tests/` dir for the plugin) with at minimum pytest tests covering the public CLI entry point (use monkeypatch/capsys/tmp_path). Follow the test style in `tests/` alongside the bin/ script — check existing tests for fixture and import patterns. Non-empty file required; empty file fails Check R4.
 Write extraction summary to $RUN_DIR/extract-<cluster-id>.md. Include: diff line counts per file, any reverts performed, incidental issues noticed but NOT fixed.
 Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/extract-<cluster-id>.md\",\"bin_script\":\"<path>\",\"source_files_updated\":N,\"test_file_created\":bool,\"confidence\":0.N}
 ")
 ```
 
-**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md` — synchronous spawns, no `run_in_background=true` here): each sw-engineer `Agent()` call is blocking and returns only when that cluster's extraction finishes — no polling possible or needed. After each spawn returns, read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing → mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
+**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): the sw-engineer spawns run in the background. Issue them, end the turn, and resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing → mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
 
 ## Step E5: Re-audit changed files
 
@@ -127,7 +133,24 @@ After all E4 agents complete, collect modified .md files from envelopes. Spawn *
 Agent(subagent_type="foundry:curator", prompt="Re-audit <file> after bin/ extraction. Check: (1) no inline block body remains — only bin/ invocation one-liner; (2) timeout annotation present on invocation line; (3) variable assignments consuming block output still correct; (4) no orphaned variable references; (5) run git diff HEAD -- <file> and flag any changed lines outside the target block — these are unauthorized side-edits; surface as high finding if found. Write findings to $RUN_DIR/reaudit-<slug>.md. Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/reaudit-<slug>.md\",\"issues\":N,\"side_edits_detected\":bool,\"confidence\":0.N}")
 ```
 
-## Step E6: Summary
+## Step E6: Measure, review, commit
+
+**After-numbers** — re-run the same measurement and diff it against `blocks-before.jsonl` from Step E3, so the summary quotes a measured delta:
+
+```bash
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-after.jsonl"  # timeout: 30000
+```
+
+Block count stays roughly flat by design — an extraction replaces a block's body, it does not delete the block. Token estimate and the count of blocks over 25 lines are the numbers that move.
+
+**Adversarial Convergence Loop** — before any commit, run the loop from `quality-gates.md` §Adversarial Convergence Loop over the combined diff: up to 3 `foundry:challenger` passes, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`, stop on `W_n == 0`, on a plateau (`0.5 < r_n < 1.0`), or immediately on `r_n ≥ 1.0`. Any open `security` or `critical` finding blocks the commit whatever the trend. On a stop with findings still open, report the score series and invoke `AskUserQuestion` instead of committing.
+
+**Commit grouping** — two commits, never one. Extraction and policy are different kinds of change and reviewers read them differently:
+
+1. The scripts, their tests, and the replaced call sites.
+2. Any change to the extraction rules themselves — this mode file, the Check 33 gate spec, the severity table.
+
+Each touched plugin bumps its own `plugin.json` `Y` in the commit that touches it, baseline read via `git show HEAD:<plugin-path>/.claude-plugin/plugin.json`. Sync each plugin's `README.md` in the same commit when a `bin/` table or a listed invocation changed.
 
 Print:
 
@@ -136,7 +159,9 @@ Extraction complete — <date>
   Extracted: N clusters → bin/ scripts
     <script-path>: <purpose> (<N> call sites updated)
   Source files updated: N
+  Tokens: <before> → <after> (Δ −N, −N%)   blocks >25 lines: <before> → <after>
   Re-audit: clean / N issues (see $RUN_DIR/)
+  Convergence: W_0 → W_1 → W_2 (<verdict>)
 ```
 
 Remind: run `/foundry:setup` to propagate bin/ scripts to `~/.claude/` plugin cache. Then run `/audit --efficiency` to confirm `clusters == 0`.

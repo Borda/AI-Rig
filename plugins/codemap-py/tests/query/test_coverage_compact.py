@@ -12,7 +12,7 @@ contract when a result is incomplete:
   honesty signals (``query_complete``, ``stale``, ``root_mismatch``).
 
 The scan-query CLI resolves the runtime marker under ``<git-root>/.cache/codemap``,
-so each test tree is a real git repo. The per-session sentinel lives in the OS temp dir
+so each test tree is a real git repo. The per-session sentinel lives in the temp dir
 keyed on the marker's session id; tests clear it around each run so ordering is
 deterministic and isolated.
 """
@@ -24,7 +24,6 @@ import os
 import subprocess
 import uuid
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -81,7 +80,11 @@ def _run_coverage_query(
     runtime: str = "claude",
 ) -> dict:
     """Run ``central --top 1`` and return its ``index`` coverage block."""
-    env = {**os.environ, "CODEMAP_LOGGING": "false"}
+    # TMPDIR points at the test's own tree: the coverage sentinel is keyed only on the
+    # session id, and these tests hardcode theirs, so inheriting the machine-wide temp dir
+    # makes two concurrent runs of this suite share one sentinel file and flip each other's
+    # first query to compact (claude-config.md TMPDIR Sentinel Scoping).
+    env = {**os.environ, "CODEMAP_LOGGING": "false", "TMPDIR": str(root)}
     env["CODEMAP_RUNTIME"] = runtime
     result = subprocess.run(
         [sys.executable, str(scan_query), "--index", str(index_path), *extra, "central", "--top", "1"],
@@ -120,7 +123,7 @@ class TestCoverageDietFailVerbose:
         session_id = f"aged-{tmp_path.name}-{uuid.uuid4().hex[:8]}"
         old_ts = int(time.time() * 1000) - (_MARKER_TTL_MS + 60_000)
         _write_marker(tmp_path, session_id, ts_ms=old_ts)
-        sentinel = Path(tempfile.gettempdir()) / f"codemap-coverage-{session_id}"
+        sentinel = tmp_path / f"codemap-coverage-{session_id}"
         sentinel.unlink(missing_ok=True)
         try:
             first = _run_coverage_query(scan_query, tmp_path, index_path)
@@ -139,7 +142,7 @@ class TestCoverageDietFailVerbose:
         now = int(time.time() * 1000)
         (marker_dir / "current-session-claude.json").write_text(json.dumps({"session_id": "claude-session", "ts": now}))
         (marker_dir / "current-session-codex.json").write_text(json.dumps({"session_id": "codex-session", "ts": now}))
-        sentinel = Path(tempfile.gettempdir()) / "codemap-coverage-codex-session"
+        sentinel = tmp_path / "codemap-coverage-codex-session"
         sentinel.unlink(missing_ok=True)
         try:
             first = _run_coverage_query(scan_query, tmp_path, index_path, runtime="codex")
@@ -159,7 +162,7 @@ class TestCompactBlockHonesty:
         index_path = _build_diet_repo(tmp_path, scan_index)
         session_id = f"signals-{tmp_path.name}-{uuid.uuid4().hex[:8]}"
         _write_marker(tmp_path, session_id)
-        sentinel = Path(tempfile.gettempdir()) / f"codemap-coverage-{session_id}"
+        sentinel = tmp_path / f"codemap-coverage-{session_id}"
         sentinel.unlink(missing_ok=True)
         try:
             _run_coverage_query(scan_query, tmp_path, index_path)  # first → full, consumes sentinel
@@ -178,7 +181,7 @@ class TestCompactBlockHonesty:
         index_path = _build_diet_repo(tmp_path, scan_index, degraded=True)
         session_id = f"incomplete-{tmp_path.name}-{uuid.uuid4().hex[:8]}"
         _write_marker(tmp_path, session_id)
-        sentinel = Path(tempfile.gettempdir()) / f"codemap-coverage-{session_id}"
+        sentinel = tmp_path / f"codemap-coverage-{session_id}"
         sentinel.unlink(missing_ok=True)
         try:
             first = _run_coverage_query(scan_query, tmp_path, index_path)  # full block

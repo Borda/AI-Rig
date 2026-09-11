@@ -83,6 +83,52 @@ After required fields, add skill-specific fields relevant to the report type (e.
 | Path | → .reports/<skill>/<timestamp>/<name>.md |
 ```
 
+## Adversarial Convergence Loop
+
+Stub in `quality-gates.md` carries the loop, the weight table and the trend table. This section carries the parts that need worked detail.
+
+### Worked example
+
+A refactor commit, three iterations, weights `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`:
+
+| Iteration | Findings | `W_n` | `r_n` | Reading |
+| -- | -- | -- | -- | -- |
+| 0 | 1 critical, 2 high, 3 medium, 4 low | 10 + 12 + 12 + 8 = 42 | — | first review |
+| 1 | 1 high, 2 medium, 3 low | 6 + 8 + 6 = 20 | 0.48 | converging — continue |
+| 2 | 2 low, 1 nit | 4 + 1 = 5 | 0.25 | converging, nothing above low remains → stop and proceed, recording the residue |
+
+The same run with `W_2 = 13` instead would read `r_2 = 0.65` — a plateau. Iterations remain, but the rule stops anyway: two passes have shown the remaining findings are not the kind this loop clears.
+
+### Assigning a tier when it is arguable
+
+The weight is only as honest as the tier. Two failure directions, both real:
+
+- **Inflation** — scoring a wording complaint as `high` makes the first pass look severe and the second look like progress, when nothing changed. A finding is `high` only if a named consumer breaks; if the answer to "what breaks?" is "a reader is mildly confused", it is `low` or `nit`.
+- **Deflation** — scoring a genuine defect as `medium` to keep the total under a threshold. The hard block on `security` and `critical` exists because these two tiers are the ones under the most pressure to be softened.
+
+When a finding could sit in either of two tiers, take the higher one and say why in one clause. An over-scored finding costs one more iteration; an under-scored one ships the defect.
+
+### Telling a structural finding from a targeted one
+
+The stub stops the loop on a structural finding rather than fixing it. The line between the two is what the fix touches, not how serious the finding is — a `critical` can be a one-line predicate, and a `nit` can be structural.
+
+| Finding | Fix touches | Verdict |
+| -- | -- | -- |
+| A glob matches at the wrong depth, so a check scans zero files | one constant, one helper | targeted — fix it |
+| A script exits 1 on findings where the block it replaced exited 0 | six `main()` bodies, one convention, their tests | targeted — a convention applied uniformly, no caller re-wired |
+| A script drops an argument its caller's output still refers to | one optional parameter, two call sites | targeted — the shape extends, nothing existing breaks |
+| The script should return JSON so callers stop parsing stdout | every call site, every consuming prose block, every test asserting stdout | **structural — flag, do not apply** |
+| These four scripts should share a base module | new module, four rewrites, the cross-plugin copy rule | **structural — flag, do not apply** |
+| This skill's steps run in the wrong order | step contracts, sentinel writes and reads, the compaction boundary | **structural — flag, do not apply** |
+
+The practical test: name every file the fix would touch. If that set is larger than the set the finding names, the reviewer has not reviewed the fix — and the next pass will be scoring work nobody has looked at.
+
+A structural finding is not a failure of the loop. It is the loop reporting that the next piece of work is a different piece of work, which is exactly what an independent reviewer is for. Record it with its blast radius so it can be scheduled, then finish or stop the current loop on the findings that remain.
+
+### Why `r ≥ 1.0` stops immediately
+
+A score that holds or grows after a fix round means the reviewer is finding faster than the fixes remove — the fixes are addressing symptoms, the review is drifting into new scope, or the design itself is wrong. None of those improve with a third pass; all three need a person to re-scope. Carrying on spends tokens generating findings nobody will act on and makes the eventual hand-off harder to read, because the score series no longer tells a story.
+
 ## Pre-Handover Check
 
 Trigger is a **specific unproven claim**, not a score crossing a line: a premise no source was read for, a conclusion resting on one ambiguous signal, an alternative never examined. A low score whose gaps are all already documented needs no dispatch — state them and hand over. When the trigger fires → push back on the analysis before handing over: ask for proof for each uncertain claim (read source code, read docs, trace through examples), re-examine assumptions, rethink conclusions from first principles. If `bridge@borda-ai-rig` is available, render and call `Skill(skill="bridge:review", args="Read-only adversarial review of <exact area and target paths>. Uncertain claims: <complete claim list>. Current evidence: <source paths or observations>. Challenge each claim, identify missing evidence and alternatives, and return actionable findings with locations; do not apply fixes.")`; never pass the placeholders or a workflow step label. Incorporate findings before handover. If the bridge is absent or disabled, state the specific gap explicitly so the user can decide to re-run.
