@@ -42,7 +42,8 @@ EXTERNAL_PLUGIN_TIMEOUT_SECONDS ?= 120
 .PHONY: sync-all sync-claude sync-codex clear-all clear-claude clear-codex \
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
         update-ext-plugins register-marketplace install-claude-plugins \
-        install-codex-plugins sync-codex-home-policy
+        install-codex-plugins sync-codex-home-policy \
+        prune-benchmarks prune-benchmarks-apply
 
 ## Meta targets ---------------------------------------------------------------
 
@@ -290,3 +291,16 @@ sync-codex-home-policy:
 		--source-config "$(PROJECT_DIR)/.codex/config.toml" \
 		--source-policy "$(PROJECT_DIR)/.codex/global-session-policy.md" \
 		--codex-home "$${CODEX_HOME:-$$HOME/.codex}"
+
+## Benchmark retention -------------------------------------------------------
+
+# benchmarks/results/ is gitignored and nothing reclaims it, so every run accumulates.
+# Deletions are unrecoverable; the bare target only reports, and -apply deletes.
+# Override the window with DAYS=90.
+DAYS ?= 30
+
+prune-benchmarks:
+	@python3 "$(PROJECT_DIR)/benchmarks/prune_results.py" --days $(DAYS)
+
+prune-benchmarks-apply:
+	@python3 "$(PROJECT_DIR)/benchmarks/prune_results.py" --days $(DAYS) --apply

@@ -668,34 +668,60 @@ def _is_package_dir(directory: Path) -> bool:
     return (directory / "__init__.py").exists() or (directory / "__init__.pyi").exists()
 
 
+_INIT_NAMES = ("__init__.py", "__init__.pyi")
+
+
 def _detect_src_root_from_init(root: Path) -> Path | None:
     """Strategy 2: find top-level package directories via the __init__ chain (``.py`` or ``.pyi``).
+
+    Prunes while descending, using the same rules as :func:`_iter_python_files`: built-in
+    ``SKIP_DIRS``, any dot-directory, and the user's ``[tool.codemap] exclude`` /
+    ``.codemapignore`` entries. The previous form paired two unbounded ``rglob`` sweeps with
+    a post-hoc ``SKIP_DIRS`` filter, which both cost ~17s on a tree holding vendored
+    checkouts and benchmark snapshots, and let an excluded subtree win the election.
+
+    Candidate selection is order-independent: the set is sorted before the ``src`` search
+    and the depth fallback breaks ties on the path itself. Iterating the raw set returned a
+    different root per ``PYTHONHASHSEED``.
 
     Args:
         root: project root to search for ``__init__.py``/``__init__.pyi`` files.
     """
+    exclusions = _load_exclusions(root)
+    skip_dirs = SKIP_DIRS | exclusions.dirs
     source_roots: set[Path] = set()
-    inits = sorted(set(root.rglob("__init__.py")) | set(root.rglob("__init__.pyi")))
-    for init in inits:
-        rel = init.relative_to(root)
-        if any(part in SKIP_DIRS for part in rel.parts):
+    for dirpath, dirnames, filenames in os.walk(root, topdown=True):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+        present = [name for name in _INIT_NAMES if name in filenames]
+        if not present:
             continue
-        pkg_dir = init.parent
+        pkg_dir = Path(dirpath)
+        rel_dir = pkg_dir.relative_to(root).as_posix()
+        if exclusions.globs and all(
+            _match_exclusion(f"{rel_dir}/{name}" if rel_dir != "." else name, exclusions) is not None
+            for name in present
+        ):
+            continue
         parent = pkg_dir.parent
-        if not str(parent).startswith(str(root)):
+        # Path containment, not string prefix: a sibling named like the root (``/a/roots``
+        # beside ``/a/root``) passed ``str.startswith`` and entered the election.
+        if parent != root and root not in parent.parents:
             continue
         if _is_package_dir(parent):
             continue
         source_roots.add(parent)
 
-    if len(source_roots) == 1:
-        return source_roots.pop()
-    if len(source_roots) > 1:
-        for candidate in source_roots:
-            if candidate.name == "src":
-                return candidate
-        return max(source_roots, key=lambda p: len(p.parts))
-    return None
+    if not source_roots:
+        return None
+    ordered = sorted(source_roots)
+    if len(ordered) == 1:
+        return ordered[0]
+    srcs = [candidate for candidate in ordered if candidate.name == "src"]
+    if srcs:
+        # Shallowest wins. Taking the sorted-first `src` instead made the winner depend on
+        # the alphabet: a vendored `a/src` beat a top-level `src`, while `zz/src` lost to it.
+        return min(srcs, key=lambda p: (len(p.parts), p))
+    return max(ordered, key=lambda p: (len(p.parts), p))
 
 
 @functools.lru_cache(maxsize=4)

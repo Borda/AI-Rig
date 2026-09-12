@@ -837,6 +837,19 @@ def maybe_self_heal(index: dict, index_path: Path, scan_root: Path | None) -> di
     # The caller's read lease is already released by the time we get here — the scan
     # below is a writer that takes its own exclusive lease, and a reader token still
     # held by this process would block it until its deadline expired, every time.
+    #
+    # Stand down when a writer is already running. The prompt hook starts a detached
+    # refresh on its own schedule, so a query in the same turn would otherwise spawn a
+    # second scan that can only queue behind the first, then be killed at
+    # _HEAL_TIMEOUT_S — paying the full timeout, healing nothing, and killing a writer
+    # mid-flight. The probe is advisory; losing the race costs no more than the
+    # unguarded behaviour did.
+    if rwgate.writer_active(index_path):
+        _print(
+            "codemap: a refresh is already running — answering from the current index.",
+            file=sys.stderr,
+        )
+        return index
     if not _run_incremental_scan(_BIN / "scan-index", scan_root, len(changed)):
         return index
     try:

@@ -142,3 +142,10 @@ ini_options.markers = [
 ini_options.filterwarnings = [
   "ignore::coverage.exceptions.CoverageWarning",
 ]
+
+[tool.codemap]
+# Bare dir names prune at walk time; path globs only filter after descending
+# (scanner._iter_python_files, scanner._detect_src_root_from_init).
+exclude = [
+  "results", # benchmarks/results/** — per-run snapshot copies of the plugin tree, 42160 .py duplicates
+]

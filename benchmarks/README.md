@@ -2,6 +2,26 @@
 
 Empirical validation for the `codemap` plugin. Provider ownership is explicit in every LLM runner name: `claude` and `codex` identify provider-exclusive transport, while `cli`, `generate`, and `provider_parity_contracts` are provider-neutral. The structural benchmark is **repo-agnostic**: swap `tasks-bench.json` (which ships a `repo` header with name, namespace, and default clone path) to run against any Python codebase. Reference results use `pytorch-lightning` pinned at tag `2.6.5` (auto-cloned to `.sandbox/pytorch-lightning`).
 
+## Deleted run artifacts
+
+A retention prune on 2026-09-12 removed every run directory older than 30 days, before `prune_results.py` had its citation guard. Eighteen of the runs cited below went with it. `benchmarks/results/` is gitignored and was never committed, so they are unrecoverable.
+
+The prose, hashes, per-cell verdicts, and conclusions in this file are unaffected and remain the record. What is gone is the raw evidence they attest to: these runs cannot be replayed, rescored, or checksum-verified, and any statement below resting on inspection of their artifacts should be read as unverifiable rather than as verified.
+
+```text
+claude-fix-multi-243a7e2174ea             codex-agentic-20260804T172617Z
+claude-fix-multi-f16f4b86418d             codex-agentic-20260804T205639Z
+claude-fix-multi-f2719755cb23             codex-agentic-20260804T212004Z
+claude-patch-post-lifecycle-9e7bbb02bc3a  codex-agentic-20260805T122121Z
+claude-readcrop-8c605ce4f83e              codex-agentic-20260805T144950Z
+claude-readcrop-a27396a66a4e              codex-agentic-20260805T170347Z
+claude-readcrop-aff1ece479cf              codex-integration-20260802T095824Z
+claude-readcrop-cd23af087f68              codex-integration-20260803T191236Z
+codex-patch-post-lifecycle-4119d30180f3   codex-unified-91752e388e4e
+```
+
+`prune_results.py` now refuses to delete any run named by a tracked file, and fails closed when it cannot determine which those are. A run cited by this document is evidence, not scratch, whatever its age.
+
 ## Provider-parity expansion
 
 ### Evidence isolation and held-out impact fixtures

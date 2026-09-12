@@ -2,6 +2,18 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.36.0
+
+- Prune excluded directories while detecting the source root, instead of sweeping the whole tree and filtering afterwards. `_detect_src_root_from_init` paired two unbounded `rglob` calls with a post-hoc `SKIP_DIRS` filter, so `.venv`, `.git`, and every other directory the filter would later discard was walked in full — on one repository, 124996 directories where pruning visits 9847 — and the sweep ran twice, once per init-file pattern. Detection there measured 15.3s, falling to 0.26s with no configuration at all; the cost was unpruned traversal and the double sweep, not any one large subtree. A full scan went from 21.4s to 5.9s, and an incremental scan that finds nothing to do from 15.9s to 0.35s. The second figure is the one that mattered — a no-op refresh that took longer than the query engine's own 10s self-heal timeout could never complete, so every self-heal was killed at the cap having healed nothing.
+
+- Detect the source root deterministically. Candidates were collected into a `set` and read back by iteration order, so an unchanged tree resolved to a different root between runs of the same command under a different `PYTHONHASHSEED`. Candidates are now ordered, the shallowest `src` wins, and both the `src` search and the depth fallback break ties on the path. Depth decides before the alphabet does: selecting the first `src` in sorted order is reproducible but arbitrary, letting a vendored `a/src` beat a top-level `src`.
+
+- Consult `[tool.codemap] exclude` and `.codemapignore` when detecting the source root. Detection previously ignored both, so an excluded subtree could be elected the root of the very index it is excluded from — on this repository a snapshot under `benchmarks/results/` won it. This governs which root is selected, not scan speed; the pruning above delivers the speed on its own.
+
+- Add `rwgate.writer_active`, an advisory probe reporting whether a live writer holds intent for an index. It is not a lease and never acquires one: a caller asking it is deciding whether to *start* work, not whether a read is safe.
+
+- Stand down from a self-heal while another writer is already running, rather than spawning a second `scan-index` that can only queue behind the first and then be killed at the heal timeout, having healed nothing. This covers the writer that appears after a query has taken its read lease — including a second query's own heal, which is how parallel queries used to stack scans — and not the writer already running when the query starts: that one the read lease waits out, after which the index is fresh and no heal is attempted. The query answers from the current index, flagged as before.
+
 ## 0.35.1
 
 - Make shared guidance independently installable through synchronized consumer-owned copies, and anchor the reference context batch's default index to the repository root.

@@ -130,7 +130,7 @@ Most query results include an `index` block. Read it before treating a list as f
 - `confidence`, `truncated`, and `total_available` describe result completeness. The default display limit is bounded for several list commands; use `--limit 0` where that command supports it when the full set matters.
 - `not_covered` names static-analysis blind spots and should remain in the final reasoning.
 
-Queries check freshness and may perform a bounded incremental self-heal unless `SCAN_NO_AUTOBUILD=1` disables query-time writes. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
+Queries check freshness and may perform a bounded incremental self-heal unless `SCAN_NO_AUTOBUILD=1` disables query-time writes. A self-heal also stands down when a writer takes the index while the query is reading it — most often another query's own heal — and answers from the index it already loaded. A refresh that was already running when the query started is waited out by the read lease instead, after which the index is fresh and no heal is needed. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
 
 ## 🧭 Honest limits
 
@@ -438,7 +438,7 @@ Index location and refresh rules:
 - `CODEMAP_INDEX_DIR` changes only the parent directory and keeps the project basename as the filename.
 - After a custom-root scan, query with `--index <emitted-index-path> --root <same-root>`; `--root` is path resolution only and does not select the index. With an explicit root, the guard admits only that exact default or `CODEMAP_INDEX_DIR`-override emitted path outside the caller project; arbitrary sibling files remain rejected.
 - Prompt freshness runs its indexed dirty-path check from the Git root, so a nested session detects root-level `.py`, `.pyi`, `.rst`, and nested documentation Markdown changes before starting its bounded refresh.
-- Normal queries may perform a bounded incremental self-heal; `SCAN_NO_AUTOBUILD=1` makes a missing index a hard refusal and prevents implicit writes.
+- Normal queries may perform a bounded incremental self-heal, skipped when a writer takes the index while the query is reading it; `SCAN_NO_AUTOBUILD=1` makes a missing index a hard refusal and prevents implicit writes.
 
 Every query exposes an `index` block. Follow this sequence:
 

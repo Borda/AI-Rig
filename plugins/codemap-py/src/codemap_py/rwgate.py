@@ -83,6 +83,7 @@ __all__ = [
     "read_lease",
     "read_index",
     "write_index",
+    "writer_active",
     "atomic_publish",
     "publish_stream",
     "IndexBusy",
@@ -96,6 +97,7 @@ __all__ = [
 DEFAULT_TIMEOUT = 30.0  # seconds; callers/tests may pass a shorter bound
 _POLL = 0.01  # seconds between contention retries
 _RELEASE_TIMEOUT = 10.0  # bounded mutex reacquire for orderly intent release
+_PROBE_TIMEOUT = 0.5  # bounded mutex acquisition for the advisory writer_active probe
 
 _COORD_NAME = ".index-rw"
 _READERS_NAME = "readers"
@@ -686,6 +688,41 @@ def _load_index(index_path: Path) -> Optional[dict]:
         raise IndexUnreadable(
             f"index is not valid JSON: {index_path} ({exc}); rebuild it with `codemap-py index`"
         ) from exc
+
+
+def writer_active(path: os.PathLike[str] | str, *, timeout: float = _PROBE_TIMEOUT) -> bool:
+    """Report whether a live writer currently holds intent for *path*.
+
+    Advisory only, and deliberately not a lease: the answer may be stale the moment it
+    returns. It exists so an *opportunistic* refresh can decline to start a second scan
+    over one already running, rather than queue behind it and be killed at its own
+    timeout. Never use it to decide whether a read is safe — that is what
+    :func:`read_lease` is for.
+
+    Probes under the registry mutex because :func:`_intent_live` recovers dead intent by
+    unlinking a fixed name; doing that unsynchronised can delete a competing writer's
+    freshly created intent.
+
+    Args:
+        path: index file path; coordination is resolved beside it.
+        timeout: bound on the mutex acquisition, not on any writer's work.
+
+    Returns:
+        True when intent is held, or when the mutex itself could not be taken within
+        *timeout* — contention there means some writer is mid-acquire, and the caller
+        asked whether to stand down. False when coordination is unavailable, since an
+        unwritable coordination root means no writer can be holding intent through it.
+    """
+    try:
+        coord = _ensure_coord(Path(path))
+    except CoordinationUnavailable:
+        return False
+    reg = _registry_for(coord)
+    try:
+        with reg.mutex(time.monotonic() + timeout):
+            return _intent_live(reg, coord / _WRITER_NAME)
+    except IndexBusy:
+        return True
 
 
 # ── writer path ─────────────────────────────────────────────────────────────
