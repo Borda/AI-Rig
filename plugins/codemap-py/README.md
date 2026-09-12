@@ -580,6 +580,7 @@ Every query accepts these global flags before or after the subcommand:
 - `--no-heal` answers from the existing index without bounded query-time refresh.
 - `--verbose-coverage` keeps the full coverage block on every query.
 - `--compact` reduces repeated coverage metadata.
+- `--format tsv` writes a table result as a header line plus tab-separated rows, naming the columns once instead of repeating every key on every row; the metadata envelope moves to stderr. JSON remains the default. It is refused for any result that is not a single table of flat, uniform records, so a nested value is never flattened into an unparsable cell. The batch pre-flight in `claude-skills/_shared/codemap-context.md` requests it for `central`, `coupled`, `fn-rdeps` and `fn-blast`; `rdeps` and `test-impact` are refused as non-tabular, and `symbol` returns a single row whose `source` field would become one quoted multi-line cell, so all three stay on JSON.
 
 Choose direction deliberately:
 

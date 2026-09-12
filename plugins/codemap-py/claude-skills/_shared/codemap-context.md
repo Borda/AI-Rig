@@ -38,20 +38,34 @@ PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
 _CM_ROUTE="${CODEMAP_QUERY_KIND:-standard}"
 if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
-    if [ "${SCAN_NO_AUTOBUILD:-0}" != "1" ]; then
-        scan-index --incremental 2>/dev/null || true   # refresh SHA-changed files only; never full-build mid-task
-    fi
+    # refresh SHA-changed files only; never full-build mid-task
+    [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] || scan-index --incremental 2>/dev/null || true
     _CM_N=0 _CM_H=0 _CM_STALE=0 _CM_NONEXH=0
+    # tsv only for flat wide tables: rdeps/test-impact exit 1 "format_not_tabular", symbol = 1 row.
+    # --format is codemap-py 0.37.0+; older builds exit 2 with empty stdout, so probe once.
+    _CM_TSV=0
+    case "$(scan-query --help 2>&1)" in *--format*) _CM_TSV=1 ;; esac
     _cq() {
-        local out; _CM_N=$((_CM_N+1))
-        out=$(scan-query --timeout 5 "$@" 2>/dev/null)
-        case "$out" in
-            *'"error"'*|'') ;;
-            *) _CM_H=$((_CM_H+1)); printf '%s\n' "$out"
-               case "$out" in *'"stale":true'*|*'"stale": true'*) _CM_STALE=1;; esac
-               # query_complete is the forward field (direction-scoped); exhaustive is its legacy alias for one cycle.
-               case "$out" in *'"query_complete":false'*|*'"query_complete": false'*|*'"exhaustive":false'*|*'"exhaustive": false'*) _CM_NONEXH=1;; esac ;;
+        local out err envelope fmt=json; _CM_N=$((_CM_N+1))
+        err=$(mktemp "${TMPDIR:-/tmp}/codemap-envelope-XXXXXX")
+        case "${_CM_TSV}:$1" in
+            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(scan-query --timeout 5 --format tsv "$@" 2>"$err") ;;
+            *)                                        out=$(scan-query --timeout 5 "$@" 2>"$err") ;;
         esac
+        envelope=$(cat "$err" 2>/dev/null); rm -f "$err"
+        # Errors stay JSON on stdout under any --format, so this test is format-independent.
+        case "$out" in *'"error"'*) return 0 ;; esac
+        # Empty tsv writes no rows but still an envelope — judge emptiness on the envelope's stream.
+        case "$fmt" in
+            tsv) case "$envelope" in '') return 0 ;; esac ;;
+            *)   case "$out" in '') return 0 ;; esac ;;
+        esac
+        _CM_H=$((_CM_H+1))
+        [ -n "$out" ] && printf '%s\n' "$out"
+        # tsv envelope on stderr, JSON envelope in $out — scan both or a stale index reads exhaustive.
+        case "$out$envelope" in *'"stale":true'*|*'"stale": true'*) _CM_STALE=1 ;; esac
+        # query_complete = forward field (direction-scoped); exhaustive = legacy alias, one cycle.
+        case "$out$envelope" in *'"query_complete":false'*|*'"query_complete": false'*|*'"exhaustive":false'*|*'"exhaustive": false'*) _CM_NONEXH=1 ;; esac
     }
     case "$_CM_ROUTE" in
         central) _cq central --top 5 ;;

@@ -2,6 +2,24 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.37.0
+
+- Add `--format {json,tsv}` to `scan-query`. JSON stays the default and is unchanged, so nothing parsing stdout today is affected. `tsv` names the columns once in a header line instead of repeating every key on every row: measured on a 100-row `central` result, 3588 tokens of JSON against 2130 of TSV, a 40.6% reduction on the payload an agent reads into context. Formatting is applied in the single stdout seam rather than at each emitter, so every command that returns a table honours the flag; converting emitters individually left most commands silently answering in JSON while the caller had asked for TSV.
+
+- Refuse `--format tsv` for any result that is not a single table of flat, uniform records — several candidate lists, ragged rows, a nested value in a cell, a bare list of strings, or an empty list. Stringifying a nested value would produce a cell no consumer can parse back, which fails silently; the refusal exits non-zero with a JSON error instead. Flat name lists such as `rdeps` are excluded deliberately: JSON already encodes them within 9% of a newline-separated list, so there is nothing to win.
+
+- Write the metadata envelope to stderr under `--format tsv`, keeping staleness and completeness flags reachable. Dropping it would make a stale or incomplete answer indistinguishable from a good one.
+
+- Keep every error object as JSON on stdout regardless of `--format`, since `{"error": ...}` is the shape callers already parse, and leave batch and `diff-impact` subqueries on JSON: the batch driver owns the one real stdout write and re-parses each captured subquery.
+
+- Write TSV bytes as UTF-8 with explicit `\n` through `sys.stdout.buffer`. Windows text-mode stdout rewrites a newline embedded in a quoted cell to CRLF, and a legacy console encoding raises on a non-ASCII path; JSON escapes both cases and TSV does not.
+
+- Request `--format tsv` from the batch pre-flight in `claude-skills/_shared/codemap-context.md`, for `central`, `coupled`, `fn-rdeps` and `fn-blast` only. The flag was inert before this: every skill call site funnels through the pre-flight's `_cq`, and nothing passed `--format`. The four are the commands whose result is one table wide enough for a header to pay for itself. `rdeps` and `test-impact` exit 1 `format_not_tabular`, which `_cq` reads as a miss and downgrades the run's completeness for. `symbol` does render as a table, but a one-row one whose header roughly equals its payload and whose `source` field — a whole function body — would become a single quoted multi-line cell.
+
+- Read the metadata envelope from stderr in `_cq`, which previously discarded it with `2>/dev/null`. Staleness and completeness are detected by substring-matching the envelope, and the contract grants consumers permission to skip re-querying when the run reports `completeness=exhaustive`; a stale index whose envelope went unread would have earned exactly that verdict. Emptiness is now judged on whichever stream carries the envelope for the format in use, so a TSV query that matched nothing counts as an empty table rather than a failed retrieval.
+
+- Probe `scan-query --help` once per pre-flight for `--format` before using it. The flag is new in this release, and an older `scan-query` on PATH answers an unknown option with argparse exit 2 and an empty stdout — a miss on the four commands worth the most.
+
 ## 0.36.0
 
 - Prune excluded directories while detecting the source root, instead of sweeping the whole tree and filtering afterwards. `_detect_src_root_from_init` paired two unbounded `rglob` calls with a post-hoc `SKIP_DIRS` filter, so `.venv`, `.git`, and every other directory the filter would later discard was walked in full — on one repository, 124996 directories where pruning visits 9847 — and the sweep ran twice, once per init-file pattern. Detection there measured 15.3s, falling to 0.26s with no configuration at all; the cost was unpruned traversal and the double sweep, not any one large subtree. A full scan went from 21.4s to 5.9s, and an incremental scan that finds nothing to do from 15.9s to 0.35s. The second figure is the one that mattered — a no-op refresh that took longer than the query engine's own 10s self-heal timeout could never complete, so every self-heal was killed at the cap having healed nothing.

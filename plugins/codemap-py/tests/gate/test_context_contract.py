@@ -186,7 +186,11 @@ class TestContextContract:
             (
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
                 "scan-index() { return 0; }",
-                'scan-query() { printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                # The snippet probes `scan-query --help` once to learn whether this build knows
+                # `--format`. That probe is capability detection, not a query, so it stays out of
+                # the trace; $SCAN_HELP decides which answer the stub gives.
+                'scan-query() { case "$1" in --help) printf "%s\\n" "${SCAN_HELP:-usage: scan-query}"; return 0;; esac; '
+                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
                 "",
             )
         )
@@ -217,6 +221,222 @@ class TestContextContract:
 
         queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
         assert queries == expected_queries
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @pytest.mark.parametrize(
+        ("query_kind", "tsv_commands", "json_commands"),
+        (
+            pytest.param("central", ["central --top 5"], [], id="central-is-tabular"),
+            pytest.param("coupling", ["coupled"], [], id="coupled-is-tabular"),
+            pytest.param(
+                "callers",
+                ["fn-rdeps package.module::target --exclude-tests"],
+                [],
+                id="fn-rdeps-is-tabular",
+            ),
+            pytest.param("blast", ["fn-blast package.module::target"], [], id="fn-blast-is-tabular"),
+            pytest.param(
+                "test-impact",
+                [],
+                ["test-impact package.module::target"],
+                id="test-impact-refuses-tsv",
+            ),
+            pytest.param("dependencies", [], ["rdeps package.module"], id="rdeps-refuses-tsv"),
+            pytest.param(
+                "standard",
+                [
+                    "central --top 5",
+                    "fn-rdeps package.module::target --exclude-tests",
+                    "fn-blast package.module::target",
+                ],
+                ["symbol --with-imports target"],
+                id="symbol-stays-json-beside-three-tables",
+            ),
+        ),
+    )
+    def test_tsv_is_requested_only_for_the_commands_that_render_as_one_table(
+        self,
+        tmp_path: Path,
+        query_kind: str,
+        tsv_commands: list[str],
+        json_commands: list[str],
+    ) -> None:
+        """Only four query kinds may carry ``--format tsv``.
+
+        ``rdeps`` and ``test-impact`` exit 1 ``format_not_tabular``, which the wrapper would read as a miss and
+        downgrade completeness for. ``symbol`` does render as a table, but a one-row one whose header roughly equals its
+        payload and whose ``source`` field would become a single quoted multi-line cell — tabular, and still the wrong
+        format.
+        """
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        trace = tmp_path / "queries.txt"
+        stubs = "\n".join(
+            (
+                'git() { printf "%s\\n" "$FAKE_REPO"; }',
+                "scan-index() { return 0; }",
+                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
+                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                "",
+            )
+        )
+
+        index_dir = tmp_path / ".cache" / "codemap"
+        index_dir.mkdir(parents=True)
+        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        env = os.environ | {
+            "CODEMAP_QUERY_KIND": query_kind,
+            "FAKE_REPO": tmp_path.as_posix(),
+            "TARGET_FN": "target",
+            "TARGET_MODULE": "package.module",
+            "TARGET_QUALIFIED": "package.module::target",
+            "TRACE": trace.as_posix(),
+        }
+
+        subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        queries = trace.read_text(encoding="utf-8").splitlines() if trace.exists() else []
+        assert queries == [f"--timeout 5 --format tsv {c}" for c in tsv_commands] + [
+            f"--timeout 5 {c}" for c in json_commands
+        ]
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    def test_an_older_scan_query_without_format_keeps_every_query_on_json(self, tmp_path: Path) -> None:
+        """``--format`` arrived in 0.37.0; an older build on PATH must not be handed the flag.
+
+        Argparse rejects an unknown option with exit 2 and an empty stdout, which the wrapper would score as a miss on
+        the four commands worth the most.
+        """
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        trace = tmp_path / "queries.txt"
+        stubs = "\n".join(
+            (
+                'git() { printf "%s\\n" "$FAKE_REPO"; }',
+                "scan-index() { return 0; }",
+                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--timeout N]"; return 0;; esac; '
+                'case "$*" in *--format*) printf "%s\\n" "unrecognized arguments: --format" >&2; return 2;; esac; '
+                'printf "%s\\n" "$*" >> "$TRACE"; printf \'%s\\n\' \'{"query_complete":true}\'; }',
+                "",
+            )
+        )
+
+        index_dir = tmp_path / ".cache" / "codemap"
+        index_dir.mkdir(parents=True)
+        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        env = os.environ | {
+            "CODEMAP_QUERY_KIND": "central",
+            "FAKE_REPO": tmp_path.as_posix(),
+            "TRACE": trace.as_posix(),
+        }
+
+        result = subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert trace.read_text(encoding="utf-8").splitlines() == ["--timeout 5 central --top 5"]
+        assert "completeness=exhaustive" in result.stdout
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @pytest.mark.parametrize(
+        ("envelope", "expected"),
+        (
+            pytest.param('{"index": {"stale": true}}', "completeness=stale", id="stale-on-stderr"),
+            pytest.param(
+                '{"index": {"query_complete": false}}',
+                "completeness=partial",
+                id="incomplete-on-stderr",
+            ),
+            pytest.param('{"index": {"stale": false}}', "completeness=exhaustive", id="clean-on-stderr"),
+        ),
+    )
+    def test_the_tsv_envelope_is_read_from_stderr(self, tmp_path: Path, envelope: str, expected: str) -> None:
+        """Staleness and completeness must survive the move to stderr.
+
+        Discarding stderr would report a stale index as ``exhaustive``, and the contract grants consumers permission to
+        skip re-querying on exactly that value — so the failure would be silently wrong answers rather than a missing
+        optimisation.
+        """
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        stubs = "\n".join(
+            (
+                'git() { printf "%s\\n" "$FAKE_REPO"; }',
+                "scan-index() { return 0; }",
+                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
+                'printf "%s\\n" "name\tn" ; printf "%s\\n" "a\t1"; printf "%s\\n" "$ENVELOPE" >&2; }',
+                "",
+            )
+        )
+
+        index_dir = tmp_path / ".cache" / "codemap"
+        index_dir.mkdir(parents=True)
+        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        env = os.environ | {
+            "CODEMAP_QUERY_KIND": "central",
+            "ENVELOPE": envelope,
+            "FAKE_REPO": tmp_path.as_posix(),
+        }
+
+        result = subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert expected in result.stdout
+        assert "hits=1" in result.stdout
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    def test_an_empty_tsv_table_counts_as_a_hit(self, tmp_path: Path) -> None:
+        """A query that matched nothing is an answer, not a retrieval failure.
+
+        Under JSON an empty result still carries its keys, so the wrapper saw a non-empty stdout. Under TSV it writes no
+        rows at all, and judging emptiness on stdout would score it a miss and drop completeness to ``unknown``.
+        """
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        stubs = "\n".join(
+            (
+                'git() { printf "%s\\n" "$FAKE_REPO"; }',
+                "scan-index() { return 0; }",
+                'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
+                'printf "%s\\n" \'{"index": {"stale": false}}\' >&2; }',
+                "",
+            )
+        )
+
+        index_dir = tmp_path / ".cache" / "codemap"
+        index_dir.mkdir(parents=True)
+        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        env = os.environ | {"CODEMAP_QUERY_KIND": "central", "FAKE_REPO": tmp_path.as_posix()}
+
+        result = subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert "queries_run=1 hits=1" in result.stdout
+        assert "completeness=exhaustive" in result.stdout
 
     def test_block_reference_target_matches_contract(self):
         """The managed block identifies the shipped integration contract."""

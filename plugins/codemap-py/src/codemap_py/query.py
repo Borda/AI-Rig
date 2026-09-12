@@ -79,6 +79,8 @@ from __future__ import annotations
 import argparse
 import ast
 import calendar
+import csv
+import io
 import json
 import os
 import re
@@ -177,6 +179,12 @@ def _print(*args: object, **kwargs: object) -> None:
     if not kwargs.get("file") and _capture is not None:
         _capture.append(str(args[0]) if args else "")
         return
+    if not kwargs.get("file") and _FORMAT == "tsv":
+        # Formatting lives here rather than at each emitter: there are ~34 stdout writers,
+        # and converting them individually left most commands silently answering in JSON
+        # while the caller had asked for TSV.
+        _emit_tsv(str(args[0]) if args else "")
+        return
     _builtin_print(*args, **kwargs)
     if kwargs.get("file"):
         return
@@ -191,6 +199,123 @@ def _print(*args: object, **kwargs: object) -> None:
     # the 2026-07 usage audit. Real CLI runs always pass through main() first.
     if _CMD:
         log_cli(_CMD, sys.argv[1:], result, _T0)
+
+
+#: Output encoding for result payloads; set from ``--format`` in main().
+_FORMAT: str = "json"
+
+
+def _tabular_key(payload: dict) -> str | None:
+    """Return the payload key holding a table of flat scalar rows, or None.
+
+    A payload qualifies when exactly one of its keys holds a non-empty list of dicts that
+    share one key order and carry only scalar values. Repeating those keys once per row is
+    what makes JSON expensive for this shape: measured on a 100-row ``central`` result,
+    tab-separated rows cost 2130 tokens against 3499 for the same rows as JSON.
+
+    Returns None when the shape does not qualify, so the caller can refuse rather than
+    flatten a nested value into an unparsable cell.
+    """
+    found = None
+    for key, value in payload.items():
+        if not isinstance(value, list) or not value or not all(isinstance(r, dict) for r in value):
+            continue
+        cols = list(value[0])
+        # A sibling list that does not qualify is not a rival table — skip it rather than
+        # veto. Refusing on its account would reject a payload that does carry exactly one
+        # renderable table, which is the case the flag exists for.
+        if not cols or any(list(r) != cols for r in value):
+            continue
+        if any(not isinstance(v, (str, int, float, bool)) and v is not None for r in value for v in r.values()):
+            continue
+        if found is not None:
+            return None
+        found = key
+    return found
+
+
+def _empty_table_key(payload: dict) -> str | None:
+    """Return the key of a lone empty result list, or None.
+
+    A query that matched nothing returns ``{"central": [], ...}``. That is an empty table,
+    not an unrenderable one: there are no rows and therefore no column order, but refusing
+    it would make the same command exit 0 or 1 depending on the data.
+
+    Returns None when more than one list is present, since then the empty one is not
+    unambiguously the result.
+    """
+    lists = [k for k, v in payload.items() if isinstance(v, list)]
+    if len(lists) == 1 and not payload[lists[0]]:
+        return lists[0]
+    return None
+
+
+def _to_tsv(rows: list[dict]) -> str:
+    """Render *rows* as a header line plus one tab-separated line per row.
+
+    ``csv`` with ``QUOTE_MINIMAL`` quotes any field containing a tab, newline, or quote, so a module name or path
+    carrying one round-trips instead of silently splitting a column.
+    """
+    buf = io.StringIO()
+    writer = csv.writer(buf, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
+    cols = list(rows[0])
+    writer.writerow(cols)
+    for row in rows:
+        writer.writerow(["" if row[c] is None else row[c] for c in cols])
+    return buf.getvalue().rstrip("\n")
+
+
+def _emit_tsv(raw: str) -> None:
+    """Render one already-serialised JSON result as TSV on stdout, or refuse.
+
+    Called from :func:`_print` for stdout writes when ``--format tsv`` is active, so every
+    emitter is covered by one seam instead of each having to opt in.
+
+    The metadata envelope each payload carries (``index``, coverage flags) has no tabular
+    shape, so it goes to stderr rather than being dropped: a caller reading rows on stdout
+    still sees staleness and completeness warnings. Bytes are written UTF-8 with explicit
+    ``\n`` through ``sys.stdout.buffer``, because Windows text-mode stdout would rewrite an
+    embedded newline inside a quoted cell to CRLF and a legacy console encoding would raise
+    on a non-ASCII path — JSON escapes both, TSV does not.
+
+    Args:
+        raw: the JSON text the emitter produced.
+    """
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        _builtin_print(raw)
+        return
+    empty = _empty_table_key(payload) if isinstance(payload, dict) else None
+    if empty is not None:
+        # An empty result is data, not a format error. Refusing it would make the same
+        # command succeed or fail depending on how many rows the index happens to hold.
+        envelope = {k: v for k, v in payload.items() if k != empty}
+        if envelope:
+            sys.stderr.write(json.dumps(envelope) + "\n")
+        if _CMD:
+            log_cli(_CMD, sys.argv[1:], payload, _T0)
+        return
+    key = _tabular_key(payload) if isinstance(payload, dict) else None
+    if key is None:
+        # Bypasses _die_json: that routes through _print, which would land back here and
+        # recurse. Errors stay JSON whatever format was requested.
+        _builtin_print(
+            json.dumps(
+                {
+                    "error": "format_not_tabular",
+                    "detail": "--format tsv needs exactly one list of flat, uniform records; this result has none",
+                }
+            )
+        )
+        sys.exit(_EXIT_GENERIC)
+    envelope = {k: v for k, v in payload.items() if k != key}
+    if envelope:
+        sys.stderr.write(json.dumps(envelope) + "\n")
+    sys.stdout.buffer.write(_to_tsv(payload[key]).encode("utf-8") + b"\n")
+    sys.stdout.flush()
+    if _CMD:
+        log_cli(_CMD, sys.argv[1:], payload, _T0)
 
 
 def _has_call_graph(index: dict) -> bool:
@@ -1115,7 +1240,16 @@ def _die_json(payload: dict, exit_code: int = _EXIT_GENERIC) -> None:
         >>> import subprocess, sys
         >>> # _die_json({"error": "boom"}, 2) prints '{"error": "boom"}' then exits 2.
     """
-    _print(json.dumps(payload))
+    # Always JSON, never routed through the formatter: an error object is not a table, so
+    # under ``--format tsv`` it would be refused by a path that reports failure the same
+    # way and recurse. The ``{"error": ...}`` shape on stdout is the contract callers
+    # parse, independent of the format asked for.
+    if _capture is not None:
+        _capture.append(json.dumps(payload))
+    else:
+        _builtin_print(json.dumps(payload))
+        if _CMD:
+            log_cli(_CMD, sys.argv[1:], payload, _T0)
     sys.exit(exit_code)
 
 
@@ -5090,6 +5224,16 @@ def _add_global_flags(parser: argparse.ArgumentParser) -> None:
         default=False,
         help="Emit compact coverage metadata and bounded alias-limitation evidence.",
     )
+    parser.add_argument(
+        "--format",
+        choices=("json", "tsv"),
+        default="json",
+        dest="output_format",
+        help=(
+            "Result encoding. json (default) is lossless. tsv writes table rows to stdout and the "
+            "metadata envelope to stderr, and is refused for results that are not a single flat table."
+        ),
+    )
 
 
 class _ScanQueryArgumentParser(argparse.ArgumentParser):
@@ -5190,10 +5334,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.command == "rdeps" and args.limit < 0:
         parser.error("rdeps --limit must be 0 or a positive integer")
-    global _CMD, _force_compact_coverage, _verbose_coverage  # noqa: PLW0603
+    global _CMD, _FORMAT, _force_compact_coverage, _verbose_coverage  # noqa: PLW0603
     _CMD = args.command
     _verbose_coverage = args.verbose_coverage
     _force_compact_coverage = args.compact
+    _FORMAT = args.output_format
     _reject_multiline_args(args)
 
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
