@@ -9,10 +9,16 @@ When check-index-currency is on PATH, also writes currency status to
 ${TMPDIR:-/tmp}/<prefix>-codemap-currency-<CSID> ("current", "stale", or "no_index").
 
 Usage:
-    python detect_codemap.py --prefix resolve [--force-off] [--strict] [--proj <name>]
+    python detect_codemap.py --prefix resolve [--arguments "$ARGUMENTS"] [--force-off]
+                             [--strict] [--proj <name>]
 
 Flags:
     --prefix <name>   Prefix for temp-file name (e.g. resolve, review). Required.
+    --arguments <s>   Raw skill argument text. `--no-codemap` in it implies --force-off;
+                      `--codemap` alone implies --strict. Matched as whole tokens, so a
+                      longer flag or a quoted value never triggers either. Lets the caller
+                      hand over one argv slot instead of interpolating $ARGUMENTS into
+                      shell tests, where an embedded quote breaks the block at parse time.
     --force-off       CODEMAP_FORCE_OFF=true — always write false.
     --strict          CODEMAP_STRICT=true — exit 1 when codemap absent/index missing.
     --proj <name>     Project name override (default: basename of git toplevel).
@@ -33,6 +39,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -149,6 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     prefix: str | None = None
     force_off = False
     strict = False
+    arguments: str | None = None
     proj_override: str | None = None
     # None = "not overridden" → derived from the project root below. An explicit
     # ``--idx-dir`` wins over CODEMAP_INDEX_DIR, which wins over the default layout.
@@ -166,6 +174,12 @@ def main(argv: list[str] | None = None) -> int:
         elif a == "--strict":
             strict = True
             i += 1
+        elif a == "--arguments" and i + 1 < len(args):
+            arguments = args[i + 1]
+            i += 2
+        elif a.startswith("--arguments="):
+            arguments = a[len("--arguments=") :]
+            i += 1
         elif a == "--proj" and i + 1 < len(args):
             proj_override = args[i + 1]
             i += 2
@@ -176,13 +190,39 @@ def main(argv: list[str] | None = None) -> int:
             i += 1
 
     if not prefix:
-        print("Usage: detect_codemap.py --prefix <name> [--force-off] [--strict]", file=sys.stderr)
+        print(
+            'Usage: detect_codemap.py --prefix <name> [--force-off] [--strict] [--arguments "$ARGUMENTS"]',
+            file=sys.stderr,
+        )
         return 2
+
+    # Derive the two modes from the skill's raw argument text, so the caller passes one argv
+    # slot instead of interpolating $ARGUMENTS into shell tests. shlex, not str.split: a
+    # plain split leaves `--keep "use --codemap later"` looking like a --codemap request,
+    # because the quotes stay attached to their neighbours instead of grouping the value.
+    # An explicit --force-off/--strict still wins; this only adds.
+    if arguments is not None:
+        try:
+            tokens = shlex.split(arguments)
+        except ValueError:
+            # Unbalanced quote in the argument text. Degrade to the coarser split rather
+            # than abort: a codemap-mode guess is not worth failing the whole skill over.
+            tokens = arguments.split()
+        if "--no-codemap" in tokens:
+            force_off = True
+        elif "--codemap" in tokens:
+            strict = True
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
     out_file = Path(tmpdir) / f"{prefix}-codemap-enabled-{csid}"
     currency_file = Path(tmpdir) / f"{prefix}-codemap-currency-{csid}"
+    # Distinct from `enabled`: the user asking for --no-codemap is not the same as codemap
+    # being unavailable, and the Gate A/B machinery branches on the difference. Callers that
+    # used to derive this from an inline shell test read it back from here instead.
+    (Path(tmpdir) / f"{prefix}-codemap-forced-off-{csid}").write_text(
+        f"{str(force_off).lower()}\n", encoding="utf-8", newline="\n"
+    )
 
     if force_off:
         out_file.write_text("false\n")

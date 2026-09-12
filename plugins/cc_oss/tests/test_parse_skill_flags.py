@@ -251,16 +251,21 @@ def test_main_invalid_flag_name_exits_nonzero() -> None:
     assert "invalid flag name" in result.stderr
 
 
-def test_help_flag_exits_zero_via_subprocess() -> None:
-    """Print usage and exit 0 (argparse)."""
+def test_help_blob_is_argument_text_not_argparse_help() -> None:
+    """Treat a blob of exactly ``--help`` as argument text, never as a help request.
+
+    Callers wrap this script in ``eval "$(...)"``, so argparse help printed on stdout would be executed as shell source
+    and leave every emitted variable unset.
+    """
     result = subprocess.run(
-        [sys.executable, str(_BIN), "--help"],
+        [sys.executable, str(_BIN), "--flags", "reply", "--help"],
         capture_output=True,
         text=True,
         check=True,
     )
     assert result.returncode == 0
-    assert "usage:" in result.stdout
+    assert "usage:" not in result.stdout
+    assert "CLEAN_ARGS=--help" in result.stdout
 
 
 def test_dash_leading_prose_forwarded_not_misparsed_as_flag() -> None:

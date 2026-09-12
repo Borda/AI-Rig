@@ -52,13 +52,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundr
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--keep "[^"]*"//g')
-rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/investigate-verdicts-${CSID}  # clear stale contract + probe ledger (compaction-contract.md §Lifecycle)  # timeout: 5000
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/investigate-keep-items-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" investigate "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast "$ARGUMENTS")"  # timeout: 5000
+ARGUMENTS="$CLEAN_ARGS"
+rm -f "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}"  # stale probe ledger  # timeout: 3000
 ```
 
 From $ARGUMENTS extract:

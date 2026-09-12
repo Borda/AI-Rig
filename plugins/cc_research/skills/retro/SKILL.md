@@ -75,8 +75,8 @@ If `--compare <run-id-2>` present: load second run identically from `.experiment
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_REMAINDER=$(echo "$ARGUMENTS" | sed -E 's/--compare[= ]+[^ ]+//g; s/--threshold[= ]+[^ ]+//g; s/--alpha[= ]+[^ ]+//g')
-RUN_ID_ARG=$(echo "$_REMAINDER" | awk '{for (i=1; i<=NF; i++) if ($i !~ /^--/) { print $i; exit }}')
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags keep --value-flags compare,threshold,alpha "$ARGUMENTS")"  # timeout: 5000
+RUN_ID_ARG=$(echo "$CLEAN_ARGS" | awk '{for (i=1; i<=NF; i++) if ($i !~ /^--/) { print $i; exit }}')
 RUN_ID_ARG="${RUN_ID_ARG:-}"
 echo "$RUN_ID_ARG" > "${TMPDIR:-/tmp}/retro-run-id-${CSID}"  # persist for T3 (vars lost between Bash calls)
 ```

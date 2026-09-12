@@ -111,12 +111,7 @@ Parse flags into actual shell variables (not prose) so downstream blocks see cor
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/dev-feature-keep-items-${CSID}"
-rm -f .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-feature "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
 ```
 
 ```bash
@@ -130,9 +125,9 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 ```bash
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-ISSUE_REF=""
-[[ "$ARGUMENTS" =~ --issue[[:space:]]+([^[:space:]]+) ]] && ISSUE_REF="${BASH_REMATCH[1]}"
-echo "$ISSUE_REF" > ${TMPDIR:-/tmp}/dev-issue-ref-${CSID}
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags issue "$ARGUMENTS")"  # timeout: 5000
+ISSUE_REF="$VALUE_ISSUE"
+echo "$ISSUE_REF" > "${TMPDIR:-/tmp}/dev-issue-ref-${CSID}"
 if [ -n "$ISSUE_REF" ]; then
     IFS= read -r REPO_NAME < "${TMPDIR:-/tmp}/dev-upstream-${CSID}" 2>/dev/null || REPO_NAME=""
     if [ -n "$REPO_NAME" ]; then
@@ -232,9 +227,9 @@ Gather full context before writing any code:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# strip flags first — mirrors debug/SKILL.md:154-156; CLEAN_ARGS omits --issue/--plan/--keep here
-ARGUMENTS_FOR_ISSUE_DETECT=$(echo "$ARGUMENTS" | sed -E 's/--no-challenge|--challenge|--team|--worktree|--no-codemap|--codemap|--semble|--accept-no-plan|--issue[= ]?[^ ]+|--repo[= ]?[^ ]+|--plan[= ]?[^ ]+|--keep[[:space:]]+"[^"]*"//g' | xargs)
-if [[ "$ARGUMENTS_FOR_ISSUE_DETECT" =~ ^#?[0-9]+$ ]]; then
+# CLEAN_ARGS is the blob with every declared flag and its value removed — same strip as debug
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap,semble,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
+if [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" feature "$ARGUMENTS"  # timeout: 6000
   ISSUE_FETCH_EXIT=$?
   [ "$ISSUE_FETCH_EXIT" -ne 0 ] && echo "⚠ issue_fetch.py failed (exit $ISSUE_FETCH_EXIT) — proceeding without issue context"
@@ -248,17 +243,8 @@ If free-text description provided: use Grep tool (pattern `<keyword>`, glob `**/
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-if [[ "$ARGUMENTS" == *"::"* ]]; then
-    _QNAME=$(printf '%s\n' "$ARGUMENTS" | grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' | head -1)
-    TARGET_MODULE="${_QNAME%%::*}"
-    TARGET_FN="${_QNAME##*::}"           # bare fn — codemap-context.md builds module::fn
-elif [[ "$ARGUMENTS" =~ ([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+) ]]; then
-    TARGET_MODULE="${BASH_REMATCH[1]}"     # dotted module extension
-    TARGET_FN=""
-else
-    TARGET_MODULE=""                       # net-new — only central baseline runs
-    TARGET_FN=""
-fi
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan,issue,repo "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a flag value like `--plan x.md` would otherwise outrank the goal's module
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty for net-new, so only central baseline runs
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > ${TMPDIR:-/tmp}/dev-feature-target-module-${CSID}   # persist — reloaded by rdeps block (bash state lost between Bash() calls)
 echo "$TARGET_FN"     > ${TMPDIR:-/tmp}/dev-feature-target-fn-${CSID}

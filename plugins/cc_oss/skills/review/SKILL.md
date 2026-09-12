@@ -79,7 +79,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
 # --reply needs $_OSS_SHARED (Step8 shepherd-reply-protocol.md); else degrades gracefully
 if [ ! -d "$_OSS_SHARED" ]; then
-    if [[ "$ARGUMENTS" == *--reply* ]]; then
+    # Step 0 parses flags properly, but this cold-start guard runs before it, so derive
+    # --reply the same way rather than substring-testing the raw argument text.
+    eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply "$ARGUMENTS")"  # timeout: 5000
+    if [ "$FLAG_REPLY" = "true" ]; then
         echo "⛔ _OSS_SHARED resolved to '$_OSS_SHARED' but dir absent — --reply requires oss plugin shared dir; verify oss plugin installed"
         exit 1
     else
@@ -120,7 +123,7 @@ Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this set
 | `--reply` | `REPLY_MODE` | `true` | `false` |
 | `--no-challenge` | `CHALLENGE_ENABLED` | `false` | `true` |
 | `--no-codemap` | `CODEMAP_FORCE_OFF` | `true` | `false` |
-| `--codemap` | `CODEMAP_STRICT` | `true` | `false` |
+| `--codemap` | — strict mode, consumed by `detect_codemap.py` | stop and report if codemap missing | auto-detect |
 | `--semble` | `SEMBLE_ENABLED` | `true` | `false` |
 | `--worktree` | `WT_ENABLED` | `true` | `false` |
 | `--full` | `FANOUT_CAP` | `0` — no cap, all preselected | `3` (`FANOUT_MAX`) |
@@ -265,17 +268,13 @@ Flags, `CLEAN_ARGS`, and `DIRECT_PATH_MODE` were parsed in Step 0 — reuse thos
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # loads: detect_codemap.py — consumers: resolve/SKILL.md, review/SKILL.md
 _DETECT_CODEMAP="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py"
-# codemap flags parsed here only (resolve/SKILL.md:141-143 idiom)
-CODEMAP_FORCE_OFF=false; CODEMAP_STRICT=false
-[[ " $ARGUMENTS " == *" --no-codemap "* ]] && CODEMAP_FORCE_OFF=true
-[[ " $ARGUMENTS " == *" --codemap "* ]] && [[ " $ARGUMENTS " != *" --no-codemap "* ]] && CODEMAP_STRICT=true
-[ "$CODEMAP_FORCE_OFF" = "true" ] && _DETECT_FLAGS="--force-off" || _DETECT_FLAGS=""
-[ "$CODEMAP_STRICT" = "true" ] && _DETECT_FLAGS="$_DETECT_FLAGS --strict"
-python "$_DETECT_CODEMAP" --prefix review $_DETECT_FLAGS 2>&1  # timeout: 5000
+# codemap flags parsed inside the script: one argv slot, shlex-tokenised (same idiom as resolve)
+python "$_DETECT_CODEMAP" --prefix review --arguments "$ARGUMENTS" 2>&1  # timeout: 5000
 [ $? -ne 0 ] && { echo "! BLOCKED — codemap strict mode requested but codemap not installed or index missing"; exit 1; }
 IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/review-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="off"
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 41)
+IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/review-codemap-forced-off-${CSID}" 2>/dev/null || CODEMAP_FORCE_OFF="false"
 [ "$CODEMAP_FORCE_OFF" = "false" ] && cat "$_OSS_SHARED/codemap-gates.md"  # timeout: 5000
 ```
 

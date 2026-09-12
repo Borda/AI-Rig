@@ -113,17 +113,8 @@ Determine task type and affected surface.
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-if [[ "$ARGUMENTS" == *"::"* ]]; then
-    _QNAME=$(printf '%s\n' "$ARGUMENTS" | grep -oE '[A-Za-z_][A-Za-z0-9_.]*::[A-Za-z_][A-Za-z0-9_]*' | head -1)
-    TARGET_MODULE="${_QNAME%%::*}"
-    TARGET_FN="${_QNAME##*::}"               # bare fn — codemap-context.md builds module::fn
-elif [[ "$ARGUMENTS" =~ ([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+) ]]; then
-    TARGET_MODULE="${BASH_REMATCH[1]}"       # dotted module target
-    TARGET_FN=""
-else
-    TARGET_MODULE=""
-    TARGET_FN=""
-fi
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags semble --value-flags max-depth "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty when goal names none
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > "$PLAN_NS/target-module"   # persist — bash state lost between Bash() calls
 echo "$TARGET_FN"     > "$PLAN_NS/target-fn"

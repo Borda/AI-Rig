@@ -44,7 +44,7 @@
 | R3 | bin/ script existence at local + installed | high | plugins (LOCAL_MODE only) | R3-FAIL: script referenced but missing locally; R3-WARN: script local but absent from installed cache |
 | R4 | bin/ Python test coverage | medium | plugins (LOCAL_MODE only) | Every `bin/*.py` has matching non-empty `tests/test_<basename>.py` with ≥1 `def test_` function that is not a pure `pass`/`...` stub |
 | 34 | Roster boundary alignment | medium/low | agents | 34a per-pair overlap >50% (>30% with --eager), 34b coverage gaps (task domain with no clear owner), 34c Sharpen Boundary section when --eager |
-| 35 | $ARGUMENTS shell injection | security | agents/skills | Bash blocks interpolating env-var user input without shlex-safe quoting |
+| 35 | $ARGUMENTS shell injection | security/high | agents/skills | Bash blocks interpolating argument text or env-var user input without handing it to a bin/ parser; `security` when an interpreter runs the text, `high` when only a shell construct guards it |
 | 36 | eval-unsafe bin/ output | security | agents/skills | Python bin/ scripts producing shell assignments for eval without `shlex.quote` |
 | 37 | Hardcoded secrets in config | security | all | API keys, tokens, passwords literal in any plugin `.md`, `settings.json`, or hook `.js` |
 | 38 | AskUserQuestion cap violation | high | skills | Skill branch path with >4 `AskUserQuestion` calls — exceeds `communication.md:86` hard limit |

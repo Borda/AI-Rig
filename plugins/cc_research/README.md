@@ -622,7 +622,7 @@ Generated files remain at the project root:
 
 The packaged bin inventory is:
 
-`check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `git_slugs.sh`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve-quality-gates.sh`, `resolve_shared.py`, `retro_analyze.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`.
+`check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `git_slugs.sh`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve-quality-gates.sh`, `resolve_shared.py`, `retro_analyze.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`.
 
 </details>
 

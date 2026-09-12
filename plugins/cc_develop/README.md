@@ -768,6 +768,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `build_codemap_batch.py`     | Build one Codemap pre-flight batch for changed modules.                      |
 | `codemap_resolve.py`         | Resolve Codemap auto, strict, or disabled mode.                              |
 | `codemap_scan.py`            | Derive affected modules and emit structural Codemap queries.                 |
+| `derive_codemap_target.py`   | Derive TARGET_MODULE/TARGET_FN from a skill goal.                            |
 | `dev_codemap_gate.py`        | Normalize and persist Codemap mode for all six workflows.                    |
 | `dev_issue_fetch_wrap.py`    | Fetch and persist upstream issue context for development skills.             |
 | `dev_parse_args.py`          | Parse development-skill arguments into shell-safe assignments.               |
@@ -775,10 +776,12 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `dev_setup_worktree_wrap.py` | Set up team-mode worktree run directories and state.                         |
 | `dev_shared_resolve.py`      | Resolve develop's own shared directory portably.                             |
 | `diagnosis_parse.py`         | Parse and validate a `--diagnosis` path from arguments.                      |
+| `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.              |
 | `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                  |
 | `find-polluter.py`           | Binary-search test isolation contamination.                                  |
 | `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                        |
 | `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                        |
+| `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                  |
 | `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.               |
 | `pytest_gate.py`             | Run an allow-listed pytest command with full output.                         |
 | `resolve_review_target.py`   | Resolve a review target and its changed Python files.                        |

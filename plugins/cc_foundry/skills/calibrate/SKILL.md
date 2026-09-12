@@ -122,20 +122,12 @@ From `$ARGUMENTS`, determine:
 - **Strip flags first**: extract `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep` before scope resolution; validate mutual exclusion (error and stop on conflict). Strip all flags from ARGUMENTS before scope token resolution:
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-  KEEP_ITEMS=""
-  if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-      KEEP_ITEMS="${BASH_REMATCH[1]}"
-  fi
-  ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--keep "[^"]*"//g')
-  rm -f .temp/state/skill-contract.md  # clear stale contract (compaction-contract.md §Lifecycle)  # timeout: 5000
-  LOCAL_MODE=false; [[ "$ARGUMENTS" == *"--local"* ]] && LOCAL_MODE=true
-  ARGUMENTS="${ARGUMENTS//--fast/}"; ARGUMENTS="${ARGUMENTS//--full/}"
-  ARGUMENTS="${ARGUMENTS//--ab-test/}"; ARGUMENTS="${ARGUMENTS//--apply/}"
-  ARGUMENTS="${ARGUMENTS//--skip-gate/}"; ARGUMENTS="${ARGUMENTS//--local/}"
-  ARGUMENTS="${ARGUMENTS#"${ARGUMENTS%%[![:space:]]*}"}"
+  python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" calibrate-state "$ARGUMENTS" --out-file "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items"  # timeout: 5000 — parses --keep, clears stale contract, makes state dir
+  eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast,full,ab-test,apply,skip-gate,local "$ARGUMENTS")"  # timeout: 5000
+  LOCAL_MODE="$FLAG_LOCAL"
+  ARGUMENTS="$CLEAN_ARGS"
   mkdir -p "${TMPDIR:-/tmp}/calibrate-state-${CSID}"
   echo "$LOCAL_MODE" > "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode"
-  echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/calibrate-state-${CSID}/keep-items"
   ```
 - **Target list** — remaining tokens after flag-strip; union of resolved targets:
   - `all` or omitted → all agents + `/audit` + routing + communication + all rules

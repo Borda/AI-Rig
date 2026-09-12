@@ -54,10 +54,9 @@ Triggered by `judge` or `judge <file.md>`.
 **Flag parsing** (first):
 
 ```bash
-SKIP_VALIDATION=false
-[[ "$ARGUMENTS" == *"--skip-validation"* ]] && SKIP_VALIDATION=true
-ARGUMENTS="${ARGUMENTS/--skip-validation/}"
-ARGUMENTS="${ARGUMENTS#"${ARGUMENTS%%[![:space:]]*}"}"  # trim leading whitespace
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags skip-validation "$ARGUMENTS")"  # timeout: 5000
+SKIP_VALIDATION="$FLAG_SKIP_VALIDATION"
+ARGUMENTS="$CLEAN_ARGS"
 ```
 
 ```bash

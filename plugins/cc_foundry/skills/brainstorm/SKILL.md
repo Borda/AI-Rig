@@ -53,13 +53,9 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundr
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--keep "[^"]*"//g')
-rm -f .temp/state/skill-contract.md  # clear stale contract (compaction-contract.md §Lifecycle)  # timeout: 5000
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/brainstorm-state-keep-items-${CSID}"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" brainstorm-state "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags tight,deep --value-flags type "$ARGUMENTS")"  # timeout: 5000
+ARGUMENTS="$CLEAN_ARGS"
 ```
 
 ## Step 1: Context scan

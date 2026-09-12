@@ -85,9 +85,9 @@ Extract operation, type, name, optional arguments from `$ARGUMENTS`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-SKIP_AUDIT=false
-[[ "$ARGUMENTS" == *"--skip-audit"* ]] && SKIP_AUDIT=true
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/\(^\|[[:space:]]\)--skip-audit\([[:space:]]\|$\)/ /g' | sed 's/^[[:space:]]*//' | sed 's/[[:space:]]*$//')
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags skip-audit "$ARGUMENTS")"  # timeout: 5000
+SKIP_AUDIT="$FLAG_SKIP_AUDIT"
+ARGUMENTS="$CLEAN_ARGS"
 echo "$SKIP_AUDIT" > "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}"  # persist (Check 41)
 echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}"
 ```

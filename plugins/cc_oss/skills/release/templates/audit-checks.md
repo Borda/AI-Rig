@@ -1,7 +1,8 @@
 <!-- file: audit-checks.md — consumers: oss skills/release/modes/audit.md (Phase 2), oss skills/release SKILL.md (Write release draft phase pre-flight) -->
 
 ```bash
-TARGET=$(echo "$ARGUMENTS" | awk '{print $2}')  # optional target version
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags changelog,summary,migration,append "$ARGUMENTS")"  # timeout: 5000
+TARGET=$(echo "$CLEAN_ARGS" | awk '{print $2}')  # optional target version — positional, so flags must be gone first
 # accept caller RANGE if set (branch-aware detection in Shared setup)
 # fallback: git describe with stable-tag-only filter — consistent with skill detection
 if [ -z "$RANGE" ]; then

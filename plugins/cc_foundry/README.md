@@ -892,9 +892,11 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `audit_hook_coverage.py`      | Measure how often the auto-allow hooks fire across session transcripts. |
 | `build_blueprint_manifest.py` | Hash shipped bash blueprints into the per-plugin allow manifest.        |
 | `cost_analyzer.py`            | Bucket Claude session token usage and estimated cost.                   |
+| `extract-keep-flag.py`        | Parse `--keep "<items>"` and clear a stale compaction contract.         |
 | `extract_code_blocks.py`      | Extract and classify fenced Markdown code blocks.                       |
 | `list_audit_files.py`         | Inventory the config files `/foundry:audit` covers, with block counts.  |
 | `measure_config_size.py`      | Size the config Claude loads, for `/foundry:audit`.                     |
+| `parse-skill-flags.py`        | Parse boolean and value skill flags into shell assignments.             |
 | `propagate_shared.py`         | Keep byte-identical cross-plugin shared files synchronized.             |
 | `resolve_centrality.py`       | Convert codemap centrality output into a resolver map.                  |
 | `timing_analyzer.py`          | Bucket Claude session clock time into a Markdown report.                |

@@ -119,14 +119,7 @@ Strip flags from `$ARGUMENTS` before using as path:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# --keep quoted value (compaction-contract.md §keep: semantics)
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/dev-review-keep-items-${CSID}"
-# stale contract cleanup (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-review "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
 ```
 
 ```bash

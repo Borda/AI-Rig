@@ -125,7 +125,8 @@ FORTIFY_DIR_BASE="${FORTIFY_DIR_BASE:-.experiments}"
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"  # default (Check 41)
-_ARG1=$(echo "$ARGUMENTS" | awk '{print $1}')
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags skip-run --value-flags venue,max-ablations "$ARGUMENTS")"  # timeout: 5000
+_ARG1=$(echo "$CLEAN_ARGS" | awk '{print $1}')
 if [ -n "$_ARG1" ] && [ "${_ARG1#-}" = "$_ARG1" ] && [ ! -f "$_ARG1" ] && [ -d "$STATE_DIR_BASE/$_ARG1" ]; then
   RUN_ID="$_ARG1"
 elif [ -n "$_ARG1" ] && [ -f "$_ARG1" ]; then

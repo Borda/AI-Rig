@@ -45,6 +45,26 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Parses `--keep "..."` out of a skill's arguments. The inline `[[ =~ ]]` twin it
+        # replaces reads ${BASH_REMATCH[1]}, which zsh leaves empty, so every skill that
+        # accepts --keep needs this and a plugin may be installed alone.
+        "canonical": "plugins/cc_foundry/bin/extract-keep-flag.py",
+        "copies": [
+            "plugins/cc_develop/bin/extract-keep-flag.py",
+            "plugins/cc_research/bin/extract-keep-flag.py",
+        ],
+    },
+    {
+        # Generic boolean/value flag extraction from a skill's raw argument text. Every
+        # plugin has skills that take flags, and a plugin may be installed alone.
+        "canonical": "plugins/cc_oss/bin/parse-skill-flags.py",
+        "copies": [
+            "plugins/cc_foundry/bin/parse-skill-flags.py",
+            "plugins/cc_research/bin/parse-skill-flags.py",
+            "plugins/cc_develop/bin/parse-skill-flags.py",
+        ],
+    },
+    {
         "canonical": "plugins/cc_foundry/hooks/agent-router.js",
         "copies": [
             "plugins/cc_oss/hooks/agent-router.js",

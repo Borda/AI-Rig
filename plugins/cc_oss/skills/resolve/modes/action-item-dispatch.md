@@ -14,16 +14,20 @@ Determine implementation agent, set up file-handoff dir, and authorize commits b
 
 `IMPL_AGENT`'s default is a routing marker, not a value passed to `Agent(subagent_type=)`. It records that unrouted work belongs to the bridge, and is read by the C1 medium-effort shortcut (which dispatches `Skill(skill="bridge:implement")`) and by the >8-item batching gate in `SKILL.md`. Phase 2 never uses it: it groups by the `change` → specialist table below, whose values are all real subagent types. Only `--agent <name>` puts a caller-supplied value in this variable, and that value does reach `Agent(subagent_type=)`.
 
+Substitute the Step 3e selection into `SELECTED_ITEMS` below as space-separated ids. It is orchestrator-held state, so this block is the only place it enters the shell; every later block reads the file this one writes.
+
 ```bash
-IMPL_AGENT="bridge:implement"
-[[ "$ARGUMENTS" == *"--agent "* ]] && {
-    IMPL_AGENT=$(echo "$ARGUMENTS" | sed -n 's/.*--agent \([^ ]*\).*/\1/p')
-    echo "→ Using --agent: $IMPL_AGENT"
-}
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags worktree --value-flags agent "$ARGUMENTS")"  # timeout: 5000
+IMPL_AGENT="${VALUE_AGENT:-bridge:implement}"
+[ -n "$VALUE_AGENT" ] && echo "→ Using --agent: $IMPL_AGENT"
 
 # set in Step 3b (pr-intelligence subagent); idempotent if already set
 [ -z "$IMPL_DIR" ] && IMPL_DIR=$(mktemp -d)  # timeout: 3000
 mkdir -p "$IMPL_DIR"  # timeout: 3000
+echo "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # mktemp path dies with this block otherwise
+SELECTED_ITEMS="<space-separated selected ids>"
+printf '%s\n' "$SELECTED_ITEMS" > "$IMPL_DIR/selected-items.txt"
 CHALLENGE_LOG=()  # per-item records: id|finding|evidence|evidence_why|suggestion|suggestion_why|resolution|detail — rationale/detail text carried through to Step 11 report, never dropped
 ```
 
@@ -79,13 +83,15 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
   - otherwise → `CHANGE_SCOPE=targeted` (default)
 - Compute `CHANGE_SCOPE` once before the loop; pass to Step 9 via shell variable
 
-**Caps** — soft cap 10, hard cap 20 items per dispatch. When `SELECTED_ITEMS` > 10 (`$(echo "$SELECTED_ITEMS" | wc -w)` > 10): invoke `AskUserQuestion` — (a) Apply first 10 now, re-run for remainder · (b) Apply all `[req]` only · (c) Proceed with all up to 20 (slow, context risk). Never silently start loop with >10 items; never exceed 20 in one dispatch (context budget boundary).
+**Caps** — soft cap 10, hard cap 20 items per dispatch. When `SELECTED_ITEMS` > 10 (count from context, or `wc -w < "$IMPL_DIR/selected-items.txt"` after re-reading `IMPL_DIR` from its sentinel): invoke `AskUserQuestion` — (a) Apply first 10 now, re-run for remainder · (b) Apply all `[req]` only · (c) Proceed with all up to 20 (slow, context risk). Never silently start loop with >10 items; never exceed 20 in one dispatch (context budget boundary).
 
 **Parallel specialist-worktree dispatch** (replaces sequential/one-item-at-a-time execution — real wall-clock lever, not just spawn-count reduction): C1 Codex-first routing (below) still runs first — batched ≤3 disjoint-file items per call, same-file items sequential. Everything falling through C1 splits into three passes: **Phase 1** challenge (read-only, parallel by domain), **Phase 2** implementation (one isolated `git worktree` per specialist, parallel), **Phase 3** merge-back (sequential, orchestrator-owned cherry-pick in original priority order). See Phase 1/2/3 below.
 
 **Per action item** — loop over `SELECTED_ITEMS` in priority order. Per item, read full details from `$IMPL_DIR/action-items.jsonl` (written by Step 3b pr-intelligence subagent) — this is the authoritative source for `full_comment_text`, `file`, `line`, `change`, `severity`, `author`:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 ITEM_DATA=$(jq -c ". | select(.id == <id>)" "$IMPL_DIR/action-items.jsonl")  # timeout: 5000
 ```
 
@@ -97,6 +103,8 @@ Each module's `rdeps` answer served from **review pre-flight cache** first (mate
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""  # prelude's mktemp path
+IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" 2>/dev/null || SELECTED_ITEMS=""
 # pre-loop; BLAST_RADIUS_CONTEXT shared with impl agents
 BLAST_RADIUS_CONTEXT=""
 IFS= read -r CODEMAP_CACHE_DIR < "${TMPDIR:-/tmp}/resolve-codemap-cache-dir-${CSID}" 2>/dev/null || CODEMAP_CACHE_DIR=""  # timeout: 3000
@@ -206,6 +214,9 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 **Structural prep — fire in this same turn, concurrently with the challenge agents** (the codemap queries below are read-only and depend only on item *files*, known from Step 3b — not on any challenge verdict — so they run under the challenge agents' latency shadow, adding ~0 wall-clock; grouping in Phase 2 then finds its maps already warm). Keyed off all `SELECTED_ITEMS` (not yet-unknown `SURVIVING_ITEMS`) — a few queries for items challenge later drops are cheap and hidden under the agent latency; Phase 2 filters to survivors. Resolve each file to its canonical module name + build the whole-repo centrality map (`resolve_centrality.py`), then capture each module's **forward imports** (`deps`, fan-*out*, naturally small — never the 20-cap that truncates reverse `rdeps`):
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" 2>/dev/null || SELECTED_ITEMS=""
 CODEMAP_MAPS="$IMPL_DIR/codemap-maps.json"; : > "$CODEMAP_MAPS"
 DEPS_MAP="$IMPL_DIR/codemap-deps.jsonl"; : > "$DEPS_MAP"
 if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
@@ -292,6 +303,8 @@ Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, inte
 **Centrality ordering** (lands the most foundational change first, so contract-defining commits precede their dependents): the `{module: rdep_count}` centrality map was already built once in Structural prep (`$IMPL_DIR/codemap-maps.json`, from a single authoritative `codemap-py query central` pass — not the 20-capped `BLAST_RADIUS_CONTEXT`, which saturates). Extract it to a file so the merge step can reorder **whole worktree groups** most-central-first. Safe precisely because the file-ownership tiebreak guarantees distinct groups touch disjoint files — reordering whole chains can't add a textual conflict, and commit order **within** a chain is never touched (chains may build on themselves). Missing maps (no `codemap-py query` / query failure) → flag omitted, plan applies in priority order unchanged.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 CENTRALITY_FILE=""
 if [ -s "$IMPL_DIR/codemap-maps.json" ]; then
     CENTRALITY_FILE=$(mktemp)  # timeout: 3000

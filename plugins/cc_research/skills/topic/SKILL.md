@@ -83,17 +83,21 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" top
 ```
 
 ```bash
-UNKNOWN_FLAGS=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | grep -oE -- '--[a-z][a-z0-9-]+' | grep -v -E -- '--(team|keep)' || true)  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+# scan CLEAN_ARGS, not the raw blob: --team and --keep "<items>" are already consumed, so a
+# flag-shaped word inside a --keep value no longer reports as unknown
+UNKNOWN_FLAGS=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE -- '--[a-z][a-z0-9-]+' || true)  # timeout: 5000
 ```
 
 **Early dispatch for `--team` and `plan` modes** — check BEFORE Steps 2-3. Priority: `--team` wins over `plan` (`plan --team` → Team Mode, topic string = "plan"):
 
 ```bash
-ARGUMENTS_LOWER=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]')  # timeout: 5000
-FIRST_WORD=$(echo "$ARGUMENTS_LOWER" | awk '{print $1}')  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+TEAM_MODE="$FLAG_TEAM"   # anchored-token match — no longer fires on --team inside a --keep value
+FIRST_WORD=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | awk '{print $1}')  # timeout: 5000
 ```
 
-- `$ARGUMENTS_LOWER` contains `--team` flag → skip Steps 2-3; jump directly to **Team Mode** section below.
+- `$TEAM_MODE` is `true` → skip Steps 2-3; jump directly to **Team Mode** section below.
 - Else `$FIRST_WORD` equals exactly `plan` → skip Steps 2-3; jump directly to **Plan Mode** section below.
 
 Steps 2-3 execute only when neither `--team` nor `plan` mode is detected.

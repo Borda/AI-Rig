@@ -16,12 +16,8 @@ Run when skill accepts `--plan <path>` flag. Sets `$PLAN_FILE`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-PLAN_FILE=""
-if [[ "$ARGUMENTS" =~ --plan[[:space:]]+([^[:space:]]+) ]]; then
-  PLAN_FILE="${BASH_REMATCH[1]}"
-elif [[ "$ARGUMENTS" =~ --plan=([^[:space:]]+) ]]; then
-  PLAN_FILE="${BASH_REMATCH[1]}"
-fi
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags plan "$ARGUMENTS")"  # timeout: 5000 — both --plan spellings
+PLAN_FILE="$VALUE_PLAN"
 if [ -n "$PLAN_FILE" ] && [ ! -f "$PLAN_FILE" ]; then
   echo "! BREAKING — plan file not found: $PLAN_FILE"
   echo "Fix: pass an existing plan path via --plan <path> or --plan=<path>"

@@ -129,17 +129,13 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # codemap: auto-on if installed; --no-codemap off; --codemap strict (stop if missing)
 # loads: detect_codemap.py — consumers: resolve/SKILL.md, review/SKILL.md
 _DETECT_CODEMAP="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py"
-# codemap flags parsed here first, before parse-resolve-args
-CODEMAP_FORCE_OFF=false; CODEMAP_STRICT=false
-[[ " $ARGUMENTS " == *" --no-codemap "* ]] && CODEMAP_FORCE_OFF=true
-[[ " $ARGUMENTS " == *" --codemap "* ]] && [[ " $ARGUMENTS " != *" --no-codemap "* ]] && CODEMAP_STRICT=true
-[ "$CODEMAP_FORCE_OFF" = "true" ] && _DETECT_FLAGS="--force-off" || _DETECT_FLAGS=""
-[ "$CODEMAP_STRICT" = "true" ] && _DETECT_FLAGS="$_DETECT_FLAGS --strict"
-python "$_DETECT_CODEMAP" --prefix resolve $_DETECT_FLAGS 2>&1  # timeout: 5000
+# codemap flags parsed inside the script, before parse-resolve-args: one argv slot, shlex-tokenised
+python "$_DETECT_CODEMAP" --prefix resolve --arguments "$ARGUMENTS" 2>&1  # timeout: 5000
 [ $? -ne 0 ] && { echo "! BLOCKED — codemap strict mode requested but codemap not installed or index missing"; exit 1; }
 IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="off"
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 41)
+IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/resolve-codemap-forced-off-${CSID}" 2>/dev/null || CODEMAP_FORCE_OFF="false"
 [ "$CODEMAP_FORCE_OFF" = "false" ] && cat "$_OSS_SHARED/codemap-gates.md"  # timeout: 5000
 ```
 
@@ -186,7 +182,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$CLAUDE_PLUGIN_ROOT" ] || { echo "Error: CLAUDE_PLUGIN_ROOT is unset — verify oss plugin installation and that skill is invoked via Claude Code plugin system"; exit 1; }  # timeout: 5000
 [ -f "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" ] || { echo "Error: parse-resolve-args.py not found — verify oss plugin installation"; exit 1; }  # timeout: 5000
 # no codemap/keep flags in parse-resolve-args.py — strip before passing (parsed above)  # timeout: 3000
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--no-codemap//g; s/ --codemap / /g; s/--worktree//g' | sed 's/--keep "[^"]*"//g' | xargs)
+eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree "$ARGUMENTS")"  # timeout: 5000
+ARGUMENTS="$CLEAN_ARGS"
 # defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
@@ -554,11 +551,9 @@ TaskUpdate(task_id=TASK_IMPL, status="in_progress")
 
 ```bash
 # computed here for cap-threshold branch (full resolve in action-item-dispatch.md)
-_RESOLVE_IMPL_AGENT="bridge:implement"
-[[ "$ARGUMENTS" == *"--agent "* ]] && _RESOLVE_IMPL_AGENT=$(echo "$ARGUMENTS" | sed -n 's/.*--agent \([^ ]*\).*/\1/p')
-if [ "$_RESOLVE_IMPL_AGENT" = "bridge:implement" ] && [ "$(echo "$SELECTED_ITEMS" | wc -w)" -gt 8 ]; then
-    :
-fi
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags worktree --value-flags agent "$ARGUMENTS")"  # timeout: 5000
+_RESOLVE_IMPL_AGENT="${VALUE_AGENT:-bridge:implement}"
+echo "$_RESOLVE_IMPL_AGENT"   # item count belongs to the prose gate below; SELECTED_ITEMS only enters the shell in action-item-dispatch.md's prelude, later than this
 ```
 
 <!-- branch: codex-cap — only when codex agent AND N>8 items; adds 1 call (max 5 if user proceeds; worst case = item-select + commit-mode + codex-cap + push-auth + post-pr) -->

@@ -103,12 +103,7 @@ Parse flags into actual shell variables (not prose) so downstream blocks see cor
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/dev-fix-keep-items-${CSID}"
-rm -f .temp/state/skill-contract.md  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-fix "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
 ```
 
 ```bash

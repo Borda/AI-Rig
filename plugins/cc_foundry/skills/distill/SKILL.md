@@ -46,17 +46,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundr
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--keep "[^"]*"//g')
-rm -f .temp/state/skill-contract.md  # clear stale contract (compaction-contract.md §Lifecycle)  # timeout: 5000
-mkdir -p "${TMPDIR:-/tmp}/distill-state-${CSID}"
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items"
-EAGER=false
-[[ "$ARGUMENTS" == *"--eager"* ]] && EAGER=true
-ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--eager//g' | xargs)  # timeout: 3000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" distill-state "$ARGUMENTS" --out-file "${TMPDIR:-/tmp}/distill-state-${CSID}/keep-items"  # timeout: 5000 — parses --keep, clears stale contract, makes state dir
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags eager "$ARGUMENTS")"  # timeout: 5000
+EAGER="$FLAG_EAGER"
+ARGUMENTS="$CLEAN_ARGS"
 echo "EAGER=$EAGER"  # shell vars don't persist across Bash calls — read from stdout
 echo "ARGUMENTS_STRIPPED=$ARGUMENTS"
 ```
@@ -64,11 +57,9 @@ echo "ARGUMENTS_STRIPPED=$ARGUMENTS"
 > **Note**: `EAGER` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `ARGUMENTS_STRIPPED=...`) and carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER` as a live shell variable in later steps — substitute the literal boolean value read from stdout.
 
 ```bash
-PROJECT_FLAG=false
-if echo "$ARGUMENTS" | grep -qE -- "--project"; then
-    PROJECT_FLAG=true
-    ARGUMENTS=$(echo "$ARGUMENTS" | sed 's/--project//' | xargs)
-fi
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags project "$ARGUMENTS")"  # timeout: 5000
+PROJECT_FLAG="$FLAG_PROJECT"
+ARGUMENTS="$CLEAN_ARGS"
 echo "PROJECT_FLAG=$PROJECT_FLAG"
 echo "ARGUMENTS_FINAL=$ARGUMENTS"
 ```

@@ -64,7 +64,10 @@ Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, t
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_STRIPPED=$(echo "$ARGUMENTS" | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+# CLEAN_ARGS has flags and --keep "<items>" removed; the sed pair still strips the user's own
+# wrapping quotes, which no flag parser touches
+_STRIPPED=$(echo "$CLEAN_ARGS" | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')  # timeout: 5000
 NONFLAG_TOKEN_COUNT=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | wc -l | tr -d ' ')  # timeout: 5000
 FILE_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | head -1)  # timeout: 5000
 echo "$FILE_ARG" > "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}"

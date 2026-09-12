@@ -83,12 +83,8 @@ Parse flags into actual shell variables (not prose) so downstream blocks see cor
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-KEEP_ITEMS=""
-if [[ "$ARGUMENTS" =~ --keep[[:space:]]\"([^\"]+)\" ]]; then
-    KEEP_ITEMS="${BASH_REMATCH[1]}"
-fi
-echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/dev-debug-keep-items-${CSID}"
-rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-debug "$ARGUMENTS"  # timeout: 5000 — parses --keep, clears stale contract
+rm -f "${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}"  # timeout: 3000
 ```
 
 ```bash
@@ -158,8 +154,8 @@ Follow §URL Normalization to set `CI_RUN_ID`. If `CI_RUN_ID` set, follow §Log 
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # strip flags first — "123 --no-challenge" would fail integer detection otherwise
-ARGUMENTS_FOR_MODE_DETECT=$(echo "$ARGUMENTS" | sed -E 's/--no-challenge|--challenge|--team|--worktree|--ci-run[= ]?[^ ]+|--issue|--repo[= ]?[^ ]+|--no-codemap|--codemap|--keep +"[^"]+"//g' | xargs)
-if [[ " $ARGUMENTS " == *" --issue "* ]] || [[ "$ARGUMENTS_FOR_MODE_DETECT" =~ ^#?[0-9]+$ ]]; then
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,issue,no-codemap,codemap --value-flags ci-run,repo "$ARGUMENTS")"  # timeout: 5000
+if [ "$FLAG_ISSUE" = "true" ] || [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
     DEBUG_MODE="issue"
 else
     DEBUG_MODE="symptom"
@@ -480,7 +476,8 @@ Evidence: <key signals that confirmed the hypothesis>
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-SLUG=$(echo "$ARGUMENTS" | tr ' ' '\n' | grep -v '^--' | grep -v '^[0-9]\+$' | head -4 | tr '\n' '-' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-' | sed 's/-$//'); [ -z "$SLUG" ] && SLUG="unnamed-$(date +%s)"
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags worktree --value-flags issue "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS drops flags and their values before slugging
+SLUG=$(echo "$CLEAN_ARGS" | tr ' ' '\n' | grep -v '^--' | grep -v '^[0-9]\+$' | head -4 | tr '\n' '-' | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]-' | sed 's/-$//'); [ -z "$SLUG" ] && SLUG="unnamed-$(date +%s)"
 # grep -v strips bare numeric tokens (CI run IDs) — avoids filenames like debug_12345678.md
 # main tree: orig-root sentinel (worktree §Enter) or pwd — /develop:fix must reach this file
 IFS= read -r _DIAG_BASE < "${TMPDIR:-/tmp}/dev-debug-orig-root-${CSID}" 2>/dev/null || _DIAG_BASE="$(pwd)"

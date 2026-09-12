@@ -65,8 +65,18 @@ def bin_scripts(scan_dir: Path) -> list[Path]:
 
 
 def expected_test(script: Path) -> Path:
-    """Return the test file path a bin/ script is expected to have."""
-    return script.parent.parent / "tests" / f"test_{script.stem}.py"
+    """Return the test file path a bin/ script is expected to have.
+
+    Hyphens in the script stem become underscores: a test module named ``test_a-b.py`` is not
+    importable, so a hyphenated script's tests can only live under the underscore spelling.
+
+    Examples:
+        >>> expected_test(Path("plugins/p/bin/thing.py")).as_posix()
+        'plugins/p/tests/test_thing.py'
+        >>> expected_test(Path("plugins/p/bin/parse-skill-flags.py")).as_posix()
+        'plugins/p/tests/test_parse_skill_flags.py'
+    """
+    return script.parent.parent / "tests" / f"test_{script.stem.replace('-', '_')}.py"
 
 
 def check_script(script: Path) -> str | None:

@@ -67,13 +67,12 @@ def _first_line(path: Path) -> str:
 
 def _resolve_paths(skill: str, tmp: Path, csid: str) -> tuple[Path, Path]:
     """Map *skill* to its (raw-flag input, resolved-value output) sentinel pair."""
-    if skill in ("debug", "feature", "fix"):
+    if skill in ("debug", "feature", "fix", "refactor"):
+        # All four read the per-skill sentinel dev_parse_args.py writes from its CODEMAP spec.
+        # refactor used to name a `-raw` variant that only an inline shell block in its
+        # SKILL.md ever wrote, so the skill had to re-parse the flag the parser had already
+        # parsed. Reading the same file as its siblings removes that second parse.
         return tmp / f"dev-{skill}-codemap-{csid}", tmp / f"dev-{skill}-codemap-enabled-{csid}"
-    if skill == "refactor":
-        return (
-            tmp / f"dev-refactor-codemap-raw-{csid}",
-            tmp / f"dev-refactor-codemap-enabled-{csid}",
-        )
     if skill == "review":
         # review round-trips one file: raw flag in, resolved value out
         round_trip = tmp / f"dev-review-codemap-enabled-{csid}"

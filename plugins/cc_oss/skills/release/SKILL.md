@@ -178,15 +178,16 @@ mkdir -p .temp  # timeout: 5000
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-DO_CHANGELOG=false; DO_SUMMARY=false; DO_MIGRATION=false; DO_APPEND=false
-FIRST=$(echo "$ARGUMENTS" | awk '{print $1}')
-# empty at single-word ARGUMENTS (cut -d' ' -f2- echoes whole line, no delimiter)
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags changelog,summary,migration,append "$ARGUMENTS")"  # timeout: 5000
+DO_CHANGELOG="$FLAG_CHANGELOG"; DO_SUMMARY="$FLAG_SUMMARY"; DO_MIGRATION="$FLAG_MIGRATION"; DO_APPEND="$FLAG_APPEND"
+FIRST=$(echo "$CLEAN_ARGS" | awk '{print $1}')
+# REST keeps the raw blob's tail — downstream readers of the sentinel expect flags intact
 REST=""; case "$ARGUMENTS" in *" "*) REST="${ARGUMENTS#* }";; esac
 echo "${REST:-}" > "${TMPDIR:-/tmp}/release-rest-${CSID}"
 # strip mode token — else leaks into RANGE
-_PARSE_INPUT="$ARGUMENTS"; case "$FIRST" in notes|prepare|audit|demo) _PARSE_INPUT="$REST";; esac
+_PARSE_INPUT="$CLEAN_ARGS"; case "$FIRST" in notes|prepare|audit|demo) case "$CLEAN_ARGS" in *" "*) _PARSE_INPUT="${CLEAN_ARGS#* }";; *) _PARSE_INPUT="";; esac;; esac
 RANGE=$(echo "$_PARSE_INPUT" | grep -oE '[^ ]+([[:space:]]*->[[:space:]]*|\.\.)[^ ]+' | head -1 | tr -d '[:space:]')
-for _a in $_PARSE_INPUT; do case "$_a" in --changelog) DO_CHANGELOG=true;; --summary) DO_SUMMARY=true;; --migration) DO_MIGRATION=true;; --append) DO_APPEND=true;; --*) echo "⚠ unknown flag: $_a";; *) [ -z "$RANGE" ] && RANGE="$_a";; esac; done
+for _a in $_PARSE_INPUT; do case "$_a" in --*) echo "⚠ unknown flag: $_a";; *) [ -z "$RANGE" ] && RANGE="$_a";; esac; done
 RANGE="${RANGE/->/..}"
 # persist (Check 41) — Gather-changes needs this for marker-based RANGE resolution
 echo "${DO_APPEND}" > "${TMPDIR:-/tmp}/release-do-append-${CSID}"
