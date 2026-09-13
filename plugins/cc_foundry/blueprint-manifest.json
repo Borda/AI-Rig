@@ -340,10 +340,6 @@
       "kind": "block",
       "src": "skills/distill/modes/prune.md:13"
     },
-    "11e1383965a2544adfd01cb89a3038bf9c5261f54585e8c9511996ad02a78bd4": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-py--codemap-context.md:35"
-    },
     "120f1ff3bf18841f89fa9c11bd2d6690ac574341da195ae8b48998e6ae503464": {
       "kind": "block",
       "src": "skills/audit/templates/checks-setup.md:135"
@@ -931,6 +927,10 @@
     "31bd352983e49f37ba0e177e2673c2398e9f9ebb635c4b77f8b17a39236cc49e": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:146"
+    },
+    "31f6832c0aada0bddba5d31a784f3b40cb93699cb631717007ce95a086464451": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "31fe8d85c3b63824972b6ecd5cf626b0351ee1fa0f66f7338720464c5e8ab45e": {
       "kind": "command",
@@ -2086,7 +2086,7 @@
     },
     "6ab2669a13310c789ac0cf285b13a598b2a0d0b9ae7d6700818202eeb9acb064": {
       "kind": "block",
-      "src": "skills/_shared/codemap-py--codemap-context.md:137"
+      "src": "skills/_shared/codemap-py--codemap-context.md:125"
     },
     "6ad6a587f81964493841956ef0522f3d8c42b3b377b3ae3337dc15b98c3458ac": {
       "kind": "block",
@@ -2471,10 +2471,6 @@
     "81337f0607685bcaa2d40eab6ff2aaa8c6d802666539d8c9d7ac4c9762f9a737": {
       "kind": "block",
       "src": "skills/audit/templates/checks-shared.md:436"
-    },
-    "813f33c8628ed379384b1f13ba328d4fe5734018a58bb6aaef56ba2ce6e6f37f": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-py--codemap-context.md:35"
     },
     "81802926852fb4db3d700663b86fc422b8e821166db42799b89f173d0d57158d": {
       "kind": "command",
@@ -3376,6 +3372,10 @@
       "kind": "command",
       "src": "skills/manage/SKILL.md:521"
     },
+    "abf7538a88807ff9506f9bfecbdd5a7702d357881e947ceaafc0eccae656cbe4": {
+      "kind": "command",
+      "src": "skills/_shared/codemap-py--codemap-context.md:35"
+    },
     "ac5904a70bcf9a70988dfb9e2738798d01b741c542990fd2b3bf863814abb8d0": {
       "kind": "command",
       "src": "skills/audit/templates/checks-agents.md:16"
@@ -3754,7 +3754,7 @@
     },
     "bec5c12142fe161f28afc60af48bc1e85953ee869a8c40410c8e7c5dca6c76d7": {
       "kind": "command",
-      "src": "skills/_shared/codemap-py--codemap-context.md:137"
+      "src": "skills/_shared/codemap-py--codemap-context.md:125"
     },
     "bef9cdbc073eab17c64244b783681684a78369a9951d0b17e618b63cd19c24b1": {
       "kind": "command",
@@ -4808,10 +4808,6 @@
       "kind": "block",
       "src": "skills/audit/templates/checks-shared.md:215"
     },
-    "fcc839ebb5509ebab1033e8c6a559e04cb7421b7197bb67b0f14492d75da726d": {
-      "kind": "command",
-      "src": "skills/_shared/codemap-py--codemap-context.md:35"
-    },
     "fcefa42b07def9554afdc751c2a73f4735c6ea0b6a44bd686b2e724531394841": {
       "kind": "command",
       "src": "skills/calibrate/templates/pipeline-prompt.md:37"
@@ -4870,7 +4866,7 @@
     },
     "febfce9fe11c33e68123418044861737ad80ae7a58acd8620762b311cfc464e6": {
       "kind": "command",
-      "src": "skills/_shared/codemap-py--codemap-context.md:137"
+      "src": "skills/_shared/codemap-py--codemap-context.md:125"
     },
     "fedd7db9c390846e55ef319aa1c76feb7f1f9252089f17e7831bf3639943ac40": {
       "kind": "command",
@@ -4905,6 +4901,6 @@
       "src": "skills/investigate/SKILL.md:97"
     }
   },
-  "plugin": "cc_foundry@0.55.1",
+  "plugin": "cc_foundry@0.55.2",
   "schema": 1
 }

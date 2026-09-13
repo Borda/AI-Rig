@@ -100,11 +100,12 @@ Before the call read `_full/quality-gates.md` §Write-Delegation Checklist and f
 
 ## Link Verification
 
-**Never add a URL without all three steps, every time — no exemption for domain/protocol/path similarity to an already-verified URL:**
+**Never add a URL without all four steps, every time — no exemption for domain/protocol/path similarity to an already-verified URL:**
 
 1. **Fetch** — call WebFetch (or equivalent); URL must return non-error (not 4xx/5xx). HTTP 200 is necessary but not sufficient — steps 2 and 3 still mandatory
 2. **Read** — read the actual page content; don't rely on URL structure or HTTP status alone
 3. **Match** — confirm content matches the intended description; no match = don't add the link
+4. **Independent** — every URL needs its own Fetch+Read+Match pass; a verified URL on the same domain doesn't exempt others; skipping any step — including inferring validity from URL structure or HTTP status alone — is a violation
 
 Applies to: agent files, skill files, CLAUDE.md, any markdown.
 

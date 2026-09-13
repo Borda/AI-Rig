@@ -53,10 +53,10 @@ Every analysis agent **must** end with:
 
 > **Never skip** — missing Confidence block = rule violation.
 
-- Omit **Refinements** if 0 passes — omit **Gaps** bullets if none, keep **Gaps** header
+- Omit **Refinements** if 0 passes (don't write "0 passes") — omit individual **Gaps** bullets if none, but keep the **Gaps** header
 - **Score**, **Gaps**, **Refinements** = peer top-level fields — never nest Refinements under Gaps; blank line before **Refinements** required
-- Score < 0.85 → ⚠ on score line AND next line: "orchestrator may re-run with the specific gap addressed"
-- Gaps = primary signal — surface implicit limitations for re-run decisions
+- Score < 0.85 → ⚠ on the score line AND on the line immediately after (standalone, not a Gaps bullet): "orchestrator may re-run with the specific gap addressed"
+- Gaps = primary signal — surfaces implicit limitations for re-run decisions
 
 ## Internal Quality Loop (analysis tasks only)
 
@@ -73,17 +73,14 @@ Trigger is a **specific unproven claim**, not a score crossing a line: premise n
 
 ## Link Verification
 
-**Never add URL without all three steps:**
+**Never add a URL without all four steps, every time — no exemption for domain/protocol/path similarity to an already-verified URL:**
 
-1. **Fetch** — call WebFetch (or equivalent); URL must return non-error (not 4xx/5xx)
+1. **Fetch** — call WebFetch (or equivalent); URL must return non-error (not 4xx/5xx). HTTP 200 is necessary but not sufficient — steps 2 and 3 still mandatory
+2. **Read** — read the actual page content; don't rely on URL structure or HTTP status alone
+3. **Match** — confirm content matches the intended description; no match = don't add the link
+4. **Independent** — every URL needs its own Fetch+Read+Match pass; a verified URL on the same domain doesn't exempt others; skipping any step — including inferring validity from URL structure or HTTP status alone — is a violation
 
-2. **Read** — read actual page content; not rely on URL structure or HTTP status alone
-
-3. **Match** — confirm content match intended description; no match = no link
-
-4. **Independent** — every URL need own Fetch+Read+Match pass; verified URL on same domain not exempt others; skip any step = violation
-
-- Applies to: agent files, skill files, CLAUDE.md, any markdown
+Applies to: agent files, skill files, CLAUDE.md, any markdown.
 
 ## Output Routing
 
@@ -97,12 +94,14 @@ Trigger is a **specific unproven claim**, not a score crossing a line: premise n
    4. **Follow-up gate** — invoke `AskUserQuestion` as final step; skip when background agent or inside other skill pipeline
 
 - **Short inline status** (single result, pass/fail, one-sentence finding) → terminal only; **no** file
+- **Copy-intent override**: output destined for an external artifact (PR body, release notes, report to share) → write to file regardless of length; output read in-context and acted on immediately (audit findings, calibration result, code review) → terminal only even if long
 - Prose paragraphs: no hard line breaks at column width
 - **Follow-up gate options**: skill-defined; minimum: (a) primary action · (b) skip. Canonical examples by skill:
   - `develop:review` → (a) `/develop:fix` · (b) `/develop:refactor` · (c) walk through findings · (d) skip
   - `develop:debug` → (a) `/develop:fix --diagnosis <file>` · (b) skip
   - `develop:plan` → (a) `/develop:feature --plan <file>` · (b) `/develop:fix --plan <file>` · (c) skip
 - **Follow-up gate follow-through**: `AskUserQuestion` return with skill-invocation option selected → call `Skill(skill=..., args=...)` same response turn; never narrate intent as prose and stop without act
+- **Don't ask what you can't honor**: selected option can't trigger automatic action (`disable-model-invocation: true`, or output is intermediate with a downstream AskUserQuestion coming anyway) → print the suggestion as plain text instead of asking a hollow question
 
 ## Report File Format
 
@@ -134,7 +133,7 @@ After required fields, add **skill-specific fields** for report type (e.g. Verdi
 
 ## Reporting Findings
 
-- **Coverage at finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity; attach confidence + severity so later stage ranks. Severity words in output-routing ("omit medium/low detail") govern **printed summary** only — never what gets investigated or recorded; finding dropped at discovery not recoverable by filter. Never instruct agent to "only report high-severity issues" or "be conservative" — current models follow literally, investigate just as deep, report less
+- **Coverage at the finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity; attach confidence + severity so later stage ranks. Severity words in output-routing ("omit medium/low detail") govern **printed summary** only — never what gets investigated or recorded; finding dropped at discovery not recoverable by filter. Never instruct agent to "only report high-severity issues" or "be conservative" — current models follow literally, investigate just as deep, report less
 - **Report before fixing**: state every finding before any fix — never silent mutate
 - **Per-fix narration**: before each file edit or tool call, state what change and why
 - **! BREAKING format**: breaking finding = standalone block — never inline or buried in table row:
@@ -145,4 +144,6 @@ Fix: <concrete action to resolve>
 ```
 
 - Severity markers: `!` = critical (standalone alert-block prefix only, e.g. `! BREAKING`) · `⚠` = warnings · `✓` = pass · hint = fix hint. Outcome/verdict tables use `✗` for blocked/rejected instead (§Report File Format) — `!` never appears as a table-cell symbol, only as the alert-block prefix
+- **Block merge integrity** (trigger: merging two instruction blocks): diff combined output against both originals — every named rule survives, zero silent drops
+- **Deferred work must appear in the delivered artifact**: if any analysis, rubric definition, or implementation is deferred, approximated, or left incomplete, document it explicitly in the output file ("Phase 2 / requires X / not yet implemented") — not only in conversation
 - Terminal colors: RED = critical · YELLOW = warnings · GREEN = pass · CYAN = fix hint

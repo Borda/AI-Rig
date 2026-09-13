@@ -38,18 +38,11 @@ PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
 _CM_ROUTE="${CODEMAP_QUERY_KIND:-standard}"
 if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
-    if [ "${SCAN_NO_AUTOBUILD:-0}" != "1" ]; then
-        scan-index --incremental 2>/dev/null || true   # refresh SHA-changed files only; never full-build mid-task
-    fi
+    # refresh SHA-changed files only; never full-build mid-task
+    [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ] || scan-index --incremental 2>/dev/null || true
     _CM_N=0 _CM_H=0 _CM_STALE=0 _CM_NONEXH=0
-    # --format tsv only for commands whose result is one flat uniform table wide enough for the
-    # header to pay for itself. rdeps and test-impact exit 1 "format_not_tabular"; symbol returns a
-    # single row, so its header roughly equals its payload and its source field — a whole function
-    # body — would become one quoted multi-line cell. Those three stay JSON.
-    #
-    # --format arrived in codemap-py 0.37.0. An older scan-query on PATH rejects the unknown flag
-    # with argparse exit 2 and an empty stdout, which would score a miss on the four commands worth
-    # the most. Probe once and stay on JSON when the flag is absent.
+    # tsv only for flat wide tables: rdeps/test-impact exit 1 "format_not_tabular", symbol = 1 row.
+    # --format is codemap-py 0.37.0+; older builds exit 2 with empty stdout, so probe once.
     _CM_TSV=0
     case "$(scan-query --help 2>&1)" in *--format*) _CM_TSV=1 ;; esac
     _cq() {
@@ -60,23 +53,18 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
             *)                                        out=$(scan-query --timeout 5 "$@" 2>"$err") ;;
         esac
         envelope=$(cat "$err" 2>/dev/null); rm -f "$err"
-        # Errors are JSON on stdout whatever --format asked for, so this test is format-independent.
+        # Errors stay JSON on stdout under any --format, so this test is format-independent.
         case "$out" in *'"error"'*) return 0 ;; esac
-        # A tsv run that matched nothing writes no rows but still writes its envelope, so emptiness
-        # is judged on whichever stream carries the envelope for this format. Judging tsv on stdout
-        # would score a legitimately empty table as a miss.
+        # Empty tsv writes no rows but still an envelope — judge emptiness on the envelope's stream.
         case "$fmt" in
             tsv) case "$envelope" in '') return 0 ;; esac ;;
             *)   case "$out" in '') return 0 ;; esac ;;
         esac
         _CM_H=$((_CM_H+1))
-        if [ -n "$out" ]; then printf '%s\n' "$out"; fi
-        # Under --format tsv the index envelope is on stderr; under JSON it is inside $out. Scanning
-        # both keeps staleness and completeness detectable whichever format ran — discarding stderr
-        # would report a stale index as completeness=exhaustive, and consumers are allowed to skip
-        # re-querying on exactly that value.
+        [ -n "$out" ] && printf '%s\n' "$out"
+        # tsv envelope on stderr, JSON envelope in $out — scan both or a stale index reads exhaustive.
         case "$out$envelope" in *'"stale":true'*|*'"stale": true'*) _CM_STALE=1 ;; esac
-        # query_complete is the forward field (direction-scoped); exhaustive is its legacy alias for one cycle.
+        # query_complete = forward field (direction-scoped); exhaustive = legacy alias, one cycle.
         case "$out$envelope" in *'"query_complete":false'*|*'"query_complete": false'*|*'"exhaustive":false'*|*'"exhaustive": false'*) _CM_NONEXH=1 ;; esac
     }
     case "$_CM_ROUTE" in
