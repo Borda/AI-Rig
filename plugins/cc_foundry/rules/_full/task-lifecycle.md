@@ -1,13 +1,23 @@
 ## Task lifecycle sequencing — worked examples
 
-Full detail behind the `rules/task-lifecycle.md` stub — spawn-prompt lead-line convention, FleetView description examples, and the end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, lead-line/unique-first constraints, the no-op-filler ban) live in the stub, always loaded — this file is illustration only.
+Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn labelling, FleetView examples, and the end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, slot/unique-first constraints, the no-op-filler ban) live in the stub, always loaded — this file is illustration only.
 
-### Spawn-prompt lead line
+### Spawn slots — three fields, no repeats
 
-FleetView/agent-list shows leading chars of the `Agent()` prompt as each agent's description — Agent tool has no separate description field. Boilerplate-first spawn prompt → every agent reads identical useless label (e.g. "Task tracking: do NOT call TaskCreate or TaskUpdat…").
+FleetView shows `name`, `description`, and the prompt's leading chars as three columns. Filling all three with the same string wastes two of them:
 
 ```text
-✓  foundry:sw-engineer — fix token-expiry off-by-one in auth/middleware.py
+✗  name: review-sw-engineer   description: sw-engineer review — PR #1424 roboflow/rf-detr
+                              prompt:      First run Bash export CSID=…   [label displaced by preamble]
+
+✓  name: review-sw-engineer   description: arch + SOLID audit
+                              prompt:      Review PR #1424 roboflow/rf-detr — architecture, SOLID, error paths
+```
+
+Boilerplate-first prompt → every agent reads one useless label (e.g. "Task tracking: do NOT call TaskCreate or TaskUpdat…"):
+
+```text
+✓  Fix token-expiry off-by-one in auth/middleware.py
    Read ${HOME}/.claude/TEAM_PROTOCOL.md — AgentSpeak v2. …
    Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state. …
 
@@ -15,9 +25,9 @@ FleetView/agent-list shows leading chars of the `Agent()` prompt as each agent's
    You are a foundry:sw-engineer teammate fixing … [label now useless]
 ```
 
-### Fleet-view description: unique-first
+### Slot content: unique-first
 
-N agents, same task family → description leads with per-agent delta (dir/plugin/module), shared boilerplate after. Cap 1 terminal line — front-load differentiator, FleetView truncates tail not head.
+N agents, same task family → every slot leads with per-agent delta (dir/plugin/module/dimension), shared target in prompt line 1 only. Cap 1 terminal line per column — front-load differentiator, FleetView truncates tail not head.
 
 ```text
 ✓  B1 — cc_develop: session-scope TMPDIR sentinels
@@ -29,16 +39,17 @@ N agents, same task family → description leads with per-agent delta (dir/plugi
 
 #### When every agent shares one target
 
-The dir-varying case above is the easy one. The hard one is a fanout over a single target — one PR, one branch, one run — where the only thing that differs is the dimension. Reading the label rule as "role + target" puts the shared half first and produces rows nobody can tell apart:
+The dir-varying case above is the easy one. The hard one is a fanout over a single target — one PR, one branch, one run — where the only thing that differs is the dimension. Reading the label rule as "role + target" puts the shared half in every slot and produces rows nobody can tell apart:
 
 ```text
-✓  architecture + SOLID — PR 596 roboflow/trackers
-✓  perf + API design — PR 596 roboflow/trackers
-✓  test coverage + security — PR 596 roboflow/trackers
+✓  name: review-arch       description: architecture + SOLID
+✓  name: review-perf-api   description: perf + API design
+✓  name: review-qa-sec     description: test coverage + security
+   [prompt line 1 of each: "Review PR #596 roboflow/trackers — <its dimensions>"]
 
-✗  Review PR #596 (roboflow/trackers) — architecture/...
-✗  Review PR #596 (roboflow/trackers) — performance A...
-✗  Review PR #596 (roboflow/trackers) — test coverage...   [23 identical chars, then truncation]
+✗  description: Review PR #596 (roboflow/trackers) — architecture/...
+✗  description: Review PR #596 (roboflow/trackers) — performance A...
+✗  description: Review PR #596 (roboflow/trackers) — test coverage...   [23 identical chars, then truncation]
 ```
 
 The target is not the label. Every agent in the batch already knows which PR it is reviewing — the prompt body says so. The row exists to answer "which of these three is this?", and only the dimension answers that. A merged spawn covering two dimensions names both, because that is its delta.
