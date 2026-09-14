@@ -253,6 +253,84 @@ def _run_inject_with_event(
 class TestInjectPreambleCurrency:
     """Currency classification and the once-per-session emit gate."""
 
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    @pytest.mark.parametrize("indexed", [False, True])
+    @pytest.mark.parametrize(
+        "source,config,ignore",
+        [
+            pytest.param(None, "", "", id="tooling-only"),
+            pytest.param(".venv/lib/pkg.py", "", "", id="virtualenv-only"),
+            pytest.param("node_modules/pkg.py", "", "", id="dependency-directory-only"),
+            pytest.param(".hidden/pkg.py", "", "", id="hidden-only"),
+            pytest.param("vendor/pkg.py", "", "vendor", id="ignored-directory"),
+            pytest.param("generated/api.pyi", "", "generated/*.pyi", id="ignored-stub-glob"),
+            pytest.param("vendor/pkg.py", '[tool.codemap]\nexclude = ["vendor"]', "", id="configured-exclusion"),
+        ],
+    )
+    def test_no_indexable_source_stays_silent(
+        self, tmp_path: Path, runtime: str, indexed: bool, source: str | None, config: str, ignore: str
+    ) -> None:
+        """Metadata and excluded sources must never prompt or dispatch a refresh."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        (repo / "a.py").unlink()
+        (repo / "pyproject.toml").write_text(config)
+        (repo / ".codemapignore").write_text(ignore)
+        if source:
+            path = repo / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("def task(): ...\n")
+        idx_dir = tmp_path / "idx"
+        if indexed:
+            _write_index(idx_dir, repo.name, git_sha="old")
+        marker = tmp_path / "spawned.marker"
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        result = _run_inject_with_event(repo, idx_dir, plugin_root, tmpdir, {}, runtime=runtime)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
+        assert list(tmpdir.iterdir()) == []
+        assert not marker.exists()
+        assert (repo / ".cache/codemap" / f"current-session-{runtime}.json").is_file()
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    @pytest.mark.parametrize("source", ["task.py", "src/namespace/api.py", "src/namespace/api.pyi"])
+    def test_source_without_initializer_can_prompt(self, tmp_path: Path, runtime: str, source: str) -> None:
+        """Source-backed packaging markers remain eligible without package initializers."""
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        path = repo / source
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def task(): ...\n")
+        (repo / "pyproject.toml").write_text("")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        result = _run_inject_with_event(repo, tmp_path / "idx", tmp_path / "plugin", tmpdir, {}, runtime=runtime)
+
+        assert result.returncode == 0, result.stderr
+        assert "No structural index" in result.stdout
+
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_plain_script_does_not_prompt(self, tmp_path: Path, runtime: str) -> None:
+        """A marker-free standalone script retains manual-only bootstrap behavior."""
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / "task.py").write_text("def task(): ...\n")
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        result = _run_inject_with_event(repo, tmp_path / "idx", tmp_path / "plugin", tmpdir, {}, runtime=runtime)
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
+
     def test_current_index_emits_preamble_once(self, tmp_path: Path) -> None:
         """A current index (sha matches HEAD, clean tree) emits the preamble line."""
         repo = tmp_path / "proj"

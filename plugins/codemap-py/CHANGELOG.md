@@ -2,6 +2,10 @@
 
 `codemap-py` is the renamed, direct successor to the `codemap` plugin. The maintained product and its SemVer history continue across the rename; only the plugin identity, repository directory, and skill namespace change. Pre-`0.25.0` history was recorded as `codemap` under `plugins/codemap/` — see the repository git history for that line; it is not reproduced here.
 
+## 0.37.1
+
+- Keep the shared Claude/Codex prompt hook silent and skip refresh when scanner exclusions leave no indexable `.py` or `.pyi` sources. Missing-index guidance retains the bounded `__init__.py`/`pyproject.toml`/`setup.py` marker condition, so marker-free scripts remain manual without imposing a universal `__init__.py` requirement; existing indexes with real source retain normal behavior.
+
 ## 0.37.0
 
 - Add `--format {json,tsv}` to `scan-query`. JSON stays the default and is unchanged, so nothing parsing stdout today is affected. `tsv` names the columns once in a header line instead of repeating every key on every row: measured on a 100-row `central` result, 3588 tokens of JSON against 2130 of TSV, a 40.6% reduction on the payload an agent reads into context. Formatting is applied in the single stdout seam rather than at each emitter, so every command that returns a table honours the flag; converting emitters individually left most commands silently answering in JSON while the caller had asked for TSV.

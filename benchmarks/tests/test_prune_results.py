@@ -37,9 +37,7 @@ _NOW = time.time()
 def _age(path: Path, days: float) -> None:
     """Stamp *path*'s mtime to *days* before the fixed reference clock."""
     when = _NOW - days * _SECONDS_PER_DAY
-    # follow_symlinks=False: the default stamps a symlink's target, leaving the link itself
-    # fresh — and the link's own mtime is what the retention scan reads.
-    os.utime(path, (when, when), follow_symlinks=False)
+    os.utime(path, (when, when))
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +126,31 @@ def test_rejects_a_zero_or_negative_window(results: Path) -> None:
     assert len(list(prune_results.results_dir(results).iterdir())) == 4
 
 
-def test_symlinked_entry_is_measured_as_a_link_not_its_target(results: Path, tmp_path: Path) -> None:
+def test_age_stamps_regular_entry_when_follow_symlinks_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regular fixture entries can be aged when the optional symlink capability is absent."""
+    entry = tmp_path / "entry"
+    entry.mkdir()
+    requested_days = 5
+    real_utime = os.utime
+
+    def _utime_without_no_follow(*args, **kwargs):
+        """Reject only the unavailable symlink-specific timestamp option."""
+        if kwargs.get("follow_symlinks") is False:
+            raise NotImplementedError("follow_symlinks unavailable")
+        return real_utime(*args, **kwargs)
+
+    monkeypatch.setattr(os, "utime", _utime_without_no_follow)
+
+    _age(entry, requested_days)
+
+    assert entry.stat().st_mtime == pytest.approx(_NOW - requested_days * _SECONDS_PER_DAY, rel=0, abs=1e-6)
+
+
+def test_symlinked_entry_is_measured_as_a_link_not_its_target(
+    results: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A symlink out of the results tree is never followed when sizing or deleting.
 
     Following one would both inflate the reported total and, on delete, reach outside the directory the script is scoped
@@ -139,7 +161,21 @@ def test_symlinked_entry_is_measured_as_a_link_not_its_target(results: Path, tmp
     (outside / "big.bin").write_bytes(b"x" * 4096)
     link = prune_results.results_dir(results) / "linked"
     link.symlink_to(outside, target_is_directory=True)
-    _age(link, 400)
+    real_lstat = Path.lstat
+    old_link_mtime = _NOW - 400 * _SECONDS_PER_DAY
+
+    def _lstat_with_old_link_mtime(path: Path):
+        """Report the test link's old metadata without changing its target."""
+        metadata = real_lstat(path)
+        if path != link:
+            return metadata
+        fields = list(metadata)
+        fields[8] = old_link_mtime
+        return os.stat_result(fields)
+
+    # Windows may not permit setting a symlink's timestamp. Simulate only the link's
+    # metadata so this still catches a regression from lstat() to target-following stat().
+    monkeypatch.setattr(Path, "lstat", _lstat_with_old_link_mtime)
 
     assert prune_results.entry_size_bytes(link) < 4096
 

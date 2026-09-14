@@ -294,7 +294,7 @@ Artifact handling:
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.
 
-For an `output-limit` incident, use the [bounded-work recovery steps](docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
+For an `output-limit` incident, use the [bounded-work recovery steps](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
 
 ## 🔒 Privacy and security boundaries
 

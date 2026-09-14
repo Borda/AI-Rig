@@ -45,14 +45,19 @@ if str(_HOOKS_DIR) not in sys.path:
 
 import _hookutil  # noqa: E402  (needs the sys.path insert above)
 
+_SRC_DIR = _HOOKS_DIR.parent / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+from codemap_py import scanner  # noqa: E402  (resolve from the installed plugin)
+
 MAX_PARSE_BYTES = 10 * 1024 * 1024
 LOCK_TTL_MS = 10 * 60 * 1000
 HEADER_PEEK_BYTES = 8 * 1024
 NOINDEX_TTL_MS = 30 * 60 * 1000
 SESSION_TTL_MS = 30 * 60 * 1000
-# Keep this prompt-path tuple local: importing the scanner here would load its full AST
-# engine for every user prompt. tests/cli_support/test_hooks_py.py pins it to the
-# scanner-owned writer contract.
+# Git freshness includes documentation as well as Python sources; the source-eligibility
+# check below deliberately uses only the scanner's Python discovery rules.
 _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
 
 #: Identity fields read out of the index header, compiled once at import. They used to be
@@ -112,6 +117,29 @@ def git_output(args: list[str], cwd: Path) -> str:
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def has_python_source(root: Path) -> bool:
+    """Find eligible Python source without enumerating or parsing the entire project.
+
+    Reuse scanner exclusions and stop at the first non-symlink .py/.pyi file. An empty project requires walking its
+    unexcluded directories; excluded trees are never traversed just to count their contents as they are during a full
+    scan.
+    """
+    exclusions = scanner._load_exclusions(root)
+    skip_dirs = scanner.SKIP_DIRS | exclusions.dirs
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [name for name in dirnames if name not in skip_dirs and not name.startswith(".")]
+        for name in filenames:
+            if not scanner._is_python_source(name):
+                continue
+            path = Path(dirpath) / name
+            if (
+                not path.is_symlink()
+                and scanner._match_exclusion(path.relative_to(root).as_posix(), exclusions) is None
+            ):
+                return True
+    return False
 
 
 def is_python_project(root: Path) -> bool:
@@ -363,6 +391,8 @@ def main() -> int:
         project = root.name
         payload = stdin_payload()
         write_session_marker(root, _hookutil.runtime_session(payload))
+        if not has_python_source(root):
+            return 0
         index_dir = Path(os.environ.get("CODEMAP_INDEX_DIR", root / ".cache" / "codemap"))
         index_path = index_dir / f"{project}.json"
         index_stat = regular_file_stat(index_path)

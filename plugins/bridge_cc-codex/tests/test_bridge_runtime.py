@@ -632,10 +632,13 @@ def test_child_output_limit_stops_a_noisy_peer_and_caps_its_transcript(tmp_path:
     assert len(transcript_bytes) <= bridge_call.MAX_CHILD_TRANSCRIPT_BYTES
 
 
-def test_codex_tool_events_do_not_consume_the_final_result_budget(tmp_path: Path) -> None:
+@pytest.mark.parametrize("initial_stdout_encoding", ["utf-8", "cp1252"])
+def test_codex_tool_events_do_not_consume_the_final_result_budget(tmp_path: Path, initial_stdout_encoding: str) -> None:
     """Keep a valid final review after repeated moderate command outputs exceed the raw capture budget."""
     emitter = (
         "import json, sys\n"
+        "sys.stdout.reconfigure(encoding=sys.argv[2])\n"
+        "sys.stdout.reconfigure(encoding='utf-8', newline='\\n')\n"
         "for index in range(20):\n"
         "    print(json.dumps({'type': 'item.completed', 'item': {'id': str(index), "
         "'type': 'command_execution', 'status': 'completed', 'exit_code': 0, "
@@ -644,7 +647,9 @@ def test_codex_tool_events_do_not_consume_the_final_result_budget(tmp_path: Path
         "'text': sys.argv[1]}}), flush=True)\n"
         "print(json.dumps({'type': 'turn.completed', 'usage': {'input': 3, 'output': 2}}), flush=True)\n"
     )
-    outcome = bridge_call._run_child([sys.executable, "-c", emitter, json.dumps(_core())], tmp_path, timeout=5.0)
+    outcome = bridge_call._run_child(
+        [sys.executable, "-c", emitter, json.dumps(_core()), initial_stdout_encoding], tmp_path, timeout=5.0
+    )
     assert outcome.returncode == 0
     assert outcome.output_limited is False
 

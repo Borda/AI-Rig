@@ -38,11 +38,12 @@ class TestTaskContractValidation:
 
         The launcher runs through ``sys.executable`` rather than by direct execution, which is how the script itself and
         the sibling lanes start it — so this contract is checked on Windows too, where an extension-less shebang script
-        cannot be launched directly.
+        cannot be launched directly. Read positional choices so option values such as ``--format {json,tsv}`` cannot be
+        mistaken for query commands.
         """
         launcher = script_gen_bench.git_toplevel() / "plugins" / "codemap-py" / "bin" / "scan-query"
         result = subprocess.run([sys.executable, str(launcher), "--help"], capture_output=True, text=True, check=True)
-        match = re.search(r"\{([^}]+)\}", result.stdout)
+        match = re.search(r"positional arguments:\s+\{([^}]+)\}", result.stdout)
 
         assert match is not None
         supported = set(match.group(1).split(","))
