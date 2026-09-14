@@ -3,11 +3,11 @@
     "name": "Jiri Borovec",
     "url": "https://github.com/Borda/AI-Rig"
   },
-  "description": "Thirteen evidence-first Codex workflows, one legacy-shim lifecycle manager, fifteen specialist role cards, shared gates, and reviewable artifacts.",
+  "description": "Fourteen evidence-first Codex workflows, one legacy-shim lifecycle manager, fifteen specialist role cards, shared gates, and reviewable artifacts.",
   "homepage": "https://github.com/Borda/AI-Rig",
   "interface": {
     "capabilities": [
-      "13 workflow skills and 1 legacy-shim lifecycle manager",
+      "14 workflow skills and 1 legacy-shim lifecycle manager",
       "15 specialist role cards",
       "Staged execution manifest validation",
       "Gated portable read-only auto execution",
@@ -25,12 +25,12 @@
     ],
     "developerName": "Borda",
     "displayName": "Codex Rig",
-    "longDescription": "Run thirteen evidence-first Codex workflows with shared gates, reviewable artifacts, canonical role cards, staged specialist execution manifest validation, disclosed inline fallback, and authenticated cleanup for prior thin shims.",
+    "longDescription": "Run fourteen evidence-first Codex workflows with shared gates, reviewable artifacts, canonical role cards, bounded adversarial convergence, staged specialist execution manifest validation, disclosed inline fallback, and authenticated cleanup for prior thin shims.",
     "shortDescription": "Evidence-first Codex workflows and role cards"
   },
   "license": "Apache-2.0",
   "name": "codex-rig",
   "repository": "https://github.com/Borda/AI-Rig",
   "skills": "./skills/",
-  "version": "0.17.1"
+  "version": "0.18.0"
 }

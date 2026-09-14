@@ -53,6 +53,7 @@ Historical `change-analysis` artifacts retain their original skill identity and 
 
 | Skill | Columns |
 | -- | -- |
+| `adversarial-loop` | `Iteration \| Open findings \| Weighted score \| Decision \| Evidence` |
 | `audit` | `Item \| Severity / impact \| Decision \| Evidence \| Next action` |
 | `calibrate` | `Check / metric \| Result \| Evidence \| Next action` |
 | `assess` | `Finding \| Impact \| Decision \| Evidence \| Next action` |

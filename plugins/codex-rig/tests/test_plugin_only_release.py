@@ -22,6 +22,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
 EXPECTED_SKILLS = (
     "agent-shims",
+    "adversarial-loop",
     "assess",
     "audit",
     "calibrate",
@@ -242,6 +243,43 @@ def test_skill_roster_names_and_manifest_records_are_exact() -> None:
     ]
 
 
+def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() -> None:
+    """Keep loop calibration aligned with its executable convergence boundary."""
+    calibration = PLUGIN_ROOT / "runtime" / "calibration"
+    cases = {
+        item["id"]: item
+        for item in _load_json(calibration / "behavioral-cases.json")["cases"]
+        if item.get("target") == "adversarial-loop"
+    }
+    assert set(cases) == {
+        "adversarial-loop-independent-closure",
+        "adversarial-loop-stop-conditions",
+        "adversarial-loop-owner-and-response-binding",
+    }
+    assert cases["adversarial-loop-owner-and-response-binding"]["expected_findings"] == [
+        "active-loop-owner-not-bound",
+        "authentic-finding-prose-ignored",
+    ]
+    assert cases["adversarial-loop-independent-closure"]["expected_findings"] == [
+        "initial-score-omitted",
+        "fixed-pending-verification-counted-closed",
+        "same-reviewer-presented-as-independent",
+        "current-diff-coverage-missing",
+    ]
+    assert cases["adversarial-loop-stop-conditions"]["expected_findings"] == [
+        "structural-finding-loop-continued",
+        "repeated-signature-loop-continued",
+        "plateau-or-nonconvergence-not-stopped",
+        "iteration-cap-exceeded",
+    ]
+    observations = {
+        json.loads(line)["case_id"]
+        for line in (calibration / "behavioral-observations.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    }
+    assert observations >= set(cases)
+
+
 @pytest.mark.parametrize("skill_id", EXPECTED_SKILLS)
 def test_skill_frontmatter_has_its_declared_name_and_description(skill_id: str) -> None:
     """Require each packaged skill card to identify its own public contract."""
@@ -363,9 +401,9 @@ def test_release_profile_declares_only_packaged_lifecycle_features() -> None:
     """Keep shim-manager and hook metadata aligned while MCP remains absent."""
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     plugin = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
-    assert plugin["description"].startswith("Thirteen evidence-first Codex workflows")
+    assert plugin["description"].startswith("Fourteen evidence-first Codex workflows")
     assert plugin["interface"]["capabilities"] == [
-        "13 workflow skills and 1 legacy-shim lifecycle manager",
+        "14 workflow skills and 1 legacy-shim lifecycle manager",
         "15 specialist role cards",
         "Staged execution manifest validation",
         "Gated portable read-only auto execution",

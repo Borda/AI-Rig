@@ -51,7 +51,7 @@ Optional but recommended:
 
 Every final chat is compact, outcome-coupled handoff in this order:
 
-1. `Outcome`: state decision or completed result first, including gate status when it changes whether work is complete.
+1. `Outcome`: name the topic or question being answered and state decision or completed result first, including gate status when it changes whether work is complete. The opening must stand alone; avoid unanchored “both,” “that,” or “yes” without repeating the conversation.
 2. `Results`: show every decision unit needed to understand outcome. Use skill's required table when multiple findings, changes, checks, iterations, recommendations, or artifacts need distinct dispositions; do not collapse skipped, rejected, deferred, or unresolved rows.
 3. `Verification`: name checks run and their exact results, including skips, failures, and unavailable checks.
 4. `Remaining`: list every unresolved, deferred, skipped, externally owned, or environment-blocked obligation with its owner and next action. Write `None` only when evidence closes all obligations.

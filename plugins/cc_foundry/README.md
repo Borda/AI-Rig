@@ -689,7 +689,7 @@ ______________________________________________________________________
 | Rule file               | Applies to                      | Governs                                                                                                                                       |
 | ----------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `communication.md`      | all                             | Re: anchor format, progress narration, tone, output routing, breaking-findings format, terminal colors, confidence display                    |
-| `quality-gates.md`      | all                             | Confidence block format, Internal Quality Loop, link verification, output routing (long output to file)                                       |
+| `quality-gates.md`      | all                             | Confidence block format, independent adversarial review/fix loop, link verification, output routing (long output to file)                     |
 | `git-commit.md`         | all                             | Commit message format, diff-gathering before writing, co-author trailers, branch + push safety                                                |
 | `claude-config.md`      | all                             | Bash timeouts (3x P90), directory navigation rules, no hardcoded absolute paths, agent/skill spawn discipline                                 |
 | `artifact-lifecycle.md` | all                             | Canonical artifact layout (`.plans/`, `.reports/`, `.temp/`), run directory naming, TTL policy                                                |
@@ -791,7 +791,7 @@ plugins/cc_foundry/
 ├── agents/                      10 specialist agent files (flat — a nested `agents/<x>/y.md` would register as a dispatchable `foundry:<x>:y` agent)
 ├── references/                  agent sidecar fragments (`references/<agent>/*.md`), `cat`-loaded on demand; deliberately outside `agents/` so they are never scanned as agents
 ├── skills/                      11 skill directories (audit, brainstorm, calibrate, create, distill, humanizer, investigate, manage, profile, session, setup)
-├── rules/                       14 rule files symlinked to ~/.claude/rules/foundry-*.md by /foundry:setup (+ 10 on-demand bodies in rules/_full/)
+├── rules/                       14 rule files symlinked to ~/.claude/rules/foundry-*.md by /foundry:setup (+ 11 on-demand bodies in rules/_full/)
 ├── CLAUDE.src.md                workflow rules; /foundry:setup Step 10 copies → ~/.claude/CLAUDE.md
 ├── TEAM_PROTOCOL.md             AgentSpeak v2 inter-agent protocol
 ├── permissions-guide.md         annotated allow/deny reference (copied to .claude/ by /foundry:setup)

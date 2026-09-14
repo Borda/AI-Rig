@@ -224,6 +224,31 @@
     ]
   },
   "skills": {
+    "adversarial-loop": [
+      "CODEX_THREAD_ID",
+      "one structured response containing every finding",
+      "## Input Schema",
+      "loop-ledger.json",
+      "loop-report.md",
+      "default max 3",
+      "initial W_0",
+      "independent final current-diff coverage",
+      "fixed-pending-verification",
+      "structural finding",
+      "repeated signature",
+      "plateau",
+      "non-converging",
+      "no fake independence fallback",
+      "self-contained reply topic",
+      "result-template.json",
+      "## Quality Gates",
+      "## Calibration Hooks",
+      "### Final chat",
+      "Next steps",
+      "Iteration \\| Open findings \\| Weighted score \\| Decision \\| Evidence",
+      "shared/final-handoff-contract.md",
+      "helper-cli-contract.md"
+    ],
     "agent-shims": [
       "## Output Contract",
       "shared/quality-gates.md",

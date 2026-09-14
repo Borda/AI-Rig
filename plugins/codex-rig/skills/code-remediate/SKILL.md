@@ -5,6 +5,8 @@ description: Apply selected review fixes; bare PR targets use current online ite
 
 # Code Remediate
 
+When independently reviewing applied fixes in a cycle, read `../../shared/adversarial-loop.md` for convergence and stop rules. A clean loop never replaces selection, implementation evidence, or this skill's normal completion gates; after authorized recovery, resume them.
+
 See the [fixed recurrence and root-cause policy](../../shared/native-skill-contract.md#recurrence-and-root-cause-policy) and [reasoning-progress escalation policy](../../shared/native-skill-contract.md#reasoning-progress-escalation) for repeated-obstacle handling; record and validate `reasoning-progress.json` before another cycle after escalation trigger.
 
 Run linear code remediation to close findings.

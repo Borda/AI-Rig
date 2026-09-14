@@ -1,0 +1,53 @@
+{
+  "artifact_path": ".reports/codex/adversarial-loop/<timestamp>/result.json",
+  "checks_failed": [],
+  "checks_run": [
+    "lint",
+    "format",
+    "types",
+    "tests",
+    "review"
+  ],
+  "confidence": 0.0,
+  "findings": {
+    "critical": 0,
+    "high": 0,
+    "low": 0,
+    "medium": 0
+  },
+  "metadata": {
+    "adversarial_loop": {
+      "reason": "independence-unavailable",
+      "rounds": [],
+      "scores": [],
+      "status": "stopped"
+    },
+    "confidence_gap_closures": [],
+    "confidence_gaps": [],
+    "confidence_recovery": {
+      "evidence": [
+        "independent reports, retained source snapshots, and executed checks"
+      ],
+      "final_confidence": 0.0,
+      "initial_confidence": 0.0,
+      "recovery_actions": [
+        "record actual evidence-backed recovery"
+      ],
+      "remaining_limits": [
+        "record actual remaining limits"
+      ],
+      "status": "shared-confidence-band-status"
+    },
+    "final_handoff": {
+      "branch": "standard",
+      "handoff_path": ".reports/codex/adversarial-loop/<timestamp>/final-handoff.json",
+      "handoff_sha256": "sha256",
+      "rendered_path": ".reports/codex/adversarial-loop/<timestamp>/final.md",
+      "rendered_sha256": "sha256",
+      "schema_version": 1,
+      "validation_path": ".reports/codex/adversarial-loop/<timestamp>/final-handoff.validation.json"
+    }
+  },
+  "schema_version": 2,
+  "status": "pass|fail"
+}

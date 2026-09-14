@@ -55,6 +55,7 @@ MANIFEST_PATH = PACKAGE_ROOT / "package-manifest.json"
 PLUGIN_MANIFEST_PATH = PACKAGE_ROOT / ".codex-plugin" / "plugin.json"
 WORKFLOW_SKILLS = (
     "agent-shims",
+    "adversarial-loop",
     "assess",
     "audit",
     "calibrate",

@@ -1,27 +1,26 @@
 # Changelog
 
+## 0.18.0
+
+- Preserve exact reviewer-context line endings when checking frozen loop evidence. Accept intact CRLF diffs and reject newline-altered context; exercise LF and CRLF snapshots and App Server review evidence on every host.
+- Bind loop closure to the active host owner, existing validated reviewer execution, one complete structured response, exact returned findings, complete source snapshots, and fresh local source; reject self-declared independence, ignored finding prose, stale source, and passing review gates on stopped loops.
+- Add `adversarial-loop` for bounded independent review-and-fix convergence with stable finding identities, weighted stop decisions, retained snapshot/report evidence, and the normal validated result lifecycle. Keep root guardrails short and one detailed shared procedure; existing workflows retain their own gates and authorization.
+- Make reply openings identify the topic or question being answered instead of relying on unanchored references to previous turns.
+
 ## 0.17.1
 
 - Make remediation outcomes distinguish finding-specific implementation, verified closure without code changes, rejection, deferral, and concrete blockers. Preserve honest unresolved counts, keep passing checks separate from incomplete remediation, and require usable text-review context and permitted missing-coverage investigation before stopping.
-
 - Repair PR source preparation and recovery evidence: verify fetched commits without forced cached-ref updates, distinguish PR-file changes and unresolved index entries from unrelated local edits, preserve safe Git failure causes without raw stderr, and clear stale PR identity between collector attempts.
-
 - Reject passing PR-check claims in new unavailable-review results when collection stopped before verification. Require explicit not-applicable gates and generated handoff consistency; preserve historical artifact reading and ordinary command exit-code behavior.
-
 - Make blocked review and remediation handoffs explain the failed check in plain English, recommend concrete recovery, and show approval/decline consequences without inventing causes or repeating existing authorization. Preserve fresh sequential review as a disclosed alternative to rejected specialist evidence; missing current PR source still prevents edits.
-
 - Explain existing merge conflicts separately from fetch failures, with evidence-backed finish/abort/defer choices and preservation requirements. After authorized recovery succeeds, resume the active review or remediation from its first unmet checkpoint through normal completion gates instead of asking the user to rerun it.
 
 ## 0.17.0
 
 - Fix managed runtime preapproval for every `--approve-gh` consumer: retain existing reader grants for Assess/Release and add explicit canonical-PR collector grants for Code Review, Code Remediate, and PR-mode Assess. Preserve approved targets across verified setup/sync upgrades, reject modified rules before writes, and back up/remove owned grants through the existing lifecycle. Loaded allow rules avoid another prompt; setup/restart and stricter host policies remain explicit requirements. Keep skill invocation separate from permission installation.
-
 - Define `--approve-gh` in Code Review and Code Remediate as completed user authorization for the required GitHub collection, so the workflow does not re-ask for consent. Preserve the reusable direct collector prefix of the actual Python executable, installed `collect_pr.py`, `--target`, and canonical repository-qualified PR URL; keep dynamic report paths outside it and do not wrap it in `rtk`. Runtime permission remains separate: the host may still prompt or deny, and the flag cannot bypass prompts or denials, create or modify saved rules, or authorize remote mutation. Remediation finding selection remains separate.
-
 - Support the same completed-user-authorization meaning for `--approve-gh` in Assess and Release. Required generic GitHub reads use the direct actual-Python-plus-installed-`github_read.py` prefix, with reader-wide scope across repositories and its output-file and allowlisted local-checkout capabilities disclosed; PR analysis retains PR-scoped collection. Preserve local-only workflows, runtime prompt and denial controls, and the prohibition on publication or permission-rule changes.
-
 - Rename `change-analysis` to `assess` across discovery, routing, templates, metadata, calibration, and documentation. New reports use `.reports/codex/assess/`; existing `change-analysis` report artifacts remain readable, but the former skill name is no longer registered.
-
 - Reject repeated PR collector targets and abbreviated options so trailing arguments cannot override the target bound by a reusable runtime prefix. The flag supplies completed user authorization for the workflow; runtime rules remain host-owned and the workflow cannot install, change, or bypass them.
 
 ## 0.16.3
@@ -92,43 +91,28 @@
 ## 0.14.3
 
 - Align active Codemap consumer guidance with once-only launcher/context resolution, persisted evidence reuse, direct known syntax, and independent stable read-only queries. Preserve optional-provider fallback and distinguish settled graph facts from separate implementation or coverage questions.
-
 - Clarify that integration metadata is not active query policy and that static package checks do not establish live activation or token savings.
-
 - Expand Python utility and test-helper docstrings with executable examples; make ordinary test helpers and fixture implementations private while preserving pytest injection names and required interfaces. Keep docstring lines within 120 characters and regenerate package hashes for the documented payload.
 
 ## 0.14.2
 
 - Read generated selection Markdown as UTF-8 in the packaged presentation regression so Windows locale defaults do not corrupt Unicode assertions or fail the installed-package gate.
-
 - Replace external commit-message drafts with chat-reviewed literal message arguments: remove draft-file creation/cleanup approvals, preserve shell-safe quoting and exact-message checks, and stop on unsupported transport or failed commits without automatic repair.
-
 - Keep all-closed selection and grouped review-gate intake compatible with final validation, make byte-bound test fixtures portable, and align fail-fast instructions with grouped layouts.
-
 - Preserve selection inputs against output aliases, scope finding identity to report files, bind gate counts to item types, and require complete actions for new local reviews with findings. Shared closure evidence alone never merges distinct findings.
-
 - Fix repeated report mentions being treated as independent findings: enriched canonical records bind titles, actions, evidence and closure criteria while preserving legacy record reads.
-
 - Validate source ownership, canonical finding identity, counts and confirmed indexes before presenting remediation selection; bind the unchanged inventory to final outcomes.
-
 - Render short review/remediation overviews with named detail groups and full references; separate pending selection from deliberate deferral. Keep historical handoff bytes unchanged.
 
 ## 0.14.1
 
 - Preserve incomplete/unpromoted review barriers across later collection failures; reject approving recommendations with failed or incomplete quality gates and reject non-string finding severities without a traceback.
-
 - Gate review completion through both validators and exact downstream discovery before emitting final text. Detect identified notes-only reviews as incomplete and block stale fallback after newer incomplete/malformed results; preserve preliminary evidence and show blocked-first diagnostics instead of a normal verdict with a promotion disclaimer.
-
 - Reject review dispatch preflight when the current launcher cannot supply the declared read-only/never child controls; keep authoritative post-run validation and existing role permissions unchanged.
-
 - Require stable schema-v2 assessed finding IDs/severities with exact count and notes/final-action coverage, plus separately declared operational blockers; retain historical schema-v1 reading.
-
 - Bind assessed review approval/minor recommendations to finding severity, require unique action-table identities, and enforce canonical final outcome wording that agrees with the structured recommendation.
-
 - Bind schema-v2 artifact paths to the run's final `result.json` through candidate promotion; reject blank/duplicate confidence gaps and missing, duplicate, or undeclared closures while retaining schema-v1 read compatibility.
-
 - Separate unchanged-baseline command/output-boundary preflight from passing postimplementation verification in the production parallel remediation route, preserving exact-command approval and parent integration gates.
-
 - Load optional parallel lifecycle mechanics only when evaluating or executing that route; retain common obligations in the remediation entrypoint, with contract/calibration and independent followability coverage. This reduces ordinary-route instruction bytes; live token or latency savings are not established.
 
 ## 0.14.0

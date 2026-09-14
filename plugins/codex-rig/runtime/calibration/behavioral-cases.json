@@ -2,6 +2,37 @@
   "cases": [
     {
       "expected_findings": [
+        "active-loop-owner-not-bound",
+        "authentic-finding-prose-ignored"
+      ],
+      "id": "adversarial-loop-owner-and-response-binding",
+      "prompt": "A loop reuses an authentic past reviewer response while the current host session is that same reviewer, but declares the old parent as implementation author. The response contains a missing-guard finding in prose after an empty structured findings block. Both source and returned bytes match retained evidence. Determine whether clean acceptance is justified, what must be bound to the active host, and how to prevent finding prose from being silently discarded without rewriting the original response.",
+      "target": "adversarial-loop"
+    },
+    {
+      "expected_findings": [
+        "initial-score-omitted",
+        "fixed-pending-verification-counted-closed",
+        "same-reviewer-presented-as-independent",
+        "current-diff-coverage-missing"
+      ],
+      "id": "adversarial-loop-independent-closure",
+      "prompt": "Assess an adversarial review loop that starts counting only after the first fix, marks findings fixed before an independent reviewer verifies the current diff, and declares the loop clean because the original reviewer reread its own patch. Require W_0, keep fixed-pending-verification findings open, and require an independent final review of the current diff before a clean result. Do not replace unavailable independent coverage with an invented fallback; report the actual stop condition, evidence, owner, and next action.",
+      "target": "adversarial-loop"
+    },
+    {
+      "expected_findings": [
+        "structural-finding-loop-continued",
+        "repeated-signature-loop-continued",
+        "plateau-or-nonconvergence-not-stopped",
+        "iteration-cap-exceeded"
+      ],
+      "id": "adversarial-loop-stop-conditions",
+      "prompt": "Assess an adversarial loop that keeps fixing after a structural finding, repeats the same finding signature in consecutive rounds, continues after weighted-score plateau or non-convergence, and runs a fourth review despite the default three-round cap. Stop at every governing condition, preserve the weighted-score series and unresolved finding evidence, and make the final reply self-contained about the decision topic rather than pretending the loop converged.",
+      "target": "adversarial-loop"
+    },
+    {
+      "expected_findings": [
         "evidence-only-closure-presented-as-code-fix",
         "passing-gates-imply-completed-remediation",
         "unexplained-unresolved-disposition",
@@ -1955,5 +1986,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.28"
+  "version": "1.29"
 }

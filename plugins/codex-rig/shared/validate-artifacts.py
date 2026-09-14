@@ -185,6 +185,12 @@ PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; 
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
 
 SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
+    "adversarial-loop": {
+        "files": {
+            "loop-ledger.json": [],
+            "loop-report.md": ["Scope", "Rounds", "Findings", "Recovery", "Verification"],
+        },
+    },
     "assess": {"files": {}},
     # Historical reports retain their original skill identity and artifact paths.
     "change-analysis": {"files": {}},
@@ -2271,6 +2277,94 @@ def _validate_code_remediate_merge_resolution(
         raise SystemExit("code-remediate-merge-resolution-metadata-mismatch")
 
 
+def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dict[str, Any]) -> None:
+    """Bind the loop decision to retained snapshots, reports, and visible result rows."""
+    if result.get("schema_version") != 2:
+        raise SystemExit("adversarial-loop-schema-v2-required")
+    ledger_path = out_dir / "loop-ledger.json"
+    completed = subprocess.run(
+        [sys.executable, str(Path(__file__).with_name("adversarial_loop.py")), "--ledger", str(ledger_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode:
+        raise SystemExit("adversarial-loop-invalid-ledger:" + completed.stderr.strip())
+    summary = json.loads(completed.stdout)
+    if result.get("metadata", {}).get("adversarial_loop") != summary:
+        raise SystemExit("adversarial-loop-summary-mismatch")
+    if result["status"] == "pass" and summary["reason"] != "clean":
+        raise SystemExit("adversarial-loop-incomplete-review")
+    review_gate = next(check for check in gates["checks"] if check["id"] == "review")
+    if summary["reason"] != "clean" and (review_gate["status"] != "fail" or "review" not in result["checks_failed"]):
+        raise SystemExit("adversarial-loop-nonclean-review-gate")
+    ledger = _load_json(ledger_path)
+    snapshots = [("current.diff", ledger["current_snapshot"])]
+    snapshots.extend((f"round-{item['index']}.diff", item["snapshot"]) for item in ledger["rounds"])
+    for filename, snapshot in snapshots:
+        path = out_dir / filename
+        if not path.is_file() or not path.resolve().is_relative_to(out_dir.resolve()):
+            raise SystemExit(f"adversarial-loop-snapshot-missing:{filename}")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != snapshot["diff_digest"]:
+            raise SystemExit(f"adversarial-loop-snapshot-digest-mismatch:{filename}")
+    for item in ledger["rounds"]:
+        report = out_dir / item["report_path"]
+        if not report.resolve().is_relative_to(out_dir.resolve()) or not report.is_file():
+            raise SystemExit("adversarial-loop-report-missing-or-outside-run")
+        if not report.read_text(encoding="utf-8").strip():
+            raise SystemExit("adversarial-loop-report-empty")
+    counts = (
+        summary["rounds"][-1]["counts"]
+        if summary["rounds"]
+        else dict.fromkeys(("security", "critical", "high", "medium", "low", "nit"), 0)
+    )
+    expected_findings = {
+        "critical": counts["critical"] + counts["security"],
+        "high": counts["high"],
+        "medium": counts["medium"],
+        "low": counts["low"] + counts["nit"],
+    }
+    if result["findings"] != expected_findings:
+        raise SystemExit("adversarial-loop-finding-count-mismatch")
+    _validate_adversarial_loop_rows(out_dir, ledger, summary)
+    evidence_validator = Path(__file__).resolve().parent.parent / "skills" / "adversarial-loop" / "validate_evidence.py"
+    evidence = subprocess.run(
+        [sys.executable, str(evidence_validator), "--out", str(out_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if evidence.returncode:
+        raise SystemExit("adversarial-loop-evidence-invalid:" + evidence.stderr.strip())
+
+
+def _validate_adversarial_loop_rows(out_dir: Path, ledger: dict[str, Any], summary: dict[str, Any]) -> None:
+    """Keep displayed round scores and decisions equal to their ledger evidence."""
+    handoff = _load_json(out_dir / "final-handoff.json")
+    rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
+    expected = []
+    for item in summary["rounds"]:
+        report = ledger["rounds"][item["index"] - 1]["report_path"]
+        expected.append(
+            [
+                str(item["index"]),
+                ", ".join(
+                    f"{tier}={item['counts'][tier]}"
+                    for tier in ("security", "critical", "high", "medium", "low", "nit")
+                ),
+                str(item["score"]),
+                item["decision"],
+                report,
+            ]
+        )
+    if not expected:
+        expected = [["not-run", "Not assessed", "N/A", summary["reason"], "loop-report.md"]]
+    if rows != expected:
+        raise SystemExit("adversarial-loop-table-mismatch")
+    if summary["reason"] != "clean" and (not handoff["remaining"] or not handoff["next_steps"]):
+        raise SystemExit("adversarial-loop-recovery-guidance-missing")
+
+
 def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     result = _load_json(result_path)
     _require_result_shape(result)
@@ -2296,6 +2390,8 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     for filename in jsonl_files:
         _validate_jsonl(out_dir / str(filename))
     _validate_confidence_recovery(result, skill)
+    if skill == "adversarial-loop":
+        _validate_adversarial_loop(result, out_dir, gates)
     if skill == "code-remediate":
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):

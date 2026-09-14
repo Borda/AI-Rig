@@ -12,6 +12,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_ROOT = PLUGIN_ROOT / "skills"
 QUALITY_GATES = PLUGIN_ROOT / "shared" / "quality-gates.md"
 ARTIFACT_SKILLS = (
+    "adversarial-loop",
     "audit",
     "calibrate",
     "assess",
@@ -42,6 +43,11 @@ def _output_contract(text: str) -> str:
     ("skill", "result_schema"),
     [
         pytest.param("agent-shims", "Action | Outcome | Verification | Remaining limit", id="agent-shims"),
+        pytest.param(
+            "adversarial-loop",
+            "Iteration | Open findings | Weighted score | Decision | Evidence",
+            id="adversarial-loop",
+        ),
         pytest.param("audit", "Item | Severity / impact | Decision | Evidence | Next action", id="audit"),
         pytest.param("calibrate", "Check / metric | Result | Evidence | Next action", id="calibrate"),
         pytest.param("assess", "Finding | Impact | Decision | Evidence | Next action", id="assess"),
@@ -106,6 +112,7 @@ def test_agent_shims_declares_the_non_artifact_handoff_exception() -> None:
     "skill",
     [
         "agent-shims",
+        "adversarial-loop",
         "audit",
         "calibrate",
         "assess",

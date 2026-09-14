@@ -7,7 +7,7 @@
 
 ## Instruction Layering
 
-Start every user-facing message with a short plain-English explanation of the outcome, situation, or requested action before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
+Start every user-facing message with a short plain-English explanation that names the full topic or question before technical details. Apply this to progress updates, questions, approval requests, errors, blockers, handoffs, and final answers; do not use unexplained references such as “both” or “that,” and do not repeat the entire conversation. Keep later evidence precise; do not prepend prose to machine-only payloads or violate an explicitly requested exact output format.
 
 Repository-wide policy belongs in this top-level file. Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy.
 
@@ -83,7 +83,7 @@ Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style �
 
 ## Adversarial Convergence Loop
 
-The stop rule for any review → fix cycle — at most three iterations, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`, stop on plateau or non-convergence, hard block on any open security or critical finding — lives in `foundry:rules/quality-gates.md` §Adversarial Convergence Loop, with the worked example in its `_full/` companion. `AGENTS.md` §Adversarial Convergence Loop carries it for Codex, which receives no foundry rules. The weights and their examples are one artifact with the ladder in `plugins/cc_foundry/skills/audit/severity-table.md`; changing either means changing both. No repo-specific addition.
+Use `foundry:rules/_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, ledger, three-round limit including initial `W_0`, independent final snapshot, weights (`security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`), stop rules, and recovery contract are mandatory. Never close an unreviewed fix; open structural findings, repeated open signatures, unavailable independent coverage, or stale final snapshots stop a clean claim; open `security` or `critical` findings also forbid completion and commit. Every stop with open findings names the residue, evidence, score series, and concrete decision required. `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships this local copy for Claude. No repo-specific addition.
 
 ## Markdown Policy
 

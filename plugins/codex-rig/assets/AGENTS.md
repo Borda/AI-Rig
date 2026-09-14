@@ -55,6 +55,7 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 ## Coordination Discipline
 
 - Start every user-facing message with short plain-English explanation of outcome, situation, or requested action before technical details. This includes progress updates, questions, approval requests, errors, blockers, handoffs, and final answers. Keep later evidence precise; machine-only payloads and explicitly requested exact output formats stay unchanged.
+- Name the topic or question being answered so each reply stands alone, including after a topic switch or long pause. Avoid unanchored “both,” “that,” or “yes”; give enough context to identify the request without repeating the conversation. Preserve exact-output exceptions.
 - Keep live plan for multi-step work, update as task shape changes. Use as session task ledger.
 - One owner per file set at a time. Other thread/agent owns same surface → coordinate, no overwrite.
 - Broader analysis/review output → durable artifact under `.reports/codex/<skill>/<canonical-safe-identity>/run-<NNN>/` only for bounded validated non-sensitive identity, otherwise `.reports/codex/<skill>/<timestamp>/`; never serialize raw arguments into paths. Assessed PR reviews use `pr-<number>`. Final chat summary compact.

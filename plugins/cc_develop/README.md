@@ -510,7 +510,7 @@ ______________________________________________________________________
 /develop:setup --approve  # non-interactive — used by make sync-claude
 ```
 
-Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. The `develop-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`. A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches.
+Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. The `develop-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`. A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches. The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles.
 
 Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
 
@@ -735,7 +735,8 @@ plugins/cc_develop/
 ├── bin/
 │   └── sync_rules.py            -- installs rules/*.md into ~/.claude/rules/
 ├── rules/
-│   └── quality-gates.md         -- delivered as ~/.claude/rules/develop-quality-gates.md
+│   ├── quality-gates.md         -- delivered as ~/.claude/rules/develop-quality-gates.md
+│   └── _full/adversarial-loop.md -- required local procedure for independent review/fix cycles
 └── skills/
     ├── plan/
     │   └── SKILL.md

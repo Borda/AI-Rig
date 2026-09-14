@@ -1,6 +1,6 @@
 # 🤖 Codex Rig — Native Codex Workflows and Specialist Roles
 
-Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/AI-Rig). It packages 13 reusable workflow skills, one lifecycle-manager skill, 15 canonical specialist role cards, shared quality gates, calibration, and optional health hook as one Apache-2.0-licensed plugin.
+Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/AI-Rig). It packages 14 reusable workflow skills, one lifecycle-manager skill, 15 canonical specialist role cards, shared quality gates, calibration, and optional health hook as one Apache-2.0-licensed plugin.
 
 Calibration measures instruction quality against synthetic cases. It is not evidence that any individual run is correct.
 
@@ -177,24 +177,33 @@ codex '$codex-rig:code-remediate review'
 
 > Skill frontmatter uses compact routing descriptions to conserve Codex skills catalog; each `SKILL.md` body remains complete workflow contract.
 
-Codex Rig installs 14 skills: 13 workflows plus legacy shim manager.
+Codex Rig installs 15 skills: 14 workflows plus legacy shim manager.
 
-| Skill            | Purpose                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `assess`         | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates.                        |
-| `audit`          | Detect configuration, workflow, routing, documentation, prompt-efficiency, and quality-gate drift.                  |
-| `calibrate`      | Run fixed and behavioral checks across packaged skills and roles; score recall, precision, and confidence accuracy. |
-| `code-remediate` | Triage review findings, select valid work, assign owners/verifiers, apply fixes, and prove closure.                 |
-| `code-review`    | Close PR at evidence-backed proposal gate or review its local diff across mandatory and risk-triggered axes.        |
-| `implement`      | Run plan-build-verify implementation loop with promoted read-only fan-out and serial parent acceptance.             |
-| `investigate`    | Debug code and narrow unknown failures to evidence-backed root cause before implementation.                         |
-| `kaggle`         | Create or extend grounded Jupytext Kaggle notebooks, grounding schema via authenticated `kaggle` CLI.               |
-| `manage`         | Safely create, update, or remove Codex skills and agent configuration with promoted read-only inventory fan-out.    |
-| `optimize`       | Measure first, change one bounded variable, remeasure, and reject regressions.                                      |
-| `release`        | Assess SemVer, changelog, migration, packaging, and release readiness.                                              |
-| `research`       | Collect current primary evidence and map findings to concrete implementation choices.                               |
-| `sync`           | Inspect active plugin-cache drift or refresh public-GitHub Codex Rig installation without cache edits.              |
-| `agent-shims`    | Diagnose and remove authenticated thin shims from pre-release development; new installation stays blocked.          |
+Use `$codex-rig:adversarial-loop` with a scoped diff and acceptance criteria to run independent review-and-fix rounds. Root guidance keeps mandatory guardrails; `shared/adversarial-loop.md` is the single detailed procedure, also shipped as generated copies by the Claude plugins. The skill records scores, stable finding dispositions, retained source snapshots, and original reviewer reports; its deterministic checker rejects inconsistent histories and false clean claims. At most three reviews include the initial baseline. Structural findings, recurring signatures, stalled scores, missing independent coverage, and exhausted rounds produce explicit recovery decisions, not silent success. Existing review, remediation, and implementation workflows retain their own completion gates.
+
+Frozen source and diff evidence preserve original line endings, including Windows CRLF. Reviewer context must contain that exact text; newline-normalized substitutes do not satisfy the binding.
+
+The loop reuses Code Review's native inspection or App Server evidence validation, binds the implementation owner to the active host session, and requires every returned finding inside one structured reviewer response. It binds those responses to supplied source contents and recaptures actual scoped source before acceptance. A changed file, staged state, or newly added source invalidates stale clean evidence; a stopped loop must fail its review gate. Older unsupported or substituted reviewer evidence cannot certify independent coverage. These checks preserve each route's provenance limits; they do not prove that a review found every defect.
+
+Replies and handoffs now name the topic or question they answer before giving the outcome, so responses remain understandable after topic switches without repeating the conversation.
+
+| Skill              | Purpose                                                                                                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `assess`           | Inspect issue, PR, module, or problem before implementation; emit ranked findings and gates.                                 |
+| `adversarial-loop` | Independently review and fix a scoped diff through bounded convergence rounds, retaining evidence and explicit stop reasons. |
+| `audit`            | Detect configuration, workflow, routing, documentation, prompt-efficiency, and quality-gate drift.                           |
+| `calibrate`        | Run fixed and behavioral checks across packaged skills and roles; score recall, precision, and confidence accuracy.          |
+| `code-remediate`   | Triage review findings, select valid work, assign owners/verifiers, apply fixes, and prove closure.                          |
+| `code-review`      | Close PR at evidence-backed proposal gate or review its local diff across mandatory and risk-triggered axes.                 |
+| `implement`        | Run plan-build-verify implementation loop with promoted read-only fan-out and serial parent acceptance.                      |
+| `investigate`      | Debug code and narrow unknown failures to evidence-backed root cause before implementation.                                  |
+| `kaggle`           | Create or extend grounded Jupytext Kaggle notebooks, grounding schema via authenticated `kaggle` CLI.                        |
+| `manage`           | Safely create, update, or remove Codex skills and agent configuration with promoted read-only inventory fan-out.             |
+| `optimize`         | Measure first, change one bounded variable, remeasure, and reject regressions.                                               |
+| `release`          | Assess SemVer, changelog, migration, packaging, and release readiness.                                                       |
+| `research`         | Collect current primary evidence and map findings to concrete implementation choices.                                        |
+| `sync`             | Inspect active plugin-cache drift or refresh public-GitHub Codex Rig installation without cache edits.                       |
+| `agent-shims`      | Diagnose and remove authenticated thin shims from pre-release development; new installation stays blocked.                   |
 
 Every workflow defines input contract, fail-fast rules, required gates, artifact shape, and confidence output. `shared/quality-gates.md` owns compact outcome-coupled final-chat frame—Outcome, Results, Verification, Remaining, Recommendations / next steps, Confidence, Artifact—while `shared/final-handoff-contract.md` makes that structure executable after gates: schema-v2 results bind validated `final-handoff.json`, rendered `final.md`, and digest record before promotion, and workflow emits `final.md` verbatim. Rendered section and table labels use portable Markdown bold text instead of headings or terminal color escapes. Each skill keeps its exact outcome vocabulary, result table, and terminal exceptions; next steps reference result rows instead of repeating them, and artifacts supplement rather than replace readable result. Historical schema-v1 artifacts remain readable. `agent-shims` stays explicit exception because it has no canonical run/result artifact, and current host still has no post-send transcript hook to prove chat transport bytes. `shared/native-skill-contract.md` likewise owns generic shell-network approval and denial behavior while each networked skill retains its five concrete operation values and recovery exceptions. Workflow instructions live in `skills/<name>/SKILL.md`; shared executable contracts live in `shared/`.
 
@@ -571,7 +580,7 @@ codex-rig/
 ├── .codex-plugin/plugin.json
 ├── ARCHITECTURE.md        # parallel split, approvals, gates, evidence, telemetry
 ├── assets/AGENTS.md        # inert global-instructions template
-├── skills/                 # 13 workflows + agent-shims lifecycle manager
+├── skills/                 # 14 workflows + agent-shims lifecycle manager
 ├── roles/                  # 15 canonical role cards
 ├── shared/                 # gates, helpers, orchestration, artifact contracts
 ├── runtime/calibration/    # fixed, behavioral, and live calibration assets

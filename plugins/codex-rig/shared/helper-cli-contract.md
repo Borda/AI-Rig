@@ -8,6 +8,7 @@ Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_RO
 - `python PLUGIN_ROOT/shared/github_read.py --help`
 - `python PLUGIN_ROOT/shared/collect_pr.py --help`
 - `python PLUGIN_ROOT/shared/escalation_ledger.py --help`
+- `python PLUGIN_ROOT/shared/adversarial_loop.py --help` — validates convergence ledger consistency, not reviewer authenticity
 - `python PLUGIN_ROOT/shared/codemap_adapter.py --help` — optional structural-context probe; `context` accepts closed `--query-kind` vocabulary (`skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`); see `codemap-contract.md`
 - `python PLUGIN_ROOT/runtime/calibration/run.py --help`
 - `python PLUGIN_ROOT/runtime/calibration/run_live_ab.py --help`

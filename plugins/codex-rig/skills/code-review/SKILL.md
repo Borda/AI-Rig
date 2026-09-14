@@ -5,6 +5,8 @@ description: Close PRs at an evidence gate or review local diffs/PRs with specia
 
 # Code Review
 
+For an authorized review-and-fix cycle, read `../../shared/adversarial-loop.md` for convergence and stop rules. A review-only request remains read-only; a clean loop does not replace this skill's evidence, artifact, and completion/discovery gates.
+
 Run tiered review with strict output gates.
 
 ## Input Schema

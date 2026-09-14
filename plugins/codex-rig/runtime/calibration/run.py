@@ -58,6 +58,7 @@ from live_contract import Layout, build_prompt, candidate_findings, prompt_sha25
 
 
 SKILLS = (
+    "adversarial-loop",
     "code-review",
     "implement",
     "code-remediate",
@@ -1158,6 +1159,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         "find-review-report": run.paths.find_review_report,
         "run-gates": run.paths.run_gates,
         "escalation-ledger": run.paths.shared_dir / "escalation_ledger.py",
+        "adversarial-loop": run.paths.shared_dir / "adversarial_loop.py",
         "code-review-validate-artifacts": run.paths.code_review_validate_artifacts,
         "code-review-review-routing": run.paths.code_review_review_routing,
         "select-git-remote": run.paths.select_git_remote,
@@ -1167,6 +1169,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
     }
     if run.paths.layout == "plugin":
         cli_paths["create-run"] = run.paths.create_run
+        cli_paths["adversarial-loop-evidence"] = run.paths.skills_dir / "adversarial-loop" / "validate_evidence.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter
         assert run.paths.github_read is not None
         cli_paths["github-read"] = run.paths.github_read
@@ -1186,6 +1189,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         run.paths.calibration_dir.glob("*.py"),
         run.paths.shared_dir.glob("*.py"),
         (run.paths.skills_dir / "code-review").glob("*.py"),
+        (run.paths.skills_dir / "adversarial-loop").glob("*.py"),
     )
     if run.paths.layout == "source":
         discovery_roots += (run.paths.shared_dir.glob("*.sh"),)

@@ -1,6 +1,12 @@
 {
   "tasks": [
     {
+      "goal": "Close an adversarial review loop with independent current-diff coverage",
+      "id": "adversarial-loop-001",
+      "skill": "adversarial-loop",
+      "success": "iteration ledger, weighted-score decision, independent coverage evidence, and a self-contained reply topic are present"
+    },
+    {
       "goal": "Catch blocking findings in working tree changes",
       "id": "code-review-001",
       "skill": "code-review",

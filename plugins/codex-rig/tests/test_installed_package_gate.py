@@ -17,8 +17,12 @@ INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS = 180
 
 
 def test_installed_package_selection_timeout_is_bounded_for_native_windows() -> None:
-    """Keep the installed lifecycle budget finite while allowing Windows Git setup."""
+    """Keep child execution bounded and leave the outer test time for setup and timeout cleanup."""
     assert 60 < INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS <= 300
+    marks = getattr(test_installed_package_runs_the_explicit_package_safe_selection, "pytestmark", [])
+    timeouts = [mark.args[0] for mark in marks if mark.name == "timeout"]
+    assert len(timeouts) == 1, "the installed-package gate needs an explicit outer deadline"
+    assert INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS + 60 <= timeouts[0] <= 300
 
 
 def _package_payload_paths() -> tuple[str, ...]:
@@ -49,6 +53,7 @@ def _copied_package_root(tmp_path: Path) -> Path:
 
 @pytest.mark.packaging
 @pytest.mark.integration
+@pytest.mark.timeout(INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS + 60)
 def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path) -> None:
     """Prevent checkout-only tests from being mistaken for installed-package coverage.
 
@@ -56,6 +61,9 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     the denial protocol/client, all seven network approval briefs, both PR collector boundaries, and calibration
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
+
+    The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
+    timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection.
     """
     installed_root = _copied_package_root(tmp_path)
     for path in (installed_root / "Makefile", installed_root / ".github", installed_root / ".git"):

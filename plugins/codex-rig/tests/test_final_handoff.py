@@ -204,9 +204,8 @@ def test_v2_handoff_avoids_a_duplicate_results_title() -> None:
 def test_v2_unavailable_handoff_rejects_executed_pr_gates() -> None:
     """Prevent a terminal collection failure from presenting unrun PR gates as passed.
 
-    New unavailable reviews are created after source collection stops, before any
-    canonical PR verification gate can run. Historical handoffs omit
-    ``presentation_version`` and remain readable under their existing contract.
+    New unavailable reviews are created after source collection stops, before any canonical PR verification gate can
+    run. Historical handoffs omit ``presentation_version`` and remain readable under their existing contract.
     """
     finalizer = _load_finalizer()
     payload = _handoff_payload()

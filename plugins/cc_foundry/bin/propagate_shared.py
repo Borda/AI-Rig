@@ -210,12 +210,19 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_research/skills/_shared/codemap-py--codemap-gates.md",
         ],
     },
-    # No rules/*.md entries here, deliberately. Cross-cutting standards (python-code.md,
-    # python-testing.md, git-commit.md) are single-homed in cc_foundry because rules reach
-    # Claude only as symlinks in ~/.claude/rules/, created by foundry:setup — that flat
-    # namespace means two plugins shipping the same rule filename would collide, and a copy
-    # in a plugin with no installer is simply never loaded. Per-plugin rules/quality-gates.md
-    # variants stay unmanifested for the separate reason that they legitimately differ.
+    # No installed rules/*.md entries belong here: the flat ~/.claude/rules/ namespace makes
+    # cross-plugin copies collide, and per-plugin quality-gates variants legitimately differ.
+    # This on-demand body is the explicit exception: Codex owns the canonical source and
+    # every consuming plugin ships a byte-identical local copy, avoiding sibling runtime reads.
+    {
+        "canonical": "plugins/codex-rig/shared/adversarial-loop.md",
+        "copies": [
+            "plugins/cc_foundry/rules/_full/adversarial-loop.md",
+            "plugins/cc_oss/rules/_full/adversarial-loop.md",
+            "plugins/cc_develop/rules/_full/adversarial-loop.md",
+            "plugins/cc_research/rules/_full/adversarial-loop.md",
+        ],
+    },
     {
         "canonical": "plugins/cc_foundry/skills/_shared/codex-prepass.md",
         "copies": [

@@ -2649,7 +2649,10 @@ def test_cancelling_detached_supervisor_terminates_its_real_child(
         "import time\n"
         "child = subprocess.Popen([sys.executable, '-c', "
         "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])\n"
-        f"Path({str(child_pid_path)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        f"pid_path = Path({str(child_pid_path)!r})\n"
+        "pid_tmp_path = pid_path.with_suffix('.pid.tmp')\n"
+        "pid_tmp_path.write_text(str(child.pid), encoding='utf-8')\n"
+        "pid_tmp_path.replace(pid_path)\n"
         "time.sleep(60)\n",
         encoding="utf-8",
         newline="\n",
