@@ -67,6 +67,47 @@ GITHUB_HOST = "github.com"
 PR_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
 GITHUB_PATH_COMPONENT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 GIT_OBJECT_ID_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
+GIT_FAILURE_PATTERNS = (
+    (
+        "ref-update-rejected",
+        (
+            re.compile(r"! \[rejected\] .+ \(non-fast-forward\)$"),
+            re.compile(r"(?:fatal|error): .*(?:cannot lock ref|fetch first|would clobber).*$"),
+        ),
+    ),
+    (
+        "remote-ref-not-found",
+        (
+            re.compile(r"fatal: couldn't find remote ref .+$"),
+            re.compile(r"fatal: remote ref .+ not found$"),
+        ),
+    ),
+    (
+        "transport",
+        (
+            re.compile(
+                r"fatal: unable to access 'https?://[^']+': (?:could not resolve host|failed to connect|connection timed out).*$"
+            ),
+            re.compile(r"ssh: could not resolve hostname .+: .*$"),
+            re.compile(r"fatal: .*(?:network is unreachable|connection reset).*$"),
+        ),
+    ),
+    (
+        "permission",
+        (
+            re.compile(r"remote: permission to .+ denied to .+$"),
+            re.compile(r"fatal: authentication failed for 'https?://[^']+'$"),
+            re.compile(r"fatal: could not read username for 'https?://[^']+': .+$"),
+        ),
+    ),
+    (
+        "repository-unavailable",
+        (
+            re.compile(r"remote: repository not found\.$"),
+            re.compile(r"fatal: repository '.+' not found$"),
+        ),
+    ),
+)
 FALLBACK_UNAVAILABLE_EVIDENCE = (
     "github_provided_file_list",
     "mergeability",
@@ -196,10 +237,23 @@ def _run(run: RunCommand, argv: list[str], timeout: int, label: str, *, input_by
             diagnostics={
                 "exit_code": completed.returncode,
                 "failure_class": failure_class,
+                "failure_reason": _git_failure_reason(completed.stderr),
                 "label": label,
             },
         )
     return completed.stdout
+
+
+def _git_failure_reason(stderr: bytes) -> str:
+    """Classify recognized Git diagnostics without retaining their sensitive text."""
+    try:
+        lines = [line.strip() for line in stderr.decode("utf-8", errors="strict").casefold().splitlines()]
+    except UnicodeDecodeError:
+        return "unknown"
+    for reason, patterns in GIT_FAILURE_PATTERNS:
+        if any(pattern.fullmatch(line) for pattern in patterns for line in lines):
+            return reason
+    return "unknown"
 
 
 def _parse_pr_target(value: str) -> PRTarget | None:
@@ -593,7 +647,7 @@ def _review_artifacts(
         "is_cross_repository": bool(payload.get("isCrossRepository")),
         "same_repo": bool(head_repo and base_repo and head_repo.casefold() == base_repo.casefold()),
         "local_checkout_required": True,
-        "local_checkout_command": f"gh pr checkout {payload.get('number')}",
+        "local_checkout_command": f"git checkout --detach {payload.get('headRefOid')}",
         "force_policy": "never pass --force to git or gh automatically; stop and ask the user first",
         "source_policy": (
             "inspect the exact local checkout and derive its diff locally; use public REST metadata with unavailable "
@@ -628,6 +682,106 @@ def _selector(
     return _json(_run(run, argv, timeout, "select-git-remote"), "select-git-remote")
 
 
+def _fetch_exact_ref(run: RunCommand, timeout: int, remote_name: str, source_ref: str, label: str) -> str:
+    """Fetch one ref without updating local refs and return its captured object ID."""
+    _run(run, ["git", "fetch", "--no-tags", "--refmap=", remote_name, source_ref], timeout, label)
+    return _run(run, ["git", "rev-parse", "FETCH_HEAD"], timeout, f"{label}-rev-parse").decode().strip()
+
+
+def _worktree_preflight(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    *,
+    phase: str,
+    current_head: str,
+    base_oid: str,
+    head_oid: str,
+) -> None:
+    """Block only local state that can overwrite or misrepresent the reviewed PR source."""
+    tracked_paths = _git_path_list(
+        _run(run, ["git", "diff", "--name-only", "-z", "HEAD", "--"], timeout, f"{phase}-tracked-worktree-paths")
+    )
+    staged_paths = _git_path_list(
+        _run(
+            run,
+            ["git", "diff", "--cached", "--name-only", "-z", "HEAD", "--"],
+            timeout,
+            f"{phase}-staged-index-paths",
+        )
+    )
+    untracked_paths = _git_path_list(
+        _run(
+            run,
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            timeout,
+            f"{phase}-untracked-worktree-paths",
+        )
+    )
+    dirty_paths = sorted(set(tracked_paths).union(staged_paths, untracked_paths))
+    unmerged_paths = _git_path_list(
+        _run(
+            run,
+            ["git", "diff", "--name-only", "-z", "--diff-filter=U", "--"],
+            timeout,
+            f"{phase}-unmerged-paths",
+        )
+    )
+    pr_paths = _git_path_list(
+        _run(
+            run,
+            ["git", "diff", "--name-only", "-z", f"{base_oid}...{head_oid}", "--"],
+            timeout,
+            f"{phase}-pr-paths",
+        )
+    )
+    checkout_paths: list[str] = []
+    if phase == "before-checkout" and current_head != head_oid:
+        checkout_paths = _git_path_list(
+            _run(
+                run,
+                ["git", "diff", "--name-only", "-z", current_head, head_oid, "--"],
+                timeout,
+                "checkout-paths",
+            )
+        )
+    overlapping_paths = sorted(set(dirty_paths).intersection(checkout_paths))
+    overlapping_pr_paths = sorted(set(dirty_paths).intersection(pr_paths))
+    status = "clean"
+    if unmerged_paths:
+        status = "blocked-unmerged-index"
+    elif overlapping_pr_paths:
+        status = "blocked-pr-dirty-paths"
+    elif overlapping_paths:
+        status = "blocked-overlapping-dirty-paths"
+    elif dirty_paths:
+        status = "safe-unrelated-dirty-paths"
+    elif current_head == head_oid:
+        status = "already-at-pr-head"
+    _write_json(
+        output / "worktree-preflight.json",
+        {
+            "phase": phase,
+            "status": status,
+            "current_head": current_head,
+            "expected_head": head_oid,
+            "dirty_paths": dirty_paths,
+            "unmerged_paths": unmerged_paths,
+            "pr_paths": pr_paths,
+            "checkout_paths": checkout_paths,
+            "overlapping_paths": overlapping_paths,
+            "overlapping_pr_paths": overlapping_pr_paths,
+        },
+    )
+    error_phase = "before-pr-checkout" if phase == "before-checkout" else "after-pr-checkout"
+    if unmerged_paths:
+        raise CollectionError(f"unresolved-index-{error_phase}")
+    if overlapping_pr_paths:
+        raise CollectionError(f"dirty-pr-worktree-{error_phase}")
+    if overlapping_paths:
+        raise CollectionError("dirty-tracked-worktree-overlap-before-pr-checkout")
+
+
 def _checkout(
     run: RunCommand,
     timeout: int,
@@ -654,14 +808,7 @@ def _checkout(
     (output / "remote-selection-error.txt").write_bytes(b"")
     (output / "remote.txt").write_text(f"{remote_name} {remote_url}\n", encoding="utf-8")
 
-    base_remote_ref = f"refs/remotes/{remote_name}/{base_ref}"
-    _run(
-        run,
-        ["git", "fetch", "--no-tags", remote_name, f"{base_ref}:{base_remote_ref}"],
-        timeout,
-        "target-branch-fetch",
-    )
-    base_local = _run(run, ["git", "rev-parse", base_remote_ref], timeout, "target-branch-rev-parse").decode().strip()
+    base_local = _fetch_exact_ref(run, timeout, remote_name, base_ref, "target-branch-fetch")
     base_matches = base_local == base_oid
     base_is_ancestor = base_matches or _git_is_ancestor(run, timeout, base_oid, base_local)
     base_relation = "matches-pr-metadata" if base_matches else "advanced" if base_is_ancestor else "diverged"
@@ -670,13 +817,13 @@ def _checkout(
         "remote": remote_name,
         "remote_url": remote_url,
         "base_ref": base_ref,
-        "remote_ref": base_remote_ref,
+        "remote_ref": base_local,
         "local_head": base_local,
         "expected_base_oid": base_oid,
         "base_matches_pr_metadata": base_matches,
         "expected_base_is_ancestor": base_is_ancestor,
         "base_relation": base_relation,
-        "command": f"git fetch --no-tags {remote_name} {base_ref}:{base_remote_ref}",
+        "command": f"git fetch --no-tags --refmap= {remote_name} {base_ref}",
         "source_policy": "target branch is refreshed before review; advancement from the PR-recorded base is review context, while divergence fails an open-PR review",
     }
     _write_json(output / "target-branch.json", target)
@@ -685,24 +832,18 @@ def _checkout(
 
     use_pull_ref = routing.get("pr_metadata_transport") == "public-https-fallback" and isinstance(number, int)
     if use_pull_ref:
-        head_remote_ref = f"refs/remotes/{remote_name}/pull/{number}/head"
-        _run(
-            run,
-            ["git", "fetch", "--no-tags", remote_name, f"refs/pull/{number}/head:{head_remote_ref}"],
-            timeout,
-            "public-pr-head-fetch",
-        )
-        head_local = (
-            _run(run, ["git", "rev-parse", head_remote_ref], timeout, "public-pr-head-rev-parse").decode().strip()
-        )
+        source_ref = f"refs/pull/{number}/head"
+        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, "public-pr-head-fetch")
         head = {
             "status": "fetched",
             "remote": remote_name,
-            "head_ref": head_remote_ref,
+            "head_ref": source_ref,
+            "remote_ref": "FETCH_HEAD",
+            "source_ref": source_ref,
             "local_head": head_local,
             "expected_head_oid": head_oid,
             "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags {remote_name} refs/pull/{number}/head:{head_remote_ref}",
+            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
             "source_policy": "public fallback verifies GitHub's pull ref against REST metadata before detached local checkout",
         }
         _write_json(output / "pr-head-fetch.json", head)
@@ -714,23 +855,18 @@ def _checkout(
         and isinstance(head_ref, str)
         and head_ref
     ):
-        head_remote_ref = f"refs/remotes/{remote_name}/{head_ref}"
-        _run(
-            run,
-            ["git", "fetch", "--no-tags", remote_name, f"{head_ref}:{head_remote_ref}"],
-            timeout,
-            "pr-head-fetch",
-        )
-        head_local = _run(run, ["git", "rev-parse", head_remote_ref], timeout, "pr-head-rev-parse").decode().strip()
+        source_ref = head_ref
+        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, "pr-head-fetch")
         head = {
             "status": "fetched",
             "remote": remote_name,
             "head_ref": head_ref,
-            "remote_ref": head_remote_ref,
+            "remote_ref": "FETCH_HEAD",
+            "source_ref": source_ref,
             "local_head": head_local,
             "expected_head_oid": head_oid,
             "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags {remote_name} {head_ref}:{head_remote_ref}",
+            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
             "source_policy": "PR branch is refreshed before local checkout and conflict analysis",
         }
         _write_json(output / "pr-head-fetch.json", head)
@@ -738,24 +874,20 @@ def _checkout(
             raise CollectionError(f"pr-head-oid-mismatch:{head_local}:{head_oid}")
     elif isinstance(number, int):
         # Fork commits may be absent locally; fetch before inspecting checkout overlap, not during checkout.
-        pull_head_ref = f"refs/remotes/{remote_name}/pull/{number}/head"
+        source_ref = f"refs/pull/{number}/head"
         historical = routing.get("pr_state") != "OPEN"
         head_label = "historical-pr-head" if historical else "pr-head"
-        _run(
-            run,
-            ["git", "fetch", "--no-tags", remote_name, f"refs/pull/{number}/head:{pull_head_ref}"],
-            timeout,
-            f"{head_label}-fetch",
-        )
-        head_local = _run(run, ["git", "rev-parse", pull_head_ref], timeout, f"{head_label}-rev-parse").decode().strip()
+        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, f"{head_label}-fetch")
         head = {
             "status": "fetched",
             "remote": remote_name,
-            "head_ref": pull_head_ref,
+            "head_ref": source_ref,
+            "remote_ref": "FETCH_HEAD",
+            "source_ref": source_ref,
             "local_head": head_local,
             "expected_head_oid": head_oid,
             "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags {remote_name} refs/pull/{number}/head:{pull_head_ref}",
+            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
             "source_policy": "PR head is refreshed from GitHub's pull ref and verified against metadata before checkout preflight",
         }
         _write_json(output / "pr-head-fetch.json", head)
@@ -765,46 +897,21 @@ def _checkout(
         raise CollectionError("missing-pr-checkout-identity")
 
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
-    dirty_paths = _git_path_list(
-        _run(run, ["git", "diff", "--name-only", "-z", "HEAD", "--"], timeout, "tracked-worktree-paths")
+    _worktree_preflight(
+        run,
+        timeout,
+        output,
+        phase="before-checkout",
+        current_head=current_head,
+        base_oid=base_oid,
+        head_oid=head_oid,
     )
-    checkout_paths = []
-    if current_head != head_oid:
-        checkout_paths = _git_path_list(
-            _run(
-                run,
-                ["git", "diff", "--name-only", "-z", current_head, head_oid, "--"],
-                timeout,
-                "checkout-paths",
-            )
-        )
-    overlapping_paths = sorted(set(dirty_paths).intersection(checkout_paths))
-    preflight_status = "clean"
-    if current_head == head_oid:
-        preflight_status = "already-at-pr-head"
-    elif dirty_paths:
-        preflight_status = "safe-unrelated-dirty-paths"
-    if overlapping_paths:
-        preflight_status = "blocked-overlapping-dirty-paths"
-    preflight = {
-        "status": preflight_status,
-        "current_head": current_head,
-        "expected_head": head_oid,
-        "dirty_paths": dirty_paths,
-        "checkout_paths": checkout_paths,
-        "overlapping_paths": overlapping_paths,
-    }
-    _write_json(output / "worktree-preflight.json", preflight)
-    if overlapping_paths:
-        raise CollectionError("dirty-tracked-worktree-overlap-before-pr-checkout")
-    checkout_argv = ["gh", "pr", "checkout", str(number)]
-    if (use_pull_ref or routing.get("pr_state") != "OPEN") and isinstance(number, int):
-        checkout_argv = ["git", "checkout", "--detach", f"refs/remotes/{remote_name}/pull/{number}/head"]
+    checkout_argv = ["git", "checkout", "--detach", head_oid]
     routing["local_checkout_command"] = " ".join(checkout_argv)
     _write_json(output / "pr-routing.json", routing)
     checkout_command = "not-run: already at expected PR head"
     if current_head != head_oid:
-        # gh may alter refs or the worktree before returning an error; retain conservative state first.
+        # Native checkout may alter the worktree before returning an error; retain conservative state first.
         _write_json(
             output / "checkout-state.json",
             {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
@@ -836,9 +943,18 @@ def _checkout(
         "force_policy": "no --force was used; ask the user before any forced checkout",
         "source_policy": "local checkout is authoritative for code inspection and edits",
     }
-    _write_json(output / "local-checkout.json", checkout_evidence)
     if not matches:
         raise CollectionError("local-checkout-head-mismatch")
+    _worktree_preflight(
+        run,
+        timeout,
+        output,
+        phase="after-checkout",
+        current_head=local_head,
+        base_oid=base_oid,
+        head_oid=head_oid,
+    )
+    _write_json(output / "local-checkout.json", checkout_evidence)
     _write_json(
         output / "checkout-state.json",
         {"status": "checkout-verified", "local_state": "exact-pr-head", "local_head": local_head},
@@ -848,7 +964,7 @@ def _checkout(
 
 def _clear_collector_artifacts(output: Path) -> None:
     """Remove this collector's prior evidence so one output directory never mixes attempts."""
-    for filename in (*COLLECTOR_EVIDENCE_ARTIFACTS, "command-failure.json", "pr-error.txt"):
+    for filename in (*COLLECTOR_EVIDENCE_ARTIFACTS, "command-failure.json", "pr-error.txt", "pr-target.txt"):
         (output / filename).unlink(missing_ok=True)
 
 
@@ -875,10 +991,7 @@ def collect_pr(
         for command in ("git", "gh"):
             if shutil.which(command) is None:
                 raise CollectionError(f"missing-command:{command}")
-        try:
-            status = _run(command_runner, ["git", "status", "--short"], timeout_seconds, "git-status")
-        except CollectionError:
-            status = b""
+        status = _run(command_runner, ["git", "status", "--short"], timeout_seconds, "git-status")
         (output / "status.txt").write_bytes(status)
         selector = Path(__file__).resolve().with_name("select-git-remote.py")
         payload_bytes, pr_metadata_transport = _read_pr_metadata(

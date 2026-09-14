@@ -278,6 +278,10 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
                 "dirty_paths": [],
                 "checkout_paths": ["changed.py"],
                 "overlapping_paths": [],
+                "pr_paths": ["changed.py"],
+                "overlapping_pr_paths": [],
+                "unmerged_paths": [],
+                "phase": "before-checkout",
             }
         ),
         encoding="utf-8",

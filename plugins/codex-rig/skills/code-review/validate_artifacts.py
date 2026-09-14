@@ -185,8 +185,60 @@ UNAVAILABLE_HUMAN_SUMMARIES = {
     "dirty-tracked-worktree-overlap-before-pr-checkout": (
         "I stopped before checkout because it could overwrite your local files, so the review has not started."
     ),
+    "dirty-pr-worktree-before-pr-checkout": (
+        "I stopped before checkout because local changes overlap PR files, so the review has not started."
+    ),
+    "dirty-pr-worktree-after-pr-checkout": (
+        "I stopped after checkout because local changes overlap PR files, so the review has not started."
+    ),
+    "unresolved-index-before-pr-checkout": (
+        "I stopped before checkout because the Git index has unresolved entries, so the review has not started."
+    ),
+    "unresolved-index-after-pr-checkout": (
+        "I stopped after checkout because the Git index has unresolved entries, so the review has not started."
+    ),
+    "target-branch-fetch": "I could not refresh the target branch before verification, so the review has not started.",
+    "pr-head-fetch": "I could not refresh the PR source before verification, so the review has not started.",
+    "public-pr-head-fetch": "I could not refresh the PR source before verification, so the review has not started.",
+    "historical-pr-head-fetch": "I could not refresh the PR source before verification, so the review has not started.",
 }
 UNAVAILABLE_GENERIC_SUMMARY = "Source collection stopped before I could verify which PR revision to review."
+UNAVAILABLE_GATE_IDS = ("lint", "format", "types", "tests", "review")
+PR_HEAD_FETCH_FAILURE_REASONS = {
+    "ref-update-rejected",
+    "remote-ref-not-found",
+    "transport",
+    "permission",
+    "repository-unavailable",
+    "unknown",
+}
+FETCH_FAILURE_LABELS = {
+    "target-branch-fetch",
+    "pr-head-fetch",
+    "public-pr-head-fetch",
+    "historical-pr-head-fetch",
+}
+PR_HEAD_FETCH_RECOVERY_ACTIONS = {
+    "ref-update-rejected": "Resolve the local Git reference rejection, then start a fresh collector run.",
+    "remote-ref-not-found": "Refresh the PR metadata and confirm a current PR head exists, then start a fresh collector run.",
+    "transport": "Restore transport access, then start a fresh collector run.",
+    "permission": "Restore permitted repository access privately, then start a fresh collector run.",
+    "repository-unavailable": "Confirm the canonical repository identity and availability after a state change, then start a fresh collector run.",
+    "unknown": "Inspect the classified collector failure before choosing a permitted recovery.",
+}
+WORKTREE_FAILURE_RECOVERY_ACTIONS = {
+    "dirty-tracked-worktree-overlap-before-pr-checkout": (
+        "Preserve or move the local changes that overlap checkout paths, then start a fresh collector run."
+    ),
+    "dirty-pr-worktree-before-pr-checkout": (
+        "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    ),
+    "dirty-pr-worktree-after-pr-checkout": (
+        "Preserve or move the local changes that overlap PR files, then start a fresh collector run."
+    ),
+    "unresolved-index-before-pr-checkout": "Resolve the Git index entries, then start a fresh collector run.",
+    "unresolved-index-after-pr-checkout": "Resolve the Git index entries, then start a fresh collector run.",
+}
 
 
 def _load_role_card(roles_dir: Path, role: str) -> dict[str, str]:
@@ -730,7 +782,9 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
 
     notes_path = out_dir / "review-notes.md"
     notes = notes_path.read_text(encoding="utf-8")
-    recovery_action = _unavailable_recovery_action(code, checkout_state is not None)
+    command_record = _unavailable_command_diagnostic(out_dir, code)
+    command_reason = command_record[1] if command_record is not None else None
+    recovery_action = _unavailable_recovery_action(code, checkout_state is not None, command_reason)
     if any(line.strip().startswith("|") for line in notes.splitlines()):
         raise SystemExit("unavailable-review-process-table-forbidden")
     expected_notes = (
@@ -776,7 +830,34 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
     }
     if metadata.get("confidence_recovery") != expected_recovery:
         raise SystemExit("unavailable-review-confidence-recovery-must-be-canonical")
+    _validate_unavailable_gates(out_dir, result)
     _validate_unavailable_final_handoff(out_dir, metadata)
+
+
+def _validate_unavailable_gates(out_dir: Path, result: dict[str, Any]) -> None:
+    """Require explicit skipped PR gates for new terminal unavailable results."""
+    if result.get("schema_version") != 2:
+        return
+    gates_path = out_dir / "gates.json"
+    if not gates_path.is_file():
+        raise SystemExit("unavailable-review-gates-must-be-not-applicable")
+    gates = _load_json(gates_path)
+    checks = gates.get("checks")
+    if (
+        gates.get("status") != "pass"
+        or gates.get("checks_failed") != []
+        or not isinstance(checks, list)
+        or tuple(check.get("id") if isinstance(check, dict) else None for check in checks) != UNAVAILABLE_GATE_IDS
+        or any(
+            not isinstance(check, dict)
+            or check.get("status") != "not-applicable"
+            or check.get("exit_code") != 0
+            or not isinstance(check.get("reason"), str)
+            or not check["reason"].strip()
+            for check in checks
+        )
+    ):
+        raise SystemExit("unavailable-review-gates-must-be-not-applicable")
 
 
 def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any]) -> None:
@@ -851,8 +932,15 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
         raise SystemExit("unavailable-review-final-handoff-recovery-mismatch")
 
 
-def _unavailable_recovery_action(code: str, checkout_started: bool) -> str:
+def _unavailable_recovery_action(code: str, checkout_started: bool, command_reason: str | None = None) -> str:
     """Return the canonical safe recovery for one classified collection failure."""
+    label = code.rsplit(":", maxsplit=1)[-1]
+    if label in FETCH_FAILURE_LABELS and command_reason in PR_HEAD_FETCH_RECOVERY_ACTIONS:
+        recovery_action = PR_HEAD_FETCH_RECOVERY_ACTIONS[command_reason]
+        return recovery_action + (CHECKOUT_STATE_RECOVERY_SUFFIX if checkout_started else "")
+    if label in WORKTREE_FAILURE_RECOVERY_ACTIONS:
+        recovery_action = WORKTREE_FAILURE_RECOVERY_ACTIONS[label]
+        return recovery_action + (CHECKOUT_STATE_RECOVERY_SUFFIX if checkout_started else "")
     category = code.split(":", maxsplit=1)[0]
     action_key = (
         "retry"
@@ -893,6 +981,8 @@ def _unavailable_command_diagnostic(out_dir: Path, code: str) -> tuple[str, str 
         raise SystemExit("unavailable-review-command-diagnostic-invalid")
     if label != code.rsplit(":", maxsplit=1)[-1]:
         raise SystemExit("unavailable-review-command-diagnostic-code-mismatch")
+    if label in FETCH_FAILURE_LABELS and reason is not None and reason not in PR_HEAD_FETCH_FAILURE_REASONS:
+        raise SystemExit("unavailable-review-command-diagnostic-invalid")
     reason_detail = f"; reason `{reason}`" if reason is not None else ""
     return f"Command diagnostic: `{label}` exited {exit_code} (`{failure_class}`{reason_detail}).", reason
 
@@ -917,23 +1007,129 @@ def _unavailable_preflight_diagnostic(out_dir: Path) -> str | None:
     if not path.is_file():
         return None
     preflight = _load_json(path)
-    expected_keys = {"status", "current_head", "expected_head", "dirty_paths", "checkout_paths", "overlapping_paths"}
+    expected_keys = {
+        "status",
+        "current_head",
+        "expected_head",
+        "dirty_paths",
+        "checkout_paths",
+        "overlapping_paths",
+        "pr_paths",
+        "overlapping_pr_paths",
+        "unmerged_paths",
+        "phase",
+    }
     head_pattern = re.compile(r"[0-9a-f]{7,64}\Z")
     if (
         set(preflight) != expected_keys
         or preflight.get("status")
-        not in {"already-at-pr-head", "blocked-overlapping-dirty-paths", "clean", "safe-unrelated-dirty-paths"}
+        not in {
+            "already-at-pr-head",
+            "blocked-overlapping-dirty-paths",
+            "blocked-pr-dirty-paths",
+            "blocked-unmerged-index",
+            "clean",
+            "safe-unrelated-dirty-paths",
+        }
+        or preflight.get("phase") not in {"before-checkout", "after-checkout"}
         or not isinstance(preflight.get("current_head"), str)
         or not head_pattern.fullmatch(preflight["current_head"])
         or not isinstance(preflight.get("expected_head"), str)
         or not head_pattern.fullmatch(preflight["expected_head"])
         or any(
             not isinstance(preflight.get(key), list) or not all(isinstance(item, str) for item in preflight[key])
-            for key in expected_keys - {"status", "current_head", "expected_head"}
+            for key in expected_keys - {"status", "current_head", "expected_head", "phase"}
         )
     ):
         raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    if preflight["status"] == "blocked-overlapping-dirty-paths" and not preflight["overlapping_paths"]:
+        raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    if preflight["status"] == "blocked-pr-dirty-paths" and not preflight["overlapping_pr_paths"]:
+        raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    if preflight["status"] == "blocked-unmerged-index" and not preflight["unmerged_paths"]:
+        raise SystemExit("unavailable-review-worktree-preflight-invalid")
+    dirty_paths = set(preflight["dirty_paths"])
+    if (
+        set(preflight["overlapping_paths"]) != dirty_paths.intersection(preflight["checkout_paths"])
+        or set(preflight["overlapping_pr_paths"]) != dirty_paths.intersection(preflight["pr_paths"])
+        or (preflight["status"] == "clean" and (preflight["dirty_paths"] or preflight["unmerged_paths"]))
+        or (
+            preflight["status"] == "safe-unrelated-dirty-paths"
+            and (not preflight["dirty_paths"] or preflight["unmerged_paths"])
+        )
+        or (preflight["status"] == "already-at-pr-head" and preflight["current_head"] != preflight["expected_head"])
+    ):
+        raise SystemExit("unavailable-review-worktree-preflight-invalid")
     return f"Worktree preflight: local head `{preflight['current_head']}`; expected PR head `{preflight['expected_head']}`."
+
+
+def _validate_verified_pr_source(
+    out_dir: Path, routing: dict[str, Any], target_branch: dict[str, Any], checkout: dict[str, Any]
+) -> None:
+    """Bind reviewed local source to immutable target and PR-head OIDs."""
+    pr_payload = _load_json(out_dir / "pr.json")
+    head_fetch = _load_json(out_dir / "pr-head-fetch.json")
+    preflight = _load_json(out_dir / "worktree-preflight.json")
+    head_oid = routing.get("head_oid")
+    base_oid = routing.get("base_oid")
+    recorded_oids = (
+        pr_payload.get("baseRefOid"),
+        pr_payload.get("headRefOid"),
+        base_oid,
+        head_oid,
+        target_branch.get("remote_ref"),
+        target_branch.get("local_head"),
+        target_branch.get("expected_base_oid"),
+        head_fetch.get("local_head"),
+        head_fetch.get("expected_head_oid"),
+        checkout.get("expected_head"),
+        checkout.get("local_head"),
+        checkout.get("diff_base_oid"),
+        checkout.get("diff_head_oid"),
+        preflight.get("current_head"),
+        preflight.get("expected_head"),
+    )
+    if (
+        any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in recorded_oids)
+        or pr_payload.get("baseRefOid") != base_oid
+        or pr_payload.get("headRefOid") != head_oid
+        or target_branch.get("remote_ref") != target_branch.get("local_head")
+        or target_branch.get("expected_base_oid") != base_oid
+        or head_fetch.get("remote_ref") != "FETCH_HEAD"
+        or head_fetch.get("local_head") != head_fetch.get("expected_head_oid")
+        or head_fetch.get("expected_head_oid") != head_oid
+        or head_fetch.get("head_matches_pr_metadata") is not True
+        or checkout.get("expected_head") != head_oid
+        or checkout.get("local_head") != head_oid
+    ):
+        raise SystemExit("pr-source-oid-provenance-invalid")
+    path_fields = (
+        "dirty_paths",
+        "unmerged_paths",
+        "pr_paths",
+        "checkout_paths",
+        "overlapping_paths",
+        "overlapping_pr_paths",
+    )
+    if (
+        preflight.get("phase") != "after-checkout"
+        or preflight.get("status") not in {"clean", "already-at-pr-head", "safe-unrelated-dirty-paths"}
+        or preflight.get("expected_head") != head_oid
+        or preflight.get("current_head") != head_oid
+        or any(
+            not isinstance(preflight.get(field), list) or not all(isinstance(path, str) for path in preflight[field])
+            for field in path_fields
+        )
+        or preflight.get("unmerged_paths")
+        or set(preflight["overlapping_paths"])
+        != set(preflight["dirty_paths"]).intersection(preflight["checkout_paths"])
+        or set(preflight["overlapping_pr_paths"]) != set(preflight["dirty_paths"]).intersection(preflight["pr_paths"])
+        or preflight["overlapping_paths"]
+        or preflight["overlapping_pr_paths"]
+        or (preflight.get("status") in {"clean", "already-at-pr-head"} and preflight.get("dirty_paths"))
+        or (preflight.get("status") == "safe-unrelated-dirty-paths" and not preflight.get("dirty_paths"))
+    ):
+        raise SystemExit("pr-source-worktree-preflight-invalid")
 
 
 def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
@@ -965,7 +1161,10 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
     )
     if forbidden:
         raise SystemExit("closed-review-has-detailed-review-artifacts:" + ",".join(forbidden))
-    for filename in sorted(CLOSED_REQUIRED_PR_ARTIFACTS):
+    required_pr_artifacts = set(CLOSED_REQUIRED_PR_ARTIFACTS)
+    if result.get("schema_version") == 2:
+        required_pr_artifacts.update({"pr-head-fetch.json", "worktree-preflight.json"})
+    for filename in sorted(required_pr_artifacts):
         if not (out_dir / filename).is_file():
             raise SystemExit(f"closed-review-missing-pr-artifact:{filename}")
 
@@ -1018,6 +1217,8 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
     routing = _load_json(out_dir / "pr-routing.json")
     target_branch = _load_json(out_dir / "target-branch.json")
     checkout = _load_json(out_dir / "local-checkout.json")
+    if result.get("schema_version") == 2:
+        _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
     if pr_payload.get("state") != "OPEN" or routing.get("pr_state") != "OPEN":
         raise SystemExit("closed-review-pr-state-not-open")
     if not isinstance(pr_payload.get("body"), str):
@@ -1921,7 +2122,7 @@ def _validate_result(
         notes_text = notes_path.read_text(encoding="utf-8")
         if "Online Review Triage" not in notes_text:
             raise SystemExit("missing-pr-online-review-triage")
-        for filename in (
+        required_pr_artifacts = (
             "pr.json",
             "pr-routing.json",
             "target-branch.json",
@@ -1933,7 +2134,10 @@ def _validate_result(
             "online-review-summary.json",
             "remote-selection.json",
             "diff.patch",
-        ):
+        )
+        if result.get("schema_version") == 2:
+            required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
+        for filename in required_pr_artifacts:
             if not (out_dir / filename).exists():
                 raise SystemExit(f"missing-pr-artifact:{filename}")
         routing = _load_json(out_dir / "pr-routing.json")
@@ -1964,14 +2168,19 @@ def _validate_result(
             raise SystemExit("pr-routing-force-checkout-forbidden")
         if "force_policy" not in routing:
             raise SystemExit("pr-routing-force-policy-missing")
-        expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
-        if routing.get("pr_metadata_transport") == "public-https-fallback":
-            expected_checkout = (
-                f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
-                f"{routing.get('pr_number')}/head"
-            )
-        if routing.get("local_checkout_command") != expected_checkout:
-            raise SystemExit("pr-routing-checkout-command-invalid")
+        if result.get("schema_version") == 2:
+            expected_checkout = f"git checkout --detach {routing.get('head_oid')}"
+            if routing.get("local_checkout_command") != expected_checkout:
+                raise SystemExit("pr-routing-checkout-command-invalid")
+        else:
+            expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
+            if routing.get("pr_metadata_transport") == "public-https-fallback":
+                expected_checkout = (
+                    f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
+                    f"{routing.get('pr_number')}/head"
+                )
+            if routing.get("local_checkout_command") != expected_checkout:
+                raise SystemExit("pr-routing-checkout-command-invalid")
         if target_branch.get("status") != "fetched":
             raise SystemExit("pr-target-branch-not-fetched")
         if target_branch.get("remote") != remote_selection.get("remote"):
@@ -2014,6 +2223,8 @@ def _validate_result(
             or checkout.get("diff_command") != expected_diff_command
         ):
             raise SystemExit("pr-local-diff-provenance-invalid")
+        if result.get("schema_version") == 2:
+            _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
         thread_status = online_summary.get("review_threads_status")
         thread_error = online_summary.get("review_threads_error")
         if thread_status == "available":

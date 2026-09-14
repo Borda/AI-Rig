@@ -34,11 +34,13 @@ def test_final_summary_includes_all_ingested_items_with_outcomes() -> None:
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     assert "Final Outcome Table" in skill
     assert "every ingested item" in skill
-    assert "Implemented —" in skill
-    assert "Rejected —" in skill
-    assert "Skipped / unselected —" in skill
-    assert "Already closed —" in skill
-    assert "Unresolved —" in skill
+    assert "Implemented:" in skill
+    assert "Rejected:" in skill
+    assert "Deferred:" in skill
+    assert "Verified without code changes:" in skill
+    assert "Blocked:" in skill
+    assert "Needs clarification:" in skill
+    assert "Never render bare `unresolved`" in skill
 
 
 def test_visible_tables_use_compact_sources_without_dropping_details() -> None:

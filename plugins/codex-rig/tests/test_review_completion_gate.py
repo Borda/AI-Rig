@@ -47,7 +47,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
             "base_host": "github.com",
             "base_repo": "acme/widgets",
             "local_checkout_required": True,
-            "local_checkout_command": "gh pr checkout 123",
+            "local_checkout_command": f"git checkout --detach {head}",
             "force_policy": "forbidden",
             "base_oid": base,
             "head_oid": head,
@@ -56,21 +56,30 @@ def _assessed_pr(tmp_path: Path) -> Path:
             "expected": {"host": "github.com", "repository": "acme/widgets"},
             "remote": "origin",
             "remote_url": remote_url,
+            "remote_ref": base,
         },
         "target-branch.json": {
             "status": "fetched",
             "remote": "origin",
             "remote_url": remote_url,
+            "remote_ref": base,
             "expected_base_oid": base,
             "local_head": base,
             "expected_base_is_ancestor": True,
             "base_matches_pr_metadata": True,
             "base_relation": "matches-pr-metadata",
         },
+        "pr-head-fetch.json": {
+            "status": "fetched",
+            "remote_ref": "FETCH_HEAD",
+            "local_head": head,
+            "expected_head_oid": head,
+            "head_matches_pr_metadata": True,
+        },
         "local-checkout.json": {
             "status": "checked-out",
             "pr_url": url,
-            "command": "gh pr checkout 123",
+            "command": f"git checkout --detach {head}",
             "force_policy": "forbidden",
             "head_matches_pr": True,
             "expected_head": head,
@@ -79,6 +88,18 @@ def _assessed_pr(tmp_path: Path) -> Path:
             "diff_base_oid": base,
             "diff_head_oid": head,
             "diff_command": f"git diff --binary {base}...{head} --",
+        },
+        "worktree-preflight.json": {
+            "phase": "after-checkout",
+            "status": "clean",
+            "current_head": head,
+            "expected_head": head,
+            "dirty_paths": [],
+            "unmerged_paths": [],
+            "pr_paths": ["widget.py"],
+            "checkout_paths": [],
+            "overlapping_paths": [],
+            "overlapping_pr_paths": [],
         },
         "online-review-summary.json": {"review_threads_status": "available", "review_threads_error": None},
     }
@@ -219,6 +240,97 @@ def test_completed_pr_emits_bound_final_then_separate_finder_finds_it(assessed_p
     )
     assert lookup.returncode == 0, lookup.stderr
     assert Path(lookup.stdout.strip()) == assessed_pr / "result.json"
+
+
+def test_v2_source_validation_accepts_a_target_advanced_past_pr_metadata(assessed_pr: Path) -> None:
+    """Allow a verified immutable target fetch to advance beyond the PR's metadata base."""
+    advanced_target = "c" * 40
+    target_path = assessed_pr / "target-branch.json"
+    target = json.loads(target_path.read_text(encoding="utf-8"))
+    target.update(
+        remote_ref=advanced_target,
+        local_head=advanced_target,
+        base_matches_pr_metadata=False,
+        base_relation="advanced",
+    )
+    target_path.write_text(json.dumps(target), encoding="utf-8")
+
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
+    shared_validator = _module(PLUGIN_ROOT / "shared/validate-artifacts.py")
+    shared_validator._validate_code_remediate_pr_source(
+        assessed_pr,
+        json.loads((assessed_pr / "pr-routing.json").read_text(encoding="utf-8")),
+        target,
+        json.loads((assessed_pr / "local-checkout.json").read_text(encoding="utf-8")),
+    )
+
+
+def test_v2_source_validation_rejects_routing_oids_mismatching_pr_metadata(assessed_pr: Path) -> None:
+    """Reject a self-consistent fetched source whose OIDs differ from PR metadata."""
+    forged_base, forged_head = "d" * 40, "e" * 40
+    routing_path = assessed_pr / "pr-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    routing.update(
+        base_oid=forged_base,
+        head_oid=forged_head,
+        local_checkout_command=f"git checkout --detach {forged_head}",
+    )
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+
+    target_path = assessed_pr / "target-branch.json"
+    target = json.loads(target_path.read_text(encoding="utf-8"))
+    target.update(remote_ref=forged_base, local_head=forged_base, expected_base_oid=forged_base)
+    target_path.write_text(json.dumps(target), encoding="utf-8")
+
+    head_fetch_path = assessed_pr / "pr-head-fetch.json"
+    head_fetch = json.loads(head_fetch_path.read_text(encoding="utf-8"))
+    head_fetch.update(local_head=forged_head, expected_head_oid=forged_head)
+    head_fetch_path.write_text(json.dumps(head_fetch), encoding="utf-8")
+
+    checkout_path = assessed_pr / "local-checkout.json"
+    checkout = json.loads(checkout_path.read_text(encoding="utf-8"))
+    checkout.update(
+        command=f"git checkout --detach {forged_head}",
+        expected_head=forged_head,
+        local_head=forged_head,
+        diff_base_oid=forged_base,
+        diff_head_oid=forged_head,
+        diff_command=f"git diff --binary {forged_base}...{forged_head} --",
+    )
+    checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
+
+    preflight_path = assessed_pr / "worktree-preflight.json"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    preflight.update(current_head=forged_head, expected_head=forged_head)
+    preflight_path.write_text(json.dumps(preflight), encoding="utf-8")
+
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="pr-source-oid-provenance-invalid"):
+        validator._validate_verified_pr_source(assessed_pr, routing, target, checkout)
+    shared_validator = _module(PLUGIN_ROOT / "shared/validate-artifacts.py")
+    with pytest.raises(SystemExit, match="code-remediate-pr-source-oid-provenance-invalid"):
+        shared_validator._validate_code_remediate_pr_source(assessed_pr, routing, target, checkout)
+
+
+def test_v1_review_validation_preserves_legacy_checkout_command_contract(assessed_pr: Path) -> None:
+    """Accept the historical checkout receipt but reject an arbitrary v1 command."""
+    result_path = assessed_pr / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result.pop("schema_version")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    routing_path = assessed_pr / "pr-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    routing["local_checkout_command"] = "gh pr checkout 123"
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
+
+    routing["local_checkout_command"] = "git checkout arbitrary"
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    with pytest.raises(SystemExit, match="pr-routing-checkout-command-invalid"):
+        validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
 
 
 def test_completion_rejects_a_valid_but_superseded_result(assessed_pr: Path) -> None:

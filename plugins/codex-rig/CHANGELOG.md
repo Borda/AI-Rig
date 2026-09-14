@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.1
+
+- Make remediation outcomes distinguish finding-specific implementation, verified closure without code changes, rejection, deferral, and concrete blockers. Preserve honest unresolved counts, keep passing checks separate from incomplete remediation, and require usable text-review context and permitted missing-coverage investigation before stopping.
+
+- Repair PR source preparation and recovery evidence: verify fetched commits without forced cached-ref updates, distinguish PR-file changes and unresolved index entries from unrelated local edits, preserve safe Git failure causes without raw stderr, and clear stale PR identity between collector attempts.
+
+- Reject passing PR-check claims in new unavailable-review results when collection stopped before verification. Require explicit not-applicable gates and generated handoff consistency; preserve historical artifact reading and ordinary command exit-code behavior.
+
+- Make blocked review and remediation handoffs explain the failed check in plain English, recommend concrete recovery, and show approval/decline consequences without inventing causes or repeating existing authorization. Preserve fresh sequential review as a disclosed alternative to rejected specialist evidence; missing current PR source still prevents edits.
+
+- Explain existing merge conflicts separately from fetch failures, with evidence-backed finish/abort/defer choices and preservation requirements. After authorized recovery succeeds, resume the active review or remediation from its first unmet checkpoint through normal completion gates instead of asking the user to rerun it.
+
 ## 0.17.0
 
 - Fix managed runtime preapproval for every `--approve-gh` consumer: retain existing reader grants for Assess/Release and add explicit canonical-PR collector grants for Code Review, Code Remediate, and PR-mode Assess. Preserve approved targets across verified setup/sync upgrades, reject modified rules before writes, and back up/remove owned grants through the existing lifecycle. Loaded allow rules avoid another prompt; setup/restart and stricter host policies remain explicit requirements. Keep skill invocation separate from permission installation.

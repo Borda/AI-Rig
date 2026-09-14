@@ -158,9 +158,22 @@ def _write_closed_artifact(out_dir: Path, code: str = "DUPLICATE") -> Path:
         json.dumps(
             {
                 "status": "fetched",
+                "remote_ref": BASE_OID,
                 "expected_base_oid": BASE_OID,
                 "local_head": BASE_OID,
                 "expected_base_is_ancestor": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "pr-head-fetch.json").write_text(
+        json.dumps(
+            {
+                "status": "fetched",
+                "remote_ref": "FETCH_HEAD",
+                "expected_head_oid": HEAD_OID,
+                "local_head": HEAD_OID,
+                "head_matches_pr_metadata": True,
             }
         ),
         encoding="utf-8",
@@ -175,6 +188,23 @@ def _write_closed_artifact(out_dir: Path, code: str = "DUPLICATE") -> Path:
                 "diff_source": "verified-local-checkout",
                 "diff_base_oid": BASE_OID,
                 "diff_head_oid": HEAD_OID,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out_dir / "worktree-preflight.json").write_text(
+        json.dumps(
+            {
+                "phase": "after-checkout",
+                "status": "clean",
+                "current_head": HEAD_OID,
+                "expected_head": HEAD_OID,
+                "dirty_paths": [],
+                "unmerged_paths": [],
+                "pr_paths": ["widget.py"],
+                "checkout_paths": [],
+                "overlapping_paths": [],
+                "overlapping_pr_paths": [],
             }
         ),
         encoding="utf-8",

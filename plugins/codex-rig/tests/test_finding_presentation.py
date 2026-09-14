@@ -251,6 +251,24 @@ def test_concise_remediation_expands_resolution_once() -> None:
     assert "[O1]" not in rendered and "[E1]" not in rendered
 
 
+def test_concise_remediation_renders_reasoned_block_without_raw_unresolved() -> None:
+    """Keep an unresolved machine status from becoming a misleading visible outcome."""
+    payload = _handoff_payload()
+    table = payload["tables"][0]
+    table["layout"] = "concise"
+    table["rows"][0]["cells"][4] = "unresolved — [O1]"
+    table["rows"][0]["cells"][5] = "[E1] — owner/status: external-reviewer"
+    table["details"] = [
+        {"id": "O1", "text": "Blocked: The reviewer cannot inspect the supplied context."},
+        {"id": "E1", "text": "Review environment record."},
+    ]
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert "| The reviewer cannot inspect the supplied context. | Blocked |" in rendered
+    assert "| unresolved |" not in rendered
+
+
 def test_historical_presentation_keeps_digest_bound_bytes() -> None:
     """Preserve saved version-2 selection and legacy/grouped handoffs from release 0.14.3."""
     renderer = _load_finalizer()
@@ -635,6 +653,147 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    base_oid, head_oid = "a" * 40, "b" * 40
+    pr_dir = tmp_path / "pr"
+    pr_dir.mkdir()
+    metadata.update(
+        mode="pr",
+        pr_relevance={
+            "evaluated": True,
+            "connected_items_marked_out_of_scope": 0,
+            "connected_open_items_total": 0,
+            "connected_selectable_items_total": 0,
+            "connected_required_followup_total": 0,
+        },
+        merge_resolution={
+            "artifact_path": str(pr_dir / "merge-resolution.json"),
+            "authorization": "not-required",
+            "conflicts_detected": False,
+            "status": "not-needed",
+        },
+    )
+    inventory["pr_relevance"] = metadata["pr_relevance"]
+    (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
+    (tmp_path / "resolution-scope.md").write_bytes(_load_finalizer().render_selection(inventory).encode("utf-8"))
+    with (tmp_path / "action-items.md").open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write("\n## PR Relevance Summary\n\nNo open selected items are PR-connected.\n")
+    url = "https://github.com/acme/widgets/pull/123"
+    remote_url = "https://github.com/acme/widgets.git"
+    artifacts = {
+        "pr.json": {"body": "Fixes the widget.", "baseRefOid": base_oid, "headRefOid": head_oid},
+        "pr-routing.json": {
+            "base_identity_source": "pr_url",
+            "pr_state": "OPEN",
+            "base_host": "github.com",
+            "base_repo": "acme/widgets",
+            "pr_number": 123,
+            "pr_url": url,
+            "local_checkout_required": True,
+            "local_checkout_command": f"git checkout --detach {head_oid}",
+            "force_policy": "forbidden",
+            "base_oid": base_oid,
+            "head_oid": head_oid,
+        },
+        "remote-selection.json": {
+            "expected": {"host": "github.com", "repository": "acme/widgets"},
+            "remote": "origin",
+            "remote_url": remote_url,
+        },
+        "target-branch.json": {
+            "status": "fetched",
+            "remote": "origin",
+            "remote_url": remote_url,
+            "remote_ref": base_oid,
+            "expected_base_oid": base_oid,
+            "local_head": base_oid,
+            "expected_base_is_ancestor": True,
+            "base_matches_pr_metadata": True,
+            "base_relation": "matches-pr-metadata",
+        },
+        "pr-head-fetch.json": {
+            "status": "fetched",
+            "remote_ref": "FETCH_HEAD",
+            "local_head": head_oid,
+            "expected_head_oid": head_oid,
+            "head_matches_pr_metadata": True,
+        },
+        "local-checkout.json": {
+            "status": "checked-out",
+            "pr_url": url,
+            "command": f"git checkout --detach {head_oid}",
+            "force_policy": "forbidden",
+            "head_matches_pr": True,
+            "expected_head": head_oid,
+            "local_head": head_oid,
+            "diff_source": "verified-local-checkout",
+            "diff_base_oid": base_oid,
+            "diff_head_oid": head_oid,
+            "diff_command": f"git diff --binary {base_oid}...{head_oid} --",
+        },
+        "worktree-preflight.json": {
+            "phase": "after-checkout",
+            "status": "clean",
+            "current_head": head_oid,
+            "expected_head": head_oid,
+            "dirty_paths": [],
+            "unmerged_paths": [],
+            "pr_paths": ["widget.py"],
+            "checkout_paths": [],
+            "overlapping_paths": [],
+            "overlapping_pr_paths": [],
+        },
+        "online-review-summary.json": {"review_threads_status": "available", "review_threads_error": None},
+        "merge-resolution.json": {
+            "schema_version": 1,
+            "conflicts_detected": False,
+            "status": "not-needed",
+            "authorization": "not-required",
+            "base_remote_ref": "origin/main",
+            "target_oid": base_oid,
+            "pre_merge_head": head_oid,
+            "post_merge_head": head_oid,
+            "merge_commit": None,
+            "resolved_paths": [],
+            "unmerged_paths": [],
+            "evidence": ["merge-tree.txt"],
+        },
+    }
+    for name, payload in artifacts.items():
+        (pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+    for name, payload in {
+        "comments.json": [],
+        "reviews.json": [],
+        "review-threads.json": [],
+        "unresolved-review-threads.json": [],
+    }.items():
+        (pr_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+    (pr_dir / "merge-base.txt").write_text(f"{base_oid}\n", encoding="utf-8")
+    (pr_dir / "merge-tree.txt").write_text("clean\n", encoding="utf-8")
+    (tmp_path / "merge-prestage.md").write_text(
+        "\n".join(
+            f"## {heading}\n\nRecorded evidence."
+            for heading in (
+                "PR And Target Refresh",
+                "Clean PR Implementation Context",
+                "Target Branch Context",
+                "Conflict Risk",
+                "Resolution Strategy",
+                "Merge Execution",
+            )
+        ),
+        encoding="utf-8",
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    merge_resolution_path = pr_dir / "merge-resolution.json"
+    merge_resolution = json.loads(merge_resolution_path.read_text(encoding="utf-8"))
+    merge_resolution["pre_merge_head"] = "c" * 40
+    merge_resolution_path.write_text(json.dumps(merge_resolution), encoding="utf-8")
+    with pytest.raises(SystemExit, match="code-remediate-merge-resolution-pre-merge-head-mismatch"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("field", ["title", "summary", "closure_evidence", "action", "evidence"])

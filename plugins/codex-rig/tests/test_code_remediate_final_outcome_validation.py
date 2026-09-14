@@ -204,6 +204,49 @@ def test_final_resolution_items_reconcile_with_durable_markdown(tmp_path: Path) 
     VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
+def test_v3_resolution_requires_a_reasoned_visible_disposition(tmp_path: Path) -> None:
+    """Prevent a concise remediation result from rendering a bare unresolved state."""
+    metadata = _metadata()
+    metadata["resolution_scope"] = {"presentation_version": 3}
+    _write_action_items(metadata, tmp_path)
+
+    with pytest.raises(SystemExit, match="code-remediate-v3-resolution-disposition-invalid"):
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+    table = metadata["final_resolution_table"]
+    assert isinstance(table, dict)
+    items = table["items"]
+    assert isinstance(items, list)
+    items[0]["resolved_how"] = "Implemented: Added the missing guard."
+    items[1]["resolved_how"] = "Duplicate: Same obligation as R1."
+    _write_action_items(metadata, tmp_path)
+
+    VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+def test_v3_needs_clarification_cannot_claim_no_code_change_closure(tmp_path: Path) -> None:
+    """Keep an open clarification request visibly open even when gates pass."""
+    metadata = _metadata()
+    metadata["resolution_scope"] = {"presentation_version": 3}
+    table = metadata["final_resolution_table"]
+    assert isinstance(table, dict)
+    items = table["items"]
+    assert isinstance(items, list)
+    items[0]["resolved_how"] = "Implemented: Added the missing guard."
+    items[1].update(
+        resolution_status="needs-clarification",
+        owner_status="user-response-required",
+        resolved_how="Verified without code changes: The report is incomplete.",
+    )
+    table["resolution_status_counts"] = _status_counts(
+        RESOLUTION_STATUSES, [item["resolution_status"] for item in items]
+    )
+    _write_action_items(metadata, tmp_path)
+
+    with pytest.raises(SystemExit, match="code-remediate-v3-resolution-disposition-invalid"):
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
 def test_final_resolution_machine_items_are_required(tmp_path: Path) -> None:
     """Reject aggregate counts that cannot prove the disposition of each input item."""
     metadata = _metadata()

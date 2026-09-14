@@ -135,6 +135,38 @@ def _write_unavailable_artifact(
     return result_path
 
 
+@pytest.mark.parametrize(
+    ("code", "reason", "expected_action"),
+    [
+        pytest.param(
+            "command-failed:pr-head-fetch",
+            "repository-unavailable",
+            "Confirm the canonical repository identity and availability after a state change, then start a fresh collector run.",
+            id="repository-unavailable-no-auth-guess",
+        ),
+        pytest.param(
+            "collector:dirty-pr-worktree-before-pr-checkout",
+            None,
+            "Preserve or move the local changes that overlap PR files, then start a fresh collector run.",
+            id="dirty-pr-paths",
+        ),
+        pytest.param(
+            "collector:unresolved-index-before-pr-checkout",
+            None,
+            "Resolve the Git index entries, then start a fresh collector run.",
+            id="unresolved-index",
+        ),
+    ],
+)
+def test_unavailable_recovery_is_actionable_without_auth_guess(
+    code: str, reason: str | None, expected_action: str
+) -> None:
+    """Keep fetch and worktree recovery tied to the classified safe cause."""
+    validator = _load_module(REVIEW_VALIDATOR_PATH, "review_validator_recovery")
+
+    assert validator._unavailable_recovery_action(code, False, reason) == expected_action
+
+
 def test_unavailable_pr_artifact_is_accepted_without_assessed_review_evidence(tmp_path: Path) -> None:
     """Allow a terminal collector failure while preserving a canonical result artifact."""
     review_validator = _load_module(REVIEW_VALIDATOR_PATH, "code_review_validator")

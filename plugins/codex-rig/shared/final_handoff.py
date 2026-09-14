@@ -283,6 +283,17 @@ def _validate_verification(payload: dict[str, Any]) -> None:
         raise HandoffError("verification-gate-coverage-mismatch")
 
 
+def _validate_unavailable_review_verification(
+    payload: dict[str, Any], skill: str, branch: str, presentation_version: object
+) -> None:
+    """Require new terminal PR-review handoffs to label unrun gates accurately."""
+    if skill != "code-review" or branch != "unavailable" or presentation_version != PRESENTATION_VERSION:
+        return
+    verification = payload.get("verification")
+    if not isinstance(verification, list) or any(entry.get("status") != "not-applicable" for entry in verification):
+        raise HandoffError("unavailable-review-verification-must-be-not-applicable")
+
+
 def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str) -> None:
     """Require every remaining item to carry a unique owner and next action."""
     remaining = payload.get("remaining")
@@ -396,6 +407,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     row_ids, represented_sources = _validate_tables(handoff, skill, branch)
     _validate_source_coverage(handoff, branch, represented_sources)
     _validate_verification(handoff)
+    _validate_unavailable_review_verification(handoff, skill, branch, presentation_version)
     _validate_remaining(handoff, row_ids, branch)
     _validate_confidence(handoff)
     _validate_artifacts(handoff)
@@ -408,12 +420,13 @@ def _table_cell(value: str) -> str:
     return value.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "<br>").replace("\n", "<br>")
 
 
-def _render_table(table: dict[str, Any]) -> list[str]:
+def _render_table(table: dict[str, Any], *, suppress_heading: bool = False) -> list[str]:
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
-        return _render_grouped_table(table)
+        return _render_grouped_table(table, suppress_heading=suppress_heading)
     columns = table["columns"]
-    lines = [f"**{table['heading']}**", "", "| " + " | ".join(columns) + " |"]
+    lines = [] if suppress_heading else [f"**{table['heading']}**", ""]
+    lines.append("| " + " | ".join(columns) + " |")
     lines.append("| " + " | ".join("---" for _ in columns) + " |")
     for row in table["rows"]:
         lines.append("| " + " | ".join(_table_cell(cell) for cell in row["cells"]) + " |")
@@ -426,19 +439,20 @@ def _render_table(table: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _render_grouped_table(table: dict[str, Any]) -> list[str]:
+def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = False) -> list[str]:
     """Render bound rows, retaining historical bytes and separating concise facts from evidence."""
     remediation = tuple(table["columns"]) == STANDARD_COLUMNS["code-remediate"]
     concise = table.get("layout") == "concise"
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
     if concise:
         columns.insert(-1, "Resolution" if remediation else "Resolution proposal")
-    lines = [
-        f"**{table['heading']}**",
-        "",
-        "| " + " | ".join(columns) + " |",
-        "| " + " | ".join("---" for _ in columns) + " |",
-    ]
+    lines = [] if suppress_heading else [f"**{table['heading']}**", ""]
+    lines.extend(
+        (
+            "| " + " | ".join(columns) + " |",
+            "| " + " | ".join("---" for _ in columns) + " |",
+        )
+    )
     definitions = {entry["id"]: entry["text"] for entry in table.get("details", [])}
     for row in table["rows"]:
         cells = row["cells"]
@@ -451,6 +465,10 @@ def _render_grouped_table(table: dict[str, Any]) -> list[str]:
                     lambda match: definitions.get(match[1], match[0]),
                     cells[4].split(" — ", 1)[-1],
                 )
+                disposition, separator, reason = resolution.partition(": ")
+                if separator:
+                    resolution = reason
+                    overview[-1] = disposition
             overview.insert(-1, resolution)
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
     for row in table["rows"]:
@@ -719,7 +737,7 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
     if handoff["tables"]:
         lines.extend(("", "**Results**"))
         for table in handoff["tables"]:
-            lines.extend(("", *_render_table(table)))
+            lines.extend(("", *_render_table(table, suppress_heading=table["heading"] == "Results")))
 
     visible_checks = [entry for entry in handoff["verification"] if entry["status"] != "not-applicable"]
     lines.extend(("", "**Verification**", ""))

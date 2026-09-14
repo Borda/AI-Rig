@@ -2,6 +2,71 @@
   "cases": [
     {
       "expected_findings": [
+        "evidence-only-closure-presented-as-code-fix",
+        "passing-gates-imply-completed-remediation",
+        "unexplained-unresolved-disposition",
+        "text-reviewer-given-artifact-paths-only",
+        "missing-coverage-stops-permitted-investigation"
+      ],
+      "id": "code-remediate-reasoned-closure-recovery",
+      "prompt": "A remediation run implements no finding-specific patch, integrates the target branch, observes green CI, and calls the review resolved although selected independent-review and coverage obligations remain open. Its table gives only unresolved outcomes. The no-tools reviewer received artifact paths instead of source, and coverage was abandoned without inspecting available artifacts or the configured focused coverage command. Distinguish implemented fixes from verified closure without code changes and target integration; passing checks do not complete selected work. Show disposition and reason without falsely rejecting valid blocked findings, supply readable reviewer context under existing dispatch rules, perform permitted coverage investigation, and resume the selected finding after recovery. If independent review or evidence remains unavailable, give the actual blocker and required next owner/action without weakening independence or approval boundaries.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "matching-head-mistaken-for-clean-pr-source",
+        "diagnostic-command-reported-as-passing-pr-check",
+        "unknown-fetch-cause-presented-as-auth-failure"
+      ],
+      "id": "code-review-source-and-verification-recovery",
+      "prompt": "Assess a PR review that calls the worktree verified solely because HEAD matches PR metadata even though a PR file is staged or conflicted. After collection fails, its lint and test commands only print a diagnostic, yet the new unavailable handoff shows those PR checks passed. A generic fetch exit is described as broken authentication without a safe cause. Retain genuine independent diagnostics separately, preserve unrelated local edits, and keep the original workflow's source and completion gates after authorized recovery.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "cached-ref-repair-forces-local-state",
+        "mutable-fetch-head-used-as-target",
+        "retry-retains-previous-pr-identity"
+      ],
+      "id": "code-remediate-stable-source-recovery",
+      "prompt": "Assess remediation that force-updates an old cached PR ref to recover a rewritten branch, despite an exact verified commit being available for detached checkout. It reads FETCH_HEAD as the target after fetching the PR head and reuses the previous pr-target.txt when a new target fails parsing. Preserve existing branches and user changes, retain immutable target and head identities independently, and resume the original remediation only after its current source evidence validates.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "review-rejection-cause-unexplained",
+        "review-repair-decline-outcome-missing",
+        "review-provenance-cause-invented",
+        "review-fallback-relabels-rejected-evidence"
+      ],
+      "id": "code-review-guided-validation-recovery",
+      "prompt": "A review stops at a specialist-context validation mismatch. Its handoff says repair the validator, without explaining that the recorded evidence cannot confirm the specialist received the prepared code and instructions. It asserts encrypted logs caused the rejection without checking provenance, asks for optional repair approval without explaining decline, and relabels the rejected response as parent inspection. Explain the failed proof and unknown cause, perform authorized diagnosis, and if a repair choice is needed show yes/no consequences. Declining optional repair can continue substantive fresh sequential review under a separate plan with rejected evidence preserved. Explicitly required independence remains unmet unless satisfied or the user revises it; runtime denials and recurrence limits stay binding.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "fetch-failure-blamed-on-access-without-evidence",
+        "fetch-recovery-delegated-without-diagnosis",
+        "sequential-fallback-edits-unverified-source",
+        "stale-report-discussion-limit-missing"
+      ],
+      "id": "code-remediate-guided-source-recovery",
+      "prompt": "A PR advanced after review and the current-source download failed twice with no retained detailed reason. The handoff tells the user to repair fork access, offers no agent-owned diagnosis, then suggests sequential fixes on the old checkout. Explain that the current PR code is unavailable and the generic fetch error does not establish an access problem. Inspect permitted failure and local-state evidence, propose the concrete supported recovery, ask only for a missing specific decision or permission, and preserve retry limits. If recovery is deferred, an existing assessed report may be discussed only with user acceptance of stale coverage and no code edits. Resume remediation after the required current-source bundle is verified.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "existing-conflict-conflated-with-fetch-failure",
+        "existing-merge-operation-assumed",
+        "merge-recovery-effects-or-authorization-missing",
+        "successful-recovery-does-not-resume-workflow"
+      ],
+      "id": "code-remediate-guided-conflict-recovery",
+      "prompt": "A review or remediation encounters both a failed remote fetch and an unmerged local file among unrelated changes. It claims a pull caused both failures, assumes an active merge from the unmerged entry alone, and tells the user to resolve or abort elsewhere. Later, after authorized conflict resolution passes verification, it stops again and asks the user to rerun the skill. Diagnose remote and local obstacles separately using operation-state evidence. Offer applicable finish, abort, or defer choices with a recommendation, preservation plan, effects, and explicit authorization for resolution or abort and any required commit; do not promise lossless abort. Preserve unrelated changes and an authorized integration result. On successful recovery, resume the original workflow from its first unmet checkpoint, recheck affected source evidence, retain independent failures and retry limits, and finish normal gates without redundant continuation permission.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
         "managed-preapproval-target-widening",
         "managed-preapproval-session-load-assumed",
         "managed-preapproval-skill-installs-permission"
@@ -77,7 +142,7 @@
         "unverified-upstream-pull"
       ],
       "id": "code-review-agent-owned-fork-freshness",
-      "prompt": "Assess an open fork PR collector that fetches only the target before comparing the unfetched PR head with local files, then calls gh pr checkout. Its handoff tells the user to create a local branch and repair checkout, invents dirty files as the cause without inspecting retained command and checkout state, and blindly pulls the current upstream. Use fresh GH CLI metadata and gh pr checkout as primary workflow, fetch and verify both required refs before overlap comparison, preserve user changes, diagnose the exact failed operation, and perform permitted routine preparation yourself. Pull only with verified branch/upstream and fast-forward-only behavior when authorized; commits and remote publication require their own authority.",
+      "prompt": "Assess an open fork PR collector that fetches only the target before comparing the unfetched PR head with local files. Its handoff tells the user to create a local branch and repair checkout, invents dirty files as the cause without inspecting retained command and checkout state, and blindly pulls the current upstream. Use fresh GH CLI metadata, fetch and verify both required commits before overlap comparison, and use the captured exact PR commit for detached checkout without moving existing branches. Preserve user changes, diagnose the exact failed operation, and perform permitted routine preparation yourself. Pull only with separately verified branch/upstream and fast-forward-only behavior when authorized; commits and remote publication require their own authority.",
       "target": "code-review"
     },
     {
@@ -632,7 +697,7 @@
         "pr-description-not-retained"
       ],
       "id": "code-review-pr-supplemental-fallback",
-      "prompt": "Assess an open fork PR collector where PR identity, title, body, base/head SHAs, and local repository are available, but GraphQL review-thread collection fails. The workflow deletes metadata, never runs numbered gh pr checkout or reuses an exact local head, never derives git diff from the verified checkout, and declares the PR review unavailable.",
+      "prompt": "Assess an open fork PR collector where PR identity, title, body, base/head SHAs, and local repository are available, but GraphQL review-thread collection fails. The workflow deletes metadata, never checks out the verified PR commit or reuses an exact local head, never derives git diff from the verified checkout, and declares the PR review unavailable.",
       "target": "code-review"
     },
     {
@@ -1890,5 +1955,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.27"
+  "version": "1.28"
 }

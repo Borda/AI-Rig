@@ -921,6 +921,64 @@ def test_code_remediate_rejects_conflicts_without_merge_authorization(tmp_path: 
         validator._validate_code_remediate_merge_resolution(metadata, pr_dir, {"local_head": "base-oid"})
 
 
+def test_v2_merge_resolution_binds_execution_pre_head_to_collected_pr_head(tmp_path: Path) -> None:
+    """Reject merge execution evidence that starts from a different PR source revision."""
+    validator = _load_shared_artifact_validator()
+    pr_dir = tmp_path / "pr"
+    pr_dir.mkdir()
+    path = pr_dir / "merge-resolution.json"
+    base_oid, head_oid, post_merge_oid = "b" * 40, "a" * 40, "c" * 40
+    metadata = {
+        "merge_resolution": {
+            "artifact_path": str(path),
+            "authorization": "user-confirmed",
+            "conflicts_detected": True,
+            "status": "completed",
+        }
+    }
+    _write_merge_resolution(
+        path,
+        conflicts_detected=True,
+        status="completed",
+        authorization="user-confirmed",
+        target_oid=base_oid,
+        pre_merge_head="d" * 40,
+        post_merge_head=post_merge_oid,
+        merge_commit=post_merge_oid,
+        resolved_paths=["src/conflicted.py"],
+        evidence=["merge-prestage.md", "pytest.log"],
+    )
+
+    with pytest.raises(SystemExit, match="code-remediate-merge-resolution-pre-merge-head-mismatch"):
+        validator._validate_code_remediate_merge_resolution(
+            metadata, pr_dir, {"local_head": base_oid}, expected_pre_merge_head=head_oid
+        )
+
+    _write_merge_resolution(
+        path,
+        conflicts_detected=True,
+        status="completed",
+        authorization="user-confirmed",
+        target_oid=base_oid,
+        pre_merge_head=head_oid,
+        post_merge_head=post_merge_oid,
+        merge_commit=post_merge_oid,
+        resolved_paths=["src/conflicted.py"],
+        evidence=["merge-prestage.md", "pytest.log"],
+    )
+    validator._validate_code_remediate_merge_resolution(
+        metadata, pr_dir, {"local_head": base_oid}, expected_pre_merge_head=head_oid
+    )
+
+    resolution = json.loads(path.read_text(encoding="utf-8"))
+    resolution.update(post_merge_head="not-an-oid", merge_commit="not-an-oid")
+    path.write_text(json.dumps(resolution), encoding="utf-8")
+    with pytest.raises(SystemExit, match="code-remediate-merge-resolution-execution-head-invalid"):
+        validator._validate_code_remediate_merge_resolution(
+            metadata, pr_dir, {"local_head": base_oid}, expected_pre_merge_head=head_oid
+        )
+
+
 def test_specialist_fallback_ladder_and_evidence_are_complete() -> None:
     """Prevent fallback routing from losing order, fidelity limits, or audit evidence."""
     policy = _normalized_text(PLUGIN_ROOT / "shared" / "specialist-orchestration.md")

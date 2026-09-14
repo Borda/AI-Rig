@@ -75,6 +75,7 @@ FINAL_HANDOFF_FILENAMES = {
 EXPECTED_GATE_IDS = {"lint", "format", "types", "tests", "review"}
 FAILING_GATE_STATUSES = {"fail", "missing-command", "timeout"}
 VALID_GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
+CODE_REVIEW_UNAVAILABLE_GATE_IDS = ("lint", "format", "types", "tests", "review")
 
 UNRESOLVED_REASON_GROUPS = {
     "local-code-or-doc",
@@ -118,6 +119,18 @@ CODE_REMEDIATE_RESOLUTION_STATUSES = {
     "already-applied",
     "needs-clarification",
     "unresolved",
+}
+V3_RESOLUTION_DISPOSITIONS = {
+    "implemented": {"Implemented"},
+    "resolved": {"Verified without code changes"},
+    "rejected": {"Rejected"},
+    "stale": {"Stale", "Rejected"},
+    "not-applicable": {"Not applicable", "Rejected"},
+    "duplicate": {"Duplicate", "Rejected"},
+    "already-fixed": {"Verified without code changes"},
+    "already-applied": {"Verified without code changes"},
+    "needs-clarification": {"Needs clarification"},
+    "unresolved": {"Blocked", "Deferred", "Not selected"},
 }
 
 CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS = {
@@ -750,6 +763,35 @@ def _reconcile_result_with_gates(result: dict[str, Any], gates: dict[str, Any]) 
         raise SystemExit("result-pass-with-failed-gates")
     if gates["status"] == "timeout" and result["status"] != "timeout":
         raise SystemExit("result-status-timeout-mismatch")
+
+
+def _validate_code_review_unavailable_gates(result: dict[str, Any], gates: dict[str, Any], skill: str) -> None:
+    """Require new unavailable PR reviews to carry explicit unrun-gate records."""
+    metadata = result.get("metadata")
+    if (
+        skill != "code-review"
+        or result.get("schema_version") != RESULT_SCHEMA_VERSION
+        or not isinstance(metadata, dict)
+        or metadata.get("review_status") != "unavailable"
+    ):
+        return
+    checks = gates.get("checks")
+    if (
+        gates.get("status") != "pass"
+        or gates.get("checks_failed") != []
+        or not isinstance(checks, list)
+        or tuple(check.get("id") if isinstance(check, dict) else None for check in checks)
+        != CODE_REVIEW_UNAVAILABLE_GATE_IDS
+        or any(
+            not isinstance(check, dict)
+            or check.get("status") != "not-applicable"
+            or check.get("exit_code") != 0
+            or not isinstance(check.get("reason"), str)
+            or not check["reason"].strip()
+            for check in checks
+        )
+    ):
+        raise SystemExit("code-review-unavailable-gates-must-be-not-applicable")
 
 
 def _validate_confidence_gaps(result: dict[str, Any], skill: str) -> None:
@@ -1813,6 +1855,8 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
     observed_source_keys: set[tuple[str, str]] = set()
     observed_source_records = 0
     observed_grouped_items = 0
+    resolution_scope = metadata.get("resolution_scope")
+    presentation_version = resolution_scope.get("presentation_version") if isinstance(resolution_scope, dict) else None
     for position, item in enumerate(items):
         if not isinstance(item, dict):
             raise SystemExit(f"code-remediate-final-table-item-not-object:{position}")
@@ -1856,6 +1900,10 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             raise SystemExit("code-remediate-final-table-item-triage-status-invalid")
         if resolution_status not in CODE_REMEDIATE_RESOLUTION_STATUSES:
             raise SystemExit("code-remediate-final-table-item-resolution-status-invalid")
+        if presentation_version == 3:
+            disposition, separator, reason = item["resolved_how"].partition(": ")
+            if not separator or not reason.strip() or disposition not in V3_RESOLUTION_DISPOSITIONS[resolution_status]:
+                raise SystemExit("code-remediate-v3-resolution-disposition-invalid")
         observed_triage_counts[triage_status] += 1
         observed_resolution_counts[resolution_status] += 1
         observed_selectable += int(item["selectable"])
@@ -2073,10 +2121,82 @@ def _validate_code_remediate_pr_identity(
         raise SystemExit("code-remediate-pr-local-diff-provenance-invalid")
 
 
-def _validate_code_remediate_merge_resolution(
-    metadata: dict[str, Any], pr_dir: Path, target_branch: dict[str, Any]
+def _validate_code_remediate_pr_source(
+    pr_dir: Path, routing: dict[str, Any], target_branch: dict[str, Any], checkout: dict[str, Any]
 ) -> None:
-    """Require intent-first target-merge completion before PR finding remediation."""
+    """Bind remediation source evidence to immutable fetched target and PR-head OIDs."""
+    pr_payload = _load_json(pr_dir / "pr.json")
+    head_fetch = _load_json(pr_dir / "pr-head-fetch.json")
+    preflight = _load_json(pr_dir / "worktree-preflight.json")
+    head_oid = routing.get("head_oid")
+    base_oid = routing.get("base_oid")
+    recorded_oids = (
+        pr_payload.get("baseRefOid"),
+        pr_payload.get("headRefOid"),
+        base_oid,
+        head_oid,
+        target_branch.get("remote_ref"),
+        target_branch.get("local_head"),
+        target_branch.get("expected_base_oid"),
+        head_fetch.get("local_head"),
+        head_fetch.get("expected_head_oid"),
+        checkout.get("expected_head"),
+        checkout.get("local_head"),
+        checkout.get("diff_base_oid"),
+        checkout.get("diff_head_oid"),
+        preflight.get("current_head"),
+        preflight.get("expected_head"),
+    )
+    if (
+        any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in recorded_oids)
+        or pr_payload.get("baseRefOid") != base_oid
+        or pr_payload.get("headRefOid") != head_oid
+        or target_branch.get("remote_ref") != target_branch.get("local_head")
+        or target_branch.get("expected_base_oid") != base_oid
+        or head_fetch.get("remote_ref") != "FETCH_HEAD"
+        or head_fetch.get("local_head") != head_fetch.get("expected_head_oid")
+        or head_fetch.get("expected_head_oid") != head_oid
+        or head_fetch.get("head_matches_pr_metadata") is not True
+        or checkout.get("expected_head") != head_oid
+        or checkout.get("local_head") != head_oid
+    ):
+        raise SystemExit("code-remediate-pr-source-oid-provenance-invalid")
+    path_fields = (
+        "dirty_paths",
+        "unmerged_paths",
+        "pr_paths",
+        "checkout_paths",
+        "overlapping_paths",
+        "overlapping_pr_paths",
+    )
+    if (
+        preflight.get("phase") != "after-checkout"
+        or preflight.get("status") not in {"clean", "already-at-pr-head", "safe-unrelated-dirty-paths"}
+        or preflight.get("current_head") != head_oid
+        or preflight.get("expected_head") != head_oid
+        or any(
+            not isinstance(preflight.get(field), list) or not all(isinstance(path, str) for path in preflight[field])
+            for field in path_fields
+        )
+        or preflight.get("unmerged_paths")
+        or set(preflight["overlapping_paths"])
+        != set(preflight["dirty_paths"]).intersection(preflight["checkout_paths"])
+        or set(preflight["overlapping_pr_paths"]) != set(preflight["dirty_paths"]).intersection(preflight["pr_paths"])
+        or preflight["overlapping_paths"]
+        or preflight["overlapping_pr_paths"]
+        or (preflight.get("status") in {"clean", "already-at-pr-head"} and preflight.get("dirty_paths"))
+        or (preflight.get("status") == "safe-unrelated-dirty-paths" and not preflight.get("dirty_paths"))
+    ):
+        raise SystemExit("code-remediate-pr-source-worktree-preflight-invalid")
+
+
+def _validate_code_remediate_merge_resolution(
+    metadata: dict[str, Any],
+    pr_dir: Path,
+    target_branch: dict[str, Any],
+    expected_pre_merge_head: str | None = None,
+) -> None:
+    """Require target-merge completion and optionally bind it to a verified PR head."""
     path = pr_dir / "merge-resolution.json"
     resolution = _load_json(path)
     required = {
@@ -2110,6 +2230,11 @@ def _validate_code_remediate_merge_resolution(
     authorization = resolution.get("authorization")
     pre_head = resolution.get("pre_merge_head")
     post_head = resolution.get("post_merge_head")
+    if expected_pre_merge_head is not None:
+        if pre_head != expected_pre_merge_head:
+            raise SystemExit("code-remediate-merge-resolution-pre-merge-head-mismatch")
+        if any(not isinstance(oid, str) or re.fullmatch(r"[0-9a-f]{40}", oid) is None for oid in (pre_head, post_head)):
+            raise SystemExit("code-remediate-merge-resolution-execution-head-invalid")
     if conflicts is False:
         if status != "not-needed" or authorization != "not-required":
             raise SystemExit("code-remediate-conflict-free-merge-resolution-invalid")
@@ -2151,6 +2276,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     _require_result_shape(result)
     _validate_confidence_gaps(result, skill)
     gates = _validate_gates(out_dir)
+    _validate_code_review_unavailable_gates(result, gates, skill)
     _reconcile_result_with_gates(result, gates)
     _validate_final_handoff(result, skill, out_dir, gates)
 
@@ -2190,12 +2316,11 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 raise SystemExit(f"code-remediate-scope-missing-{required_text}")
         pr_dir = out_dir / "pr"
         if metadata.get("mode") == "pr" or pr_dir.exists():
-            for filename in (
+            required_pr_artifacts = (
                 "pr.json",
                 "pr-routing.json",
                 "remote-selection.json",
                 "target-branch.json",
-                "pr-head-fetch.json",
                 "local-checkout.json",
                 "comments.json",
                 "reviews.json",
@@ -2205,7 +2330,10 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 "merge-base.txt",
                 "merge-tree.txt",
                 "merge-resolution.json",
-            ):
+            )
+            if result.get("schema_version") == 2:
+                required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
+            for filename in required_pr_artifacts:
                 if not (pr_dir / filename).exists():
                     raise SystemExit(f"missing-code-remediate-pr-artifact:{filename}")
             routing = _load_json(pr_dir / "pr-routing.json")
@@ -2223,14 +2351,19 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 raise SystemExit("code-remediate-pr-routing-force-checkout-forbidden")
             if "force_policy" not in routing:
                 raise SystemExit("code-remediate-pr-routing-force-policy-missing")
-            expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
-            if routing.get("pr_metadata_transport") == "public-https-fallback":
-                expected_checkout = (
-                    f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
-                    f"{routing.get('pr_number')}/head"
-                )
-            if routing.get("local_checkout_command") != expected_checkout:
-                raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
+            if result.get("schema_version") == 2:
+                expected_checkout = f"git checkout --detach {routing.get('head_oid')}"
+                if routing.get("local_checkout_command") != expected_checkout:
+                    raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
+            else:
+                expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
+                if routing.get("pr_metadata_transport") == "public-https-fallback":
+                    expected_checkout = (
+                        f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
+                        f"{routing.get('pr_number')}/head"
+                    )
+                if routing.get("local_checkout_command") != expected_checkout:
+                    raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
             if target_branch.get("status") != "fetched":
                 raise SystemExit("code-remediate-pr-target-branch-not-fetched")
             if checkout.get("status") != "checked-out":
@@ -2242,6 +2375,8 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
             if checkout.get("head_matches_pr") is not True:
                 raise SystemExit("code-remediate-pr-local-checkout-head-mismatch")
             _validate_code_remediate_pr_identity(routing, remote_selection, target_branch, checkout)
+            if result.get("schema_version") == 2:
+                _validate_code_remediate_pr_source(pr_dir, routing, target_branch, checkout)
             thread_status = online_summary.get("review_threads_status")
             thread_error = online_summary.get("review_threads_error")
             if thread_status == "available":
@@ -2265,7 +2400,12 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                     raise SystemExit("code-remediate-pr-review-thread-triage-gap-missing")
             else:
                 raise SystemExit("code-remediate-pr-review-thread-status-invalid")
-            _validate_code_remediate_merge_resolution(metadata, pr_dir, target_branch)
+            _validate_code_remediate_merge_resolution(
+                metadata,
+                pr_dir,
+                target_branch,
+                routing.get("head_oid") if result.get("schema_version") == 2 else None,
+            )
             if (pr_dir / "head-files").exists():
                 raise SystemExit("code-remediate-pr-raw-head-file-snapshots-forbidden")
             _require_file_sections(

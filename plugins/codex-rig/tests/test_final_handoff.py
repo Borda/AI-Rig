@@ -190,6 +190,60 @@ def test_v2_handoff_leads_with_plain_english_and_omits_empty_or_duplicate_sectio
     assert "**Next steps**\n\n- PR collection stopped at `github-network:gh-pr-view`. — owner: code-review" in rendered
 
 
+def test_v2_handoff_avoids_a_duplicate_results_title() -> None:
+    """Keep the enclosing v2 Results heading from repeating an identically named table title."""
+    payload = _handoff_payload()
+    payload["presentation_version"] = 2
+    payload["tables"][0]["heading"] = "Results"
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert rendered.count("**Results**") == 1
+
+
+def test_v2_unavailable_handoff_rejects_executed_pr_gates() -> None:
+    """Prevent a terminal collection failure from presenting unrun PR gates as passed.
+
+    New unavailable reviews are created after source collection stops, before any
+    canonical PR verification gate can run. Historical handoffs omit
+    ``presentation_version`` and remain readable under their existing contract.
+    """
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["presentation_version"] = 2
+    payload["skill"] = "code-review"
+    payload["branch"] = "unavailable"
+    payload["outcome"] = {"title": "PR Review Availability", "summary": "Collection stopped."}
+    payload["tables"] = []
+    payload["source_records"] = []
+    payload["source_coverage"] = {
+        "source_records_total": 0,
+        "represented_source_records_total": 0,
+        "omitted_source_records_total": 0,
+    }
+    payload["verification"] = [
+        {"check": gate_id, "status": "pass", "evidence": "diagnostic command exited zero"}
+        for gate_id in ("lint", "format", "types", "tests", "review")
+    ]
+    payload["remaining"] = [
+        {
+            "row_id": "collection-recovery",
+            "item": "PR collection stopped.",
+            "owner": "code-review",
+            "next_action": "Run the collector again after repairing its prerequisite.",
+        }
+    ]
+    payload["next_steps"] = ["collection-recovery"]
+
+    presentation_version = payload.pop("presentation_version")
+    assert presentation_version == 2
+    assert finalizer.validate_handoff(payload) == payload
+    payload["presentation_version"] = presentation_version
+
+    with pytest.raises(finalizer.HandoffError, match="unavailable-review-verification-must-be-not-applicable"):
+        finalizer.validate_handoff(payload)
+
+
 def test_v2_handoff_rejects_non_integer_presentation_version() -> None:
     """Prevent JSON numeric equality from accepting a noncanonical presentation version."""
     finalizer = _load_finalizer()
