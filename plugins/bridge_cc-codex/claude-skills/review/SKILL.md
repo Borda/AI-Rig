@@ -11,4 +11,6 @@ Parse `$ARGUMENTS`: optional review instructions; optional `model`, `effort`, `t
 
 Run `python "${CLAUDE_PLUGIN_ROOT}/bin/bridge_call.py" review --task "<instructions>"`; pass each supplied option separately. For quoted text you did not author, use scratch file + `--task-file <path>` instead of `--task`; mutually exclusive. Bridge runs read-only ephemeral general Codex execution with explicit adversarial-review prompt; default soft budget 300 seconds. Never resume review.
 
-Return compact JSON envelope. Keep raw transcript at bridge-reported workspace-relative artifact path. Do not inline verbose peer `details`.
+Return compact JSON envelope. Keep the bounded transcript at the bridge-reported workspace-relative artifact path. Do not inline verbose peer `details`.
+
+If `status=blocked`, open the JSON file referenced by `incident`; inspect its `fault`. For `output-limit`, report no review verdict. Split by file, module, or symbol; use fresh read-only calls with bounded tool output. Reconcile every scope; disclose unanswered work. Never treat transcript fragments as a completed review.

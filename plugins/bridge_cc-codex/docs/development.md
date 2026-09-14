@@ -1,6 +1,6 @@
 # Development and release verification
 
-`bridge_CC-Codex` is a standalone Python 3.10+ plugin package. Its normalized plugin identifier is `bridge`; both manifests must keep that name and the same version. Its Claude Code manifest is `.claude-plugin/plugin.json`; its Codex manifest is `.codex-plugin/plugin.json`; its reverse transport declaration is `.mcp.json`. The current release is `0.3.1`.
+`bridge_CC-Codex` is a standalone Python 3.10+ plugin package. Its normalized plugin identifier is `bridge`; both manifests must keep that name and the same version. Its Claude Code manifest is `.claude-plugin/plugin.json`; its Codex manifest is `.codex-plugin/plugin.json`; its reverse transport declaration is `.mcp.json`. The current release is `0.4.1`.
 
 ## Source layout
 
@@ -49,7 +49,7 @@ $disposablePackageDirectory = Join-Path $disposableParentDirectory "bridge"
 & python plugins/bridge_cc-codex/scripts/validate_package.py $disposablePackageDirectory
 ```
 
-The package validator rejects symlinks, private artifact directories, private absolute paths, malformed JSON, missing runtime closure, unresolved manifest paths, and version mismatches. The disposable build excludes tests, caches, `.DS_Store`, and temporary bridge state. The public envelope must remain compact: decisions, blockers, and remaining work belong in public fields, while bounded peer `details` belong only in the raw transcript with workspace-relative transcript and incident references returned as metadata. The setup result is validated independently and carries only credential-free lifecycle evidence; sensitive authentication output is never an artifact.
+The package validator rejects symlinks, private artifact directories, private absolute paths, malformed JSON, missing runtime closure, unresolved manifest paths, and version mismatches. The disposable build excludes tests, caches, `.DS_Store`, and temporary bridge state. The public envelope must remain compact: decisions, blockers, and remaining work belong in public fields, while bounded peer `details` belong only in the bounded transcript with workspace-relative transcript and incident references returned as metadata. The setup result is validated independently and carries only credential-free lifecycle evidence; sensitive authentication output is never an artifact.
 
 ## Behavioral verification
 

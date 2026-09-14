@@ -16,5 +16,5 @@
   "name": "bridge",
   "repository": "https://github.com/Borda/AI-Rig",
   "skills": "./claude-skills/",
-  "version": "0.4.0"
+  "version": "0.4.1"
 }

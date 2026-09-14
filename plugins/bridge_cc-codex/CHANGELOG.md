@@ -2,6 +2,12 @@
 
 All notable changes to `bridge_CC-Codex` are documented here.
 
+## 0.4.1
+
+- Compact complete Codex command-execution output in bounded transcripts with UTF-8 byte counts and SHA-256 digests, reserving transcript-wrapper space and keeping oversized records or retained-output overflow terminal.
+- Guide both host surfaces through output-limit recovery: dereference the incident JSON, split read-only work into explicit bounded packages, reconcile complete coverage, and inspect partial edits before scoping verified remaining write-capable work.
+- Clarify that capture-byte savings do not establish provider token savings and that a reported implementation workspace delta is advisory evidence, not proof that no edit occurred.
+
 ## 0.4.0
 
 - Reap the child leader after Windows tree termination and POSIX kill fallbacks so timeout, cancellation, and output-limit results retain the actual exit code. Bound the wait and diagnose unavailable status without fabricating success.

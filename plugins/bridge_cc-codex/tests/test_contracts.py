@@ -48,6 +48,10 @@ CODEX_SKILL_CONTRACTS = {
         "`incident`",
         "never copy transcript-only peer `details`",
         "fresh call, never session resumption",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "name unanswered work",
     ),
     "implement": (
         "bridge_implement",
@@ -61,6 +65,10 @@ CODEX_SKILL_CONTRACTS = {
         "never inline `details`",
         "reread reported files and run relevant project checks",
         "trusted inherited depth one",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "never replay the original write-capable task",
     ),
     "review": (
         "bridge_review",
@@ -72,6 +80,10 @@ CODEX_SKILL_CONTRACTS = {
         "workspace-relative transcript",
         "`incident`",
         "never inline peer `details`",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "no review verdict",
     ),
     "setup": (
         "action=all target=peer scope=auto live=prompt",
@@ -99,6 +111,10 @@ CLAUDE_SKILL_CONTRACTS = {
         "`transcript_path`",
         "`incident`",
         "Preserve caller-supplied level",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "name unanswered work",
     ),
     "implement": (
         'bridge_call.py" implement --task "<task>"',
@@ -112,6 +128,10 @@ CLAUDE_SKILL_CONTRACTS = {
         "`transcript_path`",
         "do not edit task-named paths",
         "re-read every `files_touched` path",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "never replay the original write-capable task",
     ),
     "review": (
         'bridge_call.py" review --task "<instructions>"',
@@ -120,6 +140,10 @@ CLAUDE_SKILL_CONTRACTS = {
         "300 seconds",
         "Never resume review",
         "Preserve caller-supplied level",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
+        "no review verdict",
     ),
     "cancel": (
         'bridge_call.py" cancel --job-id "<job-id>"',
@@ -130,7 +154,10 @@ CLAUDE_SKILL_CONTRACTS = {
     "result": (
         'bridge_call.py" result --job-id "<job-id>"',
         "`--workspace` only when explicitly supplied",
-        "never inline raw transcript",
+        "never inline the bounded transcript",
+        "open the JSON file referenced by `incident`",
+        "inspect its `fault`",
+        "`output-limit`",
     ),
     "status": (
         'bridge_call.py" status --job-id "<job-id>"',

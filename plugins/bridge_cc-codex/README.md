@@ -4,7 +4,7 @@
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.3.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.4.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -54,11 +54,11 @@ Every call also carries a soft wall-clock budget and a recursion `depth`:
 - The bridge enforces a hard cutoff at 1.2 times the soft budget.
 - A depth of one or greater is refused, so a Claude → Codex → Claude loop cannot continue.
 
-Results are compact envelopes rather than raw transcripts:
+Results are compact envelopes rather than transcripts:
 
 - The public envelope carries decision-critical `status`, `verdict`, `findings`, `files_touched`, `remaining`, and `blockers`, plus observed harness metadata such as model, effort, cost, duration, depth, `run_id`, and a session identifier when applicable.
 - Incomplete work and blockers must stay in those public fields; transcript-only `details` hold additional evidence and never hide required work.
-- The envelope carries workspace-relative `transcript_path` and, for faults, `incident` references; open those artifacts only when the compact result needs investigation.
+- The envelope carries workspace-relative `transcript_path` and, for faults, an `incident` path; open the referenced JSON file and inspect its `fault` member only when the compact result needs investigation.
 - Detached calls return their job identifier separately.
 
 > The model-authored core is validated separately from harness metadata; model output cannot claim observed cost, timing, process, or correlation fields.
@@ -236,7 +236,7 @@ The skills invoke the bridge MCP tools `bridge_implement`, `bridge_advise`, `bri
 | Reverse timeouts     | Implementations accept at most 700 seconds; advice and review accept at most 350 seconds because their one allowed timeout retry, including per-attempt termination and drain overhead, must also finish within the MCP host's 900-second deadline. |
 | Host boundary        | The host-launched server binds the request to its launch workspace and rejects model-supplied workspace, background, and session fields, so a tool call cannot widen filesystem authority.                                                          |
 
-The bridge supplies the budget preamble, invokes `claude -p` with the narrowest permission mode for the verb, and returns the same compact envelope used by the Claude half. The peer's bounded verbose `details` remain in the raw transcript referenced by the envelope; they are not copied into the caller's context.
+The bridge supplies the budget preamble, invokes `claude -p` with the narrowest permission mode for the verb, and returns the same compact envelope used by the Claude half. The peer's bounded verbose `details` remain in the transcript referenced by the envelope; they are not copied into the caller's context.
 
 > Do not invoke `claude -p` directly from a sandboxed Codex model turn: the bridge MCP server is the supported transport because it runs in the host context where the normal Claude authentication path is available.
 
@@ -251,16 +251,16 @@ Model and effort selection:
 
 Budget and result states:
 
-| Item            | Contract                                                                                                                                                                                                                                                                                                                                                                               |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Soft budget     | Two minutes for `advise`, five minutes for `review`, and ten minutes for `implement`. A callee receives the budget in-band and is expected to scope its work to fit.                                                                                                                                                                                                                   |
-| Hard cutoff     | 1.2× the soft budget.                                                                                                                                                                                                                                                                                                                                                                  |
-| Transport input | MCP accepts at most 16,384 task characters and Bridge rejects task UTF-8 over 16 KiB or a constructed prompt over 20 KiB before creating artifacts or launching a peer. Bridge resolves each peer executable and measures the full argv with Windows `list2cmdline` UTF-16 semantics; `.cmd`/`.bat` shims use a conservative 8,000-unit ceiling below Cmd.exe's 8,191-character limit. |
-| Child output    | Bridge retains at most 256 KiB combined stdout/stderr and writes at most 256 KiB per raw transcript; overflow terminates the peer tree and returns a blocked `output-limit` incident.                                                                                                                                                                                                  |
-| `partial`       | Valid work with explicit `remaining`.                                                                                                                                                                                                                                                                                                                                                  |
-| `blocked`       | Names the permission, authentication, or input blocker.                                                                                                                                                                                                                                                                                                                                |
-| `timeout`       | Identifies a cutoff.                                                                                                                                                                                                                                                                                                                                                                   |
-| `refused`       | Identifies recursion protection or another deliberate refusal.                                                                                                                                                                                                                                                                                                                         |
+| Item            | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Soft budget     | Two minutes for `advise`, five minutes for `review`, and ten minutes for `implement`. A callee receives the budget in-band and is expected to scope its work to fit.                                                                                                                                                                                                                                                                                          |
+| Hard cutoff     | 1.2× the soft budget.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Transport input | MCP accepts at most 16,384 task characters and Bridge rejects task UTF-8 over 16 KiB or a constructed prompt over 20 KiB before creating artifacts or launching a peer. Bridge resolves each peer executable and measures the full argv with Windows `list2cmdline` UTF-16 semantics; `.cmd`/`.bat` shims use a conservative 8,000-unit ceiling below Cmd.exe's 8,191-character limit.                                                                        |
+| Child output    | Bridge bounds each pending stdout record independently and retains at most 256 KiB combined stdout/stderr, reserving transcript wrapper space so the transcript remains at most 256 KiB. Only complete valid Codex command events replace `aggregated_output` with `aggregated_output_bytes` and `aggregated_output_sha256`; overflow during capture or final flush still terminates the peer tree with `output-limit`, including timeout/cancellation paths. |
+| `partial`       | Valid work with explicit `remaining`.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `blocked`       | Names the permission, authentication, or input blocker.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `timeout`       | Identifies a cutoff.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `refused`       | Identifies recursion protection or another deliberate refusal.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Depth and correlation:
 
@@ -271,14 +271,14 @@ Depth and correlation:
 
 ## 📊 Results and artifacts
 
-Each child attempt writes its raw host transcript once.
+Each child attempt writes its bounded host transcript once. Complete Codex command-output payloads are summarized by their UTF-8 byte counts and SHA-256 digest; other retained events and Claude output remain unchanged. The digest can compare separately retained output but cannot reconstruct discarded content, and capture-byte savings do not establish provider token savings.
 
 > The public envelope returns the compact decision core, including decisions, blockers, and remaining work, with observed metadata and workspace-relative transcript or incident references; verbose peer `details` stay in the transcript as additional evidence and never substitute for required public fields.
 
 Bridge state is project-local:
 
 ```text
-.temp/bridge/raw-<timestamp>.txt                    raw transcript, referenced by the envelope
+.temp/bridge/raw-<timestamp>.txt                    bounded transcript, referenced by the envelope
 .temp/bridge/jobs/<job-id>.json                     detached-job metadata and lifecycle state
 .temp/bridge/jobs/<job-id>.cancel.json              durable cooperative-cancellation request
 .temp/bridge/health.jsonl                           one health/cost record per completed bridge call
@@ -287,12 +287,14 @@ Bridge state is project-local:
 
 Artifact handling:
 
-- Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta.
+- Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
 - The health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`.
 - The predictable `health.jsonl` member is opened without following links or reparse points, then its opened descriptor must be a regular single-link file. A prepared symlink, reparse point, or hard link returns a contained blocked result and does not write its target. This does not provide universal containment if an attacker creates a new hard link after the descriptor check.
 - Setup summarizes blocked/timeout/refused counts, their latest timestamps, and reported cost by direction, verb, and model; static CLI findings are reported separately.
 
 > Artifacts are evidence, not authority. Read the envelope, source changes, tests, permissions, and remaining limits before accepting consequential work. Delete `.temp/bridge/` only under your project's normal retention policy and only after preserving any incident or review evidence you still need.
+
+For an `output-limit` incident, use the [bounded-work recovery steps](docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
 
 ## 🔒 Privacy and security boundaries
 
@@ -310,6 +312,8 @@ Safety boundaries:
 - ! BREAKING — every Codex invocation pins `sandbox_workspace_write.network_access=false`, so an `implement` task that installed a dependency, refreshed a lockfile, or ran a network-touching hook now fails inside the sandbox. The control is Codex-side only; the Claude child is constrained by permission mode instead.
 
 Termination reaps the child leader after native tree cleanup, including Windows `taskkill` and direct-kill fallbacks. The final wait is bounded to two seconds; unavailable exit status is diagnosed rather than fabricated. Existing timeout, cancellation, and output-limit classifications stay intact.
+
+Finalization freezes the bounded capture under its lock; a failed drain returns a non-retrying blocked drain failure rather than timeout or cancellation unless output-limit was already observed, and late unseen bytes are not reclassified as output-limit.
 
 > The bridge never bypasses host permission prompts, invents a credential, retries a write-capable timeout, or silently replaces a requested effort tier.
 

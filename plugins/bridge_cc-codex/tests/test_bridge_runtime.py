@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -630,6 +632,267 @@ def test_child_output_limit_stops_a_noisy_peer_and_caps_its_transcript(tmp_path:
     assert len(transcript_bytes) <= bridge_call.MAX_CHILD_TRANSCRIPT_BYTES
 
 
+def test_codex_tool_events_do_not_consume_the_final_result_budget(tmp_path: Path) -> None:
+    """Keep a valid final review after repeated moderate command outputs exceed the raw capture budget."""
+    emitter = (
+        "import json, sys\n"
+        "for index in range(20):\n"
+        "    print(json.dumps({'type': 'item.completed', 'item': {'id': str(index), "
+        "'type': 'command_execution', 'status': 'completed', 'exit_code': 0, "
+        "'aggregated_output': 'é' * 20000}}, ensure_ascii=False), flush=True)\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', "
+        "'text': sys.argv[1]}}), flush=True)\n"
+        "print(json.dumps({'type': 'turn.completed', 'usage': {'input': 3, 'output': 2}}), flush=True)\n"
+    )
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter, json.dumps(_core())], tmp_path, timeout=5.0)
+    assert outcome.returncode == 0
+    assert outcome.output_limited is False
+
+    parsed = bridge_call._parse_output(outcome.stdout, "codex")
+    records = [json.loads(line) for line in outcome.stdout.splitlines()]
+    tools = [record["item"] for record in records if record.get("item", {}).get("type") == "command_execution"]
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    transcript = bridge_call._write_transcript(paths, outcome.stdout, outcome.stderr)
+
+    assert parsed.core == _core()
+    assert len(tools) == 20
+    assert all("aggregated_output" not in item and item["aggregated_output_bytes"] == 40_000 for item in tools)
+    assert all(
+        item["aggregated_output_sha256"] == hashlib.sha256(("é" * 20_000).encode()).hexdigest() for item in tools
+    )
+    assert len(outcome.stdout.encode("utf-8")) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert len((tmp_path / transcript).read_bytes()) <= bridge_call.MAX_CHILD_TRANSCRIPT_BYTES
+
+
+def test_reordered_subprocess_event_preserves_final_result_under_stderr_pressure(tmp_path: Path) -> None:
+    """Keep field-order recovery covered through real concurrent subprocess pipes."""
+    emitter = (
+        "import json, sys\n"
+        "sys.stderr.buffer.write(b'E' * 100000); sys.stderr.flush()\n"
+        "print(json.dumps({'item': {'aggregated_output': 'R' * 180000, 'type': 'command_execution'}, 'type': 'item.completed'}), flush=True)\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': sys.argv[1]}}), flush=True)\n"
+    )
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter, json.dumps(_core())], tmp_path, 5.0)
+    assert outcome.output_limited is False
+    assert outcome.returncode == 0
+    assert outcome.stderr == "E" * 100_000
+    assert bridge_call._parse_output(outcome.stdout, "codex").core == _core()
+    item = json.loads(outcome.stdout.splitlines()[0])["item"]
+    assert "aggregated_output" not in item
+    assert item["aggregated_output_bytes"] == 180_000
+    assert item["aggregated_output_sha256"] == hashlib.sha256(b"R" * 180_000).hexdigest()
+
+
+def test_one_oversized_codex_event_still_blocks_before_parsing(tmp_path: Path) -> None:
+    """Keep the per-record memory limit when one command event exceeds the buffer budget."""
+    emitter = (
+        "import json, sys\n"
+        "print(json.dumps({'type': 'item.completed', 'item': {'type': 'command_execution', "
+        "'aggregated_output': 'X' * 400000}}), flush=True)\n"
+        "sys.exit(0)\n"
+    )
+
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter], tmp_path, timeout=5.0)
+
+    assert outcome.output_limited is True
+    assert outcome.error == f"child output exceeded {bridge_call.MAX_CHILD_OUTPUT_BYTES} byte capture limit"
+    assert (
+        len(outcome.stdout.encode("utf-8")) + len(outcome.stderr.encode("utf-8")) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+    )
+
+
+def test_completed_record_one_byte_over_limit_still_blocks() -> None:
+    """Reject one oversized JSONL record even when its command output could compact."""
+    record = {"type": "item.completed", "item": {"type": "command_execution", "aggregated_output": ""}}
+    base = (json.dumps(record) + "\n").encode("utf-8")
+    record["item"]["aggregated_output"] = "X" * (bridge_call.MAX_CHILD_RECORD_BYTES + 1 - len(base))
+    line = (json.dumps(record) + "\n").encode("utf-8")
+    output = bridge_call._ChildOutputBuffer()
+
+    output.append("stdout", line)
+
+    assert len(line) == bridge_call.MAX_CHILD_RECORD_BYTES + 1
+    assert output.output_limited.is_set() is True
+    assert len(output.text()[0].encode("utf-8")) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+
+
+def test_whitespace_prefixed_command_event_compacts_before_shared_budget() -> None:
+    """Keep a valid chunked JSONL event from blocking when stderr already uses the budget."""
+    record = {
+        "type": "item.completed",
+        "item": {"type": "command_execution", "aggregated_output": "X" * 180_000},
+    }
+    line = b"  " + (json.dumps(record) + "\n").encode("utf-8")
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stderr", b"E" * 100_000)
+
+    for offset in range(0, len(line), 8192):
+        output.append("stdout", line[offset : offset + 8192])
+
+    assert len(line) < bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert len(line) + 100_000 > bridge_call.MAX_CHILD_OUTPUT_BYTES
+    assert output.output_limited.is_set() is False
+    assert json.loads(output.text()[0])["item"]["aggregated_output_bytes"] == 180_000
+
+
+@pytest.mark.parametrize("chunk_size", [1, 8192])
+def test_reordered_event_survives_shared_capture_pressure(chunk_size: int) -> None:
+    """Accept valid event fields in any order before deciding whether output can compact."""
+    payload_size = 2048 if chunk_size == 1 else 180_000
+    stderr_size = bridge_call.MAX_CHILD_OUTPUT_BYTES - 1024 if chunk_size == 1 else 100_000
+    line = (
+        json.dumps(
+            {"item": {"aggregated_output": "X" * payload_size, "type": "command_execution"}, "type": "item.completed"}
+        )
+        + "\n"
+    ).encode()
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stderr", b"E" * stderr_size)
+    for offset in range(0, len(line), chunk_size):
+        output.append("stdout", line[offset : offset + chunk_size])
+        assert not output.output_limited.is_set()
+    output.append(
+        "stdout",
+        (
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(_core())}})
+            + "\n"
+        ).encode(),
+    )
+    assert bridge_call._parse_output(output.text()[0], "codex").core == _core()
+
+
+@pytest.mark.parametrize("termination", ["timeout", "cancel", "exit"])
+def test_pending_overflow_takes_precedence_after_final_drain(tmp_path: Path, termination: str) -> None:
+    """Never retry an overflow merely because the final pending record flushed during shutdown."""
+    job_path = tmp_path / "synthetic-job.json"
+    marker = job_path.with_name("synthetic-job.cancel.json")
+    emitter = (
+        "import sys, time\nfrom pathlib import Path\n"
+        f"sys.stderr.buffer.write(b'E' * {bridge_call.MAX_CHILD_OUTPUT_BYTES}); sys.stderr.flush()\n"
+        'sys.stdout.buffer.write(b\'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"\' + b\'X\' * 100000); sys.stdout.flush()\n'
+    )
+    if termination == "cancel":
+        emitter += f"Path({str(marker)!r}).write_text('{{\"job_id\":\"synthetic-job\"}}', encoding='utf-8')\n"
+    if termination != "exit":
+        emitter += "time.sleep(30)\n"
+    outcome = bridge_call._run_child([sys.executable, "-c", emitter], tmp_path, 0.8, job_path)
+    assert outcome.output_limited is True
+    assert outcome.timed_out is False
+    assert outcome.error == f"child output exceeded {bridge_call.MAX_CHILD_OUTPUT_BYTES} byte capture limit"
+    assert outcome.returncode is not None
+
+
+@pytest.mark.parametrize("payload", ["", "same", "diff", "é😀"])
+def test_compacted_output_has_verifiable_content_digest(payload: str) -> None:
+    """Distinguish equal-length omitted outputs and hash decoded UTF-8 rather than JSON escaping."""
+    event = {
+        "type": "item.completed",
+        "item": {"type": "command_execution", "id": "one", "exit_code": 7, "aggregated_output": payload},
+    }
+    result = json.loads(bridge_call._compact_command_event(json.dumps(event).encode()))
+    assert result["item"] == {
+        "type": "command_execution",
+        "id": "one",
+        "exit_code": 7,
+        "aggregated_output_bytes": len(payload.encode()),
+        "aggregated_output_sha256": hashlib.sha256(payload.encode()).hexdigest(),
+    }
+
+
+def test_transcript_preserves_capture_tail_at_budget(tmp_path: Path) -> None:
+    """Reserve transcript framing bytes so accepted final output is never silently sliced off."""
+    stdout = "X" * (bridge_call.MAX_CHILD_OUTPUT_BYTES - 4)
+    stderr = "TAIL"
+    paths = bridge_call.BridgePaths(tmp_path)
+    paths.prepare()
+    transcript = tmp_path / bridge_call._write_transcript(paths, stdout, stderr)
+    assert transcript.read_bytes() == f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode()
+    assert transcript.stat().st_size <= bridge_call.MAX_CHILD_TRANSCRIPT_BYTES
+
+
+def test_invalid_utf8_cannot_expand_retained_transcript_budget() -> None:
+    """Account for replacement characters expanding malformed bytes during final decoding."""
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stderr", b"\xff" * bridge_call.MAX_CHILD_OUTPUT_BYTES)
+    stdout, stderr = output.text()
+    assert output.output_limited.is_set()
+    assert len(stdout.encode()) + len(stderr.encode()) <= bridge_call.MAX_CHILD_OUTPUT_BYTES
+
+
+@pytest.mark.parametrize("invalid", ["nested", "integer"])
+def test_unparseable_event_does_not_hide_later_final_result(invalid: str) -> None:
+    """Keep parser resource exceptions from crashing normalization after bounded capture."""
+    value = "[" * 10_000 + "0" + "]" * 10_000 if invalid == "nested" else "1" * 10_000
+    line = (
+        '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"x","extra":' + value + "}}\n"
+    )
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stdout", line.encode())
+    output.append(
+        "stdout",
+        (
+            json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(_core())}})
+            + "\n"
+        ).encode(),
+    )
+    assert bridge_call._parse_output(output.text()[0], "codex").core == _core()
+    assert bridge_call._decode_possible_json(value) is None
+
+
+def test_output_limit_incident_records_real_partial_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Report edits from a real overflowing child without automatically replaying its write task."""
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    emitter = "from pathlib import Path\nimport sys\np = Path('landed.txt')\np.write_text(p.read_text() + 'once' if p.exists() else 'once')\nsys.stdout.buffer.write(b'X' * 400000)\nsys.stdout.flush()\n"
+    monkeypatch.setattr(bridge_call, "_resolved_command", lambda command: [sys.executable, "-c", emitter])
+    result = bridge_call.run_request(_request(tmp_path, verb="implement"))
+    incident = json.loads((tmp_path / result["incident"]).read_text())
+    assert result["status"] == "blocked"
+    assert incident["fault"] == "output-limit"
+    assert "?? landed.txt" in incident["workspace_delta"]
+    assert (tmp_path / "landed.txt").read_text() == "once"
+
+
+def test_deeply_nested_command_event_does_not_crash_reader() -> None:
+    """Retain bounded raw JSONL when parser recursion limits prevent compaction."""
+    line = (
+        '{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"x","extra":'
+        + "[" * 10_000
+        + "0"
+        + "]" * 10_000
+        + "}}\n"
+    ).encode("utf-8")
+    output = bridge_call._ChildOutputBuffer()
+
+    output.append("stdout", line)
+
+    assert output.output_limited.is_set() is False
+    assert output.text()[0].encode("utf-8") == line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        pytest.param(
+            b'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"\\ud800"}}\n',
+            id="unpaired-surrogate",
+        ),
+        pytest.param(
+            b'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"bad"\n',
+            id="invalid-json",
+        ),
+    ],
+)
+def test_unparseable_command_event_remains_bounded_and_unchanged(line: bytes) -> None:
+    """Keep malformed host text from crashing a reader thread during compaction."""
+    output = bridge_call._ChildOutputBuffer()
+
+    output.append("stdout", line)
+
+    assert output.text()[0].encode("utf-8") == line
+    assert output.output_limited.is_set() is False
+
+
 def test_output_limit_returns_a_terminal_envelope_and_classified_incident(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -742,8 +1005,83 @@ def test_output_overflow_detected_while_draining_a_completed_leader_is_terminal(
     outcome = bridge_call._run_child(["fake-peer"], tmp_path, timeout=1.0)
 
     assert outcome.output_limited is True
-    assert outcome.error == "child output exceeded 262144 byte capture limit"
+    assert outcome.error == f"child output exceeded {bridge_call.MAX_CHILD_OUTPUT_BYTES} byte capture limit"
     assert terminated == [True]
+
+
+def test_finalized_capture_rejects_late_reader_mutation() -> None:
+    """Freeze the reported snapshot even if an inherited pipe later resumes writing."""
+    output = bridge_call._ChildOutputBuffer()
+    output.append("stdout", b"accepted\n")
+    snapshot = output.text()
+    output.append("stderr", b"X" * (bridge_call.MAX_CHILD_OUTPUT_BYTES + 1))
+    assert output.text() == snapshot
+    assert output.captured_bytes == len(b"accepted\n")
+    assert not output.output_limited.is_set()
+
+
+@pytest.mark.parametrize("termination", ["timeout", "cancel", "exit"])
+def test_undrained_peer_blocks_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination: str) -> None:
+    """Prevent a timeout replay when real reader threads outlive bounded cleanup joins."""
+    release = threading.Event()
+    job_path = tmp_path / "held-job.json"
+    launches = []
+
+    class HeldPipe:
+        """Model an external pipe remaining open after its leader has been reaped."""
+
+        def __init__(self) -> None:
+            self.remaining = 400_000
+
+        def read(self, size: int) -> bytes:
+            """Release bounded chunks only after the supervisor has returned."""
+            if not release.wait(timeout=15):
+                return b""
+            count = min(size, self.remaining)
+            self.remaining -= count
+            return b"X" * count
+
+    class Process:
+        """Expose only external Popen state; bridge readers and joins remain real."""
+
+        pid = 123456
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.stdout = HeldPipe()
+            self.stderr = HeldPipe()
+            self.returncode = 0 if termination == "exit" else None
+            launches.append(self)
+            if termination == "cancel":
+                job_path.with_name("held-job.cancel.json").write_text('{"job_id":"held-job"}', encoding="utf-8")
+
+        def poll(self) -> int | None:
+            """Return the observed leader state."""
+            return self.returncode
+
+        def kill(self) -> None:
+            """Reap the leader without pretending its inherited pipes closed."""
+            self.returncode = 0
+
+        def wait(self, timeout: float) -> int | None:
+            """Expose the reaped leader while reader threads remain alive."""
+            return self.returncode
+
+    def missing_group(*args: Any) -> None:
+        """Simulate an absent process group so no real PID is ever signaled."""
+        raise ProcessLookupError
+
+    monkeypatch.setattr(bridge_call.subprocess, "Popen", Process)
+    monkeypatch.setattr(bridge_call.os, "killpg", missing_group, raising=False)
+    monkeypatch.setattr(bridge_call.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=1))
+    try:
+        result = bridge_call.run_request(_request(tmp_path, timeout_seconds=0.05), _job_path=job_path)
+        incident = json.loads((tmp_path / result["incident"]).read_text())
+        assert result["status"] == "blocked"
+        assert result["blockers"] == ["child output drain exceeded the Bridge cleanup grace"]
+        assert incident["fault"] != "timeout"
+        assert len(launches) == 1
+    finally:
+        release.set()
 
 
 def test_timeout_retries_read_only_once_at_a_lower_tier_but_never_implement(

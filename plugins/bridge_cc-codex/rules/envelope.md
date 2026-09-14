@@ -2,7 +2,7 @@
 
 > Public envelope contract: `status`, `verdict`, `findings`, `files_touched`, `remaining`, and `blockers` carry decisions, blockers, and remaining work. Transcript-only `details` hold additional evidence and never hide required work or substitute for a public field.
 
-> The bridge has two validation boundaries. The peer/model-to-harness result contains the model-authored core defined by `schemas/envelope.schema.json` plus bounded verbose `details`. The local harness validates that core, persists `details` in the raw transcript, strips them from the harness-to-caller public envelope, adds observed metadata and workspace-relative transcript/incident references, then validates the public result with `schemas/harness-envelope.schema.json`.
+> The bridge has two validation boundaries. The peer/model-to-harness result contains the model-authored core defined by `schemas/envelope.schema.json` plus bounded verbose `details`. The local harness validates that core, persists `details` in the bounded transcript, strips them from the harness-to-caller public envelope, adds observed metadata and workspace-relative transcript and incident-path references, then validates the public result with `schemas/harness-envelope.schema.json`. Open the JSON file at an `incident` path before inspecting its `fault` member; the public envelope does not inline that record.
 
 ## Model-authored core
 

@@ -18,6 +18,7 @@ its actual exit status; unavailable status is diagnosed without inventing a retu
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -56,8 +57,9 @@ MAX_TASK_UTF8_BYTES = 16 * 1024
 MAX_PROMPT_UTF8_BYTES = 20 * 1024
 MAX_WINDOWS_COMMAND_UTF16_UNITS = 32_767
 MAX_WINDOWS_BATCH_COMMAND_UTF16_UNITS = 8_000
-MAX_CHILD_OUTPUT_BYTES = 256 * 1024
+MAX_CHILD_RECORD_BYTES = 256 * 1024
 MAX_CHILD_TRANSCRIPT_BYTES = 256 * 1024
+MAX_CHILD_OUTPUT_BYTES = MAX_CHILD_TRANSCRIPT_BYTES - len(b"stdout:\n\n\nstderr:\n\n")
 
 # Environment passed to a bridge child, as an allowlist. Inheriting the parent
 # environment wholesale hands every API key, cloud credential, and token in the
@@ -466,6 +468,12 @@ def run_request(
             duration,
             _recovery or substitution,
             fault="output-limit",
+            workspace_delta=(
+                _workspace_delta(before_delta, effective_request.workspace)
+                if _is_write_verb(effective_request.verb)
+                else None
+            ),
+            prior_incident=_prior_incident,
         )
     if outcome.timed_out:
         retry_effort = _lower_effort(effective_request.effort, effective_request.supported_efforts)
@@ -651,33 +659,112 @@ class ParsedOutput:
 
 @dataclass
 class _ChildOutputBuffer:
-    """Collect a fixed combined byte budget from concurrent child output streams."""
+    """Retain bounded child output while compacting completed Codex command events."""
 
     stdout_parts: list[bytes] = dataclass_field(default_factory=list)
     stderr_parts: list[bytes] = dataclass_field(default_factory=list)
+    pending_stdout: bytearray = dataclass_field(default_factory=bytearray)
     captured_bytes: int = 0
     output_limited: threading.Event = dataclass_field(default_factory=threading.Event)
+    finalized: threading.Event = dataclass_field(default_factory=threading.Event)
     lock: threading.Lock = dataclass_field(default_factory=threading.Lock)
 
     def append(self, stream: str, chunk: bytes) -> None:
-        """Retain only the remaining combined output budget and signal overflow."""
+        """Compact complete stdout records and enforce the retained-output budget."""
         with self.lock:
-            remaining = MAX_CHILD_OUTPUT_BYTES - self.captured_bytes
-            accepted = chunk[: max(remaining, 0)]
-            if accepted:
-                target = self.stdout_parts if stream == "stdout" else self.stderr_parts
-                target.append(accepted)
-                self.captured_bytes += len(accepted)
-            if len(chunk) > len(accepted):
+            if self.finalized.is_set():
+                return
+            if stream == "stderr":
+                self._retain(stream, chunk)
+            else:
+                self.pending_stdout.extend(chunk)
+                while (newline := self.pending_stdout.find(b"\n")) >= 0:
+                    line = bytes(self.pending_stdout[: newline + 1])
+                    del self.pending_stdout[: newline + 1]
+                    # Enforce the raw per-record ceiling before a compactable
+                    # command payload can disappear from retained output.
+                    if len(line) > MAX_CHILD_RECORD_BYTES:
+                        self.output_limited.set()
+                        self._retain("stdout", line)
+                        return
+                    self._retain("stdout", _compact_command_event(line))
+                    if self.output_limited.is_set():
+                        return
+            # One oversized record remains terminal; parsing it would remove
+            # the per-record memory bound even when its tool output is expendable.
+            if len(self.pending_stdout) > MAX_CHILD_RECORD_BYTES:
+                self.output_limited.set()
+            # Object fields can arrive in any order. Candidate records use the
+            # independent raw-record budget until complete validation or final flush.
+            candidate = self.pending_stdout.lstrip().startswith(b"{")
+            if not candidate and self.captured_bytes + len(self.pending_stdout) > MAX_CHILD_OUTPUT_BYTES:
                 self.output_limited.set()
 
+    def _retain(self, stream: str, chunk: bytes) -> None:
+        """Keep at most the shared byte budget and signal when a chunk exceeds it."""
+        remaining = MAX_CHILD_OUTPUT_BYTES - self.captured_bytes
+        accepted = chunk[: max(remaining, 0)]
+        if accepted:
+            target = self.stdout_parts if stream == "stdout" else self.stderr_parts
+            target.append(accepted)
+            self.captured_bytes += len(accepted)
+        if len(chunk) > len(accepted):
+            self.output_limited.set()
+
     def text(self) -> tuple[str, str]:
-        """Decode the retained byte budget after both readers have stopped."""
+        """Flush a final unterminated stdout record and decode bounded output."""
         with self.lock:
-            return (
-                b"".join(self.stdout_parts).decode("utf-8", errors="replace"),
-                b"".join(self.stderr_parts).decode("utf-8", errors="replace"),
-            )
+            # An inherited pipe can outlive its cleanup grace. Freeze capture
+            # before taking the snapshot so a late reader cannot alter its fault.
+            self.finalized.set()
+            if self.pending_stdout:
+                self._retain("stdout", _compact_command_event(bytes(self.pending_stdout)))
+                self.pending_stdout.clear()
+            decoded = []
+            remaining = MAX_CHILD_OUTPUT_BYTES
+            for parts in (self.stdout_parts, self.stderr_parts):
+                encoded = b"".join(parts).decode("utf-8", errors="replace").encode("utf-8")
+                if len(encoded) > remaining:
+                    self.output_limited.set()
+                # Replacement characters can expand malformed bytes; count the
+                # actual transcript encoding and never cut through a code point.
+                value = encoded[:remaining].decode("utf-8", errors="ignore")
+                decoded.append(value)
+                remaining -= len(value.encode("utf-8"))
+            return decoded[0], decoded[1]
+
+
+def _compact_command_event(line: bytes) -> bytes:
+    """Replace completed Codex command output with its UTF-8 size and content digest."""
+    if b'"aggregated_output"' not in line:
+        return line
+    try:
+        record = json.loads(line)
+    except (ValueError, RecursionError):
+        return line
+    if not isinstance(record, dict) or record.get("type") != "item.completed":
+        return line
+    item = record.get("item")
+    if not isinstance(item, dict) or item.get("type") != "command_execution":
+        return line
+    command_output = item.get("aggregated_output")
+    if not isinstance(command_output, str):
+        return line
+    try:
+        output_bytes = command_output.encode("utf-8")
+    except UnicodeEncodeError:
+        return line
+    item = {
+        **item,
+        "aggregated_output_bytes": len(output_bytes),
+        "aggregated_output_sha256": hashlib.sha256(output_bytes).hexdigest(),
+    }
+    del item["aggregated_output"]
+    newline = "\n" if line.endswith(b"\n") else ""
+    try:
+        return (json.dumps({**record, "item": item}, separators=(",", ":")) + newline).encode("utf-8")
+    except RecursionError:
+        return line
 
 
 def build_child_environment(source: Mapping[str, str] | None = None, platform: str | None = None) -> dict[str, str]:
@@ -774,30 +861,24 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
     output = _ChildOutputBuffer()
     readers = _start_output_readers(process, output)
     deadline = time.monotonic() + timeout
+    timed_out = False
+    error = None
     while True:
         if output.output_limited.is_set():
             _terminate_process_group(process)
-            _finish_output_readers(readers)
-            stdout, stderr = output.text()
-            return ChildOutcome(
-                stdout,
-                stderr,
-                process.returncode,
-                False,
-                f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
-                True,
-            )
+            drained = _finish_output_readers(readers)
+            break
         if job_path is not None and _job_cancel_requested(job_path):
             _terminate_process_group(process)
-            _finish_output_readers(readers)
-            stdout, stderr = output.text()
-            return ChildOutcome(stdout, stderr, process.returncode, False, "cancelled by job owner")
+            drained = _finish_output_readers(readers)
+            error = "cancelled by job owner"
+            break
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _terminate_process_group(process)
-            _finish_output_readers(readers)
-            stdout, stderr = output.text()
-            return ChildOutcome(stdout, stderr, process.returncode, True, None)
+            drained = _finish_output_readers(readers)
+            timed_out = True
+            break
         if process.poll() is not None:
             drained = _finish_output_readers(readers)
             if not drained:
@@ -805,27 +886,30 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
                 # terminate the remaining group before returning its bounded output.
                 _terminate_process_group(process)
                 _finish_output_readers(readers)
-            stdout, stderr = output.text()
-            if output.output_limited.is_set():
-                _terminate_process_group(process)
-                return ChildOutcome(
-                    stdout,
-                    stderr,
-                    process.returncode,
-                    False,
-                    f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
-                    True,
-                )
-            if not drained:
-                return ChildOutcome(
-                    stdout,
-                    stderr,
-                    process.returncode,
-                    False,
-                    "child output drain exceeded the Bridge cleanup grace",
-                )
-            return ChildOutcome(stdout, stderr, process.returncode, False, None)
+            break
         time.sleep(min(0.05, remaining))
+    # Final flush can reveal that an incomplete record was not compactable.
+    # Overflow wins on every exit path so timeout recovery cannot replay it.
+    stdout, stderr = output.text()
+    if output.output_limited.is_set():
+        _terminate_process_group(process)
+        return ChildOutcome(
+            stdout,
+            stderr,
+            process.returncode,
+            False,
+            f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
+            True,
+        )
+    if not drained:
+        return ChildOutcome(
+            stdout,
+            stderr,
+            process.returncode,
+            False,
+            "child output drain exceeded the Bridge cleanup grace",
+        )
+    return ChildOutcome(stdout, stderr, process.returncode, timed_out, error)
 
 
 def _start_output_readers(process: subprocess.Popen[bytes], output: _ChildOutputBuffer) -> list[threading.Thread]:
@@ -840,8 +924,8 @@ def _start_output_readers(process: subprocess.Popen[bytes], output: _ChildOutput
 
 
 def _read_child_stream(stream_name: str, stream: Any, output: _ChildOutputBuffer) -> None:
-    """Copy one child stream in bounded chunks until EOF or the global limit is reached."""
-    while not output.output_limited.is_set():
+    """Feed one child stream in bounded chunks until EOF or an output limit."""
+    while not output.output_limited.is_set() and not output.finalized.is_set():
         chunk = stream.read(8 * 1024)
         if not chunk:
             return
@@ -1011,13 +1095,13 @@ def _json_records(stdout: str) -> list[Any]:
     for line in stdout.splitlines():
         try:
             records.append(json.loads(line))
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             continue
     if records:
         return records
     try:
         return [json.loads(stdout)]
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return []
 
 
@@ -1044,7 +1128,7 @@ def _decode_possible_json(value: Any) -> Any | None:
         return None
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None
 
 
@@ -1152,7 +1236,7 @@ def _next_bridge_depth() -> int:
 
 
 def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
-    """Write one raw child transcript and return its workspace-relative path."""
+    """Write one bounded child transcript and return its workspace-relative path."""
     path = paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt"
     payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode("utf-8")
     path.write_bytes(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
