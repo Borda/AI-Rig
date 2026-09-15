@@ -247,6 +247,54 @@ def test_v3_needs_clarification_cannot_claim_no_code_change_closure(tmp_path: Pa
         VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
 
 
+@pytest.mark.parametrize("field", ["triage_status", "resolution_status"])
+def test_v3_rejects_stale_review_status(tmp_path: Path, field: str) -> None:
+    """Reject outdated-comment dismissal even when row and aggregate counts agree."""
+    metadata = _metadata()
+    metadata["resolution_scope"] = {"presentation_version": 3}
+    table = metadata["final_resolution_table"]
+    items = table["items"]
+    items[0]["resolved_how"] = "Implemented: Added the missing guard."
+    items[1][field] = "stale"
+    label = "Stale" if field == "resolution_status" else "Duplicate"
+    items[1]["resolved_how"] = f"{label}: Conflict resolution moved the commented lines."
+    table["triage_status_counts"] = _status_counts(TRIAGE_STATUSES, [item["triage_status"] for item in items])
+    table["resolution_status_counts"] = _status_counts(
+        RESOLUTION_STATUSES, [item["resolution_status"] for item in items]
+    )
+    _write_action_items(metadata, tmp_path)
+    with pytest.raises(SystemExit, match="code-remediate-v3-stale-status-forbidden"):
+        VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "status,label",
+    [
+        pytest.param("implemented", "Implemented", id="implemented"),
+        pytest.param("resolved", "Verified without code changes", id="resolved"),
+        pytest.param("already-fixed", "Verified without code changes", id="already-fixed"),
+        pytest.param("already-applied", "Verified without code changes", id="already-applied"),
+        pytest.param("rejected", "Rejected", id="rejected"),
+        pytest.param("not-applicable", "Not applicable", id="not-applicable"),
+        pytest.param("duplicate", "Duplicate", id="duplicate"),
+    ],
+)
+def test_v3_preserves_other_review_dispositions(tmp_path: Path, status: str, label: str) -> None:
+    """Keep the user's existing outcome choices while removing only stale."""
+    metadata = _metadata()
+    metadata["resolution_scope"] = {"presentation_version": 3}
+    table = metadata["final_resolution_table"]
+    items = table["items"]
+    items[0]["resolved_how"] = "Implemented: Added the missing guard."
+    items[1]["resolution_status"] = status
+    items[1]["resolved_how"] = f"{label}: Original concern checked against current code and regression."
+    table["resolution_status_counts"] = _status_counts(
+        RESOLUTION_STATUSES, [item["resolution_status"] for item in items]
+    )
+    _write_action_items(metadata, tmp_path)
+    VALIDATOR._validate_code_remediate_final_resolution_table(metadata, tmp_path)
+
+
 def test_final_resolution_machine_items_are_required(tmp_path: Path) -> None:
     """Reject aggregate counts that cannot prove the disposition of each input item."""
     metadata = _metadata()

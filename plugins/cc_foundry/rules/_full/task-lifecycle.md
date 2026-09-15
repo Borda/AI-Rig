@@ -4,14 +4,18 @@ Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn label
 
 ### Spawn slots — three fields, no repeats
 
-FleetView shows `name`, `description`, and the prompt's leading chars as three columns. Filling all three with the same string wastes two of them:
+`Agent()` takes three label-bearing slots — `name`, `description`, and prompt line 1. Filling all three with the same string wastes two of them. The slot that gets rendered and truncated is prompt line 1, so it carries the strictest delta-first obligation of the three:
 
 ```text
 ✗  name: review-sw-engineer   description: sw-engineer review — PR #1424 roboflow/rf-detr
                               prompt:      First run Bash export CSID=…   [label displaced by preamble]
 
-✓  name: review-sw-engineer   description: arch + SOLID audit
+✗  name: review-sw-engineer   description: arch + SOLID audit
                               prompt:      Review PR #1424 roboflow/rf-detr — architecture, SOLID, error paths
+                                           [description fixed, but the rendered slot still leads with 34 shared chars]
+
+✓  name: review-arch          description: arch + SOLID audit
+                              prompt:      Architecture, SOLID, error paths — PR #1424 roboflow/rf-detr
 ```
 
 Boilerplate-first prompt → every agent reads one useless label (e.g. "Task tracking: do NOT call TaskCreate or TaskUpdat…"):
@@ -27,7 +31,7 @@ Boilerplate-first prompt → every agent reads one useless label (e.g. "Task tra
 
 ### Slot content: unique-first
 
-N agents, same task family → every slot leads with per-agent delta (dir/plugin/module/dimension), shared target in prompt line 1 only. Cap 1 terminal line per column — front-load differentiator, FleetView truncates tail not head.
+N agents, same task family → every slot leads with per-agent delta (dir/plugin/module/dimension). Prompt line 1 is the only slot allowed to name the shared target at all, and it names it after the delta, never before. Cap 1 terminal line per column — front-load differentiator, FleetView truncates tail not head.
 
 ```text
 ✓  B1 — cc_develop: session-scope TMPDIR sentinels
@@ -42,19 +46,34 @@ N agents, same task family → every slot leads with per-agent delta (dir/plugin
 The dir-varying case above is the easy one. The hard one is a fanout over a single target — one PR, one branch, one run — where the only thing that differs is the dimension. Reading the label rule as "role + target" puts the shared half in every slot and produces rows nobody can tell apart:
 
 ```text
-✓  name: review-arch       description: architecture + SOLID
-✓  name: review-perf-api   description: perf + API design
-✓  name: review-qa-sec     description: test coverage + security
-   [prompt line 1 of each: "Review PR #596 roboflow/trackers — <its dimensions>"]
-
 ✗  description: Review PR #596 (roboflow/trackers) — architecture/...
 ✗  description: Review PR #596 (roboflow/trackers) — performance A...
 ✗  description: Review PR #596 (roboflow/trackers) — test coverage...   [23 identical chars, then truncation]
 ```
 
+Fixing `description` alone does not fix the row, because `description` is not what the pane prints. Observed in a real FleetView pane: rows printed `name` plus the leading chars of prompt line 1, and the correct `description` values set on those same spawns never appeared. The shared prefix simply moved one slot over and kept winning:
+
+```text
+✗  ◯ review-arch       Review PR 3 Borda/lucid-YOLO — architecture, SOLID...
+✗  ◯ review-perf-api   Review PR 3 Borda/lucid-YOLO — perf claim verifica...
+✗  ◯ review-challenge  Review PR 3 Borda/lucid-YOLO — adversarial challen...   [28 identical chars, then truncation]
+
+✓  ◯ review-arch       architecture, SOLID, numerics — PR 3 Borda/lucid-YOLO
+✓  ◯ review-perf-api   perf claim verification — PR 3 Borda/lucid-YOLO
+✓  ◯ review-challenge  adversarial challenge — PR 3 Borda/lucid-YOLO
+```
+
+So delta-first binds hardest on prompt line 1, the slot the user actually reads:
+
+```text
+✓  name: review-arch       description: architecture + SOLID     prompt: Architecture, SOLID, numerics — PR #596 roboflow/trackers
+✓  name: review-perf-api   description: perf + API design        prompt: Perf claims + API design — PR #596 roboflow/trackers
+✓  name: review-qa-sec     description: test coverage + security prompt: Test coverage + security scan — PR #596 roboflow/trackers
+```
+
 The target is not the label. Every agent in the batch already knows which PR it is reviewing — the prompt body says so. The row exists to answer "which of these three is this?", and only the dimension answers that. A merged spawn covering two dimensions names both, because that is its delta.
 
-The same reading applies to a verb: "Review" is shared by all three rows and buys nothing at the front.
+The same reading applies to a verb: "Review" is shared by all three rows and buys nothing at the front. Drop it from prompt line 1 too — the dimension alone is the task statement, and the target follows the dash.
 
 ### After spawning: end the turn
 

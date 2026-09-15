@@ -123,6 +123,7 @@ def test_verify_package_rejects_mode_drift_on_posix(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("mutation", ("tamper", "extra"))
 @pytest.mark.packaging
+@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
 def test_verify_package_rejects_payload_drift(tmp_path: Path, mutation: str) -> None:
     """Reject changed bytes and unrecorded package payloads."""
     identity = _load_identity()

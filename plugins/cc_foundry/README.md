@@ -2,6 +2,8 @@
 
 OSS Claude Code configuration for Python/ML projects: 10 specialist agents, 11 skills, event-driven hooks, and repeatable audit and calibration workflows.
 
+Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action. They challenge identity, ownership, destination, lifetime, and resume assumptions with concrete counterexamples and report untested handoffs.
+
 Optional Codemap guidance is shipped locally with foundry; loading it does not read another plugin's private shared directory. Codemap queries still require the `codemap-py` plugin, with file-read fallback when the CLI or local contract is unavailable.
 
 > Optional integrations: `/oss:review` and `/oss:release` add release/review workflows (requires the `oss` plugin); `/develop:feature` and `/develop:fix` add implementation workflows (requires the `develop` plugin); `/research:run` and `/research:topic` add ML research workflows (requires the `research` plugin).

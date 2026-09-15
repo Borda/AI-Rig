@@ -50,7 +50,7 @@ Run `create_run.py --skill code-review` per `../../shared/helper-cli-contract.md
 
 For local scopes, inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect normalized `scope`, optional `target`, and literal `<run-directory>` path.
 
-For PR scope, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`; collect exact target into literal `<run-directory>` path with checkout enabled.
+For PR scope, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`; collect exact target into literal `<run-directory>` path with `--checkout --checkout-mode review`.
 
 When `approve_gh=true`, treat required GitHub operations as already approved by the user. Do not ask for another workflow confirmation. Apply [PR Collection Preapproval](../../shared/native-skill-contract.md#pr-collection-preapproval) before collector execution, including the direct command and exact PR URL prefix. Do not create or modify runtime approval rules files.
 
@@ -81,11 +81,11 @@ Collector and source boundary:
 
 Checkout and source requirements:
 
-- Fresh source is agent's responsibility before review. Use collector's primary GitHub CLI metadata path. It fetches target and PR source without persistent ref destinations, captures and verifies their commit IDs, then uses `git checkout --detach <verified-head-oid>` only when HEAD differs. Existing branches and tracking configuration remain untouched; an exact current HEAD needs no checkout. Fork, historical, and public-fallback collection fetch base repository's `refs/pull/<number>/head`; documented public fallback remains conditional, not default. Never consume mutable `FETCH_HEAD` after another fetch: use the captured verified commit IDs.
+- Fresh source is agent's responsibility before review. Use collector's primary GitHub CLI metadata path. When checkout is needed, review mode tries `gh pr checkout <canonical PR URL>` first, then may use a verified `git checkout --detach <verified-head-oid>` fallback only for review after the CLI checkout fails. The fallback must still verify the exact PR head and local diff; it is never a remediation route. Preserve unrelated work and do not manually repair tracking or use forced checkout; native `gh pr checkout` may create or update its local PR branch, while the detached fallback leaves branch refs untouched. An exact current HEAD needs no checkout. Fork, historical, and public-fallback collection fetch base repository's `refs/pull/<number>/head`; documented public fallback remains conditional, not default. Never consume mutable `FETCH_HEAD` after another fetch: use the captured verified commit IDs.
 - A routine refresh or missing local PR branch is work to perform, not human blocker. Use refreshed target ref directly; do not switch to or merge target merely for reading. If later workflow uses `git pull`, first verify current PR branch and its upstream, use `--ff-only`, and reverify resulting HEAD against fresh PR metadata. Never use blind pull/merge, discard changes, or reset diverged branch to make verification pass.
 - Inspect source only in local checkout recorded by `<run-directory>/local-checkout.json`; `diff.patch` must record `diff_source=verified-local-checkout` provenance there.
 - Never reconstruct changed source from `curl`, `raw.githubusercontent.com`, or `head-files/` snapshots.
-- If checkout or local-diff verification fails, fail instead of reviewing remote raw files.
+- If the primary review checkout and its verified detached fallback both fail, or local-diff verification fails, fail instead of reviewing remote raw files. Do not offer this review fallback to code-remediate.
 - Do not retry with `--force` unless user explicitly confirms after receiving force reason and overwrite risk.
 
 When `gh pr view` metadata fails, public unauthenticated HTTPS fallback is eligible only when all of these hold:
@@ -97,7 +97,7 @@ Ambiguous or unsafe targets, permission failures, not-found failures, and unclas
 
 Fallback behavior:
 
-- The fallback normalizes limited PR metadata, then uses verified `refs/pull/<number>/head` ref for detached checkout and derives local diff; it never establishes private PR evidence.
+- The review-only fallback normalizes limited PR metadata, then uses verified `refs/pull/<number>/head` ref for detached checkout and derives local diff; it never establishes private PR evidence and is never available to code-remediate.
 - `online-review-summary.json` must list unavailable fallback evidence as sorted IDs.
 - Raw GitHub CLI stderr is never persisted; terminal diagnostics may include safe `failure_reason` enum alongside non-secret classification metadata.
 
@@ -116,6 +116,7 @@ For `scope=pr`, merge-oriented code review is limited to an `OPEN` PR. `collect_
 - Selected remote matches base repository from PR URL. Fresh target must equal or descend from PR-recorded base (`expected_base_is_ancestor=true`); advancement is integration context, never PR finding or merge blocker. Genuine divergence fails open-PR collection; historical `target-branch.json` may record it.
 - Verify local state independently of HEAD equality: block any unresolved index, tracked edits to PR-changed paths from the exact `base...head` range, and changes checkout would overwrite. Preserve unrelated edits; never call a tracked file cache based on its name. Repeat source-state checks after checkout. Matching HEAD alone does not prove matching files or authorize PR test claims while unrelated edits affect dependencies.
 - Local checkout HEAD exactly matches metadata; `pr-routing.json` and `local-checkout.json` include `force_policy` proving no automatic forced checkout. Before tests, account for retained unrelated edits that affect test inputs; isolate or disclose that scope instead of claiming a pristine PR test run.
+- Report the observed checkout state in the handoff: attached branch name or detached HEAD at the verified revision, and whether review used the primary `gh pr checkout` or the review-only detached fallback. A matching SHA verifies source, not ownership of a future commit. A review receipt is not a remediation receipt: direct an authorized remediation continuation through a fresh `code-remediate` PR collection with `--checkout-mode remediate`, which must try `gh pr checkout <canonical PR URL>` and verify its attached branch before edits or commits. If that command fails, remediation may use only its verified same-repository original-branch route; fork remediation must use the shared bounded adversarial recovery loop. Do not imply review checkout is already the intended commit destination.
 - Treat unresolved online threads/comments as candidate findings until triaged valid, duplicate, stale, out-of-scope, or already fixed. If GraphQL review-thread collection fails or is incomplete, continue source review with empty normalized thread arrays, `review-threads-error.txt`, `review_threads_status=unavailable`, explicit partial-online-triage notes, and confidence gap `PR review-thread resolution status was unavailable; online review triage may be incomplete.` Never convert that supplemental gap into PR finding or merge blocker by itself.
 
 If `files.txt` and `untracked.txt` are empty with no explicit target, fail before gates. If `scope=pr` and `pr-error.txt` exists, fail with captured reason and do not begin T1/T2 source review.
@@ -460,7 +461,7 @@ Update calibration when review routing, severity discipline, decision vocabulary
 
 - benchmark patterns: `code-review`
 - behavioral cases: false blocker, target-advance false blocker, unrelated dirty-worktree checkout continuation, overlapping dirty-worktree immediate reason, supplemental-thread degradation, sandboxed collector network approval, each terminal close code plus its false-positive fall-through, close-versus-reject separation, closed-report remediation rejection, non-approval PR findings/action table missing reported finding, missing `needs-more-work` table, T0 PR collection failure with merge recommendation/table or without plain process diagnostic/source findings `not assessed`/merge decision `not made`, malformed finding-table row, missing specialist pass, no-finding residual risk, substituted fan-out confidence, PR online review triage, missing project docstring-style detection, missing code self-documentation, long code blocks, deep branching, docstrings masking poor structure, low-confidence recovery loop, objective confidence evidence
-- PR routing cases: target-branch refresh required, fork-aware verified detached checkout, exact-head checkout reuse, verified local diff required, stale local PR branch, raw-file snapshot rejection
+- PR routing cases: target-branch refresh required, fork-aware `gh pr checkout` primary path, verified review-only detached fallback, exact-head checkout reuse, verified local diff required, stale local PR branch, raw-file snapshot rejection, remediation same-repository fallback and fork-recovery route separation
 
 ## Output Contract
 

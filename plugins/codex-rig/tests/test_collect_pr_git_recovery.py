@@ -66,6 +66,7 @@ def _setup_repositories(tmp_path: Path) -> tuple[Path, Path, str, str, str]:
     _git(worktree, "fetch", "--no-tags", str(source), "refs/heads/old-topic:refs/heads/old-topic")
     _git(worktree, "checkout", "topic")
     _git(worktree, "config", "remote.origin.url", "https://github.com/example/project.git")
+    _git(worktree, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
     return source, worktree, base, old, head
 
 
@@ -104,6 +105,10 @@ def _collect(
     cross_repository: bool = True,
     state: str = "OPEN",
     mutate_after_checkout: bool = False,
+    checkout_mode: str = "review",
+    gh_checkout_fails: bool = True,
+    mutate_after_gh_failure: bool = False,
+    move_source_after_head_fetch: bool = False,
 ) -> tuple[int, list[list[str]]]:
     """Run the collector against real Git while replacing only GitHub responses."""
     payload = _payload(base, head, cross_repository=cross_repository, state=state)
@@ -121,6 +126,17 @@ def _collect(
                 }
             }
             return subprocess.CompletedProcess(arguments, 0, stdout=json.dumps(threads).encode(), stderr=b"")
+        if arguments[:3] == ["gh", "pr", "checkout"]:
+            if gh_checkout_fails:
+                if mutate_after_gh_failure:
+                    (worktree / "module.py").write_text("value = 'partial-gh-checkout'\n", encoding="utf-8")
+                return subprocess.CompletedProcess(arguments, 1, stdout=b"", stderr=b"connection reset by peer")
+            checkout = subprocess.run(["git", "checkout", "topic"], cwd=worktree, **kwargs)
+            if checkout.returncode == 0:
+                tracking_remote = "https://github.com/contributor/project.git" if cross_repository else "origin"
+                _git(worktree, "config", "branch.topic.remote", tracking_remote)
+                _git(worktree, "config", "branch.topic.merge", "refs/heads/topic")
+            return checkout
         if arguments[:3] == ["git", "checkout", "--detach"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
             if mutate_after_checkout:
@@ -128,7 +144,13 @@ def _collect(
             return result
         assert arguments[0] != "gh", arguments
         if arguments[:2] == ["git", "fetch"]:
+            is_same_repo_head_fetch = arguments[-1] == "topic" and "--refmap=" in arguments
             arguments = [str(source) if argument == "origin" else argument for argument in arguments]
+            result = subprocess.run(arguments, cwd=worktree, **kwargs)
+            if move_source_after_head_fetch and is_same_repo_head_fetch:
+                (source / "module.py").write_text("value = 'source moved'\n", encoding="utf-8")
+                _git(source, "commit", "-am", "source moved")
+            return result
         return subprocess.run(arguments, cwd=worktree, **kwargs)
 
     previous_which = module.shutil.which
@@ -138,6 +160,7 @@ def _collect(
             target="https://github.com/example/project/pull/17",
             output=output,
             checkout=True,
+            checkout_mode=checkout_mode,
             timeout_seconds=10,
             run=run,
         )
@@ -321,6 +344,262 @@ def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_con
     assert _git(worktree, "rev-parse", "refs/heads/local-diverged") == old
     assert _git(worktree, "rev-parse", "refs/remotes/origin/topic") == old
     assert _git(worktree, "config", "--get", "remote.origin.url") == remote_url
+
+
+def test_collect_pr_remediation_keeps_github_attached_branch(tmp_path: Path) -> None:
+    """Require the GitHub checkout route and its branch tracking for remediation."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    assert code == 0
+    assert ["gh", "pr", "checkout", "https://github.com/example/project/pull/17"] in calls
+    assert _git(worktree, "branch", "--show-current") == "topic"
+    assert _git(worktree, "config", "--get", "branch.topic.remote") == "origin"
+    assert _git(worktree, "config", "--get", "branch.topic.merge") == "refs/heads/topic"
+    checkout = json.loads((tmp_path / "collected" / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["checkout_mode"] == "remediate"
+
+
+def test_collect_pr_remediation_records_fork_tracking_destination(tmp_path: Path) -> None:
+    """Keep a fork PR's branch receipt bound to its contributor repository URL."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+
+    code, _calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        checkout_mode="remediate",
+        gh_checkout_fails=False,
+    )
+
+    assert code == 0
+    assert _git(worktree, "config", "--get", "branch.topic.remote") == "https://github.com/contributor/project.git"
+    assert _git(worktree, "config", "--get", "branch.topic.merge") == "refs/heads/topic"
+
+
+def test_collect_pr_remediation_recovers_same_repo_existing_branch_after_gh_failure(tmp_path: Path) -> None:
+    """Attach the verified existing PR branch after GitHub's checkout fails."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+    )
+
+    assert code == 0
+    assert ["git", "checkout", "--no-guess", "topic"] in calls
+    assert _git(worktree, "branch", "--show-current") == "topic"
+    assert _git(worktree, "rev-parse", "HEAD") == head
+    checkout = json.loads((tmp_path / "collected" / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["checkout_method"] == "git-original-branch-fallback"
+    assert checkout["command"] == "git checkout --no-guess topic"
+
+
+def test_collect_pr_remediation_creates_missing_same_repo_branch_from_verified_remote_ref(tmp_path: Path) -> None:
+    """Create an absent branch only from the exact fetched selected-remote PR ref."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "branch", "-D", "topic")
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+    )
+
+    assert code == 0
+    assert ["git", "checkout", "--track", "-b", "topic", "origin/topic"] in calls
+    assert ["git", "update-ref", "refs/remotes/origin/topic", head, "0" * 40] in calls
+    assert _git(worktree, "branch", "--show-current") == "topic"
+    assert _git(worktree, "rev-parse", "HEAD") == head
+
+
+def test_collect_pr_remediation_rejects_stale_same_repo_branch_without_advancing_it(tmp_path: Path) -> None:
+    """Stop before changing a stale local PR branch after a failed GitHub checkout."""
+    module = _load_collector()
+    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "update-ref", "refs/heads/topic", old)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+    )
+
+    assert code == 2
+    assert _git(worktree, "rev-parse", "refs/heads/topic") == old
+    assert ["git", "checkout", "--no-guess", "topic"] not in calls
+    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == (
+        "remediation-existing-branch-not-at-pr-head\n"
+    )
+
+
+def test_collect_pr_remediation_updates_only_ancestor_tracking_ref_for_missing_branch(tmp_path: Path) -> None:
+    """Allow the explicit remote-tracking update when its prior commit is a PR-head ancestor."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "branch", "-D", "topic")
+    _git(worktree, "update-ref", "refs/remotes/origin/topic", base)
+
+    code, _calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+    )
+
+    assert code == 0
+    assert _git(worktree, "rev-parse", "refs/remotes/origin/topic") == head
+    assert _git(worktree, "rev-parse", "refs/heads/topic") == head
+
+
+def test_collect_pr_remediation_uses_recorded_head_after_source_moves(tmp_path: Path) -> None:
+    """Prevent a source rewrite after the verified fetch from changing the recovered branch ref."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "branch", "-D", "topic")
+    _git(worktree, "update-ref", "refs/remotes/origin/topic", base)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        move_source_after_head_fetch=True,
+    )
+
+    assert code == 0
+    assert _git(source, "rev-parse", "HEAD") != head
+    assert _git(worktree, "rev-parse", "refs/remotes/origin/topic") == head
+    assert _git(worktree, "rev-parse", "refs/heads/topic") == head
+    assert not any(arguments[-1] == "refs/heads/topic:refs/remotes/origin/topic" for arguments in calls)
+
+
+def test_collect_pr_remediation_rejects_divergent_tracking_ref_without_creating_branch(tmp_path: Path) -> None:
+    """Preserve a divergent cached tracking ref instead of allowing Git to non-fast-forward it."""
+    module = _load_collector()
+    source, worktree, base, old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+    _git(worktree, "branch", "-D", "topic")
+    _git(worktree, "update-ref", "refs/remotes/origin/topic", old)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+    )
+
+    assert code == 2
+    assert _git(worktree, "rev-parse", "refs/remotes/origin/topic") == old
+    assert _git(worktree, "branch", "--list", "topic") == ""
+    assert not any(arguments[-1] == "refs/heads/topic:refs/remotes/origin/topic" for arguments in calls)
+    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == (
+        "remediation-tracking-branch-diverged\n"
+    )
+
+
+def test_collect_pr_remediation_requires_adversarial_recovery_for_fork_after_gh_failure(tmp_path: Path) -> None:
+    """Leave a fork checkout unchanged when GitHub cannot establish its publication branch."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        checkout_mode="remediate",
+    )
+
+    assert code == 2
+    assert _git(worktree, "branch", "--show-current") == "local-diverged"
+    assert not any(arguments[:2] == ["git", "checkout"] for arguments in calls)
+    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == (
+        "remediation-gh-checkout-recovery-required\n"
+    )
+
+
+def test_collect_pr_remediation_rechecks_dirty_partial_gh_failure_before_git_recovery(tmp_path: Path) -> None:
+    """Protect PR files changed by a failed GitHub checkout before native recovery runs."""
+    module = _load_collector()
+    source, worktree, base, _old, head = _setup_repositories(tmp_path)
+    _git(worktree, "checkout", "-b", "local-diverged", base)
+
+    code, calls = _collect(
+        module,
+        source,
+        worktree,
+        tmp_path / "collected",
+        base,
+        head,
+        cross_repository=False,
+        checkout_mode="remediate",
+        mutate_after_gh_failure=True,
+    )
+
+    assert code == 2
+    assert not any(arguments[:2] == ["git", "checkout"] for arguments in calls)
+    assert (
+        (tmp_path / "collected" / "pr-error.txt")
+        .read_text(encoding="utf-8")
+        .startswith("dirty-pr-worktree-after-pr-checkout")
+    )
 
 
 def test_collect_pr_rechecks_pr_source_after_checkout(tmp_path: Path) -> None:

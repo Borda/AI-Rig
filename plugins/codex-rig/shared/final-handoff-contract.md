@@ -25,13 +25,14 @@ For version-3 remediation outcomes, `resolved_how` starts with a reasoned dispos
 | `implemented` | `Implemented` |
 | `resolved`, `already-fixed`, `already-applied` | `Verified without code changes` |
 | `rejected` | `Rejected` |
-| `stale` | `Stale` or `Rejected` |
 | `not-applicable` | `Not applicable` or `Rejected` |
 | `duplicate` | `Duplicate` or `Rejected` |
 | `needs-clarification` | `Needs clarification` |
 | `unresolved` | `Blocked`, `Deferred`, or `Not selected` |
 
 Deferral and nonselection require the actual user decision, not a substitute for investigating valid selected work. Never label blocked work rejected or evidence-only closure implemented. Record finding-specific change evidence for implementation, actual closure evidence for verification without edits, and concrete owner/action for open work. Zero implementations must be explicit in the opening; target integration and green CI are not review fixes. Passing gates remain separate from whether all selected remediation is complete. Historical grouped/legacy output retains its bytes.
+
+`stale` is not a current remediation triage or resolution status. Outdated anchors and conflict-resolution line changes require reassessment of the original concern against current code, never dismissal or automatic conversion to `rejected`. Other dispositions retain their existing evidence requirements. Legacy count keys remain for historical compatibility and must be zero in current results.
 
 Selection items also retain nonempty `item_type`; report-origin `review-gate` and `confidence-gap` types determine gate intake counts. Report identity defaults to full source file path; explicit shared `report_id` is required for verified cross-file aliases. Shared closure text never establishes finding equivalence. Input/output paths must be distinct and output must not be symlink.
 

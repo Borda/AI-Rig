@@ -24,7 +24,7 @@ Follows user's ML research style distilled from past notebooks:
 - **Small, single-purpose cells** — one action per cell (load, one transform, one plot, one check); never bundle setup + run + verify to save cell count
 - **Every cell earns its place** — one-line why (comment or markdown sentence) before/in each cell: the specific reason this step happens now — never a restatement of what the code does
 - **Section markdown is extensive and structured** — full explanation of what/why/how-it-advances-the-goal per section, formatted as tables/lists/blockquotes over dense prose paragraphs; markdown before a plot sets up the question, markdown after states the finding and its implication — plot and prose flow as one beat, never an orphaned chart
-- **`# !` bash over subprocess** — package installs, `nvidia-smi`, `ls -lh`, `# ! head submission.csv`
+- **`# !` inline / `%%bash` cell over subprocess** — single command: `# ! head submission.csv`; multi-command chain (installs, `nvidia-smi` + `ls -lh`) → dedicate cell to `%%bash` instead of stacking `# !` lines
 - **EDA is visual** — distribution plots, sample grids, dimension scatters before any model
 - **Inference included** — model save pattern + separate load-and-infer cells
 - **CSVLogger + seaborn** — metrics plotted from `metrics.csv` after every training run

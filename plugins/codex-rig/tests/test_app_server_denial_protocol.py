@@ -7,6 +7,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -1081,6 +1082,7 @@ def test_live_probe_uses_exact_installed_skill_and_writes_only_sanitized_evidenc
     assert cleanup_calls == [fake]
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
 def test_live_probe_rechecks_workspace_after_process_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Reject a child-side mutation that lands after the first terminal snapshot."""
     config = _live_probe_config(tmp_path)

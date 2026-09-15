@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.1
+
+- Restore commit continuation for legacy PR remediation runs already on the original PR branch. Verify retained source identity, recorded revision, ancestry and live destination; preserve historical receipts and Git state, write separate recovery evidence, and resume the authorized commit mode without repeating checkout or mode selection.
+
+- Remove stale review-comment triage, resolution, and skip routes: outdated anchors and conflict-resolution drift require reassessment against current code. Preserve every other disposition and historical artifact compatibility.
+
+- Require PR remediation to try `gh pr checkout <canonical PR URL>` through collector remediation mode, even when HEAD already matches. After failure, allow only a verified same-repository direct checkout of the actual PR branch; a guarded local update from the already fetched, verified head may populate an explicitly selected remote-tracking ref for native tracking creation while preserving divergent or concurrently changed refs. Forks use the shared bounded adversarial recovery route and return to successful attached `gh` checkout; exact-commit detached checkout remains review-only. Make `remediation_branch.py prepare` read-only schema-2 receipt verification, require local branch/head/merge/destination identity, and preserve legacy receipts and local commits through verified recovery. Show observed branch plus original PR destination while remote updates remain human-owned.
+
+- Make audits and adversarial reviews follow producer/consumer handoffs through the next ordinary user action, question green tests and approved assumptions, and retain counterexamples, positive cases, and untested coverage.
+
+- Preserve the user-authored Kaggle preference for single inline shell commands and dedicated multi-command Bash cells.
+
 ## 0.18.0
 
 - Preserve exact reviewer-context line endings when checking frozen loop evidence. Accept intact CRLF diffs and reject newline-altered context; exercise LF and CRLF snapshots and App Server review evidence on every host.

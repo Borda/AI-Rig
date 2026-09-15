@@ -478,6 +478,7 @@ def test_audit_prompt_efficiency_requires_cost_and_value_evidence() -> None:
     validator = _load_shared_artifact_validator()
     assert validator.SKILL_REQUIREMENTS["audit"] == {
         "files": {
+            "workflow-exploration.md": ["Transitions", "Counterexamples", "Coverage"],
             "audit-ledger.md": [
                 "Inventory",
                 "Broken References",

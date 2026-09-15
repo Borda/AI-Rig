@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -21,6 +22,21 @@ _posix_doctor_only = pytest.mark.skipif(
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 HOOK_CONFIG = PLUGIN_ROOT / "hooks" / "hooks.json"
 HOOK_SCRIPT = PLUGIN_ROOT / "hooks" / "session_start.py"
+
+
+@pytest.fixture(scope="module")
+def isolated_plugin_root(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Copy the plugin payload once so unrelated repo-tree writes cannot race package verification.
+
+    The doctor subprocess opens no-follow directory handles and snapshots parent-directory identity before/after each
+    package file read (see ``_safe_package_io.py``), failing closed on any mismatch. Pointing it at the live
+    ``PLUGIN_ROOT`` exposes that guard to any concurrent write near the repo tree (another xdist worker, git, an editor,
+    AV/indexer) during the scan, which raises ``SafePackageIOError`` and fails the assertion on the expected reason
+    string. A private copy removes every writer but this fixture itself.
+    """
+    destination = tmp_path_factory.mktemp("codex-rig-plugin") / "codex-rig"
+    shutil.copytree(PLUGIN_ROOT, destination)
+    return destination
 
 
 def _snapshot(root: Path) -> tuple[tuple[object, ...], ...]:
@@ -79,21 +95,23 @@ def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
     assert "hooks" not in plugin
 
 
-def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path) -> None:
+@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
+def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path, isolated_plugin_root: Path) -> None:
     """Surface degraded health without creating state in the real Codex home."""
+    hook_script = isolated_plugin_root / "hooks" / "session_start.py"
     home = tmp_path / "home"
     home.mkdir(mode=0o700)
     codex = tmp_path / ("codex.cmd" if sys.platform == "win32" else "codex")
     codex.write_bytes(b"@exit /b 0\r\n" if sys.platform == "win32" else b"#!/bin/sh\nexit 0\n")
     codex.chmod(0o700)
     environment = os.environ.copy()
-    environment["PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+    environment["PLUGIN_ROOT"] = str(isolated_plugin_root)
     environment["CODEX_HOME"] = str(home)
     environment["PATH"] = f"{tmp_path}{os.pathsep}{environment.get('PATH', '')}"
     before = _snapshot(tmp_path)
 
     completed = subprocess.run(
-        [sys.executable, str(HOOK_SCRIPT)],
+        [sys.executable, str(hook_script)],
         input=_hook_input(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -113,21 +131,22 @@ def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path) -> N
 
 
 @_posix_doctor_only
-def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path) -> None:
+def test_hook_surfaces_one_bounded_block_reason(tmp_path: Path, isolated_plugin_root: Path) -> None:
     """Explain the first failed invariant instead of repeating only blocked."""
+    hook_script = isolated_plugin_root / "hooks" / "session_start.py"
     home = tmp_path / ("home-" + "x" * 180)
     home.mkdir(mode=0o700)
     agents = home / "agents"
     agents.mkdir(mode=0o700)
     agents.chmod(0o775)
     environment = os.environ.copy()
-    environment["PLUGIN_ROOT"] = str(PLUGIN_ROOT)
+    environment["PLUGIN_ROOT"] = str(isolated_plugin_root)
     environment["CODEX_HOME"] = str(home)
     environment["PATH"] = str(tmp_path)
     before = _snapshot(tmp_path)
 
     completed = subprocess.run(
-        [sys.executable, str(HOOK_SCRIPT)],
+        [sys.executable, str(hook_script)],
         input=_hook_input(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

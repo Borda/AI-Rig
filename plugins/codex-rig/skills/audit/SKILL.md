@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Audit Codex configuration, workflow, and prompt-efficiency (instruction cost, value-per-token) drift; emit ranked gaps and measurable gates.
+description: Audit Codex configuration and workflow contracts, including failures between individually successful steps, plus prompt-efficiency drift; emit evidence-backed gaps and measurable gates.
 ---
 
 # Audit
@@ -49,6 +49,21 @@ Write `<run-directory>/audit-ledger.md` with these sections:
 - `Overlap`: duplicate/fuzzy ownership decisions.
 - `Prompt Efficiency`: instruction cost, loaded context, obligation preservation, and value-guard evidence.
 - `Recommendations`: ranked fixes.
+
+### Explore workflow outcomes before checking conformance
+
+For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, and the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; existing instructions, accepted design decisions, and green tests are evidence to question, not proof that the contract is sufficient. Keep the exploration bounded to reachable behavior and explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
+
+Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, and `Coverage` sections, including an explicit reason in each section when no workflow applies. Use a compact transition table: `Step / actor | Required precondition | Observed postcondition | Next consumer / user action | Evidence / gap`. For each material handoff ask:
+
+- What does the producer actually guarantee, and what stronger property does the consumer assume? Distinguish matching content or value from identity, ownership, authority, lifetime, and destination.
+- Can every local check succeed while the end result is wrong, temporary, unrecoverable, or misleading to the user? What retains the result after the next normal action?
+- What happens when the same flow starts from another currently supported state, resumes, retries, or encounters a change between verification and use? Check those states that the implementation or documented use makes reachable; avoid invented risk matrices.
+- What observable example would disprove the claimed safety or completion? Does the existing test assert the user's outcome or merely repeat the implementation's chosen operation?
+
+Probe the highest-impact unproven assumption with the smallest safe executable check or source-backed counterexample. Retain its inputs, expected outcome, actual result, and rejected alternative; proposed/unavailable probes remain gaps. Include a positive case to distinguish a missing guarantee from a deliberately valid alternative. Audit remains read-only: parent-owned disposable probes may write scratch data within existing authorization; production edits and external actions keep their own scope and permission boundaries.
+
+Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite cannot close an untested end-to-end claim. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
 
 ### 04: Audit prompt efficiency without using length as quality
 
@@ -142,7 +157,7 @@ Use shared lifecycle/authoritative help. Write `AUDIT_METADATA`, validate `audit
 
 Required checks:
 
-- `review`: inventory, contract ledger, prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
+- `review`: inventory, contract ledger, workflow-exploration transitions/counterexamples or explicit inapplicability, prompt-efficiency evidence, reference scan, overlap decisions, `git diff --check`.
 - `calibration`: run owning project's declared calibration command when audited workflow behavior changes; for Codex Rig source, use `runtime/calibration/run.py --layout plugin`.
 
 Conditional checks:

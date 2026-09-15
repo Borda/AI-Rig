@@ -124,7 +124,6 @@ V3_RESOLUTION_DISPOSITIONS = {
     "implemented": {"Implemented"},
     "resolved": {"Verified without code changes"},
     "rejected": {"Rejected"},
-    "stale": {"Stale", "Rejected"},
     "not-applicable": {"Not applicable", "Rejected"},
     "duplicate": {"Duplicate", "Rejected"},
     "already-fixed": {"Verified without code changes"},
@@ -196,6 +195,7 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
     "change-analysis": {"files": {}},
     "audit": {
         "files": {
+            "workflow-exploration.md": ["Transitions", "Counterexamples", "Coverage"],
             "audit-ledger.md": [
                 "Inventory",
                 "Broken References",
@@ -1907,6 +1907,8 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
         if resolution_status not in CODE_REMEDIATE_RESOLUTION_STATUSES:
             raise SystemExit("code-remediate-final-table-item-resolution-status-invalid")
         if presentation_version == 3:
+            if "stale" in {triage_status, resolution_status}:
+                raise SystemExit("code-remediate-v3-stale-status-forbidden")
             disposition, separator, reason = item["resolved_how"].partition(": ")
             if not separator or not reason.strip() or disposition not in V3_RESOLUTION_DISPOSITIONS[resolution_status]:
                 raise SystemExit("code-remediate-v3-resolution-disposition-invalid")

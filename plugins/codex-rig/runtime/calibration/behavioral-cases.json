@@ -2,6 +2,66 @@
   "cases": [
     {
       "expected_findings": [
+        "outdated-anchor-not-resolution",
+        "stale-disposition-forbidden"
+      ],
+      "id": "code-remediate-no-stale-dismissal",
+      "prompt": "After conflict resolution moves reviewed lines, remediation skips a still-unresolved concern as stale because its anchor is outdated. Assess that shortcut. Preserve the existing implemented, resolved, already-fixed, already-applied, rejected, not-applicable and duplicate outcomes when independently supported; do not remove valid alternatives while correcting stale dismissal.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "result-lifetime-shorter-than-consumer",
+        "value-equality-mistaken-for-destination-identity",
+        "implementation-shaped-test-misses-user-outcome"
+      ],
+      "id": "audit-workflow-handoff-outcomes",
+      "prompt": "Audit two workflows before release. A report exporter returns a file path from a temporary-directory context; the UI opens the returned path after the function exits. Its tests assert the file exists before return. A workspace editor validates its selected workspace by comparing a content digest with the approved workspace, then writes to the selected workspace ID; distinct workspaces may contain identical content. Contrast a read-only immutable-snapshot comparison whose complete text result is returned inline and has no later file or write consumer. Trace reachable handoffs, distinguish confirmed failures from valid alternatives, and propose bounded falsification checks without modifying live state.",
+      "target": "audit"
+    },
+    {
+      "expected_findings": [
+        "commit-destination-not-established",
+        "matching-sha-does-not-identify-branch",
+        "resume-replaces-local-work",
+        "remediation-gh-checkout-required",
+        "remediation-checkout-failure-terminal",
+        "review-only-detached-fallback-boundary",
+        "same-repository-branch-fallback-gated",
+        "fork-recovery-loop-bounded",
+        "remediation-local-branch-name-required"
+      ],
+      "id": "code-remediate-branch-continuity",
+      "prompt": "Assess a PR review/remediation pair. Review tries `gh pr checkout <canonical PR URL>` when checkout is needed and may use a verified detached exact-commit fallback only after that review checkout fails. Remediation first runs `gh pr checkout <canonical PR URL>`, including at matching HEAD. After failure, a same-repository PR may directly check out the actual PR branch only after proving repository identity, branch name equal to `headRefName`, exact SHA, merge tracking, and effective destination; a fork must use the shared bounded adversarial recovery loop and then return to attached `gh` checkout. No generated branch, detached remediation checkout, manual tracking repair, unchanged retry, or local edits before verified recovery. Prepare only records a schema-2 read-only receipt. A legacy schema-1 run already on its original PR branch can use recover with retained PR identity and its last recorded authorized HEAD to write separate continuation evidence while preserving the legacy receipt and Git state. A resumed invocation rechecks branch, worktree, head, ancestry, and destination instead of recollecting over local fixes. Assess destination identity and continuation without overwriting local work; require actual user-outcome evidence.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "remediation-checkout-fallback-forbidden",
+        "remediation-failure-not-terminal",
+        "generated-branch-replaces-pr-branch",
+        "legacy-receipt-recreated",
+        "wrong-pr-push-destination",
+        "same-repository-identity-unverified",
+        "fork-recovery-route-bypassed"
+      ],
+      "id": "code-remediate-checkout-contract",
+      "prompt": "A remediation run invokes `gh pr checkout <canonical PR URL>` but, after it fails for a same-repository PR, detaches at the verified SHA, accepts a differently named branch, and manually repairs tracking without proving the original repository. A fork run bypasses the shared adversarial recovery loop, retries unchanged `gh` evidence, and edits before an attached checkout. Another run creates `codex/pr-<number>-<suffix>`, and prepare silently upgrades a schema-1 generated-branch receipt; resume verifies only HEAD. Require same-repository identity, actual `headRefName` branch, exact SHA, merge tracking, effective destination proof, bounded non-destructive fork recovery with fresh failed-attempt artifacts and a maximum three rounds including `W_0`, a read-only schema-2 prepared receipt, preservation of legacy commits without automatic recollection, and actual branch/destination disclosure with remote update left to the human.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "legacy-schema-blocks-verifiable-continuation",
+        "recorded-head-replaced-with-current-head",
+        "legacy-evidence-overwritten",
+        "commit-choice-repeated-after-authorization"
+      ],
+      "id": "code-remediate-legacy-commit-continuation",
+      "prompt": "A user already chose topic commits after validated PR remediation. Its legacy receipt names a generated branch, while current work is on the original PR branch after an authorized integration commit. The helper rejects schema 1, and prepare requires the old PR SHA. Assess declaring the run permanently uncommittable. Contrast recovery using retained receipt/PR/checkout identity, last recorded authorized HEAD, ancestry and live original destination with rewriting the old receipt, replaying checkout, or substituting current HEAD to hide drift. Require separate recovery evidence, unchanged Git state, rejection of a still-wrong branch or destination, normal checks around each commit, and continuation of the existing commit choice without another mode question.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
         "active-loop-owner-not-bound",
         "authentic-finding-prose-ignored"
       ],
@@ -57,10 +117,13 @@
       "expected_findings": [
         "cached-ref-repair-forces-local-state",
         "mutable-fetch-head-used-as-target",
-        "retry-retains-previous-pr-identity"
+        "retry-retains-previous-pr-identity",
+        "remediation-checkout-fallback-forbidden",
+        "same-repository-branch-fallback-gated",
+        "fork-recovery-requires-material-change"
       ],
       "id": "code-remediate-stable-source-recovery",
-      "prompt": "Assess remediation that force-updates an old cached PR ref to recover a rewritten branch, despite an exact verified commit being available for detached checkout. It reads FETCH_HEAD as the target after fetching the PR head and reuses the previous pr-target.txt when a new target fails parsing. Preserve existing branches and user changes, retain immutable target and head identities independently, and resume the original remediation only after its current source evidence validates.",
+      "prompt": "Assess remediation that force-updates an old cached PR ref and falls back to detached checkout after `gh pr checkout <canonical PR URL>` fails, despite an exact verified commit being available. It reads FETCH_HEAD as the target after fetching the PR head and reuses the previous pr-target.txt when a new target fails parsing. For same-repository recovery it skips repository/branch/SHA/destination proof; for a fork it retries unchanged evidence instead of using the shared bounded non-destructive recovery loop. Preserve existing branches and user changes, retain immutable target and head identities independently, require remediation checkout failure to stop before edits or commits, and resume the original remediation only after its current source evidence validates. An exact-commit detached fallback is available only to review, never remediation.",
       "target": "code-remediate"
     },
     {
@@ -173,7 +236,7 @@
         "unverified-upstream-pull"
       ],
       "id": "code-review-agent-owned-fork-freshness",
-      "prompt": "Assess an open fork PR collector that fetches only the target before comparing the unfetched PR head with local files. Its handoff tells the user to create a local branch and repair checkout, invents dirty files as the cause without inspecting retained command and checkout state, and blindly pulls the current upstream. Use fresh GH CLI metadata, fetch and verify both required commits before overlap comparison, and use the captured exact PR commit for detached checkout without moving existing branches. Preserve user changes, diagnose the exact failed operation, and perform permitted routine preparation yourself. Pull only with separately verified branch/upstream and fast-forward-only behavior when authorized; commits and remote publication require their own authority.",
+      "prompt": "Assess an open fork PR collector that fetches only the target before comparing the unfetched PR head with local files. Its handoff tells the user to create a local branch and repair checkout, invents dirty files as the cause without inspecting retained command and checkout state, and blindly pulls the current upstream. Use fresh GH CLI metadata, fetch and verify both required commits before overlap comparison, and try `gh pr checkout <canonical PR URL>` first when review checkout is needed; use the captured exact PR commit for a verified detached checkout only as the review fallback, without moving existing branches. Preserve user changes, diagnose the exact failed operation, and perform permitted routine preparation yourself. Pull only with separately verified branch/upstream and fast-forward-only behavior when authorized; commits and remote publication require their own authority. Do not transfer the review fallback to remediation.",
       "target": "code-review"
     },
     {
@@ -1047,7 +1110,7 @@
         "invalid-review-comment-fixed"
       ],
       "id": "code-remediate-pr-online-triage",
-      "prompt": "Assess a PR code-remediation workflow that takes a review report, applies every online PR comment as a fix without re-collecting current reviews or triaging comments as valid, duplicate, stale, out-of-scope, already-fixed, or needs-clarification.",
+      "prompt": "Assess a PR code-remediation workflow that takes a review report, applies every online PR comment as a fix without re-collecting current reviews or triaging comments as valid, duplicate, out-of-scope, already-fixed, or needs-clarification.",
       "target": "code-remediate"
     },
     {

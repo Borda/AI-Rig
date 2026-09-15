@@ -35,3 +35,30 @@ def test_remediation_commit_stages_only_proven_owned_paths() -> None:
     assert "partial-hunk staging" in commit_section
     assert "code-remediate-commit-scope-unsafe" in fail_fast
     assert "code-remediate-commit-grouping-unsafe" in fail_fast
+
+
+def test_pr_remediation_establishes_destination_before_merge_and_rechecks_before_commit() -> None:
+    """Keep source collection separate from mutation authority and preserve resumed work."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    prepare = skill.index("run its `prepare` action")
+    merge = skill.index("git merge --no-commit --no-ff")
+    commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
+    assert prepare < merge
+    assert "remediation_branch.py check" in commit
+    assert "verify afterward that the recorded branch contains the new commit" in commit
+    assert "never recollect with checkout merely to replace local remediation commits" in skill
+    assert "Do not derive a replacement expected value from current HEAD" in skill
+
+
+def test_legacy_resume_recovers_before_committing_without_repeating_mode_choice() -> None:
+    """Keep an authorized topic commit reachable after legacy branch recovery."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    resume = skill.split("On resume, inspect", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
+    commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
+    assert "remediation-branch-recovered.json" in resume
+    assert "never replace it or fall back after a failed check" in resume
+    assert "run `recover`" in skill
+    assert "last recorded authorized `--expected-head`" in skill
+    assert "without asking the user to select a mode again" in skill
+    assert "complete the legacy recovery procedure before staging" in commit
+    assert "legacy generated-branch receipt is terminal" not in skill

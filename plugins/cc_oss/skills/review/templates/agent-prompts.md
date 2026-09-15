@@ -2,7 +2,9 @@
 
 **Finding evidence standard — applies to every agent, every finding:** Every finding must cite `file:line` from diff. Training knowledge never sufficient. External standard claims (OWASP, PEP, CVE) cite authoritative document. Tier 2 sources (blog, tutorial, forum) need ≥3 genuinely independent origins OR experimental validation; N posts citing same original = 1 source. Citation tracing mandatory: for each Tier 2 source, follow its citations one level; if tracing reveals Tier 1 source (official doc, CVE, spec) confirming claim, treat as Tier 1 verified (sufficient alone); if multiple Tier 2 sources share one origin, merge into one; count distinct origins only. Distinct-origin count < 3 and no experiment → downgrade to LOW or drop; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone.
 
-**Spawn slots — set all three on every spawn below** (`task-lifecycle.md` §Spawn slots). One run reviews one PR, so PR/repo is shared context: it appears in prompt line 1 only, never in `name`, never in `description`. `description` expands the `name` stem with the work's scope — never restates it alone.
+**Spawn slots — set all three on every spawn below** (`task-lifecycle.md` §Spawn slots). One run reviews one PR, so PR/repo, the word "Review", and the role word are all shared context for this whole batch: they appear in prompt line 1 only, after the dimension, never leading it, and never in `name` or `description`. `description` expands the `name` stem with the work's scope — never restates it alone.
+
+**Compose every row of the table below in one pass before spawning anything**, then read the rendered column top to bottom: the rows must differ in their first word. FleetView prints `name` plus the leading chars of prompt line 1, and a row has room for one line — text every row shares tells the reader nothing they did not already know while consuming the room the dimension needed. The named exclusions (PR, repo, the verb, the role word) are this batch's instances of that; anything else every row would print is excluded on the same grounds.
 
 | Spawn | `name` | `description` (3–5 words) |
 | -- | -- | -- |
@@ -16,7 +18,12 @@
 | Step 4 verifier | `review-verify-<finding-id>` | `verify finding <finding-id>` |
 | Consolidator | `review-consolidate` | `merge N review files` |
 
-**Prompt line 1 — task statement, ≤12 words, carries the shared target:** `Review PR <N> <owner>/<repo> — <this spawn's dimensions>`. Everything below — preamble included — comes after that line.
+**Prompt line 1 — task statement, ≤12 words, dimensions first:** `<this spawn's dimensions> — PR <N> <owner>/<repo>`. The dimensions lead because they are the only part that differs between rows; the target trails because every row shares it. Do NOT write `Review PR <N> <owner>/<repo> — <dimensions>` — that form puts ~28 shared chars ahead of the delta and every row renders identically. Drop the verb "Review" entirely; it is shared too. Everything below — preamble included — comes after that line.
+
+```text
+✓ Architecture, SOLID, numerics correctness in musgd.py — PR 3 Borda/lucid-YOLO
+✗ Review PR 3 Borda/lucid-YOLO — architecture, SOLID, numerics correctness in musgd.py
+```
 
 **Run-dir resolution preamble — insert after prompt line 1, ahead of the rest of the prompt:**
 

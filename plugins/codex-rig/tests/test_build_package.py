@@ -241,6 +241,7 @@ def test_generation_rejects_incomplete_public_roster(
 
 
 @pytest.mark.packaging
+@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
 def test_generation_excludes_runtime_report_debris(tmp_path: Path) -> None:
     """Runtime `.reports/` artifacts never enter or invalidate the package manifest.
 

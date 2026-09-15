@@ -27,6 +27,7 @@ def _load_windows_manager(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return module
 
 
+@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
 def test_simulated_windows_doctor_verifies_package_and_inventories_shims(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

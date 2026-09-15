@@ -54,14 +54,25 @@ def test_collector_accepts_one_approval_target() -> None:
     """Keep dynamic report destinations and checkout behind one stable target prefix."""
     module = _load_collector()
     arguments = module.parse_args(
-        ["--target", "https://github.com/example/project/pull/17", "--out", "report", "--checkout"]
+        [
+            "--target",
+            "https://github.com/example/project/pull/17",
+            "--out",
+            "report",
+            "--checkout",
+            "--checkout-mode",
+            "remediate",
+        ]
     )
     assert arguments.target == "https://github.com/example/project/pull/17"
     assert arguments.out == Path("report")
     assert arguments.checkout is True
+    assert arguments.checkout_mode == "remediate"
 
 
-def _pr_payload(*, state: str = "OPEN", cross_repository: bool = False) -> dict[str, Any]:
+def _pr_payload(
+    *, state: str = "OPEN", cross_repository: bool = False, head_ref: str = "portable-pr"
+) -> dict[str, Any]:
     """Return one complete same-repository PR metadata fixture.
 
     Example:
@@ -76,7 +87,7 @@ def _pr_payload(*, state: str = "OPEN", cross_repository: bool = False) -> dict[
         "author": {"login": "contributor"},
         "baseRefName": "main",
         "baseRefOid": BASE_OID,
-        "headRefName": "portable-pr",
+        "headRefName": head_ref,
         "headRefOid": HEAD_OID,
         "headRepository": {"nameWithOwner": "contributor/AI-Rig" if cross_repository else "Borda/AI-Rig"},
         "headRepositoryOwner": {"login": "contributor" if cross_repository else "Borda"},
@@ -175,6 +186,8 @@ class FakeRunner:
         unmerged_paths: list[str] | None = None,
         untracked_paths: list[str] | None = None,
         staged_paths: list[str] | None = None,
+        gh_checkout_fails: bool = True,
+        head_ref: str = "portable-pr",
     ) -> None:
         """Initialize configurable process and GitHub-response fixtures."""
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -194,6 +207,8 @@ class FakeRunner:
         self.unmerged_paths = unmerged_paths or []
         self.untracked_paths = untracked_paths or []
         self.staged_paths = staged_paths or []
+        self.gh_checkout_fails = gh_checkout_fails
+        self.head_ref = head_ref
 
     def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Simulate the Git, GitHub CLI, and remote-selector commands."""
@@ -225,13 +240,20 @@ class FakeRunner:
                 return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"unknown remote")
             stdout = "".join(f"{url}\n" for url in self.github_remotes[remote]).encode()
         elif argv[:3] == ["gh", "pr", "view"]:
-            stdout = json.dumps(_pr_payload(state=self.pr_state, cross_repository=self.cross_repository)).encode()
+            stdout = json.dumps(
+                _pr_payload(state=self.pr_state, cross_repository=self.cross_repository, head_ref=self.head_ref)
+            ).encode()
         elif argv[:3] == ["gh", "api", "graphql"]:
             if self.review_threads_failure:
                 return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"connection reset by peer")
             stdout = json.dumps(_threads_payload(paginated=self.paginated)).encode()
         elif argv[:3] == ["gh", "pr", "diff"]:
             stdout = b"diff --git a/a.py b/a.py\n"
+        elif argv[:3] == ["gh", "pr", "checkout"]:
+            if self.gh_checkout_fails:
+                return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"connection reset by peer")
+            self.local_head_oid = HEAD_OID
+            stdout = b"checked out\n"
         elif argv[:2] == ["git", "diff"] and "--binary" in argv:
             stdout = b"diff --git a/a.py b/a.py\n"
         elif argv[:2] == ["git", "diff"] and "--stat" in argv:
@@ -266,6 +288,8 @@ class FakeRunner:
             ).encode() + b"\n"
             if reference == "HEAD":
                 stdout = f"{self.local_head_oid}\n".encode()
+            elif reference == "--show-toplevel":
+                stdout = f"{Path.cwd()}\n".encode()
             elif reference == "FETCH_HEAD":
                 fetch = next(call for call, _ in reversed(self.calls[:-1]) if call[:2] == ["git", "fetch"])
                 stdout = (self.current_base_oid if fetch[-1] == "main" else HEAD_OID).encode() + b"\n"
@@ -276,9 +300,6 @@ class FakeRunner:
                 stdout=b"",
                 stderr=b"",
             )
-        elif argv[:3] == ["gh", "pr", "checkout"]:
-            self.local_head_oid = HEAD_OID
-            stdout = b"checked out\n"
         elif argv[:3] == ["git", "checkout", "--detach"]:
             self.local_head_oid = HEAD_OID
             stdout = b"checked out\n"
@@ -762,6 +783,186 @@ def test_collect_pr_reuses_already_exact_pr_head_for_local_diff(
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
 
 
+def test_collect_pr_remediation_always_uses_gh_checkout_at_matching_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Require GitHub's branch checkout even when the local revision already matches."""
+    module = _load_collector()
+    runner = FakeRunner(current_head_oid=HEAD_OID, cross_repository=True, gh_checkout_fails=False)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=True,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 0
+    assert ["gh", "pr", "checkout", "https://github.com/Borda/AI-Rig/pull/17"] in [argv for argv, _ in runner.calls]
+    checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["checkout_mode"] == "remediate"
+    assert checkout["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+    assert checkout["local_branch"] == "portable-pr"
+
+
+def test_collect_pr_remediation_stops_when_gh_checkout_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent remediation from silently replacing a failed GitHub checkout with detached HEAD."""
+    module = _load_collector()
+    runner = FakeRunner(cross_repository=True, gh_checkout_fails=True)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=True,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-gh-checkout-recovery-required\n"
+    assert any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
+    assert not any(argv[:3] == ["git", "checkout", "--detach"] for argv, _ in runner.calls)
+    assert not (output / "local-checkout.json").exists()
+
+
+def test_collect_pr_remediation_rejects_inconsistent_cross_repository_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail closed when routing says same-repository but PR metadata says it is a fork."""
+    module = _load_collector()
+    runner = FakeRunner(cross_repository=True, gh_checkout_fails=True)
+    _configure_collector(monkeypatch, module, runner)
+    original_review_artifacts = module._review_artifacts
+
+    def _inconsistent_review_artifacts(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Return deliberately inconsistent routing to exercise the recovery guard."""
+        routing = original_review_artifacts(*args, **kwargs)
+        routing["same_repo"] = True
+        return routing
+
+    monkeypatch.setattr(module, "_review_artifacts", _inconsistent_review_artifacts)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=True,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-gh-checkout-recovery-required\n"
+    assert not any(argv[:2] == ["git", "checkout"] for argv, _ in runner.calls)
+
+
+def test_collect_pr_remediation_rejects_option_shaped_head_branch_before_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prevent the direct native checkout from parsing a PR branch name as an option."""
+    module = _load_collector()
+    runner = FakeRunner(gh_checkout_fails=True, head_ref="--orphan")
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=True,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "missing-remediation-head-branch\n"
+    assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
+
+
+def test_collect_pr_rejects_remediation_mode_without_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Require the remediation mode to invoke its mandatory GitHub branch checkout."""
+    module = _load_collector()
+    runner = FakeRunner(gh_checkout_fails=False)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=False,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-requires-checkout\n"
+    assert runner.calls == []
+
+
+def test_collect_pr_remediation_rejects_closed_pr_before_gh_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Limit remediation checkout to an open pull request with a live publication destination."""
+    module = _load_collector()
+    runner = FakeRunner(pr_state="CLOSED", gh_checkout_fails=False)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(
+        target="17",
+        output=output,
+        checkout=True,
+        checkout_mode="remediate",
+        timeout_seconds=5,
+    )
+
+    assert result == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "remediation-requires-open-pr\n"
+    assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
+
+
+def test_collect_pr_review_uses_detached_fallback_after_gh_checkout_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep exact-commit review available when GitHub's local branch checkout is unavailable."""
+    module = _load_collector()
+    runner = FakeRunner(gh_checkout_fails=True)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0
+    calls = [argv for argv, _ in runner.calls]
+    assert calls.index(["gh", "pr", "checkout", "https://github.com/Borda/AI-Rig/pull/17"]) < calls.index(
+        ["git", "checkout", "--detach", HEAD_OID]
+    )
+    checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert checkout["checkout_mode"] == "review"
+    assert checkout["command"] == f"git checkout --detach {HEAD_OID}"
+    assert checkout["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+
+
+def test_collect_pr_review_records_successful_gh_checkout_in_routing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep routing metadata aligned with review's primary successful branch checkout."""
+    module = _load_collector()
+    runner = FakeRunner(gh_checkout_fails=False)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0
+    routing = json.loads((output / "pr-routing.json").read_text(encoding="utf-8"))
+    assert routing["local_checkout_command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+
+
 def test_collect_pr_allows_dirty_paths_untouched_by_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep unrelated tracked environment churn from blocking a verified PR checkout."""
     module = _load_collector()
@@ -950,10 +1151,11 @@ def test_collect_pr_preserves_checkout_started_state_after_checkout_command_fail
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=_runner)
 
     assert result == 2
-    assert json.loads((output / "checkout-state.json").read_text()) == {
-        "status": "checkout-command-started",
-        "local_state": "changed-or-unknown",
-    }
+    checkout_state = json.loads((output / "checkout-state.json").read_text())
+    assert checkout_state["status"] == "gh-checkout-failed-recovery-assessment-started"
+    assert checkout_state["local_state"] == "changed-or-unknown"
+    assert checkout_state["gh_checkout_failure"]["code"] == "github-network:local-pr-checkout"
+    assert checkout_state["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
     assert (output / "pr.json").is_file()
     assert (output / "comments.json").is_file()
     assert (output / "review-threads.json").is_file()
@@ -977,10 +1179,11 @@ def test_collect_pr_omits_verified_source_artifact_when_checkout_head_mismatches
 
     assert module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=_runner) == 2
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == "local-checkout-head-mismatch\n"
-    assert json.loads((output / "checkout-state.json").read_text(encoding="utf-8")) == {
-        "status": "checkout-command-succeeded-unverified",
-        "local_state": "changed-or-unknown",
-    }
+    checkout_state = json.loads((output / "checkout-state.json").read_text(encoding="utf-8"))
+    assert checkout_state["status"] == "checkout-command-succeeded-unverified"
+    assert checkout_state["local_state"] == "changed-or-unknown"
+    assert checkout_state["gh_checkout_failure"]["code"] == "github-network:local-pr-checkout"
+    assert checkout_state["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
     assert not (output / "local-checkout.json").exists()
     assert (output / "pr-routing.json").is_file()
     assert (output / "pr-head-fetch.json").is_file()

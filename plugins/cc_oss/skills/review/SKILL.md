@@ -720,7 +720,7 @@ Follow above. File absent → warn: "cross-validation protocol not found — ver
 
 **Spawn cap: max 3 verifier agents.** Critical/blocking findings > 3 → group into batches of ≤2 findings per verifier; note grouped IDs in rationale.
 
-Spawn verifier agent per critical/blocking finding (or per batch when capped). Set `name`/`description`/prompt line 1 per `templates/agent-prompts.md` §Spawn slots — finding ID is the delta, PR/repo stays in prompt line 1 only. Agent reads relevant finding file from `$RUN_DIR` and referenced code. Each verifier must write full rationale to `$RUN_DIR/verify-<finding-id>.md` using the Write tool, then return ONLY: `{"finding_id":"<id>","verdict":"CONFIRMED|REFUTED","rationale":"<one sentence>","file":"$RUN_DIR/verify-<finding-id>.md"}`. REFUTED → downgrade finding severity or remove before consolidation.
+Spawn verifier agent per critical/blocking finding (or per batch when capped). Compose all verifier labels in one pass, then set `name`/`description`/prompt line 1 per `templates/agent-prompts.md` §Spawn slots — finding ID is the delta and leads prompt line 1; PR/repo stays in prompt line 1 only, after the finding ID, never leading it. Agent reads relevant finding file from `$RUN_DIR` and referenced code. Each verifier must write full rationale to `$RUN_DIR/verify-<finding-id>.md` using the Write tool, then return ONLY: `{"finding_id":"<id>","verdict":"CONFIRMED|REFUTED","rationale":"<one sentence>","file":"$RUN_DIR/verify-<finding-id>.md"}`. REFUTED → downgrade finding severity or remove before consolidation.
 
 ## Step 5: Consolidate findings
 

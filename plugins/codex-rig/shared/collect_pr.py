@@ -15,9 +15,11 @@ target/head evidence, and records checkout identity without using forced Git ope
 
 ## Usage
 
-Run ``python collect_pr.py --target <number-or-url> --out <directory> [--checkout]`` from code-review or code-remediate
-PR mode. Reusing an output directory is supported because the collector removes its own prior evidence before starting a
-new attempt.
+Run ``python collect_pr.py --target <number-or-url> --out <directory> [--checkout] [--checkout-mode review|remediate]``
+from code-review or code-remediate PR mode. Review may fall back to a detached exact commit after a failed GitHub branch
+checkout; remediation first requires GitHub's attached branch checkout, then permits only a same-repository original
+branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
+directory is supported because the collector removes its own prior evidence before starting a new attempt.
 
 ## Used by
 
@@ -63,6 +65,7 @@ from github_read import GitHubReadError, read_with_fallback, run_gh_read  # noqa
 
 MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 VALID_PR_STATES = frozenset({"OPEN", "MERGED", "CLOSED"})
+CHECKOUT_MODES = frozenset({"review", "remediate"})
 GITHUB_HOST = "github.com"
 PR_NUMBER_PATTERN = re.compile(r"[1-9][0-9]*")
 GITHUB_PATH_COMPONENT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -194,6 +197,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--out", required=True, type=Path, help="Artifact directory")
     parser.add_argument("--target", default="", help="PR number, canonical GitHub URL, or empty for current branch")
     parser.add_argument("--checkout", action="store_true", help="Fetch and update the verified local PR checkout")
+    parser.add_argument(
+        "--checkout-mode",
+        choices=sorted(CHECKOUT_MODES),
+        default="review",
+        help="Use a detached review fallback or GitHub-first remediation with same-repository branch recovery",
+    )
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Per-command timeout")
     tokens = sys.argv[1:] if argv is None else argv
     # A later target must not override the PR identity in a runtime-approved command prefix.
@@ -558,6 +567,37 @@ def _git_is_ancestor(run: RunCommand, timeout: int, ancestor: str, descendant: s
     )
 
 
+def _git_optional_ref(run: RunCommand, timeout: int, reference: str, label: str) -> str | None:
+    """Return one existing local ref's object ID without treating its absence as a command failure."""
+    argv = ["git", "rev-parse", "--verify", "--quiet", f"{reference}^{{commit}}"]
+    try:
+        completed = run(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            shell=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise CollectionError(f"command-timeout:{label}") from error
+    except OSError as error:
+        raise CollectionError(f"command-unavailable:{label}") from error
+    if len(completed.stdout) > MAX_OUTPUT_BYTES or len(completed.stderr) > MAX_OUTPUT_BYTES:
+        raise CollectionError(f"command-output-oversized:{label}")
+    if completed.returncode == 1:
+        return None
+    if completed.returncode != 0:
+        raise CollectionError(
+            f"command-failed:{label}",
+            diagnostics={"exit_code": completed.returncode, "failure_class": "command-failed", "label": label},
+        )
+    object_id = completed.stdout.decode("utf-8", errors="strict").strip()
+    if not GIT_OBJECT_ID_PATTERN.fullmatch(object_id):
+        raise CollectionError(f"invalid-git-object-id:{label}")
+    return object_id
+
+
 def _head_repository(payload: dict[str, Any]) -> str:
     """Normalize GitHub's head-repository object variants."""
     value = payload.get("headRepository")
@@ -789,6 +829,8 @@ def _checkout(
     payload: dict[str, Any],
     routing: dict[str, Any],
     selector: Path,
+    *,
+    checkout_mode: str,
 ) -> dict[str, Any]:
     """Fetch verified target/head refs and update the local PR checkout without force."""
     url = routing.get("pr_url")
@@ -799,6 +841,10 @@ def _checkout(
     head_oid = routing.get("head_oid")
     if not all(isinstance(value, str) and value for value in (url, base_ref, base_oid, head_oid)):
         raise CollectionError("missing-pr-checkout-identity")
+    if checkout_mode == "remediate" and routing.get("pr_state") != "OPEN":
+        raise CollectionError("remediation-requires-open-pr")
+    if checkout_mode == "remediate" and (not isinstance(head_ref, str) or not head_ref or head_ref.startswith("-")):
+        raise CollectionError("missing-remediation-head-branch")
     remote = _selector(run, timeout, selector, url, identity_only=False)
     remote_name = remote.get("remote")
     remote_url = remote.get("remote_url")
@@ -906,23 +952,119 @@ def _checkout(
         base_oid=base_oid,
         head_oid=head_oid,
     )
-    checkout_argv = ["git", "checkout", "--detach", head_oid]
-    routing["local_checkout_command"] = " ".join(checkout_argv)
+    gh_checkout_argv = ["gh", "pr", "checkout", url]
+    detached_checkout_argv = ["git", "checkout", "--detach", head_oid]
+    routing["checkout_mode"] = checkout_mode
+    routing["local_checkout_command"] = " ".join(
+        gh_checkout_argv if checkout_mode == "remediate" else detached_checkout_argv
+    )
     _write_json(output / "pr-routing.json", routing)
     checkout_command = "not-run: already at expected PR head"
-    if current_head != head_oid:
-        # Native checkout may alter the worktree before returning an error; retain conservative state first.
+    checkout_method = "already-at-head"
+    gh_checkout_failure: dict[str, Any] | None = None
+    needs_checkout = current_head != head_oid or checkout_mode == "remediate"
+    if needs_checkout:
+        # Checkout may alter the worktree before returning an error; retain conservative state first.
         _write_json(
             output / "checkout-state.json",
             {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
         )
-        _run(run, checkout_argv, timeout, "local-pr-checkout")
-        checkout_command = " ".join(checkout_argv)
+        try:
+            _run(run, gh_checkout_argv, timeout, "local-pr-checkout")
+            checkout_command = " ".join(gh_checkout_argv)
+            checkout_method = "gh-pr-checkout"
+        except CollectionError as error:
+            gh_checkout_failure = {
+                "command": " ".join(gh_checkout_argv),
+                "code": str(error),
+                "diagnostics": error.diagnostics,
+            }
+            _write_json(
+                output / "checkout-state.json",
+                {
+                    "status": "gh-checkout-failed-recovery-assessment-started",
+                    "local_state": "changed-or-unknown",
+                    "gh_checkout_failure": gh_checkout_failure,
+                },
+            )
+            post_gh_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-gh-checkout-head").decode().strip()
+            _worktree_preflight(
+                run,
+                timeout,
+                output,
+                phase="after-checkout",
+                current_head=post_gh_head,
+                base_oid=base_oid,
+                head_oid=head_oid,
+            )
+            if checkout_mode == "review":
+                _run(run, detached_checkout_argv, timeout, "local-pr-checkout-fallback")
+                checkout_command = " ".join(detached_checkout_argv)
+                checkout_method = "git-detached-review-fallback"
+            elif routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
+                raise CollectionError(
+                    "remediation-gh-checkout-recovery-required", diagnostics=error.diagnostics
+                ) from error
+            else:
+                branch_ref = f"refs/heads/{head_ref}"
+                _run(run, ["git", "check-ref-format", branch_ref], timeout, "remediation-head-branch-format")
+                local_branch_head = _git_optional_ref(run, timeout, branch_ref, "remediation-existing-branch")
+                if local_branch_head is not None:
+                    if local_branch_head != head_oid:
+                        raise CollectionError(
+                            "remediation-existing-branch-not-at-pr-head", diagnostics=error.diagnostics
+                        )
+                    fallback_argv = ["git", "checkout", "--no-guess", head_ref]
+                else:
+                    tracking_ref = f"refs/remotes/{remote_name}/{head_ref}"
+                    existing_tracking_head = _git_optional_ref(
+                        run,
+                        timeout,
+                        tracking_ref,
+                        "remediation-existing-tracking-branch",
+                    )
+                    if existing_tracking_head is not None and not _git_is_ancestor(
+                        run,
+                        timeout,
+                        existing_tracking_head,
+                        head_oid,
+                    ):
+                        raise CollectionError("remediation-tracking-branch-diverged", diagnostics=error.diagnostics)
+                    _run(
+                        run,
+                        ["git", "update-ref", tracking_ref, head_oid, existing_tracking_head or "0" * 40],
+                        timeout,
+                        "remediation-head-tracking-ref",
+                    )
+                    tracking_head = (
+                        _run(
+                            run,
+                            ["git", "rev-parse", tracking_ref],
+                            timeout,
+                            "remediation-head-tracking-ref-verify",
+                        )
+                        .decode()
+                        .strip()
+                    )
+                    if tracking_head != head_oid:
+                        raise CollectionError("remediation-head-tracking-ref-mismatch", diagnostics=error.diagnostics)
+                    fallback_argv = ["git", "checkout", "--track", "-b", head_ref, f"{remote_name}/{head_ref}"]
+                _run(run, fallback_argv, timeout, "remediation-original-branch-checkout")
+                checkout_command = " ".join(fallback_argv)
+                checkout_method = "git-original-branch-fallback"
         _write_json(
             output / "checkout-state.json",
-            {"status": "checkout-command-succeeded-unverified", "local_state": "changed-or-unknown"},
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": gh_checkout_failure,
+            },
         )
+    routing["local_checkout_command"] = checkout_command
+    routing["checkout_method"] = checkout_method
+    _write_json(output / "pr-routing.json", routing)
     branch = _run(run, ["git", "branch", "--show-current"], timeout, "checkout-branch").decode().strip()
+    worktree = _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "checkout-worktree").decode().strip()
     local_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "checkout-head").decode().strip()
     matches = local_head == head_oid
     checkout_evidence = {
@@ -930,10 +1072,14 @@ def _checkout(
         "pr_number": number,
         "pr_url": url,
         "local_branch": branch,
+        "worktree": Path(worktree).resolve().as_posix(),
         "local_head": local_head,
         "expected_head": head_oid,
         "head_matches_pr": matches,
+        "checkout_mode": checkout_mode,
+        "checkout_method": checkout_method,
         "command": checkout_command,
+        "gh_checkout_failure": gh_checkout_failure,
         "target_branch_artifact": "target-branch.json",
         "pr_head_fetch_artifact": "pr-head-fetch.json",
         "diff_source": "verified-local-checkout",
@@ -945,6 +1091,8 @@ def _checkout(
     }
     if not matches:
         raise CollectionError("local-checkout-head-mismatch")
+    if checkout_mode == "remediate" and not branch:
+        raise CollectionError("remediation-checkout-detached")
     _worktree_preflight(
         run,
         timeout,
@@ -957,7 +1105,12 @@ def _checkout(
     _write_json(output / "local-checkout.json", checkout_evidence)
     _write_json(
         output / "checkout-state.json",
-        {"status": "checkout-verified", "local_state": "exact-pr-head", "local_head": local_head},
+        {
+            "status": "checkout-verified",
+            "local_state": "exact-pr-head",
+            "local_head": local_head,
+            "gh_checkout_failure": gh_checkout_failure,
+        },
     )
     return checkout_evidence
 
@@ -974,6 +1127,7 @@ def collect_pr(
     output: Path,
     checkout: bool,
     timeout_seconds: int,
+    checkout_mode: str = "review",
     run: RunCommand | None = None,
 ) -> int:
     """Collect one PR context pack and optionally update its verified checkout."""
@@ -981,6 +1135,10 @@ def collect_pr(
     _clear_collector_artifacts(output)
     command_runner = subprocess.run if run is None else run
     try:
+        if checkout_mode not in CHECKOUT_MODES:
+            raise CollectionError("invalid-checkout-mode")
+        if checkout_mode == "remediate" and not checkout:
+            raise CollectionError("remediation-requires-checkout")
         requested_target = _parse_pr_target(target)
         normalized_target = (
             requested_target.url
@@ -1068,7 +1226,15 @@ def collect_pr(
         )
         (output / "untracked.txt").write_bytes(b"")
         if checkout:
-            checkout_evidence = _checkout(command_runner, timeout_seconds, output, payload, routing, selector)
+            checkout_evidence = _checkout(
+                command_runner,
+                timeout_seconds,
+                output,
+                payload,
+                routing,
+                selector,
+                checkout_mode=checkout_mode,
+            )
             revision_range = f"{checkout_evidence['diff_base_oid']}...{checkout_evidence['diff_head_oid']}"
             diff = _run(
                 command_runner,
@@ -1131,6 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
         target=arguments.target,
         output=arguments.out,
         checkout=arguments.checkout,
+        checkout_mode=arguments.checkout_mode,
         timeout_seconds=arguments.timeout_seconds,
     )
 

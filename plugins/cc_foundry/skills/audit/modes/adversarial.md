@@ -51,6 +51,8 @@ If `$CODEX_AVAILABLE` non-empty: apply the codex-prepass.md instructions above, 
 
 Codex writes per-file findings to `<RUN_DIR>/codex-adversarial-<file-slug>.md` using the same `<file-slug>` convention as Phase A. Return compact JSON envelope per file.
 
+For state-changing workflows, include unchanged downstream consumers and the next ordinary user action in the supplied context. Compare producer postconditions with consumer preconditions; challenge whether all local checks could pass while the promised result fails. Record concrete counterexamples or unexecuted probe requests, positive cases, and coverage gaps for identity, ownership, destination, lifetime, and supported resume/retry behavior. Preserve read-only audit authority; no production mutation is implied by a probe request.
+
 **Phase D — Security & Vulnerability Review** (parallel with Phases A, A-prime, B):
 
 Scope resolution — map audit scope tokens to plugin directories, collect all bin/ scripts:
