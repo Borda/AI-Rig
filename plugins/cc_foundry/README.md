@@ -10,8 +10,7 @@ Optional Codemap guidance is shipped locally with foundry; loading it does not r
 
 ______________________________________________________________________
 
-<details>
-
+<details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
 
 - [What is foundry?](#-what-is-foundry)
@@ -57,6 +56,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="-what-is-foundry"></a>
+
 ## 🤔 What is foundry?
 
 foundry is the configuration and workflow layer for Claude Code on Python/ML OSS projects. It gives Claude Code ten specialist agents, eleven namespaced skills, rules, and event-driven hooks for routing work, checking configuration, measuring instruction quality, and recording lessons for review.
@@ -64,6 +65,8 @@ foundry is the configuration and workflow layer for Claude Code on Python/ML OSS
 The problem it solves is workflow drift: a generalist session can mix architecture, implementation, tests, docs, and tooling without clear ownership, while corrections disappear between sessions. Foundry provides explicit role boundaries, repeatable audits and calibration runs, and project-local state for the parts it supports. It does not replace application-code, release, or ML-research plugins.
 
 ______________________________________________________________________
+
+<a id="-why-foundry"></a>
 
 ## 🎯 Why foundry?
 
@@ -81,6 +84,8 @@ ______________________________________________________________________
 Use `/foundry:audit` for structural checks, `/foundry:calibrate` for measured routing and agent behavior, and `/foundry:distill` to turn recurring corrections into proposed instruction updates.
 
 ______________________________________________________________________
+
+<a id="-install"></a>
 
 ## 📦 Install
 
@@ -105,11 +110,13 @@ claude plugin install research@borda-ai-rig
 /foundry:setup
 ```
 
-Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, and (when pinned by the project) `advisorModel` into `~/.claude/settings.json`; symlinks all rule files into `~/.claude/rules/` as `foundry-<name>.md` and `TEAM_PROTOCOL.md` into `~/.claude/`. Run it from the project repository root. Idempotent — safe to re-run.
+Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, the shipped `env` defaults, and (when pinned by the project) `advisorModel` into `~/.claude/settings.json`; symlinks all rule files into `~/.claude/rules/` as `foundry-<name>.md` and `TEAM_PROTOCOL.md` into `~/.claude/`. Run it from the project repository root. Idempotent — safe to re-run.
 
 **After any plugin upgrade**, re-run `/foundry:setup` — auto-replaces stale foundry symlinks, removes rules gone from new version. No prompt for old-version symlinks.
 
 ______________________________________________________________________
+
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -137,6 +144,8 @@ Quick routing benchmark — measures whether Claude Code dispatches synthetic ta
 
 ______________________________________________________________________
 
+<a id="-current-boundaries"></a>
+
 ## 🧭 Current boundaries
 
 - Foundry manages Claude Code configuration and workflow guidance; it does not implement application code or provide release-management and ML-research workflows. For those workflows, install `develop` (requires the `develop` plugin), `oss` (requires the `oss` plugin), or `research` (requires the `research` plugin).
@@ -148,6 +157,8 @@ ______________________________________________________________________
 These are current boundaries of the shipped plugin, not promises about future support.
 
 ______________________________________________________________________
+
+<a id="-skills-reference"></a>
 
 ## 🔧 Skills reference
 
@@ -165,6 +176,7 @@ What it does:
 - Detects Python 3.10+ (`python` / `py -3` / `python3`); installs `~/.local/bin/python` shim when `python` absent or resolves to Windows Store stub
 - Backs up `~/.claude/settings.json` before touching
 - Merges `statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel` (copied from project `.claude/settings.json` when pinned)
+- Merges shipped `env` defaults from `.claude-plugin/env-defaults.json` — currently `CLAUDE_CODE_ENABLE_TODO_TOOLS=1`, without which Claude Code keeps the task tools disabled and every skill that mandates task tracking silently no-ops; existing values are never overwritten
 - Copies `permissions-guide.md` to `.claude/` (only if absent — preserves project-local edits)
 - Symlinks all `plugins/cc_foundry/rules/*.md` into `~/.claude/rules/` as `foundry-<name>.md`, plus `TEAM_PROTOCOL.md` into `~/.claude/`; on upgrade, auto-replaces stale foundry symlinks, removes rules gone from the current version, and migrates pre-namespace unprefixed links it provably owns.
 - Removes stale `hooks` block from settings if present (hooks now register via plugin manifest)
@@ -494,6 +506,8 @@ Primarily model-initiated self-review pass: foundry may invoke before finalizing
 
 ______________________________________________________________________
 
+<a id="-agents-reference"></a>
+
 ## 🤖 Agents reference
 
 All ten agents available by full plugin-prefixed name. In spawn directives and `subagent_type` values, always use full prefix (`foundry:sw-engineer`, not `sw-engineer`).
@@ -662,6 +676,8 @@ Always downstream of `/foundry:create` — reads approved outline, generates ful
 
 ______________________________________________________________________
 
+<a id="-agent-relationships"></a>
+
 ## 🔗 Agent relationships
 
 Agents = directed pipeline, not flat pool:
@@ -677,6 +693,8 @@ Agents = directed pipeline, not flat pool:
 **Model tiering**: reasoning agents (`foundry:sw-engineer`, `foundry:perf-optimizer`) use `opus`; adversarial reasoning (`foundry:challenger`) uses `opus`; plan-gated roles (`foundry:solution-architect`, `foundry:curator`) use `opusplan`; execution agents (`foundry:doc-scribe`, `foundry:web-explorer`, `foundry:creator`, `foundry:qa-specialist`, `foundry:linting-expert`) use `sonnet`. Aliases resolve to the 5 family (`opus`→Opus 5, `sonnet`→Sonnet 5, `opusplan`→Opus in plan mode, Sonnet in execution); `fable` is the reserve tier for demanding long-horizon reasoning, with no standing agent assignment. Within the 5 family the tiers sit closer together than the 4.x tiers did, so **effort is the primary cost knob and tier the blunt one** — tune effort before moving an agent's tier, and prove any downgrade with `/foundry:calibrate <agent> --full --ab-test` rather than a generation-level parity claim. `/foundry:audit`'s fix dispatch (`audit/modes/fix.md`, `audit/templates/audit-fix-prompt.md`) overrides per-call to `haiku` for `PARALLEL_SAFE_CATEGORIES` findings (pure transcription of an already-known replacement) regardless of the spawned agent's own frontmatter tier — judgment-bearing and cross-file fixes keep the agent's default.
 
 ______________________________________________________________________
+
+<a id="-rules-installed"></a>
 
 ## 📋 Rules installed
 
@@ -704,17 +722,22 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="-configuration"></a>
+
 ## ⚙️ Configuration
 
 ### settings.json keys merged by `/foundry:setup`
 
-| Key                                     | What it does                                                                             |
-| --------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `statusLine.command`                    | Runs `statusline.js` — active agent count in Claude Code status bar                      |
-| `permissions.allow`                     | Adds pre-approved Bash commands, git operations, WebFetch domains                        |
-| `permissions.deny`                      | Adds permanently denied write operations (public GitHub mutations, destructive git)      |
-| `enabledPlugins["bridge@borda-ai-rig"]` | Enables bridge-backed Codex review in `/foundry:calibrate` and `/foundry:audit`          |
-| `advisorModel`                          | Copied from project `.claude/settings.json` when pinned — advisor tool uses chosen model |
+| Key                                     | What it does                                                                               |
+| --------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `statusLine.command`                    | Runs `statusline.js` — active agent count in Claude Code status bar                        |
+| `permissions.allow`                     | Adds pre-approved Bash commands, git operations, WebFetch domains                          |
+| `permissions.deny`                      | Adds permanently denied write operations (public GitHub mutations, destructive git)        |
+| `enabledPlugins["bridge@borda-ai-rig"]` | Enables bridge-backed Codex review in `/foundry:calibrate` and `/foundry:audit`            |
+| `advisorModel`                          | Copied from project `.claude/settings.json` when pinned — advisor tool uses chosen model   |
+| `env.CLAUDE_CODE_ENABLE_TODO_TOOLS`     | Re-enables the task tools (`TaskCreate`/`TaskList`/`TaskUpdate`/`TaskGet`), off by default |
+
+Env defaults ship in `.claude-plugin/env-defaults.json` and merge per key with `//=` — a key already present in `~/.claude/settings.json` keeps the user's value, including a deliberate `"0"`.
 
 ### Optional flags and knobs
 
@@ -732,13 +755,9 @@ No environment variables required. foundry reads `~/.claude/settings.json` + plu
 
 ______________________________________________________________________
 
-<details>
-
-<summary>
+<a id="-troubleshooting"></a>
 
 ## 🔍 Troubleshooting
-
-</summary>
 
 **`/foundry:audit` reports broken symlinks (Check I3)**
 
@@ -774,15 +793,9 @@ Check 4 (permissions-guide drift) requires `jq`. Install: `brew install jq` on m
 
 ______________________________________________________________________
 
-</details>
-
-<details>
-
-<summary>
+<a id="-plugin-structure"></a>
 
 ## 🏗️ Plugin structure
-
-</summary>
 
 ```text
 plugins/cc_foundry/
@@ -823,13 +836,9 @@ plugins/cc_foundry/
 
 ______________________________________________________________________
 
-</details>
-
 <a id="bin-helper-inventory"></a>
 
-<details>
-
-<summary><strong>🧰 Bin helper inventory (53 shipped deterministic helpers)</strong></summary>
+## 🧰 Bin helper inventory (53 shipped deterministic helpers)
 
 These Python helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. They resolve paths, validate plugin documents, prepare reports, or perform bounded deterministic transforms; invoke them through the owning skill or with the installed plugin root.
 
@@ -905,13 +914,9 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 | `verify_blueprint_audit.py`   | Verify and prune the auto-allow audit log in `~/.claude/logs/audit/`.   |
 | `verify_perm.py`              | Verify permission presence across settings and the permissions guide.   |
 
-</details>
-
 <a id="upgrade"></a>
 
-<details>
-
-<summary><strong>🔄 Upgrade</strong></summary>
+## 🔄 Upgrade
 
 ```bash
 claude plugin install foundry@borda-ai-rig
@@ -925,23 +930,17 @@ Then, inside Claude Code:
 
 Re-run `/foundry:setup` after upgrade required — symlinks point to versioned cache path, go stale after reinstall.
 
-</details>
-
 ______________________________________________________________________
 
 <a id="uninstall"></a>
 
-<details>
-
-<summary><strong>🗑️ Uninstall</strong></summary>
+## 🗑️ Uninstall
 
 ```bash
 claude plugin uninstall foundry
 ```
 
-Claude Code runs no cleanup hook on uninstall, so nothing `/foundry:setup` created is removed by `claude plugin uninstall` or by `make clear-all`. Settings keys merged into `~/.claude/settings.json` (`statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel`) remain — remove manually if desired. The `~/.claude/rules/foundry-*.md` symlinks and `~/.claude/TEAM_PROTOCOL.md` also persist and dangle once the plugin cache version is gone; delete them by hand.
-
-</details>
+Claude Code runs no cleanup hook on uninstall, so nothing `/foundry:setup` created is removed by `claude plugin uninstall` or by `make clear-all`. Settings keys merged into `~/.claude/settings.json` (`statusLine`, `permissions.allow`, `permissions.deny`, `enabledPlugins`, `advisorModel`, `env`) remain — remove manually if desired. The `~/.claude/rules/foundry-*.md` symlinks and `~/.claude/TEAM_PROTOCOL.md` also persist and dangle once the plugin cache version is gone; delete them by hand.
 
 ______________________________________________________________________
 
@@ -961,6 +960,8 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 
 Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process. Deliberate deviations: `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary; `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level; `agent_id` is `<plugin>/<hook>` rather than a URI; `session_id` is the host's id verbatim rather than a UUID; and `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
 
 ______________________________________________________________________
+
+<a id="-development--testing"></a>
 
 ## 🧪 Development / testing
 
@@ -1057,6 +1058,8 @@ Each test spawns `node <hook>.js` with JSON payload on stdin, asserts filesystem
 CI runs full test suite on every push to `main` and on PRs touching `plugins/` (see `.github/workflows/ci-tests.yml`).
 
 ______________________________________________________________________
+
+<a id="-contributing--feedback"></a>
 
 ## 🙏 Contributing / feedback
 

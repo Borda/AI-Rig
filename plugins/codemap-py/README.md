@@ -6,8 +6,8 @@ The package ships the same six skills for Claude Code and Codex: scan the projec
 
 Consumer plugins ship synchronized copies of the shared context and gate guidance; they never load private files from another installed plugin. The reference context batch resolves its default index from the repository root, including when invoked from a subdirectory.
 
-<details>
-<summary><strong>Contents</strong></summary>
+<details markdown="1">
+<summary><strong>📋 Contents</strong></summary>
 
 - [Quick start](#-quick-start)
 - [What it solves](#-what-it-solves)
@@ -25,6 +25,8 @@ Consumer plugins ship synchronized copies of the shared context and gate guidanc
 - [Contributing and feedback](#-contributing-and-feedback)
 
 </details>
+
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -71,11 +73,15 @@ python plugins/codemap-py/scripts/codemap_py_entry.py doctor --json
 
 Codex does not add the plugin's `bin/` directory to PATH; use the `$codemap-py:*` skills or resolve the installed plugin root as their runtime instructions describe.
 
+<a id="-what-it-solves"></a>
+
 ## 🎯 What it solves
 
 Without a structural index, a refactor often starts with repeated file searches to discover importers, callers, and tests. That exploration can miss a reverse dependency or spend time reading files that do not answer the question. codemap-py makes those relationships queryable from one local JSON index and gives each result coverage and freshness metadata.
 
 The index is not a replacement for reading source or running tests. It is a narrow, fast source of structural evidence that helps choose the next inspection or verification step.
+
+<a id="-adaptive-use"></a>
 
 ## 🔗 Adaptive use
 
@@ -101,6 +107,8 @@ Resolve the installed launcher once and retain its literal for the workflow. Ind
 
 `fn-rdeps` reports incoming call edges; it does not discover inheritance or same-name override relationships. Use `find-symbol '<ClassSuffix>\.<method>$' --exclude-tests --limit 0` to gather same-name override candidates, then verify ancestry and package boundaries in source.
 
+<a id="-prerequisites-and-supported-runtimes"></a>
+
 ## ✅ Prerequisites and supported runtimes
 
 - Claude Code or Codex, depending on the runtime you are installing into.
@@ -109,6 +117,8 @@ Resolve the installed launcher once and retain its literal for the workflow. Ind
 - The core scanner and query engine use the Python standard library. `coverage>=7.4` is optional and is needed only for `scan-index --with-coverage` and the `coverage`/`coverage-gap` queries.
 
 The scanner is intended for Python projects. It parses `.py` and `.pyi` files with `ast.parse`; a `.py` implementation takes precedence over a sibling `.pyi`, while a stub without an implementation contributes declarations and imports but no call edges. It also records selected Sphinx references from `.rst` files, `docs/**/*.md`, and supported root configuration files for cross-reference and freshness checks. It does not index TypeScript, Go, Rust, or other non-Python source as Python modules.
+
+<a id="-build-and-query-the-index"></a>
 
 ## 🗂️ Build and query the index
 
@@ -132,6 +142,8 @@ Most query results include an `index` block. Read it before treating a list as f
 
 Queries check freshness and may perform a bounded incremental self-heal unless `SCAN_NO_AUTOBUILD=1` disables query-time writes. A self-heal also stands down when a writer takes the index while the query is reading it — most often another query's own heal — and answers from the index it already loaded. A refresh that was already running when the query started is waited out by the read lease instead, after which the index is fresh and no heal is needed. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
 
+<a id="-honest-limits"></a>
+
 ## 🧭 Honest limits
 
 The graph is static AST evidence. It can miss dynamic dispatch, hook and callback registration, string-based dispatch, `getattr` lookups, `importlib.import_module`, `__import__`, and lazy-loading patterns. Import and call results therefore do not establish runtime behavior, external consumers, test pass status, or inheritance correctness. `rename-refs` calls out dynamic references, cross-repository callers, ABC/Protocol overrides, and caller lists above its edit cap as manual review items.
@@ -143,6 +155,8 @@ Possible future work includes broader dynamic-behavior evidence, deeper cross-la
 Claude's optional Python hooks provide ambient index status, session-sharded telemetry, skill-start records, and a narrow redundant-import-grep guard. Codex ships hooks for session seeding, ambient preamble/guard behavior, and runtime-scoped tool records, while its host does not provide a Codemap skill-start hook. The shared Claude/Codex prompt hook stays silent and does not start a refresh when scanner exclusions leave no indexable `.py` or `.pyi` sources. A missing-index bootstrap suggestion retains the bounded package/packaging marker condition (`__init__.py`, `pyproject.toml`, or `setup.py`), so marker-free scripts remain manual and no universal `__init__.py` requirement is implied; existing indexes with real source retain normal status and refresh behavior. The hooks suppress expected parsing and filesystem failures and are not required for indexing or querying; this is not a guarantee against every malformed event. Skill/tool logging expects mapping-shaped `tool_input` when that field is truthy. The runtime difference is an evidence boundary, not a query-engine capability difference.
 
 Performance and token use vary with repository size, model, index freshness, query choice, and whether an agent continues exploring after a result. Historical benchmark runs are exploratory and repository/model-specific; they do not establish universal savings or quality guarantees. See the [benchmark record](https://github.com/Borda/AI-Rig/blob/main/benchmarks/README.md) for methods and caveats.
+
+<a id="-benchmark-evidence"></a>
 
 ## 📈 Benchmark evidence
 
@@ -299,8 +313,7 @@ This run is descriptive and non-poolable: one repetition, one repository revisio
 
 <a id="codex-agentic-2026-08-07"></a>
 
-<details>
-<summary><strong>Agentic navigation snapshot — 2026-09-06</strong></summary>
+### Agentic navigation snapshot — 2026-09-06
 
 The same three tiers completed 144 cells across 16 shared import-graph tasks and the same three arms. Values are per-task median savings against `A_plain`; positive means the arm needed less.
 
@@ -315,12 +328,9 @@ The same three tiers completed 144 cells across 16 shared import-graph tasks and
 
 Evidence recall holds at parity or better in every Codemap cell, while the baseline drops below it on four tasks — three in both fields (BA-03, BA-12, BA-15) and one, Sonnet's BA-07, in the final report alone, where the module was surfaced during the run and left out of the answer. Time spent inside tools moves the other way — an index call costs more than a single grep — so the saving comes from needing far fewer calls, not from faster ones. This study is exploratory and non-poolable for the same reasons as the structural one, plus fixed arm order and provider-cache exposure; one baseline cell hit its coordinate timeout and is excluded rather than scored as a loss. See the [canonical agentic result and measurement caveats](https://github.com/Borda/AI-Rig/blob/main/benchmarks/results-archive/2026-09-06-claude-agentic.md).
 
-</details>
-
 <a id="codex-structural-2026-09-06"></a> <a id="codex-agentic-2026-09-06"></a>
 
-<details>
-<summary><strong>Codex navigation snapshot — 2026-09-06</strong></summary>
+### Codex navigation snapshot — 2026-09-06
 
 This is the first of three Codex strata measured; `gpt-5.6-sol` and `gpt-5.6-terra` have their own snapshots below. One `gpt-5.6-luna` study ran the same shared task contracts through the Codex CLI: 219 structural-family cells across all three arms, plus 48 agentic cells. Structural accuracy below is paired over the 45-task headline cohort, on the same denominator rule as the Claude table. This run's `B_auto` arm was executed under a prompt that required a Codemap query; the contract has since changed to optional-use to match Claude's `B_auto`, so a future Codex `B_auto` run must not be blended with these numbers.
 
@@ -335,10 +345,7 @@ The four executable and extraction stages stay separate and nonpoolable. ReadCro
 
 Agentically, the strict arm scores 0.960 against the control's 0.929 at 48% less input, answering 13 of 16 cells correctly against the control's 9, while the optional-use canary regresses to 0.860 and 6 of 16. Two defects in the measurement harness, both costing the treatment arms, were found in this run and are fixed prospectively rather than rescored. See the [canonical Codex result and limitations](https://github.com/Borda/AI-Rig/blob/main/benchmarks/results-archive/2026-09-06-codex-structural.md).
 
-</details>
-
-<details>
-<summary><strong>Codex <code>gpt-5.6-sol</code> snapshot — 2026-09-07</strong></summary>
+### Codex `gpt-5.6-sol` snapshot — 2026-09-07
 
 A second Codex stratum ran the same shared task contracts: 219 structural-family cells over 73 tasks in five stages, all three arms, one repetition per cell, Codex CLI 0.153.4 at high reasoning effort, against the same frozen repository revision and index as every other table here. Its `A_plain` and `C_strict` arm contracts are byte-identical to the `gpt-5.6-luna` run's; its `B_auto` contract is the newer optional-use one and is not the contract Luna's `B_auto` ran under. The observed CLI build is 0.153.4 against a reviewed 0.146.1, so this ran on a build the methodology had not reviewed.
 
@@ -363,10 +370,7 @@ The optional arm abandons the tool wherever code has to be modified: uptake is 5
 
 Delivery is confounded with arm — the optional arm always used the direct CLI and the strict arm always the installed Skill — so no optional-versus-strict difference can be attributed to strictness alone. Full cohort, estimator, and caveat detail is in the benchmark record's `gpt-5.6-sol` Codex section.
 
-</details>
-
-<details>
-<summary><strong>Codex <code>gpt-5.6-terra</code> snapshot — 2026-09-07</strong></summary>
+### Codex `gpt-5.6-terra` snapshot — 2026-09-07
 
 The third Codex stratum ran the same shared task contracts: 219 structural-family cells over 73 tasks in five stages, all three arms, one repetition per cell, Codex CLI 0.153.4 at high reasoning effort, against the same frozen repository revision and index as every other table here. All three arm contracts are byte-identical to the `gpt-5.6-sol` run's, so this is the second study under the optional-use `B_auto` contract. As on Sol, the observed CLI build is 0.153.4 against a reviewed 0.146.1. This is the stratum whose first launch was refused on a paid-approval token; the relaunch is a separate study, not the missing half of the Sol launch.
 
@@ -385,10 +389,7 @@ Token columns are cohort totals against `A_plain`. ReadCrop inverts here — the
 
 Optional uptake repeats the Sol pattern exactly: 4 of 6 ReadCrop cells, 48 of 55 structural cells, and 0 of 12 across the three editing stages. Delivery is again confounded with arm, and `skill_delivery_observed` is false in all 165 structural cells. Full cohort, estimator, and caveat detail is in the benchmark record's `gpt-5.6-terra` Codex section.
 
-</details>
-
-<details>
-<summary><strong>Extended operational reference</strong></summary>
+## Extended operational reference
 
 ### 🔗 Integration protocol
 
@@ -461,8 +462,7 @@ Use this order when a route is inconclusive:
 4. Hooks, callbacks, dynamic imports, string dispatch, lazy loading, or inheritance: read the source and named test/oracle regardless of a complete static result.
 5. Integration drift: run `codemap-py integrate audit --json`, inspect observed findings, and create a fresh stage-specific plan before applying or syncing anything.
 
-<details>
-<summary><strong>Complete integration mode reference</strong></summary>
+### Complete integration mode reference
 
 The integration skill is a thin, source-owned adapter over `codemap-py integrate`. It has a closed consumer set: Claude consumers `foundry`, `oss`, `develop`, and `research`, and Codex consumer `codex-rig`. It does not discover arbitrary plugins or invoke another runtime's model.
 
@@ -499,10 +499,7 @@ Mutation boundaries:
 /codemap-py:integration demo --runtime both
 ```
 
-</details>
-
-<details>
-<summary><strong>Scan-codebase flags, performance, and exclusions</strong></summary>
+### Scan-codebase flags, performance, and exclusions
 
 The scan skill dispatches `codemap-py index`; it does not answer a query. Its verified CLI surface is:
 
@@ -548,10 +545,7 @@ Exclusion semantics:
 - `src_roots` is ordered: the first matching root determines module naming and collision priority.
 - The index records effective roots and any deterministic module-name collisions so a result is not mistaken for a complete graph.
 
-</details>
-
-<details>
-<summary><strong>Query-code subcommands and completeness contract</strong></summary>
+### Query-code subcommands and completeness contract
 
 The query CLI reads an existing index and emits JSON. The complete subcommand surface is grouped below; feature-gated commands report that an older index must be rebuilt rather than silently returning an incomplete answer.
 
@@ -613,10 +607,7 @@ codemap-py query find-symbol '^Auth.*Handler$' --exclude-tests --limit 0
 codemap-py query batch - < requests.json
 ```
 
-</details>
-
-<details>
-<summary><strong>Test impact and rename-refs contracts</strong></summary>
+### Test impact and rename-refs contracts
 
 The `test-impact` skill has a deliberately narrow contract:
 
@@ -652,10 +643,7 @@ Rename behavior and safety gates:
 /codemap-py:rename-refs module mypackage.old_utils mypackage.utils
 ```
 
-</details>
-
-<details>
-<summary><strong>Debrief-coding telemetry and anonymization</strong></summary>
+### Debrief-coding telemetry and anonymization
 
 `debrief-coding` reads local JSONL telemetry and writes a diagnostic report; it does not build or query the index. Its collection and report contract is:
 
@@ -680,10 +668,7 @@ Anonymization behavior:
 /codemap-py:debrief-coding --anonymize --output .reports/codemap/debrief-shareable.md
 ```
 
-</details>
-
-<details>
-<summary><strong>Scanner, query, and index architecture</strong></summary>
+### Scanner, query, and index architecture
 
 Scanner and query architecture:
 
@@ -696,10 +681,7 @@ The query engine loads the same JSON under a read lease, performs bounded freshn
 
 The default index contains modules, relative paths, symbols and line ranges, direct imports, calls and resolution tags, test/entity classification, source-root metadata, exclusions, collisions, scan version, and Git blob or non-Git content hashes. The JSON format is version-gated: call-graph, fixture, subprocess, documentation, dead-code, and coverage queries refuse unsupported index versions with an upgrade/rebuild instruction.
 
-</details>
-
-<details>
-<summary><strong>Index locations, non-Git roots, and currency</strong></summary>
+### Index locations, non-Git roots, and currency
 
 Index location and currency:
 
@@ -718,10 +700,7 @@ CODEMAP_INDEX_DIR=<absolute-cache-dir> codemap-py index --root <project-root>
 SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.auth
 ```
 
-</details>
-
-<details>
-<summary><strong>Named troubleshooting cases</strong></summary>
+### Named troubleshooting cases
 
 | Symptom                                 | Evidence-led response                                                                                                                                                  |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -736,9 +715,7 @@ SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.au
 | integration missing/outdated            | Run `integration audit`, inspect observed evidence and the source-owned managed block, then create a fresh stage-specific plan rather than editing an installed cache. |
 | dynamic hook/callback/override behavior | Treat static results as candidates; inspect implementation and named tests/oracles because AST edges cannot prove runtime behavior.                                    |
 
-</details>
-
-</details>
+<a id="-six-skills"></a>
 
 ## 🔧 Six skills
 
@@ -754,6 +731,8 @@ Both runtimes expose these names:
 | `debrief-coding` | Analyze local cross-runtime Codemap telemetry, optionally producing an anonymized report.            |
 
 Claude uses `/codemap-py:<skill>`. Codex uses `$codemap-py:<skill>`. Both skill rosters use concise, instruction-first prose while retaining command syntax, routing, stop rules, safety gates, and runtime notes for installed-root resolution, PATH behavior, and each host's confirmation mechanism. Claude executable fences remain byte-identical so compression cannot change shell behavior.
+
+<a id="-integration-with-other-plugins"></a>
 
 ## 🔗 Integration with other plugins
 
@@ -771,6 +750,8 @@ Mode boundaries:
 - `sync` installs only the approved local candidate or immutable release through the native runtime CLI.
 - Both mutation modes require the plan SHA-256 and never push Git, publish a release, edit installed caches directly, or write Codex global instructions.
 - `demo` records disposable evidence.
+
+<a id="-configuration"></a>
 
 ## ⚙️ Configuration
 
@@ -794,6 +775,8 @@ The first two lines cover a first install, where `~/.claude/settings.json` may n
 
 Use `--root PATH` when the Python tree is a subproject or monorepo component. The scan names the index from that root's basename, and later queries must use the same root or an explicit matching index. `--root` on query controls file-path resolution; it does not retarget an index built for a different tree, and a mismatch is reported rather than silently accepted.
 
+<a id="-compatibility-and-exit-codes"></a>
+
 ## 🔢 Compatibility and exit codes
 
 `scan-index` and `scan-query` remain compatibility aliases for the canonical `codemap-py index` and `codemap-py query` launchers. New skill and documentation examples use the canonical dispatcher. The `.cache/codemap/` layout and `CODEMAP_*` variables remain compatible with the renamed product.
@@ -815,6 +798,8 @@ Fix: test `path === null` or read `reason`. Genuine failures (unknown module) st
 |   `2` | Invalid command syntax, option, or approval.                                         |
 |   `3` | Requested module or symbol is not indexed where the command distinguishes that case. |
 | `127` | No eligible CPython interpreter was found by the dispatcher.                         |
+
+<a id="-upgrade-uninstall-and-migration"></a>
 
 ## ⬆️ Upgrade, uninstall, and migration
 
@@ -847,12 +832,16 @@ codex plugin remove codemap-py@borda-ai-rig
 
 Run only the command for the runtime you installed into.
 
+<a id="-maintainer-documentation"></a>
+
 ## 📚 Maintainer documentation
 
 - [`bin/README.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codemap-py/bin/README.md) documents shipped launchers, helpers, and compatibility shims.
 - [`scripts/README.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codemap-py/scripts/README.md) documents deterministic package builds, validation, and install probes.
 - [The rendered Codemap-py page](https://borda.github.io/AI-Rig/codemap-py/) projects this README into the documentation site.
 - [`CHANGELOG.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codemap-py/CHANGELOG.md) records versioned runtime and documentation changes.
+
+<a id="-contributing-and-feedback"></a>
 
 ## 🙏 Contributing and feedback
 

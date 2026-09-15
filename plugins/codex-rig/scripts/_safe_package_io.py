@@ -269,6 +269,24 @@ def _windows_identity(handle: int) -> tuple[int, ...]:
     )
 
 
+def _windows_directory_identity(handle: int) -> tuple[int, ...]:
+    """Read only the Win32 fields that change when a directory node is itself replaced.
+
+    Excludes ``write_time``: a directory's mtime advances whenever any sibling entry is added or removed, which is
+    routine concurrent filesystem activity, not evidence the directory node was swapped.
+    ``file_index``/``volume_serial`` stay fixed across that churn and only change if the directory itself is replaced.
+    """
+    information = _ByHandleFileInformation()  # type: ignore[name-defined]
+    if not _get_information(handle, information):  # type: ignore[name-defined]
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[name-defined]
+    return (
+        information.attributes,
+        information.volume_serial,
+        information.file_index_high,
+        information.file_index_low,
+    )
+
+
 def _open_windows(path: Path, *, directory: bool) -> int:
     """Open one Win32 node itself and reject reparse points and wrong node kinds."""
     access = _FILE_READ_ATTRIBUTES if directory else _GENERIC_READ  # type: ignore[name-defined]
@@ -299,7 +317,12 @@ def _open_windows(path: Path, *, directory: bool) -> int:
 
 
 def _windows_directories(root: Path, parts: tuple[str, ...]) -> tuple[tuple[Path, tuple[int, ...]], ...]:
-    """Snapshot every Win32 parent component without following reparse points."""
+    """Snapshot every Win32 parent component without following reparse points.
+
+    Walks from the drive anchor down through ``root`` to the target file's parent. Each open rejects reparse points
+    (``_open_windows``), so this is the Windows equivalent of the POSIX ``O_NOFOLLOW`` directory-descriptor chain —
+    dropping any ancestor from the walk would let a junction above that point redirect the whole read undetected.
+    """
     absolute = Path(os.path.abspath(root))
     current = Path(absolute.anchor)
     directories = [current]
@@ -313,7 +336,7 @@ def _windows_directories(root: Path, parts: tuple[str, ...]) -> tuple[tuple[Path
     for directory in directories:
         handle = _open_windows(directory, directory=True)
         try:
-            snapshots.append((directory, _windows_identity(handle)))
+            snapshots.append((directory, _windows_directory_identity(handle)))
         finally:
             _close_handle(handle)  # type: ignore[name-defined]
     return tuple(snapshots)
@@ -347,7 +370,7 @@ def _read_windows(root: Path, relative: str, maximum: int) -> SafeFile:
     for directory, identity in parents:
         parent_handle = _open_windows(directory, directory=True)
         try:
-            if _windows_identity(parent_handle) != identity:
+            if _windows_directory_identity(parent_handle) != identity:
                 raise SafePackageIOError(f"package path changed during read: {relative}")
         finally:
             _close_handle(parent_handle)  # type: ignore[name-defined]
@@ -385,7 +408,7 @@ def _inventory_windows(
     for directory, identity in parents:
         handle = _open_windows(directory, directory=True)
         try:
-            if _windows_identity(handle) != identity:
+            if _windows_directory_identity(handle) != identity:
                 raise SafePackageIOError("package path changed during inventory")
         finally:
             _close_handle(handle)  # type: ignore[name-defined]

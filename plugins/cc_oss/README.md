@@ -12,8 +12,7 @@ Optional Codemap index-gate guidance ships with oss, so loading it does not depe
 
 ______________________________________________________________________
 
-<details>
-
+<details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
 
 - [What is oss?](#-what-is-oss)
@@ -40,11 +39,15 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="-what-is-oss"></a>
+
 ## 🤔 What is oss?
 
 `oss` = Claude Code plugin for Python/ML open-source maintainers. Five slash-command skills — analyse, review, resolve, release, and setup — plus four agents for contributor communication, CI health, and vitality data collection/scoring. It covers recurring maintainer work: triaging GitHub threads, multi-perspective PR review, organizing review feedback into fixes, and preparing release artifacts with readiness checks.
 
 ______________________________________________________________________
+
+<a id="-why-oss"></a>
 
 ## 🎯 Why oss?
 
@@ -110,27 +113,21 @@ For local-file review, install `develop` and use `/develop:review` (requires `de
 
 > **Note:** Skills always use the `oss:` prefix: `/oss:analyse`, `/oss:review`, `/oss:resolve`, `/oss:release`, and `/oss:setup`.
 
-<details>
-
-<summary><strong>Upgrade</strong></summary>
+### Upgrade
 
 ```bash
 claude plugin install oss@borda-ai-rig
 ```
 
-</details>
-
-<details>
-
-<summary><strong>Uninstall</strong></summary>
+### Uninstall
 
 ```bash
 claude plugin uninstall oss
 ```
 
-</details>
-
 ______________________________________________________________________
+
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -149,6 +146,8 @@ ______________________________________________________________________
 ```
 
 ______________________________________________________________________
+
+<a id="-skills-reference"></a>
 
 ## 🔧 Skills reference
 
@@ -280,8 +279,7 @@ Tier 2  Parallel review dimensions
 
 **Review stages (acceptance gate):** `Gate:` header field is two states beyond `PASS` — reject is terminal (skips every tier, no agent spawned), block is not (full fanout still runs, the report just surfaces the fixable gap up front instead of burying it after N findings). Test: *could revising the code, not the goal, resolve this?* Yes → block. No → reject.
 
-<details>
-<summary><strong>Stage 1 — Reject (terminal, 8 grounds)</strong></summary>
+#### Stage 1 — Reject (terminal, 8 grounds)
 
 Aligned with close-without-merge practice in K8s/CPython/Rust/Django contributing docs. Every ground needs affirmative evidence, never suspicion alone.
 
@@ -296,10 +294,7 @@ Aligned with close-without-merge practice in K8s/CPython/Rust/Django contributin
 | `REJECT_SPAM`       | Spam/low-effort/AI-slop — no real change, hacktoberfest-farming pattern. Evidence needs both a trivially low-value diff **and** a generic/templated description — either alone isn't enough (a genuine one-line fix looks low-value too).                                 |
 | `REJECT_PHILOSOPHY` | Contradicts a documented design principle, not just a style preference — e.g. adding a GUI to a project whose docs state "CLI-only by design". Requires a citable doc line.                                                                                               |
 
-</details>
-
-<details>
-<summary><strong>Stage 2 — Block (non-terminal, full review still runs)</strong></summary>
+#### Stage 2 — Block (non-terminal, full review still runs)
 
 Default `[blocking]` tag per finding category — judgment still required, not automatic:
 
@@ -314,8 +309,6 @@ Default `[blocking]` tag per finding category — judgment still required, not a
 | Merge conflicts                                                            | **not** blocking                               | `/oss:resolve`'s job — review doesn't gate on it.                                                                                                                                                  |
 | Incomplete implementation (TODOs in changed paths, missing error handling) | blocking                                       | —                                                                                                                                                                                                  |
 | Missing CLA/DCO signature                                                  | blocking, **only if the project requires one** | Check first — CLA-assistant/DCO-check bot status, or a signing mandate in `CONTRIBUTING.md`. No such requirement → not applicable.                                                                 |
-
-</details>
 
 **Typical scenarios:**
 
@@ -527,6 +520,8 @@ Only links this plugin provably owns are replaced or removed: the existing targe
 
 ______________________________________________________________________
 
+<a id="-agents-reference"></a>
+
 ## 🤖 Agents reference
 
 ### gh-scraper
@@ -658,6 +653,8 @@ Short SHAs (fewer than 40 hex chars) treated as unpinned — can collide, not cr
 
 ______________________________________________________________________
 
+<a id="-configuration"></a>
+
 ## ⚙️ Configuration
 
 `oss` needs no required configuration — reads project structure automatically.
@@ -702,9 +699,7 @@ ______________________________________________________________________
 
 <a id="bin-helper-inventory"></a>
 
-<details>
-
-<summary><strong>🧰 Bin helper inventory (43 shipped deterministic helpers)</strong></summary>
+## 🧰 Bin helper inventory (43 shipped deterministic helpers)
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the orchestration; the helpers handle bounded parsing, evidence collection, path resolution, scoring, and artifact preparation.
 
@@ -766,8 +761,6 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                        |
 | `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.      |
 
-</details>
-
 #### Auto-allow audit log
 
 `allow-dispatch.js` and `audit-close.js` append one JSON line each per Bash call to `~/.claude/logs/audit/`: one file per session (`s-<key>.jsonl`, the key being a hash of the session id) plus a shared `_no-session.jsonl` for calls that arrive without one. A record names the deciding plugin and hook, the session and tool-call ids, the working directory, the effective decision with its lane and provenance, and both decision modules' own verdicts. Command text is never written — only a digest, and for a provenance allow the manifest `src` it matched. Note the limit honestly: `task-log.js` already writes the first 200 characters of every Bash command into `timings.jsonl` under the same `tool_use_id`, so the guarantee is about this file rather than about the log directory.
@@ -785,13 +778,7 @@ Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Lo
 
 <a id="troubleshooting"></a>
 
-<details>
-
-<summary>
-
 ## 🔍 Troubleshooting
-
-</summary>
 
 **`/oss:review` skips Tier 2 agents**
 
@@ -830,8 +817,6 @@ Cached GitHub API responses served from `.cache/gh/`. Delete cache file for spec
 Run `claude plugin install oss@borda-ai-rig` again, then `/reload-plugins` in Claude Code.
 
 ______________________________________________________________________
-
-</details>
 
 <a id="contributing--feedback"></a>
 

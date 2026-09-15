@@ -23,6 +23,7 @@ Install Codex Rig when you want a disciplined workflow. Add Codemap-py when Pyth
 - [Agent-shim lifecycle](#-agent-shim-lifecycle)
 - [Codemap-py structural context](#-codemap-py-structural-context)
 - [Direct install versus repository sync](#-direct-install-versus-repository-sync)
+  - [Managed global instructions](#managed-global-instructions)
 - [Update, remove, and cleanup](#-update-remove-and-cleanup)
 - [Troubleshooting](#-troubleshooting)
 - [Source of truth](#-source-of-truth)
@@ -328,7 +329,7 @@ Codex Rig's `implement`, `investigate`, and `optimize` routes may probe the publ
 
 Direct marketplace installation is the public path and leaves global/project instructions alone.
 
-From this source checkout, `make sync-codex` performs a broader managed restore: it installs or updates Codex Rig, Codemap-py, and bridge_CC-Codex, manages one authenticated Codex Rig block in `CODEX_HOME/AGENTS.md` plus the owned `rules/codex-rig-github-read.rules`, and projects selected repository model defaults and personal policy. The root Make target supplies no direct-script flags, so it has no opt-out for these managed surfaces. Read the [Codex Rig managed-instructions section](../plugins/codex-rig/README.md#managed-global-instructions) before using it.
+From this source checkout, `make sync-codex` performs a broader managed restore: it installs or updates Codex Rig, Codemap-py, and bridge_CC-Codex, manages one authenticated Codex Rig block in `CODEX_HOME/AGENTS.md` plus the owned `rules/codex-rig-github-read.rules`, and projects selected repository model defaults and personal policy. The root Make target supplies no direct-script flags, so it has no opt-out for these managed surfaces. Read the [managed global instructions](#managed-global-instructions) before using it.
 
 `make sync-codex` installs from the pushed GitHub remote, not a dirty local tree. Commit and push first when you intentionally want a checkout change to become installable.
 
@@ -342,6 +343,55 @@ Direct installation changes only the Codex plugin configuration/cache. Repositor
 `make clear-codex` removes Codex Rig, Codemap-py, bridge_CC-Codex, the managed block, and the owned reader rules while preserving user-owned bytes; marketplace registrations remain. The native `plugins/codex-rig/scripts/sync_codex.py` path manages the Codex plugins, block, and reader rules but does not project repository model defaults or personal policy. Both lifecycle paths back up changed files and fail closed when ownership or integrity cannot be verified.
 
 </details>
+
+### Managed global instructions
+
+[Codex Rig's global-instruction template](../plugins/codex-rig/assets/AGENTS.md) is a versioned template, not automatically installed plugin capability. Its policy requires following:
+
+- **Implementation:** Use simplest solution for verified current behavior; prefer maintained standard-library/native/already-installed package functionality over duplicating custom code; reject machinery justified only by hypothetical future states, risks, scale, reuse, or edge cases; and preserve trust-boundary, data-loss, security, accessibility, and explicit-contract safeguards.
+- **Abstractions and imports:** Abstractions must reduce reader-visible concepts, and Python imports stay at module scope unless verified boundary requires locality.
+- **Fixtures and simplification:** Fixtures provide concrete state unless fixture-managed lifecycle requires callable; use ordinary helpers for configurable construction instead of nested fixture factories or aliases that add no meaning. A deliberately bounded simplification records its present ceiling and observable revisit trigger without creating separate debt system.
+
+The sync paths differ as follows:
+
+| Operation                                        | Explicit behavior                                                                                                                                                          |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Direct marketplace/plugin installation           | Leaves `${CODEX_HOME:-$HOME/.codex}/AGENTS.md` and `rules/codex-rig-github-read.rules` unchanged and does not project repository `.codex/` settings.                       |
+| Direct `plugins/codex-rig/scripts/sync_codex.py` | Installs or updates managed Codex plugins, authenticated Codex Rig block, and owned GitHub reader rules; it does not project repository model defaults or personal policy. |
+| Root `make sync-codex`                           | Additionally projects root `model` and `review_model` from `.codex/config.toml` and authenticated personal-policy block from `.codex/global-session-policy.md`.            |
+
+The current repository policy keeps parent session on Terra and permits Sol only for explicitly requested advisory pass or explicitly selected Sol agent.
+
+From AI-Rig checkout:
+
+```bash
+make sync-all                                     # full Claude + Codex restore
+make sync-codex                                   # Codex scope only
+make clear-all                                    # teardown: uninstall plugins + strip block; keep model/policy
+make clear-codex                                  # teardown Codex scope only
+```
+
+Native Codex-only restore and teardown need no Bash or `jq`:
+
+```text
+python plugins/codex-rig/scripts/sync_codex.py
+python plugins/codex-rig/scripts/sync_codex.py --no-clean
+python plugins/codex-rig/scripts/sync_codex.py clear
+```
+
+For pinned setup, pass `--codex-ref` with published revision whose Codex Rig package includes `scripts/install_github_read_rules.py`. Older revisions without this lifecycle helper remain valid for direct plugin installation but cannot satisfy current managed setup contract.
+
+`make sync-claude` changes only Claude scope, and `make sync-codex` changes only Codex scope; host selection does not otherwise alter refresh or clean-install semantics. Claude sync manages foundry, oss, develop, research, codemap-py, and `bridge`; it refreshes only retained external caveman plugin. After bridge installs successfully, sync removes any installed copy of retired external Codex rescue plugin; failed bridge install preserves it for recovery. The retired plugin and its marketplace are never installed or refreshed. Codex sync refreshes existing Git marketplace or replaces non-Git registration with canonical `Borda/AI-Rig` Git source, verifies selected source package hashes and closure plus required reader-rule helper, then removes its managed plugins by default and reinstalls them. Codex sync then runs installed Bridge static doctor: it requires the `python` launcher used by MCP to report Python 3.10 or newer and checks Claude CLI help contract without model inference, authentication changes, or provider cost. After successful plugin installation it installs or regenerates owned GitHub reader rules, regardless of `--no-codex-global-agents`; that flag skips only global `AGENTS.md` block. MCP inventory and workspace binding remain per fresh Codex project session. Direct `sync_codex.py` retains `--no-clean` and `--codex-ref`; root `make sync-codex` supplies neither and therefore uses its default clean-install and default-branch behavior.
+
+The direct `sync_codex.py clear` action removes managed Codex plugins, strips only authenticated Codex Rig block from `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`, and removes only owned `rules/codex-rig-github-read.rules`; it leaves repository-projected model defaults and personal policy untouched. Root `make clear-all` reverses selected Claude/Codex installation: it also uninstalls this marketplace's Claude plugins when Claude scope is active, strips Codex Rig block, removes owned reader rules, and leaves repository model defaults and personal-policy state in place; `make clear-codex` and `make clear-claude` scope same teardown to one side only. Both commands keep timestamped backup and preserve user-owned content byte-for-byte, honor `claude`/`codex` scoping where applicable, and leave marketplace registrations plus external plugins in place. Each helper refuses to modify its own unverifiable managed content; earlier successful sync or clear steps are not rolled back.
+
+Codex sync uses template and helper from installed marketplace revision. A missing global file is created as one SHA-256-authenticated managed block. Existing user instructions are backed up and preserved byte-for-byte outside that block. An exact unmarked copy from older sync is adopted without duplication. The same explicit sync also creates or regenerates owned `rules/codex-rig-github-read.rules` from selected installed package; migration may rewrite `rules/default.rules` only to remove exact canonical two-token legacy reader allow entries. It validates complete package and canonical managed-rule body, not merely recomputed rule checksum, and prepares every required existing-file backup before rules mutation. Unrelated bytes remain unchanged. Later runs update only verified managed content; invalid markers, ownership, checksums, or modified bytes stop affected helper before it changes its managed files. The reader rules cover only literal `python`/`python3` launcher union and installed wrapper-path union, including native and POSIX path spellings on Windows; they do not grant broad Python or `gh` access or change network settings.
+
+Each helper validates its own managed inputs before changing them; entire sync or clear sequence is not transactional. Marketplace/plugin refresh and reader-rule updates can finish before later global-instruction merge fails. The reader helper prepares all required existing-file backups before any rules mutation, reports each completed update immediately, and identifies later partial failure without claiming rollback. Resolve reported target state before rerunning sync. Avoid concurrent edits during restoration; portable filesystems provide no universal compare-and-swap operation.
+
+> Reusable reader approval trusts installed cache throughout its lifetime. Setup verifies complete package hashes and closure, but this is consistency checking, not publisher authentication or protection against same-user replacement after setup. Use only trusted cache. A configured explicit pin with invalid package or missing reader-rule lifecycle helper is rejected before marketplace/plugin mutation; newly registered or refreshed sources are verified before managed-plugin removal. Default-branch upgrades can acquire helper during refresh.
+
+Project `AGENTS.md` files remain project-owned and are never changed. Review merged instructions for semantic conflicts; byte preservation cannot resolve contradictory policies.
 
 ## ⬆️ Update, remove, and cleanup
 

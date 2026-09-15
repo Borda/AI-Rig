@@ -10,8 +10,8 @@ Optional Codemap index-gate guidance ships with research, so loading it does not
 
 > Current limits at a glance: the plugin does not provide data, GPUs, credentials, or companion plugins; `/research:run --codex` requires the installed and enabled `bridge@borda-ai-rig` plugin; unavailable explicit integrations stop the requested path rather than silently degrading; metric proxies still require human validation.
 
-<details open>
-<summary><strong>Contents</strong></summary>
+<details markdown="1">
+<summary><strong>📋 Contents</strong></summary>
 
 - [What research solves](#-what-research-solves)
 - [Install](#-install)
@@ -38,6 +38,8 @@ Optional Codemap index-gate guidance ships with research, so loading it does not
 
 </details>
 
+<a id="-what-research-solves"></a>
+
 ## 🎯 What research solves
 
 Without a contract, ML work often becomes intuition → experiment → unclear result → repeated effort. Baselines drift, proxy metrics go unquestioned, paper details are misimplemented, and GPU hours can be spent before a guard or split audit catches the design flaw.
@@ -53,6 +55,8 @@ With research, the evidence path is explicit:
 7. `/research:fortify` isolates components in worktrees to test which changes mattered.
 
 Every step is explicit and reviewable. The chain is not a guarantee of scientific validity, and a user still decides whether a result is worth adopting.
+
+<a id="-install"></a>
 
 ## 📦 Install
 
@@ -75,8 +79,7 @@ claude plugin install oss@borda-ai-rig
 
 `/research:kaggle` requires `foundry:sw-engineer` from the `foundry` plugin and has no fallback. Other skills that request `foundry:*` agents use `general-purpose` with a role description when Foundry is unavailable, so review and implementation quality can be lower.
 
-<details>
-<summary><strong>Upgrade and uninstall</strong></summary>
+### Upgrade and uninstall
 
 Upgrade from the marketplace and refresh delivered rules:
 
@@ -96,7 +99,7 @@ claude plugin uninstall research
 
 Uninstall does not remove created rule links. Delete only dangling `~/.claude/rules/research-*.md` links after confirming they target this plugin's former cache.
 
-</details>
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -111,6 +114,8 @@ Start with a measurable optimization goal:
 `/research:plan` scans the project, proposes metric and guard commands, and writes `program.md`. `/research:judge` checks completeness, methodology, scientific rigor, and (unless skipped) runs the commands once. `/research:run` asks a specialist agent for one scoped change per iteration, measures the configured metric, runs the guard, and keeps or reverts the change.
 
 The metric and guard commands are supplied by you. Research can check that a metric emits a number and a guard exits successfully, but it cannot prove that a proxy metric represents the real goal.
+
+<a id="-workflow-index"></a>
 
 ## 🔧 Workflow index
 
@@ -131,8 +136,7 @@ All ten commands are Claude Code skills under the `research:` namespace. Their `
 
 ### `/research:topic`
 
-<details>
-<summary><strong>Literature search, report gating, and plan follow-up</strong></summary>
+#### Literature search, report gating, and plan follow-up
 
 Searches AI/ML literature, compares methods, recommends an approach for the current codebase, and can turn the recommendation into a phased plan. A broad survey uses the workflow; a named-paper deep dive belongs to `research:scientist`.
 
@@ -147,12 +151,9 @@ Searches AI/ML literature, compares methods, recommends an approach for the curr
 
 The `enforce-topic-header.js` hook blocks the follow-up question until the report exists, so the report header can reach the terminal first. Once the report exists, the companion header check may add a reminder when the header was not rendered as the expected table; it does not block the question.
 
-</details>
-
 ### `/research:plan`
 
-<details>
-<summary><strong>Experiment wizard and profile-first mode</strong></summary>
+#### Experiment wizard and profile-first mode
 
 Builds a `program.md` contract from a measurable goal. A runnable Python file can be supplied instead to run `cProfile` before the wizard asks what to optimize.
 
@@ -166,12 +167,9 @@ The wizard scans the codebase, proposes metric and guard commands, chooses a str
 
 The output records `Goal`, `Metric`, `Guard`, `Config`, and optional `Notes`. `scope_files` constrain ideation, `max_iterations` is capped at 50, and `agent_strategy` accepts `auto`, `perf`, `code`, `ml`, or `arch`.
 
-</details>
-
 ### `/research:judge`
 
-<details>
-<summary><strong>Methodology gate and verdict semantics</strong></summary>
+#### Methodology gate and verdict semantics
 
 Reviews a contract before a campaign. It checks required fields, scope adequacy, metric/goal alignment, methodology, scientific rigor, and command execution.
 
@@ -200,12 +198,9 @@ Required changes: (1) add `target:` under ## Metric  (2) replace metric_cmd
 
 `--skip-validation` is for cross-machine planning. It leaves metric and guard executability unverified and therefore prevents an `APPROVED` verdict. Reports are written to `.reports/research/judge-<branch>-<date>.md`.
 
-</details>
-
 ### `/research:run`
 
-<details>
-<summary><strong>Bounded metric-improvement loop, flags, and state</strong></summary>
+#### Bounded metric-improvement loop, flags, and state
 
 Runs the core loop. Each iteration builds bounded context, proposes one scoped change, verifies that files changed, commits before measuring, runs the metric and guard, keeps a guarded improvement, or reverts the change. A campaign defaults to 20 iterations and is capped at 50. Five consecutive discards trigger strategy escalation and then stop rather than looping blindly.
 
@@ -254,12 +249,9 @@ Baseline: f1_score = 0.820
 [✓ Iter 2/20 — reverted · metric=0.818 · guard=passed]
 ```
 
-</details>
-
 ### `/research:sweep`
 
-<details>
-<summary><strong>Plan → judge/refine → run pipeline</strong></summary>
+#### Plan → judge/refine → run pipeline
 
 Runs the non-interactive plan → judge/refine → run pipeline from a goal. It accepts the run's compute, team, Codex, researcher, architect, journal, and hypothesis options, plus `--skip-validation`, `--out <path>`, and `--keep "<items>"`. It asks before overwriting an existing contract.
 
@@ -273,12 +265,9 @@ Judge refinement runs at most three times, applying Required Changes between pas
 
 Use separate `/research:plan` and `/research:judge` when you need to inspect or tune the contract before spending compute.
 
-</details>
-
 ### `/research:verify`
 
-<details>
-<summary><strong>Paper-to-code fidelity audit</strong></summary>
+#### Paper-to-code fidelity audit
 
 Audits whether code matches a named paper; it does not judge whether the paper's claims are valid. Input may be a PDF path, arXiv/PDF URL, or pasted paper text.
 
@@ -301,12 +290,9 @@ BREAKING — HIGH severity mismatch in F (formula)
 Fix: src/model.py:42 — reduction differs from the paper specification
 ```
 
-</details>
-
 ### `/research:fortify`
 
-<details>
-<summary><strong>Isolated ablations and optional reviewer Q&A</strong></summary>
+#### Isolated ablations and optional reviewer Q&A
 
 Runs one-component-at-a-time ablations after a completed run and an `APPROVED` judge report for the same program. It identifies candidates from the diff and diary, creates an isolated Git worktree for each variant, runs metric and guard commands locally, ranks importance, and can generate venue-specific reviewer Q&A.
 
@@ -335,12 +321,9 @@ Top: learning-rate-warmup (importance: 62.3%, CRITICAL)
 Reviewer Q&A: generated only when --venue was supplied
 ```
 
-</details>
-
 ### `/research:retro`
 
-<details>
-<summary><strong>Retrospective statistics and next-hypothesis queue</strong></summary>
+#### Retrospective statistics and next-hypothesis queue
 
 Reads a completed run's JSONL and diary without changing code or experiment state. It computes a one-sided one-sample Wilcoxon comparison of kept iterations against the baseline when at least six kept iterations and `scipy` are available; otherwise it reports descriptive statistics.
 
@@ -362,12 +345,9 @@ Suspicious jumps: 1 (investigate)
 Next: /research:run program.md --hypothesis .experiments/retro-<ts>/hypotheses.jsonl
 ```
 
-</details>
-
 ### `/research:kaggle`
 
-<details>
-<summary><strong>Grounded Jupytext notebook generation</strong></summary>
+#### Grounded Jupytext notebook generation
 
 Generates a Kaggle competition notebook as a Jupytext `# %%` Python script. It grounds schema and submission format through the authenticated Kaggle CLI, then produces an EDA → baseline → training → inference pipeline where the selected mode requires it. It requires `foundry:sw-engineer` and stops when that required agent is unavailable.
 
@@ -384,12 +364,9 @@ Supported options are `--type classification|regression|segmentation|detection|t
 
 Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix.
 
-</details>
-
 ### `/research:setup`
 
-<details>
-<summary><strong>Rule delivery, ownership checks, and conflicts</strong></summary>
+#### Rule delivery, ownership checks, and conflicts
 
 Delivers this plugin's `rules/*.md` into Claude's flat user-rule namespace with a `research-` prefix, avoiding collisions with other plugins' `quality-gates.md` files.
 
@@ -402,12 +379,11 @@ The default mode previews changes and asks before replacing a conflicting destin
 
 Each rule becomes `~/.claude/rules/research-<source-name>.md`. Claude Code does not run cleanup on uninstall, so dangling links must be removed manually after confirming ownership. An upgrade refreshes links from the new cache lineage and removes links for rules no longer shipped.
 
-</details>
+<a id="-experiment-contract"></a>
 
 ## 🧾 Experiment contract
 
-<details open>
-<summary><strong><code>program.md</code> fields and validation rules</strong></summary>
+### `program.md` fields and validation rules
 
 `program.md` is the boundary between planning and execution. Write it with `/research:plan` or by hand:
 
@@ -448,12 +424,9 @@ compute: local
 
 The metric command must emit a numeric value, and the guard must exit successfully for a kept iteration. A target is recommended because running only to the iteration ceiling can waste compute. Scope files, direction, baseline, controls, and stopping criteria should be reviewable before `/research:run`.
 
-</details>
-
 ## 📊 Workflow outputs
 
-<details open>
-<summary><strong>Reports, state, and handoff files</strong></summary>
+### Reports, state, and handoff files
 
 | Workflow  | Primary report                                 | Supporting state or output                                                                |
 | --------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -469,10 +442,7 @@ The metric command must emit a numeric value, and the guard must exit successful
 
 Reports should disclose the metric, baseline, commands, changed scope, gate results, confidence, unresolved limitations, and a concrete next action. Generated state is project-rooted and intended to be inspectable or cleaned according to the owning workflow's contract.
 
-</details>
-
-<details>
-<summary><strong>Colab MCP setup</strong></summary>
+### Colab MCP setup
 
 `--colab` routes metric verification and GPU testing to a connected Colab runtime through `colab-mcp`. Before invoking it:
 
@@ -482,12 +452,11 @@ Reports should disclose the metric, baseline, commands, changed scope, gate resu
 
 `--colab=H100` requests a specific hardware class; the run checks the observed GPU and reports a mismatch rather than silently treating another GPU as equivalent. `--colab` and `--compute=docker` are mutually exclusive.
 
-</details>
+<a id="-workflow-overview"></a>
 
 ## 🗺️ Workflow overview
 
-<details open>
-<summary><strong>Common paths and run internals</strong></summary>
+### Common paths and run internals
 
 Standard evidence path:
 
@@ -536,7 +505,7 @@ Inside `/research:run`, the fixed sequence is: build context from Git and JSONL 
 
 The workflow is user-invoked and bounded. Chaining `/research:retro`, `/research:run --hypothesis`, or `/research:fortify` remains an explicit next action; no unattended campaign is promised.
 
-</details>
+<a id="-agents-and-optional-integrations"></a>
 
 ## 🔗 Agents and optional integrations
 
@@ -558,8 +527,7 @@ Optional integrations are capability-gated:
 - `scipy` enables Wilcoxon significance in `retro`; without it, the report uses descriptive statistics.
 - The authenticated Kaggle CLI is required for online competition grounding.
 
-<details>
-<summary><strong>Agent operating boundaries</strong></summary>
+### Agent operating boundaries
 
 `research:scientist` is for a named paper, publication-backed method, falsifiable hypothesis, or experiment design. It separates paper claims from evidence, checks baselines and variance, identifies one central idea, audits attribution and contribution claims, plans one-variable-at-a-time experiments, estimates compute, and interprets results as confirmed, refuted, or partially supported. It should report mean ± standard deviation over at least three seeds when stochastic results are being compared and should flag cherry-picked results, missing confidence intervals, test-set reuse, and leakage concerns.
 
@@ -569,12 +537,11 @@ Useful data-steward search patterns include `fit_transform(` for pre-split norma
 
 Scientist handoffs should state the paper or method, core idea, actual contribution, mechanics, evidence, limitations, relevance, falsifiable prediction, variables, controls, success criterion, ablations, compute estimate, and expected outcome. A paper summary is not a benchmark claim unless the source and protocol are retained.
 
-</details>
+<a id="-hooks-rules-artifacts-and-bin-tools"></a>
 
 ## 📐 Hooks, rules, artifacts, and bin tools
 
-<details open>
-<summary><strong>Registered hooks and shared helper behavior</strong></summary>
+### Registered hooks and shared helper behavior
 
 Hooks register from `hooks/hooks.json` when the plugin is enabled; no settings edit is needed for registration:
 
@@ -626,7 +593,7 @@ The packaged bin inventory is:
 
 `check_output_within_root.py`, `codemap-flag.py`, `codemap_resolve.py`, `compute_effect_size.py`, `detect-complexity.py`, `docker_sandbox_run.py`, `extract-keep-flag.py`, `find_judge_verdict.py`, `find_run_id.py`, `fortify_next_variant.py`, `gate-on-sentinel.py`, `git_slugs.sh`, `heal_git_artifacts.py`, `health_monitor_start.py`, `load-agent-reference.py`, `make_run_dir.py`, `parse-skill-flags.py`, `parse_kaggle_args.py`, `read_state_field.py`, `require-vars.py`, `resolve-anti-overwrite-path.py`, `resolve-quality-gates.sh`, `resolve_shared.py`, `retro_analyze.py`, `sync_rules.py`, `verify_patient_split.py`, and `write_skill_contract.py`.
 
-</details>
+<a id="-current-boundaries"></a>
 
 ## 🧭 Current boundaries
 
@@ -642,10 +609,11 @@ These are current constraints, not promises about future releases:
 
 Potential future work includes richer native agent selection, broader compute backends for fortify, and more shared health-monitor orchestration. None is required for the current plugin contract.
 
+<a id="-troubleshooting"></a>
+
 ## 🔍 Troubleshooting
 
-<details open>
-<summary><strong>Common failure messages and recovery</strong></summary>
+### Common failure messages and recovery
 
 **`No program.md found`**: run `/research:plan "<measurable goal>"` or pass an existing contract path to `/research:judge` and `/research:run`.
 
@@ -673,7 +641,7 @@ Potential future work includes richer native agent selection, broader compute ba
 
 **Rule setup reports a conflict**: inspect the destination target. `/research:setup` replaces only links proven to belong to this plugin or its cache lineage; use `--approve` only after reviewing a real conflicting target.
 
-</details>
+<a id="-contributing-and-maintenance"></a>
 
 ## 🙏 Contributing and maintenance
 
@@ -684,6 +652,8 @@ The plugin version is currently `0.19.0`. This bridge integration is a designed 
 When editing a skill, update its README entry, flags, NOT-for boundaries, output paths, fallback behavior, and relevant troubleshooting guidance. Verify that references loaded from `skills/_shared/`, `skills/*/modes/`, agent sidecars, or `bin/` remain installed-path safe and do not assume a source checkout.
 
 The plugin's tests cover path safety, Codemap resolution, effect size, Docker sandboxing, hook contracts, run directories, rule resolution, shared-file resolution, retro analysis, and patient split validation. Run focused tests while editing and the full `plugins/cc_research` suite before release.
+
+<a id="-acknowledgments-and-license"></a>
 
 ## 🙏 Acknowledgments and license
 

@@ -86,15 +86,25 @@ Teams always user-invoked — this gate is scoped to the formal multi-agent Team
 2. On approval → TaskCreate each phase; mark complete as you go
 3. Document results in `.plans/closed/results_<name>.md`; capture lessons → §3 Self-Improvement Loop
 
+### Tool availability — load before first call
+
+Task tools ship **disabled** unless `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set (`/foundry:setup` merges it into `~/.claude/settings.json`), and even when enabled they arrive **deferred** — named without a schema, so a direct call fails. Load them before the first task call, once per session:
+
+```text
+ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)
+```
+
+No load = every `TaskCreate` below silently never happens.
+
 ### Session-start hygiene
 
-**First action every interaction**: call `TaskList`, triage all found tasks before work:
+**First action every interaction**: call `TaskList`, triage anything it returns:
 
 - Work clearly done → `TaskUpdate` status `completed`
 - Orphaned / irrelevant → `TaskUpdate` status `deleted`
-- Genuinely continuing prior session → keep, mark `in_progress`
+- Genuinely continuing → keep, mark `in_progress`
 
-Stops zombie tasks piling up across sessions, showing false progress.
+Expect an empty list. The store is per-session (`~/.claude/tasks/<session-key>/`) and a `completed` task's file is deleted, so nothing carries across sessions and a finished list erases itself. Triage covers this session's own residue — never treat an empty `TaskList` as proof that no work is in flight; check `.plans/active/` instead.
 
 ### In-session task tracking
 

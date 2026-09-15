@@ -8,8 +8,7 @@ The bridge is useful with either host integration installed and has no dependenc
 
 ______________________________________________________________________
 
-<details>
-
+<details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
 
 - [What it provides](#-what-it-provides)
@@ -30,6 +29,8 @@ ______________________________________________________________________
 </details>
 
 ______________________________________________________________________
+
+<a id="-what-it-provides"></a>
 
 ## 🎯 What it provides
 
@@ -63,6 +64,8 @@ Results are compact envelopes rather than transcripts:
 
 > The model-authored core is validated separately from harness metadata; model output cannot claim observed cost, timing, process, or correlation fields.
 
+<a id="-requirements"></a>
+
 ## ✅ Requirements
 
 - Claude Code with plugin support for the Claude half.
@@ -75,6 +78,8 @@ Results are compact envelopes rather than transcripts:
 The setup skill can orchestrate verified native plugin/configuration operations and one closed repair per fault after an exact plan approval.
 
 > It never installs runtimes, replaces the current host invocation surface, reads credentials, or grants permissions. Provider-owned authentication and live inference retain separate approvals and terminal/network boundaries. The Codex-side MCP server is host-launched outside the model's sandbox so it can reach the Claude CLI's normal authentication path; a Claude CLI that is not logged in remains a reported setup/authentication failure.
+
+<a id="-set-up-the-bridge"></a>
 
 ## 🧭 Set up the bridge
 
@@ -116,11 +121,15 @@ The setup result is defined by `schemas/setup-result.schema.json`, separate from
 - The deterministic setup CLI cannot prove the loaded session/workspace and therefore remains non-ready even after a successful point-in-time live probe; the host skill may claim a stronger lifecycle result only after applicable loaded-session evidence is also present.
 - The read-only MCP tool `bridge_status` returns sanitized server identity, version, schema/protocol version, host-selected canonical workspace, workspace fingerprint, and expected tool inventory without calling a provider or writing state.
 
+<a id="-is-mcp-required"></a>
+
 ## 🔌 Is MCP required?
 
 MCP is complementary to the bridge as a whole but mandatory for the Codex → Claude Code direction. Claude Code → Codex calls launch `codex exec` directly and do not need MCP. Codex → Claude Code calls must use the packaged MCP server because a `claude --print` process started from a sandboxed Codex model turn cannot rely on the normal Claude authentication context, while the Codex host launches the MCP server outside that model sandbox.
 
 If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus the read-only status tool and prevents model-controlled workspace, background, or session selection.
+
+<a id="-install-for-claude-code"></a>
 
 ## 📦 Install for Claude Code
 
@@ -152,6 +161,8 @@ The default setup path is end-to-end and approval-bound:
 ```text
 /bridge:setup action=verify-live target=peer live=required
 ```
+
+<a id="-use-from-claude-code"></a>
 
 ## ⚡ Use from Claude Code
 
@@ -194,6 +205,8 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 - Advice and review always start fresh ephemeral Codex runs.
 - The reverse MCP path does not resume Claude sessions.
 
+<a id="-install-for-codex"></a>
+
 ## 📦 Install for Codex
 
 Register the repository marketplace and add the Codex plugin:
@@ -217,6 +230,8 @@ The Codex half degrades cleanly when `claude` is absent or unauthenticated: setu
 
 > The static planner does not establish that the current MCP session is loaded or workspace-bound; use `bridge_status` from a fresh Codex session for that evidence. The bridge does not install Claude, read credentials from files, or fall back to a shell call inside the Codex sandbox.
 
+<a id="-use-from-codex"></a>
+
 ## ⚡ Use from Codex
 
 Use the Codex skills for the same three operations:
@@ -239,6 +254,8 @@ The skills invoke the bridge MCP tools `bridge_implement`, `bridge_advise`, `bri
 The bridge supplies the budget preamble, invokes `claude -p` with the narrowest permission mode for the verb, and returns the same compact envelope used by the Claude half. The peer's bounded verbose `details` remain in the transcript referenced by the envelope; they are not copied into the caller's context.
 
 > Do not invoke `claude -p` directly from a sandboxed Codex model turn: the bridge MCP server is the supported transport because it runs in the host context where the normal Claude authentication path is available.
+
+<a id="-model-effort-budget-and-depth"></a>
 
 ## 🎚️ Model, effort, budget, and depth
 
@@ -269,6 +286,8 @@ Depth and correlation:
 - Negative depth is rejected, and a call received at trusted depth one or greater returns `refused: recursion-depth`.
 - `run_id` is minted once at the outermost call and echoed through the call chain, so health records from both hosts can be correlated without conflating a Codex thread identifier with a Claude session identifier.
 
+<a id="-results-and-artifacts"></a>
+
 ## 📊 Results and artifacts
 
 Each child attempt writes its bounded host transcript once. Complete Codex command-output payloads are summarized by their UTF-8 byte counts and SHA-256 digest; other retained events and Claude output remain unchanged. The digest can compare separately retained output but cannot reconstruct discarded content, and capture-byte savings do not establish provider token savings.
@@ -296,6 +315,8 @@ Artifact handling:
 
 For an `output-limit` incident, use the [bounded-work recovery steps](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/operations.md#output-limit-recovery). A compact final answer alone does not cap tool output, and the Bridge does not automatically retry this fault.
 
+<a id="-privacy-and-security-boundaries"></a>
+
 ## 🔒 Privacy and security boundaries
 
 The bridge sends the task text and the selected project context to the provider CLI named by the direction of the call. Provider billing, retention, account access, and model availability remain governed by the provider and your host configuration. The bridge does not upload artifacts to a separate service or persist credentials.
@@ -316,6 +337,8 @@ Termination reaps the child leader after native tree cleanup, including Windows 
 Finalization freezes the bounded capture under its lock; a failed drain returns a non-retrying blocked drain failure rather than timeout or cancellation unless output-limit was already observed, and late unseen bytes are not reclassified as output-limit.
 
 > The bridge never bypasses host permission prompts, invents a credential, retries a write-capable timeout, or silently replaces a requested effort tier.
+
+<a id="-updating-uninstalling-and-human-owned-gates"></a>
 
 ## ⬆️ Updating, uninstalling, and human-owned gates
 
@@ -345,12 +368,16 @@ $disposablePackageDirectory = Join-Path $disposableParentDirectory "bridge"
 
 Run `action=verify-live ... live=required` only after explicitly accepting the separate provider call and its cost. A live setup probe verifies one selected path at that moment; it is diagnostic evidence, not proof that a future task will succeed. This documentation does not claim that either host is currently authenticated or live-verified.
 
+<a id="-maintainer-documentation"></a>
+
 ## 📚 Maintainer documentation
 
 - [Architecture and transport](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/architecture.md) explains both request directions, process boundaries, permissions, and exactly where MCP is required.
 - [Security and privacy](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/security.md) defines authority, data flow, artifacts, result integrity, recovery, and cancellation boundaries.
 - [Operations and troubleshooting](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/operations.md) covers prerequisites, diagnosis, foreground calls, detached jobs, common failures, and artifact inspection.
 - [Development and release verification](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/docs/development.md) records the package layout, local gates, installed-shape validation, and release responsibilities.
+
+<a id="-license-and-attribution"></a>
 
 ## 📄 License and attribution
 

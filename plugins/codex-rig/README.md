@@ -8,8 +8,8 @@ The package covers capabilities Codex can currently install and verify. It conta
 
 > Current release: `0.18.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
-<details open>
-<summary><strong>Navigation</strong></summary>
+<details markdown="1">
+<summary><strong>📋 Contents</strong></summary>
 
 - [What Codex Rig adds](#-what-codex-rig-adds)
 - [Requirements and installation](#-requirements)
@@ -25,6 +25,8 @@ The package covers capabilities Codex can currently install and verify. It conta
 
 > Current limits at a glance: named-agent shim installation remains platform-blocked; networked workflows require runtime approval; Codex CLI, Python 3.10+, and optional `gh`/Kaggle authentication are needed for their respective paths; shim mutation is unsupported on Windows and network/distributed filesystems.
 
+<a id="-what-codex-rig-adds"></a>
+
 ## 🎯 What Codex Rig adds
 
 - **A complete development loop:** investigate, assess, implement, review, remediate, optimize, release, and audit with measurable gates.
@@ -38,6 +40,8 @@ The package covers capabilities Codex can currently install and verify. It conta
 - **Calibration:** fixed and behavioral checks measure recall, precision, confidence accuracy, routing leaks, stale assumptions, fixture misuse, unjustified local imports, and incomplete abstractions.
 - **Safe legacy cleanup:** authenticated, exact-plan removal exists for thin shims created during pre-release development.
 - **Optional codemap-py structural context:** the `implement`, `investigate`, and `optimize` workflows select task-neutral route and probe public codemap-py CLI once per run for only required structural fact, or record zero-query decision for localized edit; they persist one artifact and fall back to bounded file inspection when Codemap is absent.
+
+<a id="-requirements"></a>
 
 ## ✅ Requirements
 
@@ -83,59 +87,9 @@ $codex-rig:audit
 
 `doctor` verifies active package, manifest, helpers, role cards, and legacy shim state without writing. The audit workflow checks consuming repository and reports concrete gaps. Workflow audits trace producer/consumer guarantees through the next ordinary user action, challenge accepted assumptions with counterexamples, and distinguish tested transitions from missing evidence in `workflow-exploration.md`. Skill/all audits also emit prompt-efficiency evidence: matched instruction cost, loaded-reference cost, obligation preservation, behavioral/calibration guards, and adversarial review. `axis=value-per-token` accepts candidate only with matched native/tokenizer evidence, no hard-guard regression, and declared material cost reduction; length or byte count alone cannot establish quality.
 
-## 🌍 Managed global instructions
+Repository-specific setup and synchronization are documented in the [managed global instructions guide](https://github.com/Borda/AI-Rig/blob/main/.codex/README.md#managed-global-instructions).
 
-<details open>
-<summary><strong>Global-instruction behavior and sync commands</strong></summary>
-
-`assets/AGENTS.md` is versioned template, not automatically installed plugin capability. Its policy requires following:
-
-- **Implementation:** Use simplest solution for verified current behavior; prefer maintained standard-library/native/already-installed package functionality over duplicating custom code; reject machinery justified only by hypothetical future states, risks, scale, reuse, or edge cases; and preserve trust-boundary, data-loss, security, accessibility, and explicit-contract safeguards.
-- **Abstractions and imports:** Abstractions must reduce reader-visible concepts, and Python imports stay at module scope unless verified boundary requires locality.
-- **Fixtures and simplification:** Fixtures provide concrete state unless fixture-managed lifecycle requires callable; use ordinary helpers for configurable construction instead of nested fixture factories or aliases that add no meaning. A deliberately bounded simplification records its present ceiling and observable revisit trigger without creating separate debt system.
-
-The sync paths differ as follows:
-
-| Operation                                        | Explicit behavior                                                                                                                                                          |
-| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Direct marketplace/plugin installation           | Leaves `${CODEX_HOME:-$HOME/.codex}/AGENTS.md` and `rules/codex-rig-github-read.rules` unchanged and does not project repository `.codex/` settings.                       |
-| Direct `plugins/codex-rig/scripts/sync_codex.py` | Installs or updates managed Codex plugins, authenticated Codex Rig block, and owned GitHub reader rules; it does not project repository model defaults or personal policy. |
-| Root `make sync-codex`                           | Additionally projects root `model` and `review_model` from `.codex/config.toml` and authenticated personal-policy block from `.codex/global-session-policy.md`.            |
-
-The current repository policy keeps parent session on Terra and permits Sol only for explicitly requested advisory pass or explicitly selected Sol agent.
-
-From AI-Rig checkout:
-
-```bash
-make sync-all                                     # full Claude + Codex restore
-make sync-codex                                   # Codex scope only
-make clear-all                                    # teardown: uninstall plugins + strip block; keep model/policy
-make clear-codex                                  # teardown Codex scope only
-```
-
-Native Codex-only restore and teardown need no Bash or `jq`:
-
-```text
-python plugins/codex-rig/scripts/sync_codex.py
-python plugins/codex-rig/scripts/sync_codex.py --no-clean
-python plugins/codex-rig/scripts/sync_codex.py clear
-```
-
-For pinned setup, pass `--codex-ref` with published revision whose Codex Rig package includes `scripts/install_github_read_rules.py`. Older revisions without this lifecycle helper remain valid for direct plugin installation but cannot satisfy current managed setup contract.
-
-`make sync-claude` changes only Claude scope, and `make sync-codex` changes only Codex scope; host selection does not otherwise alter refresh or clean-install semantics. Claude sync manages foundry, oss, develop, research, codemap-py, and `bridge`; it refreshes only retained external caveman plugin. After bridge installs successfully, sync removes any installed copy of retired external Codex rescue plugin; failed bridge install preserves it for recovery. The retired plugin and its marketplace are never installed or refreshed. Codex sync refreshes existing Git marketplace or replaces non-Git registration with canonical `Borda/AI-Rig` Git source, verifies selected source package hashes and closure plus required reader-rule helper, then removes its managed plugins by default and reinstalls them. Codex sync then runs installed Bridge static doctor: it requires the `python` launcher used by MCP to report Python 3.10 or newer and checks Claude CLI help contract without model inference, authentication changes, or provider cost. After successful plugin installation it installs or regenerates owned GitHub reader rules, regardless of `--no-codex-global-agents`; that flag skips only global `AGENTS.md` block. MCP inventory and workspace binding remain per fresh Codex project session. Direct `sync_codex.py` retains `--no-clean` and `--codex-ref`; root `make sync-codex` supplies neither and therefore uses its default clean-install and default-branch behavior.
-
-The direct `sync_codex.py clear` action removes managed Codex plugins, strips only authenticated Codex Rig block from `${CODEX_HOME:-$HOME/.codex}/AGENTS.md`, and removes only owned `rules/codex-rig-github-read.rules`; it leaves repository-projected model defaults and personal policy untouched. Root `make clear-all` reverses selected Claude/Codex installation: it also uninstalls this marketplace's Claude plugins when Claude scope is active, strips Codex Rig block, removes owned reader rules, and leaves repository model defaults and personal-policy state in place; `make clear-codex` and `make clear-claude` scope same teardown to one side only. Both commands keep timestamped backup and preserve user-owned content byte-for-byte, honor `claude`/`codex` scoping where applicable, and leave marketplace registrations plus external plugins in place. Each helper refuses to modify its own unverifiable managed content; earlier successful sync or clear steps are not rolled back.
-
-Codex sync uses template and helper from installed marketplace revision. A missing global file is created as one SHA-256-authenticated managed block. Existing user instructions are backed up and preserved byte-for-byte outside that block. An exact unmarked copy from older sync is adopted without duplication. The same explicit sync also creates or regenerates owned `rules/codex-rig-github-read.rules` from selected installed package; migration may rewrite `rules/default.rules` only to remove exact canonical two-token legacy reader allow entries. It validates complete package and canonical managed-rule body, not merely recomputed rule checksum, and prepares every required existing-file backup before rules mutation. Unrelated bytes remain unchanged. Later runs update only verified managed content; invalid markers, ownership, checksums, or modified bytes stop affected helper before it changes its managed files. The reader rules cover only literal `python`/`python3` launcher union and installed wrapper-path union, including native and POSIX path spellings on Windows; they do not grant broad Python or `gh` access or change network settings.
-
-Each helper validates its own managed inputs before changing them; entire sync or clear sequence is not transactional. Marketplace/plugin refresh and reader-rule updates can finish before later global-instruction merge fails. The reader helper prepares all required existing-file backups before any rules mutation, reports each completed update immediately, and identifies later partial failure without claiming rollback. Resolve reported target state before rerunning sync. Avoid concurrent edits during restoration; portable filesystems provide no universal compare-and-swap operation.
-
-> Reusable reader approval trusts installed cache throughout its lifetime. Setup verifies complete package hashes and closure, but this is consistency checking, not publisher authentication or protection against same-user replacement after setup. Use only trusted cache. A configured explicit pin with invalid package or missing reader-rule lifecycle helper is rejected before marketplace/plugin mutation; newly registered or refreshed sources are verified before managed-plugin removal. Default-branch upgrades can acquire helper during refresh.
-
-Project `AGENTS.md` files remain project-owned and are never changed. Review merged instructions for semantic conflicts; byte preservation cannot resolve contradictory policies.
-
-</details>
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -174,6 +128,8 @@ codex '$codex-rig:code-remediate #123 +review'
 codex '$codex-rig:code-remediate review'
 ```
 
+<a id="-skills"></a>
+
 ## 🔧 Skills
 
 > Skill frontmatter uses compact routing descriptions to conserve Codex skills catalog; each `SKILL.md` body remains complete workflow contract.
@@ -210,8 +166,7 @@ Every workflow defines input contract, fail-fast rules, required gates, artifact
 
 ## 🔗 Optional codemap-py structural context
 
-<details>
-<summary><strong>Bounded Codemap integration and fallback vocabulary</strong></summary>
+### Bounded Codemap integration and fallback vocabulary
 
 `implement`, `investigate`, and `optimize` select route and probe the [codemap-py](https://github.com/Borda/AI-Rig/tree/main/plugins/codemap-py) plugin once at bounded decision point via `shared/codemap_adapter.py`, then persist result to run artifact — specialists consume that artifact, never fresh query. An exact localized edit with no unresolved structural fact uses `skip`; one unresolved fact uses matching single route; broad or unknown scope uses legacy `standard` batch; explicit structural request overrides `skip`. The other workflows retain their existing category-specific standard behavior or recorded not-applicable status. The adapter reads only public `codemap-py doctor --json`/`query` CLI surface, never codemap-py's cache internals, source paths, or cross-plugin Python import.
 
@@ -220,8 +175,6 @@ The adapter resolves validated launcher once per workflow and reuses it. Indepen
 The adapter reports one named status: `available`, `absent`, `stale`, `incompatible`, `degraded`, `stale+degraded`, or `skipped`. `skipped` means workflow deliberately selected zero Codemap subprocesses; it is not structural evidence. `stale+degraded` is vocabulary's only composed value and means both caveats hold at once, so neither masks other. A standard batch run without `--target` omits queries that require one instead of failing them, so targetless probe reports honest status of queries it actually ran. Each query also records index file that answered it, and any disagreement with path health probe resolved is listed under `index_path_divergence` as evidence — both paths retained, never reconciled, and never folded into status. Absence and incompatibility are non-fatal — workflow falls back to its normal bounded file inspection. `manage`, `sync`, `agent-shims`, `calibrate`, and `kaggle` stay not-applicable with recorded behavioral reason (no Python call-graph subject); see `shared/codemap-contract.md` for full protocol, adaptive route vocabulary, category-to-query map, per-skill route selection, and not-applicable rationale. Repository sync installs Codemap alongside Codex Rig, but Codex Rig retains zero runtime dependency on it: packaging, skill discovery, and startup still work when Codemap is absent or incompatible.
 
 The active consumer contract is separate from provider integration metadata. Audit compares active source guidance with reachable installed skill references and reports `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, or `consumer_query_guidance_drift`; static references establish reachability only, not semantic loading or current-session activation. The provider-managed `codemap-py-integration.md` block is metadata-only, and matching installed bytes or native listings cannot substitute for session evidence.
-
-</details>
 
 ## 🤖 Specialist role cards
 
@@ -276,8 +229,7 @@ The model names are requested role settings. Blank-agent injection does not prov
 
 ## 🔗 How portable role routing works
 
-<details>
-<summary><strong>Role-card injection, fallback, and provenance details</strong></summary>
+### Role-card injection, fallback, and provenance details
 
 The canonical policy is `shared/specialist-orchestration.md`.
 
@@ -287,7 +239,7 @@ Every user-facing message starts with short plain-English explanation before tec
 
 Recovery guidance explains why a check rejected the work, distinguishes unknown causes, and recommends a concrete next action. A necessary repair choice states what approval and decline each do: rejected reviewer evidence can permit fresh sequential review with disclosed missing independence; unavailable current PR source permits diagnosis or user-accepted discussion of an older assessed report, but no code edits. Existing merge conflicts receive a separate diagnosis and applicable finish/abort/defer choices with preservation and authorization effects. Once authorized recovery succeeds, Code Review and Code Remediate resume their first unmet checkpoint and normal completion gates without requiring another invocation; a remaining independent blocker gets its own explanation. Repairs to validators, credentials, or Git history are never inferred from a generic error code.
 
-When native reviewer controls are unavailable, Code Review has explicitly approved [isolated App Server route](skills/code-review/app-server-review.md). The parent launches bounded independent read-only threads, disables external tool capabilities for that invocation, saves unchanged responses, and validates schema-4 evidence before normal completion gates. Its `app-server-parent-observed` evidence is not native child lineage, cryptographic attestation, or credential isolation. This experimental route requires compatible installed Codex CLI and separate paid-execution approval; it does not automatically promote other skills or enable parallel writes.
+When native reviewer controls are unavailable, Code Review has explicitly approved [isolated App Server route](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/skills/code-review/app-server-review.md). The parent launches bounded independent read-only threads, disables external tool capabilities for that invocation, saves unchanged responses, and validates schema-4 evidence before normal completion gates. Its `app-server-parent-observed` evidence is not native child lineage, cryptographic attestation, or credential isolation. This experimental route requires compatible installed Codex CLI and separate paid-execution approval; it does not automatically promote other skills or enable parallel writes.
 
 Reviewer output must be new and contained beneath resolved plan directory. Setup failures return bounded errors; when output storage is unavailable, no diagnostic artifact is promised. Completed responses remain retained if later failure occurs.
 
@@ -319,12 +271,9 @@ Passing only role name or path is not role injection. A task name records proven
 
 For every routed pass, Codex Rig records role ID, card hash, attempted and selected routes, fallback reason, observable model/effort, requested and observed controls, independence, nesting depth, and material fidelity limits.
 
-</details>
-
 ## 💰 Orchestration and cost control
 
-<details>
-<summary><strong>Tier ownership and escalation guardrails</strong></summary>
+### Tier ownership and escalation guardrails
 
 Use delegation only when two or more disjoint workstreams can proceed without duplicating same context. Typical high-value splits are implementation versus tests, architecture versus migration docs, or CI diagnosis versus static analysis.
 
@@ -338,12 +287,11 @@ Two consecutive work cycles without material progress, or three evidence-backed 
 
 The delegation lead returns one handover. Executable acceptance, runtime/API changes, release-blocking decisions, and security/architecture conclusions remain parent- or appropriate Terra/Sol-owned. Narrow work stays in parent when handoff cost would exceed its value.
 
-</details>
+<a id="-quality-gates-and-artifacts"></a>
 
 ## 📊 Quality gates and artifacts
 
-<details>
-<summary><strong>Artifact shape and confidence thresholds</strong></summary>
+### Artifact shape and confidence thresholds
 
 Workflow artifacts commonly use this shape; exact files vary by workflow:
 
@@ -366,21 +314,18 @@ Confidence is evidence-backed:
 - `0.85 <= confidence < 0.90`: cautious-low; objective recovery evidence and remaining limits must be explicit.
 - `>= 0.90`: fair, not automatic; material residual limits still belong in result.
 
-</details>
-
 ## 🗺️ PR review-to-remediation
 
 Review completion is executable: `shared/find-review-report.py --complete-run <run-directory>` reruns both artifact validators against promoted result, checks that PR lookup selects that exact result, and emits only digest-bound final text. A notes-only run is `matching-review-incomplete`, not missing evidence; newer incomplete or malformed reviews block older assessed fallback. A later collection failure cannot clear intervening incomplete or unpromoted review. Failures lead with a plain-English cause and continuation, then state “Review handoff blocked,” preserve preliminary evidence, and never masquerade as completed review or silently switch to online-only remediation. Code Review first supports instruction-bounded native inspection route whose reviewers receive full role card first, then scope inventory and relevant source/diff/evidence as untrusted input, and return text only; prohibited tool use is detected and rejected, not prevented by sandbox claim. Strict portable launcher admission and post-run validation remain required only for optional portable route and other consumers.
 
-<details>
-<summary><strong>Evidence collection, review closure, and remediation boundaries</strong></summary>
+### Evidence collection, review closure, and remediation boundaries
 
 - **Review intake:** `$codex-rig:code-review #123` collects contributor intent from PR title/body, comments/reviews, target-branch evidence, exact local PR head, and locally derived diff before producing structured review artifact. Collection starts in temporary timestamped run; after authoritative `pr.json` succeeds, run creator promotes it to next numeric `.reports/codex/code-review/pr-<number>/run-<NNN>/` directory and that printed path owns every later artifact. Assessed PR handoffs begin with snapshot rebuilt from those run artifacts: PR number/link, author, GitHub check status, intent-based type, and review suggestion; validation rejects missing or replaced fields and suggestion that disagrees with structured decision.
 - **Terminal closure:** After successful collection it may emit evidence-backed terminal `close` decision before detailed review for one of `FALSE_GOAL`, `BREAKING_CONDUCT`, `WRONG_SCOPE`, `WRONG_PROVENANCE`, `DUPLICATE`, `UNADDRESSED_REVERT`, `SPAM`, or `ARCHITECTURE_VIOLATION`; ambiguous evidence always continues to detailed review, and decision never closes, comments on, merges, or otherwise mutates GitHub.
 - **Review routing:** It prefers independent QA/challenge passes for broad or high-risk diffs and conditionally triggers architecture, security, CI, docs, data, performance, research, or web evidence when detailed review proceeds. If launcher is unavailable, documented parent-serial substitute may continue review but is not independent; expressly user-required independent pass remains unmet and withholds completion. Incomplete context or provenance is disclosed, and unsupported conclusions are withheld. Routing evidence and triggered-role reasons are always non-empty JSON string arrays, so validators can distinguish malformed output from assessed review.
 - **GitHub transport:** `shared/github_read.py` is sole GitHub data transport: it prefers authenticated `gh` but never reads credentials; permits only audited built-in view groups (`gist`, `issue`, `pr`, `project`, `release`, `repo`, `ruleset`, `run`, `workflow`), REST GET, and GraphQL query operations; and retains no CLI failure output.
 - **Approval boundary:** In network-sandboxed runtime, complete collector command—not standalone `gh` preflight—remains the unit for runtime external-network approval because its nested CLI, HTTPS fallback, checkout, and Git fetches inherit collector's execution context.
-- **Managed host preapproval:** All four `--approve-gh` workflows reuse loaded host allow rules to execute matching helpers without another prompt, subject to stricter host restrictions. Explicit setup already covers the generic reader used by Assess and Release. For Code Review, Code Remediate, and PR-mode Assess, add repeatable `--approve-pr <canonical-pr-url>` to the installed `scripts/install_github_read_rules.py` setup command with its required `--plugin-root` and `--codex-home` options. This grants literal `python`/`python3` plus the installed collector, `--target`, and only those exact PR URLs in `rules/codex-rig-pr-collection.rules`. Future approved sync refreshes the collector path without adding targets; teardown removes the owned grants. Restart Codex after setup. Grants also apply to matching unflagged commands and permit supported output destinations and safe local checkout; they trust installed code and are not filesystem isolation. Setup still requires explicit host permission, and the flag never invokes setup or overrides a denial. See [setup details](scripts/README.md#install_github_read_rulespy).
+- **Managed host preapproval:** All four `--approve-gh` workflows reuse loaded host allow rules to execute matching helpers without another prompt, subject to stricter host restrictions. Explicit setup already covers the generic reader used by Assess and Release. For Code Review, Code Remediate, and PR-mode Assess, add repeatable `--approve-pr <canonical-pr-url>` to the installed `scripts/install_github_read_rules.py` setup command with its required `--plugin-root` and `--codex-home` options. This grants literal `python`/`python3` plus the installed collector, `--target`, and only those exact PR URLs in `rules/codex-rig-pr-collection.rules`. Future approved sync refreshes the collector path without adding targets; teardown removes the owned grants. Restart Codex after setup. Grants also apply to matching unflagged commands and permit supported output destinations and safe local checkout; they trust installed code and are not filesystem isolation. Setup still requires explicit host permission, and the flag never invokes setup or overrides a denial. See [setup details](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/scripts/README.md#install_github_read_rulespy).
 - **One-flag authorization:** Use `$codex-rig:code-review 123 --approve-gh` or `$codex-rig:code-remediate 123 --approve-gh` (also supported by the unnamespaced skill aliases). The flag records completed user authorization for the required PR collection; the workflow does not ask for a second workflow-consent confirmation. The reusable collector boundary is the direct command prefix `actual Python executable + absolute installed collect_pr.py + --target + canonical GitHub PR URL`; `--out`, `--checkout`, and the mode-specific `--checkout-mode` follow that prefix, report timestamps remain outside it, and no `rtk` wrapper is allowed. This covers GitHub evidence, fetches, collection artifacts, and safe local checkout updates for that PR. Runtime permission is separate: a matching saved host rule may be reused, but the runtime may still prompt or deny when no matching rule exists. The flag cannot bypass host prompts or denials, create or modify saved rules, change permissions, or authorize remote mutation. Numeric targets resolve only from an unambiguous local repository; otherwise initial collection uses one-shot approval until authoritative identity is known. Saved rules remain runtime-owned and need a new match after collector path/version or PR identity changes. Local/report-only scopes reject the flag; remediation still asks which findings to fix. The collector rejects duplicate targets and abbreviated options so later arguments cannot override the approved PR.
 - **Analysis and release authorization:** Append `--approve-gh` to `$codex-rig:assess <question-and-scope>` or `$codex-rig:release audit`. For GitHub evidence already required by those workflows, the flag records completed user authorization for the direct reader command prefix `actual Python executable + absolute installed github_read.py`. The reader approval is deliberately reader-wide across repositories, with audited views, REST GET, GraphQL queries, supported public fallback, output-file writes, and allowlisted local PR checkout; it is not limited to the current issue, release, or repository. Dynamic `--out` and validated `gh` arguments follow the prefix, and no `rtk` wrapper is allowed. Runtime permission remains separate: a matching saved host rule may be reused, but the runtime may still prompt or deny; the flag cannot bypass host prompts or denials, create or modify saved rules, change permissions, or authorize publication or other remote mutation. The flag never adds GitHub traffic to local-only work, and PR analysis retains the narrower collector-and-PR-URL prefix. Existing evidence, scope, and release-readiness gates remain mandatory.
 - **Retry and denial:** If the agent mistakenly launches that collector without runtime access and receives a sandbox-shaped `github-network` failure before any user prompt or denial, one unchanged collector retry through the runtime approval mechanism is required before failure becomes terminal. A user denial always stops the current turn and forbids that retry; `--approve-gh` does not suppress or repeat a runtime prompt.
@@ -413,12 +358,9 @@ Historical `.reports/codex/review/` and `.reports/codex/resolve/` artifacts rema
 
 Use `$codex-rig:assess` (or `$assess` when the alias is available) for evidence-first analysis; it replaces `change-analysis` and retains `--approve-gh`. New artifacts use `.reports/codex/assess/`. Existing `change-analysis` reports remain readable, but the old skill name is no longer registered. Refresh the installed plugin to discover the new name.
 
-</details>
-
 ## 🎚️ Calibration
 
-<details>
-<summary><strong>Offline and live calibration boundaries</strong></summary>
+### Offline and live calibration boundaries
 
 The packaged runner supports plugin layout directly:
 
@@ -429,8 +371,6 @@ python3 plugins/codex-rig/runtime/calibration/run.py --layout plugin --root .
 It validates packaged skills, role cards, shared contracts, behavior fixtures, accepted routing evidence, confidence scoring, and known workflow leaks. The offline CI harness shadows network and LLM commands, uses isolated home, and writes compact failure artifacts without contacting LLM.
 
 Paid live A/B calibration is separate, explicit, and never implied by offline result.
-
-</details>
 
 ## 🧾 Approval prompts and commit handoffs
 
@@ -456,14 +396,13 @@ Codex-created commit handoffs identify every commit by hash and title, summarize
 
 ## 🩺 Optional SessionStart diagnostic
 
-<details>
-<summary><strong>Read-only hook behavior</strong></summary>
+### Read-only hook behavior
 
 `hooks/hooks.json` defines read-only diagnostic for `startup` and `resume`. Codex discovers this default plugin hook path after install. The hook runs same shim doctor used by manager; it does not install, update, or remove shims.
 
 Review hook command before trusting it. Declining hook trust leaves diagnostic inactive and does not disable skills.
 
-</details>
+<a id="-update-or-reinstall"></a>
 
 ## ⬆️ Update or reinstall
 
@@ -481,17 +420,13 @@ Repository sync never restores legacy `.codex/` tree. When Codex scope is active
 
 ### Legacy project-to-home copies
 
-<details>
-<summary><strong>Legacy copy cleanup warning</strong></summary>
+### Legacy copy cleanup warning
 
 Older `sync.sh` versions — script has since been retired and its logic folded into root `Makefile` — copied AI-Rig files into `~/.codex/`. The copied files had no durable per-file ownership marker, so Codex Rig does not delete them automatically. Before manual cleanup, back up home, distinguish AI-Rig copies from user-owned modifications, and remove only files whose ownership you can establish. An old home copy can otherwise expose duplicate unnamespaced skills or stale named-agent registrations beside plugin.
 
-</details>
-
 ## 🧪 Experimental agent shims
 
-<details>
-<summary><strong>Shim diagnostics and authenticated cleanup</strong></summary>
+### Shim diagnostics and authenticated cleanup
 
 The manager diagnoses prior development installations and safely removes authenticated standalone TOML files. New installation is platform-blocked because current collaboration tooling does not expose verifiable custom-agent selector. Do not infer selection from matching task name, child path, or file name.
 
@@ -515,12 +450,9 @@ Prior lifecycle files use authenticated names such as `codex-rig-linting-expert.
 
 Interrupted recognized transactions use separate recovery digest. Approved recovery rolls back partial mutation or finalizes durable committed state. Repeat original action after recovery. Use `remove` to recover prior interrupted transactions; blocked `install` never enters recovery or mutation planning.
 
-</details>
-
 ## ⬆️ Uninstall
 
-<details>
-<summary><strong>Plugin removal and recovery procedure</strong></summary>
+### Plugin removal and recovery procedure
 
 Remove authenticated legacy shims while plugin manager still exists:
 
@@ -533,12 +465,9 @@ Removing plugin first deliberately leaves thin shim files behind. Those shims br
 
 Recovery: reinstall `codex-rig@borda-ai-rig`, start fresh session, run `doctor`, then run approved `remove`. Compatible historical state can authenticate guarded cleanup. Verification failure remains blocked; no force cleanup is provided.
 
-</details>
-
 ## 🧭 Lifecycle safety limits
 
-<details open>
-<summary><strong>Fail-closed mutation limits</strong></summary>
+### Fail-closed mutation limits
 
 - Foreign or marker-only `codex-rig-*.toml` files are never adopted, overwritten, or removed.
 - Modified managed shims, concurrent drift, unsafe links/nodes, ambiguous package selection, or changed runtime binaries block mutation.
@@ -553,12 +482,9 @@ Recovery: reinstall `codex-rig@borda-ai-rig`, start fresh session, run `doctor`,
 - A successful shim transaction proves file ownership and link integrity, not runtime profile selection.
 - Native Windows and network/distributed filesystems are unsupported for shim mutation. Windows workflows, package verification, sync, hooks, and read-only shim inventory remain supported.
 
-</details>
-
 ## 🎯 What changed from the idealized design
 
-<details>
-<summary><strong>Architecture evidence and remaining platform dependency</strong></summary>
+### Architecture evidence and remaining platform dependency
 
 The initial design assumed plugin could bundle named agents with model, sandbox, approval, and nesting controls. Implementation evidence changed that architecture:
 
@@ -571,12 +497,11 @@ The initial design assumed plugin could bundle named agents with model, sandbox,
 
 This design delivers maintainable part of original goal today and records remaining platform dependency honestly. If Codex later exposes custom-agent selection, named shims can be reconsidered behind fresh runtime probes without changing skill or role-card semantics.
 
-</details>
+<a id="-package-layout"></a>
 
 ## 🏗️ Package layout
 
-<details open>
-<summary><strong>Installed package topology</strong></summary>
+### Installed package topology
 
 ```text
 codex-rig/
@@ -595,14 +520,11 @@ codex-rig/
 
 The installed cache is immutable input. Workflows never edit their own plugin root or manually patch Codex plugin configuration.
 
-</details>
-
 ## 🧪 Development and verification
 
 Pure helper docstrings include deterministic doctests for calibration, telemetry normalization, and review routing. Pytest collects these examples alongside workflow tests; regenerate package manifest after docstring edits because shipped Python bytes are hashed.
 
-<details open>
-<summary><strong>Maintainer verification commands and acceptance gate</strong></summary>
+### Maintainer verification commands and acceptance gate
 
 From repository root:
 
@@ -644,8 +566,6 @@ python3 -m pytest -q plugins/codex-rig/tests/test_installed_package_gate.py
 > **Failure artifact:** After each process cleanup attempt, live probe atomically records either passing evidence or bounded failing diagnostic containing only allowlisted event names/statuses, run-local identifier aliases, booleans, safe failure codes, sorted schema-owned error categories, first specific category, whether any retry occurred, and final retry state. The diagnostic omits commands, paths, prompts, model output, raw identifiers, error payloads, environment values, and credentials; failing artifact explains protocol shape but never counts as acceptance.
 >
 > **Interpretation limit:** A passing skill control proves only that host completed turn carrying installed skill input, not semantic skill loading.
-
-</details>
 
 ## 📄 License
 

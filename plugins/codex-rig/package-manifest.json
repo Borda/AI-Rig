@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "b8ff540f5329e5fbeb697634358f706f3d1a4de63c53dfbfef8b839027bbd7ec"
+      "sha256": "972fd57b8bb5128db90ea762c38fa01d94f66810bd5e866fff69237995c2c13b"
     },
     {
       "mode": "0644",
@@ -288,7 +288,7 @@
     {
       "mode": "0644",
       "path": "scripts/_safe_package_io.py",
-      "sha256": "029e4f4a4679662f4bec528c4da78ab78c901d12c621612f3c8a306bee65a073"
+      "sha256": "74f71437cc3384965a069fd1b8e958c8e9c25ffbe8ce10e23cc936015f3fdbde"
     },
     {
       "mode": "0755",
@@ -1034,6 +1034,11 @@
       "mode": "0644",
       "path": "tests/test_review_inspection_policy.py",
       "sha256": "1585c3c0badbaa1c22c949144c5cc7b86bde18ef2c0226340aed61697e520288"
+    },
+    {
+      "mode": "0644",
+      "path": "tests/test_safe_package_io_windows_identity.py",
+      "sha256": "53eb2c5b5fba2433c920e870a515eab9dea631c0caaca5e9cf2cd1a15bd63493"
     },
     {
       "mode": "0644",

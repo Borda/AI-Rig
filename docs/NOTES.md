@@ -4,6 +4,8 @@ MkDocs source for the [Borda's AI-Rig](https://borda.github.io/.local/) document
 
 Product pages (`cc_foundry.md`, `cc_oss.md`, `codex-rig.md`, etc.) are small snippet wrappers that include `plugins/*/README.md`. Edit the source READMEs for product content and the wrappers only for page metadata.
 
+Use ordinary Markdown headings, lists, tables, and fenced code in included READMEs. Keep only the Contents list in a disclosure block, using `<details markdown="1">` and `<summary><strong>📋 Contents</strong></summary>` so MkDocs parses its links. Do not wrap substantive documentation in disclosure blocks: raw HTML can leave Markdown unparsed. Keep repository-specific global-instruction setup in `.codex/README.md` and link to it from the product page.
+
 ## Local build
 
 ```bash

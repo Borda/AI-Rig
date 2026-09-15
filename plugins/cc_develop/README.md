@@ -12,8 +12,7 @@ Optional Codemap context and index-gate guidance ship with develop, so loading t
 
 ______________________________________________________________________
 
-<details>
-
+<details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
 
 - [What is develop?](#-what-is-develop)
@@ -38,6 +37,8 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+<a id="-what-is-develop"></a>
+
 ## 🤔 What is develop?
 
 `develop` is a Claude Code plugin for validate-first Python development: scope work, pin a feature contract, reproduce a bug, preserve behavior during refactoring, investigate failures, and review local Python changes with explicit evidence and handoff artifacts.
@@ -47,6 +48,8 @@ Each workflow has gates that pause when the contract, reproduction, evidence, or
 > Current boundaries: code-changing and review workflows target Python projects with pytest-style tooling; `/develop:plan` can analyze a broader task, but downstream implementation still assumes pytest. Dependency migrations, data migrations, codebase onboarding, and Python-free changes remain outside this plugin's current scope; use the project's native workflow or another tool. Broader language support could be added later, but is not promised here.
 
 ______________________________________________________________________
+
+<a id="-why-develop"></a>
 
 ## 🎯 Why develop?
 
@@ -70,6 +73,8 @@ When Codemap is enabled, `fix` selects a route before retrieval: a fully localiz
 
 ______________________________________________________________________
 
+<a id="-install"></a>
+
 ## 📦 Install
 
 **Prerequisites**: Claude Code installed (`claude --version`) and Python 3.10+ with a project test runner for code-changing/review workflows. The plugin itself is installed from the `borda-ai-rig` marketplace; project dependencies remain your responsibility.
@@ -83,9 +88,7 @@ claude plugin install develop@borda-ai-rig
 
 Then run `/develop:setup` once to link this plugin's rules into `~/.claude/rules/`. Re-run it after every upgrade. A repository checkout may also run `make sync-claude`, but that is not required for a marketplace install.
 
-<details>
-
-<summary><strong>Optional integrations</strong></summary>
+### Optional integrations
 
 ```bash
 claude plugin install foundry@borda-ai-rig   # named specialist agents
@@ -93,13 +96,9 @@ claude plugin install oss@borda-ai-rig        # optional PR review and severity 
 claude plugin install research@borda-ai-rig
 ```
 
-</details>
-
 `foundry` gives `develop` access to named specialist agents such as `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, and `foundry:doc-scribe`. Without it, dispatches fall back to `general-purpose` with role descriptions. The `develop` plugin ships its own quality-stack and shared workflow files; `foundry` is not required for those files to load.
 
-<details>
-
-<summary><strong>Verify installation</strong></summary>
+### Verify installation
 
 ```bash
 claude plugin list | grep -F 'develop@borda-ai-rig'
@@ -107,9 +106,9 @@ claude plugin list | grep -F 'develop@borda-ai-rig'
 
 Expect enabled entry like `develop@borda-ai-rig` in output.
 
-</details>
-
 ______________________________________________________________________
+
+<a id="-quick-start"></a>
 
 ## ⚡ Quick start
 
@@ -134,6 +133,8 @@ Agent review   : ✓ agents ready (1 correction incorporated)
 ```
 
 ______________________________________________________________________
+
+<a id="-skills-reference"></a>
 
 ## 🔧 Skills reference
 
@@ -518,6 +519,8 @@ Only links this plugin provably owns are replaced or removed: the existing targe
 
 ______________________________________________________________________
 
+<a id="-workflow-overview"></a>
+
 ## 🗺️ Workflow overview
 
 Skills chain naturally. Typical session:
@@ -605,6 +608,8 @@ Available on: `feature`, `fix`, `refactor` (all work stays in the worktree); and
 
 ______________________________________________________________________
 
+<a id="-configuration"></a>
+
 ## ⚙️ Configuration
 
 ### Dependencies by capability
@@ -668,13 +673,9 @@ Completed runs cleaned after 30 days. Interrupted runs (no `result.jsonl`) kept 
 
 ______________________________________________________________________
 
-<details>
-
-<summary>
+<a id="-troubleshooting"></a>
 
 ## 🔍 Troubleshooting
-
-</summary>
 
 ### "foundry plugin not installed — named-agent fallback"
 
@@ -706,7 +707,7 @@ Same pattern in `/develop:fix` Step 2. Regression test passes on unfixed code �
 
 ______________________________________________________________________
 
-</details>
+<a id="-contributing--feedback"></a>
 
 ## 🙏 Contributing / feedback
 
@@ -760,9 +761,7 @@ plugins/cc_develop/
 
 <a id="bin-helper-inventory"></a>
 
-<details>
-
-<summary><strong>🧰 Bin helper inventory (22 shipped deterministic helpers)</strong></summary>
+## 🧰 Bin helper inventory (22 shipped deterministic helpers)
 
 These helpers are installed workflow support and maintainer surfaces, not additional slash-command skills. The skills own the development workflow; the helpers handle bounded flag parsing, Codemap context, test execution, worktree setup, path resolution, and state extraction.
 
@@ -793,8 +792,6 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                    |
 | `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                   |
 | `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim. |
-
-</details>
 
 #### Auto-allow audit log
 

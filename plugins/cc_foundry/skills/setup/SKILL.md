@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Post-install setup for foundry plugin. Run once after installing on a new machine, or after a plugin version upgrade to sync settings and symlinks. Merges statusLine, permissions.allow, enabledPlugins, and advisorModel into ~/.claude/settings.json; symlinks rules and TEAM_PROTOCOL.md into ~/.claude/; purges orphaned plugin cache versions.
+description: Post-install setup for foundry plugin. Run once after installing on a new machine, or after a plugin version upgrade to sync settings and symlinks. Merges statusLine, permissions.allow, enabledPlugins, advisorModel, and env defaults (CLAUDE_CODE_ENABLE_TODO_TOOLS) into ~/.claude/settings.json; symlinks rules and TEAM_PROTOCOL.md into ~/.claude/; purges orphaned plugin cache versions.
 argument-hint: '[--approve]'
 allowed-tools: Read, Write, Bash, AskUserQuestion
 effort: low
@@ -14,7 +14,7 @@ Set up foundry on new machine:
 | Action | What happens |
 | -- | -- |
 | Detect Python 3.10+ (`python` / `py -3` / `python3`); install `~/.local/bin/python` shim if needed | ✓ |
-| Merge `statusLine`, `permissions.allow`, `enabledPlugins`, `advisorModel` → `~/.claude/settings.json` | ✓ |
+| Merge `statusLine`, `permissions.allow`, `enabledPlugins`, `advisorModel`, `env` defaults → `~/.claude/settings.json` | ✓ |
 | `rules/<name>.md` → `~/.claude/rules/foundry-<name>.md` | symlink |
 | `TEAM_PROTOCOL.md` → `~/.claude/` | symlink |
 | Purge orphaned plugin cache versions (`.orphaned_at`, age-gated, confirm-gated) | ✓ |
@@ -229,7 +229,7 @@ else
 fi
 ```
 
-## Step 7: Merge enabledPlugins
+## Step 7: Merge enabledPlugins and env defaults
 
 ```bash
 jq -e '.enabledPlugins["bridge@borda-ai-rig"] == true' ~/.claude/settings.json >/dev/null 2>&1  # timeout: 5000
@@ -247,6 +247,20 @@ _jq_result=$(jq '.enabledPlugins["bridge@borda-ai-rig"] = true' \
 ```
 
 Writeback happens in-bash above (`mv`).
+
+Then merge `$PLUGIN_ROOT/.claude-plugin/env-defaults.json` into `.env`. Claude Code ships the task tools (`TaskCreate`/`TaskList`/`TaskUpdate`/`TaskGet`) **disabled** unless `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set, so without this key every skill mandating task tracking silently no-ops outside a project that sets the var itself:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
+# //= per key — a user who deliberately set "0" keeps it; only absent keys get the shipped default
+_jq_result=$(jq --slurpfile envd "$PLUGIN_ROOT/.claude-plugin/env-defaults.json" \
+    '.env = ((.env // {}) as $cur | reduce ($envd[0] | to_entries[]) as $e ($cur; .[$e.key] //= $e.value))' \
+    ~/.claude/settings.json)  # timeout: 5000
+[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/foundry_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging env defaults — settings.json unchanged\n"; exit 1; }
+```
+
+Writeback happens in-bash above (`mv`). Report: `  env: N default(s) added (M already set)`. Existing values are never overwritten — a key already present keeps the user's value, including a deliberate `"0"`.
 
 ## Step 8: Merge advisorModel (from project settings)
 
@@ -444,6 +458,7 @@ Print summary:
 - statusLine: set / skipped
 - permissions.allow: N entries added
 - enabledPlugins: set / skipped
+- env defaults: N added / all already set
 - advisorModel: set / skipped
 - Rules removed obsolete: N (files no longer in current plugin version)
 - User-level skill links removed: N (foundry skills invoke as `/foundry:<name>`)
@@ -458,7 +473,7 @@ Print summary:
 
 <notes>
 
-**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall, and neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing foundry, delete `~/.claude/rules/foundry-*.md` and `~/.claude/TEAM_PROTOCOL.md` by hand — they dangle once the plugin cache version is gone — and review the `statusLine`, `permissions`, `enabledPlugins`, and `advisorModel` keys setup merged into `~/.claude/settings.json`, which also survive.
+**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall, and neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing foundry, delete `~/.claude/rules/foundry-*.md` and `~/.claude/TEAM_PROTOCOL.md` by hand — they dangle once the plugin cache version is gone — and review the `statusLine`, `permissions`, `enabledPlugins`, `advisorModel`, and `env` keys setup merged into `~/.claude/settings.json`, which also survive.
 
 **Follow-up gate omitted** — setup is one-shot; no iterative follow-up action applies. Step 13 Final report is terminal output; no `AskUserQuestion` gate required. (Step 11 has its own confirm gate before deleting cache dirs — that is a safety prompt, not a follow-up gate.)
 
