@@ -313,6 +313,69 @@ def test_v2_source_validation_rejects_routing_oids_mismatching_pr_metadata(asses
         shared_validator._validate_code_remediate_pr_source(assessed_pr, routing, target, checkout)
 
 
+@pytest.mark.parametrize(
+    "method, command",
+    [
+        pytest.param("gh-pr-checkout", "gh pr checkout https://github.com/acme/widgets/pull/123", id="native-checkout"),
+        pytest.param("already-at-head", "not-run: already at expected PR head", id="verified-existing-head"),
+        pytest.param("git-detached-review-fallback", "git checkout --detach {head}", id="detached-fallback"),
+    ],
+)
+def test_v2_review_accepts_truthful_collector_checkout_receipts(assessed_pr: Path, method: str, command: str) -> None:
+    """Allow supported collector outcomes through the complete review handoff validator."""
+    routing_path = assessed_pr / "pr-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    command = command.format(head=routing["head_oid"])
+    routing.update(local_checkout_command=command, checkout_method=method, checkout_mode="review")
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    checkout_path = assessed_pr / "local-checkout.json"
+    checkout = json.loads(checkout_path.read_text(encoding="utf-8"))
+    checkout.update(command=command, checkout_method=method, checkout_mode="review")
+    checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
+
+
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        pytest.param("command", "gh pr checkout https://github.com/acme/other/pull/123", id="wrong-repository"),
+        pytest.param("checkout_method", "already-at-head", id="method-disagreement"),
+        pytest.param("checkout_mode", "remediate", id="mode-disagreement"),
+        pytest.param("command", "git checkout --force main", id="forced-command"),
+    ],
+)
+def test_v2_review_rejects_checkout_receipt_disagreement(assessed_pr: Path, field: str, value: str) -> None:
+    """Reject contradictory checkout evidence even when the recorded commit IDs match."""
+    routing_path = assessed_pr / "pr-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    command = f"gh pr checkout {routing['pr_url']}"
+    routing.update(local_checkout_command=command, checkout_method="gh-pr-checkout", checkout_mode="review")
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    checkout_path = assessed_pr / "local-checkout.json"
+    checkout = json.loads(checkout_path.read_text(encoding="utf-8"))
+    checkout.update(command=command, checkout_method="gh-pr-checkout", checkout_mode="review")
+    checkout[field] = value
+    checkout_path.write_text(json.dumps(checkout), encoding="utf-8")
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="^pr-routing-checkout-command-invalid$"):
+        validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
+
+
+def test_modern_review_receipt_requires_explicit_mode(assessed_pr: Path) -> None:
+    """Reject matching modern receipts that both omit the required review mode."""
+    for filename, command_field in (("pr-routing.json", "local_checkout_command"), ("local-checkout.json", "command")):
+        path = assessed_pr / filename
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload.update(checkout_method="gh-pr-checkout")
+        payload[command_field] = "gh pr checkout https://github.com/acme/widgets/pull/123"
+        payload.pop("checkout_mode", None)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="^pr-routing-checkout-command-invalid$"):
+        validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
+
+
 def test_v1_review_validation_preserves_legacy_checkout_command_contract(assessed_pr: Path) -> None:
     """Accept the historical checkout receipt but reject an arbitrary v1 command."""
     result_path = assessed_pr / "result.json"

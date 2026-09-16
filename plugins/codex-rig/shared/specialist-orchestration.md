@@ -28,6 +28,8 @@ Stay single-agent when:
 
 ## Bounded Dispatch Wave
 
+Read-only review passes may inspect overlapping source files and evidence concurrently. Disjoint ownership constrains edits and shared mutable outputs, not source reads. Dispatch all selected independent review passes before joining any, subject to runtime capacity and an explicit user serial request; keep their source snapshot stable throughout the wave. Give each pass a clear question or axis. The parent serializes checkout, edits, artifact writes, reconciliation, and canonical gates. Report actual observed overlap; a single selected pass needs no duplicate, and unavailable concurrency retains its reason and independence limits.
+
 Each parent work item gets one approved dispatch wave after routes/immutable packs. Parent overlaps only unowned work; joins all handoffs before acceptance. A second wave is forbidden: handle discoveries parent-serially or stop and re-plan with the user. Never add fan-out, overlap ownership, bypass approval, or start dependencies; unsafe/unavailable parallelism records equal-gate serial fallback.
 
 An explicitly requested [adversarial convergence loop](adversarial-loop.md) may pre-plan up to three serial independent review rounds, with complete join, parent-owned local fixes, and a freshly frozen context before the next reviewer. This is a bounded sequential-review exception, not another parallel wave or write delegation. Existing consumer admission, source/provenance checks, stop rules, and approvals still apply; new scope or authority still requires re-planning with the user.

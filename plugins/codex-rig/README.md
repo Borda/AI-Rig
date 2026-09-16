@@ -4,9 +4,11 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 
 Calibration measures instruction quality against synthetic cases. It is not evidence that any individual run is correct.
 
+Selected read-only review passes run concurrently by default and may inspect the same source files. The parent keeps the snapshot stable and coordinates checkout, writes, and final gates; reports distinguish observed parallelism from capacity-limited or explicitly requested serial execution. PR receipt validation accepts the collector's actual supported checkout route while retaining commit-identity and provenance checks.
+
 The package covers capabilities Codex can currently install and verify. It contains no MCP server and no native bundled agent registrations. Parallel work uses runtime blank agent with exact role card injected when that route is available; inline role pass is serial fallback. Persistent named-agent routing remains platform-blocked until Codex exposes verifiable custom-agent selector. The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in [`ARCHITECTURE.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/ARCHITECTURE.md).
 
-> Current release: `0.18.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current release: `0.18.2`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 <details markdown="1">
 <summary><strong>📋 Contents</strong></summary>

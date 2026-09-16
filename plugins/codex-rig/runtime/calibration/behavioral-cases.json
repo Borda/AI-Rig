@@ -1897,8 +1897,19 @@
         "serial-fallback-gates-weakened"
       ],
       "id": "delegation-lead-bounded-dispatch-wave",
-      "prompt": "Assess a parent that starts overlapping and dependent specialist work before routes and immutable context packs exist, adds extra agents without approval, accepts before every handoff joins, then starts a second equal-sized independent wave after the first join; when parallel dispatch is unavailable it uses a serial fallback that skips the verifier and gates.",
+      "prompt": "Assess a parent that starts overlapping edits and dependent specialist work before routes and immutable context packs exist, adds extra agents without approval, accepts before every handoff joins, then starts a second equal-sized independent wave after the first join; when parallel dispatch is unavailable it uses a serial fallback that skips the verifier and gates.",
       "target": "delegation-lead"
+    },
+    {
+      "expected_findings": [
+        "read-only-review-unnecessarily-serialized",
+        "shared-source-reads-treated-as-write-conflicts",
+        "review-snapshot-mutated-during-wave",
+        "parallelism-claimed-without-overlap"
+      ],
+      "id": "code-review-concurrent-shared-source-inspection",
+      "prompt": "Assess a review with two selected independent inspectors and available runtime capacity. The parent waits for the first answer before launching the second because both read the same files, claims shared reads need disjoint edit ownership, changes the checked-out source while a reviewer is inspecting it, and reports parallel execution without observed overlap.",
+      "target": "code-review"
     },
     {
       "expected_findings": [

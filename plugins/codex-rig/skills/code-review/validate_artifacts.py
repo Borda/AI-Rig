@@ -2169,8 +2169,23 @@ def _validate_result(
         if "force_policy" not in routing:
             raise SystemExit("pr-routing-force-policy-missing")
         if result.get("schema_version") == 2:
-            expected_checkout = f"git checkout --detach {routing.get('head_oid')}"
-            if routing.get("local_checkout_command") != expected_checkout:
+            # Older receipts omit the method; current collectors record the operation actually performed.
+            checkout_commands = {
+                None: f"git checkout --detach {routing.get('head_oid')}",
+                "gh-pr-checkout": f"gh pr checkout {routing.get('pr_url')}",
+                "git-detached-review-fallback": f"git checkout --detach {routing.get('head_oid')}",
+                "already-at-head": "not-run: already at expected PR head",
+            }
+            method = routing.get("checkout_method")
+            expected_checkout = checkout_commands.get(method) if isinstance(method, (str, type(None))) else None
+            if (
+                expected_checkout is None
+                or routing.get("local_checkout_command") != expected_checkout
+                or checkout.get("command") != expected_checkout
+                or checkout.get("checkout_method") != method
+                or routing.get("checkout_mode") != (None if method is None else "review")
+                or checkout.get("checkout_mode") != routing.get("checkout_mode")
+            ):
                 raise SystemExit("pr-routing-checkout-command-invalid")
         else:
             expected_checkout = f"gh pr checkout {routing.get('pr_number')}"

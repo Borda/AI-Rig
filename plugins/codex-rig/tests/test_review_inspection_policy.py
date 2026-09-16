@@ -10,6 +10,26 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.installed_plugin
+def test_review_dispatch_allows_shared_reads_and_preserves_snapshot() -> None:
+    """Keep shared source reads from serializing independent selected review passes."""
+    skill = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    assert "dispatch every independent pass in the frozen wave before waiting for any response" in skill
+    assert "overlapping reads do not require disjoint file ownership or extra approval" in skill
+    assert "keep the reviewed snapshot stable until all passes join" in skill
+    assert "never claim parallelism without observed overlap" in skill
+    shared = (PLUGIN_ROOT / "shared/specialist-orchestration.md").read_text(encoding="utf-8")
+    assert "Disjoint ownership constrains edits and shared mutable outputs, not source reads" in shared
+    payload = json.loads((PLUGIN_ROOT / "runtime/calibration/behavioral-cases.json").read_text(encoding="utf-8"))
+    case = next(case for case in payload["cases"] if case["id"] == "code-review-concurrent-shared-source-inspection")
+    assert set(case["expected_findings"]) == {
+        "read-only-review-unnecessarily-serialized",
+        "shared-source-reads-treated-as-write-conflicts",
+        "review-snapshot-mutated-during-wave",
+        "parallelism-claimed-without-overlap",
+    }
+
+
+@pytest.mark.installed_plugin
 def test_every_skill_preserves_its_closing_gate_after_reentry() -> None:
     """Keep user intervention from turning resumed skills into informal final summaries."""
     contract = (PLUGIN_ROOT / "shared/helper-cli-contract.md").read_text(encoding="utf-8")

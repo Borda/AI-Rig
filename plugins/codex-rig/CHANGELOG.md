@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.18.2
+
+- Validate truthful PR collector checkout receipts in review and remediation: native checkout, verified review fallback or existing head, and attached same-repository remediation fallback. Preserve legacy receipts and reject inconsistent command, method, mode, and source evidence.
+- Dispatch selected independent read-only reviewers concurrently, allowing shared source reads while the parent preserves the snapshot and coordinates writes and gates. Retain actual concurrency and unavailable-capacity limits.
+
 ## 0.18.1
 
 - Restore commit continuation for legacy PR remediation runs already on the original PR branch. Verify retained source identity, recorded revision, ancestry and live destination; preserve historical receipts and Git state, write separate recovery evidence, and resume the authorized commit mode without repeating checkout or mode selection.

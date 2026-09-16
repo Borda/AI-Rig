@@ -49,6 +49,13 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+# Preserve sibling-helper imports when callers load this executable by file path.
+SHARED_DIRECTORY = Path(__file__).resolve().parent
+if str(SHARED_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SHARED_DIRECTORY))
+
+from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
+
 COMMON_RESULT_FIELDS = {
     "status",
     "checks_run",
@@ -2132,8 +2139,54 @@ def _validate_code_remediate_pr_identity(
 def _validate_code_remediate_pr_source(
     pr_dir: Path, routing: dict[str, Any], target_branch: dict[str, Any], checkout: dict[str, Any]
 ) -> None:
-    """Bind remediation source evidence to immutable fetched target and PR-head OIDs."""
+    """Validate the checkout receipt and bind remediation source to fetched commit identities."""
     pr_payload = _load_json(pr_dir / "pr.json")
+    remote_selection = _load_json(pr_dir / "remote-selection.json")
+    # Preserve legacy receipts while validating the collector's current attached-branch routes.
+    method = routing.get("checkout_method")
+    expected_checkout = None
+    if method is None and routing.get("checkout_mode") is None:
+        expected_checkout = f"git checkout --detach {routing.get('head_oid')}"
+    elif method == "gh-pr-checkout":
+        expected_checkout = f"gh pr checkout {routing.get('pr_url')}"
+    elif method == "git-original-branch-fallback":
+        branch = pr_payload.get("headRefName")
+        remote = remote_selection.get("remote")
+        url = routing.get("pr_url")
+        base_repository = _github_remote_identity(url.rsplit("/pull/", 1)[0]) if isinstance(url, str) else None
+        failure = checkout.get("gh_checkout_failure")
+        allowed_commands = (
+            f"git checkout --no-guess {branch}",
+            f"git checkout --track -b {branch} {remote}/{branch}",
+        )
+        if (
+            routing.get("same_repo") is True
+            and pr_payload.get("isCrossRepository") is False
+            and base_repository is not None
+            and "/".join(base_repository).casefold() == _head_repository(pr_payload).casefold()
+            and isinstance(remote, str)
+            and remote
+            and isinstance(failure, dict)
+            and isinstance(failure.get("code"), str)
+            and failure["code"].strip()
+            and failure.get("command") == f"gh pr checkout {url}"
+            and isinstance(branch, str)
+            and branch
+            and not branch.startswith("-")
+            and checkout.get("local_branch") == branch
+            and routing.get("local_checkout_command") in allowed_commands
+        ):
+            expected_checkout = routing["local_checkout_command"]
+    if (
+        expected_checkout is None
+        or routing.get("local_checkout_command") != expected_checkout
+        or checkout.get("command") != expected_checkout
+        or checkout.get("checkout_method") != method
+        or checkout.get("checkout_mode") != routing.get("checkout_mode")
+        or (method is not None and routing.get("checkout_mode") != "remediate")
+        or (method is not None and not checkout.get("local_branch"))
+    ):
+        raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
     head_fetch = _load_json(pr_dir / "pr-head-fetch.json")
     preflight = _load_json(pr_dir / "worktree-preflight.json")
     head_oid = routing.get("head_oid")
@@ -2449,11 +2502,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 raise SystemExit("code-remediate-pr-routing-force-checkout-forbidden")
             if "force_policy" not in routing:
                 raise SystemExit("code-remediate-pr-routing-force-policy-missing")
-            if result.get("schema_version") == 2:
-                expected_checkout = f"git checkout --detach {routing.get('head_oid')}"
-                if routing.get("local_checkout_command") != expected_checkout:
-                    raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
-            else:
+            if result.get("schema_version") != 2:
                 expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
                 if routing.get("pr_metadata_transport") == "public-https-fallback":
                     expected_checkout = (
