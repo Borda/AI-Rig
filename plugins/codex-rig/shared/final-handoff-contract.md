@@ -68,6 +68,8 @@ Historical `change-analysis` artifacts retain their original skill identity and 
 | `research` | `Recommendation \| Evidence \| Decision \| Caveat / next check` |
 | `sync` | `Surface \| Outcome \| Verification \| Remaining limit` |
 
+New `release` communication-contract handoffs include a second table named `Readiness`, with `Check | Status | Evidence | Blocker / next action`. Its rows exactly match the `## Checks` table in `release-readiness.md`; each check has a distinct source record. The shared release artifact validator binds these rows. Historical one-table release handoffs retain their exact rendering.
+
 An assessed `code-review` may use `PR Snapshot` with `Field | Value` and `Review Findings and Merge Blocks` with `Finding / area | Required change | Evidence | Status`. PR scope requires snapshot; nonzero findings require findings table. `code-remediate` rows are value-bound to `metadata.final_resolution_table.items`: cells are exactly `input_item_id`, `severity`, `item_name`, ordered compact `report [<report-file>:<line>]`, `report [<report-json>#<finding-id>]`, or `online [<comment|thread|review-id>]` pointers, `resolution_status — [O<n>]`, and `[E<n>] — owner/status: owner_status`. Ordered table details bind each `O<n>` to `resolved_how` and each `E<n>` to `evidence`; row IDs, `kind:source_id` values, source evidence, and full source records in metadata and expanded ledger items must also match exactly.
 
 ## Result compatibility

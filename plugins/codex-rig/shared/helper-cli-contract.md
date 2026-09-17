@@ -4,6 +4,7 @@ Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_RO
 
 - `python PLUGIN_ROOT/shared/create_run.py --help`
 - `python PLUGIN_ROOT/shared/run_gates.py --help`
+- `python PLUGIN_ROOT/shared/release_evidence.py --help` — explicit `record-demo` executes an authorized local demo and retains script/output receipts; ordinary release validation never executes it
 - `python PLUGIN_ROOT/shared/collect_diff.py --help`
 - `python PLUGIN_ROOT/shared/github_read.py --help`
 - `python PLUGIN_ROOT/shared/collect_pr.py --help`
@@ -39,7 +40,7 @@ Helper JSON and stable stderr codes are machine evidence, not user-facing answer
 
 Result lifecycle:
 
-1. `run_gates.py` writes `gates.json` and per-gate evidence.
+1. `run_gates.py` writes `gates.json` and per-gate evidence. Optional `--expected-head <full-lowercase-sha>` guards each executable command with clean Git head/status observations before and after execution; mismatches, dirtiness and inspection errors fail the gate. New release-contract runs require this flag and matching `metadata.release_head`; unrelated unflagged callers retain their existing behavior. Keep output outside the tested source or Git-ignored to avoid self-induced dirtiness. This checks Git source state, not imported package identity; the owning workflow verifies the command environment separately.
 2. Write new `final-handoff.json` with `presentation_version=2`; `final_handoff.py render` validates it and writes digest-bound `final.md` plus `final-handoff.validation.json`. Preserve recorded presentation of historical handoffs.
 3. `write-result.py` writes schema-v2 `result.candidate.json`, reconciles status with gate evidence, and requires final-handoff binding in metadata.
 4. Run configured skill-specific validation.

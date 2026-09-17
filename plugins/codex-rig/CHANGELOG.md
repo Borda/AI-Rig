@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.19.0
+
+- Enforce raw JSON findings on every App Server review turn with a source-bound output schema and fail-closed response validation; preserve original bytes and historical fenced loop reports without automatic retries.
+
+- Reconcile corroborating independent findings without discarding their evidence; reject conflicting verdicts and incomplete ledger unions.
+
+- Require explicit-file review scopes to match every source record. Reconcile Git and PR bot identities in a separate evidence-bound inventory and one aggregate credit instead of silently dropping automation or treating it as human credit.
+
+- Require schema-2 App Server plans to bind complete source/diff bytes and per-reviewer capacity evidence with a recomputed conservative UTF-8 byte bound and instruction/output headroom. Reject unverified proxy counts, missing, insufficient or changed admission evidence before paid turns; preserve direct inspection of historical plans without allowing them to authorize new dispatch.
+
+- Bind release receipts to exact Git candidates, ancestor scope, surviving published tree entries, visible human credits, complete canonical changelog excerpts and final output destinations. Require summary/migration structure and retained exclusion evidence; reject placeholder secondary files and historical detail loss. Add explicit local demo recording with before/after script digests, output binding and failed/timeout evidence; validation stays read-only.
+
+- Admit complete App Server review contexts up to 2 MiB without relaxing metadata, role-card, or output limits. Preserve exact inline source validation and bounded JSON transport; support a plan-bound per-thread context-window request with explicit capacity checks and no global configuration changes.
+
+- Respect the separate CLI character ceiling by loading oversized complete contexts into the review thread's history before any paid turn, with validated delivery acknowledgements. Preserve direct input for smaller contexts and retain safe RPC rejection categories without raw error payloads.
+
+- Restore native inspection provenance on hosts emitting task-path spawn receipts instead of activity events. Bind call IDs, exact context, unique child lineage and creation timing; retain legacy validation and reject stale, ambiguous or mismatched evidence.
+
+- Restore complete release communication: structured drafts, full contributor accounting, executive summaries, migration guides, changelog excerpts, and preservation of canonical changelog history and material detail. Trace release-line ancestry, released patch equivalence and final tree state; reconcile incremental drafts without losing hand edits or retaining reverted claims.
+
+- Require a readiness table with check status, evidence and closure action in release reports and final handoffs. Validate selected deliverables and communication evidence before a passing result; retain readable historical reports and honest failed preparations.
+
+- Require both change and readiness tables in new release handoffs. Bind executable release gates to the exact clean release commit with before/after source receipts; reject wrong-checkout results and source drift while preserving opt-in compatibility for other gate-runner callers.
+
 ## 0.18.2
 
 - Validate truthful PR collector checkout receipts in review and remediation: native checkout, verified review fallback or existing head, and attached same-repository remediation fallback. Preserve legacy receipts and reject inconsistent command, method, mode, and source evidence.

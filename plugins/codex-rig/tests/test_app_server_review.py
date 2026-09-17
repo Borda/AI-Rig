@@ -173,6 +173,14 @@ def _thread_result(role_index: int, model: str) -> dict[str, object]:
     }
 
 
+def _review_answer(plan_path: Path) -> str:
+    """Build a raw no-findings review bound to the fixture's exact source and diff."""
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    return json.dumps(
+        {"source_sha256": plan["source_sha256"], "diff_sha256": plan["review_input_sha256"], "findings": []}
+    )
+
+
 def _launches_for_plan(
     plan_path: Path, *, echo_input: bool = False, fail_second: bool = False, first_final: str | None = None
 ) -> list[list[dict[str, object]]]:
@@ -185,21 +193,32 @@ def _launches_for_plan(
     second.append({"jsonrpc": "2.0", "method": "thread/started", "params": {}})
     for index, node in enumerate(plan["nodes"], start=3):
         second.append(_response(index, _thread_result(index - 3, node["model"])))
-    for index, node in enumerate(plan["nodes"], start=5):
+    request_id = 3 + len(plan["nodes"])
+    for node in plan["nodes"]:
+        context = (plan_path.parent / node["context_path"]).read_text(encoding="utf-8")
+        if len(context) > 1_048_576:
+            second.append(_response(request_id, {}))
+            request_id += 1
+    for index, node in enumerate(plan["nodes"]):
+        context_path = plan_path.parent / node["context_path"]
+        context = context_path.read_text(encoding="utf-8")
+        if len(context) > 1_048_576:
+            context = (
+                "Review the complete frozen context in the preceding user message. Follow its role and output contract."
+            )
         if echo_input:
-            context_path = plan_path.parent / node["context_path"]
             item = {
-                "id": f"input-{index - 5}",
+                "id": f"input-{index}",
                 "type": "userMessage",
-                "content": [{"type": "text", "text": context_path.read_text(encoding="utf-8")}],
+                "content": [{"type": "text", "text": context}],
             }
             second.append(
                 {
                     "jsonrpc": "2.0",
                     "method": "item/started",
                     "params": {
-                        "threadId": f"thread-{index - 5}",
-                        "turnId": f"turn-{index - 5}",
+                        "threadId": f"thread-{index}",
+                        "turnId": f"turn-{index}",
                         "item": item,
                     },
                 }
@@ -209,19 +228,19 @@ def _launches_for_plan(
                     "jsonrpc": "2.0",
                     "method": "item/completed",
                     "params": {
-                        "threadId": f"thread-{index - 5}",
-                        "turnId": f"turn-{index - 5}",
+                        "threadId": f"thread-{index}",
+                        "turnId": f"turn-{index}",
                         "item": {
-                            "id": f"input-{index - 5}",
+                            "id": f"input-{index}",
                             "type": "userMessage",
-                            "content": [{"type": "text", "text": context_path.read_text(encoding="utf-8")}],
+                            "content": [{"type": "text", "text": context}],
                         },
                     },
                 }
             )
-        second.append(_response(index, {"turn": {"id": f"turn-{index - 5}"}}))
+        second.append(_response(request_id, {"turn": {"id": f"turn-{index}"}}))
+        request_id += 1
     second.extend(input_completions)
-    first_role = plan["nodes"][0]["role_id"]
     second.extend(
         [
             {
@@ -233,7 +252,7 @@ def _launches_for_plan(
                     "item": {
                         "type": "agentMessage",
                         "phase": "final_answer",
-                        "text": first_final if first_final is not None else f"{first_role} final\n",
+                        "text": first_final if first_final is not None else _review_answer(plan_path),
                     },
                 },
             },
@@ -255,7 +274,7 @@ def _launches_for_plan(
                     "params": {
                         "threadId": "thread-1",
                         "turnId": "turn-1",
-                        "item": {"type": "agentMessage", "phase": "final_answer", "text": "second final\n"},
+                        "item": {"type": "agentMessage", "phase": "final_answer", "text": _review_answer(plan_path)},
                     },
                 },
                 {
@@ -305,6 +324,446 @@ def test_check_host_uses_public_preparation_without_turn_start(tmp_path: Path, m
         request["params"].get("allowProviderModelFallback") is False
         for request in request_payloads
         if request["method"] == "thread/start"
+    )
+    assert all(
+        request["params"]["config"] == {"model_reasoning_effort": "high"}
+        for request in request_payloads
+        if request["method"] == "thread/start"
+    )
+
+
+def test_context_frame_queue_preserves_the_prior_aggregate_resource_envelope() -> None:
+    """Scale both decoded-frame buffers down when enlarged contexts raise the per-frame ceiling."""
+    adapter = _adapter()
+
+    assert adapter.MAX_EVENTS == 512
+    assert adapter.MAX_BUFFERED_EVENTS < adapter.MAX_EVENTS
+    assert adapter.MAX_BUFFERED_EVENTS * adapter.MAX_EVENT_BYTES <= adapter.MAX_BUFFERED_EVENT_BYTES
+    assert adapter._JsonRpcStdio(_FakeProcess([]), 1.0)._messages.maxsize == adapter.MAX_BUFFERED_EVENTS
+
+
+def test_request_rejects_pending_frames_past_scaled_buffer_capacity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail closed before unmatched responses can retain the enlarged frame ceiling indefinitely."""
+    adapter = _adapter()
+    client = adapter._JsonRpcStdio(_FakeProcess([]), 1.0)
+    frames = iter(_response(2, {}) for _ in range(adapter.MAX_BUFFERED_EVENTS + 1))
+    monkeypatch.setattr(client, "_read", lambda: next(frames))
+
+    with pytest.raises(adapter.ReviewRouteError, match="app-server-pending-events-overflow"):
+        client.request("initialize", {})
+
+    assert len(client._pending) == adapter.MAX_BUFFERED_EVENTS
+
+
+def test_check_host_accepts_exact_two_mebibyte_unicode_control_context_before_launching_turns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept a full context above the metadata limit and preserve every sent character exactly."""
+    adapter = _adapter()
+    plan_path, _ = review_evidence_files(tmp_path)
+    expected = _replace_context_to_size(plan_path, 0, adapter.MAX_CONTEXT_BYTES)
+    check_launches = _launches_for_plan(plan_path)
+    check_launches[1] = check_launches[1][:6]
+    _fake_public_processes(monkeypatch, check_launches)
+
+    assert adapter.check_host(plan_path, Path("codex"), 10)["model_invoked"] is False
+
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, echo_input=True))
+
+    adapter.run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    assert len(expected.encode("utf-8")) == adapter.MAX_CONTEXT_BYTES
+    assert len(expected.encode("utf-8")) > adapter.MAX_FILE_BYTES
+    assert "😀" in expected and "\x00" in expected
+    requests = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    first_turn = next(request for request in requests if request["method"] == "turn/start")
+    preload = next(request for request in requests if request["method"] == "thread/inject_items")
+    assert preload["params"]["items"] == [
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": expected}]}
+    ]
+    assert first_turn["params"]["input"] == [{"type": "text", "text": adapter.HISTORY_REVIEW_PROMPT}]
+
+
+@pytest.mark.parametrize("overage", [0, 1])
+def test_context_delivery_respects_character_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, overage: int
+) -> None:
+    """Preserve direct input at the CLI ceiling and preload the complete context above it."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_bytes())
+    prefix = (plan_path.parent / plan["nodes"][0]["context_path"]).read_text(encoding="utf-8")
+    _replace_context_bytes(plan_path, 0, b"x" * (1_048_576 + overage - len(prefix)))
+    plan = json.loads(plan_path.read_bytes())
+    expected = (plan_path.parent / plan["nodes"][0]["context_path"]).read_text(encoding="utf-8")
+    assert len(expected) == 1_048_576 + overage
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, echo_input=True))
+
+    evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    requests = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    turns = [request for request in requests if request["method"] == "turn/start"]
+    preloads = [request for request in requests if request["method"] == "thread/inject_items"]
+    evidence = json.loads(evidence_path.read_bytes())
+    if overage:
+        assert len(preloads) == 1
+        assert preloads[0]["params"] == {
+            "threadId": "thread-0",
+            "items": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": expected}]}],
+        }
+        assert requests.index(preloads[0]) < requests.index(turns[0])
+        assert evidence["nodes"][0]["context_delivery"] == {
+            "method": "thread/inject_items",
+            "context_sha256": plan["nodes"][0]["context_sha256"],
+            "acknowledged": True,
+        }
+        assert len(turns[0]["params"]["input"][0]["text"]) < 1_048_576
+    else:
+        assert preloads == []
+        assert turns[0]["params"]["input"] == [{"type": "text", "text": expected}]
+        assert "context_delivery" not in evidence["nodes"][0]
+
+
+def test_failed_later_preload_prevents_every_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject unsupported history loading for any reviewer before paid turns can begin."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context_bytes(plan_path, 1, b"x" * 1_048_576)
+    launches = _launches_for_plan(plan_path)
+    launches[1] = launches[1][:5] + [{"id": 5, "error": {"code": -32601, "message": "Method not found"}}]
+    factory = _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-request-failed:thread/inject_items"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    requests = [json.loads(line)["method"] for line in factory.processes[1].stdin.getvalue().splitlines()]
+    assert "turn/start" not in requests
+    evidence = json.loads((tmp_path / "review-output/evidence.json").read_bytes())
+    assert evidence["turn_dispatch"] == {"attempted": 0, "acknowledged": 0}
+    assert evidence["failure_phase"] == "context-preload"
+    assert evidence["failure_diagnostic"]["reason"] == "method-not-supported"
+
+
+@pytest.mark.parametrize("tamper", ["missing", "digest", "method", "false", "integer", "extra"])
+def test_large_context_evidence_requires_exact_preload_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """Reject large-context evidence lacking a precise acknowledged same-context delivery record."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context_bytes(plan_path, 0, b"x" * 1_048_576)
+    _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, echo_input=True))
+    evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+    evidence = json.loads(evidence_path.read_bytes())
+    delivery = evidence["nodes"][0]["context_delivery"]
+    if tamper == "missing":
+        del evidence["nodes"][0]["context_delivery"]
+    elif tamper == "digest":
+        delivery["context_sha256"] = "0" * 64
+    elif tamper == "method":
+        delivery["method"] = "turn/start"
+    elif tamper == "false":
+        delivery["acknowledged"] = False
+    elif tamper == "integer":
+        delivery["acknowledged"] = 1
+    else:
+        delivery["unverified"] = True
+    _write_json(evidence_path, evidence)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="evidence-context-delivery-mismatch"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+
+
+def test_check_host_rejects_context_larger_than_two_mebibytes_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a one-byte context overage before spawning an App Server process."""
+    adapter = _adapter()
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context_to_size(plan_path, 0, adapter.MAX_CONTEXT_BYTES + 1)
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+
+    with pytest.raises(adapter.ReviewRouteError, match="plan-context-too-large"):
+        adapter.check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+def test_check_host_rejects_invalid_utf8_context_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject malformed context text distinctly before any App Server process starts."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context_bytes(plan_path, 0, b"\xff")
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-context-invalid-utf8"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize(
+    ("tamper", "match"),
+    [
+        pytest.param("missing-source", "plan-source-path-invalid", id="missing-source-binding"),
+        pytest.param("partial-source", "plan-context-source-or-diff-incomplete", id="partial-source-context"),
+        pytest.param("changed-source", "plan-source-sha256-mismatch", id="stale-source-snapshot"),
+        pytest.param("invalid-source-snapshot", "plan-source-snapshot-invalid", id="invalid-source-snapshot"),
+        pytest.param("stale-receipt", "plan-capacity-receipt-binding-invalid", id="stale-capacity-source-binding"),
+        pytest.param(
+            "missing-capacity-evidence", "plan-capacity-receipt-fields-invalid", id="missing-capacity-evidence"
+        ),
+        pytest.param("malformed-capacity-evidence", "plan-capacity-evidence-invalid", id="malformed-capacity-evidence"),
+        pytest.param("boolean-receipt", "plan-capacity-receipt-types-invalid", id="boolean-capacity-value"),
+        pytest.param("zero-instruction-reserve", "plan-capacity-receipt-values-invalid", id="zero-instruction-reserve"),
+        pytest.param(
+            "insufficient-receipt", "plan-capacity-admission-insufficient", id="insufficient-capacity-headroom"
+        ),
+        pytest.param("selected-window-percent", "plan-capacity-admission-insufficient", id="requested-window-percent"),
+        pytest.param(
+            "default-window-percent", "plan-capacity-admission-insufficient", id="observed-default-window-percent"
+        ),
+    ],
+)
+def test_check_host_rejects_unbound_source_or_capacity_receipt_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str, match: str
+) -> None:
+    """Reject incomplete source snapshots and unauditable capacity claims before host startup."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    node = plan["nodes"][0]
+    if tamper == "missing-source":
+        del plan["source_path"]
+    elif tamper == "partial-source":
+        context_path = plan_path.parent / node["context_path"]
+        source = (plan_path.parent / plan["source_path"]).read_bytes()
+        context = context_path.read_bytes().replace(source, b"", 1)
+        context_path.write_bytes(context)
+        node["context_sha256"] = _sha256(context)
+        node["capacity_receipt"]["context_sha256"] = node["context_sha256"]
+    elif tamper == "changed-source":
+        (plan_path.parent / plan["source_path"]).write_bytes(b'{"files":[]}')
+    elif tamper == "invalid-source-snapshot":
+        source_path = plan_path.parent / plan["source_path"]
+        source = json.loads(source_path.read_text(encoding="utf-8"))
+        source["files"][0]["content"] = "tampered source"
+        _write_json(source_path, source)
+        plan["source_sha256"] = _sha256(source_path.read_bytes())
+        node["capacity_receipt"]["source_sha256"] = plan["source_sha256"]
+    elif tamper == "stale-receipt":
+        node["capacity_receipt"]["source_sha256"] = "0" * 64
+    elif tamper == "missing-capacity-evidence":
+        del node["capacity_receipt"]["capacity_evidence_path"]
+    elif tamper == "malformed-capacity-evidence":
+        capacity_path = plan_path.parent / node["capacity_receipt"]["capacity_evidence_path"]
+        capacity_path.write_bytes(b"{}")
+        node["capacity_receipt"]["capacity_evidence_sha256"] = _sha256(b"{}")
+    elif tamper == "boolean-receipt":
+        node["capacity_receipt"]["input_tokens"] = True
+    elif tamper == "zero-instruction-reserve":
+        node["capacity_receipt"]["instruction_reserve_tokens"] = 0
+    elif tamper in {"selected-window-percent", "default-window-percent"}:
+        _replace_context_to_size(plan_path, 0, 375_000 if tamper == "selected-window-percent" else 200_000)
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        node = plan["nodes"][0]
+        capacity = {
+            "schema_version": 1,
+            "model": node["model"],
+            "observed_supported_capacity_tokens": 872_000,
+            "observed_default_context_window": 272_000,
+        }
+        capacity_path = plan_path.parent / node["capacity_receipt"]["capacity_evidence_path"]
+        _write_json(capacity_path, capacity)
+        node["capacity_receipt"].update(
+            input_tokens=375_000 if tamper == "selected-window-percent" else 200_000,
+            instruction_reserve_tokens=100_000 if tamper == "selected-window-percent" else 60_000,
+            output_reserve_tokens=1_000 if tamper == "selected-window-percent" else 20_000,
+            supported_capacity_tokens=872_000,
+            default_context_window=272_000,
+            effective_window_percent=95,
+            capacity_evidence_sha256=_sha256(capacity_path.read_bytes()),
+        )
+        if tamper == "selected-window-percent":
+            node["model_context_window"] = 500_000
+    else:
+        node["capacity_receipt"].update(
+            supported_capacity_tokens=299,
+            default_context_window=299,
+            effective_window_percent=100,
+        )
+        capacity_path = plan_path.parent / node["capacity_receipt"]["capacity_evidence_path"]
+        _write_json(
+            capacity_path,
+            {
+                "schema_version": 1,
+                "model": node["model"],
+                "observed_supported_capacity_tokens": 299,
+                "observed_default_context_window": 299,
+            },
+        )
+        node["capacity_receipt"]["capacity_evidence_sha256"] = _sha256(capacity_path.read_bytes())
+    _write_json(plan_path, plan)
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match=match):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize("tamper", ["understated", "overstated", "unknown-method", "unicode-character-count"])
+def test_check_host_recomputes_capacity_input_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """Reject forged measurements even when exact context/source digests are correct."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context(plan_path, 0, "café 😀")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    node = plan["nodes"][0]
+    context = (plan_path.parent / node["context_path"]).read_bytes()
+    node["capacity_receipt"].update(tokenizer="utf8-byte-upper-bound", input_tokens=len(context))
+    if tamper == "unknown-method":
+        node["capacity_receipt"]["tokenizer"] = "operator-proxy"
+    elif tamper == "unicode-character-count":
+        node["capacity_receipt"]["input_tokens"] = len(context.decode("utf-8"))
+    else:
+        node["capacity_receipt"]["input_tokens"] += -1 if tamper == "understated" else 1
+    _write_json(plan_path, plan)
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-capacity-input-measurement-invalid"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize("tamper", ["empty", "missing-scope", "extra-record", "substituted-record", "directory-scope"])
+def test_source_inventory_must_match_explicit_file_scopes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """Reject incomplete inventories before host launch and when accepting retained review evidence."""
+    plan_path, evidence_path = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_bytes())
+    source_path = plan_path.parent / plan["source_path"]
+    source = json.loads(source_path.read_bytes())
+    if tamper == "empty":
+        source["files"] = []
+    elif tamper == "missing-scope":
+        source["scope_paths"] = ["missing.py", "widget.py"]
+    elif tamper == "extra-record":
+        source["files"].insert(0, dict(source["files"][0], path="extra.py"))
+    elif tamper == "substituted-record":
+        source["files"][0]["path"] = "other.py"
+    else:
+        source["scope_paths"] = ["."]
+    _write_json(source_path, source)
+    plan["source_sha256"] = _sha256(source_path.read_bytes())
+    for node in plan["nodes"]:
+        node["capacity_receipt"]["source_sha256"] = plan["source_sha256"]
+    _write_json(plan_path, plan)
+    for index in range(len(plan["nodes"])):
+        _replace_context(plan_path, index, "")
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-source-scope-coverage-invalid"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-source-scope-coverage-invalid"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize("suffix", ["ASCII", "café 😀"])
+@pytest.mark.parametrize("headroom", [0, -1])
+def test_capacity_byte_bound_obeys_exact_selected_window(tmp_path: Path, suffix: str, headroom: int) -> None:
+    """Admit the recomputed byte bound plus reserves exactly, never one token beyond it."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    _replace_context(plan_path, 0, suffix)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    node = plan["nodes"][0]
+    receipt = node["capacity_receipt"]
+    measured = len((plan_path.parent / node["context_path"]).read_bytes())
+    receipt.update(tokenizer="utf8-byte-upper-bound", input_tokens=measured)
+    node["model_context_window"] = (
+        measured + receipt["instruction_reserve_tokens"] + receipt["output_reserve_tokens"] + headroom
+    )
+    _write_json(plan_path, plan)
+
+    if headroom < 0:
+        with pytest.raises(_adapter().ReviewRouteError, match="plan-capacity-admission-insufficient"):
+            _adapter()._validated_plan(plan_path, CANONICAL_ROLES)
+    else:
+        _adapter()._validated_plan(plan_path, CANONICAL_ROLES)
+
+
+def test_direct_evidence_validation_keeps_legacy_plan_readable_but_dispatch_rejects_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preserve historical evidence inspection while preventing legacy plans from launching new work."""
+    plan_path, evidence_path = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["schema_version"] = 1
+    for key in ("source_path", "source_sha256", "diff_path", "diff_sha256"):
+        del plan[key]
+    for node in plan["nodes"]:
+        del node["capacity_receipt"]
+    _write_json(plan_path, plan)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["plan_sha256"] = _sha256(plan_path.read_bytes())
+    _write_json(evidence_path, evidence)
+
+    assert _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)["consumer_id"] == "code-review"
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-legacy-dispatch-forbidden"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, "500000", 1.5])
+def test_check_host_rejects_invalid_optional_model_context_window_before_process_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: object
+) -> None:
+    """Allow only positive integer context-window requests in a frozen reviewer node."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["nodes"][0]["model_context_window"] = value
+    _write_json(plan_path, plan)
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-model-context-window-invalid"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+def test_optional_model_context_window_is_forwarded_only_in_thread_start_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forward an optional request without changing the observed model metadata contract."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["nodes"][0]["model_context_window"] = 500_000
+    _write_json(plan_path, plan)
+    check_launches = _launches_for_plan(plan_path)
+    check_launches[1] = check_launches[1][:5]
+    check_factory = _fake_public_processes(monkeypatch, check_launches)
+
+    summary = _adapter().check_host(plan_path, Path("codex"), 10)
+
+    check_requests = [json.loads(line) for line in check_factory.processes[1].stdin.getvalue().splitlines()]
+    check_thread = next(request for request in check_requests if request["method"] == "thread/start")
+    assert check_thread["params"]["config"] == {"model_reasoning_effort": "high", "model_context_window": 500_000}
+    assert summary["nodes"][0]["observed_controls"]["model"] == plan["nodes"][0]["model"]
+
+    run_factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+    _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    run_requests = [json.loads(line) for line in run_factory.processes[1].stdin.getvalue().splitlines()]
+    run_thread = next(request for request in run_requests if request["method"] == "thread/start")
+    assert run_thread["params"]["config"] == {"model_reasoning_effort": "high", "model_context_window": 500_000}
+    assert (
+        "model_context_window"
+        not in next(request for request in run_requests if request["method"] == "turn/start")["params"]
     )
 
 
@@ -401,11 +860,124 @@ def test_run_review_dispatches_all_turns_and_persists_completed_sibling(
     evidence_path = _adapter().run_review(plan_path, output, Path("codex"), 10)
 
     assert evidence_path == output / "evidence.json"
-    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
-    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == "second final\n"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == _review_answer(plan_path)
+    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == _review_answer(plan_path)
     requests = [json.loads(line)["method"] for line in factory.processes[1].stdin.getvalue().splitlines()]
     assert requests.index("turn/start") > requests.index("thread/start")
     assert requests.count("turn/start") == 2
+
+
+def test_review_turns_enforce_output_schema(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Require generation-time structure for every reviewer, not just prompt instructions."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    plan = json.loads(plan_path.read_text())
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+    _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+    turns = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    for turn in (item for item in turns if item["method"] == "turn/start"):
+        schema = turn["params"]["outputSchema"]
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == {"source_sha256", "diff_sha256", "findings"}
+        assert schema["properties"]["source_sha256"]["enum"] == [plan["source_sha256"]]
+        assert schema["properties"]["diff_sha256"]["enum"] == [plan["review_input_sha256"]]
+        finding = schema["properties"]["findings"]["items"]
+        assert finding["additionalProperties"] is False
+        assert set(finding["required"]) == {"signature", "tier", "structural", "disposition", "evidence"}
+        assert finding["properties"]["structural"] == {"type": "boolean"}
+        assert finding["properties"]["evidence"]["items"] == {"type": "string"}
+
+
+def test_review_rejects_malformed_json_without_retry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain malformed output but never accept or repair it behind the reviewer's receipt."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    malformed = '{"findings": ['
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, first_final=malformed))
+    output = tmp_path / "review-output"
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-review-output-invalid-json"):
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+    assert (output / "challenger.md").read_text() == malformed
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert evidence["status"] == "failed"
+    assert len(factory.processes) == 2
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "wrong-source",
+        "wrong-diff",
+        "extra-root",
+        "missing-findings",
+        "null-findings",
+        "extra-finding",
+        "missing-tier",
+        "invalid-tier",
+        "invalid-disposition",
+        "integer-boolean",
+        "blank-signature",
+        "empty-evidence",
+        "blank-evidence",
+        "nonstring-evidence",
+        "duplicate-signature",
+    ],
+)
+def test_review_validates_source_bound_finding_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    """Check actual returned records rather than assuming the host enforced the requested schema."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    response = json.loads(_review_answer(plan_path))
+    finding = {
+        "signature": "missing-check",
+        "tier": "high",
+        "structural": False,
+        "disposition": "open",
+        "evidence": ["widget.py:1 lacks input validation."],
+    }
+    response["findings"] = [finding]
+    if mutation == "wrong-source":
+        response["source_sha256"] = "0" * 64
+    elif mutation == "wrong-diff":
+        response["diff_sha256"] = "0" * 64
+    elif mutation == "extra-root":
+        response["summary"] = "Unaccounted finding"
+    elif mutation == "missing-findings":
+        del response["findings"]
+    elif mutation == "null-findings":
+        response["findings"] = None
+    elif mutation == "extra-finding":
+        finding["extra"] = "untracked"
+    elif mutation == "missing-tier":
+        del finding["tier"]
+    elif mutation == "invalid-tier":
+        finding["tier"] = "unknown"
+    elif mutation == "invalid-disposition":
+        finding["disposition"] = "closed"
+    elif mutation == "integer-boolean":
+        finding["structural"] = 1
+    elif mutation == "blank-signature":
+        finding["signature"] = " "
+    elif mutation == "empty-evidence":
+        finding["evidence"] = []
+    elif mutation == "blank-evidence":
+        finding["evidence"] = [" "]
+    elif mutation == "nonstring-evidence":
+        finding["evidence"] = [False]
+    elif mutation == "duplicate-signature":
+        response["findings"].append(dict(finding))
+    raw = json.dumps(response)
+    _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, first_final=raw))
+    output = tmp_path / "review-output"
+    if mutation == "none":
+        _adapter().run_review(plan_path, output, Path("codex"), 10)
+    else:
+        with pytest.raises(
+            _adapter().ReviewRouteError, match="app-server-review-output-(schema-mismatch|finding-invalid)"
+        ):
+            _adapter().run_review(plan_path, output, Path("codex"), 10)
+    assert (output / "challenger.md").read_text() == raw
 
 
 @pytest.mark.parametrize("identity", ["thread", "turn"])
@@ -435,8 +1007,8 @@ def test_run_review_records_failed_final_identity_validation(
     assert evidence["failure_code"] == "evidence-thread-or-turn-id-duplicate"
     assert evidence["failure_phase"] == "evidence-validation"
     assert evidence["cleanup"] == "completed"
-    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
-    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == "second final\n"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == _review_answer(plan_path)
+    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == _review_answer(plan_path)
 
 
 def test_run_review_records_output_validation_failure_after_cleanup(
@@ -469,7 +1041,7 @@ def test_run_review_records_output_validation_failure_after_cleanup(
     assert evidence["failure_phase"] == "evidence-validation"
     assert evidence["cleanup"] == "completed"
     assert len(cleanup_calls) == 2
-    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == "second final\n"
+    assert (output / "cicd-steward.md").read_text(encoding="utf-8") == _review_answer(plan_path)
 
 
 def test_run_review_rejects_output_outside_plan_parent_before_host_start(
@@ -715,7 +1287,7 @@ def test_run_review_rejects_events_for_completed_turn(
     evidence = json.loads((output / "evidence.json").read_text(encoding="utf-8"))
     assert evidence["status"] == "failed"
     assert evidence["failure_code"] == "app-server-event-after-turn-completed"
-    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == _review_answer(plan_path)
     assert not (output / "qa-specialist.md").exists()
 
 
@@ -798,6 +1370,40 @@ def test_run_review_failure_evidence_uses_static_reason_code(tmp_path: Path, mon
     assert evidence["failure_code"] == "app-server-request-failed"
 
 
+@pytest.mark.parametrize(
+    ("code", "message", "reason"),
+    [
+        pytest.param(
+            -32602, "Input exceeds the maximum length of 1048576 characters", "input-character-limit", id="input-limit"
+        ),
+        pytest.param(-32602, "private path /secret/account", "invalid-parameters", id="private-diagnostic"),
+        pytest.param(-32601, "Method not found", "method-not-supported", id="unsupported-method"),
+        pytest.param(True, "Input exceeds the maximum length of 1048576 characters", "unclassified", id="boolean-code"),
+        pytest.param(12345, "sk-" + "abcdefghijklmnopqrstuvwxyz012345", "unclassified", id="unknown-secret-error"),
+    ],
+)
+def test_rpc_failure_retains_only_allowlisted_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: object, message: str, reason: str
+) -> None:
+    """Keep actionable RPC categories without copying provider messages, data or arbitrary codes."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    launches[1] = launches[1][:5] + [{"id": 5, "error": {"code": code, "message": message, "data": "private-data"}}]
+    _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-request-failed:turn/start"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    evidence_text = (tmp_path / "review-output/evidence.json").read_text(encoding="utf-8")
+    diagnostic = json.loads(evidence_text)["failure_diagnostic"]
+    assert diagnostic["stage"] == "rpc-response"
+    assert diagnostic["reason"] == reason
+    assert diagnostic["method_category"] == "turn/start"
+    assert diagnostic["rpc_code"] == (code if type(code) is int and code in {-32602, -32601} else None)
+    assert "private-data" not in evidence_text and message not in evidence_text
+    assert set(diagnostic) == {"stage", "reason", "method_category", "rpc_code", "recovery"}
+
+
 def test_run_review_rejects_mismatched_user_message_completion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Reject a completion whose input differs from its accepted user-message start."""
     plan_path, _ = review_evidence_files(tmp_path)
@@ -871,7 +1477,14 @@ def test_run_review_rejects_oversized_user_message_frame(tmp_path: Path, monkeyp
 def test_run_review_accepts_maximum_final_output_frame(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the documented 128-KiB final output limit reachable through its JSON frame envelope."""
     plan_path, _ = review_evidence_files(tmp_path)
-    final = "\x00" * _adapter().MAX_OUTPUT_BYTES
+    response = json.loads(_review_answer(plan_path))
+    response["findings"] = [
+        {"signature": "boundary", "tier": "low", "structural": False, "disposition": "open", "evidence": [""]}
+    ]
+    empty = json.dumps(response)
+    response["findings"][0]["evidence"][0] = "x" * (_adapter().MAX_OUTPUT_BYTES - len(empty.encode("utf-8")))
+    final = json.dumps(response)
+    assert len(final.encode("utf-8")) == _adapter().MAX_OUTPUT_BYTES
     _fake_public_processes(monkeypatch, _launches_for_plan(plan_path, first_final=final))
 
     _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
@@ -941,7 +1554,7 @@ def test_run_review_preserves_terminal_output_when_sibling_requests_approval(
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-approval-requested"):
         _adapter().run_review(plan_path, output, Path("codex"), 10)
 
-    assert (output / "challenger.md").read_text(encoding="utf-8") == "challenger final\n"
+    assert (output / "challenger.md").read_text(encoding="utf-8") == _review_answer(plan_path)
     assert json.loads((output / "evidence.json").read_text(encoding="utf-8"))["status"] == "failed"
 
 
@@ -1115,6 +1728,50 @@ def test_run_review_rechecks_frozen_role_bytes_before_turn_start(
     assert "turn/start" not in requests
 
 
+@pytest.mark.parametrize(
+    ("material", "reason"),
+    [
+        pytest.param("source", "source-or-diff", id="source-snapshot"),
+        pytest.param("capacity", "capacity-evidence", id="sibling-capacity-evidence"),
+    ],
+)
+def test_run_review_rechecks_admission_before_turn_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, material: str, reason: str
+) -> None:
+    """Reject actual evidence-file drift at the host boundary before any paid reviewer turn."""
+    adapter = _adapter()
+    plan_path, _ = review_evidence_files(tmp_path)
+    factory = _fake_public_processes(monkeypatch, _launches_for_plan(plan_path))
+    plan = json.loads(plan_path.read_bytes())
+    relative = (
+        plan["source_path"] if material == "source" else plan["nodes"][-1]["capacity_receipt"]["capacity_evidence_path"]
+    )
+    evidence_path = tmp_path / relative
+
+    class MutatingInput(io.StringIO):
+        """Simulate concurrent file mutation when the external host receives thread setup."""
+
+        def write(self, text: str) -> int:
+            """Retain RPC writes while changing the real evidence file, not the validator internals."""
+            if json.loads(text).get("method") == "thread/start":
+                evidence_path.write_bytes(b"changed evidence\n")
+            return super().write(text)
+
+    def launch(*args: object, **kwargs: object) -> _FakeProcess:
+        """Return the existing host fake with mutation at its stdin boundary."""
+        process = factory(*args, **kwargs)
+        process.stdin = MutatingInput()
+        return process
+
+    monkeypatch.setattr(adapter.subprocess, "Popen", launch)
+
+    with pytest.raises(adapter.ReviewRouteError, match=f"{reason}-mutated-before-turn"):
+        adapter.run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    requests = [json.loads(line)["method"] for line in factory.processes[1].stdin.getvalue().splitlines()]
+    assert "turn/start" not in requests
+
+
 def test_terminate_kills_a_posix_group_after_parent_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     """Escalate from TERM to KILL using group existence, not the already-exited parent status."""
     adapter = _adapter()
@@ -1177,14 +1834,38 @@ def _write_json(path: Path, value: dict[str, object]) -> None:
 
 def _replace_context(plan_path: Path, role_index: int, suffix: str) -> None:
     """Replace one frozen fixture context while preserving its canonical role-card prefix."""
+    _replace_context_bytes(plan_path, role_index, suffix.encode("utf-8"))
+
+
+def _replace_context_bytes(plan_path: Path, role_index: int, suffix: bytes) -> None:
+    """Replace one frozen fixture context with exact bytes after its canonical role-card prefix."""
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     node = plan["nodes"][role_index]
     role_card = (CANONICAL_ROLES / node["role_id"] / "ROLE.md").read_bytes()
-    context = role_card + b"\n" + suffix.encode("utf-8")
+    source = (plan_path.parent / plan["source_path"]).read_bytes()
+    diff = (plan_path.parent / plan["diff_path"]).read_bytes()
+    context = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff + suffix
     context_path = plan_path.parent / node["context_path"]
     context_path.write_bytes(context)
     node["context_sha256"] = _sha256(context)
+    node["capacity_receipt"]["context_sha256"] = node["context_sha256"]
+    node["capacity_receipt"]["input_tokens"] = len(context)
     _write_json(plan_path, plan)
+
+
+def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str:
+    """Replace one frozen context with exact valid UTF-8 Unicode and control-character bytes."""
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    role_card = (CANONICAL_ROLES / plan["nodes"][role_index]["role_id"] / "ROLE.md").read_bytes()
+    source = (plan_path.parent / plan["source_path"]).read_bytes()
+    diff = (plan_path.parent / plan["diff_path"]).read_bytes()
+    prefix = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff
+    remaining = size - len(prefix)
+    assert remaining >= 0
+    pattern = "😀\x00x".encode("utf-8")
+    suffix = pattern * (remaining // len(pattern)) + b"x" * (remaining % len(pattern))
+    _replace_context_bytes(plan_path, role_index, suffix)
+    return (prefix + suffix).decode("utf-8")
 
 
 def review_evidence_files(
@@ -1195,6 +1876,30 @@ def review_evidence_files(
     outputs = tmp_path / "outputs"
     contexts.mkdir()
     outputs.mkdir()
+    source = json.dumps(
+        {
+            "schema_version": 1,
+            "repository": "/workspace/repository",
+            "scope_paths": ["widget.py"],
+            "revision": "a" * 40,
+            "index_sha256": "b" * 64,
+            "files": [
+                {
+                    "path": "widget.py",
+                    "kind": "file",
+                    "sha256": _sha256(b"VALUE = 1\n"),
+                    "executable": False,
+                    "encoding": "utf-8",
+                    "content": "VALUE = 1\n",
+                }
+            ],
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    diff = b"diff --git a/widget.py b/widget.py\n"
+    (tmp_path / "source.json").write_bytes(source)
+    (tmp_path / "diff.patch").write_bytes(diff)
     nodes: list[dict[str, object]] = []
     evidence_nodes: list[dict[str, object]] = []
     for index, role_id in enumerate(roles):
@@ -1204,7 +1909,15 @@ def review_evidence_files(
         effort = next(
             line.split(": ", 1)[1] for line in role_text.splitlines() if line.startswith("model_reasoning_effort: ")
         )
-        context = role_card + b"\nReview the supplied bounded change only.\n"
+        capacity = {
+            "schema_version": 1,
+            "model": model,
+            "observed_supported_capacity_tokens": 3_000_000,
+            "observed_default_context_window": 3_000_000,
+        }
+        capacity_path = tmp_path / f"capacity-{role_id}.json"
+        _write_json(capacity_path, capacity)
+        context = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff
         context_path = contexts / f"{role_id}.txt"
         context_path.write_bytes(context)
         output = f"{role_id} final response\n".encode()
@@ -1218,6 +1931,21 @@ def review_evidence_files(
                 "context_path": context_path.relative_to(tmp_path).as_posix(),
                 "context_sha256": _sha256(context),
                 "role_card_sha256": _sha256(role_card),
+                "capacity_receipt": {
+                    "context_sha256": _sha256(context),
+                    "model": model,
+                    "tokenizer": "utf8-byte-upper-bound",
+                    "input_tokens": len(context),
+                    "instruction_reserve_tokens": 100,
+                    "output_reserve_tokens": 100,
+                    "supported_capacity_tokens": 3_000_000,
+                    "default_context_window": 3_000_000,
+                    "effective_window_percent": 100,
+                    "source_path": "source.json",
+                    "source_sha256": _sha256(source),
+                    "capacity_evidence_path": capacity_path.relative_to(tmp_path).as_posix(),
+                    "capacity_evidence_sha256": _sha256(capacity_path.read_bytes()),
+                },
             }
         )
         evidence_nodes.append(
@@ -1242,13 +1970,17 @@ def review_evidence_files(
             }
         )
     plan = {
-        "schema_version": 1,
+        "schema_version": 2,
         "consumer_id": "code-review",
         "review_run_id": "review-17",
         "parent_thread_id": "parent-17",
-        "review_input_sha256": "a" * 64,
+        "review_input_sha256": _sha256(diff),
         "task_sensitivity": "non-sensitive",
         "cwd": str(tmp_path),
+        "source_path": "source.json",
+        "source_sha256": _sha256(source),
+        "diff_path": "diff.patch",
+        "diff_sha256": _sha256(diff),
         "nodes": nodes,
     }
     plan_path = tmp_path / "plan.json"

@@ -1,31 +1,36 @@
 #!/usr/bin/env python
-"""extract_contributors.py — list unique non-bot contributors in a git range.
+"""Purpose: List unique commit contributors within a Git range.
 
-Runs ``git log`` over a commit range, collects commit authors plus
-``Co-authored-by`` trailer names, deduplicates by email, and drops bot
-accounts (``[bot]`` logins and ``noreply`` addresses). Emits one
-``Name <email>`` line per contributor to stdout, sorted.
-
-Extracted from the ``oss:release`` *Extract contributors* phase, where the
-same ``git log --format=… | grep -v '^$' | sort -u`` pipeline appeared in the
-delegation agent prompt and the inline fallback. This script owns only the
-deterministic list-building step; GitHub-handle and LinkedIn resolution stays
-in the skill prose (requires API reasoning, not a pure transform).
+Scope: This deterministic helper runs ``git log`` for commit authors and
+``Co-authored-by`` trailers, then deduplicates contributor lines by email. Its
+default output remains bot-free for existing callers; ``--include-bots``
+preserves bot identities for the release skill to aggregate separately. It
+does not resolve GitHub handles, real names, contribution summaries, or
+LinkedIn links.
 
 Usage:
     extract_contributors.py --range <git-range>
     extract_contributors.py --from <ref> --to <ref>
+    extract_contributors.py --range <git-range> --include-bots
 
-Args:
+Outputs: One sorted ``Name <email>`` line per deduplicated contributor is
+written to stdout. The normal exit code is zero, including an empty range.
+
+Failure: Exit 1 reports invalid arguments; exit 2 reports a failed Git log.
+Missing Git raises ``FileNotFoundError`` so a calling workflow cannot mistake
+an unavailable executable for an empty contributor list.
+
+Used by: ``skills/release/SKILL.md`` for inline notes mode and
+``skills/release/modes/changelog-audit-prompt.md`` for delegated release
+preparation. Tests in ``tests/test_extract_contributors.py`` cover the pure
+classification and subprocess boundary.
+
+Arguments:
     --range:  Full git range string, e.g. ``v1.2.0..HEAD`` or ``v1..v2``.
     --from:   Range lower bound (used with ``--to``); ``..`` joins them.
     --to:     Range upper bound (defaults to ``HEAD`` when ``--from`` given).
     --repo:   Optional repo root passed to ``git -C`` (default: cwd).
-
-Exit codes:
-    0 — listing emitted (possibly empty if range has no non-bot authors)
-    1 — bad args (no range given, both ``--range`` and ``--from/--to``, or unknown flag)
-    2 — git invocation failed
+    --include-bots: Preserve bot identities for caller-side credit grouping.
 """
 
 from __future__ import annotations
@@ -75,17 +80,18 @@ def is_bot(line: str) -> bool:
     return bool(_NOREPLY_RE.search(line))
 
 
-def dedupe_by_email(lines: list[str]) -> list[str]:
-    """Deduplicate contributor lines by email, dropping bots, sorted by name.
+def dedupe_by_email(lines: list[str], include_bots: bool = False) -> list[str]:
+    """Deduplicate contributor lines by email, optionally retaining bots.
 
     First occurrence of each email wins (preserves its display name). Lines
     without a parseable ``<email>`` are kept and keyed on the whole line.
 
     Args:
         lines: Raw ``Name <email>`` lines (blank lines and bots may be present).
+        include_bots: Preserve bot identities for release credit aggregation.
 
     Returns:
-        Sorted, de-duplicated, bot-free list of ``Name <email>`` lines.
+        Sorted, de-duplicated list of ``Name <email>`` lines.
 
     Examples:
         >>> dedupe_by_email([
@@ -99,7 +105,7 @@ def dedupe_by_email(lines: list[str]) -> list[str]:
     seen: dict[str, str] = {}
     for raw in lines:
         line = raw.strip()
-        if not line or is_bot(line):
+        if not line or (not include_bots and is_bot(line)):
             continue
         match = _LINE_RE.match(line)
         key = match.group("email").lower() if match else line
@@ -154,15 +160,20 @@ def main(argv: list[str] | None = None) -> int:
     if args in (["-h"], ["--help"]):
         argparse.ArgumentParser(
             prog="extract_contributors.py",
-            description="List unique non-bot contributors in a git range.",
+            description="List unique contributors in a git range.",
         ).parse_args(["-h"])
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
     range_arg = from_ref = to_ref = repo = ""
+    include_bots = False
     i = 0
     while i < len(args):
         flag = args[i]
+        if flag == "--include-bots":
+            include_bots = True
+            i += 1
+            continue
         value = args[i + 1] if i + 1 < len(args) else ""
         if flag == "--range":
             range_arg = value
@@ -200,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"extract_contributors: git log failed: {proc.stderr.strip()}", file=sys.stderr)
         return 2
 
-    contributors = dedupe_by_email(proc.stdout.splitlines())
+    contributors = dedupe_by_email(proc.stdout.splitlines(), include_bots=include_bots)
     if contributors:
         print("\n".join(contributors))
     return 0

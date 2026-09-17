@@ -71,6 +71,7 @@ def _rewrite_native_outputs(
     full: bool,
     before_block: str = "",
     after_block: str = "",
+    findings_by_role: dict[str, list[dict[str, object]]] | None = None,
 ) -> None:
     """Rebind schema-five contexts, rollout messages, and outputs to frozen loop material."""
     run = fixture["run"]
@@ -106,7 +107,7 @@ def _rewrite_native_outputs(
         report = {
             "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
             "diff_sha256": hashlib.sha256(diff_bytes).hexdigest(),
-            "findings": findings,
+            "findings": findings if findings_by_role is None else findings_by_role[role],
         }
         message = f"{header}\n{before_block}```adversarial-loop\n{json.dumps(report, sort_keys=True)}\n```{after_block}"
         output_path = run / attempt["output_path"]
@@ -200,7 +201,11 @@ def _bound_loop(tmp_path: Path) -> tuple[ModuleType, Path, dict[str, object]]:
 
 
 def _app_server_loop(
-    tmp_path: Path, *, diff_newline: str = "\n", context_diff_newline: str | None = None
+    tmp_path: Path,
+    *,
+    diff_newline: str = "\n",
+    context_diff_newline: str | None = None,
+    source_content: str = "VALUE = 1\n",
 ) -> tuple[ModuleType, Path, Path]:
     """Bind App Server evidence to explicit diff bytes, optionally altering only the supplied context."""
     validator = _validator()
@@ -211,21 +216,27 @@ def _app_server_loop(
     repository_root = tmp_path / "repository-root"
     repository_root.mkdir()
     repository = _repository(repository_root)
+    (repository / "widget.py").write_text(source_content, encoding="utf-8", newline="\n")
     source = validator.capture_source_snapshot(repository, ["widget.py"])
     source_bytes = validator._canonical_source_bytes(source)
     for name in ("current-source.json", "source-1.json"):
         (run / name).write_bytes(source_bytes)
-    diff_bytes = (review / "diff.patch").read_bytes().replace(b"\r\n", b"\n").replace(b"\n", diff_newline.encode())
-    (review / "diff.patch").write_bytes(diff_bytes)
-    (run / "round-1.diff").write_bytes(diff_bytes)
     manifest = json.loads((review / "specialist-manifest.json").read_text(encoding="utf-8"))
     execution = manifest["app_server_execution"]
     plan_path = Path(execution["plan_path"])
     evidence_path = Path(execution["evidence_path"])
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    source_path = plan_path.parent / plan["source_path"]
+    source_path.write_bytes(source_bytes)
+    diff_path = plan_path.parent / plan["diff_path"]
+    diff_bytes = diff_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", diff_newline.encode())
+    diff_path.write_bytes(diff_bytes)
+    (run / "round-1.diff").write_bytes(diff_bytes)
     for payload in (manifest, plan, evidence):
         payload["review_input_sha256"] = hashlib.sha256(diff_bytes).hexdigest()
+    plan["source_sha256"] = hashlib.sha256(source_bytes).hexdigest()
+    plan["diff_sha256"] = hashlib.sha256(diff_bytes).hexdigest()
     source_text = source_bytes.decode("utf-8")
     diff_text = diff_bytes.decode("utf-8")
     if context_diff_newline is not None:
@@ -236,6 +247,9 @@ def _app_server_loop(
         context = f"{card}\nFrozen source:\n{source_text}\nFrozen diff:\n{diff_text}\n"
         context_path.write_text(context, encoding="utf-8", newline="\n")
         node["context_sha256"] = hashlib.sha256(context_path.read_bytes()).hexdigest()
+        node["capacity_receipt"]["context_sha256"] = node["context_sha256"]
+        node["capacity_receipt"]["source_sha256"] = plan["source_sha256"]
+        node["capacity_receipt"]["input_tokens"] = len(context_path.read_bytes())
     _write_json(plan_path, plan)
     evidence["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
     for node in evidence["nodes"]:
@@ -295,9 +309,12 @@ def _app_server_loop(
     return validator, run, tmp_path / "unused-codex-home"
 
 
-def test_validates_native_review_against_frozen_source_diff_and_output(tmp_path: Path) -> None:
+@pytest.mark.parametrize("spawn_receipts", [False, True])
+def test_validates_native_review_against_frozen_source_diff_and_output(tmp_path: Path, spawn_receipts: bool) -> None:
     """Accept only a real Code Review schema-five route that binds all required evidence."""
     validator, run, fixture = _bound_loop(tmp_path)
+    if spawn_receipts:
+        _module(Path(__file__).with_name("test_review_inspection.py"))._use_spawn_receipts(fixture)
 
     validator.validate_loop_evidence(run, fixture["sessions"])
 
@@ -313,6 +330,101 @@ def test_validates_app_server_review_against_frozen_source_diff_and_output(
     validator.validate_loop_evidence(run, codex_home)
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize("tamper", ["none", "source", "missing-context", "partial-context", "output", "diff"])
+def test_large_context_dispatch_through_loop_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """Bind a real large-source dispatch to loop acceptance; reject drift and self-consistent partial coverage."""
+    validator, run, codex_home = _app_server_loop(
+        tmp_path, source_content="# Frozen module evidence: Unicode π and literal escape \\n.\n" * 20000
+    )
+    monkeypatch.setenv("CODEX_THREAD_ID", "thread")
+    loop_evidence = json.loads((run / "loop-evidence.json").read_bytes())
+    review = run / loop_evidence["rounds"][0]["review_run"]
+    manifest_path = review / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    plan_path = Path(manifest["app_server_execution"]["plan_path"])
+    plan = json.loads(plan_path.read_bytes())
+    assert (run / "source-1.json").stat().st_size > 256 * 1024
+    protocol = _module(Path(__file__).with_name("test_app_server_review.py"))
+    launches = protocol._launches_for_plan(plan_path, echo_input=True)
+    old_outputs = {item["role"]: Path(item["output_path"]).read_text(encoding="utf-8") for item in manifest["passes"]}
+    for frame in launches[1]:
+        item = frame.get("params", {}).get("item", {})
+        if item.get("type") == "agentMessage":
+            index = int(frame["params"]["threadId"].removeprefix("thread-"))
+            # New App Server turns return raw schema-constrained JSON; retained historical reports stay fenced.
+            item["text"] = (
+                old_outputs[plan["nodes"][index]["role_id"]]
+                .removeprefix("```adversarial-loop\n")
+                .removesuffix("\n```\n")
+            )
+    output_root = review / "dispatched"
+    # Replace only the external host boundary; restore it before real Git recapture.
+    with monkeypatch.context() as host:
+        factory = protocol._fake_public_processes(host, launches)
+        protocol._adapter().run_review(plan_path, output_root, Path("codex"), 10)
+    requests = [json.loads(line) for line in factory.processes[1].stdin.getvalue().splitlines()]
+    turns = [request for request in requests if request.get("method") == "turn/start"]
+    preloads = [request for request in requests if request.get("method") == "thread/inject_items"]
+    assert len(turns) == len(plan["nodes"]) == 2
+    assert all(turn["params"]["outputSchema"]["additionalProperties"] is False for turn in turns)
+    assert len(preloads) == len(turns)
+    assert max(requests.index(preload) for preload in preloads) < min(requests.index(turn) for turn in turns)
+    for preload, turn, node in zip(preloads, turns, plan["nodes"]):
+        context = (plan_path.parent / node["context_path"]).read_text(encoding="utf-8")
+        assert 1_048_576 < len(context) and len(context.encode("utf-8")) <= 2 * 1024 * 1024
+        assert preload["params"]["threadId"] == turn["params"]["threadId"]
+        assert preload["params"]["items"] == [
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": context}]}
+        ]
+        assert turn["params"]["input"] == [{"type": "text", "text": protocol._adapter().HISTORY_REVIEW_PROMPT}]
+    evidence_path = output_root / "evidence.json"
+    evidence = json.loads(evidence_path.read_bytes())
+    manifest["app_server_execution"]["evidence_path"] = str(evidence_path)
+    for item in manifest["passes"]:
+        item["output_path"] = str(output_root / f"{item['role']}.md")
+    (run / "review-1.md").write_bytes((output_root / "qa-specialist.md").read_bytes())
+    context_path = plan_path.parent / plan["nodes"][0]["context_path"]
+    if tamper == "source":
+        (tmp_path / "repository-root/repository/widget.py").write_bytes(b"CHANGED = True\n")
+    elif tamper == "missing-context":
+        context_path.unlink()
+    elif tamper == "partial-context":
+        # Rebind all provenance hashes: completeness must still reject omitted source.
+        source = (run / "source-1.json").read_bytes()
+        context_path.write_bytes(context_path.read_bytes().replace(source, source[: len(source) // 2]))
+        context_hash = hashlib.sha256(context_path.read_bytes()).hexdigest()
+        plan["nodes"][0]["context_sha256"] = context_hash
+        evidence["nodes"][0]["context_sha256"] = context_hash
+        if len(context_path.read_text(encoding="utf-8")) > 1_048_576:
+            evidence["nodes"][0]["context_delivery"]["context_sha256"] = context_hash
+        else:
+            evidence["nodes"][0].pop("context_delivery")
+        _write_json(plan_path, plan)
+        evidence["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+        _write_json(evidence_path, evidence)
+    elif tamper == "output":
+        (output_root / "challenger.md").write_bytes(b"Substituted reviewer output\n")
+    elif tamper == "diff":
+        (review / "diff.patch").write_bytes(b"Substituted diff\n")
+    manifest["app_server_execution"]["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    _write_json(manifest_path, manifest)
+    if tamper == "none":
+        validator.validate_loop_evidence(run, codex_home)
+    else:
+        expected = {
+            "source": "loop-evidence-current-source-mismatch",
+            "missing-context": "plan-context-path-outside-root",
+            "partial-context": "plan-context-source-or-diff-incomplete",
+            "output": "evidence-output-sha256-mismatch",
+            "diff": "manifest-review-input-hash-mismatch",
+        }
+        with pytest.raises(ValueError, match=expected[tamper]):
+            validator.validate_loop_evidence(run, codex_home)
+
+
 @pytest.mark.parametrize(
     ("diff_newline", "context_newline"),
     [pytest.param("\n", "\r\n", id="lf-diff-crlf-context"), pytest.param("\r\n", "\n", id="crlf-diff-lf-context")],
@@ -326,7 +438,10 @@ def test_rejects_app_server_context_with_altered_diff_newlines(
     )
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")
 
-    with pytest.raises(ValueError, match="^loop-evidence-review-context-incomplete$"):
+    with pytest.raises(
+        ValueError,
+        match="^loop-evidence-review-manifest-invalid:review-app-server-evidence-invalid:plan-context-source-or-diff-incomplete$",
+    ):
         validator.validate_loop_evidence(run, codex_home)
 
 
@@ -348,6 +463,66 @@ def test_rejects_authenticated_finding_omitted_from_loop_ledger(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="loop-evidence-report-findings-ledger-mismatch"):
         evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
+
+
+@pytest.mark.parametrize(
+    "variation",
+    ["matching", "missing-evidence", "tier", "structural", "disposition", "empty-evidence", "invalid-evidence"],
+)
+def test_corroborating_findings_preserve_evidence_and_reject_conflicts(tmp_path: Path, variation: str) -> None:
+    """Merge corroborating reviewer evidence once without hiding conflicting verdicts or dropping proof."""
+    first = {
+        "signature": "missing-guard",
+        "tier": "high",
+        "structural": False,
+        "disposition": "open",
+        "evidence": ["QA source counterexample."],
+    }
+    second = {**first, "evidence": ["QA source counterexample.", "Challenger consumer counterexample."]}
+    if variation in {"tier", "structural", "disposition"}:
+        second[variation] = {"tier": "medium", "structural": True, "disposition": "verified-fixed"}[variation]
+    elif variation == "empty-evidence":
+        second["evidence"] = []
+    elif variation == "invalid-evidence":
+        second["evidence"] = "not an evidence array"
+    evidence = _loop_evidence_run(tmp_path, findings=[first])
+    run, fixture = evidence["run"], evidence["fixture"]
+    _rewrite_native_outputs(
+        fixture,
+        (run / "source-1.json").read_bytes(),
+        (run / "round-1.diff").read_bytes(),
+        [],
+        full=True,
+        findings_by_role={"qa-specialist": [first], "challenger": [second]},
+    )
+    selected = fixture["manifest"]["passes"][0]["attempts"][0]
+    (run / "review-1.md").write_bytes((run / "review" / selected["output_path"]).read_bytes())
+    ledger = json.loads((run / "loop-ledger.json").read_bytes())
+    ledger["rounds"][0]["findings"] = [
+        {
+            **first,
+            "evidence": first["evidence"]
+            if variation == "missing-evidence"
+            else ["QA source counterexample.", "Challenger consumer counterexample."],
+        }
+    ]
+    _write_json(run / "loop-ledger.json", ledger)
+    output_paths = [run / "review" / item["attempts"][0]["output_path"] for item in fixture["manifest"]["passes"]]
+    original_outputs = [path.read_bytes() for path in output_paths]
+    if variation == "matching":
+        evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
+        assert _module(PLUGIN_ROOT / "shared/adversarial_loop.py").summarize_ledger(ledger)["scores"] == [6]
+    else:
+        reason = (
+            "findings-ledger-mismatch"
+            if variation == "missing-evidence"
+            else "findings-invalid"
+            if variation in {"empty-evidence", "invalid-evidence"}
+            else "finding-conflict:missing-guard"
+        )
+        with pytest.raises(ValueError, match=f"loop-evidence-report-{reason}"):
+            evidence["validator"].validate_loop_evidence(run, evidence["codex_home"])
+    assert [path.read_bytes() for path in output_paths] == original_outputs
 
 
 def test_rejects_implementation_author_not_observed_review_parent(

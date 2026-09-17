@@ -259,17 +259,43 @@ TRUNK=$(gh repo view --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/de
 if [ -z "$TRUNK" ]; then
     TRUNK=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | { read -r _ _ val; echo "$val"; })  # timeout: 5000
 fi
+PR_FIELDS="number,title,body,labels,mergedAt,author"
 if [ -n "$TRUNK" ]; then
-    gh pr list --state merged --base "$TRUNK" --paginate \
-        --json number,title,body,labels,mergedAt,author 2>/dev/null  # timeout: 15000
+    PRS=$(gh pr list --state merged --base "$TRUNK" --limit 500 --json "$PR_FIELDS") || { echo "Error: gh pr list failed; cannot classify release PRs" >&2; exit 1; }  # timeout: 15000
 else
     echo "⚠ Could not detect default branch — listing all merged PRs"
-    gh pr list --state merged --paginate \
-        --json number,title,body,labels,mergedAt,author 2>/dev/null  # timeout: 15000
+    PRS=$(gh pr list --state merged --limit 500 --json "$PR_FIELDS") || { echo "Error: gh pr list failed; cannot classify release PRs" >&2; exit 1; }  # timeout: 15000
 fi
+PR_COUNT=$(printf '%s' "$PRS" | jq 'length') || { echo "Error: could not count gh pr list results" >&2; exit 1; }
+if [ "$PR_COUNT" -eq 500 ]; then
+    echo "⚠ gh pr list reached its 500-item cap; recovering the complete merged-PR history"
+    PR_API_ARGS=(--method GET --paginate --slurp 'repos/{owner}/{repo}/pulls' -f state=closed -f per_page=100)
+    if [ -n "$TRUNK" ]; then
+        PR_API_ARGS+=(-f "base=$TRUNK")
+    fi
+    PRS=$(gh api "${PR_API_ARGS[@]}") || { echo "Error: exhaustive PR recovery failed; do not claim release coverage is complete" >&2; exit 1; }  # timeout: 60000
+    PRS=$(printf '%s' "$PRS" | jq '[.[][] | select(.merged_at != null) | {number, title, body, labels, mergedAt: .merged_at, author: .user}]') || { echo "Error: could not normalize exhaustive PR recovery" >&2; exit 1; }
+fi
+printf '%s\n' "$PRS"
 ```
 
 Cross-reference commit bodies against PR descriptions — canonical source of truth for *why* change made. `BREAKING CHANGE:` footer = breaking change regardless of PR label.
+
+The default-branch list is discovery context, not the contributor inventory. Query every candidate commit independently of the default branch so maintenance-branch and squash-only PR authors cannot disappear:
+
+```bash
+# Commit association follows the release range, including maintenance-branch merges.
+COMMIT_SHAS=$(git rev-list "$RANGE") || { echo "Error: release candidate enumeration failed" >&2; exit 1; }
+while IFS= read -r CANDIDATE_SHA; do
+    [ -z "$CANDIDATE_SHA" ] && continue
+    PR_ASSOCIATIONS=$(gh api --method GET --paginate --slurp "repos/{owner}/{repo}/commits/$CANDIDATE_SHA/pulls" -f per_page=100) || { echo "Error: PR association coverage unavailable for $CANDIDATE_SHA; retain gap, do not claim complete credits" >&2; exit 1; }  # timeout: 15000
+    printf '%s' "$PR_ASSOCIATIONS" | jq --arg sha "$CANDIDATE_SHA" '{commit: $sha, pull_requests: [.[][] | select(.merged_at != null) | {number, title, author: .user, base: .base.ref, merge_commit_sha}]}' || { echo "Error: invalid PR association evidence" >&2; exit 1; }
+done <<< "$COMMIT_SHAS"
+```
+
+Retain each commit's association result, including empty results, in gathered evidence. Fetch the associated PR's metadata when needed to verify repository and commit/diff membership; do not discard an association because its base is not the default branch. Empty successful lookup means no associated merged PR was returned, not a fabricated author; keep Git authors/coauthors. Failed lookup, deleted author, or ambiguous association remains an explicit gap. Do not silently continue with the default-branch list after an association failure.
+
+Retain verified commit-to-PR associations and each in-range PR author's known login/display name for Extract contributors, including PR-only authors of maintainer-authored squash commits. Preserve this identity inventory through classification, including grouped or net-zero changes; record missing association/identity metadata as contributor-coverage gaps. When delegated, write this evidence to `$GATHER_FILE`; merge dates and membership in the collected PR list alone do not establish release-range membership.
 
 **Detect revert pairs**: scan `git log $RANGE --no-merges --format="%H %s"` for subjects beginning with `Revert "`. For each: extract original subject, search range for matching commit. Both found → `REVERT_SET` pair (net effect zero).
 
@@ -403,7 +429,7 @@ Read `$CHANGELOG_AUDIT_FILE` for audit findings; report added/flagged counts fro
 
 Search order: `CHANGELOG.md` at repo root, `docs/CHANGELOG.md`, any `CHANGELOG*` one level deep (excluding `node_modules/`, `.venv/`, `vendor/`). Store as `$CHANGELOG_FILE`.
 
-If exists: cross-check against unreleased section. Items absent → add (same emoji format). Items in CHANGELOG not matching classified → flag for review (no auto-delete). For each REVERT_SET pair: add `🔄 Reverted: <original change description> (introduced and reverted in this release)`. If original already in CHANGELOG before revert, strike/remove from main section — unshipped change must not appear shipped. Reverted items never in highlights or migration guide.
+If exists: cross-check against unreleased section. Items absent → add (same emoji format). Items in CHANGELOG not matching classified → flag for review (no auto-delete). For each REVERT_SET pair: add `🔄 Reverted: <original change description> (introduced and reverted in this release)`. Preserve historical entries; remove only the exact matching Unreleased entry for an original change that has not shipped, when that stale claim is confirmed. Reverted items never in highlights or migration guide.
 
 For each `CROSS_CYCLE_MATCH` targeting `$CHANGELOG_FILE` (from Gather changes' cross-cycle detection — original predates `$RANGE`, matched text found in Unreleased from a prior `--append` cycle): strike/remove the matched entry the same way — do not add a redundant `🔄 Reverted` bullet for something the reader never saw shipped in this visible cycle.
 
@@ -430,16 +456,20 @@ Read `$CONTRIBUTORS_FILE` for formatted contributors list. If file missing (dele
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # reload $RANGE (Check 41)
 IFS= read -r RANGE < "${TMPDIR:-/tmp}/release-range-${CSID}" 2>/dev/null || RANGE=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_contributors.py" --range "$RANGE"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/extract_contributors.py" --range "$RANGE" --include-bots  # timeout: 5000
 ```
 
-`extract_contributors.py` emits one `Name <email>` line per contributor — already deduplicated by email and bot-filtered (`[bot]`, `noreply@`). Every commit counts, including docs and typo fixes.
+`extract_contributors.py --include-bots` emits one `Name <email>` line per contributor, already deduplicated by email. Keep GitHub privacy-email humans; separate bot identities into the single automated-contributions line required by `guidelines/writing-rules.md`. Every commit counts, including docs and typo fixes.
 
-For each contributor, inspect commits in range (`git log "$RANGE" --no-merges --author="<email>" --oneline`) and pick up to 3 most significant contributions. Rank: new public API > major UX improvement > significant fix > internal change > docs/typo. No PR numbers, no issue links, no `(#N)` references.
+Build the contributor inventory as the union of Git authors/coauthors and every PR author verified to belong to this release range. Use Gather changes' commit-to-PR associations, not the entire merged-PR list or merge dates alone. Include PR-only authors even when a maintainer authored the squash commit and no coauthor trailer exists. Preserve the PR-to-commit evidence in the gathered change table passed to the delegated path. If association or PR-author coverage is unavailable, flag incomplete contributor coverage; never claim completeness from Git alone.
 
-Resolve GitHub handle from PR author data (`author.login` field). Match on name or email. If no PR found, omit handle.
+Reconcile duplicates only through verified login/email linkage, including GitHub privacy-email handles; display-name similarity alone is not identity proof. Keep unmatched Git people and PR-only people; use the known login when a PR author's display name is unavailable, never invent an email or name. Deleted/unavailable PR identities remain an explicit coverage gap. Aggregate bot identities before individual formatting or profile lookup; never send bots through those human-only steps.
 
-For each resolved handle, find a LinkedIn link via this ordered chain — stop at first hit, never guess/infer/search-by-name at any step. Contributor **name is never a matching key anywhere in this chain** — only the resolved GitHub handle (steps 1, 2, 4 below) or an anchor href read directly from fetched page content (step 3):
+For each human contributor, inspect commits in range (`git log "$RANGE" --no-merges --author="<email>" --oneline`) when their email is known; for PR-only authors, use their verified in-range PR changes instead. Pick up to 3 most significant contributions. Rank: new public API > major UX improvement > significant fix > internal change > docs/typo. No PR numbers, no issue links, no `(#N)` references in public credit prose.
+
+Resolve GitHub handles from the verified PR author data (`author.login`) or confirmed Git identity linkage. If unresolved, omit the handle.
+
+For each resolved human handle, find a LinkedIn link via this ordered chain — stop at first hit, never guess/infer/search-by-name at any step. Contributor **name is never a matching key anywhere in this chain** — only the resolved GitHub handle (steps 1, 2, 4 below) or an anchor href read directly from fetched page content (step 3):
 
 1. **Primary — Social Accounts API** (strongest signal: explicitly added by the person to their own GitHub profile):
 
@@ -671,7 +701,7 @@ Follow above and execute.
 <!-- branch: demo-synthetic-fallback — only when real data unavailable; isolated deep in demo path -->
 
 - **Demo real-world-only policy**: use actual project data/fixtures/API — synthetic requires explicit user approval; fallback: (1) document each failed attempt in `## Demo attempts`, (2) ask Codex if available, (3) ask user via `AskUserQuestion`, (4) synthetic only on explicit approval
-- **Changelog audit non-destructive**: adds missing entries, flags extras, never removes automatically
+- **Changelog audit preserves history**: add missing entries and flag unrelated or uncertain extras. Remove only the exact confirmed stale Unreleased claim for an unshipped revert/pivot; preserve historical entries and every unrelated item.
 - **`--append` marker**: `.temp/release-last-processed-<branch>` — not date-stamped like sibling `.temp/release-*` artifacts (must survive across days/sessions); losing it (TTL cleanup, gitignore) degrades safely to the existing full-range/full-overwrite behavior, never to corruption — see `bin/release_append_marker.py` docstring for the full rationale.
 - **Provenance store (patch-id keyed)**: `.temp/release-provenance-<branch>.json` — same cross-session lifecycle reasoning as the marker (per-branch, `.temp/`, gitignored, not date-stamped). Array of `{patch_id, sha, subject, artifact, anchor_text, written_at}` records, one per (contributing commit, artifact, exact-written-text) tuple; every `notes`-mode write (full regenerate or `--append` merge) appends a record for each newly-written bullet/entry that traces to specific commit(s) — see "Post-write bookkeeping" → "Provenance record" in `release-draft-template.md`. Consumed by Gather changes' cross-cycle revert detection: a genuine `git revert` commit's own `This reverts commit <sha>.` trailer is converted to its `git patch-id --stable` and looked up here — a hit means an exact, deterministic `{artifact, anchor_text}` strike, no text-matching guesswork. **`patch_id` is the only lookup key**: a raw commit sha changes on `--amend`, `rebase`, or `cherry-pick` even when the diff is untouched, so a sha-keyed store would silently miss a revert of a commit reworded or cherry-picked since it was recorded; `git patch-id --stable` is a normalized hash of the diff content and survives all three (verified empirically: identical patch-id across `--amend` and cherry-pick onto another branch, while the sha changed each time). `sha` and `subject` are carried for human debugging only, never used as a matching key. A commit whose diff produces no stable patch-id (a merge commit shown without `-m`, or a genuinely empty commit) is recorded with `patch_id: null` and can only ever be struck via the semantic path — a documented gap, not a bug. Recorded artifacts in practice: DRAFT.md (Notable-changes, Spotlights, Migration guide), `$CHANGELOG_FILE`, standalone `MIGRATION.md` — never Summary (DRAFT.md's own section or standalone `SUMMARY.md`, both additive-only prose with no removal path) or Contributors (per-person, not per-commit-revertible). Losing the store (TTL cleanup) degrades the revert path to the same semantic-grep fallback already used for pivots — never to corruption or a silently-missed strike (Semantic consistency review is still the backstop).
 - **`--append` integration scope**: covers every DRAFT.md section (Summary, Spotlights, Migration guide, Notable-changes subsections, Contributors), plus root-level `SUMMARY.md`/`MIGRATION.md` when their flags are set — all merged via Read + Edit tool (see `release-draft-template.md` "Append merge"), not a parsing script. Purely additive except a detected cross-cycle revert/pivot (Gather changes' `CROSS_CYCLE_MATCH`), which strikes the specific stale entry instead of leaving a contradicting pair.

@@ -12,7 +12,7 @@ Source of truth for numeric limits in `release/SKILL.md`. Update when number cha
 | Current value | `500` |
 | Floor | GitHub CLI default: **30** (silent truncation) |
 | Evidence | `rules/external-data.md` §GitHub CLI: "set at least 10× higher than expected"; typical release = 2–4 sprints × 10–50 PRs/sprint = 40–200 PRs |
-| If insufficient | Switch to `gh pr list --paginate` |
+| If insufficient | At exactly 500 results, recover with `gh api --paginate --slurp`; otherwise the result is below the documented cap. |
 
 ### Release convention scan — `--limit 5`
 
@@ -30,7 +30,7 @@ Source of truth for numeric limits in `release/SKILL.md`. Update when number cha
 | Location | `Write release draft` → `LATEST_TAG` detection |
 | Current value | `100` |
 | Evidence | GitHub release API reverse-chronological; gap between stable releases exceeding `--limit` returns wrong tag silently; 100 handles repos with ≥80 pre-release tags between stable cuts |
-| If insufficient | Switch to `--paginate` with early exit on first non-prerelease match |
+| If insufficient | Use `gh api --paginate 'repos/{owner}/{repo}/releases'` and select the first non-prerelease match; `gh release list` has no `--paginate` flag |
 
 ### Demo execution timeout — 10 minutes (`timeout: 600000`)
 

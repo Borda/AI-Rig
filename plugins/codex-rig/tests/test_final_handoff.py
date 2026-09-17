@@ -142,6 +142,41 @@ def test_standard_handoff_renders_complete_deterministic_markdown() -> None:
     assert finalizer.render_handoff(_handoff_payload()) == rendered
 
 
+def test_release_handoff_renders_changes_and_readiness_tables() -> None:
+    """Show readiness independently from release changes without losing source coverage."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["skill"] = "release"
+    payload["tables"] = [
+        {
+            "heading": "Changes",
+            "columns": ["Change", "SemVer impact", "Status / blocker", "Evidence"],
+            "rows": [
+                {
+                    "id": "CR-1",
+                    "cells": ["Boundary fix", "patch", "Drafted", "commit abc"],
+                    "source_ids": ["report:CR-1"],
+                }
+            ],
+        },
+        {
+            "heading": "Readiness",
+            "columns": ["Check", "Status", "Evidence", "Blocker / next action"],
+            "rows": [
+                {
+                    "id": "CR-2",
+                    "cells": ["Verification", "unavailable", "CI unavailable", "CI owner: rerun"],
+                    "source_ids": ["report:CR-2"],
+                }
+            ],
+        },
+    ]
+    rendered = finalizer.render_handoff(payload)
+    assert "| Change | SemVer impact | Status / blocker | Evidence |" in rendered
+    assert "**Readiness**\n\n| Check | Status | Evidence | Blocker / next action |" in rendered
+    assert "| Verification | unavailable | CI unavailable | CI owner: rerun |" in rendered
+
+
 def test_v2_handoff_leads_with_plain_english_and_omits_empty_or_duplicate_sections() -> None:
     """Keep new reports useful when only one recovery action and no executable checks exist."""
     finalizer = _load_finalizer()

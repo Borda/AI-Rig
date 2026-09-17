@@ -4,20 +4,22 @@
 ## Purpose
 
 Execute configured lint, format, type, test, and review checks while preserving per-gate evidence and timeout
-classification. The gate runner turns each command into a named record that result validation can reconcile with the
-workflow verdict.
+classification. An optional expected Git head binds each executable check to a clean source observation before and
+after its command. The gate runner turns each command into a named record that result validation can reconcile with
+the workflow verdict.
 
 ## Scope
 
-It runs local commands supplied by a workflow and writes gate records; it does not decide release readiness or hide
-failed output. Each gate must have either a command or an explicit skip reason, and commands are executed independently
-with a per-gate timeout.
+It runs local commands supplied by a workflow and writes gate records; it does not decide release readiness, repair
+source state, or hide failed output. Each gate must have either a command or an explicit skip reason, and commands are
+executed independently with a per-gate timeout.
 
 ## Usage
 
 Run ``python run_gates.py --out <directory>`` with explicit commands or documented skip reasons for each applicable
-gate. Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies
-the value supplied through ``--timeout-seconds`` separately.
+gate. Add ``--expected-head <full-lowercase-sha>`` to require a matching clean Git checkout around executable checks.
+Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
+value supplied through ``--timeout-seconds`` separately.
 
 ## Used by
 
@@ -28,14 +30,16 @@ records without interpreting arbitrary gate names.
 ## Outputs
 
 It writes ``gates.json``, ``gates.txt``, ``failed.txt``, ``gates.checks.jsonl``, and per-gate command/stdout/stderr
-files. Records distinguish pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is
-bounded to protect artifact size.
+files. Guarded executable records include their expected head plus before/after source receipts. Records distinguish
+pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is bounded to protect
+artifact size.
 
 ## Failure
 
-A missing command, non-zero command result, timeout, malformed requested gate, or unwritable artifact directory is
-retained as explicit gate evidence. The CLI returns ``1`` for failed gates, ``124`` for a timeout, and ``2`` for invalid
-input such as a newline in a skip reason, allowing callers to classify the run without parsing prose.
+A missing command, non-zero command result, timeout, source mismatch or dirtiness, Git inspection failure, malformed
+requested gate, or unwritable artifact directory is retained as explicit gate evidence. The CLI returns ``1`` for failed
+gates, ``124`` for a timeout, and ``2`` for invalid input such as a newline in a skip reason, allowing callers to
+classify the run without parsing prose.
 """
 
 from __future__ import annotations
@@ -43,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -54,6 +59,7 @@ from typing import Any
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 DEFAULT_TIMEOUT_SECONDS = 900
 CHECKS_DIRNAME = "checks"
+SOURCE_INSPECTION_TIMEOUT_SECONDS = 30
 
 
 def positive_integer(value: str) -> int:
@@ -61,6 +67,13 @@ def positive_integer(value: str) -> int:
     if not value.isdigit() or int(value) < 1:
         raise argparse.ArgumentTypeError(f"invalid-timeout-seconds:{value}")
     return int(value)
+
+
+def full_git_sha(value: str) -> str:
+    """Accept a lowercase SHA-1 or SHA-256 Git object identifier."""
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError(f"invalid-expected-head:{value}")
+    return value
 
 
 def parse_args() -> argparse.Namespace:
@@ -93,6 +106,11 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("GATE_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS)),
         type=positive_integer,
         help="Per-gate timeout; defaults to 900 or GATE_TIMEOUT_SECONDS.",
+    )
+    parser.add_argument(
+        "--expected-head",
+        type=full_git_sha,
+        help="Optional clean Git HEAD required before and after every executable gate.",
     )
     return parser.parse_args()
 
@@ -248,7 +266,61 @@ def skipped_check(gate_id: str, reason: str, paths: dict[str, Path], recorded: d
     }
 
 
-def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, out_dir: Path) -> dict[str, Any]:
+def inspect_source() -> dict[str, str]:
+    """Return the current Git head and porcelain status, or a failed inspection receipt."""
+    empty = {"head": "", "status": ""}
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+        )
+        if head.returncode != 0:
+            detail = head.stderr.strip() or f"exit {head.returncode}"
+            return {**empty, "error": f"git-rev-parse-failed:{detail}"}
+        # Repository ignore settings must not conceal changed release dependencies.
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+        )
+        if status.returncode != 0:
+            detail = status.stderr.strip() or f"exit {status.returncode}"
+            return {**empty, "error": f"git-status-failed:{detail}"}
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return {**empty, "error": f"git-inspection-failed:{error}"}
+    return {"head": head.stdout.strip(), "status": status.stdout.rstrip("\r\n")}
+
+
+def source_guard_error(snapshot: dict[str, str], expected_head: str) -> str | None:
+    """Explain why one source observation cannot authorize a gate command."""
+    if "error" in snapshot:
+        return f"source-inspection-failed:{snapshot['error']}"
+    if snapshot["head"] != expected_head:
+        return f"source-head-mismatch:expected {expected_head}, observed {snapshot['head']}"
+    if snapshot["status"]:
+        return "source-dirty:git status --porcelain=v1 --untracked-files=all --ignore-submodules=none was non-empty"
+    return None
+
+
+def append_stderr(path: Path, message: str) -> None:
+    """Append one source-guard failure to the gate's captured standard error."""
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(f"{message}\n")
+
+
+def run_check(
+    gate_id: str,
+    command: str,
+    skip_reason: str,
+    timeout: int,
+    out_dir: Path,
+    expected_head: str | None,
+) -> dict[str, Any]:
     """Run one gate or record its explicit not-applicable status."""
     paths, recorded = check_paths(gate_id, out_dir)
     if skip_reason:
@@ -269,6 +341,25 @@ def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, out_di
         }
 
     paths["command"].write_text(f"{command}\n", encoding="utf-8")
+    source: dict[str, Any] | None = None
+    if expected_head is not None:
+        before = inspect_source()
+        source = {"expected_head": expected_head, "before": before, "after": None}
+        error = source_guard_error(before, expected_head)
+        if error is not None:
+            paths["stdout"].write_text("", encoding="utf-8")
+            append_stderr(paths["stderr"], error)
+            return {
+                "id": gate_id,
+                "status": "fail",
+                "exit_code": 1,
+                "duration_seconds": 0.0,
+                "command_path": recorded["command"],
+                "stdout": recorded["stdout"],
+                "stderr": recorded["stderr"],
+                "source": source,
+            }
+
     exit_code, duration = execute_command(command, timeout, paths["stdout"], paths["stderr"])
     status = (
         "pass"
@@ -288,6 +379,15 @@ def run_check(gate_id: str, command: str, skip_reason: str, timeout: int, out_di
         "stdout": recorded["stdout"],
         "stderr": recorded["stderr"],
     }
+    if source is not None:
+        after = inspect_source()
+        source["after"] = after
+        result["source"] = source
+        error = source_guard_error(after, expected_head)
+        if error is not None:
+            append_stderr(paths["stderr"], error)
+            if result["status"] == "pass":
+                result["status"] = "fail"
     if status == "timeout":
         result["reason"] = f"timeout after {timeout} seconds"
     elif status == "missing-command":
@@ -317,7 +417,14 @@ def main() -> int:
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
 
     checks = [
-        run_check(gate_id, commands[gate_id], skip_reasons[gate_id], arguments.timeout_seconds, output)
+        run_check(
+            gate_id,
+            commands[gate_id],
+            skip_reasons[gate_id],
+            arguments.timeout_seconds,
+            output,
+            arguments.expected_head,
+        )
         for gate_id in GATE_IDS
     ]
     failed = [check["id"] for check in checks if check["status"] in {"fail", "missing-command", "timeout"}]

@@ -10,6 +10,8 @@ Snapshots record repository, normalized scope, actual `HEAD`, staged-index diges
 
 Collect the source snapshot and supporting diff from the same state. Include the snapshot's complete retained JSON bytes and the complete diff in every participating reviewer's frozen context, not merely their hashes or paths. Complete source is authoritative for inspection; the diff is supplementary and may omit untracked content. The validator binds the supplied diff to the authenticated review, not to a reconstructed Git patch. Request fresh evidence if context or source changes. Current acceptance recaptures the same repository/scope and rejects drift in current contents, index, file inventory, or revision; clean acceptance also requires equality with the final independently reviewed source.
 
+For App Server, apply Code Review's [transport and capacity checks](../code-review/app-server-review.md#freeze-and-execute) before paid dispatch. Larger contexts retain this exact complete-source contract whether delivered directly or loaded byte-exact into the same thread's history before its short trigger turn. History delivery requires the adapter's validated acknowledgement/context-digest binding; short trigger text alone is not source evidence. Successful byte admission, history loading or a requested token window does not establish model capacity or review completeness. Missing, changed, partial, or substituted source remains rejected at the existing evidence gate.
+
 ## Bind existing reviewers
 
 Keep `loop-evidence.json` alongside `loop-ledger.json`:
@@ -39,7 +41,7 @@ The selected role's observed thread identity must match the ledger reviewer. The
 
 ## Bind returned findings
 
-Ask each participating reviewer to return exactly one fenced `adversarial-loop` block, preceded only by the existing provenance header when the route requires it. For this loop, the structured response replaces the role's free-form report sections; its review responsibilities and execution restrictions remain unchanged. No introduction, conclusion, additional fence, or finding prose may appear outside the block. Rejected responses remain intact; request a fresh conforming response only through the owning workflow's permitted recovery, never edit the original output.
+For App Server reviews, require one raw JSON object with the fields below, without Markdown fences or surrounding prose; the shared runner enforces this shape through `turn/start.outputSchema` and validates returned content. Native inspection retains exactly one fenced `adversarial-loop` block, preceded only by its required provenance header. Historical fenced App Server responses remain readable. For this loop, the structured response replaces the role's free-form report sections; its review responsibilities and execution restrictions remain unchanged. No introduction, conclusion, additional fence, or finding prose may appear outside the response. Rejected responses remain intact; request a fresh conforming response only through the owning workflow's permitted recovery, never edit the original output.
 
 ```adversarial-loop
 {
@@ -50,5 +52,7 @@ Ask each participating reviewer to return exactly one fenced `adversarial-loop` 
 ```
 
 Supply those computed digests and the exact response contract in the frozen context; do not ask the reviewer to guess or calculate digests mentally. Each finding uses the ledger's existing `signature`, `tier`, `structural`, `disposition`, and `evidence` fields. Put all finding narrative, refutations, and closure evidence inside those records. Any material missing-input or coverage gap preventing acceptance is a finding, not an omitted prose caveat. Retain coverage and route limits in `loop-report.md`, source snapshots and original execution evidence. Carry previous signatures into the review request and verify closure explicitly. The union of returned findings must match the ledger round; contradictory records for the same signature require reconciliation and cannot be silently discarded. An authenticated report that still finds a defect cannot become an empty clean ledger by parent editing.
+
+When reviewers return the same signature with matching tier, structural flag and disposition, keep one ledger record and combine all exact evidence strings in manifest/reviewer order, removing exact duplicates only. Different evidence wording alone is corroboration, not a verdict conflict. Any disagreement in tier, structural classification or disposition still fails closed; never alter original outputs to resolve it.
 
 Run this skill's `validate_evidence.py` before final promotion; shared validation repeats it. A rejected receipt remains rejected evidence. With no permitted independent review, retain the failed attempt separately, use an empty round list and `independence-unavailable`, fail the review gate, and provide concrete recovery. Never fabricate an independently reviewed round to produce a complete-looking artifact.

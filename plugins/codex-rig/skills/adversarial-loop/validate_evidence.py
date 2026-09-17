@@ -175,10 +175,12 @@ def _findings_from_report(output: Path, source_digest: str, diff_digest: str) ->
     except (OSError, UnicodeDecodeError) as exception:
         raise ValueError("loop-evidence-report-unreadable") from exception
     block = _REPORT_BLOCK.fullmatch(text.strip())
-    if block is None or "\n```" in block.group(1):
+    if block is None and not text.lstrip().startswith("{"):
+        raise ValueError("loop-evidence-report-envelope-invalid")
+    if block is not None and "\n```" in block.group(1):
         raise ValueError("loop-evidence-report-envelope-invalid")
     try:
-        payload = json.loads(block.group(1))
+        payload = json.loads(block.group(1) if block is not None else text)
     except json.JSONDecodeError as exception:
         raise ValueError("loop-evidence-report-block-invalid") from exception
     if not isinstance(payload, dict) or set(payload) != {"source_sha256", "diff_sha256", "findings"}:
@@ -316,10 +318,22 @@ def _validate_review_round(
             signature = finding["signature"]
             if not isinstance(signature, str) or not signature:
                 raise ValueError("loop-evidence-report-findings-invalid")
+            evidence = finding["evidence"]
+            if (
+                not isinstance(evidence, list)
+                or not evidence
+                or any(not isinstance(entry, str) or not entry.strip() for entry in evidence)
+            ):
+                raise ValueError("loop-evidence-report-findings-invalid")
             prior = merged.get(signature)
-            if prior is not None and prior != finding:
-                raise ValueError(f"loop-evidence-report-finding-conflict:{signature}")
-            merged[signature] = finding
+            if prior is not None:
+                if any(prior[key] != finding[key] for key in ("tier", "structural", "disposition")):
+                    raise ValueError(f"loop-evidence-report-finding-conflict:{signature}")
+                # Corroborating reviewers may supply different proof for the same verdict.
+                # Preserve exact strings in first-seen order; never choose one reviewer's evidence.
+                prior["evidence"] = list(dict.fromkeys([*prior["evidence"], *evidence]))
+            else:
+                merged[signature] = finding
     ledger_by_signature = {item.get("signature"): item for item in ledger_findings if isinstance(item, dict)}
     if len(ledger_by_signature) != len(ledger_findings) or merged != ledger_by_signature:
         raise ValueError("loop-evidence-report-findings-ledger-mismatch")

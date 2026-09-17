@@ -1170,6 +1170,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
     if run.paths.layout == "plugin":
         cli_paths["create-run"] = run.paths.create_run
         cli_paths["remediation-branch"] = run.paths.shared_dir / "remediation_branch.py"
+        cli_paths["release-evidence"] = run.paths.shared_dir / "release_evidence.py"
         cli_paths["adversarial-loop-evidence"] = run.paths.skills_dir / "adversarial-loop" / "validate_evidence.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter
         assert run.paths.github_read is not None

@@ -250,6 +250,155 @@ def _rewrite_inspection_plan(fixture: dict[str, object]) -> None:
     fixture["manifest"]["inspection_execution"]["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
 
 
+def _use_spawn_receipts(fixture: dict[str, object]) -> None:
+    """Replace legacy activity with the native host's call-bound task-path receipts."""
+    parent = fixture["sessions"] / "sessions" / "rollout-parent-thread.jsonl"
+    rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+    rows = [row for row in rows if row["type"] != "event_msg"]
+    for item in fixture["passes"]:
+        attempt = item["attempts"][0]
+        attempt.pop("event_id")
+        call = next(row for row in rows if row["payload"].get("call_id") == attempt["spawn_call_id"])
+        call["timestamp"] = "2026-01-01T10:00:00.000Z"
+        child = fixture["sessions"] / "sessions" / f"rollout-{attempt['agent_thread_id']}.jsonl"
+        child_rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+        child_rows[0]["payload"].update(
+            parent_thread_id=fixture["manifest"]["parent_thread_id"], timestamp="2026-01-01T10:00:00.050Z"
+        )
+        _write_jsonl(child, child_rows)
+        rows.append(
+            {
+                "timestamp": "2026-01-01T10:00:00.100Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call_output",
+                    "call_id": attempt["spawn_call_id"],
+                    "output": json.dumps({"task_name": attempt["agent_path"]}),
+                },
+            }
+        )
+    _write_jsonl(parent, rows)
+    (fixture["run"] / "specialist-manifest.json").write_text(
+        json.dumps(fixture["manifest"]), encoding="utf-8", newline="\n"
+    )
+
+
+def test_schema_five_accepts_call_bound_spawn_receipts(tmp_path: Path) -> None:
+    """Bind current host receipts to unique child sessions without inventing activity IDs."""
+    fixture = _inspection_run(tmp_path, independent_required=True)
+    _use_spawn_receipts(fixture)
+    validator = _validator()
+
+    validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+    summary = validator._validate_review_runtime(
+        fixture["run"], fixture["manifest"], fixture["passes"], fixture["sessions"], "parent-thread"
+    )
+
+    assert summary["actual_mode"] == "parallel"
+    assert summary["independence_satisfied"] is True
+    assert summary["evidence_level"] == "instruction-bounded-review"
+    assert summary["write_parallel_eligible"] is False
+    assert summary["observed_controls"] == {
+        role: {"sandbox_mode": "unknown", "approval_policy": "unknown"} for role in ROLES
+    }
+
+
+def test_spawn_receipts_ignore_legacy_non_thread_review_sessions(tmp_path: Path) -> None:
+    """Keep historical built-in review sessions from invalidating unrelated native lineage."""
+    fixture = _inspection_run(tmp_path)
+    _use_spawn_receipts(fixture)
+    _write_jsonl(
+        fixture["sessions"] / "sessions" / "rollout-legacy.jsonl",
+        [{"type": "session_meta", "payload": {"id": "legacy", "source": {"subagent": "review"}}}],
+    )
+    _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "wrong-call",
+        "duplicate",
+        "wrong-path",
+        "malformed",
+        "ambiguous-child",
+        "wrong-parent",
+        "spawn-path",
+        "stale-child",
+        "future-child",
+        "missing-time",
+        "naive-time",
+        "own-parent",
+        "own-path",
+        "extra-key",
+        "wrong-context",
+        "forked-context",
+        "duplicate-call",
+        "invalid-event",
+    ],
+)
+def test_spawn_receipt_rejects_unbound_or_ambiguous_lineage(tmp_path: Path, mutation: str) -> None:
+    """Do not substitute another call, path, or child session for a missing native spawn event."""
+    fixture = _inspection_run(tmp_path)
+    _use_spawn_receipts(fixture)
+    parent = fixture["sessions"] / "sessions" / "rollout-parent-thread.jsonl"
+    rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+    receipt = next(row for row in rows if row["payload"].get("type") == "function_call_output")
+    if mutation == "missing":
+        rows.remove(receipt)
+    elif mutation == "wrong-call":
+        receipt["payload"]["call_id"] = "unrelated-call"
+    elif mutation == "duplicate":
+        rows.append(receipt)
+    elif mutation == "wrong-path":
+        receipt["payload"]["output"] = json.dumps({"task_name": "/root/unrelated"})
+    elif mutation == "malformed":
+        receipt["payload"]["output"] = "not-json"
+    elif mutation == "extra-key":
+        receipt["payload"]["output"] = json.dumps(
+            {"task_name": fixture["passes"][0]["attempts"][0]["agent_path"], "error": True}
+        )
+    elif mutation == "missing-time":
+        receipt.pop("timestamp")
+    elif mutation == "naive-time":
+        receipt["timestamp"] = "2026-01-01T10:00:00.100"
+    elif mutation in {"wrong-context", "forked-context", "duplicate-call"}:
+        call = next(row for row in rows if row["payload"].get("type") == "function_call")
+        if mutation == "duplicate-call":
+            rows.append(call)
+        else:
+            arguments = json.loads(call["payload"]["arguments"])
+            arguments["message" if mutation == "wrong-context" else "fork_turns"] = "wrong"
+            call["payload"]["arguments"] = json.dumps(arguments)
+    elif mutation == "invalid-event":
+        fixture["passes"][0]["attempts"][0]["event_id"] = "missing-event"
+        (fixture["run"] / "specialist-manifest.json").write_text(
+            json.dumps(fixture["manifest"]), encoding="utf-8", newline="\n"
+        )
+    else:
+        child = fixture["sessions"] / "sessions" / "rollout-child-1.jsonl"
+        child_rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+        if mutation == "ambiguous-child":
+            child_rows[0]["payload"]["id"] = "another-child"
+            child = child.with_name("rollout-another-child.jsonl")
+        elif mutation == "wrong-parent":
+            child_rows[0]["payload"]["source"]["subagent"]["thread_spawn"]["parent_thread_id"] = "another-parent"
+        elif mutation == "spawn-path":
+            child_rows[0]["payload"]["source"]["subagent"]["thread_spawn"]["agent_path"] = "/root/wrong-child"
+        elif mutation in {"stale-child", "future-child"}:
+            child_rows[0]["payload"]["timestamp"] = (
+                "2025-01-01T10:00:00Z" if mutation == "stale-child" else "2027-01-01T10:00:00Z"
+            )
+        else:
+            child_rows[0]["payload"]["parent_thread_id" if mutation == "own-parent" else "agent_path"] = "wrong"
+        _write_jsonl(child, child_rows)
+    _write_jsonl(parent, rows)
+
+    with pytest.raises(SystemExit, match="provenance-parent-spawn-mismatch"):
+        _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+
+
 def test_schema_five_accepts_inspection_without_read_only_controls(tmp_path: Path) -> None:
     """Allow source inspection while reporting absent host controls as unknown."""
     fixture = _inspection_run(tmp_path)
@@ -284,16 +433,26 @@ def test_inspection_cannot_relabel_strict_evidence(tmp_path: Path, schema: int, 
         _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 
-@pytest.mark.parametrize("tamper", ["tool", "context", "output", "lineage"])
-def test_schema_five_rejects_unbound_or_executing_child_evidence(tmp_path: Path, tamper: str) -> None:
+@pytest.mark.parametrize("spawn_receipts", [False, True])
+@pytest.mark.parametrize("tamper", ["tool", "tool-output", "context", "output", "lineage"])
+def test_schema_five_rejects_unbound_or_executing_child_evidence(
+    tmp_path: Path, tamper: str, spawn_receipts: bool
+) -> None:
     """Reject tool use and every required source/lineage binding before promotion."""
     fixture = _inspection_run(tmp_path)
+    if spawn_receipts:
+        _use_spawn_receipts(fixture)
     validator = _validator()
     run, sessions, passes = fixture["run"], fixture["sessions"], fixture["passes"]
-    if tamper == "tool":
+    if tamper in {"tool", "tool-output"}:
         child = sessions / "sessions" / "rollout-child-1.jsonl"
         rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
-        rows.append({"type": "response_item", "payload": {"type": "function_call", "name": "exec"}})
+        rows.append(
+            {
+                "type": "response_item",
+                "payload": {"type": "function_call" if tamper == "tool" else "function_call_output", "name": "exec"},
+            }
+        )
         _write_jsonl(child, rows)
         expected = "review-inspection-child-tool-use:qa-specialist"
     elif tamper == "context":
@@ -312,6 +471,9 @@ def test_schema_five_rejects_unbound_or_executing_child_evidence(tmp_path: Path,
         rows[0]["payload"]["source"]["subagent"]["thread_spawn"]["parent_thread_id"] = "other-parent"
         _write_jsonl(child, rows)
         expected = "provenance-child-parent-mismatch:child-1"
+
+    if spawn_receipts and tamper in {"context", "lineage"}:
+        expected = "provenance-parent-spawn-mismatch"
 
     with pytest.raises(SystemExit, match=expected):
         validator._validate_manifest_preflight(run, sessions, "parent-thread", run)

@@ -296,10 +296,23 @@
         "empty-mcp-table-treated-as-disabled",
         "app-server-evidence-labelled-native",
         "adapter-success-treated-as-review-completion",
-        "review-route-promotes-sibling-writes"
+        "review-route-promotes-sibling-writes",
+        "review-byte-cap-treated-as-host-input-capacity",
+        "review-preload-lacks-context-binding",
+        "review-rpc-error-payload-retained"
       ],
       "id": "code-review-app-server-boundary",
-      "prompt": "Assess an isolated review route that assumes an empty MCP table removes inherited servers, labels independent App Server root threads as native collaboration children, stops after two response files without canonical validation or promotion, and automatically enables sibling write workflows. Require observed capability checks, explicit parent-owned evidence provenance, unchanged review completion gates, and separate write authorization.",
+      "prompt": "Assess an isolated review route that assumes an empty MCP table removes inherited servers, labels independent App Server root threads as native collaboration children, stops after two response files without canonical validation or promotion, and automatically enables sibling write workflows. It also treats a larger byte cap or token window as proof that turn text fits the host's character limit, accepts history loading without a same-context acknowledgement binding, and persists raw RPC error messages. For new reviewer turns require outputSchema-bound raw JSON findings, validate returned fields and source digests, retain rejected bytes and never fall back to prompt-only JSON or automatic repair. Native and historical fenced reports keep their existing contracts. Require observed capability checks, explicit parent-owned evidence provenance, unchanged review completion gates, separate write authorization, full-context delivery checked before paid turns, and static allowlisted RPC diagnostics without raw payloads.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
+        "review-source-diff-content-unbound",
+        "review-capacity-evidence-unbound",
+        "review-capacity-drift-before-dispatch"
+      ],
+      "id": "code-review-source-capacity-admission",
+      "prompt": "Assess an App Server wave whose context contains only source hashes, whose capacity record either omits input/reserves or understates input using an unverified proxy count, and whose operator capacity file changes after thread setup. Require schema-2 exact source/diff bytes in every context, bound observed model capacity/default-window records, a recomputed utf8-byte-upper-bound equal to exact context byte length, conservative headroom admission, and rechecking every reviewer before any paid turn. Reject character counts and unknown measurement methods; reduce scope rather than truncate required evidence when the conservative bound does not fit. Do not call local admission hosted-model attestation or authorize legacy plans for new dispatch.",
       "target": "code-review"
     },
     {
@@ -1542,6 +1555,68 @@
       ],
       "id": "release-readiness-without-contract",
       "prompt": "Assess a release declaration that omits the SemVer rationale, compatibility and migration impact, artifact checks, and release gate evidence.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "released-equivalence-unproven",
+        "reverted-patch-not-shipped",
+        "release-line-scope-missing"
+      ],
+      "id": "release-diverged-maintenance-history",
+      "prompt": "Draft a maintenance release from a branch diverged from its previous published tag. One candidate has the same title as a different released patch; another matches a patch introduced and reverted before publication; a third exactly matches an active patch already shipped on this maintenance line. The workflow subtracts all three by title and calls the range complete without a merge-base or tree comparison. Explain correct accounting and evidence gaps without publishing.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "human-noreply-excluded",
+        "coauthor-credit-missing",
+        "internal-contributor-filtered",
+        "changelog-detail-pruned"
+      ],
+      "id": "release-credit-and-changelog-preservation",
+      "prompt": "Prepare release documents from a verified range. The draft credits only headline PR authors, drops a human GitHub noreply author and a Co-authored-by contributor, and omits docs-only contributors. It replaces a detailed changelog entry with a shorter draft bullet and removes old version sections. Identify required corrections, preservation evidence and attribution reconciliation.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "append-stale-summary",
+        "manual-edits-overwritten",
+        "checkpoint-advanced-before-validation"
+      ],
+      "id": "release-append-final-state",
+      "prompt": "An append run detects a revert of an unreleased feature but removes only its notable-change bullet; the summary, highlight and example still advertise it. A user-edited migration file no longer matches the prior validated digest. The agent overwrites it and advances the checkpoint before output validation. Explain the safe reconciliation and checkpoint boundary.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "readiness-table-missing",
+        "requested-artifacts-missing",
+        "draft-success-confused-with-readiness"
+      ],
+      "id": "release-draft-versus-readiness",
+      "prompt": "A prepare run writes only DRAFT.md and prose saying readiness looks fine. SUMMARY.md, MIGRATION.md and the version changelog excerpt are absent; tests were not run and no readiness check table identifies evidence or next actions. The agent marks release-ready because the draft exists. Evaluate the output contract and distinguish notes completion from readiness.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "changes-table-missing",
+        "release-gate-source-unbound",
+        "dirty-source-certified"
+      ],
+      "id": "release-source-and-table-binding",
+      "prompt": "A new versioned release result contains only a Readiness table. Its explicit range selects a maintenance commit, but local gates ran on the current default-branch checkout without expected-head or before/after Git receipts. Another passing gate leaves tracked source changes. The agent calls prepare release-ready. Assess table completeness and source identity; preserve legacy unversioned output compatibility, but do not accept wrong or dirty execution evidence for a new release.",
+      "target": "release"
+    },
+    {
+      "expected_findings": [
+        "release-receipt-source-content-unbound",
+        "release-credit-identity-unbound",
+        "release-secondary-artifact-placeholder",
+        "release-demo-execution-unverified"
+      ],
+      "id": "release-source-content-execution-receipts",
+      "prompt": "A passing release has headings-only source reports, matching artifact hashes but placeholder summaries and an incomplete changelog excerpt, arbitrary contributor labels that omit Git coauthors, and a demo never executed by the project interpreter. Its subtraction matches a historical patch reverted before publication. Require exact candidate/ancestor/published-tree bindings, visible identity-bound credits and supported exclusion proof, preserved historical and target changelog detail, complete canonical target excerpts, actual destination digests, and a real demo recorder receipt with equal before/after script hashes and successful output binding. Keep prose truth, PR discovery completeness and operator attestation limits explicit.",
       "target": "release"
     },
     {

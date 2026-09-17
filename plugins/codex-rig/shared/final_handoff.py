@@ -164,7 +164,10 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         if tables:
             raise HandoffError("terminal-branch-forbids-tables")
         return set(), set()
-    if skill != "code-review" and len(tables) != 1:
+    if skill == "release" and len(tables) == 2:
+        if not any(isinstance(table, dict) and table.get("heading") == "Readiness" for table in tables):
+            raise HandoffError("release-readiness-table-missing")
+    elif skill != "code-review" and len(tables) != 1:
         raise HandoffError("standard-branch-requires-one-table")
 
     row_ids: set[str] = set()
@@ -185,6 +188,8 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         ):
             raise HandoffError(f"table-layout-invalid:{heading}")
         expected = REVIEW_TABLE_COLUMNS.get(heading) if skill == "code-review" else STANDARD_COLUMNS[skill]
+        if skill == "release" and heading == "Readiness":
+            expected = ("Check", "Status", "Evidence", "Blocker / next action")
         if expected is None or tuple(columns) != expected:
             raise HandoffError(f"table-columns-mismatch:{skill}:{heading}")
         rows = table.get("rows")

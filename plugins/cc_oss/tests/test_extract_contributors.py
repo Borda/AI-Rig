@@ -65,6 +65,23 @@ def test_dedupe_by_email_keeps_first_name_drops_bots_sorted() -> None:
     assert result == ["Al Pace <al@example.com>", "Jane Doe <jane@example.com>"]
 
 
+def test_dedupe_by_email_can_retain_bots_for_release_credits() -> None:
+    """Release mode retains bot identities so prose can aggregate their credits."""
+    result = ec.dedupe_by_email(
+        [
+            "Jane Doe <jane@example.com>",
+            "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+            "Jirka Borovec <6035284+Borda@users.noreply.github.com>",
+        ],
+        include_bots=True,
+    )
+    assert result == [
+        "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+        "Jane Doe <jane@example.com>",
+        "Jirka Borovec <6035284+Borda@users.noreply.github.com>",
+    ]
+
+
 @pytest.mark.parametrize(
     ("range_arg", "from_ref", "to_ref", "expected"),
     [
@@ -120,6 +137,23 @@ def test_emits_deduped_bot_free_list(monkeypatch: pytest.MonkeyPatch, capsys: py
     rc = ec.main(["--range", "v1..v2"])
     assert rc == 0
     assert capsys.readouterr().out == "Al <al@example.com>\nJane Doe <jane@example.com>\n"
+
+
+def test_include_bots_emits_bot_and_privacy_email_human(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Release extraction keeps bot credits while retaining GitHub privacy-email humans."""
+    stdout = (
+        "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>\n"
+        "Jirka Borovec <6035284+Borda@users.noreply.github.com>\n"
+    )
+    monkeypatch.setattr(ec, "which", lambda _: "/fake/git")
+    monkeypatch.setattr(ec.subprocess, "run", lambda *_a, **_k: _FakeCompleted(returncode=0, stdout=stdout))
+
+    rc = ec.main(["--range", "v1..v2", "--include-bots"])
+
+    assert rc == 0
+    assert capsys.readouterr().out == stdout
 
 
 def test_git_failure_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

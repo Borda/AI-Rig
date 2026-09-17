@@ -47,6 +47,7 @@ import math
 import os
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1775,7 +1776,7 @@ def _validate_app_server_review(
     if not evidence_path.is_file() or _sha256(evidence_path) != execution["evidence_sha256"]:
         raise SystemExit("review-app-server-evidence-hash-mismatch")
     try:
-        summary = validate_app_server_evidence(plan_path, evidence_path, PLUGIN_ROOT / "roles")
+        summary = validate_app_server_evidence(plan_path, evidence_path, PLUGIN_ROOT / "roles", require_dispatch=True)
     except (ReviewRouteError, ValueError, OSError) as error:
         raise SystemExit(f"review-app-server-evidence-invalid:{error}") from error
     evidence = _load_json(evidence_path)
@@ -1805,6 +1806,83 @@ def _validate_app_server_review(
     ):
         raise SystemExit("review-app-server-summary-invalid")
     return summary
+
+
+def _receipt_binds_child(
+    parent_rows: list[dict[str, Any]],
+    codex_home: Path,
+    parent_thread_id: str,
+    attempt: dict[str, Any],
+    context: str,
+) -> bool:
+    """Bind a path-only native spawn receipt to one newly created runtime child session.
+
+    This inspection-only route requires call, receipt, and child creation timestamps to
+    prevent a retained older same-path child from substituting for a missing new log.
+    Unknown receipt formats, missing timestamps, and ambiguous sessions fail closed.
+    """
+    call_id = attempt.get("spawn_call_id")
+    if not isinstance(call_id, str) or not call_id:
+        return False
+    records = [
+        row
+        for row in parent_rows
+        if row.get("type") == "response_item"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("call_id") == call_id
+    ]
+    calls = [row for row in records if row["payload"].get("type") == "function_call"]
+    receipts = [row for row in records if row["payload"].get("type") == "function_call_output"]
+    if len(calls) != 1 or len(receipts) != 1 or calls[0]["payload"].get("name") != "spawn_agent":
+        return False
+    try:
+        arguments = json.loads(calls[0]["payload"].get("arguments", ""))
+        receipt = json.loads(receipts[0]["payload"].get("output", ""))
+        called_at = datetime.fromisoformat(calls[0]["timestamp"].replace("Z", "+00:00"))
+        received_at = datetime.fromisoformat(receipts[0]["timestamp"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+    agent_path = attempt["agent_path"]
+    if (
+        receipt != {"task_name": agent_path}
+        or not isinstance(arguments, dict)
+        or arguments.get("message") != context
+        or arguments.get("task_name") != agent_path.rsplit("/", 1)[-1]
+        or arguments.get("fork_turns") != "none"
+        or called_at.tzinfo is None
+        or received_at.tzinfo is None
+        or called_at >= received_at
+    ):
+        return False
+
+    # The host receipt contains no UUID. Require unique parent/path metadata as well
+    # as creation inside this call's interval, never a guessed or synthesized event.
+    matches: list[str] = []
+    for path in (codex_home / "sessions").rglob("*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as stream:
+                row = json.loads(stream.readline())
+            if not isinstance(row, dict) or row.get("type") != "session_meta":
+                return False
+            session = row["payload"]
+            source = session.get("source")
+            if not isinstance(source, dict):
+                continue
+            subagent = source.get("subagent")
+            if not isinstance(subagent, dict):
+                continue
+            spawn = subagent.get("thread_spawn", {})
+            if spawn.get("parent_thread_id") != parent_thread_id or spawn.get("agent_path") != agent_path:
+                continue
+            if session.get("parent_thread_id") != parent_thread_id or session.get("agent_path") != agent_path:
+                return False
+            created_at = datetime.fromisoformat(session["timestamp"].replace("Z", "+00:00"))
+            if created_at.tzinfo is None or not called_at <= created_at <= received_at:
+                return False
+            matches.append(session["id"])
+        except (OSError, KeyError, TypeError, ValueError, AttributeError):
+            return False
+    return matches == [attempt["agent_thread_id"]]
 
 
 def _validate_spawn_attempts(
@@ -1841,7 +1919,9 @@ def _validate_spawn_attempts(
         thread_id = attempt.get("agent_thread_id")
         event_id = attempt.get("event_id")
         agent_path = attempt.get("agent_path")
-        if not all(isinstance(value, str) and value for value in (thread_id, event_id, agent_path)):
+        receipt_route = manifest.get("schema_version") == 5 and "event_id" not in attempt
+        identities = (thread_id, agent_path) if receipt_route else (thread_id, event_id, agent_path)
+        if not all(isinstance(value, str) and value for value in identities):
             raise SystemExit(f"manifest-attempt-identity-missing:{role}")
         context_path = _resolve_path(out_dir, attempt.get("context_path"))
         if context_path in used_context_paths and not (
@@ -1867,7 +1947,13 @@ def _validate_spawn_attempts(
             and event.get("agent_path") == agent_path
             and event.get("kind") == "started"
         ]
-        if len(matches) != 1:
+        if receipt_route:
+            bound = _receipt_binds_child(
+                parent_rows, codex_home, manifest["parent_thread_id"], attempt, context_path.read_text(encoding="utf-8")
+            )
+        else:
+            bound = len(matches) == 1
+        if not bound:
             raise SystemExit(f"provenance-parent-spawn-mismatch:{role}:{attempt['attempt']}")
 
         child_rows = _read_jsonl(_find_rollout(codex_home, thread_id))

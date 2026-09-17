@@ -129,6 +129,29 @@ def test_high_risk_app_server_review_completes_and_is_discoverable(isolated_revi
     assert Path(lookup.stdout.strip()) == isolated_review / "result.json"
 
 
+def test_code_review_validator_rejects_legacy_app_server_plan_dispatch(isolated_review: Path) -> None:
+    """Keep historical adapter evidence readable without allowing it to satisfy a new review run."""
+    manifest_path = isolated_review / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    plan_path = Path(manifest["app_server_execution"]["plan_path"])
+    evidence_path = Path(manifest["app_server_execution"]["evidence_path"])
+    plan = json.loads(plan_path.read_text())
+    plan["schema_version"] = 1
+    for key in ("source_path", "source_sha256", "diff_path", "diff_sha256"):
+        del plan[key]
+    for node in plan["nodes"]:
+        del node["capacity_receipt"]
+    plan_path.write_text(json.dumps(plan), encoding="utf-8", newline="\n")
+    evidence = json.loads(evidence_path.read_text())
+    evidence["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
+    manifest["app_server_execution"]["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+
+    with pytest.raises(SystemExit, match="review-app-server-evidence-invalid:plan-legacy-dispatch-forbidden"):
+        validator._validate_app_server_review(isolated_review, manifest, manifest["passes"])
+
+
 @pytest.mark.parametrize("tamper", ["response", "input", "execution-digest", "native-attempt"])
 def test_review_completion_rejects_changed_app_server_evidence(isolated_review: Path, tamper: str) -> None:
     """Reject changed evidence at final completion, not only at initial adapter validation."""

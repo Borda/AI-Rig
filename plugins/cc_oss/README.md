@@ -61,7 +61,9 @@ Maintaining OSS = three competing demands: review code carefully (catch regressi
 
 **Turn review feedback into traceable action items.** `/oss:resolve` closes the gap between "reviewer said X" and "X in code." It reads live PR comments, a saved review report, or both; deduplicates sources; resolves conflicts semantically; and implements selected items with `[resolve No.N]` attribution, using isolated worktrees for specialist batches.
 
-**Release communication stays grounded in the diff.** `/oss:release` classifies changes, checks documentation/version consistency, writes release notes and optional changelog/summary/migration artifacts, and audits readiness. It does not edit package versions, create tags, or publish packages.
+**Release communication stays grounded in the diff.** `/oss:release` classifies changes, checks documentation/version consistency, writes release notes and optional changelog/summary/migration artifacts, credits human and automated contributors distinctly, and audits readiness. It does not edit package versions, create tags, or publish packages.
+
+Contributor credits combine Git authors/coauthors with verified in-range PR authors, including PR-only authors lost from squash metadata. Paginated commit-associated PR discovery covers maintenance branches independently of the default-branch list; failed association reads remain coverage gaps. Identity reconciliation uses verified login/email links, never name similarity; missing PR identity or range evidence remains a coverage warning. Individual contribution/profile steps apply only to humans; bots share one automated-contributions line in both inline and delegated release flows.
 
 **Triage with structure.** `/oss:analyse vitality` produces a repo vitality scorecard with duplicate issue clustering and stale-PR detection. A specific thread becomes a structured summary with next actions.
 
@@ -748,18 +750,18 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 #### Release, installation, and path helpers
 
-| Helper                       | Purpose                                                                           |
-| ---------------------------- | --------------------------------------------------------------------------------- |
-| `extract_contributors.py`    | List unique non-bot contributors in a Git range.                                  |
-| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                            |
-| `parse_release_envelopes.py` | Validate the changelog-audit and contributors agent envelopes for `/oss:release`. |
-| `release_append_marker.py`   | Persist and resolve the release `--append` baseline.                              |
-| `release_setup.py`           | Resolve shared setup values for release modes.                                    |
-| `run_audit_checks.py`        | Gather raw readiness evidence for release audit.                                  |
-| `setup_release_dir.py`       | Create a release directory and protect existing artifacts.                        |
-| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                         |
-| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                        |
-| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.      |
+| Helper                       | Purpose                                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- |
+| `extract_contributors.py`    | List unique contributors in a Git range; `--include-bots` supports aggregated release credits. |
+| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                                         |
+| `parse_release_envelopes.py` | Validate the changelog-audit and contributors agent envelopes for `/oss:release`.              |
+| `release_append_marker.py`   | Persist and resolve the release `--append` baseline.                                           |
+| `release_setup.py`           | Resolve shared setup values for release modes.                                                 |
+| `run_audit_checks.py`        | Gather raw readiness evidence for release audit.                                               |
+| `setup_release_dir.py`       | Create a release directory and protect existing artifacts.                                     |
+| `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                                      |
+| `verify_blueprint_audit.py`  | Verify and prune the auto-allow audit log.                                                     |
+| `write_skill_contract.py`    | Write the compaction-boundary contract the PreCompact hook appends verbatim.                   |
 
 #### Auto-allow audit log
 

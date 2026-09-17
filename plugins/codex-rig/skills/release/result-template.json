@@ -40,7 +40,43 @@
       "rendered_sha256": "sha256",
       "schema_version": 1,
       "validation_path": ".reports/codex/release/<timestamp>/final-handoff.validation.json"
-    }
+    },
+    "mode": "notes|prepare|audit|demo",
+    "release_contract_version": 1,
+    "release_evidence": {
+      "schema_version": 1,
+      "repository": "/absolute/local/repository",
+      "baseline": "optional-full-sha-or-null",
+      "final_tree": "pinned-head-tree-sha",
+      "candidates": [],
+      "claims": [],
+      "contributors": [],
+      "pr_authors": [],
+      "artifacts": [],
+      "changelog": {
+        "backup": "absolute-pre-edit-backup",
+        "destination": "absolute-canonical-changelog",
+        "backup_sha256": "pre-edit-sha256",
+        "final_sha256": "final-sha256",
+        "target_heading": "## target-version"
+      },
+      "demo": {
+        "sha256": "selected-demo-sha256",
+        "command": ["absolute-interpreter", "absolute-selected-demo.py"],
+        "interpreter": "absolute-interpreter",
+        "environment": "environment-identity",
+        "cwd": "/absolute/working-directory",
+        "exit_code": 0,
+        "output": "/absolute/demo-output",
+        "output_sha256": "demo-output-sha256",
+        "execution_receipt": "/absolute/demo-execution-receipt.json",
+        "execution_receipt_sha256": "receipt-sha256"
+      }
+    },
+    "release_head": "full-lowercase-commit-sha",
+    "requested_artifacts": [
+      "DRAFT.md"
+    ]
   },
   "schema_version": 2,
   "status": "pass|fail"

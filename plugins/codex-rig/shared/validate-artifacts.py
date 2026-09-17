@@ -55,6 +55,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 from collect_pr import _github_remote_identity, _head_repository  # noqa: E402
+from release_evidence import validate_release_evidence  # noqa: E402
 
 COMMON_RESULT_FIELDS = {
     "status",
@@ -2420,7 +2421,164 @@ def _validate_adversarial_loop_rows(out_dir: Path, ledger: dict[str, Any], summa
         raise SystemExit("adversarial-loop-recovery-guidance-missing")
 
 
+def _validate_release_communication(result: dict[str, Any], out_dir: Path, gates: dict[str, Any]) -> None:
+    """Reject incomplete new release communication while retaining historical report readability.
+
+    The versioned contract checks output selection, evidence presence and draft structure. Semantic release membership,
+    contributor identity, historical-byte preservation and executed examples remain the recorded review gate's duties.
+    Failed runs retain their requested output list without being forced to manufacture unfinished deliverables.
+    """
+    metadata = result.get("metadata", {})
+    if "release_contract_version" not in metadata:
+        return
+    version = metadata["release_contract_version"]
+    if type(version) is not int or version != 1:
+        raise SystemExit("release-contract-version")
+    if result.get("schema_version") != RESULT_SCHEMA_VERSION:
+        raise SystemExit("release-contract-requires-schema-v2")
+    minimum = {
+        "notes": {"DRAFT.md"},
+        "prepare": {"DRAFT.md", "CHANGELOG.md", "SUMMARY.md", "MIGRATION.md"},
+        "audit": set(),
+        "demo": {"demo.py"},
+    }
+    mode = metadata.get("mode")
+    if not isinstance(mode, str) or mode not in minimum:
+        raise SystemExit("release-invalid-mode")
+    requested = metadata.get("requested_artifacts")
+    allowed = minimum["prepare"] | minimum["demo"]
+    if (
+        not isinstance(requested, list)
+        or any(not isinstance(name, str) or name not in allowed for name in requested)
+        or len(requested) != len(set(requested))
+    ):
+        raise SystemExit("release-invalid-requested-artifacts")
+    if not minimum[mode].issubset(requested):
+        raise SystemExit("release-required-deliverables")
+    if (mode == "audit" and requested) or (mode == "demo" and set(requested) != {"demo.py"}):
+        raise SystemExit("release-mode-artifact-mismatch")
+    for name, sections in {
+        "release-scope.md": ["Head and baseline", "Released comparison", "Candidate accounting", "Limits"],
+        "contributors.md": ["Coverage", "Credits", "Exclusions", "Unresolved"],
+        "changelog-audit.md": ["Scope", "Preservation", "Added and flagged", "Limits"],
+        "draft-review.md": ["Claims", "Contributors", "Changelog preservation", "Examples", "Deliverables", "Limits"],
+    }.items():
+        _require_file_sections(out_dir / name, sections)
+    _validate_release_readiness(result, out_dir)
+    if result["status"] != "pass":
+        return
+    _validate_release_gate_source(metadata, gates)
+    for name in requested:
+        path = out_dir / "deliverables" / name
+        if path.is_symlink() or not path.resolve().is_relative_to(out_dir.resolve()) or not path.is_file():
+            raise SystemExit(f"release-missing-deliverable:{name}")
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            raise SystemExit(f"release-empty-deliverable:{name}")
+        if name == "DRAFT.md":
+            _validate_release_draft(text)
+    validate_release_evidence(metadata, out_dir, set(requested))
+
+
+def _validate_release_gate_source(metadata: dict[str, Any], gates: dict[str, Any]) -> None:
+    """Require passing release checks to observe the pinned clean source before and after execution."""
+    head = metadata.get("release_head")
+    if not isinstance(head, str) or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) is None:
+        raise SystemExit("release-head-invalid")
+    for check in gates["checks"]:
+        if check["status"] == "not-applicable":
+            continue
+        source = check.get("source")
+        if not isinstance(source, dict) or source.get("expected_head") != head:
+            raise SystemExit(f"release-gate-source:{check['id']}:expected-head")
+        for phase in ("before", "after"):
+            observation = source.get(phase)
+            if (
+                not isinstance(observation, dict)
+                or observation.get("head") != head
+                or observation.get("status") != ""
+                or "error" in observation
+            ):
+                raise SystemExit(f"release-gate-source:{check['id']}:{phase}")
+
+
+def _validate_release_readiness(result: dict[str, Any], out_dir: Path) -> None:
+    """Bind release readiness rows to the report and, when present, the rendered final handoff."""
+    try:
+        columns, rows = _parse_markdown_table(out_dir / "release-readiness.md", "Checks")
+    except SystemExit as error:
+        raise SystemExit(f"release-readiness-table-invalid:{error}") from error
+    if columns != ["check", "status", "evidence", "blocker / next action"] or not rows:
+        raise SystemExit("release-readiness-table-columns")
+    required = {
+        "semver",
+        "migration",
+        "release scope",
+        "contributors",
+        "changelog",
+        "documentation",
+        "verification",
+        "artifacts",
+    }
+    names = [row[0].casefold() for row in rows]
+    if len(names) != len(set(names)) or not required.issubset(names):
+        raise SystemExit("release-readiness-checks-missing-or-duplicate")
+    for row in rows:
+        if any(not cell.strip() for cell in row) or row[1] not in {
+            "pass",
+            "fail",
+            "warning",
+            "not-applicable",
+            "unavailable",
+        }:
+            raise SystemExit("release-readiness-row-invalid")
+        if result["status"] == "pass" and row[1] in {"fail", "unavailable"}:
+            raise SystemExit("release-pass-with-readiness-blocker")
+    binding = result["metadata"].get("final_handoff")
+    if binding is not None:
+        path = _resolve_final_handoff_path(out_dir, binding.get("handoff_path"), "handoff_path")
+        handoff = _load_json(path)
+        if handoff.get("branch") == "caller-contract":
+            return
+        tables = handoff.get("tables", [])
+        changes = [
+            table
+            for table in tables
+            if table.get("columns") == ["Change", "SemVer impact", "Status / blocker", "Evidence"]
+        ]
+        if len(tables) != 2 or len(changes) != 1:
+            raise SystemExit("release-changes-table-missing")
+        readiness = [table for table in handoff.get("tables", []) if table.get("heading") == "Readiness"]
+        if len(readiness) != 1 or [row["cells"] for row in readiness[0]["rows"]] != rows:
+            raise SystemExit("release-readiness-handoff-mismatch")
+        verdict = "release-ready"
+        if result["status"] != "pass":
+            verdict = "blocked"
+        elif result["metadata"]["mode"] in {"notes", "demo"} or any(row[1] == "warning" for row in rows):
+            verdict = "warning-only"
+        if handoff.get("outcome", {}).get("title") != verdict:
+            raise SystemExit("release-readiness-verdict-mismatch")
+
+
+def _validate_release_draft(text: str) -> None:
+    """Require substantive draft section bodies rather than changelog-only output or heading mentions."""
+    if re.match(r"\s*#\s+changelog\b", text, re.IGNORECASE):
+        raise SystemExit("release-draft-is-changelog")
+    # Optional leading emojis preserve project voice without weakening the section-role check.
+    for section in ("Summary", "Highlights", "Migration guide", "Notable changes", "Contributors"):
+        match = re.search(
+            rf"^##[^\w\r\n]*{re.escape(section)}[ \t]*\r?\n(?P<body>.*?)(?=^##[ \t]+|\Z)",
+            text,
+            re.IGNORECASE | re.MULTILINE | re.DOTALL,
+        )
+        if match is None or not match.group("body").strip():
+            raise SystemExit(f"release-draft-section:{section}")
+    if not re.search(r"full changelog", text, re.IGNORECASE):
+        raise SystemExit("release-draft-comparison-missing")
+
+
 def validate(skill: str, out_dir: Path, result_path: Path) -> None:
+    """Validate shared workflow evidence and the selected skill's completion contract."""
     result = _load_json(result_path)
     _require_result_shape(result)
     _validate_confidence_gaps(result, skill)
@@ -2445,6 +2603,8 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     for filename in jsonl_files:
         _validate_jsonl(out_dir / str(filename))
     _validate_confidence_recovery(result, skill)
+    if skill == "release":
+        _validate_release_communication(result, out_dir, gates)
     if skill == "adversarial-loop":
         _validate_adversarial_loop(result, out_dir, gates)
     if skill == "code-remediate":
