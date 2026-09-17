@@ -108,7 +108,7 @@ def validator() -> ModuleType:
 
 
 @pytest.fixture
-def release_run(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+def release_run(tmp_path: Path, text_newline_default: None) -> tuple[Path, dict[str, object]]:
     """Create complete release evidence with real gate logs and a structured draft."""
     checks = []
     for gate in ("lint", "format", "types", "tests", "review"):
@@ -182,10 +182,10 @@ def release_run(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     final_tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=repository, text=True).strip()
     draft = outputs / "DRAFT.md"
     changelog_backup = tmp_path / "changelog-before.md"
-    changelog_backup.write_text("# Changelog\n\n## v1.0\n- Existing detail.\n", encoding="utf-8")
+    changelog_backup.write_text("# Changelog\n\n## v1.0\n- Existing detail.\n", encoding="utf-8", newline="\n")
     changelog_final = tmp_path / "CHANGELOG.md"
     changelog_final.write_text(
-        changelog_backup.read_text(encoding="utf-8") + "\n## v1.2.1\n- Parsing fix.\n", encoding="utf-8"
+        changelog_backup.read_text(encoding="utf-8") + "\n## v1.2.1\n- Parsing fix.\n", encoding="utf-8", newline="\n"
     )
     digest = hashlib.sha256(draft.read_bytes()).hexdigest()
     identities = [
@@ -747,20 +747,30 @@ def test_passing_release_rejects_uncredited_second_coauthor(
 
 @pytest.mark.parametrize("published_state", ["active", "reverted", "different-mode"])
 @pytest.mark.parametrize("filename", ["feature.txt", "space ü [x].txt"])
+@pytest.mark.parametrize("autocrlf", ["false", "input", "true"])
 @pytest.mark.integration
 def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
-    validator: ModuleType, release_run: tuple, published_state: str, filename: str
+    validator: ModuleType,
+    release_run: tuple,
+    published_state: str,
+    filename: str,
+    autocrlf: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A matching historical patch cannot subtract behavior absent from the published release tree."""
     directory, result = release_run
     repository = directory / "source"
+    subprocess.run(["git", "config", "core.autocrlf", autocrlf], cwd=repository, check=True, capture_output=True)
     root = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
     branch = subprocess.check_output(["git", "branch", "--show-current"], cwd=repository, text=True).strip()
     feature = repository / filename
-    feature.write_text("enabled\n", encoding="utf-8")
+    # Undefined CP1252 byte 0x9D must survive patch comparison without text decoding.
+    feature_bytes = "enabled \u081d\n".encode("utf-8")
+    feature.write_bytes(feature_bytes)
     subprocess.run(["git", "add", "--", filename], cwd=repository, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "enable feature"], cwd=repository, check=True, capture_output=True)
     introduced = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
+    assert subprocess.check_output(["git", "show", f"{introduced}:{filename}"], cwd=repository) == feature_bytes
     subprocess.run(["git", "checkout", "-q", "-b", "published", root], cwd=repository, check=True, capture_output=True)
     subprocess.run(["git", "merge", "--ff-only", introduced], cwd=repository, check=True, capture_output=True)
     if published_state == "reverted":
@@ -775,11 +785,12 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
         )
     published_head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
     subprocess.run(["git", "checkout", "-q", "-b", "candidate", root], cwd=repository, check=True, capture_output=True)
-    feature.write_text("enabled\n", encoding="utf-8")
+    feature.write_bytes(feature_bytes)
     subprocess.run(["git", "add", "--", filename], cwd=repository, check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "backport feature"], cwd=repository, check=True, capture_output=True)
     candidate = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repository, text=True).strip()
     assert candidate != introduced
+    assert subprocess.check_output(["git", "show", f"{candidate}:{filename}"], cwd=repository) == feature_bytes
     receipt = result["metadata"]["release_evidence"]
     result["metadata"]["release_head"] = candidate
     receipt.update(
@@ -799,7 +810,7 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
                 "published_paths": [
                     {
                         "path": filename,
-                        "sha256": hashlib.sha256(b"enabled\n").hexdigest(),
+                        "sha256": hashlib.sha256(feature_bytes).hexdigest(),
                         "mode": "100644",
                         "object_type": "blob",
                     }
@@ -823,11 +834,21 @@ def test_released_patch_subtraction_rejects_introduced_then_reverted_behavior(
         }
     (directory / "gates.json").write_text(json.dumps(gates), encoding="utf-8")
     bind_handoff(directory, result)
-    if published_state == "active":
-        validate_run(validator, release_run)
-    else:
-        with pytest.raises(SystemExit, match="release-evidence-released-tree-path"):
+    real_run = subprocess.run
+
+    def run_with_cp1252_default(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+        """Exercise real Git with a Windows legacy decoder when encoding is unspecified."""
+        if kwargs.get("text") and kwargs.get("encoding") is None:
+            kwargs["encoding"] = "cp1252"
+        return real_run(*args, **kwargs)
+
+    with monkeypatch.context() as context:
+        context.setattr(subprocess, "run", run_with_cp1252_default)
+        if published_state == "active":
             validate_run(validator, release_run)
+        else:
+            with pytest.raises(SystemExit, match="release-evidence-released-tree-path"):
+                validate_run(validator, release_run)
     subprocess.run(["git", "checkout", "-q", branch], cwd=repository, check=True, capture_output=True)
 
 

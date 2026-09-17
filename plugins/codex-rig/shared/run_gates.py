@@ -4,9 +4,9 @@
 ## Purpose
 
 Execute configured lint, format, type, test, and review checks while preserving per-gate evidence and timeout
-classification. An optional expected Git head binds each executable check to a clean source observation before and
-after its command. The gate runner turns each command into a named record that result validation can reconcile with
-the workflow verdict.
+classification. An optional expected Git head binds each executable check to a clean source observation before and after
+its command. The gate runner turns each command into a named record that result validation can reconcile with the
+workflow verdict.
 
 ## Scope
 
@@ -119,6 +119,9 @@ def command_argv(command: str, platform: str | None = None) -> list[str]:
     """Return the native shell argv for one configured command string."""
     host = sys.platform if platform is None else platform
     if host == "win32":
+        # PowerShell -Command normalizes native failures to 1 unless explicitly returned.
+        # Check shell success first so a recovered native failure does not override it.
+        command += "\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }"
         return ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command]
     return ["bash", "-lc", command]
 

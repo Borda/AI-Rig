@@ -56,7 +56,7 @@ def test_review_recovery_explains_rejection_and_declined_repair() -> None:
         "could not confirm",
         "encrypted",
         "not established",
-        "(yes / no)",
+        "(Approve / Deny)",
         "fresh sequential review",
         "explicitly required independent",
         "separate fallback plan",
@@ -104,8 +104,8 @@ def test_existing_merge_recovery_requires_an_owned_concrete_choice() -> None:
         "pre-existing changes",
         "unrelated dirty files",
         "current PR head",
-        "(yes / no)",
-        "a **no** selects **Defer**",
+        "(Approve / Deny)",
+        "a **Deny** selects **Defer**",
         "reprompt an action already authorized",
     ):
         assert requirement in recovery

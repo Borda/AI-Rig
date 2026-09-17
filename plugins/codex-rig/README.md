@@ -8,7 +8,7 @@ Selected read-only review passes run concurrently by default and may inspect the
 
 The package covers capabilities Codex can currently install and verify. It contains no MCP server and no native bundled agent registrations. Parallel work uses runtime blank agent with exact role card injected when that route is available; inline role pass is serial fallback. Persistent named-agent routing remains platform-blocked until Codex exposes verifiable custom-agent selector. The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in [`ARCHITECTURE.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/ARCHITECTURE.md).
 
-> Current release: `0.19.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current release: `0.20.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 <details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
@@ -61,7 +61,7 @@ Codex Rig never enables persistent workspace network access. In network-sandboxe
 
 Approval and denial behavior: brief names operation's purpose, capability and effects, target, owning command, and denial outcome. If approval is denied, current tool call stops and assistant turn may end; external command is not run, and Codex Rig does not issue equivalent reprompt or silently broaden fallback. To continue, send new message. Separate operations with materially different effects, such as GitHub read and local checkout or lifecycle mutation, remain separate approvals.
 
-Questions show how to answer: binary plain-text confirmations include `(yes / no)`, selection prompts list supported choices, and free-text requests name the expected format with an example when useful. Native controls retain their actual options; exact-digest confirmations retain their required syntax. Existing authorization is reused, and silence or a default selection never counts as consent.
+Codex questions prefer synchronous `request_user_input` for required or flow-changing decisions only when the active host permits that purpose and every feasible choice fits. Optional questions use `request_user_input_async` when independent authorized work can continue; required fallbacks keep dependent actions pending. Option-based questions put one evidence-backed choice first with `(Recommended)` in its label; the suffix maps to the unchanged canonical answer and never grants consent. Conversational approvals use Approve/Deny; exact-digest protocols and runtime permissions remain separate. Silence, preselection, stale or duplicate replies never authorize action. All Codex entrypoints load their plugin-local guidance; no sibling plugin or global setup is required. [Codex CLI 0.154.0](https://learn.chatgpt.com/docs/changelog) introduced inline selectable asynchronous TUI questions, but version alone does not establish tool availability. Older/headless hosts retain plain-chat or unresolved-input fallback; no plugin-wide minimum or automatic upgrade is added.
 
 App Server review evidence requires every supplied turn identity to agree, lifecycle items to be objects, and review events to belong to a still-active reviewer. Contradictory identities, malformed items, and late events fail with a specific reason while preserving any already completed reviewer output. Final evidence validation failures also record failed status and the validation reason after cleanup, rather than leaving a completed result; failure recording still requires a writable output directory.
 
@@ -388,6 +388,8 @@ It validates packaged skills, role cards, shared contracts, behavior fixtures, a
 Paid live A/B calibration is separate, explicit, and never implied by offline result.
 
 ## 🧾 Approval prompts and commit handoffs
+
+Explicit local review intake validates canonical `result.json` with both existing artifact validators before remediation consumes it. Metadata-only, draft, altered-evidence, and differently named local files fail closed; PR-only automatic discovery is unchanged. For a different producer session, the finder accepts the existing `--parent-thread-id` and `--codex-home` evidence-location options without bypassing provenance checks. Its default validation context remains the current runtime.
 
 New final handoffs use `presentation_version=2`: plain-English explanation first, no empty Results section, one concise line for checks not run, and each recovery action shown once. Unavailable review explanations bind actual collector failure to retained safe command and checkout evidence; missing cause details stay explicitly unknown. Machine records remain complete, historical rendered bytes stay unchanged, and explicitly requested exact caller output is preserved.
 

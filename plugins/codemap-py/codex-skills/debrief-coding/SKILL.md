@@ -3,6 +3,8 @@ name: debrief-coding
 description: 'Telemetry report: `$codemap-py:debrief-coding [flags]`; skip integration/index/query.'
 ---
 
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+
 # Debrief Coding
 
 Read `.cache/codemap/logs/` JSONL, analyse use, and write a diagnostic report. Include recursive `claude/`, `codex/`, and `direct/` shards; keep legacy flat records unattributed. Codex records runtime-scoped CLI/tool shards but no skill starts, so missing skill telemetry and cross-layer joins are evidence gaps.

@@ -3,6 +3,8 @@ name: investigate
 description: Investigate code debugging and root-cause narrowing; use measurable gates before fixes.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Investigate
 
 See the [fixed recurrence and root-cause policy](../../shared/native-skill-contract.md#recurrence-and-root-cause-policy) and [reasoning-progress escalation policy](../../shared/native-skill-contract.md#reasoning-progress-escalation) for repeated-obstacle handling; record and validate `reasoning-progress.json` before another cycle after escalation trigger.

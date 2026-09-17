@@ -3,6 +3,8 @@ name: release
 description: Draft release notes, changelogs, contributor credits, migration guides, and summaries from traced unreleased changes; assess SemVer readiness without publishing.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Release
 
 Prepare substantial, source-grounded release communication and SemVer readiness evidence. Never tag, publish, upload, or force-push. Release documents serve users; the final workflow report serves maintainers and does not replace the release draft.

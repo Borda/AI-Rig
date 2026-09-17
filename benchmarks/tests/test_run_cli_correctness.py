@@ -13,6 +13,7 @@ Coverage splits into two layers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -128,6 +129,31 @@ class TestCorrectnessInPrimaryVerdict:
 # ===========================================================================
 # Integration: each suite runs green against real fixtures + binaries
 # ===========================================================================
+
+
+@pytest.mark.integration
+def test_fixture_git_does_not_spawn_automatic_maintenance(
+    script_run_cli: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep automatic Git writers out of the disposable fixture's cleanup window."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    script_run_cli._fixture_git(root, "init", "-q")
+    script_run_cli._fixture_git(root, "config", "maintenance.auto", "true")
+    script_run_cli._fixture_git(root, "config", "maintenance.autoDetach", "false")
+    trace = tmp_path / "git-events.jsonl"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", trace.as_posix())
+
+    script_run_cli._fixture_git(root, "commit", "--allow-empty", "-q", "-m", "fixture")
+
+    events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert any(event["event"] == "exit" and event["code"] == 0 for event in events)
+    maintenance = [
+        event["argv"]
+        for event in events
+        if event["event"] == "child_start" and any(arg in {"maintenance", "gc"} for arg in event["argv"])
+    ]
+    assert maintenance == []
 
 
 def _bins(script_run_cli: Any, scan_query_binary: Path, scan_index_binary: Path) -> tuple[Path, Path]:

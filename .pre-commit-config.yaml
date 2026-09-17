@@ -170,6 +170,20 @@ repos:
           #- --exclude=^https?://
         types_or: [markdown, toml]
 
+  - repo: https://github.com/tox-dev/pyproject-fmt
+    rev: v2.25.3
+    hooks:
+      - id: pyproject-fmt
+        name: "📐 pyproject-fmt"
+        additional_dependencies:
+          - "tomli>=2.0.1"
+
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.25
+    hooks:
+      - id: validate-pyproject
+        name: "🔍 validate-pyproject"
+
   - repo: local
     hooks:
       - id: node-syntax-check
@@ -256,14 +270,6 @@ repos:
         entry: python3 plugins/cc_foundry/bin/check_readme_drift.py --scan-dir plugins --check bin-refs
         pass_filenames: false
         always_run: true
-
-      - id: codex-rig-package-manifest
-        name: "🔐 Codex Rig package manifest update"
-        language: system
-        entry: python3 plugins/codex-rig/scripts/build_package.py --update
-        # Coverage: every source or metadata change under the Codex Rig plugin.
-        files: ^plugins/codex-rig/
-        pass_filenames: false
 
       - id: blueprint-manifest-update
         name: "🧾 blueprint manifest regeneration"
@@ -389,23 +395,18 @@ repos:
         # Coverage: maintained benchmark docs/scripts plus the tracked methodology policy; excludes generated, result, and test trees.
         files: ^benchmarks/(?!manifests/|results/|tests/).*\.(md|py|sh)$|^benchmarks/policy/provider-parity-methodology\.json$
 
+      - id: codex-rig-package-manifest
+        name: "🔐 Codex Rig package manifest update"
+        language: system
+        entry: python3 plugins/codex-rig/scripts/build_package.py --update
+        # Coverage: every source or metadata change under the Codex Rig plugin. Runs last among
+        # local hooks so its hash reflects files after all earlier formatters/fixers touched them.
+        files: ^plugins/codex-rig/
+        pass_filenames: false
+
   - repo: https://github.com/jorisroovers/gitlint
     rev: v0.19.1 # run `pre-commit autoupdate --repo https://github.com/jorisroovers/gitlint` to set
     hooks:
       - id: gitlint
         name: "✅ gitlint"
         stages: [commit-msg]
-
-  - repo: https://github.com/tox-dev/pyproject-fmt
-    rev: v2.25.3
-    hooks:
-      - id: pyproject-fmt
-        name: "📐 pyproject-fmt"
-        additional_dependencies:
-          - "tomli>=2.0.1"
-
-  - repo: https://github.com/abravalheri/validate-pyproject
-    rev: v0.25
-    hooks:
-      - id: validate-pyproject
-        name: "🔍 validate-pyproject"

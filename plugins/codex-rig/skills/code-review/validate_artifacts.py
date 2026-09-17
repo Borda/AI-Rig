@@ -1817,9 +1817,9 @@ def _receipt_binds_child(
 ) -> bool:
     """Bind a path-only native spawn receipt to one newly created runtime child session.
 
-    This inspection-only route requires call, receipt, and child creation timestamps to
-    prevent a retained older same-path child from substituting for a missing new log.
-    Unknown receipt formats, missing timestamps, and ambiguous sessions fail closed.
+    This inspection-only route requires call, receipt, and child creation timestamps to prevent a retained older same-
+    path child from substituting for a missing new log. Unknown receipt formats, missing timestamps, and ambiguous
+    sessions fail closed.
     """
     call_id = attempt.get("spawn_call_id")
     if not isinstance(call_id, str) or not call_id:

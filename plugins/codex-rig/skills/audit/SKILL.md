@@ -3,9 +3,13 @@ name: audit
 description: Audit Codex configuration and workflow contracts, including failures between individually successful steps, plus prompt-efficiency drift; emit evidence-backed gaps and measurable gates.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Audit
 
 Run linear configuration/workflow audit.
+
+> Unless `skip_gate=true` or a fix level is already supplied, present ranked findings and ask which findings or severity levels should be proposed for remediation, including `No fixes`; accept existing indexes/ranges or severity syntax through User Questions. Record the bound choice in `audit-ledger.md`. Pending input stays unresolved; choosing a fix level does not turn this audit into an implementation run.
 
 ## Input Schema
 

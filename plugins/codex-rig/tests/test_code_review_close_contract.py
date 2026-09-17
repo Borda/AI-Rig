@@ -218,7 +218,7 @@ def _write_closed_artifact(out_dir: Path, code: str = "DUPLICATE") -> Path:
         ("online-review-summary.json", {}),
     ):
         (out_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
-    (out_dir / "diff.patch").write_text("diff --git a/widget.py b/widget.py\n", encoding="utf-8")
+    (out_dir / "diff.patch").write_text("diff --git a/widget.py b/widget.py\n", encoding="utf-8", newline="\n")
     (out_dir / "files.txt").write_text("widget.py\n", encoding="utf-8")
     (out_dir / "untracked.txt").write_text("", encoding="utf-8")
     (out_dir / "numstat.txt").write_text("1\t1\twidget.py\n", encoding="utf-8")

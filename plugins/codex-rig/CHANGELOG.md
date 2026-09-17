@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.20.0
+
+- Preserve native command exit codes in Windows gate receipts without masking PowerShell errors or successful recovery.
+- Decode release-evidence Git metadata as UTF-8 so Unicode paths and contributor identities remain consistent across host locales.
+- Accept local working-tree, path, and commit reviews at explicit remediation intake only after both existing artifact validators pass; reject metadata-only, draft, altered-evidence, and noncanonical local files. Keep PR discovery PR-only and preserve terminal-report rejection.
+- Add capability-aware native Codex questions across every Codex skill: prefer permitted synchronous controls for required decisions, asynchronous controls for independent follow-ups or lossless fallback, and plain chat when unsupported.
+- Use Approve/Deny for conversational authorization while preserving exact-digest and runtime permission boundaries. Bind delayed answers to immutable scope, reject superseded/duplicate replies, retain all feasible choices, and avoid duplicate live prompts.
+- Ship plugin-local question guidance and regression coverage; preserve existing authorization and host-specific behavior without changing installed settings or requiring a Codex upgrade.
+- Label one evidence-backed first choice `(Recommended)` in option-based questions; preserve canonical answers, exact confirmation syntax, and explicit consent.
+
 ## 0.19.0
 
 - Enforce raw JSON findings on every App Server review turn with a source-bound output schema and fail-closed response validation; preserve original bytes and historical fenced loop reports without automatic retries.

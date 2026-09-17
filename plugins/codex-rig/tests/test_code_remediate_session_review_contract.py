@@ -141,16 +141,20 @@ def test_parallel_details_load_only_for_a_selected_parallel_route() -> None:
 
 
 def test_scope_selection_question_keeps_options_with_visible_context() -> None:
-    """Prevent selectable context and its question splitting across UI surfaces."""
+    """Require full visible context before one native control or a complete prose fallback."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     scope_contract = skill.split("### Terminal Scope Context Contract", maxsplit=1)[1].split(
         "Record in `<run-directory>/resolution-scope.md`", maxsplit=1
     )[0]
 
     assert scope_contract.count("Which findings should I remediate?") == 1
-    assert "exactly one user-visible assistant message containing, in order" in scope_contract
+    assert "one user-visible assistant message containing" in scope_contract
     assert "the exact unabridged `resolution-scope.md` content" in scope_contract
-    assert "Do not open a second scope-selection control" in scope_contract
+    assert "Then follow User Questions to ask once in a permitted native control" in scope_contract
+    assert "only plain-chat fallback appends the question and choices" in scope_contract
+    assert "Do not repeat the question/options in both prose and a native control" in scope_contract
+    assert "immutable item/source inventory" in scope_contract
+    assert "An async return or empty sync result leaves selection pending" in scope_contract
     assert "collapsed output" in scope_contract
 
 

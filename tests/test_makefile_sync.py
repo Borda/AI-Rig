@@ -42,7 +42,7 @@ def _gnu_make() -> str | None:
     make = shutil.which("make")
     if make is None:
         return None
-    result = subprocess.run([make, "--version"], capture_output=True, text=True, check=False)
+    result = subprocess.run([make, "--version"], capture_output=True, text=True, encoding="utf-8", check=False)
     if "GNU Make" not in result.stdout:
         return None
     return make
@@ -59,7 +59,7 @@ def _run_make(
     args = [GNU_MAKE, "-f", str(MAKEFILE), target]
     for key, value in (extra_vars or {}).items():
         args.append(f"{key}={value}")
-    return subprocess.run(args, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+    return subprocess.run(args, cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", check=False)
 
 
 @pytest.fixture(name="fake_claude")
@@ -73,6 +73,7 @@ def _fake_claude(tmp_path: Path) -> FakeClaude:
     script.write_text(
         "#!/usr/bin/env bash\n"
         'echo "claude $*" >> "$CLAUDE_STUB_LOG"\n'
+        'if [[ "$CLAUDE_STUB_UTF8_STDOUT" == "true" ]]; then printf "\\340\\240\\235\\n"; fi\n'
         'if [[ "$1 $2" == "plugin install" && "$3" == bridge@* && "$FAIL_BRIDGE" == "true" ]]; then\n'
         "    exit 1\n"
         "fi\n"
@@ -121,6 +122,36 @@ def _fake_codex_home_sync_script(tmp_path: Path) -> FakeScript:
         encoding="utf-8",
     )
     return FakeScript(path=path, log=log)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(GNU_MAKE is None, reason="GNU make is not available on this host")
+def test_run_make_decodes_utf8_output_when_parent_default_is_cp1252(
+    fake_claude: FakeClaude, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Make output must remain readable when the host default decoder is cp1252.
+
+    The real CLI stub emits U+081D as raw UTF-8 bytes, including 0x9D which is undefined in cp1252. ASCII arguments
+    avoid MinGW's Unicode command-line conversion; the wrapper supplies a non-UTF-8 default only when unspecified.
+    """
+    real_run = subprocess.run
+
+    def run_with_cp1252_default(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Supply the simulated host default while preserving the real subprocess call."""
+        if kwargs.get("text") and kwargs.get("encoding") is None:
+            kwargs["encoding"] = "cp1252"
+        return real_run(*args, **kwargs)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_claude.bin_dir}{os.pathsep}{env['PATH']}"
+    env["CLAUDE_STUB_LOG"] = str(fake_claude.log)
+    env["CLAUDE_STUB_UTF8_STDOUT"] = "true"
+    monkeypatch.setattr(subprocess, "run", run_with_cp1252_default)
+
+    result = _run_make("clear-claude", env=env, extra_vars={"PLUGINS": "example"})
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\u081d" in result.stdout
 
 
 @pytest.mark.integration
@@ -329,7 +360,12 @@ def test_target_dry_runs_without_a_make_parse_error(target: str) -> None:
     exit even before any real command runs.
     """
     result = subprocess.run(
-        [GNU_MAKE, "-f", str(MAKEFILE), "-n", target], cwd=ROOT, capture_output=True, text=True, check=False
+        [GNU_MAKE, "-f", str(MAKEFILE), "-n", target],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
     )
 
     assert result.returncode == 0, result.stderr

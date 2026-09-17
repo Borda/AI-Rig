@@ -3206,10 +3206,11 @@ def _correctness_scenario(scenario: str, name: str, checklist: _Checklist, error
 
 
 def _fixture_git(root: Path, *args: str) -> None:
-    """Run a git command inside *root* with a fixed identity, raising on failure.
+    """Run fixture Git commands with fixed identity and no automatic maintenance.
 
-    A deterministic identity keeps the fixture repo hermetic (no dependence on the
-    host git config) so diff-impact's git-diff source is reproducible.
+    Automatic maintenance can outlive its Git parent and race removal of the
+    disposable repository. Per-command settings keep that work disabled without
+    changing host configuration; other Git configuration remains inherited.
 
     Args:
         root: repository working directory.
@@ -3218,8 +3219,17 @@ def _fixture_git(root: Path, *args: str) -> None:
     Raises:
         RuntimeError: when the git command exits non-zero.
     """
-    ident = ["-c", "user.email=bench@codemap", "-c", "user.name=bench"]
-    result = subprocess.run(["git", *ident, *args], cwd=str(root), capture_output=True, text=True, timeout=30)
+    settings = [
+        "-c",
+        "user.email=bench@codemap",
+        "-c",
+        "user.name=bench",
+        "-c",
+        "maintenance.auto=false",
+        "-c",
+        "gc.auto=0",
+    ]
+    result = subprocess.run(["git", *settings, *args], cwd=str(root), capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
 

@@ -3,6 +3,8 @@ name: research
 description: Research docs, papers, or state of the art; provide source-backed recommendations and caveats.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Research
 
 Source-backed research for documentation, API migration, paper, or state-of-the-art questions.

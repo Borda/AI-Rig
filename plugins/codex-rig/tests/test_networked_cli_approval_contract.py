@@ -61,17 +61,16 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     questions = contract.split("## User Questions\n", 1)[1].split("\n## ", 1)[0]
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
 
-    assert "Authorize this local merge and commit? (yes / no)" in questions
-    assert "show all supported choices" in questions
-    assert "state the expected value or format" in questions
-    assert "use the actual supported options in that control" in questions
-    assert (
-        "Do not add a conflicting yes/no suffix, duplicate its choices in another prompt, "
-        "or imply that a chat answer bypasses runtime approval."
-    ) in questions
+    assert "`Approve local merge` / `Deny local merge`" in questions
+    assert "all feasible choices" in questions
+    assert "states the expected value or format" in questions
+    assert "Use the actual tool schema" in questions
+    assert "Runtime permission requests use the dedicated runtime mechanism" in questions
+    assert "do not duplicate them in prose" in questions
     assert "Do not re-ask a decision already supplied" in questions
-    assert "Never treat silence, a preselected option, an example answer, or an unrelated reply as consent" in questions
-    assert "Authorize this local merge and commit? (yes / no)" in skill
+    assert "Silence, skip, timeout, preselection, an empty result, an example answer" in questions
+    assert "unrelated text grants no consent" in questions
+    assert "Authorize this local merge and commit? (Approve / Deny)" in skill
     assert "(approve / revise / parent-only)" in skill
 
 

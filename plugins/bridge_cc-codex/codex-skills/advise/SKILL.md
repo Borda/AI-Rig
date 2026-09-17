@@ -3,6 +3,8 @@ name: advise
 description: Ask Claude Code a read-only question from Codex through the sandbox-external bridge.
 ---
 
+> Before asking, read [User Questions](../../rules/codex-user-questions.md).
+
 # Ask Claude Code for Advice
 
 Call `bridge_advise` with required `task`; preserve caller-supplied `model`, `effort`, `timeout_seconds`, `depth`, and `run_id`. If effort is absent, select and pass it: `low` for narrow mechanical or settled factual work; `medium` for bounded implementation, diagnosis, or review; `high` for cross-file, adversarial, architectural, or security judgment; `xhigh` for unusually broad consequential work; `max` only on explicit request. Never replace supplied effort.

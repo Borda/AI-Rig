@@ -43,7 +43,7 @@ def test_app_server_manifest_requires_execution_evidence(tmp_path: Path) -> None
 
 
 @pytest.fixture
-def isolated_review(tmp_path: Path) -> Path:
+def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     """Build a full synthetic HIGH_RISK review through existing artifact constructors."""
     completion_tests = _module(Path(__file__).with_name("test_review_completion_gate.py"))
     run = completion_tests._assessed_pr.__wrapped__(tmp_path)

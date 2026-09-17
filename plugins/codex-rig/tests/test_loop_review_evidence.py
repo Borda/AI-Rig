@@ -211,7 +211,7 @@ def _app_server_loop(
     validator = _validator()
     run = tmp_path / "loop"
     review = _module(Path(__file__).with_name("test_app_server_review_integration.py")).isolated_review.__wrapped__(
-        run / "review"
+        run / "review", text_newline_default=None
     )
     repository_root = tmp_path / "repository-root"
     repository_root.mkdir()

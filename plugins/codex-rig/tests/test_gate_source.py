@@ -123,19 +123,20 @@ def test_wrong_expected_head_blocks_command_and_records_preblocked_receipt(tmp_p
     assert "source-head-mismatch" in (output / str(check["stderr"])).read_text(encoding="utf-8")
 
 
-def test_matching_head_runs_command_and_keeps_command_failure(tmp_path: Path) -> None:
-    """Execute on a clean matching source but retain the command's own nonzero failure."""
+@pytest.mark.parametrize("exit_code", [0, 1, 7])
+def test_matching_head_runs_command_and_keeps_command_failure(tmp_path: Path, exit_code: int) -> None:
+    """Execute on matching source and retain the native command's exact exit status."""
     repository = tmp_path / "repository"
     repository.mkdir()
     expected_head = _initialize_repository(repository)
     output = tmp_path / "gates"
 
-    completed = _run_lint_gate(repository, output, expected_head, _python_command("raise SystemExit(7)"))
+    completed = _run_lint_gate(repository, output, expected_head, _python_command(f"raise SystemExit({exit_code})"))
 
-    assert completed.returncode == 1
+    assert completed.returncode == (1 if exit_code else 0)
     check = _lint_check(output)
-    assert check["status"] == "fail"
-    assert check["exit_code"] == 7
+    assert check["status"] == ("fail" if exit_code else "pass")
+    assert check["exit_code"] == exit_code
     assert check["source"] == {
         "expected_head": expected_head,
         "before": {"head": expected_head, "status": ""},

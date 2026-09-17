@@ -3,6 +3,8 @@ name: assess
 description: Analyze issue/PR/problem before implementation; produce source-backed findings and measurable gates.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Assess
 
 Run evidence-first analysis: truth, risk, next action before implementation, review, release, sync.

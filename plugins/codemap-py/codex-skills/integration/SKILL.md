@@ -3,6 +3,8 @@ name: integration
 description: 'Codemap integration: audit|plan|apply|sync|demo; skip query/index rebuilds.'
 ---
 
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+
 NOT for: structural queries (`$codemap-py:query-code`) or index rebuilds (`$codemap-py:scan-codebase`).
 
 # Integration
@@ -33,7 +35,7 @@ The active Codex consumer contract (requires the `codex-rig` plugin) is its ship
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve its installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning. Codex has no `AskUserQuestion`: print plan summary and SHA-256, then wait for the next user message before `apply`/`sync`.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve its installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning. Print plan summary and SHA-256 before the User Questions control; preserve the exact confirmation syntax and wait for a valid answer bound to that digest before `apply`/`sync`.
 
 When `--runtime` includes Codex (`codex`, `both`, or omitted), discover the active `codex-rig` via native CLI, never hand-edit config:
 

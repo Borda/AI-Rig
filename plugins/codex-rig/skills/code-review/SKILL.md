@@ -3,6 +3,8 @@ name: code-review
 description: Close PRs at an evidence gate or review local diffs/PRs with specialists and JSON artifacts.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Code Review
 
 For an authorized review-and-fix cycle, read `../../shared/adversarial-loop.md` for convergence and stop rules. A review-only request remains read-only; a clean loop does not replace this skill's evidence, artifact, and completion/discovery gates.
@@ -484,10 +486,10 @@ This checkpoint is mandatory on first run and after every resume, repeated invoc
 
 For `review-inspection-context-not-sent:<role>`, explain: "The validator could not confirm that the specialist received the exact code and instructions prepared for this review. Its results cannot be accepted yet, but available code inspection can continue." Inspect retained context and safe provenance before attributing the rejection to encrypted logs or any other cause; if the cause is not established, say so. Other validation errors need their own evidence-backed explanation, not this diagnosis by default.
 
-Continue permitted diagnosis under existing authorization. If repairing the reviewer or validator would expand the task or needs a user decision, describe the specific repair scope and ask once: `Do you approve investigating and repairing this validation mismatch? (yes / no)`. Explain the branches before ending the handoff:
+Continue permitted diagnosis under existing authorization. If repairing the reviewer or validator would expand the task or needs a user decision, describe the specific repair scope and ask once: `Do you approve investigating and repairing this validation mismatch? (Approve / Deny)`. Explain the branches before ending the handoff:
 
-- **Yes:** investigate the supported repair, apply it only within granted authority, then revalidate; do not promise success or bypass provenance checks. If it cannot be repaired, explain the remaining cause and available alternative.
-- **No or repair deferred:** continue with a fresh sequential review by the main agent when permitted. Preserve rejected attempts and frozen plans separately; create a separate fallback plan under the existing inspection route, perform substantive new parent inspection, and run normal completion checks. Never relabel rejected specialist work as parent evidence.
+- **Approve:** investigate the supported repair, apply it only within granted authority, then revalidate; do not promise success or bypass provenance checks. If it cannot be repaired, explain the remaining cause and available alternative.
+- **Deny or repair deferred:** continue with a fresh sequential review by the main agent when permitted. Preserve rejected attempts and frozen plans separately; create a separate fallback plan under the existing inspection route, perform substantive new parent inspection, and run normal completion checks. Never relabel rejected specialist work as parent evidence.
 - **User explicitly required independent coverage:** sequential inspection may continue, but cannot complete that requirement. Offer an available independent route with its actual prerequisites, or ask whether the user accepts completing a non-independent review. Do not silently drop the requirement or present unsupported routes as available.
 
 Without a missing decision, take the permitted continuation rather than ask for redundant approval. Optional repair refusal is distinct from denied runtime permission or a retry-limit stop; retain those boundaries. State exactly which acceptance condition remains unmet and what would satisfy it, rather than calling the entire review permanently blocked.

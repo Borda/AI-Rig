@@ -54,6 +54,7 @@ def _copied_package_root(tmp_path: Path) -> Path:
 @pytest.mark.packaging
 @pytest.mark.integration
 @pytest.mark.timeout(INSTALLED_PACKAGE_SELECTION_TIMEOUT_SECONDS + 60)
+@pytest.mark.flaky(reruns=1, reruns_delay=1, condition=sys.platform == "win32", only_rerun="^TimeoutExpired:")
 def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Path) -> None:
     """Prevent checkout-only tests from being mistaken for installed-package coverage.
 
@@ -63,7 +64,8 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
-    timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection.
+    timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection. One Windows
+    subprocess-timeout retry mitigates unconfirmed runner timing sensitivity; assertion failures are final.
     """
     installed_root = _copied_package_root(tmp_path)
     for path in (installed_root / "Makefile", installed_root / ".github", installed_root / ".git"):

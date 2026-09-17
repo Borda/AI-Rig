@@ -19,6 +19,11 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     assert "- group findings by topic" in commit_section
     assert "- each finding as a separate commit" in commit_section
     assert "- leave unstaged" in commit_section
+    assert "able to represent all four feasible modes" in commit_section
+    assert "otherwise use async or plain chat without hiding a mode behind Other" in commit_section
+    assert "never omit a feasible mode to fit a menu limit" in commit_section
+    assert "Do not stage before this question or before an explicit valid answer" in commit_section
+    assert "silence, preselection, stale or duplicate replies cannot authorize staging" in commit_section
 
 
 def test_remediation_commit_stages_only_proven_owned_paths() -> None:

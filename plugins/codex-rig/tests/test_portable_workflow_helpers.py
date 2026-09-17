@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -129,13 +130,35 @@ def test_run_gates_selects_powershell_for_simulated_windows_and_bash_on_posix() 
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Write-Output ok",
+        "Write-Output ok\nif ($?) { exit 0 } elseif ($LASTEXITCODE) { exit $LASTEXITCODE } else { exit 1 }",
     ]
     assert module.command_argv("printf ok", platform="linux") == ["bash", "-lc", "printf ok"]
     assert set(module.default_commands("win32")) == set(GATE_IDS)
     assert all("command -v" not in command for command in module.default_commands("win32").values())
     expected_executable = "powershell.exe" if sys.platform == "win32" else "bash"
     assert module.command_argv("native")[0] == expected_executable
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(shutil.which("powershell.exe") is None, reason="Windows PowerShell is unavailable")
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("Write-Output ok", 0, id="cmdlet-success"),
+        pytest.param("Write-Error failure", 1, id="cmdlet-failure"),
+        pytest.param("exit 9", 9, id="explicit-exit"),
+        pytest.param("throw 'failure'", 1, id="terminating-error"),
+        pytest.param("cmd /c exit 7", 7, id="native-failure"),
+        pytest.param("cmd /c exit 7 # trailing comment", 7, id="native-failure-comment"),
+        pytest.param("cmd /c exit 7; Write-Output recovered", 0, id="recovered-native-failure"),
+        pytest.param("cmd /c exit 0; Write-Error failure", 1, id="cmdlet-failure-after-native-success"),
+    ],
+)
+def test_windows_gate_preserves_native_and_shell_status(command: str, expected: int) -> None:
+    """Preserve native exit codes without masking PowerShell failures or deliberate recovery."""
+    module = _load_module(RUN_GATES, "codex_rig_windows_gate_status")
+    completed = subprocess.run(module.command_argv(command, platform="win32"), capture_output=True, check=False)
+    assert completed.returncode == expected, completed.stderr
 
 
 def test_run_gates_terminates_simulated_windows_process_trees_with_taskkill(

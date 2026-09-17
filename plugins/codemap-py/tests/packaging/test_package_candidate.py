@@ -83,6 +83,46 @@ def _package(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.mark.packaging
+@pytest.mark.integration
+def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: Path) -> None:
+    """Prove every installed skill resolves the explicitly owned new reference outside the checkout."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", "."],
+        cwd=_PLUGIN_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    modes = {}
+    for record in tracked.stdout.split("\0"):
+        if record:
+            metadata, relative = record.split("\t", 1)
+            modes[relative] = metadata.split()[0] == "100755"
+    reference = "shared/codex-user-questions.md"
+    assert (_PLUGIN_ROOT / reference).is_file()
+    original_paths = set(modes)
+    modes[reference] = False
+    assert set(modes) - original_paths <= {reference}
+    mode_map = tmp_path / "candidate-modes.json"
+    mode_map.write_text(json.dumps(modes), encoding="utf-8")
+    output = tmp_path / "package"
+    built = subprocess.run(
+        [sys.executable, str(_BUILDER), "--out", str(output), "--mode-map", str(mode_map)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert built.returncode == 0, built.stdout + built.stderr
+    assert (output / reference).read_bytes() == (_PLUGIN_ROOT / reference).read_bytes()
+    skills = list((output / "codex-skills").glob("*/SKILL.md"))
+    assert len(skills) == 6
+    for skill in skills:
+        assert "../../" + reference in skill.read_text(encoding="utf-8")
+        assert (skill.parent / "../../" / reference).resolve() == output / reference
+
+
+@pytest.mark.packaging
 def test_build_exits_zero_and_writes_manifest(package: Path) -> None:
     """Manifest carries the tracked plugin identity and a non-empty file list."""
     name, version = _plugin_identity()

@@ -3,6 +3,8 @@ name: rename-refs
 description: '`$codemap-py:rename-refs`: rename Python names; skip non-Python/unbuilt/local/grep/split/pkg-dir.'
 ---
 
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+
 # Rename Refs
 
 Atomically rename one Python symbol/module: definition, `__all__` exports, caller imports/calls (`fn-rdeps` plus line ranges), Sphinx refs in `.py`/`.rst`, optional pyDeprecate alias, or hard delete only with exhaustive zero callers.
@@ -22,7 +24,7 @@ NOT for: index build (`$codemap-py:scan-codebase`); query without rename intent 
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning; shell state does not persist. Codex has no `AskUserQuestion`: state choices in chat and wait for the next user message.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning; shell state does not persist. Route missing input, stale-index, ambiguous-match, delete/abort, and dry-run/apply/abort questions through User Questions; preserve every feasible choice and wait for a valid bound answer before dependent changes.
 
 ## Workflow
 

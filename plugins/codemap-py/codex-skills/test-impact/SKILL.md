@@ -1,7 +1,9 @@
 ---
 name: test-impact
-description: '`$codemap-py:test-impact <qname> [--no-mocks]`: affected tests; skip caller/dependency query/exec.'
+description: '`$codemap-py:test-impact qname [--no-mocks]`: affected tests; skip caller/dependency query/exec.'
 ---
+
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Test Impact
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Find the newest compatible local code-review artifact for a pull-request target.
+"""Select assessed review artifacts for explicit local intake or pull-request lookup.
 
 ## Purpose
 
@@ -10,16 +10,18 @@ reached an assessed verdict, or a terminal close disposition.
 ## Scope
 
 It scans local report directories and JSON identity files without querying GitHub or changing report content. Completion
-mode runs both packaged artifact validators before allowing final text to leave the producer boundary. Matching accepts
-a PR number, ``#number``, or exact normalized URL and checks ``pr.json`` identity and result metadata.
+mode runs both packaged artifact validators before allowing final text to leave the producer boundary. Explicit local
+intake reuses that same validation, including source and final-handoff bindings, before returning the artifact path.
+Matching accepts a PR number, ``#number``, or exact normalized URL and checks ``pr.json`` identity and result metadata.
 
 ## Usage
 
 Run ``python find-review-report.py --target <pr-url-or-number>`` to select an assessed report. Alternatively, run the
-same script with ``--result <path>`` to reject a supplied unavailable, closed, or unpromoted candidate result. The
-target search covers canonical ``pr-<number>/run-<NNN>`` directories, timestamped flat reports, and, for the default
-current root, the legacy ``.reports/codex/review`` root. ``--complete-run <run>`` validates a promoted review, checks
-that PR lookup returns that exact result, then emits the bound final Markdown bytes. It never promotes candidates.
+same script with ``--result <path>`` to accept assessed working-tree, path, commit, or PR reports while rejecting
+supplied unavailable, closed, or unpromoted candidate results. The target search covers canonical
+``pr-<number>/run-<NNN>`` directories, timestamped flat reports, and, for the default current root, the legacy
+``.reports/codex/review`` root. ``--complete-run <run>`` validates a promoted review, checks that PR lookup returns that
+exact result, then emits the bound final Markdown bytes. It never promotes candidates.
 
 ## Used by
 
@@ -30,8 +32,11 @@ exists.
 ## Outputs
 
 It prints one matching assessed local review-artifact path, choosing the numerically highest PR-scoped run before any
-compatible timestamped artifact across canonical and legacy report roots. Compatibility requires PR scope and a
-recognized ``metadata.review_decision.recommendation`` in addition to PR identity.
+compatible timestamped artifact across canonical and legacy report roots. Target lookup requires PR scope and a
+recognized ``metadata.review_decision.recommendation`` in addition to PR identity. Explicit intake accepts all four
+declared review scopes without requiring PR identity; local artifacts must be canonical ``result.json`` files that pass
+both validators. Existing ``--parent-thread-id`` and ``--codex-home`` options identify evidence from another producer
+session. Without overrides, validation uses current runtime defaults. It does not broaden target lookup.
 
 ## Failure
 
@@ -73,8 +78,8 @@ def _matches_target(target: str, number: str, url: str) -> bool:
     return bool(target and (number == target.lstrip("#") or url == target))
 
 
-def review_result_kind(result_path: Path) -> str:
-    """Classify a result as assessed, unavailable, closed, or invalid for remediation intake."""
+def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
+    """Classify review disposition, accepting local scopes only for explicit-path intake."""
     try:
         payload: dict[str, Any] = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -82,7 +87,8 @@ def review_result_kind(result_path: Path) -> str:
     if not isinstance(payload, dict):
         return "invalid"
     metadata = payload.get("metadata")
-    if not isinstance(metadata, dict) or metadata.get("scope") != "pr":
+    scopes = ("pr", "working-tree", "path", "commit") if allow_local else ("pr",)
+    if not isinstance(metadata, dict) or metadata.get("scope") not in scopes:
         return "invalid"
     if metadata.get("review_status") == "unavailable":
         return "unavailable"
@@ -100,17 +106,29 @@ def review_result_kind(result_path: Path) -> str:
     return "assessed"
 
 
-def require_assessed_review_result(result_path: Path) -> Path:
-    """Return a supplied result path unless it is a terminal unavailable-review diagnostic."""
+def require_assessed_review_result(
+    result_path: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None
+) -> Path:
+    """Validate explicit local artifacts while retaining the existing PR disposition selector.
+
+    Local intake reuses the producer completion boundary and its optional evidence-location and thread overrides. It
+    returns only the selected path, never the producer's final text.
+    """
     if result_path.name == CANDIDATE_RESULT_NAME:
         raise LookupError(f"matching-review-candidate-unpromoted:{result_path}")
-    kind = review_result_kind(result_path)
+    kind = review_result_kind(result_path, allow_local=True)
     if kind == "unavailable":
         raise LookupError("matching-review-unavailable-rerun-code-review")
     if kind == "closed":
         raise LookupError("matching-review-closed-not-remediable")
     if kind != "assessed":
         raise LookupError("invalid-review-report-rerun-code-review")
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    if payload["metadata"]["scope"] != "pr":
+        # Completion validates the canonical filename; never certify a different file through a valid sibling.
+        if result_path.name != "result.json":
+            raise LookupError("invalid-review-report-rerun-code-review")
+        complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
     return result_path
 
 
@@ -316,8 +334,8 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--target", help="PR number, #number, or PR URL.")
     source.add_argument("--result", type=Path, help="Explicit result path that must be an assessed review.")
     source.add_argument("--complete-run", type=Path, help="Validate a promoted run and emit only its bound final text.")
-    parser.add_argument("--codex-home", type=Path, help="Completion validator's rollout-log root.")
-    parser.add_argument("--parent-thread-id", help="Completion validator's parent thread identity.")
+    parser.add_argument("--codex-home", type=Path, help="Completion or local-intake validator's rollout-log root.")
+    parser.add_argument("--parent-thread-id", help="Completion or local-intake validator's producer thread identity.")
     parser.add_argument(
         "--reports-dir",
         default=CURRENT_REPORTS_DIR,
@@ -334,7 +352,11 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout.buffer.write(final_bytes)
             return 0
         if args.result is not None:
-            print(require_assessed_review_result(args.result))
+            print(
+                require_assessed_review_result(
+                    args.result, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id
+                )
+            )
             return 0
         reports_dirs = [args.reports_dir]
         if args.reports_dir == CURRENT_REPORTS_DIR:

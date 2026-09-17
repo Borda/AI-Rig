@@ -11,9 +11,9 @@ adapter, scheduler, or provenance replacement.
 
 This module reads schema-version-one historical plans for direct evidence inspection and requires schema-version-two
 plans for new dispatch to one to four canonical Terra or Luna roles. It validates all local inputs before process
-launch, including complete source/diff inclusion and bounded operator capacity evidence, discovers configured MCP
-server identifiers without retaining configuration content, restarts with every simple identifier disabled, and rejects
-any control, event, output, path, hash, or cleanup deviation. It never changes global configuration, home directories,
+launch, including complete source/diff inclusion and bounded operator capacity evidence, discovers configured MCP server
+identifiers without retaining configuration content, restarts with every simple identifier disabled, and rejects any
+control, event, output, path, hash, or cleanup deviation. It never changes global configuration, home directories,
 credentials, plugin state, or a parent result artifact.
 
 ## Usage

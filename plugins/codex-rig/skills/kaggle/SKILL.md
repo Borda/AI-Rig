@@ -3,6 +3,8 @@ name: kaggle
 description: Build/extend grounded Kaggle Jupytext notebooks for training, EDA, inference, or resume workflows, grounding schema and submission format through the authenticated kaggle CLI.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Kaggle
 
 Build public-readable Kaggle notebook with evidence-backed problem profile, visual EDA, stage-level sanity checks, reproducible training, inference, and submission validation. Write notebook scripts only; use `implement` for packages or production modules and `research` for literature surveys.

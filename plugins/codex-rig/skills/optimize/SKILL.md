@@ -3,6 +3,8 @@ name: optimize
 description: Optimize a measurable metric with bounded iterations, guardrails, and regression gates.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Optimize
 
 Metric-driven optimization with explicit guards, rollback criteria, experiment log.

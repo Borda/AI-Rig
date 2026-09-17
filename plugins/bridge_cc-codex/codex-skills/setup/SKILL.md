@@ -3,6 +3,8 @@ name: setup
 description: Configure, authenticate, repair, and verify the Codex to Claude Code Bridge; safe stages run by default and sensitive stages require separate approval.
 ---
 
+> Before asking, read [User Questions](../../rules/codex-user-questions.md).
+
 # Set Up the Bridge
 
 ## Bootstrap and plan
@@ -20,6 +22,8 @@ python "${PLUGIN_ROOT}/bin/bridge_setup.py" --current-host codex --workspace "<l
 ```
 
 The credential-free planner returns the setup result JSON defined by `schemas/setup-result.schema.json`.
+
+> Route configuration/repair, authentication, and paid live-verification decisions separately through User Questions. Bind each answer to its own current action digest after displaying effects; a generic approval never carries to another stage. Preserve digest confirmation syntax, operator-terminal login, cost disclosure, and denial/replay/expiry stops. Host-side answers are not guest authorization or runtime permission.
 
 ## Check and approved changes
 

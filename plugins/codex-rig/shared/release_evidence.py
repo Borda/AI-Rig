@@ -13,12 +13,12 @@ checks exact local records and source bytes; it does not claim to decide general
 
 ## Usage
 
-``validate_release_evidence(metadata, out_dir, requested_artifacts)`` is called from ``validate-artifacts.py`` after
-the common result and gate checks. The caller supplies parsed result metadata, the retained run directory, and selected
-deliverable names. Validation only reads local Git and files. The separate, explicit CLI
-``python release_evidence.py record-demo --script demo.py --cwd . --environment 'project environment' --out run``
-executes the script with the selected Python interpreter, retaining output and before/after digests in a new directory.
-It never installs dependencies or grants network access; the owning workflow must authorize execution first.
+``validate_release_evidence(metadata, out_dir, requested_artifacts)`` is called from ``validate-artifacts.py`` after the
+common result and gate checks. The caller supplies parsed result metadata, the retained run directory, and selected
+deliverable names. Validation only reads local Git and files. The separate, explicit CLI ``python release_evidence.py
+record-demo --script demo.py --cwd . --environment 'project environment' --out run`` executes the script with the
+selected Python interpreter, retaining output and before/after digests in a new directory. It never installs
+dependencies or grants network access; the owning workflow must authorize execution first.
 
 ## Outputs
 
@@ -27,8 +27,8 @@ raises ``SystemExit`` with a stable ``release-evidence-*`` reason that makes the
 
 ## Failure
 
-Examples include a non-ancestor baseline, unaccounted candidate, incomplete credit or exclusion, path/digest drift,
-lost historical changelog bytes, placeholder summary, or a demo receipt whose recorded output cannot be bound. Ambiguous
+Examples include a non-ancestor baseline, unaccounted candidate, incomplete credit or exclusion, path/digest drift, lost
+historical changelog bytes, placeholder summary, or a demo receipt whose recorded output cannot be bound. Ambiguous
 patch equivalence fails closed rather than being inferred from subjects, titles, or net tree state.
 
 ## Used by
@@ -71,8 +71,15 @@ def _sha256(path: Path) -> str:
 
 
 def _git(repository: Path, *args: str) -> str:
-    """Run one local Git read command and reject a nonzero result."""
-    completed = subprocess.run(["git", *args], cwd=repository, capture_output=True, text=True, check=False)
+    """Read Git paths and metadata as UTF-8 and reject a nonzero result."""
+    completed = subprocess.run(
+        ["git", "-c", "i18n.logOutputEncoding=utf-8", *args],
+        cwd=repository,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
     if completed.returncode:
         _fail("git:" + args[0])
     return completed.stdout.strip()
@@ -95,22 +102,19 @@ def _is_ancestor(repository: Path, ancestor: str, descendant: str) -> bool:
 
 
 def _patch_id(repository: Path, sha: str) -> str:
-    """Return a nonempty stable patch ID for a local nonempty commit patch."""
+    """Return a stable patch ID without decoding or rewriting the patch's file bytes."""
     patch = subprocess.run(
         ["git", "show", "--format=", "--no-ext-diff", sha],
         cwd=repository,
         capture_output=True,
-        text=True,
         check=False,
     )
     if patch.returncode:
         _fail("git:show")
-    stable = subprocess.run(
-        ["git", "patch-id", "--stable"], input=patch.stdout, capture_output=True, text=True, check=False
-    )
+    stable = subprocess.run(["git", "patch-id", "--stable"], input=patch.stdout, capture_output=True, check=False)
     if stable.returncode or not stable.stdout.strip():
         _fail("patch-id")
-    return stable.stdout.split()[0]
+    return stable.stdout.split()[0].decode("ascii")
 
 
 def _blob_sha256(repository: Path, sha: str, path: str) -> str | None:
@@ -694,8 +698,8 @@ def record_demo(
 ) -> dict[str, Any]:
     """Execute one explicitly authorized local Python demo and retain digest-bound evidence.
 
-    Output uses a new directory; existing evidence is never overwritten. Execution inherits the caller's environment
-    and permissions, with no dependency installation or network grant. A timeout or nonzero exit is retained as failed
+    Output uses a new directory; existing evidence is never overwritten. Execution inherits the caller's environment and
+    permissions, with no dependency installation or network grant. A timeout or nonzero exit is retained as failed
     evidence. Validation never calls this execution entrypoint implicitly.
     """
     script, interpreter, cwd, out = script.resolve(), interpreter.absolute(), cwd.resolve(), out.resolve()

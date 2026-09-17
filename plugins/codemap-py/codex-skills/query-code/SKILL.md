@@ -3,13 +3,15 @@ name: query-code
 description: Query Codemap.
 ---
 
+> Before asking, read ../../shared/codex-user-questions.md.
+
 NOT for: $codemap-py:scan-codebase, $codemap-py:rename-refs, $codemap-py:test-impact.
 
 Test-impact split: one-off structural fact → `test-impact <target>` here; full workflow → $codemap-py:test-impact.
 
 ## Runtime note
 
-No Codex plugin-root variable or shell persistence. Resolve the installed launcher once as `PLUGIN_ROOT/bin/codemap-py`; retain its literal in reasoning.
+No plugin-root variable or shell persistence. Resolve the installed launcher once as `PLUGIN_ROOT/bin/codemap-py`; retain its literal.
 
 ## Workflow
 

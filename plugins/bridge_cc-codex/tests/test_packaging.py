@@ -56,6 +56,11 @@ def test_build_and_validate_use_only_the_disposable_package_copy(tmp_path: Path)
     assert (output / "codex-skills" / "implement" / "SKILL.md").is_file()
     assert (output / "bin" / "bridge_setup.py").is_file()
     assert (output / "schemas" / "setup-result.schema.json").is_file()
+    question_policy = output / "rules" / "codex-user-questions.md"
+    assert question_policy.is_file()
+    for skill in (output / "codex-skills").glob("*/SKILL.md"):
+        assert "../../rules/codex-user-questions.md" in skill.read_text(encoding="utf-8")
+        assert (skill.parent / "../../rules/codex-user-questions.md").resolve() == question_policy
 
 
 @pytest.mark.packaging

@@ -10,10 +10,45 @@ from pathlib import Path
 
 import pytest
 
+from test_review_completion_gate import _assessed_pr, _module
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 FINDER_PATH = PLUGIN_ROOT / "shared" / "find-review-report.py"
 CREATE_RUN_PATH = PLUGIN_ROOT / "shared" / "create_run.py"
+
+
+@pytest.fixture(name="assessed_local")
+def _assessed_local(tmp_path: Path) -> Path:
+    """Build a complete local artifact using the existing real producer fixture."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["metadata"]["scope"] = "working-tree"
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["tables"] = []
+    handoff["source_records"] = []
+    handoff["source_coverage"] = {
+        "source_records_total": 0,
+        "represented_source_records_total": 0,
+        "omitted_source_records_total": 0,
+    }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+        handoff_path, run / "final.md", run / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        result["metadata"]["final_handoff"][field] = validation[field]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--complete-run", str(run), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return result_path
 
 
 def _load_finder() -> object:
@@ -348,6 +383,186 @@ def test_only_unavailable_reports_require_a_new_code_review(tmp_path: Path) -> N
 
     with pytest.raises(LookupError, match="matching-review-unavailable-rerun-code-review"):
         finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
+
+
+def test_explicit_pr_report_retains_existing_disposition_selection(tmp_path: Path) -> None:
+    """Keep the existing PR selector behavior outside the local-intake repair."""
+    result = tmp_path / "result.json"
+    result.write_text(
+        json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(result)], capture_output=True, text=True, check=False
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(result)
+    assert completed.stderr == ""
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
+def test_explicit_local_report_requires_complete_validation(assessed_local: Path, scope: str) -> None:
+    """Accept real local artifacts through both producer validators before intake."""
+    result = json.loads(assessed_local.read_text(encoding="utf-8"))
+    result["metadata"]["scope"] = scope
+    assessed_local.write_text(json.dumps(result), encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(assessed_local), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == str(assessed_local)
+    assert completed.stderr == ""
+
+
+@pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
+def test_explicit_local_metadata_only_report_is_rejected(tmp_path: Path, scope: str) -> None:
+    """A canonical filename and plausible disposition do not establish producer validation."""
+    result = tmp_path / "result.json"
+    result.write_text(
+        json.dumps({"metadata": {"scope": scope, "review_decision": {"recommendation": "needs-more-work"}}}),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(result), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "review-validation-failed:" in completed.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("damage", ["draft", "missing-handoff", "final-text", "diff", "manifest-parent"])
+def test_explicit_local_report_rejects_invalid_producer_evidence(assessed_local: Path, damage: str) -> None:
+    """Exercise real validation failures instead of mocking the intake's proof boundary."""
+    result = json.loads(assessed_local.read_text(encoding="utf-8"))
+    run = assessed_local.parent
+    if damage == "draft":
+        result["metadata"]["review_status"] = "draft"
+        assessed_local.write_text(json.dumps(result), encoding="utf-8")
+    elif damage == "missing-handoff":
+        del result["metadata"]["final_handoff"]
+        assessed_local.write_text(json.dumps(result), encoding="utf-8")
+    elif damage == "final-text":
+        (run / "final.md").write_text("Unvalidated replacement final.\n", encoding="utf-8")
+    elif damage == "diff":
+        (run / "diff.patch").write_text("Unreviewed replacement diff.\n", encoding="utf-8")
+    else:
+        manifest_path = run / "specialist-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["parent_thread_id"] = "different-producer"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(assessed_local), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "review-validation-failed:" in completed.stderr
+
+
+@pytest.mark.integration
+def test_explicit_local_alias_cannot_validate_its_sibling_instead(assessed_local: Path) -> None:
+    """Never validate result.json while returning a different, unvalidated local file."""
+    alias = assessed_local.with_name("other.json")
+    alias.write_text(
+        json.dumps({"metadata": {"scope": "working-tree", "review_decision": {"recommendation": "needs-more-work"}}}),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(alias), "--parent-thread-id", "thread"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "invalid-review-report-rerun-code-review" in completed.stderr
+
+
+@pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
+def test_pr_lookup_rejects_local_report_with_leftover_pr_identity(tmp_path: Path, scope: str) -> None:
+    """Explicit local intake must not widen PR discovery to unrelated local assessments."""
+    result = _write_report(tmp_path, "2026-08-10T11-00-00Z", unavailable=False)
+    result.write_text(
+        json.dumps({"metadata": {"scope": scope, "review_decision": {"recommendation": "needs-more-work"}}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LookupError, match="^invalid-review-report-rerun-code-review$"):
+        _load_finder().find_latest_review_report("123", [tmp_path])
+
+
+@pytest.mark.parametrize(
+    "metadata,diagnostic",
+    [
+        pytest.param(
+            {"scope": "working-tree", "review_status": "unavailable"},
+            "matching-review-unavailable-rerun-code-review",
+            id="local-unavailable",
+        ),
+        pytest.param(
+            {"scope": "path", "review_status": "closed"},
+            "matching-review-closed-not-remediable",
+            id="local-closed",
+        ),
+        pytest.param(
+            {"scope": "unknown", "review_decision": {"recommendation": "needs-more-work"}},
+            "invalid-review-report-rerun-code-review",
+            id="unknown-scope",
+        ),
+        pytest.param(
+            {"scope": [], "review_decision": {"recommendation": "needs-more-work"}},
+            "invalid-review-report-rerun-code-review",
+            id="malformed-scope",
+        ),
+        pytest.param(
+            {"scope": "commit", "review_decision": {"recommendation": "unknown"}},
+            "invalid-review-report-rerun-code-review",
+            id="unknown-decision",
+        ),
+    ],
+)
+def test_explicit_local_intake_retains_rejection_boundaries(
+    tmp_path: Path, metadata: dict[str, object], diagnostic: str
+) -> None:
+    """Reject unassessed or malformed local reports with their existing diagnostic."""
+    result = tmp_path / "result.json"
+    result.write_text(json.dumps({"metadata": metadata}), encoding="utf-8")
+
+    with pytest.raises(LookupError, match=f"^{diagnostic}$"):
+        _load_finder().require_assessed_review_result(result)
+
+
+@pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
+def test_explicit_local_candidate_still_requires_promotion(tmp_path: Path, scope: str) -> None:
+    """Local scope support must not make a draft result consumable."""
+    candidate = tmp_path / "result.candidate.json"
+    candidate.write_text(
+        json.dumps({"metadata": {"scope": scope, "review_decision": {"recommendation": "needs-more-work"}}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(LookupError, match="^matching-review-candidate-unpromoted:"):
+        _load_finder().require_assessed_review_result(candidate)
 
 
 def test_explicit_unavailable_report_is_rejected_as_remediation_input(tmp_path: Path) -> None:

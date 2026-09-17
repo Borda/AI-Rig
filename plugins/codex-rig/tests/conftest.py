@@ -14,6 +14,22 @@ if str(_TESTS_DIR) not in sys.path:
 from _platform import POSIX_BASH  # noqa: E402
 
 
+@pytest.fixture(params=["\n", "\r\n"])
+def text_newline_default(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Exercise fixture text writes under both host newline defaults on every platform."""
+    write_text = Path.write_text
+
+    def write_with_default(
+        path: Path, data: str, encoding: str | None = None, errors: str | None = None, newline: str | None = None
+    ) -> int:
+        """Translate only implicit newlines; preserve explicit byte-stability choices."""
+        return write_text(
+            path, data, encoding=encoding, errors=errors, newline=request.param if newline is None else newline
+        )
+
+    monkeypatch.setattr(Path, "write_text", write_with_default)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Register selectors when tests run from a payload without repository configuration."""
     for marker in (

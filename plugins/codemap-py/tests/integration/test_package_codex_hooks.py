@@ -32,6 +32,8 @@ def _build_candidate(tmp_path: Path) -> Path:
     """Build an isolated candidate from the checked-out plugin tree."""
     candidate = tmp_path / "candidate"
     mode_map = _BUILD._git_exec_modes(_PLUGIN_ROOT)
+    # Include the owned new payload before commit without staging the caller's index.
+    mode_map["shared/codex-user-questions.md"] = False
     _BUILD.build_package(_PLUGIN_ROOT, candidate, mode_map)
     return candidate
 

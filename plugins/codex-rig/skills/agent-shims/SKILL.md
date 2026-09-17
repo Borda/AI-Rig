@@ -3,6 +3,8 @@ name: agent-shims
 description: 'Safely manage Codex Rig role-agent shims: doctor, status, install, or remove; one action only.'
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Agent Shims
 
 After user intervention or repeated invocation, follow [Resume And Re-entry](../../shared/helper-cli-contract.md#resume-and-re-entry): complete selected action's verification and diagnostic instructions below. This manager keeps its non-artifact lifecycle; it does not skip its closing checks or replace final explanation with raw JSON.

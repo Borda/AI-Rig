@@ -1,10 +1,12 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
+Codex questions prefer synchronous `request_user_input` for required or flow-changing decisions only when the active host permits that purpose and every feasible choice fits. Optional questions use `request_user_input_async` when independent authorized work can continue; required fallbacks keep dependent actions pending. Option-based questions put one evidence-backed choice first with `(Recommended)` in its label; the suffix maps to the unchanged canonical answer and never grants consent. Conversational approvals use Approve/Deny; exact-digest protocols and runtime permissions remain separate. Silence, preselection, stale or duplicate replies never authorize action. All Codex entrypoints load their plugin-local guidance; no sibling plugin or global setup is required. [Codex CLI 0.154.0](https://learn.chatgpt.com/docs/changelog) introduced inline selectable asynchronous TUI questions, but version alone does not establish tool availability. Older/headless hosts retain plain-chat or unresolved-input fallback; no plugin-wide minimum or automatic upgrade is added. Claude-specific question behavior is unchanged.
+
 `bridge_CC-Codex` lets Claude Code and OpenAI Codex hand one another bounded implementation, advice, and review requests. Its normalized plugin identifier is `bridge`. It is one repository with two independently installable host integrations: the Claude Code half calls the `codex` CLI, and the Codex half calls Claude through the bridge's host-launched MCP server.
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.4.1`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.5.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 

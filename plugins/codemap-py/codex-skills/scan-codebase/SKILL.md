@@ -3,6 +3,8 @@ name: scan-codebase
 description: '`$codemap-py:scan-codebase [flags]` only: Python index; never auto-invoke; skip query/integration.'
 ---
 
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
+
 # Scan Codebase
 
 Python only: `ast.parse` records imports plus classes/functions/methods and line ranges for every `.py`; non-Python files are excluded. Writes `.cache/codemap/<project>.json` without external dependencies. A zero-Python project writes a valid empty index; downstream queries return no results. Symbol data lets `$codemap-py:query-code symbol`/`find-symbol` return target source instead of full-file reads (~70–94% fewer `Read` tokens).

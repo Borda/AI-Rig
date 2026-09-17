@@ -44,34 +44,37 @@
     "mode": "notes|prepare|audit|demo",
     "release_contract_version": 1,
     "release_evidence": {
-      "schema_version": 1,
-      "repository": "/absolute/local/repository",
-      "baseline": "optional-full-sha-or-null",
-      "final_tree": "pinned-head-tree-sha",
-      "candidates": [],
-      "claims": [],
-      "contributors": [],
-      "pr_authors": [],
       "artifacts": [],
+      "baseline": "optional-full-sha-or-null",
+      "candidates": [],
       "changelog": {
         "backup": "absolute-pre-edit-backup",
-        "destination": "absolute-canonical-changelog",
         "backup_sha256": "pre-edit-sha256",
+        "destination": "absolute-canonical-changelog",
         "final_sha256": "final-sha256",
         "target_heading": "## target-version"
       },
+      "claims": [],
+      "contributors": [],
       "demo": {
-        "sha256": "selected-demo-sha256",
-        "command": ["absolute-interpreter", "absolute-selected-demo.py"],
-        "interpreter": "absolute-interpreter",
-        "environment": "environment-identity",
+        "command": [
+          "absolute-interpreter",
+          "absolute-selected-demo.py"
+        ],
         "cwd": "/absolute/working-directory",
+        "environment": "environment-identity",
+        "execution_receipt": "/absolute/demo-execution-receipt.json",
+        "execution_receipt_sha256": "receipt-sha256",
         "exit_code": 0,
+        "interpreter": "absolute-interpreter",
         "output": "/absolute/demo-output",
         "output_sha256": "demo-output-sha256",
-        "execution_receipt": "/absolute/demo-execution-receipt.json",
-        "execution_receipt_sha256": "receipt-sha256"
-      }
+        "sha256": "selected-demo-sha256"
+      },
+      "final_tree": "pinned-head-tree-sha",
+      "pr_authors": [],
+      "repository": "/absolute/local/repository",
+      "schema_version": 1
     },
     "release_head": "full-lowercase-commit-sha",
     "requested_artifacts": [

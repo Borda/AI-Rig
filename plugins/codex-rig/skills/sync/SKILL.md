@@ -3,6 +3,8 @@ name: sync
 description: Dry-run active plugin cache drift; refresh/reinstall only with approval; keep shims separate.
 ---
 
+> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+
 # Sync
 
 Inspect and refresh the public-GitHub Codex Rig plugin through supported Codex CLI operations. Never copy files into an installed cache, edit Codex configuration by hand, or treat cached package directories as mutable source trees.
