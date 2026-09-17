@@ -73,8 +73,12 @@ find .reports/calibrate .reports/resolve .reports/audit .reports/analyse .experi
     -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null |
 xargs dirname | xargs rm -rf
 
-# review dirs: no result.jsonl — keyed on dir mtime
-find .reports/review -mindepth 1 -maxdepth 1 -type d -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
+# review dirs, two shapes: legacy flat <timestamp>/ (still produced by /develop:review) ages by its
+# own mtime; pr-<N>/run-<NNN>/ (oss lineage) ages per run, not per PR, so an active PR's older runs
+# still expire; the empty pr-<N> parent is swept once its last run has aged out
+find .reports/review -mindepth 1 -maxdepth 1 -type d ! -name 'pr-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
+find .reports/review -mindepth 2 -maxdepth 2 -type d -name 'run-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
+find .reports/review -mindepth 1 -maxdepth 1 -type d -name 'pr-*' -empty -delete 2>/dev/null
 
 find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs rm -f
 

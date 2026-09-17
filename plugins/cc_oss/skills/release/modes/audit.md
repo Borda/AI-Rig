@@ -81,11 +81,11 @@ git -C "$REPO_ROOT" grep -n "^def <symbol>\|^class <symbol>\|    def <symbol>\| 
 Verify no blocking `/oss:review` (or codex-lineage review) verdict already exists for the current branch before declaring readiness — closes the gap where `audit` re-derives blockers a prior review already found instead of surfacing them immediately as a pre-flight failure.
 
 ```bash
-REVIEW_FILE=$(ls -t .reports/review/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
+REVIEW_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1)
 ```
 
 - No match → skip this check (informational: no prior review on file).
-- Match under `.reports/review/*/review-report.md` (oss lineage) → grep its `Outcome:` YAML field. `✗` or `⚠ NEEDS_ATTENTION` with unresolved blocking findings → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`.
+- Match under `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage) → grep its `Outcome:` YAML field. `✗` or `⚠ NEEDS_ATTENTION` with unresolved blocking findings → add to Phase 2 Findings summary: `| Upstream review blocking | ✗ <REVIEW_FILE> reports <Outcome value> | <path> | critical |`.
 - Match under `.reports/codex/review/*/review-notes.md` (codex lineage) → grep `Recommendation:` / `Blocking findings:` lines. `needs-more-work` with non-empty `Blocking findings:` → same critical finding, quoting the blocking finding IDs.
 - Only act on a review whose header/scope names the branch or PR currently being released — a review for a different branch/PR is not a blocker here; note it as informational context instead.
 

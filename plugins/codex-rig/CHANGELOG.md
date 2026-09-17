@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.1
+
+- Track embedded suggestions in collapsed review bodies individually across review and remediation, preserving parent provenance, separate source identities, advertised-count reconciliation, and per-finding dispositions.
+
 ## 0.20.0
 
 - Preserve native command exit codes in Windows gate receipts without masking PowerShell errors or successful recovery.

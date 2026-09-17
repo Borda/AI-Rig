@@ -100,6 +100,6 @@ Orchestrator handling by status:
 
 ## Reference implementation
 
-`/oss:review` and `/develop:review` = canonical examples of three-tier convention — intermediate agent handover files in `.temp/review/<timestamp>/`, final report in `.reports/review/<timestamp>/review-report.md`.
+`/oss:review` and `/develop:review` = canonical examples of three-tier convention — intermediate agent handover files in `.temp/review/<timestamp>/`. Final report: `.reports/review/pr-<N>/run-<NNN>/review-report.md` for `/oss:review` (PR-scoped, so `ls .reports/review/pr-<N>/` finds every run for that PR); `.reports/review/<timestamp>/review-report.md` for `/develop:review` (no PR number to key on — local file/diff target).
 
 `/calibrate`, `/audit` predate this convention — they mix intermediate and final in `.reports/<skill>/`. Treat as legacy patterns, not examples to follow. Migration pending.

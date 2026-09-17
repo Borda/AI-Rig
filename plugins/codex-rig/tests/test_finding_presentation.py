@@ -115,6 +115,42 @@ def test_selection_rejects_invalid_inventory(mutation: str) -> None:
         _load_finalizer().render_selection(payload)
 
 
+def test_embedded_findings_keep_separate_choices_and_source_ownership() -> None:
+    """Keep two obligations in one review selectable and reject dropped or reused fragments."""
+    payload = _selection()
+    payload["source_records_total"] = 2
+    payload["items_total"] = 2
+    for ordinal, item in enumerate(payload["items"], 1):
+        item["sources"] = [
+            {
+                "kind": "online",
+                "source_id": f"review-42#finding-{ordinal}",
+                "location": "src/parser.py:12",
+                "body": item["summary"],
+                "evidence": "pr/reviews.json",
+            }
+        ]
+    original = copy.deepcopy(payload)
+    renderer = _load_finalizer()
+
+    rendered = renderer.render_selection(payload)
+
+    assert "| 1 | high | F7 — Preserve input compatibility |" in rendered
+    assert "| 2 | medium | F9 — Cover the boundary |" in rendered
+    assert rendered.count("online [review-42#finding-1]") == 1
+    assert rendered.count("online [review-42#finding-2]") == 1
+    assert payload == original
+
+    payload["items"].pop()
+    with pytest.raises(ValueError, match="selection-count-mismatch:source_records_total"):
+        renderer.render_selection(payload)
+
+    payload = copy.deepcopy(original)
+    payload["items"][1]["sources"][0]["source_id"] = "review-42#finding-1"
+    with pytest.raises(ValueError, match="selection-source-duplicate"):
+        renderer.render_selection(payload)
+
+
 def test_grouped_final_remediation_keeps_evidence_without_symbols() -> None:
     """Render the same bound machine cells as short rows and per-finding details."""
     payload = _handoff_payload()

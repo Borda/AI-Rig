@@ -197,7 +197,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/build_analyse_paths.py" --mode
 **Cache hit** — if `$CACHE_FILE` exists:
 
 - Read `type`, `item`, `comments` fields from JSON; `TYPE` known
-- Skip all primary `gh` item fetches in `modes/thread.md`
+- Skip all primary `gh` item fetches in `modes/thread.md` — **except** PR mode's reviews/inline-comments fetch (`github-review-parsing.md` rule 1): review rounds change on every push, so that fetch stays live even on a cache hit
 - Print `[cache] #$CLEAN_ARGS ($TODAY)` as one-line status note
 - Still run wide-net searches (dynamic — never cached)
 - `FAST_PATH_TENTATIVE=true`: run lightweight drift check now that `TYPE` known, then skip Step 4 type-detection API calls:

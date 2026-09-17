@@ -60,8 +60,8 @@ const path = require("path");
 const SENTINEL_PREFIX = "oss-review-report-dir-";
 // File the Step 5 consolidator writes into $REPORT_DIR.
 const REPORT_FILENAME = "review-report.md";
-// Step 2 always builds "$_REPORT_BASE/.reports/review/$TIMESTAMP"; requiring the
-// marker keeps the hook from acting on a sentinel holding anything else.
+// Step 2 always builds "$_REPORT_BASE/.reports/review/pr-<N>/run-<NNN>"; requiring
+// the marker keeps the hook from acting on a sentinel holding anything else.
 const REPORT_DIR_PARTS = [".reports", "review"];
 // Enforcement window measured from the sentinel's mtime (see KNOWN LIMITATION).
 const STALE_MS = 2 * 60 * 60 * 1000;

@@ -117,7 +117,7 @@ Both hooks were validated against *committed text* — the share of shipped blue
 | `Bash(mkdir -p .reports/calibrate/*)` | Create `.reports/calibrate/` skill run subdirs | `/calibrate` creates timestamped run dir before spawning pipeline agents |
 | `Bash(mkdir -p .reports/resolve/*)` | Create `.reports/resolve/` skill run subdirs | `/resolve` creates run dir for lint+QA gate artifacts |
 | `Bash(mkdir -p .reports/audit/*)` | Create `.reports/audit/` skill run subdirs | `/audit` creates timestamped run dir before spawning curator agents |
-| `Bash(mkdir -p .reports/review/*)` | Create `.reports/review/` final report subdirs | `/oss:review`, `/develop:review` create per-run dir for consolidated final report |
+| `Bash(mkdir -p .reports/review/*)` | Create `.reports/review/` final report subdirs | `/oss:review` creates `pr-<N>/run-<NNN>/`, `/develop:review` creates its per-run dir, for the consolidated final report |
 | `Bash(mkdir -p .temp/review/*)` | Create `.temp/review/` intermediate handover subdirs | `/oss:review`, `/develop:review` create per-run dir for subagent handover files |
 | `Bash(rm -f .temp/state/*)` | Delete regenerable skill-contract.md under `.temp/state/` | Compaction lifecycle clears skill-contract.md on skill completion — `.temp/` is not sensitive-file-gated, so this entry works (unlike the old `.claude/state/` location) |
 | `Bash(mkdir -p .reports/analyse/*)` | Create `.reports/analyse/` skill run subdirs | `/analyse` creates subdirs for thread, ecosystem, health modes |

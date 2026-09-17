@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 """find_review_report.py — enforce the oss:review reject gate before oss:resolve starts fixing a PR.
 
-Finds the newest ``.reports/review/*/review-report.md`` whose header names the given PR, reads its ``Gate:`` line, and
-blocks when that line still carries a ``REJECT_<GROUND>`` verdict. A rejection is a premise problem — wrong goal,
-conduct, scope, licence, duplicate, revert, spam, or philosophy — and editing code cannot clear it.
+Finds the newest run under ``.reports/review/pr-<N>/run-<NNN>/review-report.md`` for the given PR (falling back to a
+pre-rename flat ``.reports/review/<timestamp>/`` report if no ``pr-<N>`` directory exists yet), reads its ``Gate:``
+line, and blocks when that line still carries a ``REJECT_<GROUND>`` verdict. A rejection is a premise problem — wrong
+goal, conduct, scope, licence, duplicate, revert, spam, or philosophy — and editing code cannot clear it.
 
 The block is lifted only when the PR head has moved since the rejection was recorded: new state, so the ground may no
 longer hold and the run continues with a warning. Every other outcome (no report, no ``Gate:`` line, ``PASS``,
@@ -26,24 +27,35 @@ import sys
 from pathlib import Path
 from typing import Final
 
-_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
 _GATE_PREFIX: Final = "Gate:"
 _SHA_RE: Final = re.compile(r"@([0-9a-f]{7,40})")
+_RUN_RE: Final = re.compile(r"^run-(\d+)$")
+_LEGACY_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
 
 
-def newest_report_for_pr(pr_number: str, root: Path | None = None) -> Path | None:
-    """Return the most recently modified review report whose header names ``pr_number``.
+def _run_sort_key(run_dir: Path) -> tuple[int, str]:
+    """Order run directories numerically, not lexically — ``run-1000`` must outrank ``run-999``."""
+    match = _RUN_RE.match(run_dir.name)
+    return (int(match.group(1)), run_dir.name) if match else (-1, run_dir.name)
+
+
+def _legacy_report_for_pr(pr_number: str, base: Path) -> Path | None:
+    """Fall back to the pre-rename flat ``.reports/review/<timestamp>/`` layout.
+
+    Kept only for the ~30-day TTL window (``artifact-lifecycle.md``) during which a report written
+    before the ``pr-<N>/run-<NNN>`` rename can still be on disk. This function backs the
+    ``/oss:resolve`` reject gate — a miss here must never make a still-standing ``REJECT_<GROUND>``
+    fail open just because the report predates the rename.
 
     Args:
         pr_number: PR number without the leading ``#``.
-        root: Directory to search from; defaults to the current working directory.
+        base: Directory to search from.
 
     Returns:
-        The matching report path, or ``None`` when no report names this PR.
+        The newest matching legacy report, or ``None`` when none names this PR.
     """
-    base = root or Path.cwd()
     header = re.compile(rf"^PR: *#{re.escape(pr_number)}$")
-    reports = sorted(base.glob(_REPORT_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
+    reports = sorted(base.glob(_LEGACY_REPORT_GLOB), key=lambda p: p.stat().st_mtime, reverse=True)
     for report in reports:
         try:
             lines = report.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -52,6 +64,32 @@ def newest_report_for_pr(pr_number: str, root: Path | None = None) -> Path | Non
         if any(header.match(line) for line in lines):
             return report
     return None
+
+
+def newest_report_for_pr(pr_number: str, root: Path | None = None) -> Path | None:
+    """Return the highest-numbered run's report for ``pr_number``, falling back to legacy reports.
+
+    Reports live at ``.reports/review/pr-<N>/run-<NNN>/review-report.md`` — the PR number is the
+    directory itself, so no header parse is needed to match it; the run number orders runs
+    deterministically without relying on mtime. A PR with no ``pr-<N>`` directory yet may still have
+    a pre-rename flat-layout report on disk (see ``_legacy_report_for_pr``).
+
+    Args:
+        pr_number: PR number without the leading ``#``.
+        root: Directory to search from; defaults to the current working directory.
+
+    Returns:
+        The matching report path, or ``None`` when this PR has no report at all.
+    """
+    base = root or Path.cwd()
+    pr_dir = base / ".reports/review" / f"pr-{pr_number}"
+    if pr_dir.is_dir():
+        run_dirs = sorted((d for d in pr_dir.glob("run-*") if d.is_dir()), key=_run_sort_key, reverse=True)
+        for run_dir in run_dirs:
+            report = run_dir / "review-report.md"
+            if report.is_file():
+                return report
+    return _legacy_report_for_pr(pr_number, base)
 
 
 def gate_line(report: Path) -> str:

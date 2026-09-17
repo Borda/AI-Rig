@@ -64,6 +64,15 @@ Inputs (substitute literal values — agent does not inherit shell variables):
 - Linked issues: <CLOSING_ISSUES>  # comma-separated issue numbers; may be empty
 - Contributor: @<PR_AUTHOR>
 - Output dir: <IMPL_DIR>           # expand to absolute path before spawning
+- Shared rules: <_OSS_SHARED>/github-review-parsing.md   # expand to absolute path before spawning
+
+<!-- loads: github-review-parsing.md -->
+
+Read <_OSS_SHARED>/github-review-parsing.md first. Follow its fetch-completeness rule (both
+endpoints below are mandatory, neither alone is enough), its collapsed-`<details>`-block
+expansion rule (a review body listing suppressed/nested findings is never one item), and its
+cross-round dedup rule (same file+line recurring across reviews/timestamps merges to one item)
+for everything below.
 
 Fetch (each gh call timeout 15000 ms; run as Bash):
 1. gh pr view <PR_NUMBER> --comments
@@ -77,7 +86,15 @@ Fetch (each gh call timeout 15000 ms; run as Bash):
 
 Assign location field per source (determines GitHub resolvability):
   Source 1 (gh pr view --comments) → location: discussion (PR main-thread; no GitHub "Resolve conversation" button)
-  Source 2 (gh api .../reviews) top-level body (no path/position) → location: discussion (review summary; no resolve button)
+  Source 2 (gh api .../reviews) top-level body — apply github-review-parsing.md's collapsed-block
+    expansion FIRST: each nested finding inside a `<details>` block becomes its own item, not
+    the review body as one unit. Every expanded (or bare, no-block) Source 2 item →
+    location: discussion (review-body text, its `url` is the review's, never a real comment
+    thread — no resolve button, and the resolved-thread `[done]` check below can never apply
+    to it). Never promote a Source 2 item to location: inline even when it names the same
+    file+line as a Source 3 comment — the cross-round dedup pass below already merges that
+    pair and keeps Source 3's inline occurrence; promoting here preempts that pass and is
+    redundant with it.
   Source 3 (gh api .../comments) → location: inline (code-review thread; "Resolve conversation" button available)
   [report] items (no GitHub source) → location: report
 Key invariant: location tracks "does this comment have a resolvable PullRequestReviewThread?" not which endpoint returned it.
@@ -109,16 +126,29 @@ Per location:discussion comment: skip resolved-thread list entirely — PR discu
 
 ACTION_ITEM fields: id (sequential int starting at 1), type, change, severity, author,
 summary (≤60 chars, truncated at word boundary with …), file, line, url (html_url from
-API, blank for report items), full_comment_text, location.
+API, blank for report items), full_comment_text, location, origin.
   - change ∈ {code,test,docs,config,ci,style,refactor,perf,architecture}; default=code when ambiguous. `perf` = latency/memory/throughput/allocation-focused comment; `architecture` = API design, module boundary, coupling, interface-shape comment. Keep in sync with `_shared/review-section-taxonomy.md`'s resolve `change` column and `action-item-dispatch.md`'s `change` → `IMPL_AGENT` table.
   - severity ∈ 1..5 (5=highest); [req] floor=3
   - location ∈ {inline, discussion, report}; inline = code-review comment (GitHub "Resolve conversation" button available); discussion = PR main-thread comment (no resolve button — cannot be marked resolved in GitHub UI); report = /review finding (no GitHub source)
+  - origin ∈ {posted, suppressed-block}; default=posted. `suppressed-block` per github-review-parsing.md rule 2 — a finding pulled out of a review's collapsed/suppressed section rather than posted directly; carries the bot's own lower-confidence signal, never silently indistinguishable from a posted finding downstream.
+
+**Cross-round dedup pass** (github-review-parsing.md rule 3 — run before writing anything below):
+group two classified items only when ALL three are true — same file, wording is a
+close/near-identical match, AND position is consistent with recurrence (exact line match, OR
+lines differ by an amount explainable by an intervening push, OR either item has no line).
+Wording match is never optional: same file + same/nearby line + unrelated wording never groups
+— two unrelated findings can legitimately share or sit near a line. Collapse each group to ONE
+ACTION_ITEM — keep the most-resolvable occurrence's location/url (inline over discussion over
+report), highest severity seen in the group, union of classification codes if they differ. The
+number of groups collapsed (group size > 1) is the `<N> recurring findings merged` count in the
+Sources block below — no separate variable needed, it's already literal text in the file this
+step writes.
 
 Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path above):
 
 1. <IMPL_DIR>/pr-intelligence.md
    Sources block: Mode=pr · PR=#<PR_NUMBER> · GitHub=Read — PR body · <N> comments ·
-   <N> reviews · <N> inline code comments · Report=not used
+   <N> reviews · <N> inline code comments · <N> recurring findings merged · Report=not used
    Motivation paragraph (2–3 sentences).
    Table header: ### Action Items — PR #<PR_NUMBER>
    Columns: # | Type | Change | Severity | Author | Status | Summary | Notes
@@ -130,7 +160,7 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
 
 2. <IMPL_DIR>/action-items.jsonl
    One compact JSON object per line, one ACTION_ITEM each.
-   Fields: id, type, change, severity, author, summary, file, line, url, full_comment_text, location.
+   Fields: id, type, change, severity, author, summary, file, line, url, full_comment_text, location, origin.
 
 3. <IMPL_DIR>/pr-vars.sh
    ONLY these assignments, one per line, each value single-quoted, no shell metacharacters:
@@ -145,7 +175,7 @@ Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path ab
 
 DO NOT print table, motivation, or raw comment data in final message — write to files only.
 Return ONLY this compact JSON as your FINAL message (nothing after it):
-{\"status\":\"done\",\"items\":N,\"req\":N,\"suggest\":N,\"done\":N,\"files\":[\"<IMPL_DIR>/pr-intelligence.md\",\"<IMPL_DIR>/action-items.jsonl\",\"<IMPL_DIR>/pr-vars.sh\"]}
+{\"status\":\"done\",\"items\":N,\"req\":N,\"suggest\":N,\"done\":N,\"deduped\":N,\"files\":[\"<IMPL_DIR>/pr-intelligence.md\",\"<IMPL_DIR>/action-items.jsonl\",\"<IMPL_DIR>/pr-vars.sh\"]}
 ")
 ```
 

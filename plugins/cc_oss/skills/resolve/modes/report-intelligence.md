@@ -59,6 +59,8 @@ No PR# in header → skip Steps 3b and 4; work on current branch as-is. Before s
 
 **Report mode — Step 8 behavior**: `SELECTED_ITEMS` initialized above; Step 3d (user selection) is skipped; Step 8 proceeds with all report-derived items. If report produces zero action items: `SELECTED_ITEMS=[]` → Step 8 skipped, jump to Step 9.
 
+**Challenge Log — Phase 1 is not skippable in report mode.** Report-mode items reach Step 8 with `SELECTED_ITEMS` set above, same as any other mode — `action-item-dispatch.md`'s Phase 1 then runs unconditionally; the only sanctioned skip is `--no-challenge` (SKILL.md), which omits the Challenge Log section entirely. Do not shortcut Phase 1 by reusing a source report's own verdicts or `Recommendation` text as if it were Phase 1 output, even when that source is itself a prior `oss:review` report — a reviewer's own recommendation is exactly the unproven claim Phase 1 exists to independently re-verify (`action-item-dispatch.md`'s Part 1/Part 2 challenge contract). A run that reuses source verdicts instead of dispatching challenge agents is a spec violation to self-correct on, not a documented report-mode behavior.
+
 **`BASE_REF` derivation (no-PR path)** — when Step 3b skipped (report mode without PR#, or comment-dispatch mode), Step 9's lint-qa gate still needs `BASE_REF` for `git merge-base HEAD "origin/$BASE_REF"`. Without this, `BASE_REF` expands empty → `origin/` invalid ref → linting sees no changes → workflow pushes silently with vacuous QA gate. Set from local default-branch symbolic-ref before Step 8, guard downstream `git merge-base` against shallow-clone empty output (CI checkouts frequently use `--depth=1`, `merge-base` returns nothing — linting again sees no changes):
 
 ```bash

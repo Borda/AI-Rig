@@ -40,6 +40,7 @@ The package covers capabilities Codex can currently install and verify. It conta
 - **No stale dismissal:** remediation reassesses review concerns against current code after conflict-resolution line changes; `stale` is not a triage or resolution status. Other evidence-backed dispositions are unchanged.
 - **Scoped network access:** shell networking stays blocked by default; workflows request one runtime approval for complete command owning each intentional GitHub, Kaggle, marketplace-refresh, or paid live-calibration operation.
 - **Calibration:** fixed and behavioral checks measure recall, precision, confidence accuracy, routing leaks, stale assumptions, fixture misuse, unjustified local imports, and incomplete abstractions.
+- **Embedded review findings:** review and remediation enumerate suggestions inside collapsed bot comments individually, retain parent evidence and per-finding identities, reconcile advertised counts before grouping, and track each disposition. Shared locations alone never justify merging distinct obligations.
 - **Safe legacy cleanup:** authenticated, exact-plan removal exists for thin shims created during pre-release development.
 - **Optional codemap-py structural context:** the `implement`, `investigate`, and `optimize` workflows select task-neutral route and probe public codemap-py CLI once per run for only required structural fact, or record zero-query decision for localized edit; they persist one artifact and fall back to bounded file inspection when Codemap is absent.
 

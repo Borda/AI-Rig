@@ -705,13 +705,19 @@ process.stdin.on("end", () => {
       } catch (_) {}
       // Artifact TTL: prune skill run dirs / temp files older than 30 days (rules/foundry-config.md
       // §Cleanup Hook). Best-effort shell find; portable BSD/GNU flags. Completed runs are keyed on
-      // result.jsonl mtime (incomplete runs lack it and are preserved for post-mortem); review dirs
-      // and loose temp/cache/blueprint files are keyed on their own mtime.
+      // result.jsonl mtime (incomplete runs lack it and are preserved for post-mortem); loose
+      // temp/cache/blueprint files are keyed on their own mtime. Review dirs: two shapes coexist —
+      // legacy flat .reports/review/<timestamp>/ (still produced by /develop:review) ages by its own
+      // mtime; .reports/review/pr-<N>/run-<NNN>/ (oss lineage) ages per run-<NNN>, not per pr-<N>, so
+      // an active PR's older runs still expire even while new ones keep landing; the last empty
+      // pr-<N> parent is swept once its final run has aged out.
       try {
         execSync(
           [
             "find .reports/calibrate .reports/resolve .reports/audit .reports/analyse .experiments .developments -maxdepth 2 -name result.jsonl -mtime +30 2>/dev/null | xargs -r dirname 2>/dev/null | xargs -r rm -rf 2>/dev/null",
-            "find .reports/review -mindepth 1 -maxdepth 1 -type d -mtime +30 2>/dev/null | xargs -r rm -rf 2>/dev/null",
+            "find .reports/review -mindepth 1 -maxdepth 1 -type d ! -name 'pr-*' -mtime +30 2>/dev/null | xargs -r rm -rf 2>/dev/null",
+            "find .reports/review -mindepth 2 -maxdepth 2 -type d -name 'run-*' -mtime +30 2>/dev/null | xargs -r rm -rf 2>/dev/null",
+            "find .reports/review -mindepth 1 -maxdepth 1 -type d -name 'pr-*' -empty -delete 2>/dev/null",
             "find .plans/blueprint .cache .temp -type f -mtime +30 2>/dev/null | xargs -r rm -f 2>/dev/null",
             "find .temp -mindepth 2 -maxdepth 2 -type d -empty -delete 2>/dev/null",
           ].join("; "),

@@ -4,9 +4,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
+
+
+@pytest.mark.parametrize("skill_name", ["code-review", "code-remediate"])
+def test_embedded_review_findings_are_individually_inventoried(skill_name: str) -> None:
+    """Prevent a collected bot review from masking its independent nested findings."""
+    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+
+    assert "### Embedded review findings" in skill
+    assert "<parent-id>#finding-<ordinal>" in skill
+    assert "before deduplication" in skill
+    assert "Comments generated" in skill
+    assert "same file or line alone" in skill
+    assert "complete parent body" in skill
+    assert "every nested finding" in skill
 
 
 def test_bare_pr_targets_collect_online_evidence_without_review_artifact() -> None:

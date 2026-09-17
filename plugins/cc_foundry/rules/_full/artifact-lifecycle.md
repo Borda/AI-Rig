@@ -60,7 +60,8 @@ Completed run always has `result.jsonl`. Incomplete runs (crashed, timed out) la
 | Location | TTL | Condition |
 | -- | -- | -- |
 | `.reports/<skill>/YYYY-MM-DDTHH-MM-SSZ/`, `.<skill>/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | only dirs containing `result.jsonl` |
-| `.reports/review/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | keyed on dir mtime (no result.jsonl — hook uses separate find) |
+| `.reports/review/<timestamp>/` (legacy flat, still produced by `/develop:review`) | 30 days | keyed on dir mtime (no result.jsonl — hook uses separate find) |
+| `.reports/review/pr-<N>/run-<NNN>/` (oss lineage) | 30 days | keyed per `run-<NNN>` dir, not per `pr-<N>` — an active PR's older runs still expire; empty `pr-<N>` parent swept once its last run ages out |
 | `.temp/<skill>/YYYY-MM-DDTHH-MM-SSZ/` | 30 days | keyed on file mtime (intermediate subagent handover dirs) |
 | `.plans/blueprint/` | 30 days | keyed on file mtime (flat spec/tree files) |
 | `.cache/gh/` | 30 days | keyed on file mtime (GitHub API response cache) |

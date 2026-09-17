@@ -28,7 +28,7 @@ cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
 
 Contains: foundry check + fallback table. If foundry not installed: use table to substitute each `foundry:X` with `general-purpose`. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`.
 
-**Cache check first**: if `$CACHE_FILE` exists — set by parent `analyse/SKILL.md` Cache layer; see that file for keying convention — read `item` and `comments` from it — skip primary fetch. Still run wide-net searches (never cached). For PRs: `gh pr checks` and `gh pr diff` never cached — always live.
+**Cache check first**: if `$CACHE_FILE` exists — set by parent `analyse/SKILL.md` Cache layer; see that file for keying convention — read `item` and `comments` from it — skip primary fetch. Still run wide-net searches (never cached). For PRs: `gh pr checks`, `gh pr diff`, and the reviews/inline-comments fetch below never cached — always live (review rounds change on every push; serving them from a cache keyed before the latest push reproduces the exact under-reporting `github-review-parsing.md` exists to prevent).
 
 On cache miss, run the block matching `$TYPE`; commands inside it run in parallel. Each block reloads `NUMBER` itself — mode files execute in fresh shells, so `NUMBER`/`TYPE` set by `SKILL.md` are gone (Check 41).
 
@@ -41,7 +41,17 @@ gh issue view $NUMBER --json number,title,body,labels,comments,createdAt,author,
 gh issue view $NUMBER --comments  # timeout: 6000
 ```
 
-`TYPE=pr` — `pr view` completes: write cache:
+`TYPE=pr` — `pr view` completes: write cache.
+
+<!-- loads: github-review-parsing.md -->
+
+> loads: github-review-parsing.md — fetch-completeness rule (reviews + inline comments both needed), collapsed-`<details>`-block expansion, cross-round dedup
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
+[ -f "$_OSS_SHARED/github-review-parsing.md" ] && cat "$_OSS_SHARED/github-review-parsing.md" || echo "⚠ github-review-parsing.md not found at $_OSS_SHARED — PR triage below runs without its fetch/expansion/dedup rules"  # timeout: 5000
+```
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -49,6 +59,12 @@ IFS= read -r NUMBER < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null |
 gh pr view $NUMBER --json number,title,body,labels,reviews,statusCheckRollup,files,additions,deletions,commits,author  # timeout: 6000
 gh pr checks $NUMBER  # never cached — always live  # timeout: 15000
 gh pr diff $NUMBER --name-only  # never cached — always live  # timeout: 6000
+# inline code-review comments — `reviews` above carries only review bodies (may embed a
+# collapsed findings block per github-review-parsing.md); this endpoint is the only source
+# for per-line inline threads, never cached — always live. {owner}/{repo} is gh's own REST
+# path template (expands from the current repo, no extra `gh repo view` round-trip or its
+# failure mode — see the discussion block below re: REST-path-only substitution)
+gh api "repos/{owner}/{repo}/pulls/$NUMBER/comments" --paginate  # timeout: 15000
 ```
 
 `TYPE=discussion` — resolve the repo slug first: `gh api graphql` does **not** expand `{owner}`/`{repo}` in `-f` values (template substitution is REST-path-only), so the literal form returns `Could not resolve to a Repository with the name '{owner}/{repo}'`. Null result: print `⚠ Discussions not enabled or #N not found`, stop. Paginate with `after: "<endCursor>"` while `pageInfo.hasNextPage=true`; cap 200 comments and note in Summary when exceeded: `⚠ Thread has >200 comments — analysis based on first 200.` After complete: write cache.
@@ -193,6 +209,8 @@ Run its **Detect** block, then **Signal A** (loaded above). From thread body + c
 Status mapping: `reproduced` → ✓ · `not_reproduced` → ✗ · `partial` → ⚠ · `missing_context` → ⚠ (add missing detail) · `HAS_REPRO=false` → 🔍 No Example · PR → ⏭ Skipped
 
 **Severity/priority tier rubric** (applies to the `Priority:` header field and the inline `Severity:` fields above): Critical = data loss, security vulnerability, or a regression breaking core functionality with no workaround. High = confirmed bug blocking a common workflow, no workaround. Medium = confirmed bug or duplicate with a workaround, or a well-scoped feature request. Low = cosmetic, docs-only, or minor edge case. Base the tier on the underlying issue's technical impact, not on triage urgency alone — a stale/reopened duplicate of a critical bug is still Critical.
+
+**PR mode — `Completeness`/`Must Fix`/`Suggestions` inputs** (below): built from the reviews AND inline comments fetched above, both expanded and deduped per `github-review-parsing.md` (loaded above) — never from the raw review-body text alone. A finding sitting inside a collapsed block counts the same as a visible one; a finding recurring across review rounds counts once.
 
 Produce:
 

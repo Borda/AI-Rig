@@ -12,7 +12,7 @@ Outcome:     [APPROVE | NEEDS_WORK | REQUEST_CHANGES | N/A — rejected at gate]
 Summary:     [1–2 sentence overview of key findings]
 Confidence:  [aggregate score] — [key gaps]
 Next steps:  [comma-separated actionable items — blockers first]
-Path:        → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
+Path:        → .reports/review/pr-<N>/run-<NNN>/review-report.md
 ---
 
 ## Code Review: [target]

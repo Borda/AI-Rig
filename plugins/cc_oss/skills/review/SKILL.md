@@ -164,7 +164,7 @@ DIRECT_PATH_MODE=false
 if [[ "$CLEAN_ARGS" == *.md ]]; then
     # reject plan files — no replies drafted from plan content
     if [[ "$CLEAN_ARGS" == .plans/* ]] || [[ "$CLEAN_ARGS" == *todo_*.md ]]; then
-        echo "Error: plan files cannot be used as review report input. Pass a review report from .reports/review/<timestamp>/review-report.md or a PR number."
+        echo "Error: plan files cannot be used as review report input. Pass a review report from .reports/review/pr-<N>/run-<NNN>/review-report.md or a PR number."
         exit 1
     fi
     if [ -f "$CLEAN_ARGS" ] && grep -qE '(^## Summary|^verdict:|APPROVED|NEEDS_WORK|REQUEST_CHANGES)' "$CLEAN_ARGS" 2>/dev/null; then  # timeout: 5000
@@ -541,8 +541,12 @@ echo "$RUN_DIR" > "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}"
 # deliverable → main tree (worktree-isolation.md §review): --worktree sets orig-root at §Enter, else pwd — report stays reachable outside worktree; RUN_DIR stays worktree-local
 IFS= read -r _REPORT_BASE < "${TMPDIR:-/tmp}/oss-review-orig-root-${CSID}" 2>/dev/null || _REPORT_BASE="$(pwd)"
 [ -n "$_REPORT_BASE" ] || _REPORT_BASE="$(pwd)"
-REPORT_DIR="$_REPORT_BASE/.reports/review/$TIMESTAMP"
-mkdir -p "$REPORT_DIR" # timeout: 5000
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
+# fail closed: a lost/emptied sentinel must never fall through into a bare "pr-" directory nothing can find later
+[[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]] || { echo "! BLOCKED — PR tag sentinel empty or non-numeric ('$CLEAN_ARGS') — refusing to allocate a report dir"; exit 1; }
+# PR-scoped, run-indexed (find_review_report.py + oss:resolve glob this shape — ls .reports/review/pr-<N>/ finds every run for that PR at a glance)
+PR_REPORT_DIR="$_REPORT_BASE/.reports/review/pr-$CLEAN_ARGS"
+REPORT_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/next_run_dir.py" --pr-dir "$PR_REPORT_DIR") # timeout: 5000
 echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # persist for contract-write
 ```
 

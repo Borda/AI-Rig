@@ -237,6 +237,7 @@ fi
 
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
+- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN, same as the C1 missing-element rule above; never append that item to `CHALLENGE_LOG` on this pass. Re-dispatch it alone (single-item challenge call, same domain) once; still empty on retry → append with `evidence_why="challenge agent returned no rationale after retry"` rather than an empty field — SKILL.md's render must never receive an empty `suggestion_why`/`evidence_why` to fabricate filler for.
 - `evidence=REJECT` → print `⊘ #<id> evidence rejected: <evidence_rationale>`; set type `[challenged:reject]`; append to `CHALLENGE_LOG`: `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=REJECT evidence_why=<evidence_rationale> suggestion=— suggestion_why=— resolution=rejected detail=<evidence_rationale>`; drop from `SURVIVING_ITEMS`
 - `evidence=VALID` + `suggestion=VALID` → `SUGGESTION_VERDICT[id]=VALID`; use original suggestion for implementation
 - `evidence=VALID` + `suggestion=REJECT` → `SUGGESTION_VERDICT[id]=REJECT`; self-resolve using `alternative` as guidance

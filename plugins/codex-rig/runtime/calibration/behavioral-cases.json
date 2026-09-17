@@ -2,6 +2,25 @@
   "cases": [
     {
       "expected_findings": [
+        "embedded-review-findings-omitted",
+        "review-container-treated-as-finding",
+        "distinct-obligations-merged-by-location"
+      ],
+      "id": "code-remediate-embedded-review-findings",
+      "prompt": "A bot review contains a collapsed section advertising three suggestions but its footer says Comments generated: 1. Remediation preserves the whole body as one source and exposes only one selectable row. Two nested suggestions share a source line but require different changes; the third repeats an inline comment. Assess intake. Require full-body enumeration, parent-bound fragment identities, count reconciliation before deduplication, separate dispositions for distinct obligations, and retained inline plus nested provenance for the evidenced duplicate. Existing source-count validation alone cannot prove semantic enumeration completeness.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "embedded-review-findings-omitted",
+        "bot-suppression-treated-as-resolution"
+      ],
+      "id": "code-review-embedded-review-findings",
+      "prompt": "An online review triage reads only the summary verdict and inline threads, although reviews.json contains a complete body with suppressed findings inside nested details blocks. It dismisses that section as already handled because the bot labels it suppressed. Assess whether triage is complete; require individual source identities, exact nested text and parent provenance, advertised-count reconciliation, and current-code validation before assigning each disposition.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "question-purpose-restriction-bypassed",
         "question-options-dropped"
       ],

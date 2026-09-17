@@ -181,7 +181,7 @@ Analyse GitHub threads + repo vitality. Accepts issue/PR number, keyword `vitali
 
 **What it does:**
 
-Thread number: fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces structured summary: what asked, current state, action needed from you, and — with `--reply` — draft response. With codemap index present, symbols/modules named in issue thread existence-checked against index; identifiers that no longer resolve flag issue as referencing stale code (with likely rename target when codemap suggests one).
+Thread number: fetches issue/PR, reads all comments, classifies thread type (bug report, feature request, question, duplicate, stale), produces structured summary: what asked, current state, action needed from you, and — with `--reply` — draft response. With codemap index present, symbols/modules named in issue thread existence-checked against index; identifiers that no longer resolve flag issue as referencing stale code (with likely rename target when codemap suggests one). PR mode reads both review bodies and inline code comments, expands findings a bot collapsed into a `<details>` block instead of posting them individually, and merges the same finding when it recurs across review rounds.
 
 `vitality`: pulls open issues + PRs, scores repo across 9 axes (Axes 1–8 plus Axis 9 Trajectory), clusters duplicates, flags threads stale beyond project threshold, gives prioritised triage list with weighted Health Score %. All raw API data saved to JSONL file alongside report for manual inspection. With codemap index, report gains Open-PR Overlap note (pairwise changed-file overlap plus tightly-coupled-module conflict candidates) and Structural Constraints block (highest-blast-radius modules, collision/degraded/stale index signals). Every codemap signal optional — no index or plugin absent → analyse degrades to GitHub-only behavior, flags gap inline, never blocks.
 
@@ -327,7 +327,7 @@ Without `foundry`, selected dimensions fall back to `general-purpose` agents wit
 **Output locations:**
 
 - Per-agent handover files (intermediate): `.temp/review/<timestamp>/`
-- Consolidated report: `.reports/review/<timestamp>/review-report.md`
+- Consolidated report: `.reports/review/pr-<N>/run-<NNN>/review-report.md`
 - Reply draft (with `--reply`): `.temp/output-reply-<PR#>-<date>.md`
 
 **Flags:**
@@ -346,7 +346,7 @@ ______________________________________________________________________
 
 ### /oss:resolve
 
-Apply review findings to codebase. Reads live PR comments, saved review report, or both — deduplicates, resolves conflicts, implements fixes.
+Apply review findings to codebase. Reads live PR comments, saved review report, or both — deduplicates, resolves conflicts, implements fixes. GitHub-side intelligence expands findings a bot collapsed into a `<details>` block and merges the same finding when it recurs across review rounds, before the report-side dedup below runs.
 
 **Purpose:** Close gap between "reviewer said X" and "X in code." One command: open findings → committed fixes.
 
@@ -370,7 +370,7 @@ Apply review findings to codebase. Reads live PR comments, saved review report, 
 | `55 report`      | pr + report    | Both, aggregated                  | Full close — deduplicates across both inputs                |
 | _(none)_         | review-handoff | Review-handoff                    | Continues directly from last `/oss:review` run this session |
 
-`report` / review-handoff discovery looks for the newest report across both `.reports/review/*/review-report.md` (`/oss:review`'s own output) and `.reports/codex/review/*/review-notes.md` (a Codex-native review run outside this plugin). Only the former's section schema is parsed — a codex-lineage report is detected and refused with an explicit message (rather than silently skipped or mis-parsed) so a blocking finding never goes unactioned; pass the PR number explicitly instead.
+`report` / review-handoff discovery looks for the newest report across `.reports/review/pr-*/run-*/review-report.md` and the legacy pre-rename `.reports/review/*/review-report.md` (both `/oss:review`'s own output) and `.reports/codex/review/*/review-notes.md` (a Codex-native review run outside this plugin). Only the former's section schema is parsed — a codex-lineage report is detected and refused with an explicit message (rather than silently skipped or mis-parsed) so a blocking finding never goes unactioned; pass the PR number explicitly instead.
 
 **How it works:**
 
@@ -788,7 +788,7 @@ Review dimensions are scope-selected and the default fan-out is capped at four. 
 
 **A question is blocked with "oss:review report gate"**
 
-`enforce-review-header.js` denied an `AskUserQuestion` call because `.reports/review/<timestamp>/review-report.md` does not exist — the review reached agent launch but never consolidated its findings into a report. Finish the consolidation step and print the report `---` header; the question then goes through. The gate deactivates two hours after a run starts, so an aborted review never blocks later questions permanently. Once the report exists, the hook also checks (via `report-header-table.js`) whether the printed reply actually rendered the header as a table — a missing table never blocks the question, but rides along as an `additionalContext` reminder naming Step 5b.
+`enforce-review-header.js` denied an `AskUserQuestion` call because `.reports/review/pr-<N>/run-<NNN>/review-report.md` does not exist — the review reached agent launch but never consolidated its findings into a report. Finish the consolidation step and print the report `---` header; the question then goes through. The gate deactivates two hours after a run starts, so an aborted review never blocks later questions permanently. Once the report exists, the hook also checks (via `report-header-table.js`) whether the printed reply actually rendered the header as a table — a missing table never blocks the question, but rides along as an `additionalContext` reminder naming Step 5b.
 
 **A question is blocked with "oss:analyse report gate"**
 

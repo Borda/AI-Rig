@@ -24,13 +24,23 @@ class _FakeCompleted:
 
 
 def _write_report(root: Path, run_id: str, pr: str, gate: str = "", mtime: int | None = None) -> Path:
-    """Create a review report naming ``pr`` with an optional ``Gate:`` line."""
-    report = root / ".reports/review" / run_id / "review-report.md"
+    """Create a review report for ``pr`` under its ``run_id`` run directory, with an optional ``Gate:`` line."""
+    report = root / ".reports/review" / f"pr-{pr}" / run_id / "review-report.md"
     report.parent.mkdir(parents=True, exist_ok=True)
     body = f"# Review\nPR: #{pr}\n"
     if gate:
         body += f"Gate: {gate}\n"
     report.write_text(body, encoding="utf-8")
+    if mtime is not None:
+        os.utime(report, (mtime, mtime))
+    return report
+
+
+def _write_legacy_report(root: Path, run_id: str, pr: str, mtime: int | None = None) -> Path:
+    """Create a pre-rename flat-layout report (no ``pr-<N>`` nesting), naming ``pr`` in its header."""
+    report = root / ".reports/review" / run_id / "review-report.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text(f"# Review\nPR: #{pr}\n", encoding="utf-8")
     if mtime is not None:
         os.utime(report, (mtime, mtime))
     return report
@@ -51,27 +61,55 @@ def _fake_head_sha(monkeypatch: pytest.MonkeyPatch, sha: str, returncode: int = 
 
 
 def test_newest_report_for_pr_picks_most_recent(tmp_path: Path) -> None:
-    """With two reports for the same PR, the newest by mtime wins."""
-    _write_report(tmp_path, "old", "42", mtime=1_000_000)
-    newest = _write_report(tmp_path, "new", "42", mtime=2_000_000)
+    """With two runs for the same PR, the highest run number wins."""
+    _write_report(tmp_path, "run-001", "42")
+    newest = _write_report(tmp_path, "run-002", "42")
     assert frr.newest_report_for_pr("42", tmp_path) == newest
 
 
 def test_newest_report_for_pr_ignores_other_prs(tmp_path: Path) -> None:
     """A report for a different PR is not a match."""
-    _write_report(tmp_path, "run1", "7")
+    _write_report(tmp_path, "run-001", "7")
     assert frr.newest_report_for_pr("42", tmp_path) is None
 
 
 def test_newest_report_for_pr_requires_exact_number(tmp_path: Path) -> None:
-    """``PR: #420`` must not satisfy a lookup for PR 42."""
-    _write_report(tmp_path, "run1", "420")
+    """PR directory ``pr-420`` must not satisfy a lookup for PR 42."""
+    _write_report(tmp_path, "run-001", "420")
     assert frr.newest_report_for_pr("42", tmp_path) is None
+
+
+def test_newest_report_for_pr_orders_runs_numerically(tmp_path: Path) -> None:
+    """``run-1000`` outranks ``run-999`` — a lexical sort would pick the wrong one.
+
+    Regression guard: string-sorting run directory names ("run-1000" < "run-999") would make the
+    reject gate read a stale run once a PR passes 999 review runs.
+    """
+    _write_report(tmp_path, "run-999", "42")
+    newest = _write_report(tmp_path, "run-1000", "42")
+    assert frr.newest_report_for_pr("42", tmp_path) == newest
+
+
+def test_newest_report_for_pr_falls_back_to_legacy_flat_layout(tmp_path: Path) -> None:
+    """A pre-rename flat-layout report is still found when no ``pr-<N>`` directory exists yet.
+
+    Regression guard: the reject gate must not fail open on a report written before the
+    pr-<N>/run-<NNN> rename just because its directory shape predates it.
+    """
+    legacy = _write_legacy_report(tmp_path, "2026-08-04T10-00-00Z", "42")
+    assert frr.newest_report_for_pr("42", tmp_path) == legacy
+
+
+def test_newest_report_for_pr_prefers_pr_scoped_over_legacy(tmp_path: Path) -> None:
+    """A pr-<N>/run-<NNN> report takes priority over any legacy flat-layout report for the same PR."""
+    _write_legacy_report(tmp_path, "2026-08-04T10-00-00Z", "42")
+    scoped = _write_report(tmp_path, "run-001", "42")
+    assert frr.newest_report_for_pr("42", tmp_path) == scoped
 
 
 def test_gate_line_returns_empty_without_field(tmp_path: Path) -> None:
     """A pre-gate report with no ``Gate:`` field yields an empty line."""
-    report = _write_report(tmp_path, "run1", "42")
+    report = _write_report(tmp_path, "run-001", "42")
     assert frr.gate_line(report) == ""
 
 
@@ -114,7 +152,7 @@ def test_main_allows_when_no_report(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 def test_main_allows_non_reject_gates(gate: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``PASS`` and ``BLOCK`` are ordinary findings, not premise problems."""
     monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run1", "42", gate=gate)
+    _write_report(tmp_path, "run-001", "42", gate=gate)
     assert frr.main(["--pr", "42"]) == 0
 
 
@@ -123,7 +161,7 @@ def test_main_blocks_when_head_unchanged(
 ) -> None:
     """A rejection still standing at the current head blocks the run."""
     monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run1", "42", gate="REJECT_SCOPE @a1b2c3d")
+    _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
     _fake_head_sha(monkeypatch, "a1b2c3d")
     assert frr.main(["--pr", "42"]) == 1
     assert "⛔ BLOCKED" in capsys.readouterr().out
@@ -134,7 +172,7 @@ def test_main_warns_when_head_moved(
 ) -> None:
     """A rejection recorded against an older head lets the run continue with a warning."""
     monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run1", "42", gate="REJECT_GOAL @a1b2c3d")
+    _write_report(tmp_path, "run-001", "42", gate="REJECT_GOAL @a1b2c3d")
     _fake_head_sha(monkeypatch, "9999999")
     assert frr.main(["--pr", "42"]) == 0
     out = capsys.readouterr().out
@@ -146,7 +184,7 @@ def test_main_blocks_when_head_unverifiable(
 ) -> None:
     """An unreachable ``gh`` fails closed — the rejection stands."""
     monkeypatch.chdir(tmp_path)
-    _write_report(tmp_path, "run1", "42", gate="REJECT_SPAM @a1b2c3d")
+    _write_report(tmp_path, "run-001", "42", gate="REJECT_SPAM @a1b2c3d")
     _fake_head_sha(monkeypatch, "", returncode=1)
     assert frr.main(["--pr", "42"]) == 1
     assert "unverifiable" in capsys.readouterr().out

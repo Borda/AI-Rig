@@ -4913,6 +4913,6 @@
       "src": "skills/investigate/SKILL.md:97"
     }
   },
-  "plugin": "cc_foundry@0.56.0",
+  "plugin": "cc_foundry@0.56.1",
   "schema": 1
 }
