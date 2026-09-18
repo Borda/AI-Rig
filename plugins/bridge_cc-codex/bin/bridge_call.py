@@ -1713,15 +1713,37 @@ def _request_json(request: Request) -> dict[str, Any]:
     }
 
 
+_REPLACE_ATTEMPTS = 40
+_REPLACE_RETRY_SECONDS = 0.025
+
+
 def _write_json(path: Path, value: dict[str, Any]) -> None:
     """Atomically write a JSON artifact with byte-stable cross-platform newlines."""
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     try:
         temporary.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-        temporary.replace(path)
+        _replace_with_retry(temporary, path)
     except OSError:
         temporary.unlink(missing_ok=True)
         raise
+
+
+def _replace_with_retry(source: Path, target: Path) -> None:
+    """Rename ``source`` over ``target``, retrying briefly when another process holds ``target`` open.
+
+    On Windows a rename over a file that another process has open for reading fails with ``PermissionError`` (``WinError
+    5``, a sharing violation) instead of succeeding as it does on POSIX. The supervisor polls the job record and the
+    cancel marker while the caller rewrites them, so that window is hit routinely rather than rarely. The reader holds
+    the file for one ``read_text`` call, so a bounded retry covers it; the last attempt re-raises.
+    """
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(_REPLACE_RETRY_SECONDS)
 
 
 def _resolve_task(args: argparse.Namespace) -> str:

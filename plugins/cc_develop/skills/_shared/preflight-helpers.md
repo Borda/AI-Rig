@@ -2,13 +2,9 @@
 
 Shared preflight protocols for develop skills. Read + run relevant section(s) per active flags.
 
-## Codemap + Semble Preflight
-
-Run when `SEMBLE_ENABLED=true`. Codemap availability already validated by `codemap_resolve.py` in flag-parsing phase — no extra check needed when `CODEMAP_ENABLED=true`.
+## Codemap Preflight
 
 **If `CODEMAP_ENABLED=true`**: no-op — `codemap_resolve.py` confirmed `codemap-py query` on PATH, index present before setting `CODEMAP_ENABLED=true`.
-
-**If `SEMBLE_ENABLED=true`**: verify `mcp__semble__search` in available tools. Else: print `! --semble requested but semble MCP server not configured. Configure: claude mcp add semble -s user -- uvx --from "semble[mcp]" semble` and stop.
 
 ## --plan Path Extraction
 

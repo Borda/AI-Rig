@@ -4,7 +4,7 @@ description: "OSS maintainer fast-close workflow for GitHub PRs. Three phases: (
 argument-hint: <PR number or URL> [report] | report | <review comment text> [--no-challenge] [--agent <name>] [--codemap] [--no-codemap] [--worktree] [--keep "<items>"]
 disable-model-invocation: true
 model: sonnet
-allowed-tools: Read, Edit, Write, Bash, Agent, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, EnterWorktree, ExitWorktree
+allowed-tools: Read, Edit, Write, Bash, Agent, Skill, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, EnterWorktree, ExitWorktree
 effort: high
 ---
 
@@ -30,7 +30,7 @@ Bare comment text → skip to Codex dispatch (Step 12).
   - Omitted → **review-handoff mode**: auto-detect PR from most recent `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage, same schema) or `.reports/codex/review/*/review-notes.md` (codex lineage, detected but not parsed — see Step 0 lineage guard)
   - PR number (e.g. `42` or `#42`) or GitHub PR URL → **pr mode**
   - `report` (bare word) → **report mode**: latest review findings as action items; no GitHub re-fetch
-  - `42 report` or `<URL> report` → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass
+  - `42 report` or `<URL> report` → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass. The `report` word **adds** the report as a second source; it never suppresses the GitHub fetch — bare `report` (no PR number) is the no-GitHub mode
   - Bare review comment text → **comment dispatch mode** (jumps to Step 12)
 - **`--no-challenge`**: optional — skip challenge gate per item; all selected items treated as `VALID`
 - **`--no-codemap`**: optional — disable codemap structural context (on by default when codemap installed + index present)
@@ -181,9 +181,16 @@ Parse $ARGUMENTS:
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$CLAUDE_PLUGIN_ROOT" ] || { echo "Error: CLAUDE_PLUGIN_ROOT is unset — verify oss plugin installation and that skill is invoked via Claude Code plugin system"; exit 1; }  # timeout: 5000
 [ -f "${CLAUDE_PLUGIN_ROOT}/bin/parse-resolve-args.py" ] || { echo "Error: parse-resolve-args.py not found — verify oss plugin installation"; exit 1; }  # timeout: 5000
-# no codemap/keep flags in parse-resolve-args.py — strip before passing (parsed above)  # timeout: 3000
-eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree "$ARGUMENTS")"  # timeout: 5000
+# parse-resolve-args.py anchors on "<PR#> [report]" alone — ANY surviving flag token routes to
+# comment-dispatch and drops PR_NUMBER. Every supported flag must be stripped here, not just codemap/keep.
+eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent "$ARGUMENTS")"  # timeout: 5000
 ARGUMENTS="$CLEAN_ARGS"
+echo "$FLAG_NO_CHALLENGE" > "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}"  # read by Step 8 Phase 1
+echo "${VALUE_AGENT:-}" > "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
+echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 10 overwrites; a run that never reaches it must not inherit last run's `open`
+# same reason: a run that never reaches Step 3d (zero pending items, bulk skip-all) must not inherit last run's `stage`/`grouped`
+echo each > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"
+echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
 # defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
@@ -202,20 +209,72 @@ echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeou
 
 **Unsupported flag check** — after `eval`, scan remaining `$ARGUMENTS` for any `--<token>` not in `{--no-challenge, --agent, --codemap, --no-codemap, --worktree}`. Found → invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown tokens). Supported: `--no-challenge`, `--agent <name>`, `--codemap`, `--no-codemap`, `--worktree`, `--keep "<items>"`.
 
-- `MODE="pr+report"` → strip `report` suffix conceptually (already captured separately); find latest review report via `ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1`; no report found → warn but continue in pr mode; newest match is codex-lineage (`.reports/codex/review/*/review-notes.md`) → this parser can't read its schema — warn `⚠ newest review is codex-lineage, unsupported by this parser — GitHub comments only, no report findings merged` and continue in pr mode (same non-fatal treatment as "no report found")
-- `MODE="report"` → find latest review report via `ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1`; no report found → stop with: "No review report found in .reports/review/ or .reports/codex/review/ — run /review \<PR#> first, or provide a PR number"; newest match is codex-lineage → stop with the Step 0 lineage-guard message (same wording as the auto-detect block above); extract PR# from header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }`
+- `MODE="pr+report"` or `MODE="report"` → resolve the report source with the **Report source resolution** block below (executable, not prose), then branch on its printed `REPORT_STATUS`. `MODE="report"` additionally: extract PR# from the report header if present; no PR# in header → add branch safety check before Step 8 — `CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — report mode without PR# must not operate on default branch; check out a feature branch first"; exit 1; }`
 - `MODE="pr"` → continue Step 2
 - `MODE="comment-dispatch"` → branch safety check before Step 12: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r WT_ENABLED < "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}" 2>/dev/null; [ "$WT_ENABLED" = "true" ] || WT_ENABLED=false; CURRENT=$(git branch --show-current); DEFAULT=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||'); [ -z "$DEFAULT" ] && DEFAULT=$(git remote show origin 2>/dev/null | grep 'HEAD branch' | awk '{print $NF}'); [ -z "$DEFAULT" ] && { printf "! BLOCKED — cannot determine default branch; refusing to proceed\n"; exit 1; }; [ "$CURRENT" = "$DEFAULT" ] && { echo "⛔ On default branch '$CURRENT' — comment dispatch must not commit to default branch"; exit 1; }; [ "$WT_ENABLED" = "true" ] && echo "⚠ --worktree has no effect in comment-dispatch mode"` → jump to Step 12
 
-### Reject-gate check (all modes with a known `PR_NUMBER`)
+### Reject-gate check (every mode — run the block even without a `PR_NUMBER`)
 
 `oss:review`'s acceptance gate can reject a PR at the premise level — `Gate: REJECT_<GROUND> @<sha>`, one of `GOAL`/`CONDUCT`/`SCOPE`/`LICENSE`/`DUPLICATE`/`REVERTED`/`SPAM`/`PHILOSOPHY` (see `oss:review` SKILL.md Stage 1 for what each means). Premise problem, not fixable by `/oss:resolve` editing code — never start the fix pipeline on a PR still in that state, regardless of which of the 8 grounds fired. `Gate: BLOCK` and anything else (`PASS`, or no `Gate:` field at all — pre-gate reports) impose no restriction here — ordinary fixable findings, exactly what resolve exists for.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER"  # timeout: 6000
+# --path-out: this lookup is PR-scoped; Steps 3a/3c reuse it instead of a second newest-of-any-PR glob
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" \
+    --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"  # timeout: 6000
 ```
+
+The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`) is the **PR-scoped** answer to "does a review report for this PR already exist". Steps 3a and 3c read it first and glob only on a miss — never re-derive it from the gate's printed line, and never let the printed `Gate: …` verdict be the only thing parsed out of this block. With no `PR_NUMBER` the script skips the check and writes an **empty** sentinel — that write is why the block runs in every mode: a bare `/oss:resolve report` after an earlier `/oss:resolve 42 report` in the same session would otherwise inherit PR 42's path.
+
+### Report source resolution (`report` and `pr + report` modes)
+
+Run this block — it is the single lookup for both modes, and the **only** sanctioned way to conclude that no report exists. A prose-only lookup here was silently skipped in a real run, and the orchestrator re-ran a full `oss:review` fan-out while a matching report sat on disk and its path had already been printed by the reject gate one block earlier.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# timeout: 5000
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+# re-run the PR-scoped lookup here (idempotent): the sentinel is trustworthy only if the reject gate ran THIS run for THIS PR.
+# Its exit 1 = still-rejected PR; never swallow that — a skipped gate block would otherwise resolve a rejected PR silently
+if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "n/a" ]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" >/dev/null || { echo "REPORT_STATUS=rejected"; exit 1; }  # timeout: 6000
+fi
+IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
+[ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
+# with a PR# the gate sentinel is authoritative: empty means "none for THIS PR", and the newest
+# report of a *different* PR would merge the wrong findings. No PR# → the sentinel carries nothing
+# PR-scoped (gate wrote it empty), so glob newest-of-any.
+case "$PR_NUMBER" in
+    ""|n/a) REPORT_FILE=$(ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md .reports/codex/review/*/review-notes.md 2>/dev/null | head -1) ;;
+esac
+echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
+case "$REPORT_FILE" in
+    "")                      echo "REPORT_STATUS=missing" ;;
+    .reports/codex/review/*) echo "REPORT_STATUS=codex-lineage" ;;
+    *)                       echo "REPORT_STATUS=ok" ;;
+esac
+echo "REPORT_FILE=$REPORT_FILE"
+```
+
+Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
+
+- `rejected` → stop; the reject-gate block above already printed the `⛔ BLOCKED` verdict and why (a still-rejected PR is a premise problem, not a fix queue)
+- `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c. **Never start a review when a report is already resolved.**
+- `codex-lineage` → this parser reads `oss:review`'s section schema only, not codex's flat H1/H2/M1-bullet schema. Treat as `missing` for the gate below, stating the lineage as the reason.
+- `missing` with **no `PR_NUMBER`** (bare `report` on the current branch) → nothing to offer: there is no second source and no PR to review. Stop with `No review report found in .reports/review/ or .reports/codex/review/ — run /oss:review <PR#> first, or provide a PR number`.
+- `missing` with a known `PR_NUMBER` → **do not spawn anything.** The caller asked for report findings; producing them is a decision, not a fallback. Invoke `AskUserQuestion` (actual tool call — prose question is a violation):
+
+<!-- branch: report-missing — fires only when `report` requested, PR# known, and no readable report resolved -->
+
+```text
+"No readable review report for PR #<N>. How should /oss:resolve get the findings you asked for?"
+  (a) Continue without report findings — GitHub comments only (pr + report mode only)
+  (b) Stop — print the /oss:review <PR#> command to run first, then re-invoke resolve  (Recommended)
+  (c) Abort — I'll run the review myself
+```
+
+Offer (a) only in `pr + report` — bare `report` has no second source, so its menu is (b)/(c). Selected (a) → print `⚠ no report findings merged — GitHub comments only` and continue in pr mode. Selected (b) → print `→ Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> report`, and stop. **Never invoke `Skill(skill="oss:review", …)` here** — `oss:review` ends its own run in a Step 7a `AskUserQuestion` asking the user what to do next, so there is no structural "return" to resume this block on: the whole nested multi-agent fan-out would run only to leave the resume instruction sitting in context, unenforceable across the exact kind of compaction this fix exists to survive. Print the command and let the user re-invoke `/oss:resolve` themselves — the same pattern `oss:review`'s own Step 7a already uses. Selected (c) → stop.
 
 ## Step 1b: Create all workflow tasks upfront
 
@@ -272,7 +331,7 @@ Execute its steps (loaded above). Substitute `<_OSS_SHARED>` in the Agent() prom
 
 When mode == **pr + report**:
 
-Find + read latest review report (`ls -t .reports/review/*/review-report.md .reports/review/*/*/review-report.md 2>/dev/null | head -1`). Parse findings same as Step 3a.
+Read the report already resolved by **Report source resolution** (Step 1) — `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never re-glob here: a second newest-of-any-PR lookup can hand this step another PR's findings. Empty sentinel means that block never ran — run it now and honour its gate. Parse findings same as Step 3a.
 
 **Deduplication**:
 
@@ -318,7 +377,7 @@ Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` r
 
 ## Step 3d: User item selection
 
-<!-- branch: main-path — item-selection (always fires in step 3d; ≤6 items = one merged call incl. commit-mode, >6 = two calls) -->
+<!-- branch: main-path — item-selection (always fires in step 3d; ≤3 items = one merged call incl. commit-mode + topic-group; 4-6 = one call, +1 topic-group follow-up only when commit mode = (b); 7-9 = two calls; 10-18 = three: two checkbox pages + commit-mode follow-up) -->
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text.
 
@@ -331,14 +390,25 @@ TaskUpdate(task_id=TASK_SELECT, status="in_progress")
 
 Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero pending → set `SELECTED_ITEMS` = all pending IDs, skip to Step 3e.
 
-Sort all pending items by severity descending (most impactful first). Constraint: max 3 items/question, max 4 questions/call. `AskUserQuestion` always appends "Type something" outside option list — 3 items + Type something = 4 visible per page; keep ≤3 items per group.
+Sort all pending items by severity descending (most impactful first).
 
-**Call layout — pick by pending-item count** (each AskUserQuestion window is pure human idle, median ~15 min — merge whenever the 4-question ceiling allows):
+**Cap mechanics — read before building any call**: the tool cap is **4 questions per call**. The `Submit` tab is NOT a question — a 4-question call renders 5 tabs. Never stop at 3 questions believing the cap is reached, and never over-pack a question past 3 items to avoid opening a 4th. Within one question, `AskUserQuestion` appends "Type something" outside the option list, so 3 items + Type something = 4 visible rows; that is the **≤3 items/question** limit, a separate constraint from the 4-question cap.
 
-- **≤6 pending items → ONE call**: Q1–Q2 = item checkboxes (≤3 each; one question when ≤3 items), next question = bulk action, LAST question = commit-mode menu (full 4-option text below, verbatim). Bulk action resolving to (d) Skip all → discard the commit-mode answer (nothing will be committed). This satisfies the distinct-menus rule below — the menus stay separate questions; only the round-trips merge.
-- **>6 pending items → two calls**: Q1–Q3 = item checkboxes, last question = bulk action; commit-mode menu asked as the follow-up call after the bulk action resolves (flow below).
+**Call layout — literal slot template, pick by pending-item count** (each AskUserQuestion window is pure human idle, median ~15 min — merge whenever the 4-question cap allows):
 
-**Bulk action — hard rule**: single-select, fixed options, always positioned after every item-checkbox question. Never put items in it. Items span ≤3 groups regardless of how many type categories exist.
+| Pending | Call 1 slots | Follow-up call |
+| -- | -- | -- |
+| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 topic-group | none |
+| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | topic-group, only when commit mode = (b) |
+| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group |
+| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group |
+| ≥19 | context-budget mode below — no item checkboxes exist | — |
+
+Checkbox mode holds at most 18 items (2 calls × 3 questions × 3 items). Decide the mode from the pending count **before** building Call 1; never widen a question past 3 items and never open a Call 3 to stretch checkbox mode further.
+
+Bulk action resolving to (d) Skip all → discard the commit-mode and topic-group answers from the same call (nothing will be committed). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
+
+**Bulk action — hard rule**: single-select, fixed options, **present in every selection call without exception** — Call 1 and Call 2 alike, positioned after that call's last item-checkbox question. A selection call without a bulk page is a defect, never a valid compression. Never put items in it. Items span ≤3 groups per call regardless of how many type categories exist.
 
 ```text
 Bulk-action question — multiSelect: FALSE (single-select only — user picks one bulk action, not a checklist)
@@ -349,6 +419,8 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
   (d) Skip all — skip all items, exit
 ```
 
+**ESSENTIAL — exactly these 4 options, verbatim, never substitute and never add** (empirically motivated: an observed run emitted an invented `Use my checked picks (Recommended)` option and dropped `+All [suggest]`). The checked-picks path needs no option — it is the "unanswered" branch below. Every selection call carries this menu; a call that omits it must be re-issued.
+
 **Bulk-action resolution**:
 
 - (a) → `SELECTED_ITEMS` = all `[req]` IDs; skip Call 2 in two-call flow; proceed to commit-mode resolution
@@ -357,18 +429,23 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
 - (d) → stop; print `→ All items skipped.`; jump to Step 11 (merged flow: discard the commit-mode answer from the same call)
 - unanswered / "Type something" → use checked IDs from the item questions; proceed to commit-mode resolution; `COMMIT_MODE = each` (default)
 
-**Item checkbox questions**: each `multiSelect: true`, header "Items to implement:", labels: `<type> #<id>: <summary>` (≤55 chars), description: `<file:line> · @<author>` + for `location: discussion` items append `· thread (no GH resolve)`. Fill in severity order (≤3 items each). >9 pending items: two calls — print `→ N pending items — selecting in 2 calls` before call 1; Call 2 gets remaining items + bulk-action question again; "ALL (req + suggest)" in Call 1 → skip Call 2.
+**Item checkbox questions**: each `multiSelect: true`, header "Items to implement:", labels: `<type> #<id>: <summary>` (≤55 chars), description: `<file:line> · @<author>` + for `location: discussion` items append `· thread (no GH resolve)`. Fill in severity order (≤3 items each — never 4, open another question instead). >9 pending items: two calls — print `→ N pending items — selecting in 2 calls` before Call 1, then build each call from the slot table above:
 
-**≥20 pending items — context-budget mode**: skip per-item checkboxes; print compressed table (type · id · summary ≤40 chars · file) **inline to terminal** (Output-Routing exemption from Step 3c applies — never divert to `.temp`), then ONE call: bulk-action question + commit-mode question (≤6-item merged layout applies — only 2 questions needed).
+- **Call 1** = Q1-Q3 item checkboxes (items 1-9) + Q4 bulk action.
+- **Call 2** = Q1-Q3 item checkboxes (remaining items, ≤3 each) + Q4 bulk action — the bulk menu repeats here, it is not carried over from Call 1.
+- Any bulk answer other than "unanswered" in Call 1 → skip Call 2 entirely (scope already resolved).
+- ≥19 pending → context-budget mode below instead, decided before Call 1; never open a Call 3.
+
+**≥19 pending items — context-budget mode**: skip per-item checkboxes; print compressed table (type · id · summary ≤40 chars · file) **inline to terminal** (Output-Routing exemption from Step 3c applies — never divert to `.temp`), then ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group (3 of the 4 slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
 <!-- branch: main-path — commit-mode (same call in the ≤6-item merged layout; separate call 2 only in the >6-item flow; skipped only when bulk action = (d) skip) -->
 
-**Commit mode** — in the merged layout this menu is the LAST question of the same call; in the two-call flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
+**Commit mode** — placed per the slot table above: same call for ≤6 pending items, follow-up call (paired with topic-group) for >6. In the follow-up flow ask it immediately after the bulk action resolves to (a), (b), (c), or unanswered (skip only when (d) skip-all). Commit mode is always the user's choice; item scope ((c) = all items) never implies a commit mode:
 
 ```text
 AskUserQuestion: "Commit mode for selected items:"
   (a) Each item separately — one commit per action item (default)
-  (b) By topic group — ask for topic labels; group related items into themed commits
+  (b) By topic group — group related items into themed commits (grouping strategy asked next)
   (c) All at once — single commit after all items
   (d) Stage only — no commits; stay staged on PR branch (⚠ cannot cleanly restore to $SAVED_BRANCH after Step 11; governs Step 8 action-item commits only — the Steps 5–7 merge commit is unconditional and always created)
 ```
@@ -382,6 +459,29 @@ Set `COMMIT_MODE`:
 - (c) → `all`
 - (d) → `stage`
 - unanswered → `each` (default)
+
+**Topic-group question** — always present in the SAME call as the commit-mode menu wherever the slot table leaves room (`≤3` items, and every `>6` follow-up call): the commit-mode answer is unknown when that call is built, so the question is asked unconditionally there and its answer discarded silently unless commit mode resolves to (b) — same pattern as the skip-all discard. For `4-6` items the call is already full, so ask it as a separate follow-up call, and only when commit mode = (b). Options are grouping strategies, not free-text labels: the orchestrator already knows each item's `change` category and `file`, so it proposes concrete groupings and only falls back to typing.
+
+```text
+Topic-group question — multiSelect: FALSE
+"If 'By topic group' — how should items group?"
+  (a) By change domain — one commit per `change` category (perf, docs, test, ...)
+  (b) By file/module — one commit per touched file or package
+  (c) By specialist domain — mirrors the Step 8 Phase 2 dispatch groups
+  (d) Let me type labels — free-text via "Type something"
+```
+
+Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · (d) or free text → `labels` (prompt for labels at Step 8) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
+
+Persist both once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, and its after-loop grouping reads the strategy; neither survives a fence boundary or a compaction on its own. Substitute the resolved values for the two literals before running:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+COMMIT_MODE=each  # substitute: each | grouped | all | stage
+GROUP_STRATEGY=domain  # substitute: domain | file | specialist | labels
+echo "$COMMIT_MODE" > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
+echo "$GROUP_STRATEGY" > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
+```
 
 ```text
 TaskUpdate(task_id=TASK_SELECT, status="completed")
@@ -554,12 +654,13 @@ TaskUpdate(task_id=TASK_IMPL, status="in_progress")
 
 ```bash
 # computed here for cap-threshold branch (full resolve in action-item-dispatch.md)
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags worktree --value-flags agent "$ARGUMENTS")"  # timeout: 5000
-_RESOLVE_IMPL_AGENT="${VALUE_AGENT:-bridge:implement}"
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _AGENT_OVERRIDE < "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}" 2>/dev/null || _AGENT_OVERRIDE=""
+_RESOLVE_IMPL_AGENT="${_AGENT_OVERRIDE:-bridge:implement}"
 echo "$_RESOLVE_IMPL_AGENT"   # item count belongs to the prose gate below; SELECTED_ITEMS only enters the shell in action-item-dispatch.md's prelude, later than this
 ```
 
-<!-- branch: codex-cap — only when codex agent AND N>8 items; adds 1 call (max 5 if user proceeds; worst case = item-select + commit-mode + codex-cap + push-auth + post-pr) -->
+<!-- branch: codex-cap — only when codex agent AND N>8 items; adds 1 call (max 5 if user proceeds; worst case at 10-18 items = two item pages + commit-mode + codex-cap + push-auth/post-pr) -->
 
 If `_RESOLVE_IMPL_AGENT = bridge:implement` AND `SELECTED_ITEMS` has > 8 items, invoke `AskUserQuestion`: "N items selected — bridge implementation cap is 8 per session. Split into batches?" Options: (a) Apply first 8 now, re-run for remainder · (b) Apply all [req] only (if ≤8) · (c) Proceed anyway (sequential, may be slow). For non-bridge agents, skip this gate.
 
@@ -672,9 +773,11 @@ IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null |
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
 ```
 
-<!-- branch: main-path — push-auth (call 3 of 4 normal / 4 of 5 with codex-cap) -->
+<!-- branch: main-path — push-auth + post-pr in one call (call 3 of 3 normal / 4 of 4 with codex-cap) -->
 
-**Push authorization gate** — per `git-commit.md` push-safety rule ("Never push without explicit user confirmation"), invoke `AskUserQuestion` before any `git push`. The question must surface:
+**Push authorization + post-PR gate — one `AskUserQuestion` call, two questions.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") the push question precedes any `git push`; the post-PR question rides in the same call because each window is pure human idle and Step 11 has nothing left to ask that the user cannot decide now. Never split these into two calls.
+
+Q1 — push. Must surface:
 
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
 - Diff stat: `$PUSH_STAT` (e.g. `3 files changed, 47 insertions(+), 12 deletions(-)`)
@@ -685,7 +788,15 @@ Options:
 - (a) **Push** — proceed with `git push` below (default)
 - (b) **Skip push** — stop after Step 9; user pushes manually later
 
-Only proceed to the `git push` below on option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. `` and jump to Step 11.
+Q2 — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Persist the answer for Step 11 — substitute `open` for the literal when Q2 = (a), the fence itself assigns nothing else:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+POST_PR_ACTION=skip  # substitute: open | skip
+echo "$POST_PR_ACTION" > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
+```
+
+Only proceed to the `git push` below on Q1 option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. `` and jump to Step 11 (Q2's answer still applies there).
 
 ```bash
 git push # timeout: 30000
@@ -748,6 +859,7 @@ Omit section when `--no-challenge`.
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r SAVED_BRANCH < "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}" 2>/dev/null || SAVED_BRANCH=""
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
 # stage mode: skip restore, else staged work lost
 if [ "$COMMIT_MODE" = "stage" ]; then
     echo "⚠ COMMIT_MODE=stage: changes are staged on $(git branch --show-current) — restore to $SAVED_BRANCH skipped to preserve staged work. Run: git stash && git switch $SAVED_BRANCH && git stash pop (on PR branch) when ready."
@@ -758,13 +870,22 @@ fi
 
 **Worktree exit** — if `WT_ENABLED=true` and a worktree was entered at Step 4: commits are already pushed to the fork (the deliverable is remote). Follow `worktree-isolation.md` §Exit — `git branch --show-current`, then `ExitWorktree(action="keep")` to return the session to the main tree, and append the `Worktree` block noting the local worktree is disposable (`git worktree remove` when done). The `SAVED_BRANCH` restore above was a no-op — the main tree was never switched. Never auto-merge.
 
-<!-- branch: main-path — post-pr (call 4 of 4 normal / 5 of 5 with codex-cap) -->
-
 ```text
 TaskUpdate(task_id=TASK_CLOSE, status="completed")
 ```
 
-Invoke `AskUserQuestion` — options: (a) Open PR in browser (`gh pr view <PR_NUMBER> --web`) · (b) Skip.
+Post-PR action — already answered in the Step 10 call (Q2); no new `AskUserQuestion` here:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r POST_PR_ACTION < "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}" 2>/dev/null || POST_PR_ACTION="skip"
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+# n/a is what Step 1 stores when no PR# was parsed; never hand it to gh
+[ "$POST_PR_ACTION" = "open" ] && [ "$_PR_NUMBER" != "n/a" ] && [ -n "$_PR_NUMBER" ] && gh pr view "$_PR_NUMBER" --web  # timeout: 10000
+echo "POST_PR_ACTION=$POST_PR_ACTION"
+```
+
+The post-PR sentinel needs no cleanup — Step 1 re-initialises it to `skip` on every run, so nothing stale survives into the next invocation. Clear the compaction contract alone (its own fence: the `rm` keeps the block out of the blueprint manifest, and this exact path is allow-listed):
 
 ```bash
 rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -805,8 +926,9 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; retry push only (don't re-run full merge). `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
 - **Impl agent health + effort**: bridge implementation calls use `bridge:implement`; effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`. `--agent foundry:*` stays foreground only.
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
-- **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — last question of the merged call when ≤6 pending items, separate follow-up call when >6 — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
-- **AskUserQuestion usage**: calls spread across independent branch-paths — no single sequential path exceeds 4-call limit (worst case: codex-cap adds one call when N>8 items and codex available). Compliant with sequential-call limit.
+- **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
+- **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
+- **AskUserQuestion usage**: calls spread across independent branch-paths — the longest sequential path is 5 calls (10-18 items: two checkbox pages + commit-mode follow-up, then codex-cap when N>8 items and codex available, then push-auth/post-pr); ≤6 items with no codex-cap is 2 (3 when 4-6 items pick grouped commits). Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.

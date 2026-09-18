@@ -16,8 +16,25 @@ Tier cascade
   exists. Helper search order: (a) ``$CLAUDE_PLUGIN_ROOT/bin/...``,
   (b) newest cached foundry version, (c) source-tree dev fallback.
 * **Tier 2** — Glob ``~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/<subdir>``,
-  skip version dirs carrying ``.orphaned_at``, return newest by semver.
-* **Tier 3** — Source-tree fallback ``plugins/<plugin>/<subdir>`` (warn to stderr).
+  skip version dirs carrying ``.orphaned_at``, return newest by semver. Degraded
+  fallback only: it runs when the registry has no usable record (helper missing,
+  registry absent or malformed, recorded ``installPath`` purged, or the recorded
+  install lacks ``<subdir>``) and may then pick a cache dir newer than the one
+  Claude Code actually loads.
+* **Tier 3** — Source-tree fallback ``plugins/cc_<plugin>/<subdir>``, then
+  ``plugins/<plugin>/<subdir>`` for un-prefixed provider dirs such as
+  ``codemap-py`` (warn to stderr).
+
+Cross-plugin use
+----------------
+Consumers normally resolve their **own** plugin. The one sanctioned exception is an
+optional-provider contract — content that has no value unless the provider is
+installed (``resolve_shared_path.py codemap-py claude-skills/_shared``): the
+registry tier returns the *active* install and skips a newer orphaned cache dir;
+the newest-cache tier is reached only when no usable registry record exists or the
+recorded install lacks ``<subdir>``, and absence degrades to the consumer's own
+fallback line. See ``plugins/CLAUDE.md``
+§Self-Contained ``_shared``.
 
 Exit codes
 ----------
@@ -34,7 +51,7 @@ Usage
     python resolve_shared_path.py foundry skills/_shared
     python resolve_shared_path.py oss skills/_shared
 
-<!-- file: resolve_shared_path.py — consumers: resolve-shared-path.sh, find-foundry-shared.sh -->
+<!-- file: resolve_shared_path.py — consumers: codemap-gates.md, codemap-context.md, foundry/oss SKILL.md -->
 """
 
 from __future__ import annotations
@@ -42,7 +59,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -50,35 +66,6 @@ from pathlib import Path
 _PLUGIN_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 _SUBDIR_RE = re.compile(r"^[a-zA-Z0-9_/-]+$")
 _MARKETPLACE = "borda-ai-rig"
-
-
-def _resolve(cmd: str) -> str:
-    """Resolve an executable name to an absolute path.
-
-    Wrapper around :func:`shutil.which` that raises ``FileNotFoundError``
-    when the executable is not on ``PATH``. Centralising the lookup keeps
-    subprocess invocations Windows-portable and prevents accidental
-    ``shell=True`` usage.
-
-    Args:
-        cmd: Executable basename (e.g. ``python``).
-
-    Returns:
-        Absolute path to the executable.
-
-    Raises:
-        FileNotFoundError: When ``cmd`` is not found on ``PATH``.
-
-    Examples:
-        >>> import os
-        >>> path = _resolve("python")
-        >>> os.path.isabs(path)
-        True
-    """
-    resolved = shutil.which(cmd)
-    if not resolved:
-        raise FileNotFoundError(f"required executable not on PATH: {cmd!r}")
-    return resolved
 
 
 def _version_key(name: str) -> list[int]:
@@ -213,10 +200,13 @@ def _locate_helper(home: Path, env_root: str | None) -> Path | None:
 def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) -> Path | None:
     """Resolve via ``installed_plugins.json`` (registry).
 
-    Invokes ``get_plugin_install_path.py`` as a subprocess (via the
-    ``python`` executable on PATH) to look up the plugin's authoritative
-    install path, then validates that ``<install_path>/<subdir>`` is a
-    directory.
+    Invokes ``get_plugin_install_path.py`` as a subprocess under the
+    interpreter already running this script (``sys.executable``), looks up
+    the plugin's authoritative install path, then validates that
+    ``<install_path>/<subdir>`` is a directory. A PATH lookup for ``python``
+    would silently miss on ``python3``-only hosts and on the Windows Store
+    alias stub, dropping every caller to the newest-cache tier without a
+    trace.
 
     Args:
         home: User home directory.
@@ -231,12 +221,8 @@ def _tier1_registry(home: Path, plugin: str, subdir: str, env_root: str | None) 
     if helper is None:
         return None
     try:
-        python_bin = _resolve("python")
-    except FileNotFoundError:
-        return None
-    try:
         completed = subprocess.run(  # noqa: S603 — args fully internal
-            [python_bin, str(helper), _MARKETPLACE, plugin],
+            [sys.executable, str(helper), _MARKETPLACE, plugin],
             capture_output=True,
             text=True,
             check=False,
@@ -347,11 +333,13 @@ def resolve(plugin: str, subdir: str, *, home: Path | None = None, env_root: str
     hit = _tier2_cache(home, plugin, subdir)
     if hit is not None:
         return str(hit), 2
-    # Source-tree fallback targets the on-disk folder, which is cc_-prefixed
-    # after the folder rename; `plugin` stays bare for the cache/registry tiers.
+    # Source-tree fallback targets the on-disk folder: cc_-prefixed for the
+    # Claude plugins, bare for provider plugins such as codemap-py; `plugin`
+    # stays bare for the cache/registry tiers.
     source_fallback = Path("plugins") / f"cc_{plugin}" / subdir
-    if source_fallback.is_dir():
-        return source_fallback.as_posix(), 3
+    for candidate in (source_fallback, Path("plugins") / plugin / subdir):
+        if candidate.is_dir():
+            return candidate.as_posix(), 3
     return source_fallback.as_posix(), -1
 
 

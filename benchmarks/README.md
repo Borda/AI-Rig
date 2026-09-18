@@ -446,6 +446,41 @@ Historical Claude compatibility runs can still be selected explicitly under thes
 
 </details>
 
+This table describes the original 16-task suite; the run below used the current 20-task `tasks-agentic.json` (all `blast_radius_analysis` type, difficulty simple/medium/hard/extreme), the same extension referenced under [Results](#results).
+
+#### `plain` / `codemap` / `semble` — 2026-09-18, haiku
+
+Every prior table in this file measures `plain` against the canonical A/B/C arms; `semble` had never been run against either, so no comparison existed — its exclusion from the canonical arms (§Legacy Claude-only arms, above) reflected a decision to isolate the Codemap treatment, not a measurement of Semble's value. This run closes that gap: all three legacy arms, one model tier, one launch, same repo and revision as every other table in this file (`pytorch-lightning` 2.6.5 at `be98784a1`, index auto-resolved at scan time). Sources: `results/semble-eval-2026-09-18-{plain,codemap,semble}.json`, `results/semble-eval-2026-09-18-{plain,codemap,semble}.md`.
+
+Unlike the paired table above, which drops a pair when either cell is incomplete, this table reports unpaired per-arm means over all 20 cells including the 2 `semble` failures at their measured value (BA-16's timeout scores 0% erec; BA-04's tool-never-called cell scores its true 100%) — a harness failure is part of what the arm delivered, not something to discard. `Mean tool calls` is the mean length of the full recorded tool-call log for all 20 cells; the per-run `.md` reports linked above show a different, smaller figure in their own **Tool calls** column because that column excludes BA-04 and BA-16 from `semble`'s average — the two are not the same metric and will not reproduce each other.
+
+| Metric                |  plain | codemap | semble |
+| --------------------- | -----: | ------: | -----: |
+| Total cost (20 tasks) |  $3.65 |   $1.40 |  $4.03 |
+| Mean cost / task      | $0.182 |  $0.070 | $0.202 |
+| Mean wall time        | 123.1s |   50.5s | 120.2s |
+| Mean input tokens     |   736k |    162k |   858k |
+| Mean output tokens    |    12k |      5k |    10k |
+| Mean tool calls       |   24.1 |     5.8 |   22.2 |
+| Mean erec             |  96.2% |   99.7% |  88.1% |
+| Min erec (worst task) |    68% |     95% |     0% |
+| Mean F1               |  58.2% |   63.4% |  52.1% |
+| Failures / 20         |      0 |       0 |      2 |
+
+`codemap` beats `plain` on every column that is not a tie — 2.6× cheaper, 2.4× faster, 4.1× fewer tool calls, higher erec and F1 — and ties it on failures (0 vs 0). `semble` splits against `plain`: it reads faster (120.2s vs 123.1s), emits fewer output tokens (10k vs 12k), and makes fewer tool calls (22.2 vs 24.1), but costs more (higher input tokens and dollars), scores lower on erec and F1, and is the only arm with failures — BA-16 hit the 210s per-cell timeout outright (0% erec), and BA-04 completed at 100% erec without the agent calling `mcp__semble__search` even once, falling back to Bash-only exploration and reaching the answer without either tool.
+
+The two `semble` failures could be read as making its numbers look artificially worse than a fair per-task comparison — checked by excluding BA-04 and BA-16 from all three arms (18 tasks each), not just `semble`:
+
+| Arm     | cost/task | wall time | input tokens |   erec |     F1 |
+| ------- | --------: | --------: | -----------: | -----: | -----: |
+| plain   |    $0.182 |    124.4s |      737,484 | 95.77% | 55.33% |
+| codemap |    $0.071 |     52.0s |      170,001 | 99.71% | 61.05% |
+| semble  |    $0.218 |    116.6s |      936,538 | 92.34% | 53.31% |
+
+The conclusion survives: excluding its own two failures, `semble` still loses to `plain` on cost, input tokens, and erec. It gains a wider wall-time edge over `plain` (116.6s vs 124.4s) once its worst cell (the timeout) is removed, which is expected — that is the cell being excluded.
+
+This result is real but narrow: one model tier (haiku), one repository, one task family (blast-radius reverse-dependency enumeration) — exactly the family an exact call-graph index is built for and an embedding-similarity search is not. It confirms that mismatch; it does not test what Semble is built for (remote-URL, natural-language, cross-language code search), which this suite never exercises.
+
 ### Quick start
 
 ```bash

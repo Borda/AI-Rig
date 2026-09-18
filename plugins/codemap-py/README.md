@@ -694,8 +694,13 @@ Index location and currency:
 - `SCAN_NO_AUTOBUILD=1` disables implicit query refresh and makes missing indexes a structured manual-build error.
 - Git repositories use stored Git blob hashes and the repository revision for fast currency checks. Non-Git projects use content hashes, so incremental scans and stale detection still work without `git`.
 - A custom root is recorded as `scan_root`; subsequent scans and queries must use that same tree or explicitly select the matching index. Multiple configured `src_roots` are ordered and recorded to make module naming reproducible.
-- The integration and consumer currency gates distinguish a missing index from stale data: Gate A offers build, continue without Codemap, or abort; Gate B offers refresh, continue with an explicit stale caveat, or abort.
+- The integration and consumer currency gates distinguish a missing index from stale data: Gate A offers build, continue without Codemap, or abort. Gate B rebuilds automatically by default — a rebuild on a typical repo is fast enough that asking first only adds a pause; set `LAZY_CODEMAP` to restore the prompt (refresh, continue with an explicit stale caveat, or abort).
 - There is no post-commit hook requirement. Explicit scan remains available for CI and benchmarks where build cost should be controlled.
+
+```text
+! BREAKING — Gate B (stale index) no longer asks before rebuilding. A consumer that reaches a stale index now runs `codemap-py index` in the foreground unprompted; a repo where a full rebuild takes minutes feels that pause where it used to get a question.
+Fix: set `LAZY_CODEMAP` (any non-empty value) in the environment to restore the confirm-first prompt. Consumers reading the contract live pick the new default up as soon as this version is installed.
+```
 
 ```bash
 CODEMAP_INDEX_DIR=<absolute-cache-dir> codemap-py index --root <project-root>
@@ -744,6 +749,8 @@ The integration engine has an explicit closed consumer set:
 - Codex consumer: `codex-rig`.
 
 `/codemap-py:integration audit` or `$codemap-py:integration` reports observed installed versions, roots, protocol compatibility, managed blocks, runtime-scoped telemetry, and wiring state without guessing at unavailable runtime facts.
+
+Shared contracts are read live, not copied. The Claude consumers load `claude-skills/_shared/codemap-gates.md` (missing/stale-index gates, `LAZY_CODEMAP`) and `claude-skills/_shared/codemap-context.md` (query mechanics, evidence lines, batch pre-flight) straight from the active `codemap-py` install, resolved through each consumer's own `resolve_shared_path.py codemap-py claude-skills/_shared` — the install record picks the version; the resolver's newest-cache tier is a degraded fallback used only when no usable install record exists or the recorded install lacks the subdir. No consumer ships a frozen copy, so the contract a skill follows always matches the CLI it is driving; upgrading `codemap-py` upgrades the contract everywhere at once. Without the plugin installed, every consumer prints its own "contract absent — use fallback below" line and continues; a `codemap-py` CLI on `PATH` without the plugin install is treated the same way.
 
 Mode boundaries:
 

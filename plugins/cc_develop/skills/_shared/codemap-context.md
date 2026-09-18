@@ -2,18 +2,14 @@
 
 **Structural context (codemap-py)** — run only when caller sets `CODEMAP_ENABLED=true`; skip if flag absent. Callers pre-set `TARGET_MODULE` (dotted), `TARGET_FN` (bare function name), `CODEMAP_QUERY_KIND`. Use `skip` for a fully localized edit, a task-fit kind for one unresolved structural fact, `standard` only when broader context is justified.
 
-**Wrapper** — query mechanics, batch pre-flight bash, evidence-line contract, completeness/staleness semantics, coverage-metadata rules, targeted-edit pattern, and effort tiers live in codemap-shipped contract. Resolve this plugin's local propagated copy and read it:
+**Wrapper** — query mechanics, batch pre-flight bash, evidence-line contract, completeness/staleness semantics, coverage-metadata rules, targeted-edit pattern, and effort tiers live in codemap-shipped contract. Resolve the active `codemap-py` install (registry first, never a newer orphaned cache dir) and read its contract — no local copy, so the text always matches the CLI actually installed:
 
 ```bash
-_DEV_SHARED="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/skills/_shared}"
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED=$(python "plugins/cc_develop/bin/dev_shared_resolve.py" 2>/dev/null)
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-if ! command -v codemap-py >/dev/null 2>&1 || ! cat "$_DEV_SHARED/codemap-py--codemap-context.md" 2>/dev/null; then
-    echo "codemap contract absent — use fallback below"
-fi
+# gate before resolve: absent CLI spawns nothing; && chain keeps set -e off resolver exit 1
+command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-context.md" 2>/dev/null || echo "codemap contract absent — use fallback below"
 ```
 
-Contract (`v3`) — follow §Batch pre-flight pattern (run with `TARGET_MODULE`/`TARGET_FN`/`CODEMAP_QUERY_KIND`), §Evidence-line contract, §Coverage metadata, §Targeted-edit pattern, §Effort-tier guidance.
+Contract (version as loaded) — follow §Batch pre-flight pattern (run with `TARGET_MODULE`/`TARGET_FN`/`CODEMAP_QUERY_KIND`), §Evidence-line contract, §Coverage metadata, §Targeted-edit pattern, §Effort-tier guidance.
 
 **Fallback when codemap plugin absent**: `CODEMAP_QUERY_KIND=skip` → run no Codemap command. Else run only the task-fit query when known, falling back to `codemap-py query --timeout 5 central --top 5 2>/dev/null`; treat any non-empty output as usable, skip evidence-line/completeness logic, proceed with file reads for the rest. Never break load.
 
@@ -80,19 +76,4 @@ Review runs per-changed-module pre-flight batch once (§Review-pipeline injectio
 
 **Freshness rule** (fail-closed, three conditions — all must hold): `prefix.git_sha` matches current index `git_sha`; `prefix.scanned_at` not older than current index `scanned_at` (rebuilt index — newer `scanned_at` — invalidates every artifact); `prefix.index_stamp` still equals index file's `<size>:<mtime_ns>`. Stamp makes the rule fail closed without trusting index-declared metadata: an `--incremental` re-scan, a restored backup, or a manual edit can leave `git_sha`/`scanned_at` untouched, invisible to the first two checks alone. An artifact written before the stamp field existed carries none, is re-queried rather than trusted. Verdict reasons from `codemap_cache.py read`: `fresh` · `git_sha_mismatch` · `index_rebuilt` · `index_stamp_mismatch` · `content_hash_mismatch`. Health metric: `reuse_ratio` = reused answers / total persisted.
 
-**Writer/reader contract** (oss plugin ships `bin/codemap_cache.py`; gate on `oss` availability — consumer without it simply re-queries):
-
-```bash
-# write — split a codemap-py query batch result into per-module artifacts (batch-producer side)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py" write --batch "$BATCH_OUT" --index "$IDX" --cache-dir "$CACHE_DIR"
-# read — reuse verdict + cached answers for one module (consumer side)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py" read  --module "$MOD" --index "$IDX" --cache-dir "$CACHE_DIR"
-# report — aggregate reuse_ratio for telemetry
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py" report --cache-dir "$CACHE_DIR"
-```
-
-> Review-side wiring (optional, not yet in review/SKILL.md): review may call `codemap_cache.py write` on its `$RUN_DIR` batch output to seed `$RUN_DIR/codemap-context/` — until then, resolve materializes cache from review's persisted `$RUN_DIR/codemap-context.md` batch blob on first use, so no review change needed for reuse to work.
-
-**Semble companion** — include in agent spawn prompt only when caller sets `SEMBLE_ENABLED=true`; skip if flag absent:
-
-> `mcp__semble__search` available and codemap direction-incomplete (`"query_complete": false`, or legacy `"exhaustive": false`) or no index found: call `mcp__semble__search` with varied queries (e.g. `"<module> import"`, `"from <module> import"`, `"<module> usage"`), `repo=<git_root>`, `top_k=20`. Stop when two consecutive queries return no new modules. Merge all results into final rdep set — union of codemap + all semble calls. Codemap `query_complete: true`: skip semble.
+**Writer/reader ownership** — the `write` / `read` / `report` subcommands of `codemap_cache.py` ship in the oss plugin and run only from `oss:resolve`; develop never invokes them. develop's part of the contract is the producer side: `develop:review` persists its pre-flight batch blob as `$RUN_DIR/codemap-context.md`, and `oss:resolve` materializes the per-module artifacts above from that blob on first use. No `oss` plugin installed → nothing reads the blob and every module is re-queried live; no develop behaviour changes.

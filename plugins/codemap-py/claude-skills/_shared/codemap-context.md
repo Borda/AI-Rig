@@ -1,8 +1,8 @@
-<!-- file: codemap-context.md — consumers: plugin-local codemap-context.md wrappers read manifested codemap-py--codemap-context.md copies; provider→consumer wiring uses the codemap-py.integration.v2 managed-block body with a v1 sentinel schema -->
+<!-- file: codemap-context.md — consumers: plugin-local codemap-context.md wrappers (foundry, develop) read this file from the active codemap-py install via `resolve_shared_path.py codemap-py claude-skills/_shared`; provider→consumer wiring uses the codemap-py.integration.v2 managed-block body with a v1 sentinel schema -->
 
 # Codemap context contract — v3
 
-Plugin-agnostic structural-context contract. Consumers read byte-identical manifested copies, synced from this canonical source. Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers stay maintained here.
+Plugin-agnostic structural-context contract. Consumers read this file live from the active `codemap-py` install (no local copies — the text always matches the CLI actually installed). Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers stay maintained here.
 
 > `v3` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
 
@@ -105,7 +105,7 @@ codemap_evidence: queries_run=<n> hits=<h> completeness=<exhaustive|partial|stal
 Completeness semantics:
 
 - `exhaustive` — all queries hit, none stale, none direction-incomplete → consumers may **skip** re-querying (grep/read) for what codemap returned.
-- `partial` — at least one result `query_complete:false` (direction-incomplete) → fill gaps via consumer's fallback (semble, grep), not by re-running codemap.
+- `partial` — at least one result `query_complete:false` (direction-incomplete) → fill gaps via consumer's fallback (grep, targeted file reads), not by re-running codemap.
 - `stale` — index older than source (`stale:true`) → rebuild or accept reduced currency; see gates contract.
 - `unknown` — no query hit → index empty or target absent; fall back to file reads.
 

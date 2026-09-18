@@ -1,7 +1,7 @@
 ---
 name: plan
 description: 'Analysis-only planning — classify and scope a task without writing code; outputs a structured plan to .plans/active/. TRIGGER when: user wants to understand scope and risks before implementation; phrases: "plan this", "scope out X", "what would it take to Y", "analyse before we start". SKIP when: user already knows what to build and wants code immediately (use `/develop:feature` or `/develop:fix` directly); `.claude/` config planning (use `/foundry:manage`).'
-argument-hint: <goal> [--no-challenge] [--codemap] [--no-codemap] [--semble] [--max-depth <N>]
+argument-hint: <goal> [--no-challenge] [--codemap] [--no-codemap] [--max-depth <N>]
 effort: medium
 allowed-tools: Read, Write, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch
 disable-model-invocation: true
@@ -57,13 +57,12 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" --skill
 # written to ${TMPDIR:-/tmp}/dev-plan-<flag>-${CSID} (legacy paths: SKILL_SPECS["plan"])
 cp "${TMPDIR:-/tmp}/dev-challenge-enabled-${CSID}"  "$PLAN_NS/challenge-enabled" 2>/dev/null || echo "true"  > "$PLAN_NS/challenge-enabled"
 cp "${TMPDIR:-/tmp}/dev-codemap-raw-${CSID}"        "$PLAN_NS/codemap-raw"       2>/dev/null || echo "auto"  > "$PLAN_NS/codemap-raw"
-cp "${TMPDIR:-/tmp}/dev-semble-enabled-${CSID}"     "$PLAN_NS/semble-enabled"    2>/dev/null || echo "false" > "$PLAN_NS/semble-enabled"
 cp "${TMPDIR:-/tmp}/dev-plan-max-depth-${CSID}"     "$PLAN_NS/max-depth"         2>/dev/null || echo "3"     > "$PLAN_NS/max-depth"
 ```
 
 Downstream blocks recover namespace then read back, e.g. `IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""; IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false`.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--codemap`, `--no-codemap`, `--semble`, `--max-depth`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--codemap`, `--no-codemap`, `--max-depth`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Codemap auto-detection** — normalize `CODEMAP_RAW` to `true`/`false`; strict mode hard-fails when codemap unavailable:
 
@@ -83,25 +82,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/codemap-gates.md"
 ```
 
-Follow Gate A and Gate B.
-
-**Preflight** — runs only when `--semble` passed; block re-reads `SEMBLE_ENABLED` from namespace — bash resets between calls:
-
-```bash
-# timeout: 5000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-IFS= read -r SEMBLE_ENABLED < "$PLAN_NS/semble-enabled" 2>/dev/null || SEMBLE_ENABLED=false
-if [ "$SEMBLE_ENABLED" = "true" ]; then
-    IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
-    [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-    cat "$_DEV_SHARED/preflight-helpers.md"
-else
-    echo "→ --semble not passed — skipping semble preflight"
-fi
-```
-
-When the block printed `preflight-helpers.md`, execute the semble preflight it describes; when it printed the skip line, proceed. Codemap validation handled by auto-detect block above.
+Follow Gate A and Gate B. Codemap validation handled by auto-detect block above.
 
 ## Step 1: Classify and scope
 
@@ -113,32 +94,31 @@ Determine task type and affected surface.
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags semble --value-flags max-depth "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,codemap,no-codemap --value-flags max-depth "$ARGUMENTS")"  # timeout: 5000 — CLEAN_ARGS only; a dotted flag value would otherwise outrank the goal's module
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/derive_codemap_target.py" "$CLEAN_ARGS")"  # timeout: 5000 — module.path or module.path::fn; both empty when goal names none
 export TARGET_MODULE TARGET_FN
 echo "$TARGET_MODULE" > "$PLAN_NS/target-module"   # persist — bash resets between calls
 echo "$TARGET_FN"     > "$PLAN_NS/target-fn"
 ```
 
-**Structural context** — runs only when codemap or semble enabled; both values re-read from namespace (bash resets between calls):
+**Structural context** — runs only when codemap enabled; value re-read from namespace (bash resets between calls):
 
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLAN_NS < "${TMPDIR:-/tmp}/dev-plan-ns-current-${CSID}" 2>/dev/null || PLAN_NS=""
 IFS= read -r CODEMAP_ENABLED < "$PLAN_NS/codemap-enabled" 2>/dev/null || CODEMAP_ENABLED=false
-IFS= read -r SEMBLE_ENABLED  < "$PLAN_NS/semble-enabled"  2>/dev/null || SEMBLE_ENABLED=false
-echo "CODEMAP_ENABLED=$CODEMAP_ENABLED SEMBLE_ENABLED=$SEMBLE_ENABLED"
-if [ "$CODEMAP_ENABLED" = "true" ] || [ "$SEMBLE_ENABLED" = "true" ]; then
+echo "CODEMAP_ENABLED=$CODEMAP_ENABLED"
+if [ "$CODEMAP_ENABLED" = "true" ]; then
     IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
     [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
     cat "$_DEV_SHARED/codemap-context.md"
 else
-    echo "→ codemap and semble both off — skipping structural context"
+    echo "→ codemap off — skipping structural context"
 fi
 ```
 
-Follow enabled sections per the values the block echoed (codemap block if `CODEMAP_ENABLED=true`, semble companion if `SEMBLE_ENABLED=true`). Nothing printed beyond the skip line → proceed.
+Follow the codemap block per the value echoed. Nothing printed beyond the skip line → proceed.
 
 **Effort sizing (codemap-py)** — `CODEMAP_ENABLED=true` → derive blast-radius tier table from reverse dependencies so complexity estimate is structural, not guessed. Degrades silently when codemap-py absent — plan works unchanged, sizing falls back to agent's file-count heuristic. Run Extended scan (`--source=diff` when partial diff exists, e.g. re-planning after abandoned work; else per-target `rdeps` when `TARGET_MODULE` known):
 

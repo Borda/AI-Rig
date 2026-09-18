@@ -286,9 +286,9 @@ def test_dash_leading_prose_forwarded_not_misparsed_as_flag() -> None:
         pytest.param("worktree", "42 report --worktree", "FLAG_WORKTREE", "true", id="resolve-shape"),
         pytest.param("reply,quick", "vitality --quick", "FLAG_QUICK", "true", id="analyse-shape"),
         pytest.param(
-            "reply,no-challenge,no-codemap,codemap,semble,worktree",
-            "123 --reply --semble",
-            "FLAG_SEMBLE",
+            "reply,no-challenge,no-codemap,codemap,worktree,full",
+            "123 --reply --full",
+            "FLAG_FULL",
             "true",
             id="review-shape",
         ),

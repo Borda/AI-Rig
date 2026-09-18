@@ -12,6 +12,8 @@
 
 When mode == **report**:
 
+Source file = `REPORT_FILE`, already resolved and gated by SKILL.md Step 1's **Report source resolution** block: `IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"`. Never glob for it again here, and never conclude "no report" from an empty sentinel — empty means that block has not run yet; run it, including its `AskUserQuestion` gate when nothing is found. Starting a fresh `oss:review` without that gate is the documented failure this path exists to prevent.
+
 Print Sources block before parsing findings:
 
 ```markdown

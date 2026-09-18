@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import subprocess
 import sys
@@ -109,105 +110,61 @@ def test_real_manifest_prefixes_migrated_copies(copy: str) -> None:
     assert Path(copy).name.startswith("foundry--")
 
 
-@pytest.mark.parametrize(
-    ("canonical", "copy"),
-    [
-        pytest.param(
-            "plugins/codemap-py/claude-skills/_shared/codemap-context.md",
-            "plugins/cc_foundry/skills/_shared/codemap-py--codemap-context.md",
-            id="foundry-context",
-        ),
-        pytest.param(
-            "plugins/codemap-py/claude-skills/_shared/codemap-context.md",
-            "plugins/cc_develop/skills/_shared/codemap-py--codemap-context.md",
-            id="develop-context",
-        ),
-        pytest.param(
-            "plugins/codemap-py/claude-skills/_shared/codemap-gates.md",
-            "plugins/cc_develop/skills/_shared/codemap-py--codemap-gates.md",
-            id="develop-gates",
-        ),
-        pytest.param(
-            "plugins/codemap-py/claude-skills/_shared/codemap-gates.md",
-            "plugins/cc_oss/skills/_shared/codemap-py--codemap-gates.md",
-            id="oss-gates",
-        ),
-        pytest.param(
-            "plugins/codemap-py/claude-skills/_shared/codemap-gates.md",
-            "plugins/cc_research/skills/_shared/codemap-py--codemap-gates.md",
-            id="research-gates",
-        ),
-    ],
-)
-def test_codemap_contract_copy_is_manifested_and_identical(canonical: str, copy: str) -> None:
-    """Each consumer ships a registered, byte-identical provider contract."""
-    root = _MOD_PATH.parents[3]
-    manifest = {str(entry["canonical"]): entry["copies"] for entry in ps.MANIFEST}
+_CODEMAP_WRAPPERS = [
+    "plugins/cc_foundry/skills/_shared/codemap-context.md",
+    "plugins/cc_develop/skills/_shared/codemap-context.md",
+    "plugins/cc_develop/skills/_shared/codemap-gates.md",
+    "plugins/cc_oss/skills/_shared/codemap-gates.md",
+    "plugins/cc_research/skills/_shared/codemap-gates.md",
+]
 
-    assert copy in manifest.get(canonical, [])
-    assert (root / copy).read_bytes() == (root / canonical).read_bytes()
+_PROVIDER_RESOLVE = 'resolve_shared_path.py" codemap-py claude-skills/_shared'
 
 
-@pytest.mark.parametrize(
-    ("wrapper", "resolver", "local_contract"),
-    [
-        pytest.param(
-            "plugins/cc_foundry/skills/_shared/codemap-context.md",
-            'resolve_shared_path.py" foundry skills/_shared',
-            'cat "$_FOUNDRY_SHARED/codemap-py--codemap-context.md"',
-            id="foundry-context",
-        ),
-        pytest.param(
-            "plugins/cc_develop/skills/_shared/codemap-context.md",
-            "dev_shared_resolve.py",
-            'cat "$_DEV_SHARED/codemap-py--codemap-context.md"',
-            id="develop-context",
-        ),
-        pytest.param(
-            "plugins/cc_develop/skills/_shared/codemap-gates.md",
-            "dev_shared_resolve.py",
-            'cat "$_DEV_SHARED/codemap-py--codemap-gates.md"',
-            id="develop-gates",
-        ),
-        pytest.param(
-            "plugins/cc_oss/skills/_shared/codemap-gates.md",
-            'resolve_shared_path.py" oss skills/_shared',
-            'cat "$_OSS_SHARED/codemap-py--codemap-gates.md"',
-            id="oss-gates",
-        ),
-        pytest.param(
-            "plugins/cc_research/skills/_shared/codemap-gates.md",
-            "resolve_shared.py",
-            'cat "$_RESEARCH_SHARED/codemap-py--codemap-gates.md"',
-            id="research-gates",
-        ),
-    ],
-)
-def test_codemap_wrapper_loads_its_own_contract(wrapper: str, resolver: str, local_contract: str) -> None:
-    """Each wrapper resolves its own shared directory instead of a sibling plugin."""
+def _wrapper_script(wrapper_path: Path) -> str:
+    """Return the first fenced bash block of a wrapper — the loader the tests execute."""
+    return wrapper_path.read_text(encoding="utf-8").split("```bash\n", 1)[1].split("```", 1)[0]
+
+
+def _fallback_line(wrapper_path: Path) -> str:
+    """Return the exact fallback line a wrapper prints when the provider contract is absent."""
+    stem = "codemap gates contract absent" if wrapper_path.stem == "codemap-gates" else "codemap contract absent"
+    return f"{stem} — use fallback below\n"
+
+
+@pytest.mark.parametrize("wrapper", _CODEMAP_WRAPPERS)
+def test_codemap_wrapper_resolves_the_active_provider_install(wrapper: str) -> None:
+    """Each wrapper reads the provider contract from the active codemap-py install, never a local copy.
+
+    The optional-provider exception (plugins/CLAUDE.md §Self-Contained _shared) allows exactly this
+    shape: own-plugin resolver copy, provider name + subdir, registry tier first — and no manifested
+    ``codemap-py--`` copy and no newest-version cache glob.
+    """
     text = (_MOD_PATH.parents[3] / wrapper).read_text(encoding="utf-8")
 
-    assert resolver in text
-    assert local_contract in text
-    assert "codemap-py/*/claude-skills/_shared" not in text
+    assert _PROVIDER_RESOLVE in text
+    assert "command -v codemap-py" in text
+    assert "codemap-py--" not in text
+    assert "plugins/cache" not in text
+
+
+@pytest.mark.parametrize("wrapper", _CODEMAP_WRAPPERS)
+def test_codemap_provider_contract_is_not_manifested(wrapper: str) -> None:
+    """No MANIFEST entry copies codemap-py's contracts into a consumer any more."""
+    manifest_targets = {copy for entry in ps.MANIFEST for copy in entry["copies"]}
+    consumer_shared = Path(wrapper).parent
+
+    assert not any(Path(target).parent == consumer_shared and "codemap-py--" in target for target in manifest_targets)
+    assert not (_MOD_PATH.parents[3] / consumer_shared / f"codemap-py--{Path(wrapper).name}").exists()
 
 
 @pytest.mark.integration
 @_requires_bash
-@pytest.mark.parametrize(
-    "wrapper",
-    [
-        "plugins/cc_foundry/skills/_shared/codemap-context.md",
-        "plugins/cc_develop/skills/_shared/codemap-context.md",
-        "plugins/cc_develop/skills/_shared/codemap-gates.md",
-        "plugins/cc_oss/skills/_shared/codemap-gates.md",
-        "plugins/cc_research/skills/_shared/codemap-gates.md",
-    ],
-)
+@pytest.mark.parametrize("wrapper", _CODEMAP_WRAPPERS)
 @pytest.mark.parametrize(
     ("cli_present", "contract_present"),
     [
-        pytest.param(True, True, id="load-local-contract"),
+        pytest.param(True, True, id="load-provider-contract"),
         pytest.param(True, False, id="missing-contract-fallback"),
         pytest.param(False, True, id="missing-cli-fallback"),
         pytest.param(False, False, id="missing-both-fallback"),
@@ -218,13 +175,12 @@ def test_codemap_wrapper_load_or_fallback(
 ) -> None:
     """The shipped Bash loader degrades gracefully when either dependency is absent."""
     wrapper_path = _MOD_PATH.parents[3] / wrapper
-    script = wrapper_path.read_text(encoding="utf-8").split("```bash\n", 1)[1].split("```", 1)[0]
-    contract = tmp_path / f"codemap-py--{wrapper_path.name}"
+    contract = tmp_path / wrapper_path.name
     content = "provider contract bytes\n"
     if contract_present:
         contract.write_text(content, encoding="utf-8", newline="\n")
 
-    # Resolve the consumer directory without depending on an installed plugin or
+    # Stub the resolver to the tmp provider dir without depending on an installed plugin or
     # host PATH. Keep real cat I/O so missing-file failures remain observable.
     prelude = 'python() { printf "%s\\n" "$CONTRACT_DIRECTORY"; }\ncat() { command -p cat "$@"; }\nPATH=\n'
     if cli_present:
@@ -232,7 +188,7 @@ def test_codemap_wrapper_load_or_fallback(
     env = {**os.environ, "CONTRACT_DIRECTORY": tmp_path.as_posix()}
     env.pop("CLAUDE_PLUGIN_ROOT", None)
     result = subprocess.run(
-        ["bash", "-c", prelude + script],
+        ["bash", "-c", prelude + _wrapper_script(wrapper_path)],
         cwd=tmp_path,
         env=env,
         capture_output=True,
@@ -241,8 +197,7 @@ def test_codemap_wrapper_load_or_fallback(
         check=False,
     )
 
-    fallback = "codemap gates contract absent" if wrapper_path.stem == "codemap-gates" else "codemap contract absent"
-    expected = content if cli_present and contract_present else f"{fallback} — use fallback below\n"
+    expected = content if cli_present and contract_present else _fallback_line(wrapper_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
     assert result.stderr == ""
@@ -264,55 +219,64 @@ def test_noop_apply_reports_success_on_legacy_stdout(
 
 @pytest.mark.integration
 @_requires_bash
-@pytest.mark.parametrize(
-    ("wrapper", "resolver"),
-    [
-        pytest.param(
-            "plugins/cc_develop/skills/_shared/codemap-context.md", "dev_shared_resolve.py", id="develop-context"
-        ),
-        pytest.param("plugins/cc_develop/skills/_shared/codemap-gates.md", "dev_shared_resolve.py", id="develop-gates"),
-        pytest.param("plugins/cc_research/skills/_shared/codemap-gates.md", "resolve_shared.py", id="research-gates"),
-    ],
-)
+@pytest.mark.parametrize("wrapper", _CODEMAP_WRAPPERS)
 @pytest.mark.parametrize("contract_present", [True, False])
-def test_codemap_wrapper_keeps_the_active_version_when_a_newer_cache_exists(
-    tmp_path: Path, wrapper: str, resolver: str, contract_present: bool
+def test_codemap_wrapper_reads_the_recorded_install_not_the_newest_cache(
+    tmp_path: Path, wrapper: str, contract_present: bool
 ) -> None:
-    """A newer cached plugin cannot replace the active version's contract or its local fallback."""
+    """The install record picks the provider version; a newer cache dir never shadows it.
+
+    Two codemap-py versions sit in the cache and ``installed_plugins.json`` points at the older one. The wrapper must
+    print that recorded version's contract, and its own fallback line when the recorded version ships no contract — even
+    though the newer dir does.
+    """
     root = _MOD_PATH.parents[3]
     wrapper_path = root / wrapper
     plugin_path = wrapper_path.parents[2]
-    active_root = tmp_path / "active-plugin"
-    active_shared = active_root / "skills" / "_shared"
-    active_shared.mkdir(parents=True)
-    (active_root / "bin").mkdir()
-    (active_root / "bin" / resolver).write_bytes((plugin_path / "bin" / resolver).read_bytes())
-    contract_name = f"codemap-py--{wrapper_path.name}"
-    if contract_present:
-        (active_shared / contract_name).write_bytes(b"active contract\n")
-    newer_shared = (
-        tmp_path
-        / ".claude"
-        / "plugins"
-        / "cache"
-        / "borda-ai-rig"
-        / plugin_path.name.removeprefix("cc_")
-        / "99.0.0"
-        / "skills"
-        / "_shared"
+    consumer_root = tmp_path / "consumer-plugin"
+    (consumer_root / "bin").mkdir(parents=True)
+    for helper in ("resolve_shared_path.py", "get_plugin_install_path.py"):
+        (consumer_root / "bin" / helper).write_bytes((plugin_path / "bin" / helper).read_bytes())
+    (consumer_root / ".claude-plugin").mkdir()
+    (consumer_root / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": plugin_path.name.removeprefix("cc_")}), encoding="utf-8"
     )
-    newer_shared.mkdir(parents=True)
-    (newer_shared / contract_name).write_bytes(b"newer cached contract\n")
-    script = wrapper_path.read_text(encoding="utf-8").split("```bash\n", 1)[1].split("```", 1)[0]
+    cache = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig"
+    recorded = cache / "codemap-py" / "0.38.0"
+    newer = cache / "codemap-py" / "99.0.0"
+    for version_dir in (recorded, newer):
+        (version_dir / "claude-skills" / "_shared").mkdir(parents=True)
+    (newer / "claude-skills" / "_shared" / wrapper_path.name).write_bytes(b"newer cached contract\n")
+    if contract_present:
+        (recorded / "claude-skills" / "_shared" / wrapper_path.name).write_bytes(b"recorded contract\n")
+    (tmp_path / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "plugins": {
+                    "codemap-py@borda-ai-rig": [
+                        {
+                            "scope": "user",
+                            "installPath": recorded.as_posix(),
+                            "version": "0.38.0",
+                            "installedAt": "2026-09-18T06:00:47.793Z",
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
     prelude = 'python() { "$TEST_PYTHON" "$@"; }\ncodemap-py() { :; }\n'
     result = subprocess.run(
-        ["bash", "-c", prelude + script],
+        ["bash", "-c", prelude + _wrapper_script(wrapper_path)],
         cwd=tmp_path,
         env={
             **os.environ,
             "HOME": tmp_path.as_posix(),
             "USERPROFILE": str(tmp_path),
-            "CLAUDE_PLUGIN_ROOT": active_root.as_posix(),
+            "CLAUDE_PLUGIN_ROOT": consumer_root.as_posix(),
             "TEST_PYTHON": sys.executable,
         },
         capture_output=True,
@@ -320,8 +284,7 @@ def test_codemap_wrapper_keeps_the_active_version_when_a_newer_cache_exists(
         timeout=10,
         check=False,
     )
-    fallback = "codemap gates contract absent" if wrapper_path.stem == "codemap-gates" else "codemap contract absent"
-    expected = "active contract\n" if contract_present else f"{fallback} — use fallback below\n"
+    expected = "recorded contract\n" if contract_present else _fallback_line(wrapper_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout == expected
     assert result.stderr == ""

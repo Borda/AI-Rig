@@ -18,7 +18,7 @@ Exit codes:
     1   not found (plugin not installed or registry missing)
     2   argument error
 
-<!-- file: get_plugin_install_path.py — consumers: find-foundry-shared.sh, resolve-shared-path.sh -->
+<!-- file: get_plugin_install_path.py — consumers: resolve_shared_path.py (tier 1 registry lookup, every bin/) -->
 """
 
 from __future__ import annotations

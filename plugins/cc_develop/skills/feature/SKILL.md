@@ -1,7 +1,7 @@
 ---
 name: feature
 description: 'TDD-first feature development — crystallise API as a demo test, drive implementation to pass it, run quality stack and progressive review loop. TRIGGER when: user asks to build new functionality, add a capability, or implement a feature in a Python project; phrases: "add X", "implement Y", "build Z feature", "create a new module for". SKIP when: bug fixes (use `/develop:fix`); refactoring without new behaviour (use `/develop:refactor`); non-Python projects; `.claude/` config changes (use `/foundry:manage`).'
-argument-hint: <goal> [--issue <N>] [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--no-codemap] [--codemap] [--semble] [--team] [--worktree] [--accept-no-plan] [--keep "<items>"]
+argument-hint: <goal> [--issue <N>] [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--no-codemap] [--codemap] [--team] [--worktree] [--accept-no-plan] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch, EnterWorktree, ExitWorktree
 disable-model-invocation: true
@@ -146,7 +146,7 @@ If `ISSUE_REF` non-empty and issue fetch succeeded: include issue title, body, l
 2. Check local divergences: run `git log --oneline -10`, grep for symbols mentioned in issue; identify where local codebase differs structurally from what issue assumes
 3. Produce adaptation plan: upstream intent → local implementation using local conventions, existing abstractions, current code structure — never assume upstream approach ports directly
 
-**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--semble`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: print `` ! Unknown flag(s): `--<token>`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: print `` ! Unknown flag(s): `--<token>`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -189,17 +189,6 @@ cat "$_DEV_SHARED/codemap-gates.md"
 
 Follow Gate A and Gate B.
 
-**Semble preflight** — if `SEMBLE_ENABLED=true`:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/preflight-helpers.md"
-```
-
-Execute semble preflight if flag set.
-
 <!-- Only active when --team flag passed (~10% of invocations) -->
 
 ## Team Mode Branch
@@ -228,7 +217,7 @@ Gather full context before writing any code:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # CLEAN_ARGS is the blob with every declared flag and its value removed — same strip as debug
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap,semble,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
 if [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" feature "$ARGUMENTS"  # timeout: 6000
   ISSUE_FETCH_EXIT=$?
@@ -264,7 +253,7 @@ if [ "$CODEMAP_ENABLED" = "true" ] && [ -n "$TARGET_MODULE" ] && command -v code
 fi
 ```
 
-**If `CODEMAP_ENABLED=true` or `SEMBLE_ENABLED=true`** (codemap normalized by `bin/codemap_resolve.py`; semble verified by `preflight-helpers.md` §Semble preflight):
+**If `CODEMAP_ENABLED=true`** (normalized by `bin/codemap_resolve.py`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -273,7 +262,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/codemap-context.md"
 ```
 
-Follow enabled sections (codemap block if `CODEMAP_ENABLED`, semble companion if `SEMBLE_ENABLED`). Skip entirely if both flags false.
+Follow the codemap block. Skip entirely if the flag is false.
 
 Spawn **foundry:sw-engineer** agent to analyse codebase, produce:
 

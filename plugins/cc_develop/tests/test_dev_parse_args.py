@@ -32,8 +32,8 @@ class TestParseSpecs:
 
         --bool produces FlagSpec with correct fields.
         """
-        specs = parse_specs(["--bool", "semble", "SEMBLE_ENABLED", "false"])
-        assert specs == [FlagSpec(kind=SpecType.BOOL, flag="semble", var="SEMBLE_ENABLED", default="false")]
+        specs = parse_specs(["--bool", "team", "TEAM_MODE", "false"])
+        assert specs == [FlagSpec(kind=SpecType.BOOL, flag="team", var="TEAM_MODE", default="false")]
 
     def test_neg_bool_spec(self):
         """Verify command-line option behavior.
@@ -83,7 +83,7 @@ class TestParseSpecs:
     def test_insufficient_tokens_exits(self):
         """Too few tokens after keyword calls sys.exit(1)."""
         with pytest.raises(SystemExit) as exc:
-            parse_specs(["--bool", "semble"])
+            parse_specs(["--bool", "team"])
         assert exc.value.code == 1
 
 
@@ -98,19 +98,19 @@ class TestBoolFlags:
     def test_bool_present(self):
         """Verify command-line option behavior.
 
-        --semble present → true.
+        --team present → true.
         """
-        specs = parse_specs(["--bool", "semble", "S", "false"])
-        vals, clean = extract_flags("--semble fix auth.py", specs)
+        specs = parse_specs(["--bool", "team", "S", "false"])
+        vals, clean = extract_flags("--team fix auth.py", specs)
         assert vals["S"] == "true"
         assert clean == "fix auth.py"
 
     def test_bool_absent(self):
         """Verify command-line option behavior.
 
-        --semble absent → default.
+        --team absent → default.
         """
-        specs = parse_specs(["--bool", "semble", "S", "false"])
+        specs = parse_specs(["--bool", "team", "S", "false"])
         vals, clean = extract_flags("fix auth.py", specs)
         assert vals["S"] == "false"
         assert clean == "fix auth.py"
@@ -135,10 +135,10 @@ class TestBoolFlags:
         assert vals["CHALLENGE"] == "true"
         assert clean == "fix auth.py"
 
-    @pytest.mark.parametrize("arguments", ["--sembleton fix auth.py", "fix --sembleton auth.py"])
+    @pytest.mark.parametrize("arguments", ["--teamx fix auth.py", "fix --teamx auth.py"])
     def test_bool_near_miss_not_consumed(self, arguments: str):
         """Flag extraction requires a full token, not a substring prefix."""
-        specs = parse_specs(["--bool", "semble", "S", "false"])
+        specs = parse_specs(["--bool", "team", "S", "false"])
         vals, clean = extract_flags(arguments, specs)
         assert vals["S"] == "false"
         assert clean == arguments
@@ -307,19 +307,19 @@ class TestRunOutput:
 
     def test_single_quote_wrapping(self):
         """All values wrapped in single quotes."""
-        out = run("fix auth.py", ["--bool", "semble", "SEMBLE_ENABLED", "false"])
-        assert "SEMBLE_ENABLED='false'" in out
+        out = run("fix auth.py", ["--bool", "team", "TEAM_MODE", "false"])
+        assert "TEAM_MODE='false'" in out
         assert "CLEAN_ARGS='fix auth.py'" in out
 
     def test_clean_args_last_line(self):
         """CLEAN_ARGS is always the last emitted line."""
-        out = run("fix auth.py", ["--bool", "semble", "SEMBLE_ENABLED", "false"])
+        out = run("fix auth.py", ["--bool", "team", "TEAM_MODE", "false"])
         last = out.strip().splitlines()[-1]
         assert last.startswith("CLEAN_ARGS=")
 
     def test_whitespace_normalised_in_clean_args(self):
         """Multiple spaces in stripped args collapsed to single space."""
-        out = run("  --semble   fix   auth.py  ", ["--bool", "semble", "S", "false"])
+        out = run("  --team   fix   auth.py  ", ["--bool", "team", "S", "false"])
         assert "CLEAN_ARGS='fix auth.py'" in out
 
     @pytest.mark.parametrize(
@@ -338,15 +338,15 @@ class TestRunOutput:
     def test_combined_flags(self):
         """Multiple flags parsed together; clean args contains remainder."""
         out = run(
-            "--no-challenge --codemap --semble fix auth.py",
+            "--no-challenge --codemap --team fix auth.py",
             [
                 "--neg-bool",
                 "no-challenge",
                 "CHALLENGE_ENABLED",
                 "true",
                 "--bool",
-                "semble",
-                "SEMBLE_ENABLED",
+                "team",
+                "TEAM_MODE",
                 "false",
                 "--codemap",
                 "CODEMAP_RAW",
@@ -354,7 +354,7 @@ class TestRunOutput:
             ],
         )
         assert "CHALLENGE_ENABLED='false'" in out
-        assert "SEMBLE_ENABLED='true'" in out
+        assert "TEAM_MODE='true'" in out
         assert "CODEMAP_RAW='strict'" in out
         assert "CLEAN_ARGS='fix auth.py'" in out
 
@@ -403,12 +403,12 @@ class TestWriteSkillFiles:
 
     def test_feature_flag_values_persisted(self, tmp_path: Path):
         """Feature skill: representative flags persist their parsed values."""
-        write_skill_files("feature", "--semble --no-challenge --codemap fix auth.py", tmp_dir=tmp_path)
-        assert (tmp_path / "dev-feature-semble-shared").read_text() == "true\n"
+        write_skill_files("feature", "--team --no-challenge --codemap fix auth.py", tmp_dir=tmp_path)
+        assert (tmp_path / "dev-feature-team-shared").read_text() == "true\n"
         assert (tmp_path / "dev-feature-no-challenge-shared").read_text() == "false\n"
         assert (tmp_path / "dev-feature-codemap-shared").read_text() == "strict\n"
         # Legacy paths mirror the same values
-        assert (tmp_path / "dev-semble-enabled-shared").read_text() == "true\n"
+        assert (tmp_path / "dev-team-mode-shared").read_text() == "true\n"
         assert (tmp_path / "dev-challenge-enabled-shared").read_text() == "false\n"
         assert (tmp_path / "dev-codemap-raw-shared").read_text() == "strict\n"
 
@@ -485,10 +485,10 @@ class TestMainEntryPoint:
         argparse would reject the spec tokens (``--bool`` etc.) as unknown options. The script must instead treat
         argv[0] as the blob and argv[1:] as spec tokens — proving the blob and specs bypassed argparse entirely.
         """
-        rc = main(["--semble --no-challenge fix auth.py", "--bool", "semble", "SEMBLE_ENABLED", "false"])
+        rc = main(["--team --no-challenge fix auth.py", "--bool", "team", "TEAM_MODE", "false"])
         out = capsys.readouterr().out
         assert rc == 0
-        assert "SEMBLE_ENABLED='true'" in out
+        assert "TEAM_MODE='true'" in out
         assert "CLEAN_ARGS='--no-challenge fix auth.py'" in out
 
     def test_skill_mode_blob_dash_tokens_written_to_files(
@@ -497,14 +497,14 @@ class TestMainEntryPoint:
         """Skill form: the ``--write-files`` blob with ``--flag`` tokens is consumed internally.
 
         ``--skill``/``--write-files`` are the only genuine outer flags; the trailing blob (which contains
-        ``--semble``/``--no-challenge``) must reach write_skill_files unmangled, not be interpreted as argparse options.
+        ``--team``/``--no-challenge``) must reach write_skill_files unmangled, not be interpreted as argparse options.
         """
         monkeypatch.setenv("TMPDIR", str(tmp_path))
         monkeypatch.delenv("CSID", raising=False)
         monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
-        rc = main(["--skill", "feature", "--write-files", "--semble --no-challenge fix auth.py"])
+        rc = main(["--skill", "feature", "--write-files", "--team --no-challenge fix auth.py"])
         assert rc == 0
-        assert (tmp_path / "dev-feature-semble-shared").read_text() == "true\n"
+        assert (tmp_path / "dev-feature-team-shared").read_text() == "true\n"
         assert (tmp_path / "dev-feature-no-challenge-shared").read_text() == "false\n"
 
     def test_skill_mode_missing_write_files_exits_1(self, capsys: pytest.CaptureFixture[str]) -> None:

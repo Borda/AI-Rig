@@ -1,7 +1,7 @@
 ---
 name: review
 description: "Multi-agent code review of GitHub Pull Requests (Python source, documentation (Markdown/RST), and CI/CD config PRs) covering architecture, tests, performance, docs, lint, security, and API design. TRIGGER when: user provides a GitHub PR number (e.g. 42, #42) and asks to review/audit/check it, or provides a saved review-report path with --reply to draft a contributor-facing comment; phrases: 'review PR 123', 'audit this pull request', 'look at PR #42', 'draft a reply for this review report'. SKIP: local file or current git diff review (use /develop:review (requires 'develop' plugin)); non-Python source PRs without Python files (TypeScript-only, Go-only, Rust-only); standalone issue/discussion thread analysis (use /oss:analyse)."
-argument-hint: '[PR number|path/to/report.md] [--reply] [--no-challenge] [--codemap] [--semble] [--worktree] [--full] [--keep "<items>"]'
+argument-hint: '[PR number|path/to/report.md] [--reply] [--no-challenge] [--codemap] [--worktree] [--full] [--keep "<items>"]'
 allowed-tools: Read, Write, Edit, Bash, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 model: sonnet
 effort: high
@@ -25,7 +25,6 @@ NOT for local file review or current git diff — use `/develop:review` (require
   - **Scope**: Python source only. Non-Python file → state out of scope, suggest tool, no findings.
   - **Local files**: use `/develop:review` (requires `develop` plugin) for local files or current git diff.
   - `--codemap`: strict mode — stop, report if codemap not installed (on by default when installed; use `--no-codemap` to opt out; requires codemap plugin installed)
-  - `--semble`: enable semble semantic search companion (off by default; requires semble MCP server configured)
   - `--full`: run **every** dimension the scope preselected, instead of only the `FANOUT_MAX` most relevant. Never widens the preselection itself — a dimension the scope ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
 - **--plan handoff not supported** — skill doesn't accept plan-mode output from `/develop:plan` (requires `develop` plugin).
 
@@ -43,7 +42,6 @@ FANOUT_MAX=3            # default: top-N most relevant of the scope-preselected 
 AGENT_CALL_BUDGET=55    # target tool-calls per agent; past ~60 they stall without returning an envelope
 CHALLENGE_ENABLED=true  # set to false via --no-challenge
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
-SEMBLE_ENABLED=false    # set to true via --semble
 ```
 
 > Agent health monitoring (CLAUDE.md §6) — applies to Step 3 parallel agent spawns. Spawns are background; orchestrator ends its turn, resumes on completion notification. Constants below bound how long a run may stay silent — not a poll cadence, nothing sleeps.
@@ -124,7 +122,6 @@ Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this set
 | `--no-challenge` | `CHALLENGE_ENABLED` | `false` | `true` |
 | `--no-codemap` | `CODEMAP_FORCE_OFF` | `true` | `false` |
 | `--codemap` | — strict mode, consumed by `detect_codemap.py` | stop and report if codemap missing | auto-detect |
-| `--semble` | `SEMBLE_ENABLED` | `true` | `false` |
 | `--worktree` | `WT_ENABLED` | `true` | `false` |
 | `--full` | `FANOUT_CAP` | `0` — no cap, all preselected | `3` (`FANOUT_MAX`) |
 | `--keep "<items>"` | `KEEP_ITEMS` | value string | `""` |
@@ -133,22 +130,22 @@ Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this set
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# parses --reply/--no-challenge/--semble/--worktree/--keep; codemap flags detected-only, re-derived independently below
+# parses --reply/--no-challenge/--worktree/--full/--keep; codemap flags detected-only, re-derived independently below
 # shared flag/--keep parser (C5; also resolve/analyse SKILL.md)
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,semble,worktree,full "$ARGUMENTS")"  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full "$ARGUMENTS")"  # timeout: 5000
 FANOUT_CAP=3; [ "$FLAG_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all scope-preselected dimensions
 REPLY_MODE="$FLAG_REPLY"
-SEMBLE_ENABLED="$FLAG_SEMBLE"
 WT_ENABLED="$FLAG_WORKTREE"
 [ "$FLAG_NO_CHALLENGE" = "true" ] && CHALLENGE_ENABLED=false || CHALLENGE_ENABLED=true
-# stale contract, crashed prior run (compaction-contract.md §Lifecycle)
-rm -f .temp/state/skill-contract.md  # timeout: 5000
+# stale contract, crashed prior run (compaction-contract.md §Lifecycle); the report-dir sentinel of a run
+# that died between Step 2 and Step 5 makes enforce-review-header.js deny every AskUserQuestion (Gate A,
+# the existing-report guard) for its 2h staleness window — this run has not reached Step 2, so it is stale
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # timeout: 5000
 
-# flags sentinel; CHALLENGE_ENABLED kept separate — scope-detection.md:34-38 truncates this file
+# flags sentinel; CHALLENGE_ENABLED kept in its own sentinel so the challenge-skip fence can rewrite it alone
 {
     echo "REPLY_MODE=$REPLY_MODE"
     echo "WT_ENABLED=$WT_ENABLED"
-    echo "SEMBLE_ENABLED=$SEMBLE_ENABLED"
 } > "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
 echo "$CHALLENGE_ENABLED" > "${TMPDIR:-/tmp}/oss-review-challenge-enabled-${CSID}"
 echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}"
@@ -203,6 +200,66 @@ if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
     echo "$SNAP_DIR" > "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}"
 fi
 ```
+
+### Existing-report guard — before Step 1, before any worktree
+
+A full review is a multi-agent fan-out; re-running one over an unchanged PR head spends that cost for a report already on disk. Nothing else in this skill checks — a real session re-reviewed a PR minutes after reviewing it, because the prior run had been compacted out of context. Check disk, not memory, and do it here: nothing below Step 0 (codemap gates, worktree entry, CI status, the codemap battery) has run yet, so a reuse costs only the snapshot above.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# timeout: 15000
+IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
+[ -f "${TMPDIR:-/tmp}/oss-review-flags-${CSID}" ] && . "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
+_PRIOR=""
+if [ "$DIRECT_PATH_MODE" = "false" ] && [[ "$CLEAN_ARGS" =~ ^[0-9]+$ ]]; then
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$CLEAN_ARGS" \
+        --path-out "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" >/dev/null  # stderr kept: a failed sentinel write must be visible
+    IFS= read -r _PRIOR < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || _PRIOR=""
+fi
+if [ -n "$_PRIOR" ]; then
+    # head-sha.txt sidecar is written when a run dir is allocated (Step 2); a reject-path report has none,
+    # so fall back to the @<sha> its Gate: line carries
+    IFS= read -r _PRIOR_SHA < "$(dirname "$_PRIOR")/head-sha.txt" 2>/dev/null || _PRIOR_SHA=""
+    [ -n "$_PRIOR_SHA" ] || _PRIOR_SHA=$(grep -m1 '^Gate:' "$_PRIOR" 2>/dev/null | grep -oE '@[0-9a-f]{7,40}' | tr -d @)
+    _HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
+    echo "PRIOR_REPORT=$_PRIOR"
+    echo "PRIOR_DATE=$(grep -m1 '^Date:' "$_PRIOR" 2>/dev/null | cut -d: -f2- | tr -d ' ')"
+    echo "PRIOR_SHA=${_PRIOR_SHA:-unknown} HEAD_SHA=${_HEAD_SHA:-unknown}"
+    # a Gate: line may carry a short SHA — prefix match, never string equality
+    case "${_HEAD_SHA:-x}" in "${_PRIOR_SHA:-y}"*) echo "SHA_MATCH=true" ;; *) echo "SHA_MATCH=false" ;; esac
+else
+    echo "PRIOR_REPORT="
+fi
+```
+
+Empty `PRIOR_REPORT` → proceed, no gate. Non-empty → invoke `AskUserQuestion` (actual tool call) before anything else runs:
+
+<!-- branch: prior-report — fires only when a report for this PR already exists on disk -->
+
+```text
+"Review report for PR #<N> already exists (<PRIOR_DATE>). Re-run the full fan-out?"
+  (a) Reuse it — print its path and stop; nothing to re-review  (Recommended when PRIOR_SHA = HEAD_SHA)
+  (b) Re-run full review — PR head moved, or the prior report is stale
+  (c) Reply-draft from the existing report — jumps to Step 8 with --reply
+```
+
+`SHA_MATCH=true` (prior SHA equals, or is a prefix of, the current head) means the prior report covers exactly this code; say so in the question text. Unknown on either side (no `head-sha.txt` sidecar and no `Gate: … @<sha>` line, or `gh` returned no `headRefOid`) → state that instead of guessing, and let the user decide.
+
+Selected (a) → `TaskUpdate(status="deleted")` for every Step 2–5b task already created, print `→ existing report: <PRIOR_REPORT>` and stop. Selected (c) → delete those same tasks, persist the redirect so Step 8 and a post-compaction resume both see it, then skip to Step 8:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r REVIEW_FILE < "${TMPDIR:-/tmp}/oss-review-prior-report-${CSID}" 2>/dev/null || REVIEW_FILE=""
+# later lines win when the sentinel is sourced — the Step 0 REPLY_MODE=false line stays, this overrides it
+{
+    echo "REPLY_MODE=true"
+    echo "REVIEW_FILE=$REVIEW_FILE"
+} >> "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"
+echo "REVIEW_FILE=$REVIEW_FILE"  # timeout: 3000
+```
+
+Step 8 reads `REVIEW_FILE` from the flags sentinel whenever it is set there — this redirect and the direct-report fast path share that source; only an unset value falls back to Step 5's output file.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -280,9 +337,7 @@ IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/review-codemap-forced-off-${CS
 
 **Codemap gates** — when `CODEMAP_FORCE_OFF=false`, run (from `codemap-gates.md`, loaded above): **Gate A** if `CODEMAP_ENABLED=false` (missing index → offer to build); **Gate B** if `CODEMAP_ENABLED=true` and `CODEMAP_CURRENCY=stale`. On a build choice, build with the gated `codemap-py index` binary in the foreground, then set `CODEMAP_ENABLED=true` — never model-invoke the `codemap-py:scan-codebase` skill, which is `disable-model-invocation: true` (user-slash-only). Skip both gates when `CODEMAP_FORCE_OFF=true` (`--no-codemap`).
 
-If `SEMBLE_ENABLED=true`: proceed — semble MCP tool availability verified at first use. If `mcp__semble__search` is unavailable when called, it fails with a clear error; do not preemptively exit here.
-
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--semble`, `--worktree`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--reply`, `--no-challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Worktree isolation** — when `WT_ENABLED=true` **and** this is a PR review (not `--reply` / direct-report `.md` mode): run the review in an isolated git worktree so no dimension agent can mutate main sources. Load and follow the oss worktree protocol (§Enter now, §review deliverable routing, §Exit at the follow-up gate):
 
@@ -429,7 +484,7 @@ IFS= read -r REVIEW_SKILL_DIR < "${TMPDIR:-/tmp}/review-skill-dir-${CSID}" 2>/de
 cat "$REVIEW_SKILL_DIR/modes/codemap-context.md"  # timeout: 5000
 ```
 
-Follow above and execute its contents — stages `codemap_available` and `$CODEMAP_CONTEXT_STAGE` to TMPDIR (Step 2 copies into `$RUN_DIR/codemap-context.md`) and defines the Step-2 spawn-prompt substitution rules + semble companion. `CODEMAP_ENABLED=false`: skip; agents fall back to file reads.
+Follow above and execute its contents — stages `codemap_available` and `$CODEMAP_CONTEXT_STAGE` to TMPDIR (Step 2 copies into `$RUN_DIR/codemap-context.md`) and defines the Step-2 spawn-prompt substitution rules. `CODEMAP_ENABLED=false`: skip; agents fall back to file reads.
 
 ### Linked issue analysis (PR mode only)
 
@@ -548,6 +603,11 @@ IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/nul
 PR_REPORT_DIR="$_REPORT_BASE/.reports/review/pr-$CLEAN_ARGS"
 REPORT_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/next_run_dir.py" --pr-dir "$PR_REPORT_DIR") # timeout: 5000
 echo "$REPORT_DIR" > "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}"  # persist for contract-write
+# sidecar, not a header field: lets Step 0's existing-report guard tell "covers this head" from "stale";
+# read from the snapshot, not the acceptance-gate sentinel (DOCS_TYPING/TESTS_CI never write that one)
+IFS= read -r SNAP_DIR < "${TMPDIR:-/tmp}/oss-review-snap-dir-${CSID}" 2>/dev/null || SNAP_DIR=""
+_HEAD_SHA=$(jq -r '.headRefOid // empty' "$SNAP_DIR/pr-meta.json" 2>/dev/null)
+[ -n "$_HEAD_SHA" ] && echo "$_HEAD_SHA" > "$REPORT_DIR/head-sha.txt" || :
 ```
 
 **File-based handoff**:
@@ -868,7 +928,7 @@ cat "$_OSS_SHARED/shepherd-reply-protocol.md"  # timeout: 5000
 
 Spawn with:
 
-- Report path: review output file from Step 5
+- Report path: `REVIEW_FILE` from the flags sentinel (`. "${TMPDIR:-/tmp}/oss-review-flags-${CSID}"`) when set — the direct-report fast path and Step 0's existing-report redirect both store it there; unset → the review output file from Step 5
 - PR number and contributor handle: from Step 1 `gh pr view` output
 - Output path: `.temp/output-reply-<PR#>-$(date -u +%Y-%m-%d).md`
 

@@ -70,7 +70,7 @@ def test_empty_query_kind_falls_back_to_standard(session: Path, capsys: pytest.C
 
 def test_leading_dash_arguments_do_not_break_parsing(session: Path) -> None:
     """``$ARGUMENTS`` routinely starts with a flag; the ``--`` separator must absorb it."""
-    assert main(["--", "--issue 42 --semble"]) == 0
+    assert main(["--", "--issue 42 --team"]) == 0
     assert _read(session, "target-module") == "\n"
 
 

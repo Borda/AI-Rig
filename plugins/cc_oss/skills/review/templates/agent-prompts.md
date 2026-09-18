@@ -45,7 +45,7 @@ Every agent prompt must end with:
 
 **Agent 1 — foundry:sw-engineer**: Review architecture, SOLID, type safety, error handling, code structure. Check Python anti-patterns (bare `except:`, `import *`, mutable defaults). Flag blocking vs suggestions. `codemap_available=true`: read `rdeps` first (importer list per changed module) — skip importer-walk Reads on listed modules; verify only when needed for specific finding.
 
-**Reuse audit**: Before accepting new helper, utility, or class introduced in diff, search for existing equivalents: `Grep` with semantic function-name patterns across `src/`; if `SEMBLE_ENABLED=true`, also call `mcp__semble__search(query="<function purpose>", repo=<git_root>, top_k=10)`. Near-duplicate found → flag as MEDIUM: "existing utility at `<path>` covers this — reuse or extend instead of reimplementing."
+**Reuse audit**: Before accepting new helper, utility, or class introduced in diff, search for existing equivalents: `Grep` with semantic function-name patterns across `src/`. Near-duplicate found → flag as MEDIUM: "existing utility at `<path>` covers this — reuse or extend instead of reimplementing."
 
 **API-consistency audit** (any diff hunk touching public API surface — new/changed function, method, class, constant, param, flag, return shape, or module placement; NOT gated on `__init__.py` churn, fires for new kwargs on already-exported functions too): for each public symbol added or changed, `Read` the ACTUAL surrounding surface from source — existing function/class it lives beside, siblings' signatures, module it sits in — validate the change against established API principles, not in isolation:
 

@@ -14,6 +14,7 @@ Cross-cutting checks confirm Windows-portability invariants:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -125,19 +126,110 @@ class TestTier2Cache:
         assert tier == -1
 
 
+class TestTier1Registry:
+    """Tier 1 — the install record decides the active version, not the newest cache dir."""
+
+    @staticmethod
+    def _install_tree(home: Path, active: str, helper_src: Path) -> tuple[Path, Path]:
+        """Lay out a fake ``~/.claude`` with two cached codemap-py versions and one install record.
+
+        Returns the ``claude-skills/_shared`` dirs of the active and the newer-but-inactive version.
+        """
+        cache = home / ".claude" / "plugins" / "cache" / "borda-ai-rig"
+        active_shared = cache / "codemap-py" / active / "claude-skills" / "_shared"
+        newer_shared = cache / "codemap-py" / "99.0.0" / "claude-skills" / "_shared"
+        active_shared.mkdir(parents=True)
+        newer_shared.mkdir(parents=True)
+        helper_dst = cache / "foundry" / "0.1.0" / "bin" / "get_plugin_install_path.py"
+        helper_dst.parent.mkdir(parents=True)
+        helper_dst.write_bytes(helper_src.read_bytes())
+        registry = home / ".claude" / "plugins" / "installed_plugins.json"
+        registry.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "plugins": {
+                        "codemap-py@borda-ai-rig": [
+                            {
+                                "scope": "user",
+                                "installPath": (cache / "codemap-py" / active).as_posix(),
+                                "version": active,
+                                "installedAt": "2026-09-18T06:00:47.793Z",
+                            }
+                        ]
+                    },
+                }
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        return active_shared, newer_shared
+
+    @pytest.mark.parametrize("active", ["0.38.0", "0.37.1"])
+    def test_registry_record_beats_newer_cache_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, active: str
+    ) -> None:
+        """The recorded ``installPath`` wins even when a newer version dir sits in the cache.
+
+        A consumer loading codemap-py's contract must read the version Claude Code actually dispatches to; an orphaned
+        or half-installed newer dir must never shadow it.
+        """
+        helper_src = Path(resolve_shared_path.__file__).with_name("get_plugin_install_path.py")
+        active_shared, _newer = self._install_tree(tmp_path, active, helper_src)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))  # no `python` anywhere: tier 1 must not depend on PATH
+        path, tier = resolve_shared_path.resolve("codemap-py", "claude-skills/_shared", home=tmp_path, env_root="")
+        assert tier == 1
+        assert Path(path) == active_shared
+
+    def test_consumer_plugin_root_does_not_shadow_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``CLAUDE_PLUGIN_ROOT`` of a consumer plugin is not mistaken for the provider's tree.
+
+        A develop skill runs with its own root exported; the provider lookup must skip tier 0 and fall through to the
+        registry.
+        """
+        helper_src = Path(resolve_shared_path.__file__).with_name("get_plugin_install_path.py")
+        active_shared, _newer = self._install_tree(tmp_path, "0.38.0", helper_src)
+        consumer_root = tmp_path / "develop-root"
+        (consumer_root / ".claude-plugin").mkdir(parents=True)
+        (consumer_root / ".claude-plugin" / "plugin.json").write_text('{"name": "develop"}', encoding="utf-8")
+        (consumer_root / "claude-skills" / "_shared").mkdir(parents=True)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        path, tier = resolve_shared_path.resolve(
+            "codemap-py", "claude-skills/_shared", home=tmp_path, env_root=str(consumer_root)
+        )
+        assert tier == 1
+        assert Path(path) == active_shared
+
+
 class TestTier3SourceFallback:
     """Tier 3 — source-tree fallback when nothing else hits."""
 
-    def test_source_fallback_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Source tree present → tier 3 returns ``plugins/<plugin>/<subdir>``."""
-        # Build a source-tree shape in tmp_path and cwd there so the relative
-        # path resolves to a real dir. On-disk folder is cc_-prefixed post-rename.
-        source = tmp_path / "plugins" / "cc_foundry" / "skills" / "_shared"
+    @pytest.mark.parametrize(
+        ("plugin", "source_dir"),
+        [
+            pytest.param("foundry", "cc_foundry", id="cc-prefixed"),
+            pytest.param("codemap-py", "codemap-py", id="un-prefixed-provider"),
+        ],
+    )
+    def test_source_fallback_exists(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, plugin: str, source_dir: str
+    ) -> None:
+        """Source tree present → tier 3 returns the on-disk ``plugins/<dir>/<subdir>``.
+
+        Claude plugin dirs carry the ``cc_`` prefix; provider plugins such as codemap-py do not, and the dev-checkout
+        fallback must find both.
+        """
+        source = tmp_path / "plugins" / source_dir / "skills" / "_shared"
         source.mkdir(parents=True)
         monkeypatch.chdir(tmp_path)
-        path, tier = resolve_shared_path.resolve("foundry", "skills/_shared", home=tmp_path, env_root="")
+        path, tier = resolve_shared_path.resolve(plugin, "skills/_shared", home=tmp_path, env_root="")
         assert tier == 3
-        assert path == "plugins/cc_foundry/skills/_shared"
+        assert path == f"plugins/{source_dir}/skills/_shared"
 
     def test_main_tier3_warns_and_exits_0(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

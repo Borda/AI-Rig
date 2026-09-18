@@ -1,8 +1,13 @@
 Before cycle 1 of review loop, run Codex pre-pass if diff meaningful:
 
 ```bash
-# canonical check — target selector must be installed and enabled
-CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")
+# canonical check — target selector must be installed and enabled. Installed: own plugin's check_bridge.py.
+# Dev tree (CLAUDE_PLUGIN_ROOT unset): every consumer ships a byte-identical manifested copy, so the first one
+# found is the right one — no sibling plugin named, no variable borrowed from another fence
+_CB="${CLAUDE_PLUGIN_ROOT:+$CLAUDE_PLUGIN_ROOT/bin/check_bridge.py}"
+[ -n "$_CB" ] || _CB=$(ls plugins/cc_*/bin/check_bridge.py 2>/dev/null | head -1)
+# -f guard: an empty path would make python run a __main__.py in the cwd instead of failing
+[ -f "$_CB" ] && CODEX_STATUS=$(python "$_CB" --status 2>/dev/null) || CODEX_STATUS="absent"
 CODEX_AVAILABLE=false
 if [ "$CODEX_STATUS" = "available" ]; then
     CODEX_AVAILABLE=true

@@ -132,6 +132,8 @@ Full rule in `plugins/CLAUDE.md` §Self-Contained `_shared`.
 
 **Precedent**: `codex-delegation.md`, canonical in `foundry`, was copied to `cc_research` after research's Check R7 lost the file on a research-only install (no `foundry` present to reach into).
 
+**Counter-precedent (optional-provider exception)**: codemap-py's `claude-skills/_shared/codemap-{gates,context}.md` were manifested into five consumer copies, and each copy froze at the consumer's last release while the installed `codemap-py` kept moving — the consumer drove a newer CLI with stale contract prose, and no test could see it because tests only read the source tree. The R7 incident does not apply: without `codemap-py` the whole feature is already a no-op (every wrapper gates on `command -v codemap-py`), so the contract has no value to lose. Consumers now resolve the active install (`resolve_shared_path.py codemap-py claude-skills/_shared`) and print their own fallback line when it is absent. The exception is narrow — see `plugins/CLAUDE.md` §Self-Contained `_shared` for the three conditions; degraded-mode content stays duplicated.
+
 ## Versioning — Pre-Bump Checklist + Worked Example
 
 Full rule (trigger, decision table, one-bump-per-commit) in `plugins/CLAUDE.md` §Versioning.

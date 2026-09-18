@@ -1,5 +1,7 @@
 # 🏠 Borda's AI-Rig
 
+![Borda's AI-Rig banner](docs/assets/images/banner.webp)
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE) [![Claude Code](https://img.shields.io/badge/Claude_Code-plugins-orange)](https://code.claude.com/docs/en/discover-plugins) [![Codex](https://img.shields.io/badge/Codex-plugins-green)](https://developers.openai.com/codex/cli/reference)
 
 Practical agent workflows for Python, ML, and open-source maintenance. AI-Rig turns recurring work—scoping a change, reproducing a bug, reviewing a pull request, running an experiment, or checking release readiness—into explicit workflows with specialist ownership, evidence gates, and reviewable artifacts.

@@ -225,6 +225,8 @@ Build directed graph from (source-file, skill-reference) pairs collected in Step
 - **Global path** — `$HOME/.claude/skills/_shared/...` or bare `.claude/skills/_shared/...`. No such path exists any more: `/foundry:setup` symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`, and purges any leftover `~/.claude/skills/` link. A dir with `SKILL.md` there would register as a user-level skill and shadow Claude Code's bundled skill of that name.
 - **Sibling reach-in** — resolving another plugin's tree (`resolve_shared_path.py foundry` from a non-foundry plugin, `dev_shared_resolve.py --foundry`, `$_FOUNDRY_SHARED`, `$_FOUNDRY_BIN`, or a literal `plugins/cc_<other>/` path). Content genuinely needed by two plugins is **duplicated**, not borrowed: add a `MANIFEST` entry in `bin/propagate_shared.py` so the copies stay byte-identical.
 
+**Sanctioned exception — optional-provider contract**: `resolve_shared_path.py codemap-py claude-skills/_shared` inside a `codemap-gates.md` / `codemap-context.md` wrapper is **not** a finding when the block also gates on `command -v codemap-py` and prints a fallback line on absence. The provider's contract has no value without the provider, and a frozen copy would drift against the installed CLI. Flag it as 27b only if the gate or fallback is missing, or if the resolved plugin is anything other than an optional provider (`plugins/CLAUDE.md` §Self-Contained `_shared`).
+
 **Special antipattern — foundry-dependency catch-22**: a borrowed file that describes how to degrade *without* foundry (e.g. `agent-resolution.md` listing `general-purpose` substitutes) is **critical** — the instructions for surviving foundry's absence are reachable only when foundry is present.
 
 **Step 1 — Global `_shared` paths** (any plugin, foundry included):
@@ -238,12 +240,14 @@ grep -rn '\.claude/skills/_shared/' plugins/*/skills/ plugins/*/*.md 2>/dev/null
 **Step 2 — Sibling reach-in**:
 
 ```bash
-grep -rn 'resolve_shared_path\.py" foundry\|--foundry\|_FOUNDRY_SHARED\|_FOUNDRY_BIN\|plugins/cc_[a-z]*/skills/_shared' plugins/*/skills/ 2>/dev/null | grep -v '^plugins/cc_foundry/'  # timeout: 5000
+grep -rn 'resolve_shared_path\.py" [a-z-]*\|--foundry\|_FOUNDRY_SHARED\|_FOUNDRY_BIN\|plugins/cc_[a-z]*}\?/\(bin\|skills/_shared\)' plugins/*/skills/ 2>/dev/null | grep -v '/audit/templates/checks-skills\.md:' | awk -F/ '{ own=$2; l=$0; keep=0; while (match(l,/plugins\/cc_[a-z]*/)) { t=substr(l,RSTART+8,RLENGTH-8); if (t!="cc_" && t!=own) keep=1; l=substr(l,RSTART+RLENGTH) }; l=$0; while (match(l,/resolve_shared_path\.py" [a-z-]*/)) { t=substr(l,RSTART+24,RLENGTH-24); if ("cc_" t!=own && t!="codemap-py") keep=1; if (t=="codemap-py" && $0 !~ /command -v codemap-py/) keep=1; l=substr(l,RSTART+RLENGTH) }; if (own!="cc_foundry" && $0 ~ /_FOUNDRY_|--foundry/) keep=1; if (keep) print }'  # timeout: 5000
 ```
 
-Ignore a plugin's own bare-path fallback (e.g. `plugins/cc_oss/...` inside `cc_oss`) — that is the sanctioned last-resort tier. Everything else:
+The `}\?` admits the `${CLAUDE_PLUGIN_ROOT:-plugins/cc_<x>}/bin/…` idiom as well as a bare `plugins/cc_<x>/bin/` literal; the resolver pattern requires the double-quoted path the repo idiom always uses (an unquoted `resolve_shared_path.py foundry` in prose is not a call). The `awk` drops rows whose every `plugins/cc_<x>` token is the file's own plugin and whose every resolver token is its own name or `codemap-py` (both loops walk the whole line — a second, foreign token after an own-plugin one is still caught); `_FOUNDRY_*` / `--foundry` count as reach-ins only outside `cc_foundry`, so foundry's own skills stay in scope for every other shape; a `plugins/cc_` token with no plugin letters after it (`cc_<x>`, `cc_*`) names no sibling and is ignored (`t!="cc_"` — the token keeps its `cc_` prefix); a `codemap-py` resolver call is dropped only when `command -v codemap-py` gates it on the same line, so an ungated provider read still surfaces for the sanctioned-exception judgement; this template is excluded from its own scan because its prose quotes every forbidden shape — ~410 raw rows become the handful worth judging (POSIX awk, no GNU back-references).
 
-- Match → **[high] 27b**: `<plugin>/<skill>: reads <file> from cc_foundry's _shared — ship a copy in this plugin's skills/_shared and add a propagate_shared.py MANIFEST entry`
+Ignore a plugin's own resolver call (`resolve_shared_path.py" oss` inside `cc_oss`) and its own bare-path fallback (e.g. `plugins/cc_oss/...` inside `cc_oss`) — that is the sanctioned last-resort tier — and the gated `codemap-py` provider read under the sanctioned exception above. Every plugin now ships `resolve_shared_path.py`, so a reach-in can name any sibling, not only foundry; the pattern catches the plugin token, the auditor judges it. Everything else:
+
+- Match → **[high] 27b**: `<plugin>/<skill>: reads <file> from cc_<other>'s _shared or bin — ship a copy in this plugin's own tree and add a propagate_shared.py MANIFEST entry`
 
 **Step 3 — Catch-22 upgrade**:
 

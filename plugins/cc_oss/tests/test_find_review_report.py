@@ -188,3 +188,64 @@ def test_main_blocks_when_head_unverifiable(
     _fake_head_sha(monkeypatch, "", returncode=1)
     assert frr.main(["--pr", "42"]) == 1
     assert "unverifiable" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# --path-out: publish the resolved path so callers reuse this PR-scoped lookup
+# ---------------------------------------------------------------------------
+
+
+def test_path_out_publishes_resolved_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The resolved report path is written verbatim for the caller to reuse."""
+    monkeypatch.chdir(tmp_path)
+    report = _write_report(tmp_path, "run-001", "42", gate="PASS")
+    sentinel = tmp_path / "sentinel"
+    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 0
+    assert sentinel.read_text(encoding="utf-8").strip() == report.as_posix()
+
+
+def test_path_out_empty_when_no_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A PR with no report yields an empty sentinel, never a stale path."""
+    monkeypatch.chdir(tmp_path)
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("/stale/path\n", encoding="utf-8")
+    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 0
+    assert sentinel.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("pr", ["", "n/a"])
+def test_path_out_empty_without_pr_number(pr: str, tmp_path: Path) -> None:
+    """The no-PR early return still clears the sentinel."""
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("/stale/path\n", encoding="utf-8")
+    assert frr.main(["--pr", pr, "--path-out", str(sentinel)]) == 0
+    assert sentinel.read_text(encoding="utf-8") == ""
+
+
+def test_path_out_written_before_reject_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A blocking rejection still publishes the path — the caller needs it to show the user."""
+    monkeypatch.chdir(tmp_path)
+    report = _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
+    _fake_head_sha(monkeypatch, "a1b2c3d")
+    sentinel = tmp_path / "sentinel"
+    assert frr.main(["--pr", "42", "--path-out", str(sentinel)]) == 1
+    assert sentinel.read_text(encoding="utf-8").strip() == report.as_posix()
+    capsys.readouterr()
+
+
+def test_path_out_unwritable_does_not_break_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """The verdict is load-bearing; a sentinel write failure must not change it, only warn on stderr.
+
+    A silent failure would leave the caller trusting whatever stale sentinel an earlier run wrote.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_report(tmp_path, "run-001", "42", gate="PASS")
+    unwritable = tmp_path / "missing-dir" / "sentinel"
+    assert frr.main(["--pr", "42", "--path-out", str(unwritable)]) == 0
+    captured = capsys.readouterr()
+    assert "no restriction" in captured.out
+    assert "could not write --path-out" in captured.err

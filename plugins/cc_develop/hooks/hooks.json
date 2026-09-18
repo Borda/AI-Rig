@@ -85,6 +85,7 @@
         "hooks": [
           {
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/audit-close.js\"",
+            "timeout": 15,
             "type": "command"
           }
         ]

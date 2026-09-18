@@ -46,7 +46,7 @@ printf "=== Check 35: \$ARGUMENTS shell injection risk ===\n"
 - `security` — an **Unsafe pattern** above: `eval`, `bash -c`, `python -c`, or unquoted expansion in heredoc position. The text runs.
 - `high` — a block that reaches step 3 with only a shell construct handling the blob: a `[[ =~ ]]` guard, a `case`, or a substring comparison. Nothing executes the text, so this isn't an injection vector; it's a guard that can't be relied on — `[[ =~ ]]` captures into `match` under zsh, and a quote or newline in the blob breaks the block at parse time, skipping every step below it.
 
-Fix, both tiers: hand the whole blob to a bin/ script as one positional argument and parse it there (`plugins/cc_oss/bin/parse-skill-flags.py` for boolean and value flags, `plugins/codemap-py/bin/parse_scan_args.py` for a shlex-based reference).
+Fix, both tiers: hand the whole blob to a bin/ script as one positional argument and parse it there (`bin/parse-skill-flags.py`, shipped by every plugin, for boolean and value flags; codemap-py's `bin/parse_scan_args.py` for a shlex-based reference).
 
 ## Check 36 — eval-unsafe bin/ output security
 

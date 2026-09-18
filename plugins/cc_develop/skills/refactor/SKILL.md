@@ -1,7 +1,7 @@
 ---
 name: refactor
 description: 'Test-first refactoring — audit coverage, add characterization tests, apply changes with safety net, run quality stack and review loop. TRIGGER when: user wants to restructure existing Python code without changing behaviour; phrases: "refactor X", "clean up Y", "extract Z", "restructure this module", "improve code quality". SKIP when: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); mixed refactor+feature — run `/develop:refactor` first, then `/develop:feature`; non-Python projects.'
-argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--semble] [--team] [--worktree] [--keep "<items>"]
+argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 disable-model-invocation: true
@@ -112,7 +112,7 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 
 **Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug) — stale values from a prior run of another skill can't leak in.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--semble`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -164,7 +164,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/preflight-helpers.md"
 ```
 
-Execute codemap + semble preflight if respective flags set.
+Execute codemap preflight if the flag is set.
 
 ## Step 1: Scope and understand
 
@@ -176,7 +176,7 @@ If `<target>` is directory: use Glob tool (pattern `**/*.py`, path `<target>`) t
 find <target> -name '*.py' -exec wc -l {} + 2>/dev/null | tail -1
 ```
 
-**If `CODEMAP_ENABLED=true` or `SEMBLE_ENABLED=true`**:
+**If `CODEMAP_ENABLED=true`**:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -185,7 +185,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/codemap-context.md"
 ```
 
-Follow enabled sections (codemap block if `CODEMAP_ENABLED`, semble companion if `SEMBLE_ENABLED`). Skip if both false.
+Follow the codemap block. Skip if the flag is false.
 
 **Multi-file / API-change scope — extended codemap scan** (only when `CODEMAP_ENABLED=true`): target is directory, spans multiple files, or goal mentions renaming/restructuring public API (i.e. refactoring NOT limited to internals of a single function/class with unchanged public interface):
 

@@ -2,17 +2,14 @@
 
 **Structural context (codemap-py) — foundry wrapper.** Provider ships shared mechanics; this file adds only foundry-specific dimension. Run only when caller sets `CODEMAP_ENABLED=true`; skip if flag absent.
 
-**Wrapper** — target derivation, query mechanics, evidence-line contract, completeness/staleness semantics, effort tiers all live in codemap-shipped contract. Resolve this plugin's local propagated copy, read it:
+**Wrapper** — target derivation, query mechanics, evidence-line contract, completeness/staleness semantics, effort tiers all live in codemap-shipped contract. Resolve the active `codemap-py` install (registry first, never a newer orphaned cache dir) and read its contract — no local copy, so the text always matches the CLI actually installed:
 
 ```bash
-_FOUNDRY_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null)
-[ -z "$_FOUNDRY_SHARED" ] && _FOUNDRY_SHARED="plugins/cc_foundry/skills/_shared"
-if ! command -v codemap-py >/dev/null 2>&1 || ! cat "$_FOUNDRY_SHARED/codemap-py--codemap-context.md" 2>/dev/null; then
-    echo "codemap contract absent — use fallback below"
-fi
+# gate before resolve: absent CLI spawns nothing; && chain keeps set -e off resolver exit 1
+command -v codemap-py >/dev/null 2>&1 && _CODEMAP_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared 2>/dev/null) && cat "$_CODEMAP_SHARED/codemap-context.md" 2>/dev/null || echo "codemap contract absent — use fallback below"
 ```
 
-Contract (`v3`) — follow §Target derivation, §Core query map, §Evidence-line contract, §Effort-tier guidance.
+Contract (version as loaded) — follow §Target derivation, §Core query map, §Evidence-line contract, §Effort-tier guidance.
 
 ## Per-agent query map (foundry dimension)
 

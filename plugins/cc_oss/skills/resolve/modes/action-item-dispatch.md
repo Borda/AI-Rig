@@ -2,7 +2,7 @@
 
 <!-- fragment — no <workflow> wrapper; executed inline by SKILL.md -->
 
-<!-- Input: SELECTED_ITEMS (from Step 3e), COMMIT_MODE (from Step 3d), CODEX_AVAILABLE (from Step 1), PR_REF (from Step 4), $_OSS_RESOLVE, ARGUMENTS -->
+<!-- Input: SELECTED_ITEMS (from Step 3e), COMMIT_MODE + GROUP_STRATEGY (from Step 3d), CODEX_AVAILABLE (from Step 1), PR_REF (from Step 4), $_OSS_RESOLVE, ARGUMENTS -->
 
 <!-- Output: items implemented/staged/committed; CHALLENGE_LOG populated; CHANGE_SCOPE set for Step 9 -->
 
@@ -181,7 +181,15 @@ When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use P
 
 ### Phase 1: Challenge — parallel by domain (skip when `--no-challenge`)
 
-Route by domain to foreground challenge agent:
+Read the flag from its sentinel, not from the raw argument blob — SKILL.md Step 1 strips every flag token before mode parsing, so `$ARGUMENTS` no longer carries it here:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r NO_CHALLENGE < "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}" 2>/dev/null || NO_CHALLENGE="false"
+echo "NO_CHALLENGE=$NO_CHALLENGE"  # timeout: 3000
+```
+
+`true` → skip this phase entirely; `SURVIVING_ITEMS` = all `SELECTED_ITEMS`, every item treated `VALID`, Challenge Log section omitted from the report. Otherwise route by domain to foreground challenge agent:
 
 | Item domain | Challenger |
 | -- | -- |
@@ -306,6 +314,7 @@ Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, inte
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"  # Step 3d persists it; argparse rejects an empty value
 CENTRALITY_FILE=""
 if [ -s "$IMPL_DIR/codemap-maps.json" ]; then
     CENTRALITY_FILE=$(mktemp)  # timeout: 3000
@@ -353,9 +362,22 @@ rm -f "$_GITDIR/oss-resolve-${_BRANCH}.lock" "${TMPDIR:-/tmp}/resolve-base-sha-$
 
 > If Phase 3 stops on a conflict (routed to Step 5a) the lock is **not** released here — intentional: the run is still live. It clears on the retry's cleanup, or via the 30-min staleness override if the session is abandoned.
 
-**After loop — `COMMIT_MODE=grouped` only**: collect topic labels, group items, commit each group.
+**After loop — `COMMIT_MODE=grouped` only**: group items per `GROUP_STRATEGY` (chosen at Step 3d alongside the commit-mode menu), commit each group. Read it back first:
 
-Invoke `AskUserQuestion` after the implementation loop completes (all items staged, no commits yet):
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r GROUP_STRATEGY < "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}" 2>/dev/null || GROUP_STRATEGY="domain"
+echo "GROUP_STRATEGY=$GROUP_STRATEGY"  # timeout: 3000
+```
+
+Only `labels` reaches the user; the other three group without another idle window:
+
+- `domain` (default) — topic = each item's `.change` field, mapped by the `auto` table below
+- `file` — topic = the item's `file` basename without extension (items sharing a file share a commit)
+- `specialist` — topic = the Phase 2 `group` tag the item was dispatched under
+- `labels` — ask, using the block below
+
+Invoke `AskUserQuestion` — **`GROUP_STRATEGY=labels` only** — after the implementation loop completes (all items staged, no commits yet):
 
 ```text
 AskUserQuestion: "Assign a topic label to each implemented item (e.g. style, logic, tests, docs, config).
@@ -368,6 +390,8 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 - User types `auto` → infer topic from each item's `.change` field: `style`→`style`, `test`→`tests`, `docs`→`docs`, `ci`→`ci`, `config`→`config`, `code`|`refactor`→`logic`; default `misc` when unclassified
 - Any item not assigned a label → assign topic `misc`
 - User skips (empty response or blank) → fall back to `each` mode: commit each already-staged item individually using the same `commit_action_item.py` path as `COMMIT_MODE=each`
+
+`GROUP_STRATEGY` ≠ `labels` → skip the question entirely; derive topics from the strategy above (`domain` uses the same `auto` mapping). Every item lands in exactly one group; unclassified → `misc`.
 
 Group items by topic label. For each unique topic group (ordered by first item ID in group):
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -1325,6 +1326,55 @@ def test_supervisor_rejects_job_identifier_traversal_before_writing(
     assert response["status"] == "error"
     assert "job" in response["error"].lower()
     assert json.loads(escaped_record.read_text(encoding="utf-8")) == original
+
+
+@pytest.mark.parametrize(
+    ("denials", "outcome", "expected"),
+    [
+        pytest.param(0, contextlib.nullcontext(), {"job_id": "fresh"}, id="no-contention"),
+        pytest.param(3, contextlib.nullcontext(), {"job_id": "fresh"}, id="transient-sharing-violation"),
+        pytest.param(
+            bridge_call._REPLACE_ATTEMPTS,
+            pytest.raises(PermissionError),
+            {"job_id": "stale"},
+            id="held-open-past-the-retry-budget",
+        ),
+    ],
+)
+def test_write_json_retries_a_rename_blocked_by_a_concurrent_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    denials: int,
+    outcome: contextlib.AbstractContextManager[Any],
+    expected: dict[str, str],
+) -> None:
+    """A rename that a concurrent reader blocks is retried; only a persistent block raises.
+
+    On Windows renaming over a file another process has open fails with ``PermissionError`` (a sharing violation). The
+    supervisor polls the cancel marker and job record while the caller rewrites them, so a second ``cancel_job`` or a
+    record update lands in that window routinely. The retry must absorb a short block, still raise when the file stays
+    held past the budget, and never leave the temporary file behind in either case.
+    """
+    target = tmp_path / "job.cancel.json"
+    target.write_text('{"job_id": "stale"}\n', encoding="utf-8")
+    real_replace = Path.replace
+    attempts: list[int] = []
+
+    def blocked_replace(self: Path, other: Path) -> Path:
+        attempts.append(len(attempts))
+        if len(attempts) <= denials:
+            raise PermissionError(5, "Access is denied", str(other))
+        return real_replace(self, other)
+
+    monkeypatch.setattr(Path, "replace", blocked_replace)
+    monkeypatch.setattr(bridge_call, "_REPLACE_RETRY_SECONDS", 0.0)
+
+    with outcome:
+        bridge_call._write_json(target, {"job_id": "fresh"})
+
+    assert json.loads(target.read_text(encoding="utf-8")) == expected
+    assert len(attempts) == min(denials + 1, bridge_call._REPLACE_ATTEMPTS)
+    assert [p.name for p in tmp_path.iterdir()] == ["job.cancel.json"]
 
 
 def test_background_dispatch_leaves_pid_ownership_to_the_supervisor(

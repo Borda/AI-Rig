@@ -78,13 +78,22 @@ def _bash_blocks(path: Path) -> list[str]:
 
 
 def test_gates_resolve_and_read_the_shipped_contract():
-    """An inline transcription cannot replace the plugin-local propagated contract."""
+    """An inline transcription cannot replace the contract read from the active codemap-py install.
+
+    Optional-provider exception: the gates have no value without codemap-py, so the wrapper reads the
+    installed provider's file through its own resolver copy (registry tier first) instead of a frozen
+    local copy — and never globs the cache itself.
+    """
     text = _GATES.read_text(encoding="utf-8")
 
-    assert "resolve_shared.py" in text, "no own shared-directory resolver"
-    assert 'cat "$_RESEARCH_SHARED/codemap-py--codemap-gates.md"' in text, "contract is never loaded"
-    assert "codemap-py/*/claude-skills/_shared" not in text, "sibling cache reach-in reintroduced"
-    assert re.search(r"Contract \(`v\d+`\)", text), "no contract version marker"
+    assert (
+        '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared'
+        in text
+    ), "provider contract is not resolved from the active install"
+    assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text, "contract is never loaded"
+    assert "codemap-py--" not in text, "manifested copy reintroduced"
+    assert "plugins/cache" not in text, "newest-version cache glob reintroduced"
+    assert "Contract (version as loaded)" in text, "no contract marker"
     assert "Fallback when codemap-py plugin absent" in text, "no graceful degradation"
 
 

@@ -151,6 +151,13 @@ MANIFEST: list[dict[str, object]] = [
     # consuming plugin now ships its own copy and resolves it with its OWN resolver;
     # these entries are what keep the copies byte-identical. Audit Check 27 fails
     # any new reach-in, so extend the copies list here instead of borrowing.
+    #
+    # One deliberate exception is NOT manifested: codemap-py's provider contracts
+    # (claude-skills/_shared/codemap-{gates,context}.md). They have no value unless
+    # codemap-py is installed, so every consumer wrapper resolves the ACTIVE install
+    # at runtime (`resolve_shared_path.py codemap-py claude-skills/_shared`) and
+    # degrades to its own fallback line otherwise. A frozen copy would drift
+    # silently against whatever codemap-py version the user actually runs.
     {
         "canonical": "plugins/cc_foundry/skills/_shared/codex-delegation.md",
         "copies": [
@@ -191,25 +198,6 @@ MANIFEST: list[dict[str, object]] = [
             "plugins/cc_develop/skills/_shared/foundry--quality-stack.md",
         ],
     },
-    {
-        # Consumer wrappers keep their own flags and fallbacks, while this
-        # provider contract stays identical in every plugin that loads it.
-        # The prefixed copies cannot overwrite the consumer-owned wrapper.
-        "canonical": "plugins/codemap-py/claude-skills/_shared/codemap-context.md",
-        "copies": [
-            "plugins/cc_foundry/skills/_shared/codemap-py--codemap-context.md",
-            "plugins/cc_develop/skills/_shared/codemap-py--codemap-context.md",
-        ],
-    },
-    {
-        # Same isolated-copy rule for the shared missing/stale-index gates.
-        "canonical": "plugins/codemap-py/claude-skills/_shared/codemap-gates.md",
-        "copies": [
-            "plugins/cc_develop/skills/_shared/codemap-py--codemap-gates.md",
-            "plugins/cc_oss/skills/_shared/codemap-py--codemap-gates.md",
-            "plugins/cc_research/skills/_shared/codemap-py--codemap-gates.md",
-        ],
-    },
     # No installed rules/*.md entries belong here: the flat ~/.claude/rules/ namespace makes
     # cross-plugin copies collide, and per-plugin quality-gates variants legitimately differ.
     # This on-demand body is the explicit exception: Codex owns the canonical source and
@@ -234,15 +222,22 @@ MANIFEST: list[dict[str, object]] = [
         # so it silently inherited foundry-specific internals (it scanned FOUNDRY's cache
         # for get_plugin_install_path.py). Both copies now derive their own plugin from
         # __file__; manifesting them keeps that true.
+        # develop/research keep their own single-plugin resolvers for their own
+        # _shared; they ship this pair only to resolve the active codemap-py
+        # install (optional-provider contract, see the note above).
         "canonical": "plugins/cc_foundry/bin/resolve_shared_path.py",
         "copies": [
             "plugins/cc_oss/bin/resolve_shared_path.py",
+            "plugins/cc_develop/bin/resolve_shared_path.py",
+            "plugins/cc_research/bin/resolve_shared_path.py",
         ],
     },
     {
         "canonical": "plugins/cc_foundry/bin/get_plugin_install_path.py",
         "copies": [
             "plugins/cc_oss/bin/get_plugin_install_path.py",
+            "plugins/cc_develop/bin/get_plugin_install_path.py",
+            "plugins/cc_research/bin/get_plugin_install_path.py",
         ],
     },
     {
@@ -278,6 +273,16 @@ MANIFEST: list[dict[str, object]] = [
         "canonical": "plugins/cc_oss/bin/resolve_centrality.py",
         "copies": [
             "plugins/cc_foundry/bin/resolve_centrality.py",
+        ],
+    },
+    {
+        # SemVer classification rules for the develop:fix breaking-change gate. develop
+        # used to glob oss's newest cache dir for this file — a sibling reach-in that the
+        # self-contained _shared rule forbids and that silently read a stale or orphaned
+        # oss version. develop ships its own copy and resolves it through its own tree.
+        "canonical": "plugins/cc_oss/skills/_shared/semver-rules.md",
+        "copies": [
+            "plugins/cc_develop/skills/_shared/semver-rules.md",
         ],
     },
     {

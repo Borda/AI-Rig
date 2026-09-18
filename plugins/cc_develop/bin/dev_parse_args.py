@@ -10,7 +10,7 @@ Two calling conventions:
 
        eval "$(python dev_parse_args.py "$ARGUMENTS" \\
            --neg-bool no-challenge CHALLENGE_ENABLED true \\
-           --bool semble SEMBLE_ENABLED false \\
+           --bool team TEAM_MODE false \\
            --codemap CODEMAP_RAW auto)"
 
 2. **Skill-driven with file writes** — caller passes the ``--skill <name>`` and
@@ -134,8 +134,8 @@ def parse_specs(tokens: list[str]) -> list[FlagSpec]:
         SystemExit(1): on malformed spec (wrong token count).
 
     Examples:
-        >>> parse_specs(['--bool', 'semble', 'SEMBLE_ENABLED', 'false']) == [
-        ...     FlagSpec(kind=SpecType.BOOL, flag='semble', var='SEMBLE_ENABLED', default='false')
+        >>> parse_specs(['--bool', 'team', 'TEAM_MODE', 'false']) == [
+        ...     FlagSpec(kind=SpecType.BOOL, flag='team', var='TEAM_MODE', default='false')
         ... ]
         True
         >>> parse_specs(['--codemap', 'CODEMAP_RAW', 'auto']) == [
@@ -229,11 +229,11 @@ def extract_flags(arguments: str, specs: list[FlagSpec]) -> tuple[dict[str, str]
         Tuple of (var_to_value dict, clean_args string).
 
     Examples:
-        >>> specs = parse_specs(['--bool', 'semble', 'SEMBLE_ENABLED', 'false'])
-        >>> extract_flags('--semble do the thing', specs)
-        ({'SEMBLE_ENABLED': 'true'}, 'do the thing')
+        >>> specs = parse_specs(['--bool', 'team', 'TEAM_MODE', 'false'])
+        >>> extract_flags('--team do the thing', specs)
+        ({'TEAM_MODE': 'true'}, 'do the thing')
         >>> extract_flags('do the thing', specs)
-        ({'SEMBLE_ENABLED': 'false'}, 'do the thing')
+        ({'TEAM_MODE': 'false'}, 'do the thing')
     """
     result: dict[str, str] = {}
     clean = arguments
@@ -314,8 +314,8 @@ def run(arguments: str, spec_tokens: list[str]) -> str:
         Multi-line string of shell KEY=VALUE assignments ending with CLEAN_ARGS.
 
     Examples:
-        >>> out = run('--semble fix auth.py', ['--bool', 'semble', 'SEMBLE_ENABLED', 'false'])
-        >>> "SEMBLE_ENABLED='true'" in out
+        >>> out = run('--team fix auth.py', ['--bool', 'team', 'TEAM_MODE', 'false'])
+        >>> "TEAM_MODE='true'" in out
         True
         >>> "CLEAN_ARGS='fix auth.py'" in out
         True
@@ -349,7 +349,6 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     "feature": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
-        (_spec(SpecType.BOOL, "semble", "SEMBLE_ENABLED", "false"), "dev-semble-enabled"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
         (_spec(SpecType.BOOL, "worktree", "WORKTREE_ENABLED", "false"), None),
         (_spec(SpecType.BOOL, "accept-no-plan", "ACCEPT_NO_PLAN", "false"), "dev-accept-no-plan"),
@@ -360,7 +359,6 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
         (_spec(SpecType.BOOL, "accept-no-plan", "ACCEPT_NO_PLAN", "false"), "dev-accept-no-plan"),
-        (_spec(SpecType.BOOL, "semble", "SEMBLE_ENABLED", "false"), "dev-semble-enabled"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
         (_spec(SpecType.BOOL, "worktree", "WORKTREE_ENABLED", "false"), None),
         (_spec(SpecType.CODEMAP, "", "CODEMAP_RAW", "auto"), "dev-codemap-raw"),
@@ -378,7 +376,6 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     "refactor": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-challenge-forced"),
-        (_spec(SpecType.BOOL, "semble", "SEMBLE_ENABLED", "false"), "dev-semble-enabled"),
         (_spec(SpecType.BOOL, "team", "TEAM_MODE", "false"), "dev-team-mode"),
         (_spec(SpecType.BOOL, "worktree", "WORKTREE_ENABLED", "false"), None),
         (_spec(SpecType.BOOL, "accept-no-plan", "ACCEPT_NO_PLAN", "false"), "dev-accept-no-plan"),
@@ -387,14 +384,12 @@ SKILL_SPECS: dict[str, list[tuple[FlagSpec, str | None]]] = {
     ],
     "plan": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-challenge-enabled"),
-        (_spec(SpecType.BOOL, "semble", "SEMBLE_ENABLED", "false"), "dev-semble-enabled"),
         (_spec(SpecType.CODEMAP, "", "CODEMAP_RAW", "auto"), "dev-codemap-raw"),
         (_spec(SpecType.INT, "max-depth", "MAX_DEPTH", "3"), None),
     ],
     "review": [
         (_spec(SpecType.NEG_BOOL, "no-challenge", "CHALLENGE_ENABLED", "true"), "dev-review-challenge-enabled"),
         (_spec(SpecType.BOOL, "challenge", "CHALLENGE_FORCED", "false"), "dev-review-challenge-forced"),
-        (_spec(SpecType.BOOL, "semble", "SEMBLE_ENABLED", "false"), "dev-review-semble-enabled"),
         (_spec(SpecType.BOOL, "worktree", "WORKTREE_ENABLED", "false"), None),
         (_spec(SpecType.BOOL, "full", "FANOUT_FULL", "false"), "dev-review-fanout-full"),
         (_spec(SpecType.CODEMAP, "", "CODEMAP_RAW", "auto"), "dev-review-codemap-enabled"),
@@ -456,10 +451,10 @@ def write_skill_files(skill: str, arguments: str, tmp_dir: Path | None = None) -
         >>> import tempfile
         >>> from pathlib import Path
         >>> with tempfile.TemporaryDirectory() as d:
-        ...     vals = write_skill_files("feature", "--semble fix auth.py", tmp_dir=Path(d))
-        ...     vals["SEMBLE_ENABLED"]
-        ...     any(p.name.startswith("dev-feature-semble-") for p in Path(d).iterdir())
-        ...     any(p.name.startswith("dev-semble-enabled-") for p in Path(d).iterdir())
+        ...     vals = write_skill_files("feature", "--team fix auth.py", tmp_dir=Path(d))
+        ...     vals["TEAM_MODE"]
+        ...     any(p.name.startswith("dev-feature-team-") for p in Path(d).iterdir())
+        ...     any(p.name.startswith("dev-team-mode-") for p in Path(d).iterdir())
         'true'
         True
         True

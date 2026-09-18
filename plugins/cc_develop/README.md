@@ -156,13 +156,12 @@ ______________________________________________________________________
 
 **Flags**:
 
-| Flag              | Description                                          |
-| ----------------- | ---------------------------------------------------- |
-| `--no-challenge`  | Skip challenger adversarial gate                     |
-| `--codemap`       | Require Codemap and an index; stop when unavailable  |
-| `--no-codemap`    | Disable Codemap even if available                    |
-| `--semble`        | Enable the optional Semble semantic-search preflight |
-| `--max-depth <N>` | Limit plan → debug → plan cycles (default: `3`)      |
+| Flag              | Description                                         |
+| ----------------- | --------------------------------------------------- |
+| `--no-challenge`  | Skip challenger adversarial gate                    |
+| `--codemap`       | Require Codemap and an index; stop when unavailable |
+| `--no-codemap`    | Disable Codemap even if available                   |
+| `--max-depth <N>` | Limit plan → debug → plan cycles (default: `3`)     |
 
 **What happens**:
 
@@ -448,7 +447,6 @@ ______________________________________________________________________
 | `--challenge`      | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                      |
 | `--codemap`        | Require Codemap and an index; stop when unavailable                                                                                                                                            |
 | `--no-codemap`     | Disable codemap even if available                                                                                                                                                              |
-| `--semble`         | Enable semble semantic search context                                                                                                                                                          |
 | `--worktree`       | Run the review in an isolated git worktree (base: HEAD) so no agent can mutate main sources. Report is written to the **main tree**; reviews committed HEAD (uncommitted changes not visible). |
 | `--full`           | Run every spawn unit selected by classification instead of the default top-three-unit cap                                                                                                      |
 | `--keep "<items>"` | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                      |
@@ -620,21 +618,25 @@ ______________________________________________________________________
 | `oss` plugin          | optional    | Severity checklist for local review when available; use `/oss:review <PR#>` for contributor-facing GitHub PR review (requires `oss`).                                                        |
 | `bridge@borda-ai-rig` | optional    | Read-only adversarial pre-pass and bounded mechanical follow-up when installed and enabled; skipped with an explicit status when absent or disabled.                                         |
 | `codemap-py`          | optional    | Structural context such as callers, imports, test impact, and blast radius. Auto mode uses an available index; absent/stale indexes follow the Codemap gate, and `--no-codemap` disables it. |
-| `semble` MCP          | optional    | Semantic-search companion enabled explicitly with `--semble`; preflight stops if the MCP server is not configured.                                                                           |
 | `gh` CLI              | optional    | Fetches issue bodies for numeric issue arguments and GitHub Actions logs for `/develop:debug --ci-run`; required only for those paths.                                                       |
+
+```text
+! BREAKING — `--semble` is gone from `/develop:plan`, `/develop:feature`, `/develop:fix`, `/develop:refactor`, and `/develop:review`, and the `semble` MCP server is no longer a dependency of any develop skill. Passing the flag now trips the unknown-flag prompt instead of enabling a semantic-search preflight. Measured on the blast-radius benchmark, the semble arm lost to both the plain and codemap arms on cost, input tokens, and recall.
+Fix: drop `--semble` from saved invocations; Codemap-py auto mode (below) supplies the structural context the preflight used to add.
+```
 
 ### Codemap-py behavior
 
 In auto mode, Codemap-py is used when the plugin and a project index are available; no flag is needed for that default experience.
 
-| State                                 | Behavior                                   |
-| ------------------------------------- | ------------------------------------------ |
-| Installed + current index + auto mode | Use Codemap context                        |
-| Installed + no index + auto mode      | Gate A asks whether to build or continue   |
-| Installed + stale index + auto mode   | Gate B asks whether to refresh or continue |
-| Not installed + auto mode             | Continue without Codemap                   |
-| Any unavailable state + `--codemap`   | Stop and report strict-mode failure        |
-| Any state + `--no-codemap`            | Always disabled                            |
+| State                                 | Behavior                                                                                                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Installed + current index + auto mode | Use Codemap context                                                                                                                             |
+| Installed + no index + auto mode      | Gate A asks whether to build or continue                                                                                                        |
+| Installed + stale index + auto mode   | Gate B per the installed contract: `codemap-py` ≥ 0.39.0 refreshes automatically (asks only if `LAZY_CODEMAP` is set); older installs ask first |
+| Not installed + auto mode             | Continue without Codemap                                                                                                                        |
+| Any unavailable state + `--codemap`   | Stop and report strict-mode failure                                                                                                             |
+| Any state + `--no-codemap`            | Always disabled                                                                                                                                 |
 
 `--codemap` = **strict assertion** — useful in CI or to guarantee structural context always applied. `--no-codemap` skips codemap for specific run (e.g. non-Python submodule).
 
@@ -703,7 +705,7 @@ Same pattern in `/develop:fix` Step 2. Regression test passes on unfixed code �
 
 ### codemap-py query warnings appearing in output
 
-`codemap-py` optional. `codemap-py` not on PATH → all codemap-py steps silently skipped. Plugin installed but index missing/stale → default (auto) mode prompts build/rebuild (Gate A/B); `--no-codemap` skips silently. Skill works fully without it. To enable codemap-py context, install the `codemap-py` plugin, then run `/codemap-py:scan-codebase` (requires `codemap-py` plugin).
+`codemap-py` optional. `codemap-py` not on PATH → all codemap-py steps silently skipped. The gate and context contracts are read live from the installed `codemap-py` plugin (`bin/resolve_shared_path.py codemap-py claude-skills/_shared`, install record first) — no local copy, so upgrading `codemap-py` upgrades the contract develop follows. Plugin installed but index missing → default (auto) mode prompts build (Gate A). Index stale → Gate B follows the installed contract: `codemap-py` ≥ 0.39.0 rebuilds automatically, no prompt unless `LAZY_CODEMAP` is set; older installs ask first. `--no-codemap` skips silently either way. Skill works fully without it. To enable codemap-py context, install the `codemap-py` plugin, then run `/codemap-py:scan-codebase` (requires `codemap-py` plugin).
 
 ______________________________________________________________________
 
@@ -781,12 +783,14 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 | `extract-keep-flag.py`       | Parse `--keep "<items>"` and clear a stale compaction contract.              |
 | `extract_json_field.py`      | Recover a JSON object from text and print a selected field.                  |
 | `find-polluter.py`           | Binary-search test isolation contamination.                                  |
+| `get_plugin_install_path.py` | Resolve the active plugin path from Claude's registry.                       |
 | `heal_git_artifacts.py`      | Reclaim stale skill locks and orphaned git worktrees.                        |
 | `issue_fetch.py`             | Validate an issue argument and fetch it through `gh`.                        |
 | `parse-skill-flags.py`       | Parse boolean and value skill flags into shell assignments.                  |
 | `parse_target_qname.py`      | Split a `module::function` suspect out of a skill's arguments.               |
 | `pytest_gate.py`             | Run an allow-listed pytest command with full output.                         |
 | `resolve_review_target.py`   | Resolve a review target and its changed Python files.                        |
+| `resolve_shared_path.py`     | Resolve the active `codemap-py` install for its shared contracts.            |
 | `run_pytest_short.py`        | Run an allow-listed pytest command and show its final output lines.          |
 | `setup_worktree.py`          | Create a team-mode `.temp/develop/` run directory and optional sentinel.     |
 | `sync_rules.py`              | Install namespaced rule symlinks into `~/.claude/rules/`.                    |

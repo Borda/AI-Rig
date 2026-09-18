@@ -1,7 +1,7 @@
 ---
 name: review
 description: 'Multi-agent code review of local Python files, directories, or the current git diff covering architecture, tests, performance, docs, lint, security, and API design. Scope: Python source files in local working tree. Python-file-free targets (pure JS/TS/Go/Rust projects) are out of scope. TRIGGER when: user asks to review local Python files, a directory, or the current git diff/working-tree changes, with no GitHub PR number involved; phrases: "review this", "review my changes", "code review this diff", "review src/foo.py". SKIP when: input is a bare GitHub PR/issue number (use `/oss:review <PR#>`, requires oss plugin); user wants the Codex-native tiered `$code-review` workflow (codex-rig plugin, JSON artifact + specialist fan-out) — different toolchain; implementation work (use `/develop:fix` or `/develop:feature`); non-Python-only projects.'
-argument-hint: '[python-file|dir] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--semble] [--worktree] [--full] [--keep "<items>"]'
+argument-hint: '[python-file|dir] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--worktree] [--full] [--keep "<items>"]'
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 disable-model-invocation: true
 effort: high
@@ -25,7 +25,6 @@ NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHu
   - `--challenge`: force challenger (Agent 7) even on small diff that small-diff auto-skip would otherwise skip
   - `--full`: run **every** dimension classification preselected, instead of only the `FANOUT_MAX` most relevant. Never widens preselection — a dimension the FIX/CHORE/small-diff rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
   - `--codemap`: strict mode — stop and report if codemap not installed (on by default when installed; use `--no-codemap` to opt out)
-  - `--semble`: enable semble semantic search companion (off by default)
 
 **PR#/filename disambiguation gate** (execute BEFORE Step 1): tighten classification — valid PR# is positive integer with no extension and no existing file at that path. Filenames that look like numbers (e.g. `42.py`) must NOT trigger PR mode.
 
@@ -64,7 +63,6 @@ AGENT_CALL_BUDGET=55    # target tool-calls per agent; past ~60 they stall witho
 CHALLENGE_ENABLED=true  # set to false via --no-challenge
 CHALLENGE_FORCED=false  # set to true via --challenge — forces Agent 7 even on small diffs (overrides small-diff auto-skip)
 CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no-codemap = off; --codemap = strict (stop if not installed)
-SEMBLE_ENABLED=false    # set to true via --semble
 ```
 
 </constants>
@@ -125,19 +123,18 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/extract-keep-flag.py" dev-
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" --skill review --write-files "$ARGUMENTS"
-# writes ${TMPDIR:-/tmp}/dev-review-{no-challenge,semble,codemap,clean-args}-${CSID} + legacy paths
+# writes ${TMPDIR:-/tmp}/dev-review-{no-challenge,codemap,clean-args}-${CSID} + legacy paths
 IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS="$ARGUMENTS"
 # strip --keep so it doesn't leak into find/git diff target path
 REVIEW_ARGS=$(echo "$REVIEW_ARGS" | sed -E 's/ *--keep +"[^"]+"//' | xargs 2>/dev/null || echo "$REVIEW_ARGS")
 IFS= read -r CHALLENGE_ENABLED < "${TMPDIR:-/tmp}/dev-review-challenge-enabled-${CSID}" 2>/dev/null || CHALLENGE_ENABLED="true"
 IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED="false"  # --challenge: force Agent 7 even on small diffs
-IFS= read -r SEMBLE_ENABLED < "${TMPDIR:-/tmp}/dev-review-semble-enabled-${CSID}" 2>/dev/null || SEMBLE_ENABLED="false"
 IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
 IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/dev/null || FANOUT_FULL="false"
 FANOUT_CAP=3; [ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
 ```
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--semble`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -178,19 +175,6 @@ cat "$_DEV_SHARED/codemap-gates.md"
 ```
 
 Follow Gate A and Gate B.
-
-If `SEMBLE_ENABLED=true`: verify `mcp__semble__search` in available tools. DMI skill — stop enforced via bash exit when semble not configured:
-
-```bash
-# timeout: 5000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r SEMBLE_ENABLED < "${TMPDIR:-/tmp}/dev-review-semble-enabled-${CSID}" 2>/dev/null || SEMBLE_ENABLED="false"
-if [ "$SEMBLE_ENABLED" = "true" ]; then
-    # bash can't check MCP availability — LLM verifies. If mcp__semble__search absent:
-    # echo "! --semble requested but semble MCP server not configured. Configure: claude mcp add semble -s user -- uvx --from 'semble[mcp]' semble"; exit 1
-    echo "⚠ --semble enabled: verify mcp__semble__search is available in your tools before proceeding; if absent, abort with error above"
-fi
-```
 
 Use `$REVIEW_ARGS` (not `$ARGUMENTS`) as path for rest of workflow.
 
@@ -276,10 +260,6 @@ Codemap context propagation in Step 3:
 > Per-agent consumption guidance kept in sync with `$_DEV_SHARED/codemap-context.md` §Review-pipeline injection — update both on change.
 
 Tier annotation for Agent 1 (sw-engineer) only: label each module's `imported_by` count — **high risk** (>20), **moderate** (5–20), **low** (\<5). Agent 1 uses this to prioritize: high `imported_by` modules warrant deeper scrutiny on API compatibility, error handling, behavioural correctness — downstream callers outside diff otherwise invisible.
-
-**Semble companion** (only if `SEMBLE_ENABLED=true`): include in Agent 1 spawn prompt:
-
-> If `mcp__semble__search` is available in your tools and any changed module's codemap result was non-exhaustive (`"exhaustive": false`) or no codemap index found: call `mcp__semble__search` with varied queries and `repo=<git_root>`, `top_k=20`. Stop per module when two consecutive queries return no new importers. Merge with codemap results. If `mcp__semble__search` is NOT available (MCP not activated in this session): use Grep and Glob tools as fallback for code search — search for import references and usages of changed modules using `Grep(pattern="from <module>|import <module>", path=".")`.
 
 ## Step 2: Codex co-review
 

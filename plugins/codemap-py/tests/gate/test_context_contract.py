@@ -37,9 +37,7 @@ _DEVELOP_FIX = _PLUGINS_DIR / "cc_develop" / "skills" / "fix" / "SKILL.md"
 _DEVELOP_QNAME = _PLUGINS_DIR / "cc_develop" / "bin" / "parse_target_qname.py"
 _DEVELOP_GATES = _PLUGINS_DIR / "cc_develop" / "skills" / "_shared" / "codemap-gates.md"
 _OSS_GATES = _PLUGINS_DIR / "cc_oss" / "skills" / "_shared" / "codemap-gates.md"
-_DEVELOP_CONTEXT_COPY = _DEVELOP_CONTEXT.with_name("codemap-py--codemap-context.md")
-_DEVELOP_GATES_COPY = _DEVELOP_GATES.with_name("codemap-py--codemap-gates.md")
-_OSS_GATES_COPY = _OSS_GATES.with_name("codemap-py--codemap-gates.md")
+_PROVIDER_RESOLVE = 'resolve_shared_path.py" codemap-py claude-skills/_shared'
 
 
 def _find_working_posix_bash() -> str | None:
@@ -452,7 +450,7 @@ class TestGatesContract:
     def test_has_version_header_and_consumer_declaration(self):
         """Gates contract carries its version header and a cross-plugin consumer declaration."""
         text = _GATES_CONTRACT.read_text(encoding="utf-8")
-        assert "# Codemap gates contract — v2" in text
+        assert "# Codemap gates contract — v3" in text
         assert "<!-- file: codemap-gates.md" in text
 
     @pytest.mark.parametrize(
@@ -469,6 +467,12 @@ class TestGatesContract:
             # The former bare `scan-index` alias had already been replaced by every skill
             # and consumer wrapper, which otherwise needed an explicit override.
             "run `codemap-py index` in the foreground",
+            # v3 Gate B: auto-rebuild is the default, the confirm-first prompt is the opt-in —
+            # a revert of the default flip must fail here, not only in a consumer's behaviour.
+            "**`LAZY_CODEMAP` unset (default)**: rebuild without asking",
+            "No `AskUserQuestion` in either case",
+            "**`LAZY_CODEMAP` set** (any non-empty value): ask before rebuilding",
+            "print `! codemap index busy — continuing with stale data`",
         ],
     )
     def test_carries_gate_machinery(self, marker: str):
@@ -484,13 +488,17 @@ class TestGatesContract:
 class TestDevelopWrapper:
     """The develop context wrapper references the contract and keeps only its per-plugin surface."""
 
-    def test_references_own_manifested_contract_copy(self):
-        """Wrapper resolves its own directory and reads the byte-identical context copy."""
+    def test_reads_the_context_contract_from_the_active_install(self):
+        """Wrapper resolves the active codemap-py install and reads this plugin's context contract live.
+
+        No manifested copy, no newest-version cache glob, no bare cross-plugin source path.
+        """
         text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
-        assert "dev_shared_resolve.py" in text
-        assert 'cat "$_DEV_SHARED/codemap-py--codemap-context.md"' in text
-        assert _DEVELOP_CONTEXT_COPY.read_bytes() == _CONTEXT_CONTRACT.read_bytes()
-        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert _PROVIDER_RESOLVE in text
+        assert 'cat "$_CODEMAP_SHARED/codemap-context.md"' in text
+        assert not _DEVELOP_CONTEXT.with_name("codemap-py--codemap-context.md").exists()
+        assert "codemap-py--" not in text
+        assert "plugins/cache" not in text
         assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_never_uses_bare_relative_cross_plugin_path(self):
@@ -533,26 +541,34 @@ class TestDevelopWrapper:
         assert '_DEFAULT_QUERY_KIND = "standard"' in qname
         assert "query_kind = _DEFAULT_QUERY_KIND" in qname
 
-    @pytest.mark.parametrize(
-        "surface",
-        ["uncovered --top 20", "mock-rdeps", "undocumented", "codemap_scan.py", "codemap_cache.py", "Semble companion"],
-    )
+    @pytest.mark.parametrize("surface", ["uncovered --top 20", "mock-rdeps", "undocumented", "codemap_scan.py"])
     def test_retains_per_plugin_surface(self, surface: str):
-        """Develop-specific dimensions, batch/cache scripts, and semble stay in the wrapper."""
+        """Develop-specific dimensions and the batch producer script stay in the wrapper."""
         assert surface in _DEVELOP_CONTEXT.read_text(encoding="utf-8")
+
+    def test_cache_script_documented_as_oss_owned_not_invoked(self):
+        """The wrapper names `codemap_cache.py` only as oss-owned; develop never carries its command block.
+
+        The `write`/`read`/`report` fence used to live here and reached into the oss plugin's `bin/`; the ownership
+        paragraph replaced it, so the name must survive in prose while the invocation must not come back.
+        """
+        text = _DEVELOP_CONTEXT.read_text(encoding="utf-8")
+        assert "`codemap_cache.py` ship in the oss plugin" in text
+        assert "bin/codemap_cache.py" not in text
 
 
 @pytest.mark.skipif(not _DEVELOP_GATES.is_file(), reason="develop plugin sibling tree absent")
 class TestDevelopGatesWrapper:
     """The develop gates wrapper references the gates contract and supplies its skip flag."""
 
-    def test_references_own_manifested_gates_copy(self):
-        """Wrapper resolves its own directory and reads the byte-identical gates copy."""
+    def test_reads_the_gates_contract_from_the_active_install(self):
+        """Wrapper resolves the active codemap-py install and reads this plugin's gates contract live."""
         text = _DEVELOP_GATES.read_text(encoding="utf-8")
-        assert "dev_shared_resolve.py" in text
-        assert 'cat "$_DEV_SHARED/codemap-py--codemap-gates.md"' in text
-        assert _DEVELOP_GATES_COPY.read_bytes() == _GATES_CONTRACT.read_bytes()
-        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert _PROVIDER_RESOLVE in text
+        assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text
+        assert not _DEVELOP_GATES.with_name("codemap-py--codemap-gates.md").exists()
+        assert "codemap-py--" not in text
+        assert "plugins/cache" not in text
         assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_supplies_develop_skip_flag_and_fallback(self):
@@ -566,13 +582,14 @@ class TestDevelopGatesWrapper:
 class TestOssGatesWrapper:
     """The oss gates wrapper references the gates contract and supplies its skip flag."""
 
-    def test_references_own_manifested_gates_copy(self):
-        """Wrapper resolves its own directory and reads the byte-identical gates copy."""
+    def test_reads_the_gates_contract_from_the_active_install(self):
+        """Wrapper resolves the active codemap-py install and reads this plugin's gates contract live."""
         text = _OSS_GATES.read_text(encoding="utf-8")
-        assert 'resolve_shared_path.py" oss skills/_shared' in text
-        assert 'cat "$_OSS_SHARED/codemap-py--codemap-gates.md"' in text
-        assert _OSS_GATES_COPY.read_bytes() == _GATES_CONTRACT.read_bytes()
-        assert "codemap-py/*/claude-skills/_shared" not in text
+        assert _PROVIDER_RESOLVE in text
+        assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text
+        assert not _OSS_GATES.with_name("codemap-py--codemap-gates.md").exists()
+        assert "codemap-py--" not in text
+        assert "plugins/cache" not in text
         assert "plugins/codemap-py/claude-skills/_shared" not in text
 
     def test_supplies_oss_skip_flag_and_fallback(self):

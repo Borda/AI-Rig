@@ -126,5 +126,3 @@ For symbols listed in `uncovered`/`mock-rdeps`/`undocumented`/`xrefs --broken`/`
 `codemap_available=false`: omit the block; agents proceed with current file-read behaviour.
 
 Tier annotation for Agent 1 (sw-engineer) only: label each module's `imported_by` count — **high risk** (>20), **moderate** (5–20), **low** (\<5) — for blast-radius reference.
-
-**Semble companion** (only if `SEMBLE_ENABLED=true`): include in Agent 1 spawn prompt: "If `mcp__semble__search` available and any codemap result is direction-incomplete (`query_complete: false`, or the legacy `exhaustive: false`) or codemap absent: call `mcp__semble__search(query='<module> import', repo=<git_root>, top_k=20)` per module; stop when two consecutive queries return no new importers; merge with codemap; skip if all results `query_complete: true`."

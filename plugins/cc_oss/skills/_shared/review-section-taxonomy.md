@@ -37,7 +37,7 @@ All severities:
 
 ## LOW Grouping Rule
 
-Never omit LOW items **present in the report** — this rule binds the resolve parser (extraction + AskUserQuestion clustering), not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules. When total pending items > 12 (AskUserQuestion single-call ceiling), cluster LOW items into composite `[suggest]` rows by **topic or logical theme**. Cluster by semantic similarity, not by section or file. Each composite row:
+Never omit LOW items **present in the report** — this rule binds the resolve parser (extraction + AskUserQuestion clustering), not what the review consolidator chooses to write. Report-side pruning governed by review/checklist.md §Consolidation Rules. When total pending items > 18 (AskUserQuestion checkbox ceiling: 2 calls × 3 item questions × 3 items — the 4th slot of every call is the mandatory bulk page, never items), cluster LOW items into composite `[suggest]` rows by **topic or logical theme**. Cluster by semantic similarity, not by section or file. Each composite row:
 
 - `summary`: cluster theme (≤55 chars)
 - `change`: bullet list of every member finding with `file:line`
@@ -45,7 +45,7 @@ Never omit LOW items **present in the report** — this rule binds the resolve p
 - `full_comment_text`: concatenation of member bullets
 - `file`/`line`: blank (multi-file)
 
-Compress until total ≤ 12. Surface every LOW as own row when count permits, group only as needed.
+Compress until total ≤ 18 — past that, resolve drops per-item checkboxes entirely for a compressed table. Surface every LOW as own row when count permits, group only as needed.
 
 ## Grep Pattern (resolve parser)
 

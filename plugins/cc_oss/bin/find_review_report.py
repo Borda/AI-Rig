@@ -10,8 +10,12 @@ The block is lifted only when the PR head has moved since the rejection was reco
 longer hold and the run continues with a warning. Every other outcome (no report, no ``Gate:`` line, ``PASS``,
 ``BLOCK``) imposes no restriction — those are ordinary findings that resolve exists to fix.
 
+``--path-out FILE`` additionally publishes the resolved report path (empty file when the PR has none), so
+``oss:resolve`` reuses this PR-scoped lookup for its report-merge step instead of running a second,
+newest-of-any-PR glob of its own.
+
 Usage:
-    python "${CLAUDE_PLUGIN_ROOT}/bin/find_review_report.py" --pr "$PR_NUMBER"
+    python "${CLAUDE_PLUGIN_ROOT}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "$SENTINEL"
 
 Exit codes:
     0 — no restriction, or the head moved since the rejection
@@ -145,6 +149,39 @@ def current_head_sha(pr_number: str, timeout: int) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
+def _write_path_out(path_out: str, report: Path | None) -> None:
+    """Publish the resolved report path so the caller reuses this lookup instead of re-globbing.
+
+    The gate already resolves the newest report *for this PR*; ``oss:resolve`` previously parsed only the
+    printed verdict and then ran its own newest-of-any-PR glob. Writing the path here gives both the reject
+    gate and the report-merge step one PR-scoped answer.
+
+    A write failure never changes the exit code: the gate's verdict is the load-bearing output, and the caller
+    treats a missing or empty sentinel as "no report", falling back to its own lookup. It is reported on
+    stderr rather than swallowed, because the caller may still hold a *stale* sentinel from an earlier run —
+    the consumer's ``[ -f ]`` check catches a vanished report, but not a wrong one.
+
+    Args:
+        path_out: Destination file; no-op when empty.
+        report: The resolved report, or ``None`` when this PR has none.
+
+    Examples:
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     out = Path(tmp) / "sentinel"
+        ...     _write_path_out(str(out), None)
+        ...     out.read_text(encoding="utf-8")
+        ''
+    """
+    if not path_out:
+        return
+    try:
+        Path(path_out).write_text(f"{report.as_posix()}\n" if report else "", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        print(f"[gate] ⚠ could not write --path-out {path_out}: {exc} — a stale sentinel may remain", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
@@ -160,6 +197,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pr", default="", help="PR number (empty or 'n/a' skips the check).")
     parser.add_argument("--timeout", type=int, default=6, help="Max subprocess wait in seconds (default: 6).")
+    parser.add_argument(
+        "--path-out",
+        default="",
+        help="File to write the resolved report path to (empty file when this PR has no report).",
+    )
     args = parser.parse_args(argv)
 
     if hasattr(sys.stdout, "reconfigure"):
@@ -167,10 +209,12 @@ def main(argv: list[str] | None = None) -> int:
 
     pr_number = args.pr.strip()
     if not pr_number or pr_number == "n/a":
+        _write_path_out(args.path_out, None)
         print("[gate] no PR number — reject-gate check skipped")
         return 0
 
     report = newest_report_for_pr(pr_number)
+    _write_path_out(args.path_out, report)
     if report is None:
         print(f"[gate] no review report names PR #{pr_number} — no restriction")
         return 0

@@ -71,19 +71,73 @@ class TestPrUrlMode:
     """parse_resolve_args: GitHub PR URL inputs → mode 'pr' or 'pr+report'."""
 
     def test_bare_url(self) -> None:
-        """Full GitHub PR URL → PR_URL set, MODE='pr'."""
+        """Full GitHub PR URL → PR_URL set, PR_NUMBER extracted, MODE='pr'.
+
+        PR_NUMBER must not stay empty here: the reject-gate check and the report-source
+        lookup are both scoped on PR_NUMBER, and an empty value routes them onto 'n/a' —
+        invisible to both, regardless of PR_URL being set.
+        """
         url = "https://github.com/owner/repo/pull/7"
+        result = parse_resolve_args(url)
+        assert result["PR_URL"] == url
+        assert result["PR_NUMBER"] == "7"
+        assert result["MODE"] == "pr"
+
+    def test_url_with_report_suffix(self) -> None:
+        """GitHub URL + ' report' → MODE='pr+report', PR_NUMBER still extracted."""
+        url = "https://github.com/owner/repo/pull/7"
+        result = parse_resolve_args(f"{url} report")
+        assert result["PR_URL"] == url
+        assert result["PR_NUMBER"] == "7"
+        assert result["MODE"] == "pr+report"
+
+    @pytest.mark.parametrize(
+        "tail",
+        [
+            pytest.param("/files", id="files-tab"),
+            pytest.param("/commits", id="commits-tab"),
+            pytest.param("/", id="trailing-slash"),
+            pytest.param("#discussion_r1", id="thread-anchor"),
+            pytest.param("?diff=split", id="query-string"),
+            pytest.param("/files#r99", id="tab-plus-anchor"),
+        ],
+    )
+    def test_pasted_url_tail_dropped_from_pr_url(self, tail: str) -> None:
+        """A PR link pasted with a tab, anchor, or query tail still yields PR_NUMBER and the canonical URL.
+
+        Browser copies carry '/files', '#discussion_r…', '?diff=…' tails; routing them to comment dispatch would hand
+        the URL to an implementer instead of resolving the PR.
+        """
+        canonical = "https://github.com/owner/repo/pull/7"
+        result = parse_resolve_args(f"{canonical}{tail}")
+        assert result["PR_URL"] == canonical
+        assert result["PR_NUMBER"] == "7"
+        assert result["MODE"] == "pr"
+
+    def test_pasted_url_tail_with_report_suffix(self) -> None:
+        """A tailed PR link followed by ' report' still selects MODE='pr+report'."""
+        result = parse_resolve_args("https://github.com/owner/repo/pull/7/files report")
+        assert result["PR_URL"] == "https://github.com/owner/repo/pull/7"
+        assert result["PR_NUMBER"] == "7"
+        assert result["MODE"] == "pr+report"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            pytest.param("https://github.com/owner/repo", id="plain-repo-link"),
+            pytest.param("https://github.com/owner/repo/issues/7", id="issue-link"),
+        ],
+    )
+    def test_url_without_pull_segment_routes_on_pr_url_alone(self, url: str) -> None:
+        """A GitHub URL lacking '/pull/N' keeps MODE='pr' with PR_URL set and PR_NUMBER empty.
+
+        Downstream gates then report 'n/a' for the missing number; the URL must never fall through to comment dispatch,
+        which forwards its argument to a write-capable implementer.
+        """
         result = parse_resolve_args(url)
         assert result["PR_URL"] == url
         assert result["PR_NUMBER"] == ""
         assert result["MODE"] == "pr"
-
-    def test_url_with_report_suffix(self) -> None:
-        """GitHub URL + ' report' → MODE='pr+report'."""
-        url = "https://github.com/owner/repo/pull/7"
-        result = parse_resolve_args(f"{url} report")
-        assert result["PR_URL"] == url
-        assert result["MODE"] == "pr+report"
 
 
 class TestReportMode:

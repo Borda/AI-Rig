@@ -61,6 +61,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 - Every plugin resolves its own `skills/_shared` through its own resolver and reads only files it ships itself.
 - Never use `$HOME/.claude/skills/_shared/...` or a bare `.claude/skills/_shared/...` path. `/foundry:setup` symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`, and purges any leftover `~/.claude/skills/` link; a directory carrying `SKILL.md` there registers as a user-level skill and shadows Claude Code's bundled skill of the same name.
 - Never read another plugin's `_shared` or `bin/` either; duplicate the content into each plugin and add a `propagate_shared.py` MANIFEST entry instead of borrowing.
+- One exception, the optional-provider contract: a consumer may read a provider plugin's shipped file at runtime when the consumer's feature is a no-op without that provider, resolution goes through the active install record (`resolve_shared_path.py <provider> <subdir>`, registry tier first; the resolver's newest-cache tier is a degraded fallback reached only without a usable install record or when the recorded install lacks the subdir, and a wrapper never globs the cache itself), and absence degrades to the consumer's own fallback line. Current instance: `resolve_shared_path.py codemap-py claude-skills/_shared`. Content needed to survive a plugin's absence never qualifies.
 - Audit Check 27 enforces both halves.
 
 ## README Synchronization

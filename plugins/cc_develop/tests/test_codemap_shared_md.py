@@ -84,13 +84,22 @@ def test_every_index_dir_override_is_root_anchored(path: Path, default: str) -> 
 
 
 def test_gates_resolve_and_read_the_shipped_contract():
-    """The wrapper must load its propagated contract rather than transcribe it."""
+    """The wrapper loads the contract from the active codemap-py install rather than transcribing it.
+
+    Optional-provider exception: the gates have no value without codemap-py, so the wrapper reads the
+    installed provider's file through its own resolver copy (registry tier first) instead of a frozen
+    local copy — and never globs the cache itself.
+    """
     text = _GATES.read_text(encoding="utf-8")
 
-    assert "dev_shared_resolve.py" in text
-    assert 'cat "$_DEV_SHARED/codemap-py--codemap-gates.md"' in text
-    assert "codemap-py/*/claude-skills/_shared" not in text
-    assert re.search(r"Contract \(`v\d+`\)", text)
+    assert (
+        '"${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_shared_path.py" codemap-py claude-skills/_shared'
+        in text
+    )
+    assert 'cat "$_CODEMAP_SHARED/codemap-gates.md"' in text
+    assert "codemap-py--" not in text
+    assert "plugins/cache" not in text
+    assert "Contract (version as loaded)" in text
     assert "Fallback when codemap-py plugin absent" in text
 
 
