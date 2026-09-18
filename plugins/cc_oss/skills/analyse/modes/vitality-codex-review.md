@@ -47,9 +47,7 @@ Return compact JSON only: {"status":"done","file":"{CODEX_REVIEW_OUT}","health_s
 After codex review completes (sentinel verified), compute per-axis delta:
 
 ```bash
-# delta = abs(main_score[axis] - codex_score[axis])
-# divergence threshold: delta >= 2.0 points
-# flag axes where delta >= 2.0 as "⚠ divergent"
+# delta = abs(main_score[axis] - codex_score[axis]); flag axis "⚠ divergent" if delta >= 2.0
 # aggregate health score = mean(main_health_score, codex_health_score)
 ```
 

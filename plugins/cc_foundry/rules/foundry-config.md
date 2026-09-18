@@ -6,9 +6,9 @@ paths:
 
 ## Before Editing
 
-- **STOP — do not open, read, or edit any file.** Enter plan mode first (`opusplan`). **No exceptions**: typo fixes, single-step edits, "quick" changes all require plan mode before any action. Global "3+ steps" threshold does NOT apply — any `.claude/` edit = non-trivial.
+- **STOP — don't open, read, or edit any file.** Enter plan mode first (`opusplan`). **No exceptions**: typo fixes, single-step edits, "quick" changes all require plan mode before any action. Global "3+ steps" threshold does NOT apply — any `.claude/` edit = non-trivial.
 - **Never edit `.claude/` paths directly.** Run `ls -la .claude/` first to identify symlink target; all `.claude/` entries are symlinks into `plugins/cc_foundry/`; edit only source file under `plugins/cc_foundry/`, never `.claude/` symlink destination.
-- **Stop before duplicating**: when change would add identical or near-identical content to 3+ files, stop — identify shared abstraction first (e.g. `_shared/` dir, shared rule file); only proceed to individual file edits after single source of truth identified.
+- **Stop before duplicating**: change would add identical or near-identical content to 3+ files → stop, identify shared abstraction first (e.g. `_shared/` dir, shared rule file); proceed to individual file edits only after single source of truth identified.
 
 ## Agent Dispatch for .claude/ Config Edits
 
@@ -73,9 +73,9 @@ find .reports/calibrate .reports/resolve .reports/audit .reports/analyse .experi
     -maxdepth 2 -name "result.jsonl" -mtime +30 2>/dev/null |
 xargs dirname | xargs rm -rf
 
-# review dirs, two shapes: legacy flat <timestamp>/ (still produced by /develop:review) ages by its
-# own mtime; pr-<N>/run-<NNN>/ (oss lineage) ages per run, not per PR, so an active PR's older runs
-# still expire; the empty pr-<N> parent is swept once its last run has aged out
+# review dirs, two shapes: legacy flat <timestamp>/ (still produced by /develop:review) ages by its own mtime;
+# pr-<N>/run-<NNN>/ (oss) ages per run not per PR — active PR's older runs still expire;
+# empty pr-<N> parent swept once its last run ages out
 find .reports/review -mindepth 1 -maxdepth 1 -type d ! -name 'pr-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
 find .reports/review -mindepth 2 -maxdepth 2 -type d -name 'run-*' -mtime +30 2>/dev/null | xargs rm -rf 2>/dev/null
 find .reports/review -mindepth 1 -maxdepth 1 -type d -name 'pr-*' -empty -delete 2>/dev/null

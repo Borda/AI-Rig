@@ -4,7 +4,7 @@
 
 ## What
 
-`.temp/state/skill-contract.md` — terse block skill (re)writes at expanding-phase boundaries. PreCompact hook (`task-log.js`) appends it **verbatim** under `## Skill Compaction Contract` in `session-context.md`. Post-compaction re-read restores it losslessly.
+`.temp/state/skill-contract.md` — terse block skill (re)writes at expanding-phase boundaries. PreCompact hook (`task-log.js`) appends it **verbatim** under `## Skill Compaction Contract` in `session-context.md`. Post-compaction re-read restores losslessly.
 
 ## Block format (emit this template exactly)
 
@@ -20,7 +20,7 @@
 
 Refresh at boundary **after** expanding phase (parallel fan-out / iteration loop / large gather), **before** next phase begins.
 
-- Only at phase boundaries — not after every step
+- Only at phase boundaries — not every step
 - `preserve:` = only what next phase consumes; drop raw expanded material
 - `--keep "<items>"` at invocation → append user string to `preserve:` at Step 0
 
@@ -36,4 +36,4 @@ Refresh at boundary **after** expanding phase (parallel fan-out / iteration loop
 | Boundary reached | Write tool → `.temp/state/skill-contract.md` |
 | Auto-compact fires | PreCompact hook appends block verbatim to `session-context.md` |
 | Post-compaction | Re-read `session-context.md` — contract section restored into context |
-| Skill completes | Delete `.temp/state/skill-contract.md` — prevents stale leakage into later compactions |
+| Skill completes | Delete `.temp/state/skill-contract.md` — prevents stale leak into later compactions |

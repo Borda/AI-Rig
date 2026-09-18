@@ -1,10 +1,10 @@
 ## Task lifecycle sequencing — worked examples
 
-Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn labelling, FleetView examples, and the end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, slot/unique-first constraints, the no-op-filler ban) live in the stub, always loaded — this file is illustration only.
+Full detail behind the `rules/task-lifecycle.md` stub — three-slot spawn labelling, FleetView examples, end-turn-after-spawn contract. Rules themselves (TaskUpdate-before-long-output, subagent task prohibition, slot/unique-first constraints, the no-op-filler ban) live in the stub, always loaded — this file is illustration only.
 
 ### Spawn slots — three fields, no repeats
 
-`Agent()` takes three label-bearing slots — `name`, `description`, and prompt line 1. Filling all three with the same string wastes two of them. The slot that gets rendered and truncated is prompt line 1, so it carries the strictest delta-first obligation of the three:
+`Agent()` takes three label-bearing slots — `name`, `description`, and prompt line 1. Filling all three with the same string wastes two of them. The slot rendered and truncated is prompt line 1, so it carries the strictest delta-first obligation of the three:
 
 ```text
 ✗  name: review-sw-engineer   description: sw-engineer review — PR #1424 roboflow/rf-detr
@@ -31,7 +31,7 @@ Boilerplate-first prompt → every agent reads one useless label (e.g. "Task tra
 
 ### Slot content: unique-first
 
-N agents, same task family → every slot leads with per-agent delta (dir/plugin/module/dimension). Prompt line 1 is the only slot allowed to name the shared target at all, and it names it after the delta, never before. Cap 1 terminal line per column — front-load differentiator, FleetView truncates tail not head.
+N agents, same task family → every slot leads with per-agent delta (dir/plugin/module/dimension). Prompt line 1 is the only slot allowed to name the shared target at all, and names it after the delta, never before. Cap 1 terminal line per column — front-load differentiator, FleetView truncates tail not head.
 
 ```text
 ✓  B1 — cc_develop: session-scope TMPDIR sentinels
@@ -43,7 +43,7 @@ N agents, same task family → every slot leads with per-agent delta (dir/plugin
 
 #### When every agent shares one target
 
-The dir-varying case above is the easy one. The hard one is a fanout over a single target — one PR, one branch, one run — where the only thing that differs is the dimension. Reading the label rule as "role + target" puts the shared half in every slot and produces rows nobody can tell apart:
+The dir-varying case above is the easy one. The hard one is a fanout over a single target — one PR, one branch, one run — where the only thing that differs is the dimension. Reading the label rule as "role + target" puts the shared half in every slot, produces rows nobody can tell apart:
 
 ```text
 ✗  description: Review PR #596 (roboflow/trackers) — architecture/...
@@ -51,7 +51,7 @@ The dir-varying case above is the easy one. The hard one is a fanout over a sing
 ✗  description: Review PR #596 (roboflow/trackers) — test coverage...   [23 identical chars, then truncation]
 ```
 
-Fixing `description` alone does not fix the row, because `description` is not what the pane prints. Observed in a real FleetView pane: rows printed `name` plus the leading chars of prompt line 1, and the correct `description` values set on those same spawns never appeared. The shared prefix simply moved one slot over and kept winning:
+Fixing `description` alone doesn't fix the row, because `description` isn't what the pane prints. Observed in a real FleetView pane: rows printed `name` plus the leading chars of prompt line 1, and the correct `description` values set on those same spawns never appeared. The shared prefix simply moved one slot over, kept winning:
 
 ```text
 ✗  ◯ review-arch       Review PR 3 Borda/lucid-YOLO — architecture, SOLID...
@@ -71,9 +71,9 @@ So delta-first binds hardest on prompt line 1, the slot the user actually reads:
 ✓  name: review-qa-sec     description: test coverage + security prompt: Test coverage + security scan — PR #596 roboflow/trackers
 ```
 
-The target is not the label. Every agent in the batch already knows which PR it is reviewing — the prompt body says so. The row exists to answer "which of these three is this?", and only the dimension answers that. A merged spawn covering two dimensions names both, because that is its delta.
+The target isn't the label. Every agent in the batch already knows which PR it's reviewing — the prompt body says so. The row exists to answer "which of these three is this?", and only the dimension answers that. A merged spawn covering two dimensions names both, because that's its delta.
 
-The same reading applies to a verb: "Review" is shared by all three rows and buys nothing at the front. Drop it from prompt line 1 too — the dimension alone is the task statement, and the target follows the dash.
+The same reading applies to a verb: "Review" is shared by all three rows, buys nothing at the front. Drop it from prompt line 1 too — the dimension alone is the task statement, and the target follows the dash.
 
 ### After spawning: end the turn
 
@@ -92,4 +92,4 @@ The stub forbids no-op filler while agents are in flight. What that looks like w
 
 Each filler call is a full model turn: the entire live context is re-read to produce `true`. A handful of them costs more than the agents being waited on.
 
-The mistake is understandable and worth naming, because skill prose still invites it: a skill that says "spawns are synchronous — the framework awaits each response natively" describes a harness that no longer exists. `Agent()` has no `run_in_background` parameter to pass, because every spawn is already background. When a skill fragment and this rule disagree, this rule is current.
+The mistake is understandable and worth naming, because skill prose still invites it: a skill that says "spawns are synchronous — the framework awaits each response natively" describes a harness that no longer exists. `Agent()` has no `run_in_background` parameter to pass, because every spawn is already background. Skill fragment and this rule disagree → this rule is current.

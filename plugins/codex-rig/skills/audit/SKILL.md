@@ -40,7 +40,7 @@ Scopes:
 - `roles`: role-routing instructions and explicitly supplied plugin/package role-card root.
 - `all`: every applicable surface above. Missing optional local skills or roles is `not-configured`, not drift.
 
-Run `rg --files` with the `AGENTS.md`, `.codex/config.toml`, and `.agents/skills/**` globs as argv. When `target` is supplied and exists, enumerate regular files under it to depth four with platform-native filesystem walk. Sort and deduplicate both result sets into `<run-directory>/inventory.txt`; record unavailable inputs or collection failures.
+Run `rg --files` with the `AGENTS.md`, `.codex/config.toml`, `.agents/skills/**` globs as argv. When `target` is supplied and exists, enumerate regular files under it to depth four with platform-native filesystem walk. Sort and deduplicate both result sets into `<run-directory>/inventory.txt`; record unavailable inputs or collection failures.
 
 ### 03: Build an audit ledger before running gates
 
@@ -56,34 +56,34 @@ Write `<run-directory>/audit-ledger.md` with these sections:
 
 ### Explore workflow outcomes before checking conformance
 
-For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, and the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; existing instructions, accepted design decisions, and green tests are evidence to question, not proof that the contract is sufficient. Keep the exploration bounded to reachable behavior and explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
+For a workflow-bearing target, follow its actual entrypoint through helpers, state changes, handoffs, the next ordinary user action. Read the relevant callers and consumers even when unchanged. Start from the user's intended outcome; existing instructions, accepted design decisions, green tests are evidence to question, not proof that the contract is sufficient. Keep the exploration bounded to reachable behavior, explicitly record excluded paths. For a static target with no workflow, record why this check is not applicable.
 
-Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, and `Coverage` sections, including an explicit reason in each section when no workflow applies. Use a compact transition table: `Step / actor | Required precondition | Observed postcondition | Next consumer / user action | Evidence / gap`. For each material handoff ask:
+Write `<run-directory>/workflow-exploration.md` with `Transitions`, `Counterexamples`, `Coverage` sections, including an explicit reason in each section when no workflow applies. Use a compact transition table: `Step / actor | Required precondition | Observed postcondition | Next consumer / user action | Evidence / gap`. For each material handoff ask:
 
-- What does the producer actually guarantee, and what stronger property does the consumer assume? Distinguish matching content or value from identity, ownership, authority, lifetime, and destination.
+- What does the producer actually guarantee, what stronger property does the consumer assume? Distinguish matching content or value from identity, ownership, authority, lifetime, and destination.
 - Can every local check succeed while the end result is wrong, temporary, unrecoverable, or misleading to the user? What retains the result after the next normal action?
 - What happens when the same flow starts from another currently supported state, resumes, retries, or encounters a change between verification and use? Check those states that the implementation or documented use makes reachable; avoid invented risk matrices.
 - What observable example would disprove the claimed safety or completion? Does the existing test assert the user's outcome or merely repeat the implementation's chosen operation?
 
-Probe the highest-impact unproven assumption with the smallest safe executable check or source-backed counterexample. Retain its inputs, expected outcome, actual result, and rejected alternative; proposed/unavailable probes remain gaps. Include a positive case to distinguish a missing guarantee from a deliberately valid alternative. Audit remains read-only: parent-owned disposable probes may write scratch data within existing authorization; production edits and external actions keep their own scope and permission boundaries.
+Probe the highest-impact unproven assumption with the smallest safe executable check or source-backed counterexample. Retain its inputs, expected outcome, actual result, rejected alternative; proposed/unavailable probes remain gaps. Include a positive case to distinguish a missing guarantee from a deliberately valid alternative. Audit remains read-only: parent-owned disposable probes may write scratch data within existing authorization; production edits and external actions keep their own scope and permission boundaries.
 
 Report tested transitions separately from untested coverage. A passing inventory, schema validator, command, or existing regression suite cannot close an untested end-to-end claim. Generalize demonstrated mechanisms into recommendations; keep incident-specific names and benchmark answers out of shipped instructions.
 
 ### 04: Audit prompt efficiency without using length as quality
 
-Always write `<run-directory>/prompt-efficiency.md` with `Measurement`, `Cost Baseline`, `Loaded Context`, `Obligation Map`, `Value Guards`, `Adversarial Review`, and `Recommendations` sections. For `scope=config|roles` with no skill target, record `not-applicable` and why. For `scope=skills|all` or `axis=value-per-token`, audit each discovered local skill root independently; absent optional Codex Rig, Codemap, or Bridge root is `not-configured`, never cross-plugin dependency or failure.
+Always write `<run-directory>/prompt-efficiency.md` with `Measurement`, `Cost Baseline`, `Loaded Context`, `Obligation Map`, `Value Guards`, `Adversarial Review`, `Recommendations` sections. For `scope=config|roles` with no skill target, record `not-applicable` and why. For `scope=skills|all` or `axis=value-per-token`, audit each discovered local skill root independently; absent optional Codex Rig, Codemap, or Bridge root is `not-configured`, never cross-plugin dependency or failure.
 
-Measure with matched provider-native token counts; else local `tiktoken` with `o200k_base`; else deterministic UTF-8 bytes and words. Do not install tokenizer or use network access. Counts are cost evidence, never quality evidence; proxy-only comparison cannot accept candidate and remains `insufficient-evidence`.
+Measure with matched provider-native token counts; else local `tiktoken` with `o200k_base`; else deterministic UTF-8 bytes and words. Never install tokenizer or use network access. Counts are cost evidence, never quality evidence; proxy-only comparison cannot accept candidate, remains `insufficient-evidence`.
 
-For each baseline/candidate pair, use same file set and record hashes, measurement source, static cost, loaded referenced instructions, conditional-load decisions, and cost of every reference required by exercised path. A moved instruction is not saving when same run must load it. Map every baseline obligation to its candidate location and evidence, covering safety, ordering, user approval, output/schema, fail-fast, tool-permission, and quality-gate requirements.
+For each baseline/candidate pair, use same file set and record hashes, measurement source, static cost, loaded referenced instructions, conditional-load decisions, cost of every reference required by exercised path. A moved instruction is not saving when same run must load it. Map every baseline obligation to its candidate location and evidence, covering safety, ordering, user approval, output/schema, fail-fast, tool-permission, quality-gate requirements.
 
-Value Guards must record exact package/tests, behavioral and calibration results, contract-marker coverage, tool/check failures, and completion quality. A live comparison must use paired tasks with same model, effort, task contract, and prompt identity; record native token/cost fields and confidence limits. Treat missing paired live evidence as `insufficient-evidence` for material behavior claim.
+Value Guards must record exact package/tests, behavioral and calibration results, contract-marker coverage, tool/check failures, completion quality. A live comparison must use paired tasks with same model, effort, task contract, and prompt identity; record native token/cost fields and confidence limits. Treat missing paired live evidence as `insufficient-evidence` for material behavior claim.
 
-Any candidate that removes, moves, or condenses obligations requires adversarial review of obligation map. Accept only when all hard guards pass, no critical behavior regresses, tool/check failures do not increase, and normalized cost falls by `min_cost_reduction`; otherwise reject or mark insufficient evidence. A shorter candidate fails when it loses obligation, weakens guard, hides loaded-reference cost, or lacks required evidence. Value-per-token scores may rank already accepted candidates but never override hard gates.
+Any candidate that removes, moves, or condenses obligations requires adversarial review of obligation map. Accept only when all hard guards pass, no critical behavior regresses, tool/check failures don't increase, normalized cost falls by `min_cost_reduction`; otherwise reject or mark insufficient evidence. A shorter candidate fails when it loses obligation, weakens guard, hides loaded-reference cost, or lacks required evidence. Value-per-token scores may rank already accepted candidates but never override hard gates.
 
 ### 05: Route specialists only when triggered
 
-For `scope=all`, `mode=adversarial`, audits crossing skills, agents, CI/config, or material prompt compression, read and apply `../../shared/specialist-orchestration.md`; do not load it for narrow single-surface audit. Write `<run-directory>/specialist-audit-plan.md` packs for:
+For `scope=all`, `mode=adversarial`, audits crossing skills, agents, CI/config, or material prompt compression, read, apply `../../shared/specialist-orchestration.md`; never load it for narrow single-surface audit. Write `<run-directory>/specialist-audit-plan.md` packs for:
 
 - `curator`: skill/agent/config drift, duplication, calibration hygiene.
 - `linting-expert`: Markdown, Python, shell, ruff/mypy/pre-commit references.
@@ -96,7 +96,7 @@ For material prompt compression, `challenger` must independently inspect obligat
 
 ### 06: Run shared quality gates
 
-Follow `../../shared/helper-cli-contract.md` and `python PLUGIN_ROOT/shared/run_gates.py --help`. Use project-configured lint, format, type, and test commands for discovered surfaces, explicit reasons for inapplicable gates, and clean diff review.
+Follow `../../shared/helper-cli-contract.md` and `python PLUGIN_ROOT/shared/run_gates.py --help`. Use project-configured lint, format, type, test commands for discovered surfaces, explicit reasons for inapplicable gates, clean diff review.
 
 ### 07: Detect drift and broken references
 

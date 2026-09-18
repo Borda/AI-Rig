@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.2
+
+- Compress skill and shared-contract prose to the ultra-caveman tier; behavior, test-pinned contract sentences, role definitions, and structural literals are unchanged.
+
 ## 0.20.1
 
 - Track embedded suggestions in collapsed review bodies individually across review and remediation, preserving parent provenance, separate source identities, advertised-count reconciliation, and per-finding dispositions.

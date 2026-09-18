@@ -2,7 +2,7 @@
 
 ## Premise Grounding Gate
 
-Every assumption, hypothesis, constraint claim, or stated fact used as **pillar for next step must be grounded in evidence** read now — from source. Gate fires before any design, implementation, plan generation, or hypothesis presentation.
+Every assumption, hypothesis, constraint claim, or stated fact used as **pillar for next step must be grounded in evidence** read now — from source. Gate fires before any design, implementation, plan generation, hypothesis presentation.
 
 **Scan [SCAN_SOURCE] for ungrounded premises** — any of:
 
@@ -22,11 +22,11 @@ For each premise found:
    - (c) Run experimental validation (write minimal test/script that proves or refutes it)
    - (d) Accept as unverified risk and proceed
 
-Do not build on any premise failing step 3. Memory or training knowledge never evidence — [CONSEQUENCE] if premise false.
+Never build on a premise failing step 3. Memory or training knowledge never evidence — [CONSEQUENCE] if premise false.
 
 ## Evidence Authority
 
-Not all sources equal. Weak sources require corroboration or experimental confirmation before a premise based on them treated as fact.
+Not all sources equal. Weak sources need corroboration or experimental confirmation before a premise based on them is treated as fact.
 
 **Tier 1 — Authoritative (sufficient alone)**
 
@@ -47,14 +47,14 @@ Not all sources equal. Weak sources require corroboration or experimental confir
 
 When only Tier 2 sources available: find ≥3 genuinely independent corroborating sources, OR write minimal experiment (script, test, REPL invocation) empirically confirming or refuting premise. Document which path taken.
 
-**Independence requirement**: sources independent only when derived from different authors and different primary research. N posts all referencing same blog post = 1 source, not N. Count distinct origin nodes, not surface citations.
+**Independence requirement**: sources independent only when derived from different authors, different primary research. N posts all referencing same blog post = 1 source, not N. Count distinct origin nodes, not surface citations.
 
 **Citation tracing — mandatory before counting sources**:
 
 1. For each Tier 2 source: follow its citations one level deep
 2. Map: `source → cites → origin`
 3. Singleton detection: sources sharing an origin → merge into one; count distinct origins only
-4. Tier upgrade: if tracing reveals a Tier 1 source (official doc, spec, changelog) cited by a Tier 2 source but not found directly — read it; if it confirms claim, premise becomes Tier 1 verified (sufficient alone)
+4. Tier upgrade: tracing reveals a Tier 1 source (official doc, spec, changelog) cited by a Tier 2 source but not found directly → read it; confirms claim → premise becomes Tier 1 verified (sufficient alone)
 5. After tracing, distinct-origin count < 3 and no Tier 1 found → require experimental validation
 
 ### Skill contexts (substitute when calling this protocol)

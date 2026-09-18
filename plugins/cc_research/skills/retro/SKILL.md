@@ -172,10 +172,10 @@ IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/retro-run-dir-${CSID}" 2>/dev/null || RU
 IFS= read -r RUN_ID_ARG < "${TMPDIR:-/tmp}/retro-run-id-${CSID}" 2>/dev/null || RUN_ID_ARG=""
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}" 2>/dev/null || RUN_ID=""
 IFS= read -r RETRO_JSONL < "${TMPDIR:-/tmp}/retro-jsonl-path-${CSID}" 2>/dev/null || RETRO_JSONL=".experiments/state/$RUN_ID/experiments-clean.jsonl"
-# T-C1: separate guards — `|| ... &&` has subtle precedence. `exit 1` terminates the Bash
+# T-C1: separate guards — `|| ... &&` has subtle precedence. `exit 1` terminates Bash
 # subprocess only — orchestrator must treat non-zero exit as hard stop, not proceed to T4.
-# One call reports both missing values; a trailing `[ -z ] && { …; }` guard would also
-# leave the block's exit status at 1 whenever the value IS present (T-C1).
+# One call reports both missing values; trailing `[ -z ] && { …; }` guard would leave
+# block exit status 1 even when value IS present (T-C1).
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/require-vars.py" "$RUN_DIR" "retro T3: RUN_DIR missing — T1 must run first" "$RUN_ID" "retro T3: RUN_ID missing — T1 must run first" || exit 1
 ```
 
@@ -215,14 +215,14 @@ Write to `$RUN_DIR/suspicious-jumps.json` via Write tool.
 
 ### Step T5: Scientist learning summary
 
-Pre-compute all file paths before spawning, and substitute the actual computed values for every `<RUN_DIR>`/`<path>` placeholder in the prompt below before constructing the Agent() call — an unsubstituted placeholder reaches the agent as literal text, output lands in a wrongly-named directory, and the post-call check reports a false timeout. Verify `$RUN_DIR/stats-results.json`, `$RUN_DIR/dead-iters.json`, `$RUN_DIR/suspicious-jumps.json` exist (T2–T4 must complete first).
+Pre-compute all file paths before spawning; substitute actual computed values for every `<RUN_DIR>`/`<path>` placeholder in prompt below before constructing Agent() call — unsubstituted placeholder reaches agent as literal text: output lands in wrongly-named directory, post-call check reports false timeout. Verify `$RUN_DIR/stats-results.json`, `$RUN_DIR/dead-iters.json`, `$RUN_DIR/suspicious-jumps.json` exist (T2–T4 must complete first).
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 Spawn `research:scientist` via `Agent(subagent_type="research:scientist", prompt="...")`:
 
 ```markdown
-Act as a research retrospective analyst.
+Act as research retrospective analyst.
 
 Read:
 - experiments-clean.jsonl at <RETRO_JSONL path — the sanitized copy written by T1; fall back to experiments.jsonl if clean copy absent> (full iteration history)
@@ -233,18 +233,18 @@ Read:
 
 Produce a retrospective analysis covering:
 
-1. **Strategy effectiveness**: which agent types (perf/code/ml/arch) had highest kept-rate and average delta? Rank them. Include per-agent iteration count, kept count, and mean delta.
+1. **Strategy effectiveness**: which agent types (perf/code/ml/arch) had highest kept-rate and average delta? Rank them. Include per-agent iteration count, kept count, mean delta.
 2. **Failure pattern analysis**: what approaches were repeatedly tried and reverted? Common failure modes? Group by pattern, not individual iteration.
 3. **Diminishing returns**: at which iteration did improvement rate drop below 0.5% per iteration? Was the stopping point appropriate?
-4. **Next hypotheses**: based on what worked and failed, generate 3–5 concrete next hypotheses. Write them as a hypotheses.jsonl-compatible file to <RUN_DIR>/hypotheses.jsonl — one JSON object per line with fields: hypothesis (str), rationale (str), confidence (float 0–1), expected_delta (str like "+2%"), priority (int 1=highest), source: "retro". Do NOT include feasible/blocker/codebase_mapping — feasibility annotation is optional in this context; /research:run treats absent feasibility fields as feasible:true. Note: full feasibility-annotation workflow is defined in research:scientist — see that agent for complete annotation spec.
+4. **Next hypotheses**: based on what worked and failed, generate 3–5 concrete next hypotheses. Write as hypotheses.jsonl-compatible file to <RUN_DIR>/hypotheses.jsonl — one JSON object per line, fields: hypothesis (str), rationale (str), confidence (float 0–1), expected_delta (str like "+2%"), priority (int 1=highest), source: "retro". Do NOT include feasible/blocker/codebase_mapping — feasibility annotation optional here; /research:run treats absent feasibility fields as feasible:true. Full feasibility-annotation workflow defined in research:scientist — see that agent for complete annotation spec.
 5. **Cross-run insights** (only if compare data present in stats-results.json): which run's strategy was more effective and why?
 
-Write full retrospective to <RUN_DIR>/retrospective.md using Write tool.
+Write full retrospective to <RUN_DIR>/retrospective.md via Write tool.
 Include ## Confidence block per quality-gates rules.
 Return ONLY: {"status":"done","hypotheses":N,"file":"<RUN_DIR>/retrospective.md","confidence":0.N}
 ```
 
-**Health monitoring note** (CLAUDE.md §6): the research:scientist agent runs in the background — spawn, then end the turn; no filler call, no "waiting" line, no sleep. If the completion notification arrives with no output file, or nothing appears for >15 min, treat as timed out.
+**Health monitoring note** (CLAUDE.md §6): research:scientist agent runs in background — spawn, then end turn; no filler call, no "waiting" line, no sleep. If completion notification arrives with no output file, or nothing appears for >15 min, treat as timed out.
 
 **Post-call timeout check**: after Agent() returns, verify:
 
@@ -375,7 +375,7 @@ If `scientist_status == "timed_out"` or `<RUN_DIR>/hypotheses.jsonl` does not ex
 
 - Retro read-only — never modifies code, commits, or writes to `.experiments/state/<run-id>/`
 - `.experiments/retro-<timestamp>/` stores analysis scripts, intermediate JSON, scientist output, hypotheses.jsonl
-- Retro run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (exempt per `.claude/rules/foundry-artifact-lifecycle.md` — no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/retro-*/`)
+- Retro run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/retro-*/`)
 - `hypotheses.jsonl` uses `source: "retro"` — compatible with `--hypothesis` flag of `/research:run`; `"retro"` extends oracle schema (see `protocol.md`); feasibility fields omitted, treated as feasible:true by run
 - `--compare` requires both runs use same metric; if metric names differ, stop: `"Cannot compare runs with different metrics: <metric-1> vs <metric-2>"`
 - Dead iteration threshold (`--threshold`) should match metric's noise floor — default 0.001 for normalized metrics; adjust for raw values (e.g. `--threshold 0.1` for loss in hundreds)

@@ -5,7 +5,7 @@ paths:
   - '**/test_*.py'
 ---
 
-> **Precedence — the rule closer to the code wins.** These are plugin-level defaults. Where a project states its own convention that conflicts with anything here — in its `CLAUDE.md`, its own `rules/`, a linter/formatter config it enforces, or a consistent established style in the surrounding code — the project's convention wins. Follow it and do not "correct" the codebase toward this file. Apply these rules only where the project is silent. When a project convention looks like an oversight rather than a decision, say so once and still follow the project.
+> **Precedence — the rule closer to the code wins.** These are plugin-level defaults. Where a project states its own convention that conflicts with anything here — in its `CLAUDE.md`, its own `rules/`, a linter/formatter config it enforces, or a consistent established style in the surrounding code — the project's convention wins. Follow it, don't "correct" the codebase toward this file. Apply these rules only where the project is silent. Project convention looks like an oversight rather than a decision → say so once, still follow the project.
 
 ## Adding Tests — Process
 
@@ -46,7 +46,7 @@ class TestParseArgs:                  # subject stated once
 
 ## Test Selection — Markers
 
-Markers exist so a suite can be sliced by what a test *requires*, not by what it is called or where it lives. The vocabulary itself is per-project; the discipline below is not.
+Markers exist so a suite can be sliced by what a test *requires*, not by what it's called or where it lives. The vocabulary itself is per-project; the discipline below is not.
 
 - Choose **semantic** markers describing a behavioral contract or an execution requirement — real component interaction, build/install contract, need for live external services or credentials.
 - **Classify by contract, never by duration.** A marker is not a speed tier; use CI duration reports to investigate slow tests instead.
@@ -121,7 +121,7 @@ def test_x(mock_fetch): ...
 
 ## Fixtures
 
-Repetitive setup goes in a fixture, not the test body — the body should read as Act + Assert, with Arrange reduced to naming what it needs. Same input built in 2+ tests ⇒ fixture.
+Repetitive setup goes in a fixture, not the test body — the body should read as Act + Assert, with Arrange reduced to naming what it needs. Same input built in 2+ tests → fixture.
 
 ```python
 @pytest.fixture

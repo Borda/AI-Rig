@@ -2,7 +2,7 @@
 
 <!-- file: executables.md — consumers: distill/SKILL.md -->
 
-Triggered when the first normalized argument token is `executables`. Reads latest `/audit --efficiency` Check 33 reports if present; runs bin/ extraction scan inline otherwise. Then gates, extracts with user confirmation, re-audits changed files.
+Triggered when first normalized argument token is `executables`. Reads latest `/audit --efficiency` Check 33 reports if present; runs bin/ extraction scan inline otherwise. Then gates, extracts with user confirmation, re-audits changed files.
 
 ## Step E1: Locate or run scan
 
@@ -35,30 +35,30 @@ echo "Check 33 files: ${#CHECK33_FILES[@]} (from ${LATEST_RUN:-$EXEC_ARGS})"
 
 **If `CHECK33_FILES` non-empty**: proceed to Step E2 using those files.
 
-**If `CHECK33_FILES` empty** (no prior `/audit --efficiency` run): print `[→ No efficiency report found — running bin/ extraction scan]` and execute scan inline:
+**If `CHECK33_FILES` empty** (no prior `/audit --efficiency` run): print `[→ No efficiency report found — running bin/ extraction scan]`, execute scan inline:
 
-Determine LOCAL_MODE-aware scan path and extract code blocks:
+Determine LOCAL_MODE-aware scan path, extract code blocks:
 
 ```bash
 [ -d "plugins/" ] && _SCAN_DIR="plugins/" || _SCAN_DIR=".claude/"  # timeout: 3000
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks.jsonl"  # timeout: 30000
 ```
 
-Spawn **foundry:curator** per plugin directory found under `$_SCAN_DIR` (one spawn per plugin, all in parallel — issue all in a single response). Pass curator relevant slice of `$RUN_DIR/blocks.jsonl` (filter lines where `"file"` prefix matches plugin dir). Each spawn prompt:
+Spawn **foundry:curator** per plugin directory found under `$_SCAN_DIR` (one spawn per plugin, all parallel — issue all in a single response). Pass curator relevant slice of `$RUN_DIR/blocks.jsonl` (filter lines where `"file"` prefix matches plugin dir). Each spawn prompt:
 
 > Use the attached block JSONL (pre-extracted via extract_code_blocks.py — each line is `{"file":..., "lang_marker":..., "line_start":..., "token_estimate":..., "content":...}`). Follow the full Check 33 Phase B2 protocol from `audit/modes/efficiency.md` exactly: assign block IDs, write purpose statements, build purpose clusters, compute syntactic similarity, produce Table 1 (purpose clusters) and Table 2 (extraction scoring). Write to `$RUN_DIR/efficiency-check33-<plugin>.md`. Return ONLY: `{"status":"done","file":"<path>","clusters":N,"findings":N,"severity":{"high":N,"medium":N,"low":N},"confidence":0.N}`
 
-After all spawns complete: update `CHECK33_FILES` to point to the new files in `$RUN_DIR`.
+After all spawns complete: update `CHECK33_FILES` to point to new files in `$RUN_DIR`.
 
-**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md`): the curator spawns run in the background. Issue them, end the turn, and resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing → mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
+**Health monitoring for scan spawns** (`_shared/agent-spawn-protocol.md`): curator spawns run in background. Issue them, end turn, resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that plugin's `$RUN_DIR/efficiency-check33-<plugin>.md`. Empty or missing: mark that plugin `timed_out`, surface with ⏱, continue with completed plugins' results.
 
 ## Step E2: Parse candidates
 
-For each file in `CHECK33_FILES`, read and extract clusters. Default: `Verdict = HIGH` or `Verdict = MEDIUM` only. With `--eager`: also include `Verdict = LOW` clusters. Build candidate list: cluster ID, files affected, language, block purpose, occurrence count, verdict, recommended extraction target, differs-by param slots.
+For each file in `CHECK33_FILES`, read, extract clusters. Default: `Verdict = HIGH` or `Verdict = MEDIUM` only. With `--eager`: also include `Verdict = LOW` clusters. Build candidate list: cluster ID, files affected, language, block purpose, occurrence count, verdict, recommended extraction target, differs-by param slots.
 
 Also include **prose compression candidates** — inline blocks where `tokens(block) > tokens(prose equivalent)` or bin/ call-site descriptions where `tokens(description) >= tokens(prose equivalent)`. Tag as `Verdict = PROSE` in candidate list. Exempt: examples, templates, exact-syntax blocks.
 
-If no qualifying clusters found: print `✓ No extraction candidates at current threshold.` End with `## Confidence` block and stop.
+No qualifying clusters found: print `✓ No extraction candidates at current threshold.` End with `## Confidence` block, stop.
 
 ## Step E3: Present candidates and gate
 
@@ -73,7 +73,7 @@ Bin/ extraction candidates:
 | C2      | prose | PROSE   | 1      | bash     | sets STALE var used only in prose conditions | replace with 2-row table |
 ```
 
-**Before-numbers** — capture the pre-extraction measurement now, so the summary in Step E6 can quote a real delta rather than an estimate:
+**Before-numbers** — capture pre-extraction measurement now, so Step E6 summary quotes a real delta rather than an estimate:
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-before.jsonl"  # timeout: 30000
@@ -92,9 +92,9 @@ Then call `AskUserQuestion` — do NOT write options as plain text first. Map op
 
 ## Step E4: Extract
 
-> **Worktree isolation caveat** — `foundry:sw-engineer` runs with `isolation: worktree`. File writes inside agent (including `$RUN_DIR/extract-<cluster-id>.md` summary) land in agent's worktree under `.claude/worktrees/<id>/`, NOT main working tree. After agent returns JSON envelope, orchestrator must either (a) read summary from returned worktree path declared in agent's stdout, or (b) cherry-pick / merge worktree branch before reading `$RUN_DIR/extract-<cluster-id>.md` from main tree. Path resolution: use absolute main-tree path `$(git rev-parse --show-toplevel)/$RUN_DIR/extract-<cluster-id>.md` in prompt so agent has unambiguous target; agent's worktree shares same path layout, merging worktree branch back deposits summary at same path in main tree.
+> **Worktree isolation caveat** — `foundry:sw-engineer` runs with `isolation: worktree`. File writes inside agent (including `$RUN_DIR/extract-<cluster-id>.md` summary) land in agent's worktree under `.claude/worktrees/<id>/`, NOT main working tree. After agent returns JSON envelope, orchestrator must either (a) read summary from returned worktree path declared in agent's stdout, or (b) cherry-pick/merge worktree branch before reading `$RUN_DIR/extract-<cluster-id>.md` from main tree. Path resolution: use absolute main-tree path `$(git rev-parse --show-toplevel)/$RUN_DIR/extract-<cluster-id>.md` in prompt so agent has unambiguous target; agent's worktree shares same path layout, merging worktree branch back deposits summary at same path in main tree.
 
-For each selected cluster, resolve `$_FS` path and spawn **foundry:sw-engineer** (one per cluster, all in parallel — issue all in a single response). Substitute absolute `$RUN_DIR` value into prompt before spawning (resolve via `$(git rev-parse --show-toplevel)/$RUN_DIR`):
+For each selected cluster, resolve `$_FS` path, spawn **foundry:sw-engineer** (one per cluster, all parallel — issue all in a single response). Substitute absolute `$RUN_DIR` value into prompt before spawning (resolve via `$(git rev-parse --show-toplevel)/$RUN_DIR`):
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -123,11 +123,11 @@ Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/extract-<cluster-id>.md\",
 ")
 ```
 
-**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): the sw-engineer spawns run in the background. Issue them, end the turn, and resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing → mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
+**Health monitoring for extraction spawns** (`_shared/agent-spawn-protocol.md`): sw-engineer spawns run in background. Issue them, end turn, resume on each completion notification — never a filler call, a "waiting" line, or a sleep. On each notification read that cluster's `$RUN_DIR/extract-<cluster-id>.md`. Empty or missing: mark that cluster `timed_out`, surface with ⏱, continue with completed clusters.
 
 ## Step E5: Re-audit changed files
 
-After all E4 agents complete, collect modified .md files from envelopes. Spawn **foundry:curator** per modified file (all parallel — issue all in a single response):
+After all E4 agents complete, collect modified .md files from envelopes. Spawn **foundry:curator** per modified file (all parallel — issue all in one response):
 
 ```text
 Agent(subagent_type="foundry:curator", prompt="Re-audit <file> after bin/ extraction. Check: (1) no inline block body remains — only bin/ invocation one-liner; (2) timeout annotation present on invocation line; (3) variable assignments consuming block output still correct; (4) no orphaned variable references; (5) run git diff HEAD -- <file> and flag any changed lines outside the target block — these are unauthorized side-edits; surface as high finding if found. Write findings to $RUN_DIR/reaudit-<slug>.md. Return ONLY: {\"status\":\"done\",\"file\":\"$RUN_DIR/reaudit-<slug>.md\",\"issues\":N,\"side_edits_detected\":bool,\"confidence\":0.N}")
@@ -135,22 +135,22 @@ Agent(subagent_type="foundry:curator", prompt="Re-audit <file> after bin/ extrac
 
 ## Step E6: Measure, review, commit
 
-**After-numbers** — re-run the same measurement and diff it against `blocks-before.jsonl` from Step E3, so the summary quotes a measured delta:
+**After-numbers** — re-run same measurement, diff against `blocks-before.jsonl` from Step E3, so summary quotes a measured delta:
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract_code_blocks.py" "$_SCAN_DIR" --min-tokens 5 > "$RUN_DIR/blocks-after.jsonl"  # timeout: 30000
 ```
 
-Block count stays roughly flat by design — an extraction replaces a block's body, it does not delete the block. Token estimate and the count of blocks over 25 lines are the numbers that move.
+Block count stays roughly flat by design — an extraction replaces a block's body, doesn't delete the block. Token estimate and count of blocks over 25 lines are the numbers that move.
 
-**Adversarial Convergence Loop** — before any commit, run the loop from `quality-gates.md` §Adversarial Convergence Loop over the combined diff: up to 3 `foundry:challenger` passes, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`, stop on `W_n == 0`, on a plateau (`0.5 < r_n < 1.0`), or immediately on `r_n ≥ 1.0`. Any open `security` or `critical` finding blocks the commit whatever the trend. On a stop with findings still open, report the score series and invoke `AskUserQuestion` instead of committing.
+**Adversarial Convergence Loop** — before any commit, run loop from `quality-gates.md` §Adversarial Convergence Loop over combined diff: up to 3 `foundry:challenger` passes, findings weighted `security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`, stop on `W_n == 0`, on plateau (`0.5 < r_n < 1.0`), or immediately on `r_n ≥ 1.0`. Any open `security` or `critical` finding blocks the commit whatever the trend. On a stop with findings still open, report score series, invoke `AskUserQuestion` instead of committing.
 
-**Commit grouping** — two commits, never one. Extraction and policy are different kinds of change and reviewers read them differently:
+**Commit grouping** — two commits, never one. Extraction and policy are different kinds of change; reviewers read them differently:
 
 1. The scripts, their tests, and the replaced call sites.
-2. Any change to the extraction rules themselves — this mode file, the Check 33 gate spec, the severity table.
+2. Any change to the extraction rules themselves — this mode file, Check 33 gate spec, severity table.
 
-Each touched plugin bumps its own `plugin.json` `Y` in the commit that touches it, baseline read via `git show HEAD:<plugin-path>/.claude-plugin/plugin.json`. Sync each plugin's `README.md` in the same commit when a `bin/` table or a listed invocation changed.
+Each touched plugin bumps its own `plugin.json` `Y` in the commit that touches it, baseline read via `git show HEAD:<plugin-path>/.claude-plugin/plugin.json`. Sync each plugin's `README.md` in same commit when a `bin/` table or listed invocation changed.
 
 Print:
 
@@ -164,6 +164,6 @@ Extraction complete — <date>
   Convergence: W_0 → W_1 → W_2 (<verdict>)
 ```
 
-Remind: run `/foundry:setup` to propagate bin/ scripts to `~/.claude/` plugin cache. Then run `/audit --efficiency` to confirm `clusters == 0`.
+Remind: run `/foundry:setup` to propagate bin/ scripts to `~/.claude/` plugin cache, then `/audit --efficiency` to confirm `clusters == 0`.
 
 End response with `## Confidence` block per CLAUDE.md output standards.

@@ -2,13 +2,13 @@
 
 # Codemap context contract — v3
 
-Plugin-agnostic structural-context contract. Consumer plugins read their own byte-identical manifested copies, synchronized from this canonical source. Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers are maintained here.
+Plugin-agnostic structural-context contract. Consumers read byte-identical manifested copies, synced from this canonical source. Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers stay maintained here.
 
-> Contract version `v3` is the context-contract doc version — bump it when the query set or evidence contract changes. The provider→consumer wiring uses the `codemap-py.integration.v2` managed-block body with a `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
+> `v3` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
 
 ## Target derivation — pluggable (consumer supplies)
 
-`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), and `CODEMAP_QUERY_KIND` are **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL sets them from `$ARGUMENTS`, review diff, or finding before reading this file. `CODEMAP_QUERY_KIND=skip` is the executable zero-query route for a fully localized edit. The safe adaptive vocabulary is `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, and `standard`; an unset or unknown value preserves the legacy `standard` batch.
+`TARGET_MODULE` (dotted), `TARGET_FN` (bare name), `CODEMAP_QUERY_KIND` = **consumer-supplied inputs** — contract doesn't derive them. Consumer wrapper/SKILL sets them from `$ARGUMENTS`, review diff, or finding before reading this file. `CODEMAP_QUERY_KIND=skip` = executable zero-query route for a fully localized edit. Safe adaptive vocabulary: `skip`, `central`, `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, `standard`; unset/unknown value preserves legacy `standard` batch.
 
 - explicit `module.path` or `module.path::function` in args → split into `TARGET_MODULE` / `TARGET_FN`
 - module-only known → set `TARGET_MODULE`, leave `TARGET_FN` empty
@@ -30,7 +30,7 @@ Normalize file path to dotted module: strip leading `./` and `src/`, strip trail
 
 ## Batch pre-flight pattern
 
-Reference bash for single-target run. Consumers may inline it or call plugin-local batch producer; completeness/evidence logic below invariant.
+Reference bash, single-target run. Consumers inline it or call plugin-local batch producer; completeness/evidence logic below stays invariant.
 
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || _ROOT="$PWD"
@@ -92,7 +92,7 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
 fi
 ```
 
-> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for the full map. `scan-query` not found or index missing → the pre-flight emits nothing, callers fall back to normal exploration path.
+> Consumer wrappers run this batch pattern (or a shorter inline variant — `central --top 3` + one derived query — for quick tasks), pointing here for full map. `scan-query` not found or index missing → pre-flight emits nothing, callers fall back to normal exploration path.
 
 ## Evidence-line contract
 
@@ -137,9 +137,9 @@ When `method=index-lookup` + `confidence=exact`: result authoritative, skip veri
 
 Scale query set to task blast-radius; more queries cost more tokens.
 
-Set `CODEMAP_QUERY_KIND=skip` and skip Codemap when an exact file and symbol are supplied for a localized edit and no caller, dependency, blast-radius, test-impact, or coupling fact remains unresolved. An explicit structural query or tool requirement overrides this skip; otherwise set the kind for the smallest complete query.
+Set `CODEMAP_QUERY_KIND=skip`, skip Codemap when exact file+symbol supplied for a localized edit and no caller, dependency, blast-radius, test-impact, or coupling fact remains unresolved. Explicit structural query or tool requirement overrides this skip; otherwise set kind for smallest complete query.
 
-- **quick** (one unresolved structural fact): run only `central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling` as matches that fact. Do not add centrality or a transitive walk by default.
+- **quick** (one unresolved structural fact): run only `central`, `callers`, `blast`, `dependencies`, `test-impact`, or `coupling` matching that fact. Do not add centrality or transitive walk by default.
 - **standard** (feature/fix touching one module): add `fn-blast` + `symbol --with-imports`; add wrapper's per-agent dimensions.
 - **deep** (multi-module / public-API change): run per-affected-module reverse-dependency batch (below), tier blast radius.
 
@@ -157,7 +157,7 @@ Risk tier by `rdep_count`:
 
 ## Targeted-edit pattern (known symbol, large file)
 
-Known symbol + file >~300 lines: `symbol <mod::name>` → take line span → `Read(offset=span_start−10, limit=span_len+20)` → Edit. Slice Read suffices — Edit needs only slice containing target, not whole file. Spans come from index; file changed since scan → spans may drift (self-heal usually covers it). Edit errors "Found N matches" (`old_string` not file-wide unique) or no-match (drifted) → full `Read`, then Edit with larger unique `old_string`.
+Known symbol + file >~300 lines: `symbol <mod::name>` → take line span → `Read(offset=span_start−10, limit=span_len+20)` → Edit. Slice Read suffices — Edit needs only target's slice, not whole file. Spans come from index; file changed since scan → spans may drift (self-heal usually covers it). Edit errors "Found N matches" (`old_string` not file-wide unique) or no-match (drifted) → full `Read`, then Edit with larger unique `old_string`.
 
 ## Result-prepend contract
 

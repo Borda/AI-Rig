@@ -6,20 +6,20 @@
 
 > **Codex integration: disabled.** Problem gen + scoring Claude-only. Routing tests orchestrator dispatch logic — scoring deterministic binary match (`selected == expected`). Codex lacks agent system internals context for realistic routing problems.
 
-Routing accuracy test: measures how accurately `general-purpose` orchestrator picks correct `subagent_type` for synthetic task prompts. Not per-agent quality benchmark; included in `all`. Use explicit `routing` target for isolation.
+Routing accuracy test: measures how accurately `general-purpose` orchestrator picks correct `subagent_type` for synthetic task prompts. Not per-agent quality benchmark; included in `all`. Use explicit `routing` target to isolate.
 
 Thresholds (from SKILL.md constants): `ROUTING_ACCURACY_THRESHOLD=0.90`, `ROUTING_HARD_THRESHOLD=0.80`.
 
 ### Step 2: Spawn routing pipeline subagent
 
-Mark "Calibrate routing" in_progress. Load the routing pipeline template via `cat` (not the Read tool — `Bash(cat:*)` grant is version-proof):
+Mark "Calibrate routing" in_progress. Load routing pipeline template via `cat` (not Read tool — `Bash(cat:*)` grant version-proof):
 
 ```bash
 CALIB_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate templates 2>/dev/null || echo "plugins/cc_foundry/skills/calibrate/templates")  # timeout: 5000
 cat "$CALIB_TPL/routing-pipeline-prompt.md"  # timeout: 5000
 ```
 
-Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`. Spawn **single** `general-purpose` pipeline subagent with substituted template — handles all phases internally. Proceed to Step 3 after spawn.
+Substitute `<N>` (5 fast, 10 full), `<TIMESTAMP>`, `<MODE>`. Spawn **single** `general-purpose` pipeline subagent with substituted template — handles all phases internally. Proceed to Step 3.
 
 Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
@@ -39,10 +39,10 @@ When target is `routing`, replace standard combined report table with:
 
 Flag routing accuracy < 0.90 or hard accuracy < 0.80 with ⚠. Print confused pair details from routing report's Confused Pairs section. Mark "Calibrate routing" completed.
 
-Verdict `incomplete` (empty agent roster — pipeline Phase 1 hard stop): omit the table entirely and print `⚠ routing — no agent roster resolved; accuracy not measured`. Never substitute a number for an unmeasured run.
+Verdict `incomplete` (empty agent roster — pipeline Phase 1 hard stop): omit table, print `⚠ routing — no agent roster resolved; accuracy not measured`. Never substitute a number for an unmeasured run.
 
 ### Follow-up chain
 
-Routing accuracy < 0.90 or hard accuracy < 0.80 → update descriptions for confused pairs → `/calibrate routing` to verify. Max 3 re-run cycles; still below threshold after third → surface persistent confusion pairs to user for manual review.
+Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs, then `/calibrate routing` to verify. Max 3 re-run cycles; still below threshold after third: surface persistent confusion pairs to user for manual review.
 
 Proposals written to: `.reports/calibrate/<TIMESTAMP>/routing/benchmark-report.md` — Proposals section has targeted wording per confused pair.

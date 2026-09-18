@@ -2,7 +2,7 @@
 
 ## Modality-specific sample display — dispatch by `input_modality`
 
-Use this dispatch wherever samples need showing (EDA Section 3, training sanity check, inference spot check). Pick matching branch; each is self-contained set of cells.
+Use wherever samples need showing (EDA Section 3, training sanity check, inference spot check). Pick matching branch; each is self-contained cell set.
 
 ## Contents
 

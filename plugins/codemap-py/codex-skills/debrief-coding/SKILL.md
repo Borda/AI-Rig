@@ -7,13 +7,13 @@ description: 'Telemetry report: `$codemap-py:debrief-coding [flags]`; skip integ
 
 # Debrief Coding
 
-Read `.cache/codemap/logs/` JSONL, analyse use, and write a diagnostic report. Include recursive `claude/`, `codex/`, and `direct/` shards; keep legacy flat records unattributed. Codex records runtime-scoped CLI/tool shards but no skill starts, so missing skill telemetry and cross-layer joins are evidence gaps.
+Read `.cache/codemap/logs/` JSONL, analyse use, write diagnostic report. Include recursive `claude/`, `codex/`, `direct/` shards; keep legacy flat records unattributed. Codex records runtime-scoped CLI/tool shards, no skill starts; missing skill telemetry + cross-layer joins are evidence gaps.
 
 NOT for: installation/integration health (use `$codemap-py:integration audit`); index build or structural query (use `$codemap-py:scan-codebase` or `$codemap-py:query-code`).
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed root once, substitute it for `PLUGIN_ROOT`, and retain it in reasoning; shell state does not persist. Telemetry otherwise matches Claude: local JSONL under `.cache/codemap/logs/`.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute for `PLUGIN_ROOT`, retain in reasoning; shell state doesn't persist. Telemetry otherwise matches Claude: local JSONL under `.cache/codemap/logs/`.
 
 ## Flags
 
@@ -30,7 +30,7 @@ Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed ro
 find .cache/codemap/logs -type f -name '*.jsonl' -print 2>/dev/null
 ```
 
-No files: stop: "No codemap telemetry found. Run any `$codemap-py:*` skill or `codemap-py query`/`index` command to start collecting logs." Collect every matching shard recursively; `cli_<session>.jsonl`, `skills_<session>.jsonl`, and `tools_<session>.jsonl` live below each runtime directory. Flat shards remain unattributed; never infer Claude from tool names. `token_measurement` is unavailable because host hooks expose no token usage.
+No files: stop: "No codemap telemetry found. Run any `$codemap-py:*` skill or `codemap-py query`/`index` command to start collecting logs." Collect every matching shard recursively; `cli_<session>.jsonl`, `skills_<session>.jsonl`, `tools_<session>.jsonl` live below each runtime directory. Flat shards remain unattributed; never infer Claude from tool names. `token_measurement` unavailable — host hooks expose no token usage.
 
 ### 2. Anonymize when requested
 
@@ -38,11 +38,11 @@ No files: stop: "No codemap telemetry found. Run any `$codemap-py:*` skill or `c
 python PLUGIN_ROOT/bin/anonymize.py --input .cache/codemap/logs --out-dir .cache/codemap/export
 ```
 
-Use only anonymized copies after this step; never mix with raw data. They are separated from `.salt`; never target the log directory. With no shard, stop: "no CLI or skill logs found — cannot produce an anonymized report." With one layer, anonymize it and report the gap.
+Use only anonymized copies after this step; never mix with raw data. Separated from `.salt`; never target log directory. With no shard, stop: "no CLI or skill logs found — cannot produce an anonymized report." With one layer, anonymize it, report the gap.
 
 ### 3. Read and filter records
 
-Read every CLI, skill, and tool shard recursively; one file is incomplete. Each line is JSON. Filter `ts` by `--since` and `session` by `--session`; an empty filter in one layer is expected because a UUID can be absent there.
+Read every CLI, skill, tool shard recursively; one file is incomplete. Each line is JSON. Filter `ts` by `--since`, `session` by `--session`; empty filter in one layer is expected — UUID can be absent there.
 
 - CLI: `ts`, `layer`, `runtime`, `v`, `session`, `cmd`, `argv`, `result` (`count`, `query_complete`, `completeness_reason`, `stale`, `method`, `not_covered`, `error`; index also `trigger`, `changed_count`, `incremental`, `stale_before`, `result_currency`), `timing_ms`, optional `stderr`/`exit_code`.
 - Skill: `ts`, `layer`, `runtime`, `v`, `session`, `skill`, `event`, `intent`, `hook_session`.
@@ -50,7 +50,7 @@ Read every CLI, skill, and tool shard recursively; one file is incomplete. Each 
 
 ### 4. Analyse
 
-Exclude `source: "bench"` and CLI records with empty `cmd` from organic stats; report their count as "scripted/polluted records excluded: N". When present, group headline statistics by distinct `v`, overall, runtime, and unattributed legacy records.
+Exclude `source: "bench"` and CLI records with empty `cmd` from organic stats; report count as "scripted/polluted records excluded: N". When present, group headline statistics by distinct `v`, overall, runtime, unattributed legacy records.
 
 - CLI: invocations; success/error (`exit_code: 0` success; non-zero error; absent success unless `result.error`); completeness reasons; subcommands; median/p95/max `timing_ms`; non-empty `not_covered` fraction; top five error prefixes; stale fraction.
 - Skill: starts by name, sessions, first/last timestamp.
@@ -62,7 +62,7 @@ Join tool searches/reads to a complete (`query_complete: true`) CLI answer for t
 python PLUGIN_ROOT/bin/join_avoidance.py --logs .cache/codemap/logs --window-min 10 --json
 ```
 
-High avoidance means guard/context/model dead-chain risk. Preserve `per_runtime` and `unattributed`; report count/rate in Overview and flagged modules when non-zero. Do not claim measured token savings or live fresh-session activation.
+High avoidance means guard/context/model dead-chain risk. Preserve `per_runtime` and `unattributed`; report count/rate in Overview and flagged modules when non-zero. Never claim measured token savings or live fresh-session activation.
 
 ### 5. Write report
 

@@ -30,13 +30,13 @@ Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state
 
 ### Spawn slots — three fields, no repeats
 
-**The principle: a label's only job is to distinguish this row from its siblings.** Text repeated on every row of a batch carries zero information no matter how true or well-written it is — the reader already knows it, and it consumes the same display budget as text that would have told them something. A rendered row has room for one line; every character of shared text spends that room on nothing and pushes the distinguishing text past the truncation.
+**The principle: a label's only job is to distinguish this row from its siblings.** Text repeated on every row of a batch carries zero information no matter how true or well-written — the reader already knows it, and it consumes the same display budget as text that would tell them something. A rendered row has room for one line; every character of shared text spends that room on nothing, pushes the distinguishing text past the truncation.
 
-This is a property of the batch, not of any single spawn. The same string can be the perfect label for one agent and worthless for five, and nothing visible in one spawn's own arguments reveals which case it is. So the test is never "is this label accurate?" — it is "does this label differ from what the other rows will print?". Enumerated cases below (PR, repo, verb, role word) are the recurring instances, not the rule: anything shared is waste, including shared text these examples never name.
+This is a property of the batch, not of any single spawn. The same string can be the perfect label for one agent and worthless for five, and nothing in one spawn's own arguments reveals which case it is. So the test is never "is this label accurate?" — it's "does this label differ from what the other rows will print?". Enumerated cases below (PR, repo, verb, role word) are recurring instances, not the rule: anything shared is waste, including shared text these examples never name.
 
 `Agent()` takes three label-bearing slots: `name`, `description`, prompt line 1. Each holds different content. Filling all three from one string wastes two of them.
 
-**The rendered label is prompt line 1, not `description`.** Observed in a real FleetView pane: each row printed `name` plus the leading chars of prompt line 1; the `description` strings set on those same spawns (`arch + SOLID audit`, `coverage + OWASP scan`) did not appear in that pane at all. Treat prompt line 1 as the slot the user actually reads and the one truncation cuts. `description` may surface in other views — keep it correct — but never rely on it to differentiate rows.
+**The rendered label is prompt line 1, not `description`.** Observed in a real FleetView pane: each row printed `name` plus the leading chars of prompt line 1; the `description` strings set on those same spawns (`arch + SOLID audit`, `coverage + OWASP scan`) didn't appear in that pane at all. Treat prompt line 1 as the slot the user actually reads, the one truncation cuts. `description` may surface in other views — keep it correct — but never rely on it to differentiate rows.
 
 | Slot | Role | Carries | Cap |
 | -- | -- | -- | -- |
@@ -46,15 +46,15 @@ This is a property of the batch, not of any single spawn. The same string can be
 
 `name` necessarily encodes the delta — it must be unique. `description` shares that stem and expands it; it never merely restates it.
 
-Order every slot **delta-first**: whatever differs across this batch — dimension, directory, module, plugin, task ID, issue number. FleetView truncates the tail, never the head, so a batch differing only past the cut has no labels at all. Never buy room by dropping the delta. One spawn in the batch → nothing is shared, so the target *is* the delta and leads every slot.
+Order every slot **delta-first**: whatever differs across this batch — dimension, directory, module, plugin, task ID, issue number. FleetView truncates the tail, never the head, so a batch differing only past the cut has no labels at all. Never buy room by dropping the delta. One spawn in the batch → nothing is shared, so the target *is* the delta, leads every slot.
 
-**Compose the batch's labels in one pass, never one spawn at a time.** A per-spawn author cannot see what its siblings will say, so each one independently reaches for the same framing and the batch converges on an identical prefix. Write all `name`/`description`/prompt-line-1 triples together, before issuing any `Agent()` call, in three steps:
+**Compose the batch's labels in one pass, never one spawn at a time.** A per-spawn author can't see what its siblings will say, so each one independently reaches for the same framing and the batch converges on an identical prefix. Write all `name`/`description`/prompt-line-1 triples together, before issuing any `Agent()` call, in three steps:
 
 1. **Name the shared context once** — the PR, repo, branch, run, role word, and verb that every row in this batch would carry.
 2. **Strike it from every label.** It belongs in the prompt body, which each agent reads in full; it never belongs in a slot that gets truncated.
 3. **Keep only the delta** — the dimension, module, directory, finding ID, or issue number that answers "which of these rows is this one?". Read the finished triples as a column, top to bottom: if two rows share their opening words, the strike in step 2 was incomplete.
 
-**Pre-spawn check** (mandatory, cheap, on the composed batch): read the three strings of every spawn side by side. Three fail conditions — `description` adds nothing `name` did not already say; any slot carries a value every sibling also carries (the PR, the repo, the role word); or prompt line 1 opens with anything shared across the batch, including the verb. Any of them → rewrite before spawning.
+**Pre-spawn check** (mandatory, cheap, on the composed batch): read the three strings of every spawn side by side. Three fail conditions — `description` adds nothing `name` didn't already say; any slot carries a value every sibling also carries (the PR, the repo, the role word); or prompt line 1 opens with anything shared across the batch, including the verb. Any of them → rewrite before spawning.
 
 ```text
 ✗ name: review-sw-engineer  description: sw-engineer review — PR #1424 roboflow/rf-detr  prompt: First run Bash export CSID=…
@@ -64,7 +64,7 @@ Order every slot **delta-first**: whatever differs across this batch — dimensi
 
 The second line fails for the reason the first does, one slot over: `Review PR #1424 roboflow/rf-detr — ` is 34 chars every sibling row also prints, so the rendered column shows the same text on every row and the dimension falls past the cut.
 
-`description` is required — the tool rejects the call without it. Omitted `name` → harness assigns one and `SendMessage` cannot address that agent.
+`description` is required — the tool rejects the call without it. Omitted `name` → harness assigns one, `SendMessage` can't address that agent.
 
 Boilerplate (`Task tracking:`, `Compact Instructions:`, TEAM_PROTOCOL read, run-dir preamble, envelope spec) goes **after** prompt line 1 — including a preamble a template calls "prepend to every prompt". Task line still first.
 

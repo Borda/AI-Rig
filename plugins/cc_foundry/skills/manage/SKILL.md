@@ -37,7 +37,7 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 
 - `--skip-audit` — optional flag: skip Step 9 `/audit` validation (use inside `audit fix` loop to avoid recursion)
 
-- **Spec-file paths must be quoted** — `update <name> <spec-file.md>` requires the spec path quoted if it contains any whitespace (e.g. `update my-agent "docs/My Spec.md"`); unquoted paths with spaces split into multiple arguments and trigger argument-shape mismatch. Recommended: keep spec filenames free of spaces.
+- **Spec-file paths must be quoted** — `update <name> <spec-file.md>` requires spec path quoted if it contains any whitespace (e.g. `update my-agent "docs/My Spec.md"`); unquoted paths with spaces split into multiple arguments, trigger argument-shape mismatch. Recommended: keep spec filenames free of spaces.
 
 **Update/delete mode** — name looked up across agents, skills, rules automatically:
 
@@ -69,9 +69,9 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 - HOOKS_DIR: `.claude/hooks`
 - AVAILABLE_COLORS: indigo, lime, magenta, teal, violet
 
-Each Step 4 spawn applies the health monitoring in `_shared/agent-spawn-protocol.md` §8b — rely on the harness completion notification, then read the agent's output file; optional single `health_sentinel.py` probe per turn (no sleep loop). Substitute only its own `<ID>` suffix and output-file glob; do not re-paste the snippet per spawn.
+Each Step 4 spawn applies health monitoring in `_shared/agent-spawn-protocol.md` §8b — rely on harness completion notification, then read agent's output file; optional single `health_sentinel.py` probe per turn (no sleep loop). Substitute only its own `<ID>` suffix and output-file glob; don't re-paste the snippet per spawn.
 
-Colors in use are read from the live Grep in Step 3 (authoritative) — no static used-color list to maintain. AVAILABLE_COLORS is the candidate pool for a new agent; pick the first entry not already in the Step-3 set.
+Colors in use are read from live Grep in Step 3 (authoritative) — no static used-color list to maintain. AVAILABLE_COLORS is the candidate pool for a new agent; pick first entry not already in Step-3 set.
 
 </constants>
 
@@ -92,7 +92,7 @@ echo "$SKIP_AUDIT" > "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}"  # persist (Che
 echo "${TMPDIR:-/tmp}/manage-skip-audit-${CSID}" > "${TMPDIR:-/tmp}/manage-skip-audit-path-${CSID}"
 ```
 
-**Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--skip-audit`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--skip-audit`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Validation rules:**
 
@@ -118,9 +118,9 @@ Then run all four Glob checks in parallel:
 
 Results:
 
-- One non-empty result → resolved type; proceed
-- Multiple non-empty results → `AskUserQuestion`: "Multiple entities named `<name>` found. Which one? (a) agent (b) skill (c) rule (d) hook" — note: (d) hook valid for `update` and `delete` only; `create hook` not yet implemented (use Edit tool on `hooks/<name>.js` directly until create-hook mode added)
-- All empty → report "No agent, skill, rule, or hook named `<name>` found" and stop
+- One non-empty result: resolved type; proceed
+- Multiple non-empty results: `AskUserQuestion`: "Multiple entities named `<name>` found. Which one? (a) agent (b) skill (c) rule (d) hook" — note: (d) hook valid for `update` and `delete` only; `create hook` not yet implemented (use Edit tool on `hooks/<name>.js` directly until create-hook mode added)
+- All empty: report "No agent, skill, rule, or hook named `<name>` found", stop
 
 For `create`, check only relevant type's path.
 
@@ -130,7 +130,7 @@ For `create`, check only relevant type's path.
 jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/settings.json >/dev/null 2>&1  # timeout: 5000
 ```
 
-**Update second-argument discrimination** — apply after type resolved. Set shell variable `MODE` from the parsed operation; consumed by the delete confirmation gate above, the edit-complexity classifier below, and the per-mode workflow branches in Step 4. Recognised values: `create`, `rename`, `content-edit`, `delete`, `add-perm`, `remove-perm`.
+**Update second-argument discrimination** — apply after type resolved. Set shell variable `MODE` from parsed operation; consumed by delete confirmation gate above, edit-complexity classifier below, and per-mode workflow branches in Step 4. Recognised values: `create`, `rename`, `content-edit`, `delete`, `add-perm`, `remove-perm`.
 
 | Argument shape | `MODE` |
 | -- | -- |
@@ -142,13 +142,13 @@ jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/se
 | `add perm <rule> "..." "..."` | `add-perm` |
 | `remove perm <rule>` | `remove-perm` |
 
-Assign `MODE` in shell before the edit-complexity classification below so the `[[ "$MODE" == "content-edit" ]]` guard fires correctly:
+Assign `MODE` in shell before edit-complexity classification below so `[[ "$MODE" == "content-edit" ]]` guard fires correctly:
 
 ```bash
 # MODE="content-edit"   # or "rename" / "create" / "delete" / "add-perm" / "remove-perm"
 ```
 
-If validation fails, report error and stop.
+Validation fails: report error, stop.
 
 **Edit complexity classification** (content-edit mode only):
 
@@ -159,7 +159,7 @@ Classify `$DIRECTIVE` as **trivial** when ALL conditions hold:
 | Word count ≤ 10 | ✓ |
 | Matches pattern: `typo`, `spelling`, `rename X to Y`, `change X to Y`, `replace X with Y`, `fix (a/the)? (typo/bug/error)`, `add missing`, `remove [word]`, `correct` | ✓ |
 
-Both must hold — either failing → **substantive**. Trivial edits: apply inline with Edit tool — no agent spawn.
+Both must hold — either failing: **substantive**. Trivial edits: apply inline with Edit tool — no agent spawn.
 
 **Step skip rules**:
 
@@ -170,7 +170,7 @@ Both must hold — either failing → **substantive**. Trivial edits: apply inli
 
 ## Step 2: Overlap review (create only)
 
-Before creating, check if existing agents/skills already cover requested functionality:
+Before creating, check whether existing agents/skills already cover requested functionality:
 
 1. Read descriptions of all existing agents (use `Read(file_path=..., limit=3)` on each `.md` in agents/) and skills (use `Read(file_path=..., limit=3)` on each `SKILL.md`)
 2. Compare new description against each existing — look for domain overlap, similar workflows, redundant scope
@@ -183,7 +183,7 @@ Skip for `update`, `delete`, perm operations.
 
 ## Step 3: Inventory current state
 
-Snapshot current roster for later comparison. Steps 2 and 3 are independent reads — issue Glob calls for both in same response.
+Snapshot current roster for later comparison. Steps 2 and 3 are independent reads — issue Glob calls for both in the same response.
 
 Use Glob (pattern `agents/*.md`, path `.claude/`) for agents and Glob (pattern `skills/*/`, path `.claude/`) for skills. Use Grep (pattern `^color:`, glob `agents/*.md`, path `.claude/`, output mode `content`) to collect colors in use.
 
@@ -202,13 +202,13 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
      if [ -n "$(find "$MANAGE_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SCHEMA_CACHED=true; else MANAGE_SCHEMA_CACHED=false; fi
      echo "Schema file: $MANAGE_SCHEMA_FILE (cached: $MANAGE_SCHEMA_CACHED)"  # timeout: 3000
      ```
-   - **`MANAGE_SCHEMA_CACHED=true`** → skip the spawn and health monitoring below; Read `$MANAGE_SCHEMA_FILE` (limit=60) for the field list and continue at the extraction bullet.
+   - **`MANAGE_SCHEMA_CACHED=true`**: skip spawn and health monitoring below; Read `$MANAGE_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
    - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/sub-agents` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
 
    Health monitoring §8b: `<ID>` = `web-explorer`, glob `agent-schema.md` (poll path `.cache/manage`).
 
    - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `tools`, `disallowedTools`, `model`, `permissionMode`, `maxTurns`, `effort`, `initialPrompt`, `skills`, `mcpServers`, `hooks`, `memory`, `background`, `isolation`, `color`), current model shorthands, new fields
-   - Note new fields worth including. Adjust template to reflect current schema. If new field broadly useful for agent's role (e.g. `maxTurns` for long-running agents), include with sensible default and inline comment.
+   - Note new fields worth including. Adjust template to reflect current schema. New field broadly useful for agent's role (e.g. `maxTurns` for long-running agents): include with sensible default and inline comment.
 
 2. Pick first unused color from AVAILABLE_COLORS pool (compare against Step 3 colors)
 
@@ -225,9 +225,9 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
 MANAGE_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" manage templates) || { printf "! BREAKING: manage templates not found — run /foundry:setup first\n"; exit 1; }  # timeout: 5000
 ```
 
-5. Spawn **foundry:sw-engineer** subagent to scaffold and write the agent file. `foundry:curator` is the wrong delegate here — its NOT-for explicitly excludes creating or scaffolding agents/skills; curator only reviews and edits existing config. `foundry:sw-engineer` owns scaffolding (treat agent `.md` as a config artifact whose authoring is a software task — frontmatter schema, tool selection, structural completeness).
+5. Spawn **foundry:sw-engineer** subagent to scaffold and write agent file. `foundry:curator` is the wrong delegate here — its NOT-for explicitly excludes creating or scaffolding agents/skills; curator only reviews and edits existing config. `foundry:sw-engineer` owns scaffolding (treat agent `.md` as a config artifact whose authoring is a software task — frontmatter schema, tool selection, structural completeness).
 
-> Before passing schema file path to sw-engineer: verify file exists on disk using Read tool (limit=1). If schema file path from JSON envelope does not exist, proceed with default frontmatter fields (name, description, model, color) — note omission in Step 10 report.
+> Before passing schema file path to sw-engineer: verify file exists on disk using Read tool (limit=1). Schema file path from JSON envelope doesn't exist: proceed with default frontmatter fields (name, description, model, color) — note omission in Step 10 report.
 
 ```markdown
 Run `cat "<MANAGE_TPL>/agent-scaffold.md"` via the Bash tool (substitute resolved path from bash block above — do not pass literal `$MANAGE_TPL` to the agent).
@@ -241,7 +241,7 @@ Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confi
 
 Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's output files.
 
-**CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read the worktree path from the agent result (returned in `worktree` field or as part of the result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on the main-tree copy. Without this step, Steps 5–9 Globs find nothing.
+**CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read worktree path from agent result (returned in `worktree` field or as part of result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on main-tree copy. Without this step, Steps 5–9 Globs find nothing.
 
 ### Mode: Create Skill
 
@@ -254,7 +254,7 @@ Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's
      if [ -n "$(find "$MANAGE_SKILL_SCHEMA_FILE" -mmin -1440 2>/dev/null)" ]; then MANAGE_SKILL_SCHEMA_CACHED=true; else MANAGE_SKILL_SCHEMA_CACHED=false; fi
      echo "Skill schema file: $MANAGE_SKILL_SCHEMA_FILE (cached: $MANAGE_SKILL_SCHEMA_CACHED)"  # timeout: 3000
      ```
-   - **`MANAGE_SKILL_SCHEMA_CACHED=true`** → skip the spawn and health monitoring below; Read `$MANAGE_SKILL_SCHEMA_FILE` (limit=60) for the field list and continue at the extraction bullet.
+   - **`MANAGE_SKILL_SCHEMA_CACHED=true`**: skip spawn and health monitoring below; Read `$MANAGE_SKILL_SCHEMA_FILE` (limit=60) for field list, continue at extraction bullet.
    - Spawn **foundry:web-explorer** to fetch `https://code.claude.com/docs/en/skills` with instruction: "Write your full findings (schema fields, new fields, deprecated fields) to `<MANAGE_SKILL_SCHEMA_FILE>` (substitute resolved path from bash block above) using the Write tool. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<MANAGE_SKILL_SCHEMA_FILE>\",\"fields\":N,\"new\":N,\"deprecated\":N,\"confidence\":0.N,\"summary\":\"N fields, N new, N deprecated\"}`"
 
    Health monitoring §8b: `<ID>` = `web-explorer-skill`, glob matching this agent's output files.
@@ -262,7 +262,7 @@ Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's
    - Read returned summary; extract: valid frontmatter fields (`name`, `description`, `argument-hint`,`disable-model-invocation`, `user-invocable`, `allowed-tools`, `model`, `effort`, `shell`, `paths`, `context`, `agent`, `hooks`), new fields
    - Note new fields worth including. Adjust template to reflect current schema. Include `model` or `context: fork` only when skill's purpose clearly benefits.
 
-2. **Re-resolve `MANAGE_TPL` at the start of each skill invocation**; do not assume it is set from a prior step. Most `/foundry:manage create skill ...` invocations enter Create Skill mode directly without going through Create Agent first, so the variable will be unset. Run the resolution block from Create Agent step 4 above (cascade primary → project-local → cache scan with the `-d` guards) before reading any template path.
+2. **Re-resolve `MANAGE_TPL` at the start of each skill invocation**; don't assume it's set from a prior step. Most `/foundry:manage create skill ...` invocations enter Create Skill mode directly without going through Create Agent first, so the variable will be unset. Run resolution block from Create Agent step 4 above (cascade primary → project-local → cache scan with `-d` guards) before reading any template path.
 
 3. Resolve `$_FOUNDRY_SHARED` before spawning — sub-agents do not inherit shell variables:
 
@@ -313,7 +313,7 @@ Atomic rename — create new directory before removing old:
 
 2. Read old SKILL.md, update `name:` line in frontmatter, Write to new location.
 
-   > After updating `name:` in frontmatter: also scan the new SKILL.md body for TRIGGER conditions, NOT-for lines, and example invocations that still reference the old skill name — update those inline with Edit tool before proceeding to Step 5.
+   > After updating `name:` in frontmatter: also scan new SKILL.md body for TRIGGER conditions, NOT-for lines, and example invocations still referencing old skill name — update those inline with Edit tool before proceeding to Step 5.
 
 3. Verify new file exists: `Read(file_path=".claude/skills/<new-name>/SKILL.md", limit=5)`
 
@@ -620,7 +620,7 @@ Use Grep to find all references:
 - Pattern `<name>`, file `.claude/CLAUDE.md`, output mode `content`
 - Pattern `<name>`, file `README.md`, output mode `content`
 
-**For update (rename):** Count files grep returns. **≤ 3 files**: apply inline with Edit tool. **> 3 files**: spawn **foundry:curator** subagent. For hook renames: also update hook entry in `.claude/settings.json` `hooks` array if hook filename referenced there by path.
+**For update (rename):** Count files grep returns. **≤3 files**: apply inline with Edit tool. **>3 files**: spawn **foundry:curator** subagent. For hook renames: also update hook entry in `.claude/settings.json` `hooks` array if hook filename referenced there by path.
 
 ```text
 Apply these cross-reference updates (<old-name> → <new-name>):
@@ -639,7 +639,7 @@ Return ONLY: {"status":"done","files_updated":N}
 
 **For content-edit:** Run propagation only if entity's `description:` frontmatter changed — propagate new description to any MEMORY.md or README summary lines that quote it. Skip if only internal content changed.
 
-**Severity/priority labeling** — for every cross-reference decision above (rename fix, delete flag, content-edit propagate-or-skip), state a priority: **high** (genuine reference — invocation, routing, or discovery breaks if missed) or **low** (cosmetic/consistency-only, e.g. mention inside a code example or an unrelated similarly-named entity). Carry the priority into the Step 10 report (Files Changed table / Rename Occurrence Validation buckets).
+**Severity/priority labeling** — for every cross-reference decision above (rename fix, delete flag, content-edit propagate-or-skip), state a priority: **high** (genuine reference — invocation, routing, or discovery breaks if missed) or **low** (cosmetic/consistency-only, e.g. mention inside a code example or an unrelated similarly-named entity). Carry priority into Step 10 report (Files Changed table / Rename Occurrence Validation buckets).
 
 ### Rename occurrence validation (rename mode only)
 
@@ -653,7 +653,7 @@ Execute the mode loaded above.
 
 ## Step 6: Update MEMORY.md roster (auto-memory)
 
-MEMORY.md is Claude Code's auto-memory file — **not** stored under `.claude/`. Injected into conversation context at session start. Absolute path appears near top of system prompt (e.g. `~/.claude/projects/.../memory/MEMORY.md`). Use that absolute path with Edit tool. If system prompt parsing fails or path absent, fall back to:
+MEMORY.md is Claude Code's auto-memory file — **not** stored under `.claude/`. Injected into conversation context at session start. Absolute path appears near top of system prompt (e.g. `~/.claude/projects/.../memory/MEMORY.md`). Use that absolute path with Edit tool. System prompt parsing fails or path absent: fall back to:
 
 ```bash
 # Claude Code auto-memory: / and . → - for path slugs
@@ -689,7 +689,7 @@ Use Edit tool with **absolute auto-memory path** to update these roster lines in
 - **update rule (content-edit)**: update "What it governs" column if rule's description changed
 - **delete rule**: remove row for deleted rule
 
-Keep descriptions concise (one line), consistent in tone with surrounding rows. Do not add/remove table columns.
+Keep descriptions concise (one line), consistent in tone with surrounding rows. Don't add/remove table columns.
 
 **For content-edit (agent/skill):** Update README if description OR model field changed. Model changes update the Model column only; description changes update the description column.
 
@@ -697,7 +697,7 @@ Keep descriptions concise (one line), consistent in tone with surrounding rows. 
 
 Confirm no broken references remain:
 
-Use Grep (pattern `[a-z]+:[a-z]+(-[a-z]+)*` to find cross-plugin references, or `See [a-z-]+ agent` for cross-references, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`). Avoid broad kebab-case patterns — they match code examples and produce false positives.
+Use Grep (pattern `[a-z]+:[a-z]+(-[a-z]+)*` to find cross-plugin references, or `See [a-z-]+ agent` for cross-references, glob `{agents/*.md,skills/*/SKILL.md}`, path `.claude/`, output mode `content`). Avoid broad kebab-case patterns — they match code examples, produce false positives.
 
 Use Glob (`agents/*.md`, path `.claude/`) and Glob (`skills/*/`, path `.claude/`) for on-disk inventory; extract names inline. Use Grep to search for changed name and confirm:
 
@@ -708,7 +708,7 @@ Use Glob (`agents/*.md`, path `.claude/`) and Glob (`skills/*/`, path `.claude/`
 
 Add rules to on-disk inventory check: Glob (`rules/*.md`, path `.claude/`), extract names inline.
 
-For **create** and **update (rename)**: verify tool efficiency — cross-check agent/skill's declared tools (`tools:` or `allowed-tools:`) against tool names in workflow body. Declared tool not referenced anywhere → flag as cleanup candidate in Step 10 report (report only — do not block operation).
+For **create** and **update (rename)**: verify tool efficiency — cross-check agent/skill's declared tools (`tools:` or `allowed-tools:`) against tool names in workflow body. Declared tool not referenced anywhere: flag as cleanup candidate in Step 10 report (report only — don't block operation).
 
 ## Step 9: Audit and calibrate
 
@@ -727,11 +727,11 @@ For targeted check of only affected file, spawn **foundry:curator** directly:
 - For `update`: audit renamed file, verify no stale references remain
 - For `delete`: audit remaining files for broken references to deleted name
 
-Include audit findings in final report. Do not proceed to sync if any `critical` findings remain.
+Include audit findings in final report. Don't proceed to sync if any `critical` findings remain.
 
-**Calibration** — invoke `Skill(skill="foundry:calibrate", args="<name>")` after audit passes (requires `foundry` plugin). **Mandatory only when the edit changes the routing surface** — an agent/skill `description:` field, or a `TRIGGER`/`SKIP`/`NOT-for` line. For pure body/prose edits that leave the routing surface untouched (workflow steps, examples, `<notes>`, wording polish), calibration is **optional** — suggest it, don't force it. Routing accuracy is unaffected by non-routing edits, so the 10–30 min run rarely pays off; skipping keeps small polishes cheap.
+**Calibration** — invoke `Skill(skill="foundry:calibrate", args="<name>")` after audit passes (requires `foundry` plugin). **Mandatory only when the edit changes the routing surface** — an agent/skill `description:` field, or a `TRIGGER`/`SKIP`/`NOT-for` line. For pure body/prose edits leaving routing surface untouched (workflow steps, examples, `<notes>`, wording polish), calibration is **optional** — suggest it, don't force it. Routing accuracy is unaffected by non-routing edits, so the 10–30 min run rarely pays off; skipping keeps small polishes cheap.
 
-Then, **only when the routing surface changed**, invoke `Skill(skill="foundry:calibrate", args="routing --fast")` to confirm overall routing accuracy unaffected (requires `foundry` plugin). Skip this for pure body/prose edits.
+Then, **only when routing surface changed**, invoke `Skill(skill="foundry:calibrate", args="routing --fast")` to confirm overall routing accuracy unaffected (requires `foundry` plugin). Skip this for pure body/prose edits.
 
 Skip calibration entirely for: trivial edits, renames, deletes, rule operations, perm operations.
 
@@ -748,7 +748,7 @@ Skip calibration entirely for: trivial edits, renames, deletes, rule operations,
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
-**Challenger review gate** — after emitting the summary report and Confidence block, invoke `AskUserQuestion` to offer adversarial review of the just-completed changes. Skip this gate entirely when: `MODE` is `delete`, `add-perm`, or `remove-perm`; OR `EDIT_TRIVIAL=true`; OR `MODE` is `rename` (structural change only, no content to challenge). Gate is mandatory for: `create` (agent, skill, rule), non-trivial `content-edit` (agent, skill, rule).
+**Challenger review gate** — after emitting summary report and Confidence block, invoke `AskUserQuestion` to offer adversarial review of just-completed changes. Skip this gate entirely when: `MODE` is `delete`, `add-perm`, or `remove-perm`; OR `EDIT_TRIVIAL=true`; OR `MODE` is `rename` (structural change only, no content to challenge). Gate is mandatory for: `create` (agent, skill, rule), non-trivial `content-edit` (agent, skill, rule).
 
 ```text
 AskUserQuestion: "Run foundry:challenger to adversarially review the changes just made?"
@@ -762,9 +762,9 @@ On **(b)**: spawn `foundry:challenger` inline (foreground, not background):
 Agent(subagent_type="foundry:challenger", prompt="Adversarially review the changes just made to <list modified file paths>. Challenge: correctness of design decisions, completeness, potential regressions, and whether the stated goal was achieved. Read-only. Write full findings to .temp/manage-challenger-<YYYY-MM-DD>.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\".temp/manage-challenger-<YYYY-MM-DD>.md\",\"findings\":N,\"confidence\":0.N}")
 ```
 
-Print challenger's `findings` count and confidence; note any HIGH findings that warrant a follow-up `/manage update` pass. On **(a)**: print `→ Done.` and stop.
+Print challenger's `findings` count and confidence; note any HIGH findings warranting a follow-up `/manage update` pass. On **(a)**: print `→ Done.`, stop.
 
-**Cycle guard**: this challenger dispatch is from the orchestrator (manage skill itself), not from a sub-agent — cycle detection in `<notes>` does not apply here. Do NOT spawn challenger from inside foundry:curator or foundry:sw-engineer sub-agents spawned by manage.
+**Cycle guard**: this challenger dispatch is from orchestrator (manage skill itself), not from a sub-agent — cycle detection in `<notes>` doesn't apply here. Do NOT spawn challenger from inside foundry:curator or foundry:sw-engineer sub-agents spawned by manage.
 
 </workflow>
 
@@ -773,10 +773,10 @@ Print challenger's `findings` count and confidence; note any HIGH findings that 
 - **Atomic updates**: write-before-delete prevents data loss on interruption; perm ops must update both `settings.json` and `permissions-guide.md`
 - **settings.json format**: jq with atomic tmp-file pattern (`jq ... > .tmp && mv .tmp dest`) — avoids fragile sed/awk on JSON; indent=2 via `jq --indent 2` when formatting required
 - **README.md tables**: agent/skill tables in project `README.md`; rules table in `.claude/README.md` — keep row format consistent with existing rows
-- **No auto-edit for agent/skill/rule operations**: skill does not mutate settings.json for non-perm operations
-- **Color pool**: AVAILABLE_COLORS lists unused colors; if exhausted, reuse with note
-- **Inline bash / extraction gate + prose compression**: before writing any fenced bash block directly into a `.md` file (agent, skill, rule) via Edit/Write, apply two checks from `bin-authoring-guide.md`: (1) extraction gate — verdict MEDIUM or HIGH → write a `bin/` script instead; verdict LOW → inline is acceptable; (2) Prose over Code — if `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision → write prose/table instead. Exempt: examples, templates, exact-syntax blocks. Same rules enforced in spawn prompts to foundry:curator and foundry:sw-engineer (see Content-Edit Agent/Skill modes). This note applies to orchestrator-level inline edits.
-- **Cycle detection**: sub-tasks spawned by manage (foundry:sw-engineer, foundry:curator, foundry:doc-scribe) must not invoke manage again. Circular dispatch — manage→sw-engineer→curator→manage — causes infinite loops. If a sub-task needs manage capabilities, surface the need back to the orchestrator; never chain manage from inside a manage-spawned sub-agent.
+- **No auto-edit for agent/skill/rule operations**: skill doesn't mutate settings.json for non-perm operations
+- **Color pool**: AVAILABLE_COLORS lists unused colors; exhausted: reuse with note
+- **Inline bash / extraction gate + prose compression**: before writing any fenced bash block directly into a `.md` file (agent, skill, rule) via Edit/Write, apply two checks from `bin-authoring-guide.md`: (1) extraction gate — verdict MEDIUM or HIGH: write a `bin/` script instead; verdict LOW: inline is acceptable; (2) Prose over Code — `tokens(block) > tokens(equivalent prose/table/schema)` at identical precision: write prose/table instead. Exempt: examples, templates, exact-syntax blocks. Same rules enforced in spawn prompts to foundry:curator and foundry:sw-engineer (see Content-Edit Agent/Skill modes). This note applies to orchestrator-level inline edits.
+- **Cycle detection**: sub-tasks spawned by manage (foundry:sw-engineer, foundry:curator, foundry:doc-scribe) must not invoke manage again. Circular dispatch — manage→sw-engineer→curator→manage — causes infinite loops. A sub-task needs manage capabilities: surface the need back to orchestrator; never chain manage from inside a manage-spawned sub-agent.
 - Follow-up chains:
   - create or non-trivial update of agent/skill → `Skill(skill="foundry:audit", args="--skip-gate")` → `Skill(skill="foundry:calibrate", args="<name>")` (mandatory) → `Skill(skill="foundry:calibrate", args="routing --fast")`
   - trivial update or rename or delete → `Skill(skill="foundry:audit", args="--skip-gate")` → `Skill(skill="foundry:calibrate", args="routing --fast")` (if description changed)

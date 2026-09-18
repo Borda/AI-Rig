@@ -41,11 +41,11 @@ nvitop
 
 ## DataLoader Bottleneck Detection
 
-`data_fraction = data_time / step_time`; `cpu_bound = data_fraction > 0.3` means the pipeline is CPU-bound. Increase `num_workers`; add `pin_memory=True` and `persistent_workers=True`; or use faster augmentations (e.g. albumentations) when they dominate `data_time`.
+`data_fraction = data_time / step_time`; `cpu_bound = data_fraction > 0.3` means pipeline CPU-bound. Increase `num_workers`; add `pin_memory=True`, `persistent_workers=True`; or use faster augmentations (e.g. albumentations) when they dominate `data_time`.
 
 ## DataLoader Optimization
 
-**Throughput parameters** (`num_workers`, `persistent_workers`, `pin_memory`, `prefetch_factor`): owned by `foundry:perf-optimizer` — tune based on `data_fraction` ratio (see Detection above). Set `num_workers > 0`, `pin_memory=True`, `persistent_workers=True` as first fix when DataLoader is bottleneck. **Correctness/reproducibility** (`worker_init_fn` seeding, split isolation, leakage detection): see `research:data-steward` (requires `research` plugin). If `research` plugin unavailable, apply throughput tuning only and flag correctness audit as out-of-scope.
+**Throughput params** (`num_workers`, `persistent_workers`, `pin_memory`, `prefetch_factor`): owned by `foundry:perf-optimizer` — tune from `data_fraction` ratio (see Detection above). Set `num_workers > 0`, `pin_memory=True`, `persistent_workers=True` as first fix when DataLoader bottlenecks. **Correctness/reproducibility** (`worker_init_fn` seeding, split isolation, leakage detection): see `research:data-steward` (requires `research` plugin). If `research` plugin unavailable, apply throughput tuning only, flag correctness audit out-of-scope.
 
 ## Mixed Precision (torch.amp — PyTorch 2.0+)
 

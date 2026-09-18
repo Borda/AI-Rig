@@ -5,7 +5,7 @@
 **Steps**:
 
 1. Inform: "Complexity: \[[COMPLEXITY_TERMS]\] — generating [SKILL_VERB] plan before [SKILL_VERB]..."
-2. Spawn **foundry:sw-engineer** (model=sonnet) to produce structured plan:
+2. Spawn **foundry:sw-engineer** (model=sonnet), produce structured plan:
    - [PLAN_SECTIONS] — filled by calling skill context below
    - Affected files: list with per-file change description
    - Risks: [RISK_FOCUS] — filled by calling skill context below
@@ -17,7 +17,7 @@
    - (b) **Stop** — review/edit plan at `<path>` before continuing; re-invoke with `--plan <path>` when ready
    - (c) **Abort** — cancel
 5. On (b) or (c): stop
-6. On (a): set `PLAN_FILE=<path>` and persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundary reads in feature/fix/refactor resolve it across Bash calls; continue to next step
+6. On (a): set `PLAN_FILE=<path>`, persist it (`echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"`) so compaction-contract boundary reads in feature/fix/refactor resolve it across Bash calls; continue to next step
 
 ### Skill contexts (substitute when calling this protocol)
 

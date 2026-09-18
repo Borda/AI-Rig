@@ -4,7 +4,7 @@
 
 Shared compact templates for `/analyse` and `/oss:review` **report files** (on-disk content only). All templates: `---` delimiters, entity identifier line, key-value fields, `→ saved to [skill-specific path]`.
 
-**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. When printing a report's header to the terminal (the consuming skill's "print report header" step), do NOT print this raw `---`-delimited block verbatim. Per quality-gates.md §Report File Format's Universal terminal-print rule, render it as a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
+**Terminal-print note**: these ```` ```text ```` fences show the report file's raw on-disk format — write the file exactly as shown. Printing a report's header to terminal (consuming skill's "print report header" step): do NOT print this raw `---`-delimited block verbatim. Per quality-gates.md §Report File Format's Universal terminal-print rule, render as a two-column Markdown table instead (`Field | Value`, one row per key-value line above, `→ saved to ...` as its own trailing line after the table, not a table row).
 
 ## PR Summary
 
@@ -22,14 +22,14 @@ Suggestions: 1. [most important action]
 ---
 ```
 
-Swap `[entity-line]` with skill-specific identifier:
+Swap `[entity-line]` for skill-specific identifier:
 
 - `/analyse` PR mode: `PR #[number] — [title]`
 - `/oss:review`: `Review — [target]`
 
 ## Extended Fields (review only)
 
-In `/oss:review` **PR Summary**: **omit `Suggestions:` field** — `Recommendation:` replaces it. Insert after `Blockers:`, before `→ saved to`:
+`/oss:review` **PR Summary**: **omit `Suggestions:` field** — `Recommendation:` replaces it. Insert after `Blockers:`, before `→ saved to`:
 
 ```text
 Recommendation:

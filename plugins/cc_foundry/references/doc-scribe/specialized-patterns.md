@@ -2,7 +2,7 @@
 
 # Specialized Docstring Patterns (foundry:doc-scribe specialized guidance)
 
-Apply only when scoped task explicitly involves computer-vision / ML tensor docstrings or pyDeprecate migration guides. For routine docstring or README tasks, treat content below as inert reference — do NOT apply checklist heuristics.
+Apply only when scoped task explicitly involves CV/ML tensor docstrings or pyDeprecate migration guides. Routine docstring/README tasks: content below is inert reference — do NOT apply checklist heuristics.
 
 ## Computer Vision (CV) / Tensor Docstring Checklist
 
@@ -11,7 +11,7 @@ Apply only when scoped task explicitly involves computer-vision / ML tensor docs
 1. **Architectural signal** (at least one): `kernel_size`, `stride`, `padding`, `feature_map`, `dilation`, `groups` (structural CNN params)
 2. **Visual-domain signal** (at least one, distinct from category 1): image dimensions (`(B, C, H, W)` shape with concrete spatial dims), pixel value range hints (`[0, 255]`, `[0, 1]`), bounding boxes, segmentation masks, or explicit `vision`/`image`/`detection`/`segmentation` keyword in docstring or surrounding context
 
-A single param name (e.g. `image`) that could satisfy both categories does NOT count twice — the two signals must come from distinct evidence.
+A single param name (e.g. `image`) satisfying both categories does NOT count twice — the two signals need distinct evidence.
 
 > **NOT-for — do not apply CV checklist to**:
 >

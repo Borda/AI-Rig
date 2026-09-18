@@ -28,7 +28,7 @@ While producing output — not only after — ask "what would make this wrong?".
 
 Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and recovery rules are mandatory.
 
-Never fork the implementing conversation for review or close a local fix before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or a stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still requires the owning workflow’s remaining gates.
+Never fork the implementing conversation for review or close a local fix before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or a stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (e.g. `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still requires the owning workflow's remaining gates.
 
 ## Confidence Block (required on all analysis tasks)
 
@@ -55,11 +55,11 @@ Every analysis agent **must** end with:
 
 ## Internal Quality Loop (analysis tasks only)
 
-**No routine re-read pass.** Current models mostly catch their own errors without a mandated re-score cycle; forcing one anyway compounds token cost without reliably improving results. Write once, at full care.
+**No routine re-read pass.** Current models mostly catch their own errors without a mandated re-score cycle; forcing one anyway compounds token cost without reliably improving results. Write once, full care.
 
-A second pass fires only on a **named, actionable gap** — a source not read, a claim not grounded, a section the ask required and the draft lacks. Address that specific gap, then record it under **Refinements**. Generic phrases ("re-checked, looks fine", "reviewed for completeness") are not gaps and never justify a pass or a score rise. Cap 2. Report the real score — never inflate; `foundry:calibrate` catches bias.
+A second pass fires only on a **named, actionable gap** — a source not read, a claim not grounded, a section the ask required and the draft lacks. Address that gap, record it under **Refinements**. Generic phrases ("re-checked, looks fine", "reviewed for completeness") aren't gaps, never justify a pass or a score rise. Cap 2. Report the real score — never inflate; `foundry:calibrate` catches bias.
 
-Gaps that cannot be closed (info-access limits, tooling absent) are **documented in the Confidence block, not chased** — caveat and move on.
+Gaps that can't be closed (info-access limits, tooling absent) are **documented in the Confidence block, not chased** — caveat and move on.
 
 ## Python Code Complexity (when writing or reviewing Python)
 
@@ -67,7 +67,7 @@ Before delivering any Python function or class: cyclomatic complexity ≤12, req
 
 ## Pre-Handover Check (trigger: a named gap the analysis itself cannot close)
 
-Trigger is a **specific unproven claim**, not a score crossing a line: a premise no source was read for, a conclusion resting on one ambiguous signal, an alternative never examined. A low score with every gap already documented needs no dispatch — say so and hand over. When the trigger fires: proof per uncertain claim, re-examine assumptions from first principles. `bridge@borda-ai-rig` available → dispatch `bridge:review` with the exact-args template in `_full/quality-gates.md` §Pre-Handover Check (read it at this trigger; never pass placeholders or a workflow step label), incorporate findings; bridge absent/disabled → state the specific gap so the user can decide to re-run.
+Trigger is a **specific unproven claim**, not a score crossing a line: a premise no source was read for, a conclusion resting on one ambiguous signal, an alternative never examined. A low score with every gap already documented needs no dispatch — say so, hand over. When the trigger fires: proof per uncertain claim, re-examine assumptions from first principles. `bridge@borda-ai-rig` available → dispatch `bridge:review` with the exact-args template in `_full/quality-gates.md` §Pre-Handover Check (read it at this trigger; never pass placeholders or a workflow step label), incorporate findings; bridge absent/disabled → state the specific gap so the user can decide to re-run.
 
 ## Write-Delegation Checklist (trigger: any `bridge:implement` call)
 
@@ -88,8 +88,8 @@ Applies to: agent files, skill files, CLAUDE.md, any markdown.
 
 **Long output** (multi-item analysis, 5+ findings — including lists of 5+ items: module names, issues, files —, or prose >~10 lines) → two mandatory steps, in order:
 
-1. **Write tool call** — create `.temp/output-<slug>-<branch>-<YYYY-MM-DD>.md` (new file — never overwrite; append a counter suffix if the slug exists, e.g. `-2.md`); full evidence coverage, ultra-caveman compressed (see §Prose Compression — "full" means no dropped findings, not verbose prose). **Execute the Write tool call; do not narrate intent and proceed without calling it** — never skipped; pipeline/background mode only exempts the follow-up gate (step 2.4), not this Write. Distinct from any other file write the task also does.
-2. Print to terminal, in this order: (1) **YAML header table** — render the `---` metadata block as a two-column Markdown table (`Field | Value`, one row per key, each value on a single physical line ≤100 chars — a wrapped value loses its leading `|` and breaks GFM table parsing from that row down); never print raw YAML (see §Report File Format). No YAML block → fall back to a plain ASCII verdict line, `·` separator: `verdict: ⚠ NEEDS_WORK · findings: 8 · ...` (verdict word prefixed with its symbol — see §Reporting Findings). (2) **Report path** — `→ <filepath>`. (3) **Executive summary** — 2–3 sentence overview + every critical/high finding listed individually; omit medium/low detail unless ≤2 total findings. (4) **Follow-up gate** — invoke `AskUserQuestion` as the final step; skip only when: spawned via `Agent()`, running inside another skill's pipeline, or the prompt explicitly states background/pipeline mode — when in doubt, invoke.
+1. **Write tool call** — create `.temp/output-<slug>-<branch>-<YYYY-MM-DD>.md` (new file — never overwrite; append a counter suffix if the slug exists, e.g. `-2.md`); full evidence coverage, ultra-caveman compressed (see §Prose Compression — "full" means no dropped findings, not verbose prose). **Execute the Write tool call; don't narrate intent and proceed without calling it** — never skipped; pipeline/background mode only exempts the follow-up gate (step 2.4), not this Write. Distinct from any other file write the task also does.
+2. Print to terminal, in order: (1) **YAML header table** — render the `---` metadata block as a two-column Markdown table (`Field | Value`, one row per key, each value on a single physical line ≤100 chars — a wrapped value loses its leading `|` and breaks GFM table parsing from that row down); never print raw YAML (see §Report File Format). No YAML block → fall back to a plain ASCII verdict line, `·` separator: `verdict: ⚠ NEEDS_WORK · findings: 8 · ...` (verdict word prefixed with its symbol — see §Reporting Findings). (2) **Report path** — `→ <filepath>`. (3) **Executive summary** — 2–3 sentence overview + every critical/high finding listed individually; omit medium/low detail unless ≤2 total findings. (4) **Follow-up gate** — invoke `AskUserQuestion` as the final step; skip only when: spawned via `Agent()`, running inside another skill's pipeline, or the prompt explicitly states background/pipeline mode — when in doubt, invoke.
 
 - **Short inline status** (single result, pass/fail, one-sentence finding) → terminal only; do **not** create a file
 - **Copy-intent override**: output destined for an external artifact (PR body, release notes, report to share) → write to file regardless of length; output read in-context and acted on immediately (audit findings, calibration result, code review) → terminal only even if long
@@ -98,9 +98,9 @@ Applies to: agent files, skill files, CLAUDE.md, any markdown.
 
 ## Prose Compression — Output Files
 
-Applies to all agents; compression tier by destination. Cap is a **soft compression target, not a truncation trigger** — never drop evidence, findings, or CRITICAL/HIGH content to force a file under cap. Compress prose (articles, filler, hedging, verbose framing) first; still over cap after full compression → let it run over rather than lose substance. Structurally large artifacts (multi-agent aggregates, batch reports) legitimately exceed the target — that's a signal the content warrants its size. Only LOW/Nitpick-severity items are droppable for space; CRITICAL and HIGH always survive intact.
+Applies to all agents; compression tier by destination. Cap is a **soft compression target, not a truncation trigger** — never drop evidence, findings, or CRITICAL/HIGH content to force a file under cap. Compress prose (articles, filler, hedging, verbose framing) first; still over cap after full compression → let it run over rather than lose substance. Structurally large artifacts (multi-agent aggregates, batch reports) legitimately exceed the target — a signal the content warrants its size. Only LOW/Nitpick-severity items are droppable for space; CRITICAL and HIGH always survive intact.
 
-The soft-cap escape is not licence to run long. Written deliverables skew longer on current models than the caps assume, so match document length to what the task needs: cover the substance, and add no filler sections, redundant summaries, restated findings, or boilerplate. Length earned by evidence is fine; length earned by padding is not.
+The soft-cap escape isn't licence to run long. Written deliverables skew longer on current models than the caps assume, so match document length to what the task needs: cover the substance, add no filler sections, redundant summaries, restated findings, or boilerplate. Length earned by evidence is fine; length earned by padding is not.
 
 Size estimate: `$(( $(wc -c < file) / 3 ))` tokens — `/4` predates the current tokenizer and under-reports by roughly 30%.
 
@@ -123,7 +123,7 @@ _Outcome legend_: `✓` = approved/ready/clean · `⚠` = needs-attention/needs-
 
 ## Reporting Findings
 
-- **Coverage at the finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity ones; attach confidence and severity so a later stage can rank. Severity words in output-routing rules ("omit medium/low detail") govern the **printed summary**, never what gets investigated or recorded — a finding dropped at discovery cannot be recovered by a filter. Never instruct an agent to "only report high-severity issues" or "be conservative": current models follow that literally, investigating just as deeply and then reporting less
+- **Coverage at the finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity ones; attach confidence and severity so a later stage can rank. Severity words in output-routing rules ("omit medium/low detail") govern the **printed summary**, never what gets investigated or recorded — a finding dropped at discovery can't be recovered by a filter. Never instruct an agent to "only report high-severity issues" or "be conservative": current models follow that literally, investigating just as deeply and reporting less
 - **Report before fixing**: state every finding before any fix — never silently mutate
 - **Per-fix narration**: before each file edit or tool call, state what changes and why
 - **! BREAKING format**: breaking findings = standalone block — never inline or buried in a table row:

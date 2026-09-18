@@ -10,7 +10,7 @@ ls .claude/agents/*.md 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.m
 
 Read `- Agents:` and `- Skills:` roster lines from MEMORY.md content injected in conversation context (auto-memory at session start). Don't Grep file path — MEMORY.md not under `.claude/` but in Claude Code's auto-memory system. Repeat with Glob (`skills/*/`, path `.claude/`) for skills on disk — write to `/tmp/skills_disk.txt`.
 
-**macOS caution**: BSD grep treats args starting with `-` as option flags. When building bash comparison from MEMORY.md roster via grep, use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'` not `grep '- Agents:'` — latter exits 2 on macOS, silently produces empty result. Safest: use Read tool (not grep) for MEMORY.md.
+**macOS caution**: BSD grep treats args starting with `-` as option flags. Building bash comparison from MEMORY.md roster via grep: use `grep -E 'Agents:'` (no leading `- `) or `grep -- '- Agents:'`, not `grep '- Agents:'` — latter exits 2 on macOS, silently produces empty result. Safest: use Read tool (not grep) for MEMORY.md.
 
 ## Check 2 — README vs disk
 
@@ -56,7 +56,7 @@ Read `.claude/settings.json` with Read tool, extract `permissions.allow` list. F
 - **Reversible**: effect undoable without data loss (local file edits, test runs, read-only queries)
 - **Local-only**: no effect outside working directory, no external data transmission
 
-Flag destructive patterns as **critical** (auto-approved destructive commands always = breaking safety failure). Flag external-state mutations as **high**, raise to user — some (e.g., `gh release create`) may be intentional but must be explicitly acknowledged.
+Flag destructive patterns as **critical** (auto-approved destructive commands always = breaking safety failure). Flag external-state mutations as **high**, raise to user — some (e.g. `gh release create`) may be intentional but must be explicitly acknowledged.
 
 ## Check 6 — Stale settings.json allow entries
 
@@ -80,7 +80,7 @@ fi
 
 **Severity**: **low** per stale entry. Fix: remove stale entry from `settings.json` (report only — `settings.json` never auto-edited per audit policy).
 
-**Important**: some allow entries intentionally grant broad patterns (e.g., `Bash(mkdir -p .reports/audit/*)`) not appearing verbatim in config files — exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file.
+**Important**: some allow entries intentionally grant broad patterns (e.g. `Bash(mkdir -p .reports/audit/*)`) not appearing verbatim in config files — exercised at runtime. Flag only entries whose command fragment appears nowhere in any `.claude/` file.
 
 ## Check 7 — bridge-to-Codex plugin integration check
 
@@ -180,7 +180,7 @@ Severity: > 100 KB total or > 10 KB single file = **medium**; 50–100 KB total 
 
 Note: `agents/` and `skills/` lazy-loaded — never flag for token overhead.
 
-Note: the thresholds were calibrated against a total that counted the global `CLAUDE.md` twice. The total is now lower for the same tree, so a threshold can only fire later, never sooner — recalibrate downward if 50 KB stops discriminating.
+Note: thresholds were calibrated against a total that counted the global `CLAUDE.md` twice. Total now lower for the same tree, so a threshold can only fire later, never sooner — recalibrate downward if 50 KB stops discriminating.
 
 ## Check 39 — Plugin version freeze
 

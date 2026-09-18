@@ -1276,10 +1276,6 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:147"
     },
-    "9ebc6af74301b92603e210ef61e1486ae155e48aa568c94447762abffa8f8ce1": {
-      "kind": "block",
-      "src": "skills/fortify/SKILL.md:212"
-    },
     "9f337bff8f189b44a4a2356792e8da187face9a1cbe0e27fd696e110c4f99fea": {
       "kind": "command",
       "src": "skills/run/SKILL.md:584"
@@ -2024,6 +2020,10 @@
       "kind": "block",
       "src": "skills/verify/SKILL.md:91"
     },
+    "f892b7823085fc639b52e5664f96f84945ada618931f49f2273b4023490e3f56": {
+      "kind": "block",
+      "src": "skills/fortify/SKILL.md:212"
+    },
     "f905ea72758e79a7a3ffa87b5bb5522806ca47dfcb35c0baf2ff4846e01e70b5": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:324"
@@ -2133,6 +2133,6 @@
       "src": "skills/verify/SKILL.md:134"
     }
   },
-  "plugin": "cc_research@0.23.4",
+  "plugin": "cc_research@0.23.5",
   "schema": 1
 }

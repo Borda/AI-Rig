@@ -1,6 +1,6 @@
 # Health Report Format
 
-Loaded on demand by `foundry:curator` when producing a standalone `.claude` config health report. Audit, consolidator, and fix-gate spawns get their output shape from the spawn prompt instead and never need this file.
+Loaded on demand by `foundry:curator` for a standalone `.claude` config health report. Audit, consolidator, fix-gate spawns get output shape from spawn prompt instead — never need this file.
 
 ```markdown
 ## .claude Config Health — <date>
@@ -24,7 +24,7 @@ Over budget: <N agents> | Broken refs: <N> | Duplicates found: <N>
 - fileA:lines X-Y duplicates fileB:lines A-B — keep in fileB, add cross-ref in fileA → Fix: remove duplicate block from fileA, replace with "See fileB"
 
 #### [P3] Disproportionate length (investigate)
-- agent-name: significantly longer than peers — flag sections that could be cross-refs or bullet points → Fix: convert verbose section to cross-ref bullet or trim to essential content
+- agent-name: significantly longer than peers — flag sections convertible to cross-refs or bullets → Fix: convert verbose section to cross-ref bullet or trim to essentials
 
 #### [P4] Outdated content (verify and update)
 - linting-expert:line — ruff version cited as X but latest is Y → Fix: fetch latest version and update the cited value

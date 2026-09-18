@@ -10,7 +10,7 @@
 
 ### Axis 4 — Issue & PR Health
 
-(queue hygiene + code review quality; merged from old Axes 1+2)
+(queue hygiene + code review quality, merged from old Axes 1+2)
 
 Issue signals (from open/closed issue lists):
 
@@ -37,7 +37,7 @@ Score (worst-of composite — any 🔴 dimension → axis 🔴):
 
 ### Axis 7 — Governance
 
-(7 checkpoints; weight increased above Documentation per H1 fix)
+(7 checkpoints, weight increased above Documentation per H1 fix)
 
 1. LICENSE present (root)
 2. SECURITY.md present (root or .github/)
@@ -51,7 +51,7 @@ max_applicable = 7 if checkpoint 7 applicable, else 6 Score: floor(met / max_app
 
 ### Axis 8 — Security Posture
 
-(weight reduced; partial scoring on 403 instead of excluding)
+(weight reduced, partial scoring on 403 instead of excluding)
 
 Primary signals (push access required — Dependabot alerts API):
 

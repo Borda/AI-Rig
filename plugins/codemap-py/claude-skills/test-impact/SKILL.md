@@ -42,8 +42,8 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 _IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"
 INDEX="${_IDX}/${_CM_PROJ}.json"
 
-# dispatcher, not the scan-query/scan-index aliases — aliases lease in-engine too, but skip the dispatcher's interpreter probe (exit 127) and are deprecated shims, removed no earlier than 1.0.0
-# PATH-literal invocation everywhere below — expansion-bearing form matches no bare-name allow prefix; the plugin's absolute bin/codemap-py stays the interactive fallback
+# dispatcher, not scan-query/scan-index aliases — aliases lease in-engine too but skip dispatcher's interpreter probe (exit 127), deprecated shims removed no earlier than 1.0.0
+# PATH-literal invocation everywhere below — expansion-bearing form matches no bare-name allow prefix; plugin's absolute bin/codemap-py stays interactive fallback
 command -v codemap-py >/dev/null 2>&1 || { echo "codemap-py not on PATH — install the codemap-py plugin, or invoke its bin/codemap-py launcher as one standalone command"; exit 1; }
 
 [ ! -f "$INDEX" ] && echo "No index found — will build via codemap-py index"
@@ -66,7 +66,7 @@ if [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then
     echo "[codemap] SCAN_NO_AUTOBUILD=1 — using existing index as-is (no refresh)"
 else
     _CM_BUILD_T0=$(date +%s)
-    # export, not an inline env prefix — a prefix puts an expansion ahead of the binary, so the command no longer matches a bare-name allow prefix
+    # export not inline env prefix — prefix puts expansion ahead of binary, command no longer matches bare-name allow prefix
     export CODEMAP_INDEX_DIR="${_IDX}"   # forward to the build; ensures it writes to same path as INDEX
     codemap-py index --incremental \
         && echo "[codemap] index built in $(( $(date +%s) - _CM_BUILD_T0 ))s" \
@@ -109,7 +109,7 @@ QNAME="<answer from AskUserQuestion>"
 echo "$QNAME" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-qname-${CSID}"
 ```
 
-**Multi-symbol guard**: `$ARGUMENTS` may contain multiple tokens (for example `mypackage.auth::validate mypackage.auth::parse`); `awk '{print $1}'` silently keeps first. If more than one after removing `--no-mocks`, print `⚠ test-impact accepts one symbol at a time — using first token only: $QNAME. Run separately for each remaining symbol.`
+**Multi-symbol guard**: `$ARGUMENTS` may contain multiple tokens (e.g. `mypackage.auth::validate mypackage.auth::parse`); `awk '{print $1}'` silently keeps first. If more than one after removing `--no-mocks`, print `⚠ test-impact accepts one symbol at a time — using first token only: $QNAME. Run separately for each remaining symbol.`
 
 ## Step 2 — Run test-impact query
 
@@ -120,7 +120,7 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 IFS= read -r QNAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-qname-${CSID}" 2>/dev/null || QNAME=""
 IFS= read -r MOCKS_FLAG < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-mocks-${CSID}" 2>/dev/null || MOCKS_FLAG=""
 _TI_ERR="${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-ti-stderr-${CSID}"
-# capture stderr to a file, never 2>/dev/null — a swallowed diagnostic is what rendered a broken index as "no affected tests"
+# capture stderr to file, never 2>/dev/null — swallowed diagnostic rendered a broken index as "no affected tests" before
 RESULT=$(codemap-py query test-impact "$QNAME" $MOCKS_FLAG 2>"$_TI_ERR")
 _TI_RC=$?
 if [ "$_TI_RC" -ne 0 ]; then
@@ -129,7 +129,7 @@ if [ "$_TI_RC" -ne 0 ]; then
     printf "Rebuild with /codemap-py:scan-codebase, then re-run.\n" >&2
     exit 1
 fi
-# one parse, no per-field `|| echo` defaults — a default here forges total=0 out of an unparsable payload
+# one parse, no per-field `|| echo` defaults — default here forges total=0 from unparsable payload
 printf '%s' "$RESULT" | python3 -c "
 import json, sys
 base, suf = sys.argv[1], sys.argv[2]
@@ -190,7 +190,7 @@ Output routing: if `total >= 5`, derive free non-colliding path; write report th
 ```bash
 # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-'); BRANCH="${BRANCH:-main}"
-# never overwrite — a same-day re-run on another target would replace an unrelated report
+# never overwrite — same-day re-run on another target would replace unrelated report
 TI_OUT=".temp/output-test-impact-${BRANCH}-$(date +%Y-%m-%d).md"; _n=1
 while [ -e "$TI_OUT" ]; do _n=$((_n+1)); TI_OUT=".temp/output-test-impact-${BRANCH}-$(date +%Y-%m-%d)-${_n}.md"; done
 printf '%s\n' "$TI_OUT"

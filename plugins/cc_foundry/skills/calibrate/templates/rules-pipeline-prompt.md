@@ -32,7 +32,7 @@ Write to `.reports/calibrate/<TIMESTAMP>/rules/<RULE_DIR>/directives.json`:
 ]
 ```
 
-**Step 1b — Generate adherence problems** (`<N>` per directive): for each directive, create `<N>` tasks where correct response MUST apply directive and ignoring it produces detectably wrong result. Cover realistic user requests; vary surface form across `<N>` problems per directive.
+**Step 1b — Generate adherence problems** (`<N>` per directive): for each directive, create `<N>` tasks where correct response MUST apply directive, ignoring it produces detectably wrong result. Cover realistic user requests; vary surface form across `<N>` problems per directive.
 
 Problem format:
 
@@ -86,9 +86,9 @@ Write complete response to `<RUN_DIR>/response-<PROBLEM_ID>.md` using Write tool
 
 <!-- END SPAWN PROMPT -->
 
-**Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. Receiving only `Wrote: <PROBLEM_ID>` per agent is correct and expected.
+**Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. Receiving only `Wrote: <PROBLEM_ID>` per agent is correct, expected.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). When each subagent returns, check for `response-<PROBLEM_ID>.md`; missing → mark that problem `{"timed_out": true}` in scores.json and proceed.
+**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `response-<PROBLEM_ID>.md`; missing: mark that problem `{"timed_out": true}` in scores.json, proceed.
 
 ### Phase 3 — Score (parallel scorer subagents)
 

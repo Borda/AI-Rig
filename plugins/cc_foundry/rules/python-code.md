@@ -4,7 +4,7 @@ paths:
   - '**/*.py'
 ---
 
-> **Precedence — the rule closer to the code wins.** These are plugin-level defaults. Where a project states its own convention that conflicts with anything here — in its `CLAUDE.md`, its own `rules/`, a linter/formatter config it enforces, or a consistent established style in the surrounding code — the project's convention wins. Follow it and do not "correct" the codebase toward this file. Apply these rules only where the project is silent. When a project convention looks like an oversight rather than a decision, say so once and still follow the project.
+> **Precedence — the rule closer to the code wins.** These are plugin-level defaults. Where a project states its own convention that conflicts with anything here — in its `CLAUDE.md`, its own `rules/`, a linter/formatter config it enforces, or a consistent established style in the surrounding code — the project's convention wins. Follow it, don't "correct" the codebase toward this file. Apply these rules only where the project is silent. Project convention looks like an oversight rather than a decision → say so once, still follow the project.
 
 ## Docstring Style
 
@@ -38,7 +38,7 @@ Use `pyDeprecate`, never `warnings.warn`. Import from `deprecate` (not `pyDeprec
 
 - **Never `@deprecated` on a class** — it emits `UserWarning` and silently delegates; `deprecated_class` is the correct API (transparent proxy: attribute access, calls, `isinstance()`, instantiation all forward with `FutureWarning`).
 - Lifecycle: deprecate in minor → keep ≥1 minor cycle → remove in next major.
-- Check the installed version before writing the code (`deprecate.__version__`); the API differs across versions and training memory is not evidence (§Library API Awareness). Below v0.6.0 with upgrading blocked, `deprecated_class`/`deprecated_instance` don't exist — ask before upgrading, never upgrade silently.
+- Check the installed version before writing the code (`deprecate.__version__`); the API differs across versions, training memory isn't evidence (§Library API Awareness). Below v0.6.0 with upgrading blocked, `deprecated_class`/`deprecated_instance` don't exist — ask before upgrading, never upgrade silently.
 
 <!-- verified: 2026-04-06 against pyDeprecate 0.6.x; re-verify if upgraded past 0.6.x -->
 
@@ -66,7 +66,7 @@ Applies to **every code-touching agent**, not `foundry:sw-engineer` alone. Train
 3. Use API matching the **installed** version — don't assume training knowledge current
 4. Never fabricate a symbol/kwarg from memory; unverified against installed pkg = don't write it
 
-**Never suggest upgrading library** solely because Claude doesn't recognise newer API. Project has version pinned for a reason — learn that version's API from docs; don't force updates on stable/stale projects.
+**Never suggest upgrading library** solely because Claude doesn't recognise newer API. Project has version pinned for a reason — learn that version's API from docs, don't force updates on stable/stale projects.
 
 ## PyTorch AMP
 
@@ -76,7 +76,7 @@ Applies to **every code-touching agent**, not `foundry:sw-engineer` alone. Train
 
 ## Multi-OS Executables — a POSIX Assumption is a Defect
 
-Scripts, hooks, `bin/` entry points, and CI steps run on Linux, macOS, and native Windows. Fix a portability break at its source; never skip the platform. (Test-side rules live in `python-testing.md` §Cross-OS Tests.)
+Scripts, hooks, `bin/` entry points, and CI steps run on Linux, macOS, and native Windows. Fix a portability break at its source; never skip the platform. (Test-side rules in `python-testing.md` §Cross-OS Tests.)
 
 - `pathlib` throughout: `Path(p).is_absolute()`, never `startswith("/")`; `PurePath(p).as_posix()` before hashing, serializing, or comparing — native separators change the digest. POSIX-absolute literals are unportable fixtures: `/host/x` resolves to `D:\host\x` on Windows.
 - **Serialized telemetry or provenance paths are cross-host coordinates, not local paths.** Preserve the exact string; recognize declared POSIX and Windows absolute forms with `PurePosixPath` and `PureWindowsPath`; never convert through host `Path` before an exact comparison. Regressions exercise both forms on every host.
@@ -103,7 +103,7 @@ Scripts, hooks, `bin/` entry points, and CI steps run on Linux, macOS, and nativ
 
 ## Structured Data — never a bare dict
 
-A dict with known, fixed keys is the same failure as a bare string with fixed values: `d["retires"]` raises only at runtime, `d.get("retires")` silently returns `None`, and no tool flags a renamed key. Pick by what the data must do:
+A dict with known, fixed keys is the same failure as a bare string with fixed values: `d["retires"]` raises only at runtime, `d.get("retires")` silently returns `None`, no tool flags a renamed key. Pick by what the data must do:
 
 | Need | Use |
 | -- | -- |
@@ -120,7 +120,7 @@ A dict with known, fixed keys is the same failure as a bare string with fixed va
 
 ## Closed Option Sets — never bare strings
 
-Fixed, mutually exclusive options (severity, mode, status, kind, action, direction) = named type, declared once. Bare `str` re-states the set at every comparison: typo `"WANR"` evaluates false instead of raising; renamed member leaves stale literals nothing flags.
+Fixed, mutually exclusive options (severity, mode, status, kind, action, direction) = named type, declared once. Bare `str` re-states the set at every comparison: typo `"WANR"` evaluates false instead of raising; renamed member leaves stale literals unflagged.
 
 **Signals** (any one ⇒ closed set): docstring says `One of "a", "b"` · `argparse choices=(...)` whose value is branched on internally · same literals compared in 2+ places · dataclass field `str` with enumerable legal values.
 

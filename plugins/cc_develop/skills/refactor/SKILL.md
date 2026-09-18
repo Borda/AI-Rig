@@ -17,9 +17,9 @@ NOT for:
 - new features (use `/develop:feature`)
 - `.claude/` config changes (use `/foundry:manage` (requires foundry plugin))
 - non-Python projects (JS/TS/Go/Rust) — toolchain assumes pytest; use language-native toolchain instead
-- mixed refactor+feature tasks — run /develop:refactor first, then /develop:feature; do not attempt both in single skill run
+- mixed refactor+feature tasks — run /develop:refactor first, then /develop:feature; never both in one run
 
-Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) requires `foundry` plugin; when absent, Step 5 quality stack skipped with a visible warning — output lower quality but workflow still completes.
+Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) requires `foundry` plugin; absent → Step 5 quality stack skipped with visible warning — lower output quality but workflow still completes.
 
 </objective>
 
@@ -73,7 +73,7 @@ cat "$_DEV_SHARED/runner-detection.md"
 
 Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill start.
 
-**Optional `--plan <path>`**: if `$ARGUMENTS` contains `--plan <path>` (at any position), read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use to inform Step 1 scope analysis. Skip redundant codebase exploration for already-classified files. Store plan path as `PLAN_FILE`.
+**Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — informs Step 1 scope analysis. Skip redundant codebase exploration for already-classified files. Store plan path as `PLAN_FILE`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -84,10 +84,10 @@ cat "$_DEV_SHARED/preflight-helpers.md"
 
 Execute --plan path extraction; sets `$PLAN_FILE`.
 
-**Checkpoint init**: create `.developments/<TS>/` run directory, capture path in `$DEV_DIR` (assigned in the block below). Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), append `step: N — completed` to `$DEV_DIR/checkpoint.md`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
+**Checkpoint init**: create `.developments/<TS>/` run directory, capture path in `$DEV_DIR` (assigned below). Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4, 5), append `step: N — completed` to `$DEV_DIR/checkpoint.md`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
 
 ```bash
-# persist DEV_DIR for compaction recovery — bash state lost between Bash() calls
+# persist DEV_DIR for compaction recovery — bash resets between calls
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 DEV_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_run_dir.py" 2>/dev/null)  # timeout: 5000
 echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}"
@@ -95,7 +95,7 @@ echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-refactor-dev-dir-${CSID}"
 
 ## Flag parsing
 
-Parse flags into actual shell variables (not prose) so downstream blocks see correct values. Persist to temp files for cross-block access (bash state lost between Bash() calls):
+Parse flags into shell variables (not prose) so downstream blocks see correct values. Persist to temp files for cross-block access (bash resets between calls):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -110,15 +110,15 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_parse_args.py" \
 
 Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || TEAM_MODE=false`.
 
-**Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug), so stale values from a prior run of another skill cannot leak in.
+**Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug) — stale values from a prior run of another skill can't leak in.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--semble`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--semble`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
 > loads: worktree-isolation.md
 
-When `--worktree` set, offload the whole run into an isolated git worktree — **before** codemap detection or any edit, so codemap scans + all mutations land in the worktree (per-worktree ephemeral index; parallel runs never share one index).
+`--worktree` set → offload the whole run into an isolated git worktree — **before** codemap detection or any edit, so codemap scans + all mutations land in the worktree (per-worktree ephemeral index; parallel runs never share one index).
 
 ```bash
 # timeout: 5000
@@ -135,7 +135,7 @@ cat "$_DEV_SHARED/worktree-isolation.md"
 
 `WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree. Remember the branch for §Exit at Final Report.
 
-**Codemap auto-detection** — run after flag parsing. Behaviour differs by mode: `strict` (user explicitly passed `--codemap`) hard-fails when codemap unavailable; `auto` and `off` soft-degrade to `false` (do not abort skill):
+**Codemap auto-detection** — run after flag parsing. Behaviour differs by mode: `strict` (user explicitly passed `--codemap`) hard-fails when codemap unavailable; `auto` and `off` soft-degrade to `false` (don't abort skill):
 
 ```bash
 # timeout: 5000
@@ -187,7 +187,7 @@ cat "$_DEV_SHARED/codemap-context.md"
 
 Follow enabled sections (codemap block if `CODEMAP_ENABLED`, semble companion if `SEMBLE_ENABLED`). Skip if both false.
 
-**Multi-file / API-change scope — extended codemap scan** (only when `CODEMAP_ENABLED=true`): if target is directory, spans multiple files, or goal mentions renaming/restructuring public API (i.e., refactoring NOT limited to internals of single function or class with unchanged public interface):
+**Multi-file / API-change scope — extended codemap scan** (only when `CODEMAP_ENABLED=true`): target is directory, spans multiple files, or goal mentions renaming/restructuring public API (i.e. refactoring NOT limited to internals of a single function/class with unchanged public interface):
 
 ```bash
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"  # timeout: 3000
@@ -204,7 +204,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ] && [ -
 fi
 ```
 
-Include `## Scope & Reusability (codemap-py)` block in foundry:sw-engineer spawn prompt. If `rdeps` returns callers **outside** refactoring scope: flag explicitly — those callers must update or refactoring silently breaks public contract. If `CODEMAP_ENABLED=false` and scope is multi-file: skip silently.
+Include `## Scope & Reusability (codemap-py)` block in foundry:sw-engineer spawn prompt. `rdeps` returns callers **outside** refactoring scope → flag explicitly — those callers must update or refactoring silently breaks public contract. `CODEMAP_ENABLED=false` and scope is multi-file → skip silently.
 
 Spawn **foundry:sw-engineer** agent to analyze code and identify:
 
@@ -223,9 +223,9 @@ cat "$_DEV_SHARED/premise-grounding.md"
 
 §Premise Grounding Gate. Apply using **refactor** context from Skill contexts table.
 
-**Goal classification gate**: after sw-engineer analysis completes, scan goal text for mixed signals — if goal contains both refactor keywords (rename, extract, restructure, decouple, consolidate) AND feature keywords (add, implement, new, support), ask: "Goal mixes refactoring and feature work — split into two runs." · (a) Abort — run refactor first, then feature · (b) Continue as refactor-only — treat feature additions as out of scope.
+**Goal classification gate**: after sw-engineer analysis completes, scan goal text for mixed signals — goal contains both refactor keywords (rename, extract, restructure, decouple, consolidate) AND feature keywords (add, implement, new, support) → ask: "Goal mixes refactoring and feature work — split into two runs." · (a) Abort — run refactor first, then feature · (b) Continue as refactor-only — treat feature additions as out of scope.
 
-**Scope gate**: if target spans 3+ modules OR 5+ files OR goal mentions any public-API rename — flag complexity smell. Ask: "Narrow scope (Recommended)" / "Proceed anyway".
+**Scope gate**: target spans 3+ modules OR 5+ files OR goal mentions any public-API rename → flag complexity smell. Ask: "Narrow scope (Recommended)" / "Proceed anyway".
 
 Both gates evaluate after the same sw-engineer analysis — when BOTH fire, invoke `AskUserQuestion` ONCE with both questions in the same call (menus stay distinct verbatim; a second sequential window costs another human-idle round trip). Only one fires → single-question call as usual.
 
@@ -240,13 +240,13 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": it runs on substantial refactors and auto-skips only small contained ones):
+**Decision — three states** (default is NOT "skip": runs on substantial refactors, auto-skips only small contained ones):
 
 1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
 2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a small change.
 3. else **default** → **run when refactor is substantial** (spans multiple files, ≳50 lines, or changes public API / an exported symbol); **auto-skip when small** (single file, ≲50 lines, no API change) — a contained refactor has little design surface to challenge.
 
-Two flags are opposites for two regimes, which is why both exist: `--no-challenge` suppresses gate on *substantial* changes where it would otherwise fire; `--challenge` forces it on *small* changes where it would otherwise auto-skip.
+Two flags are opposites for two regimes, why both exist: `--no-challenge` suppresses gate on *substantial* changes where it would otherwise fire; `--challenge` forces it on *small* changes where it would otherwise auto-skip.
 
 Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, dependencies, coupling, risks):
 
@@ -282,7 +282,7 @@ echo "$_CO_OUT" | grep -i "<module_name>" || echo "No tests found for <module_na
 [ "${SKIP_COV}" -eq 0 ] && { $PYTEST_CMD --cov=<target_module> -q --cov-report=term-missing || true; }
 ```
 
-If `SKIP_COV=1`: skip coverage classification entirely — do not classify any function as UNCOVERED; note "coverage tool absent — coverage audit skipped" in audit output. **Step 3 qa-specialist spawn behavior when `SKIP_COV=1`**: spawn qa-specialist with all public functions listed as `coverage: unknown` and instruction to write characterization tests for every public function (cannot prioritize uncovered functions when coverage unknown — test all to ensure safety net). Proceed to Step 3 with unknown coverage state.
+`SKIP_COV=1` → skip coverage classification entirely — don't classify any function as UNCOVERED; note "coverage tool absent — coverage audit skipped" in audit output. **Step 3 qa-specialist spawn behavior when `SKIP_COV=1`**: spawn qa-specialist with all public functions listed as `coverage: unknown`, instructed to write characterization tests for every public function (can't prioritize uncovered functions when coverage unknown — test all for safety net). Proceed to Step 3 with unknown coverage state.
 
 Classify each public function/method (only when `SKIP_COV=0`):
 
@@ -299,7 +299,7 @@ Before writing characterization tests, evaluate audit output critically:
 3. **Refactor relevance**: uncovered/partial items in code paths refactoring will touch?
 4. **Hidden dependencies**: integration points or cross-module calls audit may have missed?
 
-If audit incomplete: re-examine before Step 3. Gaps found mid-refactoring (Step 4) costly.
+Audit incomplete → re-examine before Step 3. Gaps found mid-refactoring (Step 4) are costly.
 
 <!-- Only active when --team flag passed (~10% of invocations) -->
 
@@ -366,7 +366,7 @@ else
 fi
 ```
 
-If `GATE_EXIT -ne 0` (including exit 5): characterization tests missing or wrong — **cannot proceed to Step 4 without a passing safety net**. Invoke `AskUserQuestion` — "Characterization test gate failed (exit `$GATE_EXIT`). How to proceed?" · (a) **Fix test collection path / fix test assertions** (recommended — re-spawn qa-specialist with corrected path or assertions) · (b) **Proceed without safety net** (accept risk — record decision in `$DEV_DIR/checkpoint.md`) · (c) **Abort**. On (b): document explicit acceptance in `checkpoint.md` (`step: 3 — gate exit $GATE_EXIT — proceed without safety net (user accepted)`) before continuing.
+`GATE_EXIT -ne 0` (including exit 5) → characterization tests missing or wrong — **cannot proceed to Step 4 without a passing safety net**. Invoke `AskUserQuestion` — "Characterization test gate failed (exit `$GATE_EXIT`). How to proceed?" · (a) **Fix test collection path / fix test assertions** (recommended — re-spawn qa-specialist with corrected path or assertions) · (b) **Proceed without safety net** (accept risk — record decision in `$DEV_DIR/checkpoint.md`) · (c) **Abort**. On (b): document explicit acceptance in `checkpoint.md` (`step: 3 — gate exit $GATE_EXIT — proceed without safety net (user accepted)`) before continuing.
 
 ## Step 4: Refactor with safety net
 
@@ -386,7 +386,7 @@ For each change:
 3. Tests pass: proceed to next change
 4. Tests fail: revert, try different approach
 
-**Safety break**: track cycle count and wall time via temp files (bash state lost between Bash() calls — `$INNER_CYCLE` and `$START_TIME` declared inline are unavailable in subsequent Bash blocks; persistence is mandatory):
+**Safety break**: track cycle count and wall time via temp files (bash resets between calls — `$INNER_CYCLE`/`$START_TIME` inline don't survive to later blocks; persistence mandatory):
 
 ```bash
 # timeout: 3000
@@ -415,7 +415,7 @@ if [ "$ELAPSED" -ge 1800 ]; then
 fi
 ```
 
-After each change-test pair: re-read counter from temp file, increment, write back. Stop when `INNER_CYCLE > MAX_INNER_CYCLES` or elapsed ≥ `MAX_WALL_SECONDS`.
+After each change-test pair: re-read counter from temp file, increment, write back. Stop at `INNER_CYCLE > MAX_INNER_CYCLES` or elapsed ≥ `MAX_WALL_SECONDS`.
 
 **Refactoring categories:**
 
@@ -458,7 +458,7 @@ Full review of refactored code. **Loop** — review -> targeted refactoring (ret
    GATE_EXIT=${PIPESTATUS[0]}
    ```
 
-4. **Objective convergence check**: if findings this cycle identical to previous cycle (same locations, same issues), declare convergence and exit — further cycles won't resolve; surface to user.
+4. **Objective convergence check**: findings this cycle identical to previous (same locations, same issues) → declare convergence, exit — further cycles won't resolve; surface to user.
 
 5. **Only nits remain** (variable naming, comment clarity, minor formatting): document in Follow-up, exit loop.
 
@@ -471,7 +471,7 @@ Full review of refactored code. **Loop** — review -> targeted refactoring (ret
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash state lost between Bash() calls
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash resets between calls
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 [ -f "$_DEV_SHARED/foundry--quality-stack.md" ] || echo "⚠ foundry--quality-stack.md missing from this plugin's _shared — broken install; quality stack skipped"
 ```
@@ -484,7 +484,7 @@ _SHARED="$_DEV_SHARED"  # foundry--quality-stack.md loads its siblings from $_SH
 cat "$_DEV_SHARED/foundry--quality-stack.md"
 ```
 
-If not found → skip quality stack entirely, note the message above in Final Report. Otherwise execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
+Not found → skip quality stack entirely, note the message above in Final Report. Otherwise execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review Loop, and Codex Mechanical Delegation steps.
 
 ## Final Report
 
@@ -534,10 +534,10 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 | Temptation | Reality |
 | -- | -- |
-| "The code is simple enough — I can skip characterization tests" | No safety net = no proof behavior unchanged. Characterization tests only proof. |
+| "The code is simple enough — I can skip characterization tests" | No safety net = no proof behavior unchanged. Characterization tests are the only proof. |
 | "I'll fix this adjacent bug while I'm in here" | Scope creep conflates history. Adjacent bugs go in Follow-up, not this session. |
 | "The tests are too brittle — I'll refactor them as well" | Refactoring tests + prod code simultaneously makes regressions unattributable. Fix tests first, separate pass. |
-| "I know the codebase — no need for coverage audit" | Untested edge cases = most common refactoring breakage. Audit finds what you don't know you don't know. |
-| "This is a small change — Step 4's max-5 cycles are overkill" | Simple changes = simple test loops. Guard costs nothing when unneeded; prevents runaway sessions when it is. |
+| "I know the codebase — no need for coverage audit" | Untested edge cases are the most common refactoring breakage. Audit finds what you don't know you don't know. |
+| "This is a small change — Step 4's max-5 cycles are overkill" | Simple changes = simple test loops. Guard costs nothing when unneeded; prevents runaway sessions when needed. |
 
 </notes>

@@ -17,7 +17,7 @@ mkdir -p "$RUN_DIR" # timeout: 5000
 BASE_REF_MERGE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || echo "origin/$BASE_REF")
 ```
 
-When `$CHANGE_SCOPE=lint-only` (ALL selected items were typing/doc/formatting): skip `foundry:qa-specialist` entirely — linting only. Otherwise spawn both in parallel:
+When `$CHANGE_SCOPE=lint-only` (all selected items were typing/doc/formatting): skip `foundry:qa-specialist` — linting only. Otherwise spawn both in parallel:
 
 ```text
 Agent(subagent_type="foundry:linting-expert", maxTurns=15, prompt="Review all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning). List every lint/type violation. Apply inline fixes for any that are auto-fixable. Write your full findings to $RUN_DIR/linting-expert-step9.md using the Write tool, then return ONLY a compact JSON envelope: {fixed: N, remaining: N, files: [...]}.")
@@ -25,7 +25,7 @@ Agent(subagent_type="foundry:linting-expert", maxTurns=15, prompt="Review all fi
 Agent(subagent_type="foundry:qa-specialist", maxTurns=15, prompt="Review all files changed in the current branch since $BASE_REF_MERGE (expand to literal SHA before spawning) for correctness, edge cases, and regressions. Run tests for changed modules only — do not run the full test suite unless $CHANGE_SCOPE=full. Flag any blocking issues (bugs, broken contracts, missing test coverage for the changed logic). Write your full findings to $RUN_DIR/qa-specialist-step9.md using the Write tool, then return ONLY a compact JSON envelope: {blocking: N, warnings: N, issues: [...]}.")
 ```
 
-> **Health monitoring**: both spawns run in the background. Issue them in one message, then **end the turn** — the completion notification is the resume signal. Never hold the turn open with `Bash(true)`, a "waiting" line, or a poll. On notification read each output file; empty or missing → surface partial results from `$RUN_DIR` with ⏱.
+> **Health monitoring**: both spawns run in background. Issue in one message, then **end the turn** — completion notification is resume signal. Never hold turn open with `Bash(true)`, a "waiting" line, or a poll. On notification, read each output file; empty or missing → surface partial results from `$RUN_DIR` with ⏱.
 
 - `foundry:linting-expert` made file changes → commit:
 
@@ -42,7 +42,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_lint_fixes.py"  # timeo
 
 - Warnings (non-blocking) → record in report; don't block push
 
-Revoke commit authorization (recompute sentinel path — main PR flow does not set `$SENTINEL`):
+Revoke commit authorization (recompute sentinel path — main PR flow doesn't set `$SENTINEL`):
 
 ```bash
 SENTINEL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/compute_commit_sentinel.py" 2>/dev/null || echo "")

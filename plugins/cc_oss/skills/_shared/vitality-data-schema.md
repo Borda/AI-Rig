@@ -1,6 +1,6 @@
 # Vitality Data Schemas
 
-Reference schemas for oss:gh-scraper data files.
+Reference schemas, oss:gh-scraper data files.
 
 ## JSONL Record Types (`DATA_FILE`)
 
@@ -36,7 +36,7 @@ Each line: `{"type": "<dataset>", "repo": "<GH_OWNER>/<GH_REPO>", "timestamp": "
 Rules:
 
 - Skip datasets returning 403, persistent 202, or empty
-- Set `"partial": true` when truncation detected (e.g. 501/201/1001 response count hit limit)
+- Set `"partial": true` when truncation detected (e.g. 501/201/1001 response count hits limit)
 - Set `"records"` to item count in `data`
 - After write: `echo "[repo-warden] raw data: N datasets → $DATA_FILE"`
 
@@ -67,5 +67,5 @@ Rules:
 
 Rules:
 
-- Replace all `<VARIABLE>` placeholders with actual computed values
+- Replace all `<VARIABLE>` placeholders with computed values
 - ⚪ axes: score=-1, conf=-1, status="⚪", signal="unavailable — <reason>"

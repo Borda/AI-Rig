@@ -8,15 +8,15 @@ model: haiku
 
 <objective>
 
-Detect and remove statistical AI-writing fingerprints from human-facing prose before it ships. Grounded in Wikipedia's crowd-sourced AI-detection corpus (`Wikipedia:Signs of AI writing`) — a maintained list of vocabulary, syntax, and formatting patterns that over-represent in LLM output vs human baseline. Apply as a final pass, not a rewrite-from-scratch: preserve meaning, facts, and structure; only excise the tells.
+Detect and remove statistical AI-writing fingerprints from human-facing prose before it ships. Grounded in Wikipedia's crowd-sourced AI-detection corpus (`Wikipedia:Signs of AI writing`) — a maintained list of vocabulary, syntax, and formatting patterns over-represented in LLM output vs human baseline. Apply as a final pass, not a rewrite-from-scratch: preserve meaning, facts, structure; only excise the tells.
 
 </objective>
 
 <inputs>
 
 - **text or file path to humanize**: optional. Inline text, or a file path (Markdown/plain text) to edit in place.
-- **check `<file>`**: read-only mode — report findings without editing.
-- No argument: humanize the draft already composed earlier in this turn (self-review pass) — only reachable when the model chooses to invoke this skill mid-task; there is no platform hook that guarantees a pre-send interception, so treat this path as best-effort, not a hard gate.
+- **check `<file>`**: read-only mode — report findings, no editing.
+- No argument: humanize the draft already composed earlier this turn (self-review pass) — only reachable when the model chooses to invoke this skill mid-task; no platform hook guarantees a pre-send interception, so treat this path as best-effort, not a hard gate.
 
 </inputs>
 
@@ -24,9 +24,9 @@ Detect and remove statistical AI-writing fingerprints from human-facing prose be
 
 ## 1. Load the target text
 
-- Inline text → work on it directly, no file I/O.
-- File path → `Read` the file.
-- No argument → treat the draft already composed earlier in this turn as the target.
+- Inline text: work on it directly, no file I/O.
+- File path: `Read` the file.
+- No argument: treat the draft already composed earlier this turn as the target.
 
 ## 2. Scan against the checklist
 
@@ -60,22 +60,22 @@ Walk the text once per category below; flag every hit before editing anything (r
 
 ## 3. Apply fixes
 
-- `check` mode: stop here — report findings (category, location, quote, suggested fix), do not edit.
-- Edit mode: apply the minimal edit per flagged instance using `Edit`. Preserve every fact, number, and citation — only the phrasing/formatting changes. Re-read the result once to confirm no fact was dropped in the rewrite.
+- `check` mode: stop here — report findings (category, location, quote, suggested fix), no edit.
+- Edit mode: apply minimal edit per flagged instance using `Edit`. Preserve every fact, number, citation — only phrasing/formatting changes. Re-read result once to confirm no fact dropped in rewrite.
 
 ## 4. Report
 
-One line per category with hit count and net edits made (e.g. "vocabulary: 4 removed, syntax: 2 restructured, formatting: 1 fixed"). Zero hits → say so plainly, do not pad the report.
+One line per category with hit count and net edits made (e.g. "vocabulary: 4 removed, syntax: 2 restructured, formatting: 1 fixed"). Zero hits: say so plainly, don't pad the report.
 
 </workflow>
 
 <notes>
 
-- Source of the checklist: Wikipedia's `Wikipedia:Signs of AI writing` essay — a living document; the vocabulary list drifts as models change ("delve" was the 2023-24 tell, largely purged by 2025). Treat the table above as a snapshot, not gospel — if a word reads natural and specific in context, don't force a cut because it once trended in AI output.
-- This skill governs **artifacts** headed for human eyes, not conversational chat turns or ultra-caveman-tier handover files — see the SKIP list in `description:` for the exact destination-based cutoff.
-- Never invent facts while trimming a vague-attribution sentence — either name the real source (if known from context) or cut the claim entirely. Don't launder a weasel-worded claim into a confident unsourced one.
-- Dense co-occurrence (5+ flagged patterns in one passage) is the real signal — a single "robust" or one bolded term is not worth flagging in isolation; don't over-trigger on incidental matches.
-- Commit messages: `rules/git-commit.md` structural rules are inviolable (subject ≤50 chars, `type(scope): detail`, no line-wrap, mandatory co-author trailers, self-contained no internal labels) — on a commit message, humanizer only touches word choice inside those constraints, never subject length, wrapping, or trailer lines.
+- Checklist source: Wikipedia's `Wikipedia:Signs of AI writing` essay — living document; vocabulary list drifts as models change ("delve" was the 2023-24 tell, largely purged by 2025). Treat the table above as a snapshot, not gospel — a word natural and specific in context isn't a forced cut just because it once trended in AI output.
+- This skill governs **artifacts** headed for human eyes, not conversational chat turns or ultra-caveman-tier handover files — see SKIP list in `description:` for exact destination-based cutoff.
+- Never invent facts while trimming a vague-attribution sentence — name the real source (if known from context) or cut the claim entirely. Don't launder a weasel-worded claim into a confident unsourced one.
+- Dense co-occurrence (5+ flagged patterns in one passage) is the real signal — a single "robust" or one bolded term isn't worth flagging in isolation; don't over-trigger on incidental matches.
+- Commit messages: `rules/git-commit.md` structural rules are inviolable (subject ≤50 chars, `type(scope): detail`, no line-wrap, mandatory co-author trailers, self-contained no internal labels) — on a commit message, humanizer touches only word choice inside those constraints, never subject length, wrapping, or trailer lines.
 - Checklist deliberately excludes Wikipedia-only categories (broken wikitext, DOI/ISBN citation format, AfC submission-statement framing, non-existent Wikipedia templates) — those don't apply outside Wikipedia; don't re-add them.
 
 </notes>

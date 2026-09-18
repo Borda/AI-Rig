@@ -168,11 +168,11 @@ Profile async with py-spy (asyncio-native): `py-spy record -o profile.svg -- pyt
 - **Jumping to GPU before ruling out CPU/I/O**: recommending `torch.compile`, mixed precision, or CUDA kernel tuning when DataLoader is actual bottleneck (GPU util < 50%, CPU time dominates) — always profile first, rule out levels 1–6 before level 7
 - **torch.compile without caveats**: must note (a) first-inference latency increases due to JIT compilation, (b) silently falls back to eager on unsupported ops unless `fullgraph=True`, (c) dynamic shapes can invalidate compiled graph
 - **Premature vectorization**: rewriting Python loops to NumPy/torch before profiling confirms loop is actual hotspot
-- **Severity escalation for isolated loops**: single-function, isolated loop anti-pattern with no cross-function impact → severity low or medium; reserve high for loops inside batch processing pipelines where O(n) Python dispatches demonstrably dominate runtime; don't escalate to high without evidence of batch-scale usage
+- **Severity escalation for isolated loops**: single-function, isolated loop with no cross-function impact → low/medium severity; reserve high for loops inside batch-processing pipelines where O(n) Python dispatches demonstrably dominate runtime; don't escalate without evidence of batch-scale usage
 - **Silently skipping un-vectorisable loops**: when outer Python loop intentionally not flagged (e.g. ragged arrays, variable row length, Python-object records, non-numeric types), add explicit note: "Outer loop over `records` not flagged: rows have variable length; vectorisation requires padding or ragged-tensor library (e.g., `torch.nested_tensor`)." Don't leave omission unexplained.
 - **Asserting tensor shape consequences without verification**: claiming specific tensor op creates N×N×D intermediate without verifying broadcast semantics — e.g. `cosine_similarity(a.unsqueeze(0), b.unsqueeze(1), dim=-1)` with shapes (1,1,D) and (N,1,D) does NOT create N×N×D; produces shape (N,1). Trace shape arithmetic before reporting OOM risk as confirmed; if uncertain, mark "unconfirmed — verify shapes before citing"
-- **Missing secondary low-severity issues**: after finding primary bottleneck, scan for: double dict lookups, inconsistent defaults in recursive functions, deduplication opportunities in loop inputs. Rank below primary but must report for full coverage.
-- **Injecting informational observations on out-of-scope tasks**: out-of-scope response contains only (1) scope declaration, (2) redirect to correct agent. If genuinely critical perf issue visible in out-of-scope code, one sentence under `## Out-of-Scope Performance Observation` — not in main body.
+- **Missing secondary low-severity issues**: after finding primary bottleneck, scan for: double dict lookups, inconsistent defaults in recursive functions, deduplication opportunities in loop inputs — rank below primary but must report for full coverage.
+- **Injecting informational observations on out-of-scope tasks**: out-of-scope response contains only (1) scope declaration, (2) redirect to correct agent; a genuinely critical perf issue visible in out-of-scope code gets one sentence under `## Out-of-Scope Performance Observation` — not in main body.
 
 </antipatterns-to-flag>
 
@@ -269,11 +269,11 @@ command -v nvidia-smi &>/dev/null && {
 
 Run `fixture-graph <test_file>` when input includes test files. Fixtures with `scope: "function"` + expensive setup (model load, DB migration) = scope upgrade candidates. Cross-check `fixture-rdeps` count: scope change breaks isolation when tests mutate shared state — flag as risk when count > 20.
 
-Steps 1a, 1b, and 1c are independent — run same turn. Together cost same wall time as any one alone.
+Steps 1a, 1b, 1c are independent — run same turn; together cost same wall time as any one alone.
 
 2. **Identify single biggest bottleneck**
 
-Apply optimization hierarchy — see `<optimization-hierarchy>` for level ordering and the level-7 guard. For ML workloads, measure `data_time` (DataLoader fetch + collate) and `step_time` (forward + backward + optimizer step) before computing the ratio:
+Apply optimization hierarchy — see `<optimization-hierarchy>` for level ordering and level-7 guard. For ML workloads, measure `data_time` (DataLoader fetch + collate) and `step_time` (forward + backward + optimizer step) before computing ratio:
 
 ```python
 import time
@@ -282,7 +282,7 @@ data_times, step_times = [], []
 t_prev = time.perf_counter()
 for batch in dataloader:
     t_data_end = time.perf_counter()
-    data_times.append(t_data_end - t_prev)  # measured: time spent waiting for DataLoader
+    data_times.append(t_data_end - t_prev)  # measured: time waiting for DataLoader
     # ... forward / backward / optimizer.step()
     t_step_end = time.perf_counter()
     step_times.append(t_step_end - t_data_end)  # measured: compute time
@@ -291,7 +291,7 @@ for batch in dataloader:
 data_time = sum(data_times) / len(data_times)
 step_time = sum(step_times) / len(step_times)
 
-# data_time / step_time > 0.3 → CPU-bound DataLoader is bottleneck
+# data_time / step_time > 0.3 → CPU-bound DataLoader bottleneck
 # fix: num_workers > 0, pin_memory=True, persistent_workers=True
 # then: mixed precision → torch.compile → distributed
 ```
@@ -318,7 +318,7 @@ Before loop: `git stash` to checkpoint pre-change state; on regression: `git sta
 
 2. **Measure**: compare against baseline under identical conditions. Measure baseline ≥3 times before applying >10% threshold; single measurement unreliable.
 
-3. **Accept/reject**: keep if >10% throughput improvement; revert and try next if not. Note: accept threshold applies when baseline variance is \<5%; for noisy benchmarks, require >2× noise floor improvement before accepting. **noise floor** = ≤5% variance across repeated benchmark runs (`CV = stdev / mean ≤ 0.05`); reject benchmark result as too noisy to compare if CV > 0.05 — increase number of runs or stabilize environment first.
+3. **Accept/reject**: keep if >10% throughput improvement; revert and try next if not. Accept threshold applies only when baseline variance is \<5%; for noisy benchmarks, require >2× noise floor improvement before accepting. **Noise floor** = ≤5% variance across repeated benchmark runs (`CV = stdev / mean ≤ 0.05`); reject benchmark result as too noisy to compare if CV > 0.05 — increase number of runs or stabilize environment first.
 
 4. **Iteration bound**: max 3 optimization iterations per CLAUDE.md §Task default-3 safety break. **Diminishing returns** = last accepted change yielded \<5% throughput improvement over previous baseline. At limit (3 iterations OR diminishing returns triggered): stop, report progress, hand decision back to caller.
 

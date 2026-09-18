@@ -116,7 +116,7 @@ Severity: **high** — permission prompt mid-workflow blocks automation; user de
 
 ### Sub-check 23b — `# timeout:` annotation without shell enforcement
 
-`# timeout: N` on a bash line is a hint to Claude Code's Bash tool — no effect when the command runs outside the tool (bin/ scripts, CI, direct shell). Hard enforcement needs `timeout S <cmd>` prefix (bash) or `--timeout S` via argparse passed to every blocking call (Python subprocess). See `bin-authoring-guide.md` §Timeout Policy for patterns and ms→s conversion table.
+`# timeout: N` on a bash line is a hint to Claude Code's Bash tool — no effect when the command runs outside the tool (bin/ scripts, CI, direct shell). Hard enforcement needs `timeout S <cmd>` prefix (bash) or `--timeout S` via argparse passed to every blocking call (Python subprocess). See `bin-authoring-guide.md §Timeout Policy` for patterns and ms→s conversion table.
 
 Rules:
 
@@ -726,7 +726,7 @@ Severity: **medium** — rule with non-matching paths is never applied; may repr
 
 ### Sub-check 32d — Orphaned bin/ scripts
 
-`bin/` scripts that exist in the plugin source tree but are not referenced by any `.md` file in that plugin (SKILL.md, agents, rules, modes, templates, \_shared) are unreachable at runtime. Common cause: script authored as scaffolding but never wired into its caller SKILL.md.
+`bin/` scripts existing in the plugin source tree but not referenced by any `.md` file in that plugin (SKILL.md, agents, rules, modes, templates, \_shared) are unreachable at runtime. Common cause: script authored as scaffolding but never wired into its caller SKILL.md.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -795,7 +795,7 @@ Severity: **medium** — inline twin diverges silently from canonical mode file 
 
 ## Check 32g — Self-confessed manual sync markers
 
-Detects explicit sync instructions in plugin `.md` files (`SYNC:`, `lock-step`, `keep both`, `duplicated from`, `mirror this in`, `keep.*copies.*sync`). Each marker = author admitted manual sync is required = extraction not yet done.
+Detects explicit sync instructions in plugin `.md` files (`SYNC:`, `lock-step`, `keep both`, `duplicated from`, `mirror this in`, `keep.*copies.*sync`). Each marker = author admitted manual sync required = extraction not yet done.
 
 ```bash
 printf "=== Check 32g: self-confessed sync markers ===\n"
@@ -972,7 +972,7 @@ Fix: re-assign the variable at the top of every bash block that needs it, or com
 
 ## Check 42 — Unexpanded variables in agent spawn prompts
 
-Variables written as `$VAR` or `${VAR}` inside ```` ```markdown ```` fenced blocks (spawn prompt templates) are passed literally to the spawned agent — the agent receives the dollar-sign string, not the resolved value. The agent cannot resolve orchestrator shell variables; `$_FOUNDRY_SHARED/foo.md` becomes the literal path string `$_FOUNDRY_SHARED/foo.md` and the Read tool fails silently.
+Variables written as `$VAR` or `${VAR}` inside ```` ```markdown ```` fenced blocks (spawn prompt templates) are passed literally to the spawned agent — the agent receives the dollar-sign string, not the resolved value. The agent can't resolve orchestrator shell variables; `$_FOUNDRY_SHARED/foo.md` becomes the literal path string `$_FOUNDRY_SHARED/foo.md` and the Read tool fails silently.
 
 ```bash
 printf "=== Check 42: Unexpanded variables in spawn prompt markdown blocks ===\n"

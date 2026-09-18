@@ -120,7 +120,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_mode_dispatch.py" \
 
 ## Check 14e — Cross-plugin shared-file drift
 
-Detects byte-level drift in files that must be identical across plugins because each plugin ships its own copy of a shared mechanism (a plugin cannot depend on another being installed). The canonical copy lives in one plugin; others must track it byte-for-byte. Source of truth is the `MANIFEST` in the script (currently the `agent-router.js` fallback hook: foundry canonical → oss/develop/research copies). Files that legitimately vary per plugin (e.g. `agent-resolution.md` fallback tables, per-plugin `rules/quality-gates.md`) intentionally NOT in the manifest.
+Detects byte-level drift in files that must be identical across plugins because each plugin ships its own copy of a shared mechanism (a plugin can't depend on another being installed). The canonical copy lives in one plugin; others must track it byte-for-byte. Source of truth is the `MANIFEST` in the script (currently the `agent-router.js` fallback hook: foundry canonical → oss/develop/research copies). Files that legitimately vary per plugin (e.g. `agent-resolution.md` fallback tables, per-plugin `rules/quality-gates.md`) intentionally NOT in the manifest.
 
 Scan via deterministic bin/ script:
 
@@ -137,7 +137,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/propagate_shared.py"  # ti
 
 ## Check 14f — Unmanaged codemap index-guard copy
 
-Detects a hand-written codemap index path in a file that neither a `MANIFEST` entry nor the guard registry covers. The guard ("is codemap-py installed, and does an index exist for this project?") was hand-copied across four plugins with nothing linking the copies, so each drifted alone and one path fix cost ten edits. Two shapes are permitted: consume the provider CLI (`codemap-py query`, `codemap_resolve.py` — such a consumer never spells the path, so it never trips this check), or one canonical copy propagated byte-identical. Inline bash in agent/skill prose is a fragment `MANIFEST` cannot propagate, so those copies are named in the script's `REGISTRY` with a reason and held to two invariants: index dir anchored to a project-root variable (never CWD), project name the raw basename (never sanitized).
+Detects a hand-written codemap index path in a file that neither a `MANIFEST` entry nor the guard registry covers. The guard ("is codemap-py installed, and does an index exist for this project?") was hand-copied across four plugins with nothing linking the copies, so each drifted alone and one path fix cost ten edits. Two shapes permitted: consume the provider CLI (`codemap-py query`, `codemap_resolve.py` — such a consumer never spells the path, so it never trips this check), or one canonical copy propagated byte-identical. Inline bash in agent/skill prose is a fragment `MANIFEST` can't propagate, so those copies are named in the script's `REGISTRY` with a reason and held to two invariants: index dir anchored to a project-root variable (never CWD), project name the raw basename (never sanitized).
 
 ```bash
 printf "=== Check 14f: Unmanaged codemap index-guard copy ===\n"
@@ -199,7 +199,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/list_audit_files.py" $( [ 
 
 Flag files with block count ≥ 10 as extraction candidates — recommend `--efficiency` run for full NxN analysis.
 
-> **A `0` in the BLOCKS column is a correct result, not a filtering bug** — `_shared/agent-resolution.md` is the standing example. Those rows are the regression test for the `grep -c` fallback defect fixed in the block above: with `|| echo 0`, a zero-match file captured `"0\n0"` and aborted the arithmetic, so the check emitted nothing at all. Keep zero rows in the output; their presence is the evidence the count path still works.
+> **A `0` in the BLOCKS column is a correct result, not a filtering bug** — `_shared/agent-resolution.md` is the standing example. Those rows are the regression test for the `grep -c` fallback defect fixed in the block above: with `|| echo 0`, a zero-match file captured `"0\n0"` and aborted the arithmetic, so the check emitted nothing at all. Keep zero rows in the output — their presence is the evidence the count path still works.
 
 For 17a (step-level prose overlap, ≥40% consecutive steps): flag pair, name canonical owner; route to Check 20 `merge-prune` if no clear owner.
 
@@ -312,9 +312,7 @@ fix: use fully-qualified form, e.g. subagent_type="foundry:<name>"
 
 ## Check 29 — LLM context minimality (verbosity)
 
-Every token in agent, skill, rule file = inference cost on every invocation. Each file must be semantically minimal — all information retained, zero redundant wording.
-
-**Scan targets**: `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/rules/*.md`.
+Every token in agent, skill, rule file = inference cost on every invocation. Each file must be semantically minimal — all information retained, zero redundant wording. **Scan targets**: `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.claude/rules/*.md`.
 
 Via model reasoning, apply four criteria per file:
 
@@ -406,7 +404,7 @@ Via model reasoning: extract (symbol, concept) pairs from legend. Per concept, s
 
 Config files consumed primarily by LLM at inference time. Formatting inconsistencies force LLM to resolve ambiguity before parsing content — wasted tokens, degraded reliability. **Principle**: compact + robust + minimal variation. One canonical form per pattern type per file.
 
-**Scan targets**: all `*.md` files under `.claude/` and `plugins/`, excluding any file named `README.md`. Each sub-check block below re-derives that file list inline — a shared assignment in its own block would not survive into the next Bash call (Check 43), and `mapfile` is a bash builtin absent from zsh (Check 45's note).
+**Scan targets**: all `*.md` files under `.claude/` and `plugins/`, excluding any file named `README.md`. Each sub-check block below re-derives that file list inline — a shared assignment in its own block wouldn't survive into the next Bash call (Check 43), and `mapfile` is a bash builtin absent from zsh (Check 45's note).
 
 Via model reasoning, apply four sub-checks per file:
 
@@ -505,7 +503,7 @@ done 3< <(find .claude plugins -name "*.md" ! -name "README.md" 2>/dev/null | so
 
 ## Check 45 — Policy-sibling marker symmetry (reference-graph completeness)
 
-Some policies (safety rules, scoping rules, format conventions) are **restated in prose** across multiple files instead of cross-referenced, because each consumer needs the rule inline in its own reading context. A restated copy has no structural link back to its siblings, so refining the policy in one location can silently leave others stating a stale version — grep-for-violations doesn't catch a file that correctly states an *old* rule. `plugins/CLAUDE.md §Policy Duplication Marker` requires a `<!-- policy-sibling: path1, path2, ... -->` comment in every copy, listing every other file stating the same policy. This check verifies that declared graph is complete and symmetric — it does not (cannot, mechanically) verify the restated *content* itself stays in sync; that judgment call is `foundry:curator`'s reference-graph trace (see curator `<workflow>` step on policy edits).
+Some policies (safety rules, scoping rules, format conventions) are **restated in prose** across multiple files instead of cross-referenced, because each consumer needs the rule inline in its own reading context. A restated copy has no structural link back to its siblings, so refining the policy in one location can silently leave others stating a stale version — grep-for-violations doesn't catch a file that correctly states an *old* rule. `plugins/CLAUDE.md §Policy Duplication Marker` requires a `<!-- policy-sibling: path1, path2, ... -->` comment in every copy, listing every other file stating the same policy. This check verifies that declared graph is complete and symmetric — it doesn't (can't, mechanically) verify the restated *content* itself stays in sync; that judgment call is `foundry:curator`'s reference-graph trace (see curator `<workflow>` step on policy edits).
 
 Two failure modes:
 
@@ -528,7 +526,7 @@ done
 if [ -n "$OUT" ]; then printf "$OUT"; else printf "✓: Check 45 — no unsynced policy-sibling markers found\n"; fi
 ```
 
-Extraction anchors on the literal `<!-- policy-sibling:` prefix (not a bare grep for the word) so prose documenting the convention — like this file's own explanation above, or an example snippet — never self-matches; the sibling-token filter (`/.*\.md$`) additionally drops non-path fragments (placeholder text, trailing rationale words) that survive the comma split. No array syntax (`read -ra`, `mapfile`) — Claude Code's Bash tool runs under the user's login shell, which is `zsh` on macOS by default, and zsh's `read` does not support bash's `-a` flag; plain `for x in $(...)` word-splitting is portable to both.
+Extraction anchors on the literal `<!-- policy-sibling:` prefix (not a bare grep for the word) so prose documenting the convention — like this file's own explanation above, or an example snippet — never self-matches; the sibling-token filter (`/.*\.md$`) additionally drops non-path fragments (placeholder text, trailing rationale words) surviving the comma split. No array syntax (`read -ra`, `mapfile`) — Claude Code's Bash tool runs under the user's login shell, `zsh` on macOS by default, and zsh's `read` doesn't support bash's `-a` flag; plain `for x in $(...)` word-splitting is portable to both.
 
 **Severity**:
 

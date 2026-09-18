@@ -15,9 +15,8 @@ import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
 patient_ids = metadata["patient_id"].values
-# random_state MUST be pinned — omitting produces a different split per run; the
-# patient-overlap assertion still passes (stays group-aware), silently masking
-# non-reproducibility. Cross-run comparisons require the exact same seed.
+# random_state MUST be pinned — omitting varies split per run; patient-overlap assertion
+# still passes (group-aware), silently masking non-reproducibility. Same seed needed for cross-run comparisons.
 gss = GroupShuffleSplit(n_splits=1, test_size=0.3, random_state=42)
 train_idx, temp_idx = next(gss.split(metadata, groups=patient_ids))
 
@@ -84,7 +83,7 @@ ratio = majority / minority  # >10x severe; 2-10x moderate
 
 ## Recommended Configuration
 
-For throughput settings (`num_workers`, `pin_memory`, `prefetch_factor`, `persistent_workers`), see `foundry:perf-optimizer`; skip if foundry is absent. Core integrity settings:
+For throughput settings (`num_workers`, `pin_memory`, `prefetch_factor`, `persistent_workers`), see `foundry:perf-optimizer`; skip if foundry absent. Core integrity settings:
 
 ```python
 DataLoader(

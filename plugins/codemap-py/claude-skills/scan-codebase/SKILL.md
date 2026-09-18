@@ -30,7 +30,7 @@ Build invocation from `$ARGUMENTS`. Pass supplied `--root <path>` and/or `--incr
 ```bash
 # timeout: 10000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# tr|awk, not for-loop — zsh doesn't word-split unquoted vars, for-loop saw whole string as one token, "--root <path>" always false-flagged unsupported
+# tr|awk not for-loop — zsh doesn't word-split unquoted vars; for-loop saw whole string as one token, always false-flagged "--root <path>" unsupported
 # awk skips token after --root same as old _SKIP_NEXT; parse_scan_args.py handles quoted paths
 _ARGS_UNKNOWN=$(printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' \
   | awk '/^--root$/{skip=1;next} skip{skip=0;next} /^--incremental$/{next} /^--/{print}' | tr '\n' ' ')
@@ -64,8 +64,8 @@ while IFS= read -r -d '' _arg; do
   SCAN_ARGS+=("$_arg")
 done < "$_ARGS_FILE"
 rm -f "$_ARGS_FILE"
-# dispatcher, not the scan-index alias — alias leases in-engine too (graph.main wraps build+publish in rwgate.write_index), but it skips the dispatcher's interpreter probe (exit 127 on no eligible CPython) and is a deprecated shim, removed no earlier than 1.0.0. SCAN_BIN stays setup_scan_env.py's existence preflight (dispatcher needs the same binary present).
-# PATH-literal first token — expansion-bearing form matches no bare-name allow prefix; absolute launcher is the interactive fallback
+# dispatcher, not scan-index alias — alias leases in-engine too (graph.main wraps build+publish in rwgate.write_index) but skips dispatcher's interpreter probe (exit 127 on no eligible CPython) and is a deprecated shim, removed no earlier than 1.0.0. SCAN_BIN stays setup_scan_env.py's existence preflight (dispatcher needs same binary present).
+# PATH-literal first token — expansion-bearing form matches no bare-name allow prefix; absolute launcher is interactive fallback
 command -v codemap-py >/dev/null 2>&1 || { printf "! codemap-py not on PATH — run \"\${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py\" index as one standalone command instead\n" >&2; exit 1; }
 codemap-py index --timeout 360 "${SCAN_ARGS[@]}"
 # capture rc BEFORE branching — inside `if ! cmd; then`, $? is the negated compound's status (always 0), never the scanner's
@@ -78,7 +78,7 @@ if [ "$_SCAN_RC" -ne 0 ]; then
 fi
 ```
 
-**`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain the exact path printed by the scanner as `<emitted-index-path>`; a later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only and does not select the index. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` is handled specially — `setup_scan_env.py` falls back to the git-root basename, same as omitting `--root`.
+**`--root` naming**: index uses `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`; later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only, doesn't select the index. After custom-root scan, verify path via `resolve_index_env.py`. `--root .` handled specially — `setup_scan_env.py` falls back to git-root basename, same as omitting `--root`.
 
 Writes `<root>/.cache/codemap/<project>.json`, or `$CODEMAP_INDEX_DIR/<project>.json` when set; prints:
 

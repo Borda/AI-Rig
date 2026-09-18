@@ -24,9 +24,9 @@ Run calibration for Codex workflow integrity and behavioral scoring.
 
 ## Workflow
 
-Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, and `shared`; `--root` controls only report output, Git context, and read-only classification work. It must not fall back to source checkout or project `.codex`.
+Installed plugin runs use `--layout plugin --root <consuming-project>`. The runner discovers package assets from its own file location under `runtime/calibration`, `skills`, `roles`, `shared`; `--root` controls only report output, Git context, read-only classification work. It must not fall back to source checkout or project `.codex`.
 
-Repository maintainers may use `--layout source --root <source-project>` to validate source `.codex` layout. Do not mix source agents, sync manifests, or project registration checks into installed-plugin result.
+Repository maintainers may use `--layout source --root <source-project>` to validate source `.codex` layout. Never mix source agents, sync manifests, or project registration checks into installed-plugin result.
 
 ### 01: Load calibration task set from `../../runtime/calibration/tasks.json`
 
@@ -95,10 +95,10 @@ Role checks:
 - Behavioral metrics measure supplied observations only. `fixture-selftest` validates scoring; live Codex quality requires replacing/appending live-prompt observations.
 - Missing route coverage is `insufficient-evidence`, never acceptance; `require_live_routes=true` exits nonzero.
 - Compare thresholds with `gate_metrics_raw`, not rounded display.
-- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial and retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
+- Paid paired campaigns: `../../runtime/calibration/run_live_ab.py`; plans by default, executes only `--confirm-paid-run=chatgpt-subscription`, verified local ChatGPT subscription login, no API key env, no `CI`/`GITHUB_ACTIONS`. An executing campaign applies full networked CLI approval and denial contract in `../../shared/native-skill-contract.md` to complete owning command because it spawns `codex exec`. The operation-specific brief is: `Action and purpose`: run confirmed paid paired calibration; `External capability`: paid ChatGPT subscription execution through `codex exec`; `Credential behavior`: use verified local ChatGPT subscription login without reading API keys or credentials; `Filesystem and worktree effects`: write calibration artifacts only to selected run directory; `Retry policy and safe denial outcome`: stop turn on denial, retain sandboxed planning or offline scoring only. Planning and offline scoring remain sandboxed.
 - Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
 - Sol critical-only unless paired quality exceeds Terra configured minimum; tie retains Terra.
-- Do not claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
+- Never claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
 - Fixture `version` is committed-history marker: compare `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit.
 - Missing registration/pattern mismatch: inspect named file and expected registration or pattern first; record observed mismatch. Apply smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
 

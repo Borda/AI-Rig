@@ -4,7 +4,7 @@ Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle a
 
 > **Research run directory**: outputs (`hypotheses.jsonl`, `checkpoint.json`, `journal.md`) go to `.experiments/<run-id>/` — timestamped dir created at R0 start, distinct from `.experiments/state/<run-id>/`. Called `<RUN_DIR>` throughout. See `protocol.md` (companion file, same skill dir) for layout.
 
-**Spawn note**: oracle agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On the completion notifications, check each oracle's output (e.g. `<RUN_DIR>/oracle-researcher.md`); missing or empty → surface with ⏱, continue with partial hypotheses or empty queue if none written.
+**Spawn note**: oracle agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check each oracle's output (e.g. `<RUN_DIR>/oracle-researcher.md`); missing or empty → surface with ⏱, continue with partial hypotheses or empty queue if none written.
 
 1. **Build hypothesis queue** — if `--hypothesis <path>` provided, read as pre-built queue (skip oracle phase). Otherwise spawn oracle agents per active flags — parallel if both set:
 
@@ -22,7 +22,7 @@ Loaded by Step R0 when `--researcher` or `--architect` active. Contains oracle a
 
    **Both `--researcher` and `--architect` set**: run both oracle agents parallel. After both done, merge JSONL files into `<RUN_DIR>/hypotheses.jsonl`, interleaving by priority (lower = higher priority, round-robin on ties). Update priorities to reflect interleaved order.
 
-   No separate feasibility-annotation spawn — each oracle annotates its own hypotheses (`feasible`/`blocker`/`codebase_mapping` are in both prompts above; both oracles already read the codebase). A dedicated `foundry:solution-architect` annotator pass costs ~120,851 tok of fixed overhead to re-read the same codebase for facts the generating oracle just had in hand — the annotation is factual codebase mapping, not adversarial review. Entries missing the fields after an oracle returns (older queue files, partial output): backfill `feasible: true`, `blocker: null`, `codebase_mapping: ""` and flag the count in the R0 summary.
+   No separate feasibility-annotation spawn — each oracle annotates its own hypotheses (`feasible`/`blocker`/`codebase_mapping` are in both prompts above; both oracles already read the codebase). Dedicated `foundry:solution-architect` annotator pass costs ~120,851 tok fixed overhead to re-read same codebase for facts generating oracle already had in hand — annotation is factual codebase mapping, not adversarial review. Entries missing the fields after an oracle returns (older queue files, partial output): backfill `feasible: true`, `blocker: null`, `codebase_mapping: ""` and flag the count in the R0 summary.
 
    Both agents follow handoff envelope protocol (CLAUDE.md §2). Schema: `protocol.md` (companion file, same skill dir).
 

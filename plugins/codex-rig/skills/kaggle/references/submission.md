@@ -7,7 +7,7 @@ Generate final section from grounded sample-submission or competition output evi
 ## CSV classification/regression
 
 - Read grounded sample submission.
-- Join predictions by stable ID when ID column exists; do not rely on incidental row order.
+- Join predictions by stable ID when ID column exists; never rely on incidental row order.
 - Assign exact grounded target column(s).
 - Preserve required column order and row count.
 - Write `submission.csv` without index.

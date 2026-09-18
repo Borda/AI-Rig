@@ -26,8 +26,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --
 
 Two distinct expectations, both asserted here:
 
-- `~/.claude/agents/` and `~/.claude/skills/` must contain **zero** foundry symlinks. Both namespaces dispatch from the plugin (`foundry:sw-engineer`, `/foundry:audit`); a skills link additionally registers a user-level skill that shadows Claude Code's bundled skill of the same name. `/foundry:setup` Step 10 Phase 1 purges both.
-- `~/.claude/rules/` and `~/.claude/TEAM_PROTOCOL.md` **are** symlinked, so those are checked for staleness — they break silently when a version upgrade moves the cache path.
+- `~/.claude/agents/` and `~/.claude/skills/` must contain **zero** foundry symlinks. Both namespaces dispatch from the plugin (`foundry:sw-engineer`, `/foundry:audit`); a skills link additionally registers a user-level skill shadowing Claude Code's bundled skill of the same name. `/foundry:setup` Step 10 Phase 1 purges both.
+- `~/.claude/rules/` and `~/.claude/TEAM_PROTOCOL.md` **are** symlinked, so checked for staleness — they break silently when a version upgrade moves the cache path.
 
 ```bash
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --check I3  # timeout: 10000
@@ -67,7 +67,7 @@ Fix: re-install plugin with `claude plugin install <plugin>@borda-ai-rig` to syn
 
 Structural guard: for every `.md` file in `plugins/*/skills/*/modes/`, `plugins/*/skills/*/templates/`, `plugins/*/skills/_shared/` — verify its **basename** appears as literal string in ≥1 consumer `.md` file in same plugin.
 
-**Scope**: `modes/`, `templates/`, `_shared/` only. SKILL.md and agent `.md` files covered by Check 32a (checks-skills.md); R2 complementary — covers subdirectories 32a does not walk.
+**Scope**: `modes/`, `templates/`, `_shared/` only. SKILL.md and agent `.md` files covered by Check 32a (checks-skills.md); R2 complementary — covers subdirectories 32a doesn't walk.
 
 **Why**: grep-based dead-file checks (Check 32a, 32b) and agent zero-hit analysis search for filename. File loaded only via computed path (e.g. `$AUDIT_TPL/../modes/adversarial.md`) has zero literal-basename hits → grep tools conclude unreferenced → deletion risk.
 
@@ -94,11 +94,11 @@ Fix: add comment in consumer `SKILL.md` making basename a literal string, e.g.:
 # loads: adversarial.md  (via $AUDIT_TPL/../modes/adversarial.md)
 ```
 
-This single-line comment costs ~5 tokens and permanently protects file from grep-based false-positive orphan detection.
+This single-line comment costs ~5 tokens, permanently protects file from grep-based false-positive orphan detection.
 
 ## Check R3 — bin/ script reference integrity (reverse of Check 32d)
 
-Check 32d walks `bin/` scripts and flags those unreferenced by any `.md` file (orphaned scripts). R3 is the reverse: for every `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>` reference in any plugin `.md` file, verify script exists locally — catches typos, deleted scripts, refactor leftovers leaving dangling references.
+Check 32d walks `bin/` scripts, flags those unreferenced by any `.md` file (orphaned scripts). R3 is the reverse: for every `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>` reference in any plugin `.md` file, verify script exists locally — catches typos, deleted scripts, refactor leftovers leaving dangling references.
 
 Skip if `LOCAL_MODE != true`.
 
@@ -167,13 +167,13 @@ Fix: create `tests/test_<basename>.py` with at minimum one test class covering s
 | R4-FAIL — no test functions | test file non-empty but has zero `def test_` functions | medium | no — write tests |
 | R4-FAIL — stub tests only | all `def test_` functions body is only `pass` or `...` | medium | no — implement assertions |
 
-Note: the `_*.py` exclusion (e.g., `_schema.py`) is intentional only for pure type-definition modules with no runnable logic. Files with `__name__ == "__main__"` guards must have tests regardless of leading underscore. Auditor verifies exclusion is appropriate per file when `_FAIL` reports are absent.
+Note: the `_*.py` exclusion (e.g. `_schema.py`) is intentional only for pure type-definition modules with no runnable logic. Files with `__name__ == "__main__"` guards must have tests regardless of leading underscore. Auditor verifies exclusion appropriate per file when `_FAIL` reports absent.
 
 ## Check R5 — Consumer→template orphan (reverse of R2)
 
 Check R2 verifies every template file has its basename visible in a consumer `.md` file. R5 is the reverse: for every `<!-- loads: X -->` or `# loads: X` comment in any `.md` file, verify `X` exists on disk (locally or in installed cache).
 
-Catches deleted or renamed templates where consumer `<!-- loads: -->` comment was not updated — silent runtime failure when audit tries to `Read $AUDIT_TPL/X`.
+Catches deleted or renamed templates where consumer `<!-- loads: -->` comment wasn't updated — silent runtime failure when audit tries to `Read $AUDIT_TPL/X`.
 
 Skip if `LOCAL_MODE != true`.
 

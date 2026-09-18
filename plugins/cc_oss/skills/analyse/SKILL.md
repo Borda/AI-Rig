@@ -318,7 +318,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 ### 6a — Follow-up gate
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies this call while the report path each mode file writes to `${TMPDIR:-/tmp}/analyse-report-file-${CSID}` names a missing or empty file. A denial reading `oss:analyse report gate` means the mode never wrote its report — write it, print its `---` header, then re-issue the question.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies this call while the report path each mode file writes to `${TMPDIR:-/tmp}/analyse-report-file-${CSID}` names a missing or empty file. Denial `oss:analyse report gate` = mode never wrote its report — write it, print `---` header, re-issue question.
 
 Invoke `AskUserQuestion`. Options depend on mode:
 

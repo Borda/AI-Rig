@@ -21,7 +21,7 @@ Ask up to **5 distillation questions** to narrow open branches into single direc
 
 Start with these (adapt based on tree content):
 
-1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as lettered option. Note: if tree was saved and this branch does not already have ✓ status in file, it should be updated to `resolved — chosen in distillation` in tree file; do not re-save file here — spec file written in D3 will reflect accepted direction.
+1. "Which open branch best captures the core direction you want to pursue?" — list each open branch as lettered option. Note: if tree was saved and this branch doesn't already have ✓ status in file, update it to `resolved — chosen in distillation` in tree file; do not re-save file here — spec file written in D3 will reflect accepted direction.
 2. "Should any remaining open branches be combined with chosen direction, or are they separate concerns?"
 3. "What is the single most important success criterion for this idea?" 4–5. Ask additional questions based on gaps in open threads section or unresolved tensions between branches
 
@@ -113,7 +113,7 @@ For each blocking question: call `AskUserQuestion` — one at a time, in order. 
 
 #### Step B2: Generate the action plan
 
-**Idempotency pre-check**: before generating plan, call `TaskList` and scan for active `/develop:feature` tasks naming this spec's slug. If found, surface existing task to user, ask whether to re-generate plan (will not re-dispatch — see Step B3) or skip; do not silently double-dispatch.
+**Idempotency pre-check**: before generating plan, call `TaskList` and scan for active `/develop:feature` tasks naming this spec's slug. Found → surface existing task to user, ask whether to re-generate plan (will not re-dispatch — see Step B3) or skip; do not silently double-dispatch.
 
 1. Parse spec into discrete action items from "Proposed design" and "Success criteria"
 2. For each item, write ready-to-run invocation:

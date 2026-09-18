@@ -2,14 +2,14 @@
 
 # bin/ Authoring Guide
 
-Reference from any skill or scaffolding step deciding whether to write a `bin/` script vs keep code inline, which language to use, how to structure it.
+Reference for any skill/scaffolding step deciding bin/ script vs inline code, language choice, structure.
 
 Two audiences:
 
-1. **Check 33 auto-fix** — on HIGH verdict, reference this doc for how to perform extraction
-2. **`foundry:manage create skill`** — reference when scaffolding any new skill needing code blocks, to prevent inline blocks that later need extraction
+1. **Check 33 auto-fix** — HIGH verdict: reference for extraction method
+2. **`foundry:manage create skill`** — reference when scaffolding new skill needing code blocks, prevents inline blocks needing later extraction
 
-See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plugins/README.md for authoring motivations behind these rules.
+See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plugins/README.md — authoring motivation.
 
 ## Language Policy (canonical — reproduced verbatim from `plugins/CLAUDE.md`)
 
@@ -23,7 +23,7 @@ See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plu
 
 ## Cross-OS Compatibility
 
-`bin/` scripts run on macOS, Linux, Windows (WSL/git-bash). Python preferred over bash for any logic beyond the three allowed bash cases — Python portable by design; bash not.
+`bin/` scripts run macOS, Linux, Windows (WSL/git-bash). Prefer Python over bash beyond the three allowed bash cases — Python portable by design, bash not.
 
 **Bash: banned constructs** (GNU-only or platform-divergent):
 
@@ -40,34 +40,34 @@ See also: [bin/ Script Principles](../../README.md#bin-script-principles) in plu
 
 - Use `pathlib.Path` for all path operations — never `os.path.sep` string surgery
 - Never `os.system()` — use `subprocess.run(..., check=True)`
-- Add `LC_ALL=C` to subprocess env when calling `sort`/`grep` for stable locale-independent output
+- Add `LC_ALL=C` to subprocess env calling `sort`/`grep` — stable locale-independent output
 - Test with `tmp_path` fixture (pytest) — never hard-code `/tmp/` or `C:\Temp`
 
 ## Silent-Failure Bash Idioms
 
-Two traps that produce no error and no output — the command "succeeds" while the check it powers never fires. Both were found live in shipped skills; neither is caught by shellcheck.
+Two traps producing no error, no output — the command "succeeds" while the check it powers never fires. Both found live in shipped skills; neither caught by shellcheck.
 
-**1. `$(cmd) || echo N` where `cmd` prints on failure.** `grep -c` prints `0` **and** exits 1 when there are zero matches, so the fallback fires too and the substitution captures `"0\n0"`. Every later `[ "$v" -eq 0 ]` then errors, and because a failed test exits non-zero, any `&&` action hanging off it is skipped — the warning is suppressed exactly when the condition it tests is true.
+**1. `$(cmd) || echo N` where `cmd` prints on failure.** `grep -c` prints `0` **and** exits 1 on zero matches, so fallback fires too — substitution captures `"0\n0"`. Later `[ "$v" -eq 0 ]` then errors; failed test exits non-zero, so any `&&` action hanging off it skips — warning suppressed exactly when the condition it tests is true.
 
 ```bash
 v=$(grep -c PAT "$f" 2>/dev/null || echo 0)   # ✗ file exists, zero matches → v="0\n0"
 v=$(grep -c PAT "$f" 2>/dev/null) || v=0      # ✓ correct in both the zero-match and missing-file cases
 ```
 
-The missing-file case works either way (`grep` prints nothing, so the fallback is clean), which is why the bug reads as harmless and survives review. Applies to any counter that prints a valid result on a non-zero exit; `wc` is **not** affected (it does not print-and-fail).
+Missing-file case works either way (`grep` prints nothing, fallback clean) — why the bug reads harmless and survives review. Applies to any counter printing a valid result on non-zero exit; `wc` **not** affected (no print-and-fail).
 
-**2. Glob patterns held in a variable.** The tool shell may be `zsh`, which — unlike bash — applies neither word-splitting nor filename generation to an unquoted `$VAR`. `for f in $_SKILL_GLOB` iterates once over the literal pattern string and matches nothing; the same line under bash expands normally.
+**2. Glob patterns held in a variable.** Tool shell may be `zsh` — unlike bash, applies neither word-splitting nor filename generation to unquoted `$VAR`. `for f in $_SKILL_GLOB` iterates once over literal pattern string, matches nothing; same line under bash expands normally.
 
 ```bash
 G="plugins/*/skills/*/SKILL.md"; for f in $G; do ...     # ✗ zsh: 1 literal iteration, 0 files
 while IFS= read -r f; do ... done < <(find plugins -path "*/skills/*/SKILL.md")   # ✓ identical in both shells
 ```
 
-Keep variables holding **plain paths**, never patterns, and enumerate with `find` piped into `while IFS= read -r`. Note `find -path "*/agents/*.md"` recurses (`*` matches `/`) where the glob `*/agents/*.md` does not — add `! -path "*/agents/*/*"` when the flat scope is intended.
+Keep variables holding **plain paths**, never patterns; enumerate with `find` piped into `while IFS= read -r`. Note `find -path "*/agents/*.md"` recurses (`*` matches `/`) where glob `*/agents/*.md` doesn't — add `! -path "*/agents/*/*"` for flat scope.
 
 ## Extraction Gate
 
-Before writing ANY inline code block, first apply the Prose check (§Prose over Code, Case 3). If prose is precision-equivalent and shorter — write prose and stop. Otherwise apply this gate. All three must pass — if any fails, stay inline.
+Before writing any inline code block, apply Prose check first (§Prose over Code, Case 3). Prose precision-equivalent and shorter → write prose, stop. Else apply this gate. All three must pass — any fails, stay inline.
 
 **Gate conditions (all three must pass):**
 
@@ -98,13 +98,13 @@ Before writing ANY inline code block, first apply the Prose check (§Prose over 
 
 ## Prose over Code (Token Compression)
 
-Prefer plain language, a table, or a schema over a code block when prose is **precision-equivalent** and shorter in tokens. Applies at authoring time and retrospectively.
+Prefer plain language, table, or schema over code block when prose **precision-equivalent** and shorter in tokens. Applies at authoring time and retrospectively.
 
-**Exempt** (fenced code blocks in `.md` files): examples, templates, blocks whose purpose is to carry exact syntax for copy-paste or reproducible execution.
+**Exempt** (fenced code blocks in `.md` files): examples, templates, blocks carrying exact syntax for copy-paste or reproducible execution.
 
-**Precision-equivalent** means the prose expresses the logic with **100% precision and 100% reproducibility**: every input produces the same output from the prose description as from the code, with no ambiguity. Holds for: routing/switch logic with a fixed, bounded, enumerable input set (e.g. mode flags, classification labels, small enum dispatch). Does NOT hold for: free-form inputs, numeric ranges, regex pattern matching, file-system state checks, or any logic where edge cases cannot be fully enumerated in plain language. When uncertain, keep code.
+**Precision-equivalent** means prose expresses logic with **100% precision and 100% reproducibility**: every input produces same output from prose as from code, no ambiguity. Holds for: routing/switch logic with fixed, bounded, enumerable input set (mode flags, classification labels, small enum dispatch). Does NOT hold for: free-form inputs, numeric ranges, regex pattern matching, file-system state checks, or logic whose edge cases can't be fully enumerated in plain language. Uncertain → keep code.
 
-Tests and linting on a bin/ script are anti-regression tools — NOT a reason to keep a script fully replaceable with plain language. Delete the script and its tests when precision-equivalent prose is possible.
+Tests/linting on a bin/ script are anti-regression tools — NOT reason to keep a script fully replaceable with plain language. Delete script and tests when precision-equivalent prose possible.
 
 ### Case 1 — inline fenced code block in any `.md` file
 
@@ -128,12 +128,12 @@ Token test (apply only when all REPLACE conditions hold): `tokens(block) > token
 `bin/` scripts enforce reproducibility and stay as executables. Deletion candidate only when ALL hold:
 
 - Logic is precision-equivalent (see definition above) — routing/switch with bounded input set; NOT free-form or range inputs
-- If a test file exists (`tests/test_<name>.py` or `tests/test_<name>_sh.py`): the test file is evidence precision was non-obvious at authoring time. Before deleting, verify prose covers every non-happy-path test scenario — if any test case produces an ambiguous prose answer, keep the script. Delete the test file only after this verification passes.
+- If test file exists (`tests/test_<name>.py` or `tests/test_<name>_sh.py`): evidence precision was non-obvious at authoring time. Before deleting, verify prose covers every non-happy-path test scenario — any test case producing ambiguous prose answer → keep script. Delete test file only after verification passes.
 - No cross-plugin consumers (not listed in `Known cross-plugin utilities` or any `<!-- file: ... consumers: ... -->` header)
 - Single consumer — called from exactly one `.md` file within the plugin; verify with `grep -rn "<script-basename>" plugins/*/skills/ plugins/*/agents/`
 - Token test: `tokens(call-site description in .md) > tokens(equivalent prose in .md)` — strict savings required
 
-Linting on the script is not a blocker. Tests are not a veto — but they document precision cases the author considered non-obvious. Verify prose covers every test scenario before deleting. Delete the test file together with the script after verification.
+Linting on script isn't a blocker. Tests aren't a veto — but document precision cases the author considered non-obvious. Verify prose covers every test scenario before deleting; delete test file with script after verification.
 
 When all hold: delete script (and its test file if present), replace call-site with prose, run `check_orphaned_bin.py` (must exit 0).
 
@@ -152,7 +152,7 @@ When all hold: delete script (and its test file if present), replace call-site w
 6. Score ≥ 4? bin/ required (HIGH verdict); use language policy; write tests.
 7. Wire into consumer — before commit: edit consumer SKILL.md, replace inline twin with `"${CLAUDE_PLUGIN_ROOT}/bin/<script>" …`; run `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_orphaned_bin.py"`; must exit 0.
 
-> **A consumer never reaches into another plugin's `bin/`.** `${CLAUDE_PLUGIN_ROOT}` must resolve to the **consuming** plugin, so the script has to exist in that plugin's own `bin/`. A script two plugins both need is **duplicated**: add a `propagate_shared.py` MANIFEST entry (canonical in the owning plugin) and the copies stay byte-identical. Precedent: `find-polluter.py`, canonical in foundry, copied to `cc_develop/bin/` — `develop:debug` previously derived a `$_FOUNDRY_BIN` path from the resolver output, so flaky-test isolation silently vanished on a develop-only install. Rule and rationale: `plugins/CLAUDE.md` §Self-Contained `_shared`; audit Check 27 fails new reach-ins.
+> **A consumer never reaches into another plugin's `bin/`.** `${CLAUDE_PLUGIN_ROOT}` must resolve to the **consuming** plugin — script must exist in that plugin's own `bin/`. Script two plugins both need is **duplicated**: add `propagate_shared.py` MANIFEST entry (canonical in owning plugin), copies stay byte-identical. Precedent: `find-polluter.py`, canonical in foundry, copied to `cc_develop/bin/` — `develop:debug` previously derived `$_FOUNDRY_BIN` path from resolver output, so flaky-test isolation silently vanished on develop-only install. Rule + rationale: `plugins/CLAUDE.md` §Self-Contained `_shared`; audit Check 27 fails new reach-ins.
 
 ## Caller Pattern
 
@@ -179,13 +179,13 @@ RESULT=$(python "${CLAUDE_PLUGIN_ROOT}/bin/<script-name>.py" arg1 arg2)
 
 **Multi-value DATA output: write to TMPDIR files — never `eval` stdout.**
 
-Shell variables set in one Bash tool call do not persist to the next separate Bash tool call — they survive only within a single invocation. TMPDIR files survive across all invocations. Any script returning 2+ values (e.g. `PROJ` + `INDEX`) must write each to its own file and exit 0/1. The skill checks exit code; downstream steps `cat` what they need.
+Shell variables set in one Bash tool call don't persist to next separate call — survive only within single invocation. TMPDIR files survive across all invocations. Script returning 2+ values (e.g. `PROJ` + `INDEX`) must write each to own file, exit 0/1. Skill checks exit code; downstream steps `cat` what they need.
 
-**Preferred idiom for cross-block persistence: `bin/state.py`.** Instead of hand-rolling a per-skill temp file + reload, use the tested helper — `python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" set <namespace> RUN_DIR="$RUN_DIR" SCOPE="$SCOPE"` in the producing block, then `eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" load <namespace>)"` at the top of each consuming block. Values are single-quote-escaped and keys must be shell identifiers matching `^[A-Za-z_][A-Za-z0-9_]*$` (`set` exits 2 on an unsafe key; `load` skips one), so `eval` is injection-safe. Include a run-unique component in `<namespace>` (timestamp / run-id) when concurrent sessions of the same skill could collide. This is what `check_bash_persistence` recognizes as a valid reload — the `eval "$(…)"` form suppresses the cross-block-loss finding.
+**Preferred idiom for cross-block persistence: `bin/state.py`.** Instead of hand-rolling per-skill temp file + reload, use tested helper — `python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" set <namespace> RUN_DIR="$RUN_DIR" SCOPE="$SCOPE"` in producing block, then `eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/state.py" load <namespace>)"` at top of each consuming block. Values single-quote-escaped, keys must be shell identifiers matching `^[A-Za-z_][A-Za-z0-9_]*$` (`set` exits 2 on unsafe key; `load` skips one) — `eval` injection-safe. Include run-unique component in `<namespace>` (timestamp/run-id) when concurrent sessions of same skill could collide. `check_bash_persistence` recognizes this as valid reload — `eval "$(…)"` form suppresses cross-block-loss finding.
 
-> **Scope**: this rule applies to DATA output (returning computed values to the skill). Shell-setup eval — e.g. `eval "$(python health_sentinel.py ...)"` injecting `SENTINEL=...` into the calling shell for health monitoring — is a different pattern and remains valid.
+> **Scope**: rule applies to DATA output (returning computed values to skill). Shell-setup eval — e.g. `eval "$(python health_sentinel.py ...)"` injecting `SENTINEL=...` into calling shell for health monitoring — different pattern, remains valid.
 
-**Naming convention**: `${TMPDIR:-/tmp}/<plugin>-<script-slug>-<value-name>-${CSID}` (terminal session-scope suffix — see `rules/claude-config.md` §TMPDIR Sentinel Scoping). When a script has more than one consumer (e.g. a shared `resolve-shared.py`), the calling skill passes a unique prefix: `--out-prefix <skill>-<run-id>`; the script writes `<prefix>-proj-${_CSID}`, `<prefix>-index-${_CSID}`. Never hardcode a prefix in a shared script — consumers will collide.
+**Naming convention**: `${TMPDIR:-/tmp}/<plugin>-<script-slug>-<value-name>-${CSID}` (terminal session-scope suffix — see `rules/claude-config.md` §TMPDIR Sentinel Scoping). Script with more than one consumer (e.g. shared `resolve-shared.py`) — calling skill passes unique prefix: `--out-prefix <skill>-<run-id>`; script writes `<prefix>-proj-${_CSID}`, `<prefix>-index-${_CSID}`. Never hardcode prefix in shared script — consumers collide.
 
 ```python
 # script — owns output routing; prefix passed by caller when multi-consumer
@@ -232,7 +232,7 @@ INDEX=$(python resolve.py --field index)
 
 ## Timeout Policy
 
-Every bin/ executable called from a SKILL.md with a `# timeout: N` comment must enforce that timeout at runtime — not just as a hint to Claude Code's Bash tool:
+Every bin/ executable called from SKILL.md with `# timeout: N` comment must enforce timeout at runtime — not just a hint to Claude Code's Bash tool:
 
 **Bash scripts** — use `# timeout: N` annotation; do NOT wrap with `timeout S` shell command:
 
@@ -246,7 +246,7 @@ RESULT=$(timeout 5 "${CLAUDE_PLUGIN_ROOT}/bin/<script>.sh" args 2>/dev/null || e
 
 Note: `timeout S` IS valid for scripts invoked outside Claude Code (CI pipelines, standalone shell, pytest helpers). In SKILL.md context only: use `# timeout: N`.
 
-**Python scripts** — add `--timeout SECS` argparse argument; scripts doing subprocess or network I/O must pass it to every blocking call. The `--timeout` parameter is optional at the call site — default value must equal N ÷ 1000 (from the calling SKILL.md `# timeout: N` annotation). Shell `timeout S` wrapper is not required for Python scripts; the argparse default enforces the budget internally:
+**Python scripts** — add `--timeout SECS` argparse argument; scripts doing subprocess/network I/O must pass it to every blocking call. `--timeout` optional at call site — default value must equal N ÷ 1000 (from calling SKILL.md `# timeout: N` annotation). Shell `timeout S` wrapper not required for Python scripts; argparse default enforces budget internally:
 
 ```bash
 # ✓ — --timeout default enforces budget; no shell wrapper needed
@@ -279,7 +279,7 @@ def _subprocess_call(timeout: int = 5) -> str:
 
 ## Python Script Skeleton
 
-> Closed option sets (severity, mode, status, kind, action) must be a named `(str, Enum)` — never bare strings compared inline. `argparse` derives `choices=` from the enum so CLI and type cannot drift; convert at the boundary, pass the enum inward. Full rule + `Enum` vs `Literal` table: `rules/python-code.md` §Closed Option Sets.
+> Closed option sets (severity, mode, status, kind, action) must be named `(str, Enum)` — never bare strings compared inline. `argparse` derives `choices=` from enum so CLI and type can't drift; convert at boundary, pass enum inward. Full rule + `Enum` vs `Literal` table: `rules/python-code.md` §Closed Option Sets.
 
 Minimum required structure for any new Python bin/ script:
 
@@ -333,7 +333,7 @@ plugins/cc_foundry/
     test_script_name.py   ← here, not bin/tests/
 ```
 
-**Naming rule — use underscores, not hyphens.** Python cannot import hyphenated filenames via `import` statement; `script-name.py` requires `importlib` boilerplate. Underscore names (`script_name.py`) allow direct import — simpler tests, no extra machinery.
+**Naming rule — underscores, not hyphens.** Python can't import hyphenated filenames via `import` statement; `script-name.py` requires `importlib` boilerplate. Underscore names (`script_name.py`) allow direct import — simpler tests, no extra machinery.
 
 **conftest.py** (one per plugin `tests/` directory — centralises `bin/` path setup for all test files in that plugin):
 
@@ -439,7 +439,7 @@ Integration-requiring conditions: `git describe`, `git log` on real history, `gh
 
 ## Complexity Escalation
 
-Applies to `bin/` scripts only — inline SKILL.md blocks stay bash (inline Python triggers approval prompt every invocation). When an extracted `bin/` bash script grows past a simple linear transform, convert to Python before complexity compounds.
+Applies to `bin/` scripts only — inline SKILL.md blocks stay bash (inline Python triggers approval prompt every invocation). Extracted `bin/` bash script growing past a simple linear transform → convert to Python before complexity compounds.
 
 **Escalation triggers** — any one fires → convert:
 
@@ -460,7 +460,7 @@ Applies to `bin/` scripts only — inline SKILL.md blocks stay bash (inline Pyth
 5. Delete old `.sh` file
 6. Delegate to **foundry:linting-expert** (ruff + mypy) and **foundry:qa-specialist** (edge-case matrix) per Quality Agents section
 
-**Check 33 / `--efficiency` mode**: Phase A bin/-extraction check raises complexity-escalation findings as **medium** severity when trigger conditions detected in an existing `bin/` bash script. HIGH or MEDIUM verdict triggers conversion, not just extraction.
+**Check 33 / `--efficiency` mode**: Phase A bin/-extraction check raises complexity-escalation findings as **medium** severity when trigger conditions detected in existing `bin/` bash script. HIGH or MEDIUM verdict triggers conversion, not just extraction.
 
 ## Quality Agents
 
@@ -488,7 +488,7 @@ Blocks replicating across files by design (per-plugin resilience, cross-plugin f
 # audit-skip: resilience-replication
 ```
 
-Marker must appear as the first content line inside the fence (not preceding it). Curator and Check 33 Phase 2 recognize both this structured marker and prose annotations matching "intentional resilience replication" — the structured form is a conventional token (not yet wired into bash quick-scans; recognized by curator prompt).
+Marker must be the first content line inside the fence (not preceding it). Curator and Check 33 Phase 2 recognize both the structured marker and prose annotations matching "intentional resilience replication" — the structured form is a conventional token (not yet wired into bash quick-scans; recognized by curator prompt).
 
 Example:
 
@@ -498,13 +498,13 @@ HARD_CUTOFF=${HARD_CUTOFF:-900}
 EXTENSION=${EXTENSION:-300}
 ```
 
-**When to use**: block appears in 2+ plugin files with only constant differences AND is not a bin/ extraction candidate — e.g. health-monitoring constants, plugin-availability checks, unsupported-flag resilience boilerplate. See `plugins/CLAUDE.md` §Fallback / Resilience Infrastructure for design rationale.
+**When to use**: block appears in 2+ plugin files with only constant differences AND isn't a bin/ extraction candidate — e.g. health-monitoring constants, plugin-availability checks, unsupported-flag resilience boilerplate. See `plugins/CLAUDE.md` §Fallback / Resilience Infrastructure for design rationale.
 
 ## Integration with `foundry:manage create skill`
 
 When `foundry:manage create skill <name>` scaffolds a new SKILL.md, include this instruction:
 
-> Before writing any fenced code block, run `cat "$_FOUNDRY_SHARED/bin-authoring-guide.md"` via the Bash tool and apply the extraction gate. Write bin/ script directly if verdict is MEDIUM or HIGH. For any bin/ script returning 2+ values: apply §Script Output Routing — write each value to `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file; never `eval` stdout.
+> Before writing any fenced code block, run `cat "$_FOUNDRY_SHARED/bin-authoring-guide.md"` via Bash tool and apply extraction gate. Write bin/ script directly if verdict MEDIUM or HIGH. Any bin/ script returning 2+ values: apply §Script Output Routing — write each value to `${TMPDIR:-/tmp}/<skill>-<name>-${CSID}` file; never `eval` stdout.
 
 ## Integration with Check 33 Auto-Fix
 
@@ -514,4 +514,4 @@ When Check 33 surfaces HIGH findings, reference this doc for:
 - Caller pattern to replace the inline block with — see Caller Pattern section
 - Test location (`bin/tests/`)
 
-**Surgical edit constraint** — when replacing an inline block in a source `.md` file, modify ONLY the target block. Do NOT edit surrounding prose, frontmatter, other code blocks, check tables, or any other content. Notice incidental issues → record them in the extraction summary; do not fix inline. After each file edit, run `git diff HEAD -- <file>` and verify only target-block lines appear in the diff; revert and re-apply if non-target lines changed.
+**Surgical edit constraint** — when replacing an inline block in a source `.md` file, modify ONLY the target block. Do NOT edit surrounding prose, frontmatter, other code blocks, check tables, or other content. Incidental issues noticed → record in extraction summary; don't fix inline. After each file edit, run `git diff HEAD -- <file>`, verify only target-block lines appear in diff; revert and re-apply if non-target lines changed.

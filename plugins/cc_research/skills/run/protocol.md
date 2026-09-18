@@ -21,11 +21,11 @@ Canonical layout — other run/mode files point here rather than re-explaining i
   journal.md         ← structured learning log, appended after every iteration (when --journal is set)
 ```
 
-> **Planned unification (code alignment needed — not yet migrated)**: two run-scoped dirs are known duplication (re-explained across several files). Target = one dir per run — merge pipeline artifacts under `.experiments/state/<run-id>/`, leaving `state.json` in place so `find_run_id.py` / `read_state_field.py` resume discovery untouched. Blocked on coordinated change: producers (`run/SKILL.md` `RUN_DIR`, `hypothesis-pipeline.md`, `team.md`), every `<RUN_DIR>` substitution, and README/protocol docs must move together; team mode also derives its own `.experiments/run-team-<ts>/` via `make_run_dir` and stores that `run_dir` path in `state.json`, so migration must not break team-mode resume.
+> **Planned unification (code alignment needed — not yet migrated)**: two run-scoped dirs are known duplication (re-explained across several files). Target = one dir per run — merge pipeline artifacts under `.experiments/state/<run-id>/`, leaving `state.json` in place so `find_run_id.py` / `read_state_field.py` resume discovery untouched. Blocked on coordinated change: producers (`run/SKILL.md` `RUN_DIR`, `hypothesis-pipeline.md`, `team.md`), every `<RUN_DIR>` substitution, README/protocol docs must move together; team mode also derives its own `.experiments/run-team-<ts>/` via `make_run_dir`, stores that `run_dir` path in `state.json` — migration must not break team-mode resume.
 
 ## hypotheses.jsonl Schema
 
-One JSON obj per line. Single-pass write — each oracle annotates its own entries (a separate solution-architect annotation spawn was removed: the generating oracle already read the codebase, and a second agent pass costs full spawn overhead to re-derive the same facts):
+One JSON obj per line. Single-pass write — each oracle annotates its own entries (a separate solution-architect annotation spawn was removed: generating oracle already read codebase; second agent pass costs full spawn overhead to re-derive same facts):
 
 **Core fields (every oracle):**
 

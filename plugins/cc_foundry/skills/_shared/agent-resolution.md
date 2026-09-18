@@ -1,8 +1,8 @@
 ## Agent Resolution — Cross-Plugin Dependencies
 
-> **Plugin check**: `find ~/.claude/plugins/cache -name "<plugin>" -type d 2>/dev/null | head -1` (non-empty = installed). Uncertain → proceed as if installed — common case; fall back only if agent dispatch explicitly fails.
+> **Plugin check**: `find ~/.claude/plugins/cache -name "<plugin>" -type d 2>/dev/null | head -1` (non-empty = installed). Uncertain: proceed as installed — common case; fall back only if agent dispatch explicitly fails.
 
-Availability vars — set once before any cross-plugin dispatch; pass via env or re-check inline:
+Availability vars — set once before cross-plugin dispatch; pass via env or re-check inline:
 
 ```bash
 OSS_AVAILABLE=$(find ~/.claude/plugins/cache -name "oss" -type d 2>/dev/null | head -1)  # timeout: 5000
@@ -31,11 +31,11 @@ research not installed → sub `research:X` with `general-purpose`, prepend role
 
 ### Codemap and Develop Plugins Absent
 
-Codemap and develop expose skills only — no agent-level fallback. When absent, skip ops requiring their skills and log:
+Codemap and develop expose skills only — no agent-level fallback. Absent → skip ops requiring their skills, log:
 
 ```
 "codemap plugin not installed — skipping <codemap-py:skill>"
 "develop plugin not installed — skipping <develop:skill>"
 ```
 
-Skills with `--team` mode: omit unavailable cross-plugin agents from roster, log per-agent skip note. Team runs with available agents.
+Skills with `--team` mode: omit unavailable cross-plugin agents from roster, log per-agent skip note. Team runs with agents available.

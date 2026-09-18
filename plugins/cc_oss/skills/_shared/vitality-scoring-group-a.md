@@ -10,7 +10,7 @@
 
 ### Axis 1 — Responsiveness
 
-(CHAOSS top metric — most predictive of contributor attractiveness)
+(CHAOSS top metric, most predictive of contributor attractiveness)
 
 Data: GraphQL response from Group 1 (20 sampled issues + 20 sampled PRs).
 
@@ -32,7 +32,7 @@ Score:
 
 ### Axis 2 — Maintenance Activity
 
-(velocity + cadence; most important single axis)
+(velocity + cadence, most important single axis)
 
 - Days since last commit; commits in last 30d and 90d
 - Days since last release (if releases exist); release cadence = avg days between last 5 releases
@@ -41,11 +41,11 @@ Score:
   - 🟡: last commit 14–60d OR commits/30d 1–4 OR (last commit >60d AND commits/90d ≥3 AND last release \<180d — genuine maintenance backports)
   - 🔴: last commit >60d AND commits/30d = 0 — regardless of release recency. Zero commits = 🔴. Release ≤180d only upgrades to 🟡 when commits/90d ≥3 proves ongoing work.
   - ALSO 🔴: commits/30d = 0 for >90d (no commits entire quarter)
-  - ⛔ OVERRIDE 🔴 (abandonment signal): if repository description OR README first 500 bytes contains any of `abandoned`, `no longer maintained`, `deprecated`, `end-of-life`, `unmaintained`, `not maintained` (case-insensitive) → score 🔴 regardless of commit activity. Maintainer has explicitly signaled discontinuation.
+  - ⛔ OVERRIDE 🔴 (abandonment signal): if repository description OR README first 500 bytes contains any of `abandoned`, `no longer maintained`, `deprecated`, `end-of-life`, `unmaintained`, `not maintained` (case-insensitive) → score 🔴 regardless of commit activity. Maintainer explicitly signaled discontinuation.
 
 ### Axis 5 — CI/CD & Code Quality
 
-(absent from prior design; repohealth scores CI/CD 35/100)
+(absent from prior design, repohealth scores CI/CD 35/100)
 
 5 checkpoints:
 
@@ -66,7 +66,7 @@ Score: floor(met / 5 × 10) → 0–10; 🟢 ≥4/5 | 🟡 2–3/5 | 🔴 ≤1/5
 
 (content quality, not just presence; 9 checkpoints)
 
-Note: CONTRIBUTING.md presence tracked in Axis 7 Governance — this axis scores content depth only.
+Note: CONTRIBUTING.md presence tracked in Axis 7 Governance, this axis scores content depth only.
 
 9 checkpoints:
 

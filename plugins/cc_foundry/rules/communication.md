@@ -50,7 +50,7 @@ Box `╔═╗`/`╚═╝` + `▓` footer frame the reply against surrounding t
 
 ## Execution Failure Signaling
 
-When unable to execute or proceed with any part of a request (unsupported flag, `disable-model-invocation` block, parse error, missing prerequisite, permission denied, tool unavailable): lead the response with a bold failure block — never bury it at the end, never silently skip it.
+Unable to execute or proceed with any part of a request (unsupported flag, `disable-model-invocation` block, parse error, missing prerequisite, permission denied, tool unavailable): lead with a bold failure block — never bury it at the end, never silently skip it.
 
 ```
 **! BLOCKED — [one-line reason]**
@@ -58,7 +58,7 @@ When unable to execute or proceed with any part of a request (unsupported flag, 
 **! MISSING — [what is needed]**
 ```
 
-Block is FIRST content in the response, not a footnote; state what was asked, what cannot proceed, what alternative is available. Applies to partial failures too — if 3 of 4 sub-tasks fail, flag the 3 at top before reporting the 1 success. Never use grey prose ("note: X was skipped") as a substitute — that's what gets missed.
+Block is FIRST content, not a footnote; state what was asked, what can't proceed, what alternative exists. Applies to partial failures too — if 3 of 4 sub-tasks fail, flag the 3 at top before reporting the 1 success. Never substitute grey prose ("note: X was skipped") — that's what gets missed.
 
 ## Tone
 
@@ -77,7 +77,7 @@ Block is FIRST content in the response, not a footnote; state what was asked, wh
 
 **Hard constraint — stop before writing any question.** Need user info → invoke `AskUserQuestion` tool immediately. Prose question + "note: should use tool" caveat = still violation. Two options only: answer without asking, or call tool. No plain-text question ever.
 
-Any bracketed, annotated, narrated, or simulated form of a question — parenthetical, bracket notation, intent narration — is still plain text and still violates this constraint; only an actual tool invocation satisfies it. Full catalogue of non-compliant forms + compliant example: `_full/communication.md`.
+Any bracketed, annotated, narrated, or simulated form of a question — parenthetical, bracket notation, intent narration — is still plain text, still violates this constraint; only an actual tool invocation satisfies it. Full catalogue of non-compliant forms + compliant example: `_full/communication.md`.
 
 - Applies to: ambiguous input, clarifying choices, scope decisions, continuation guards, any point where user input required before proceeding
 - **Scope decisions count**: user asks "should I also X?" mid-task → scope decision requiring AskUserQuestion — not rhetorical; never silently resolve
@@ -90,7 +90,7 @@ Any bracketed, annotated, narrated, or simulated form of a question — parenthe
 
 For every `AskUserQuestion` multiple-choice call with a genuine model leaning: embed plain-text markers **inside each option's own `description` field** — never as a separate legend before the tool call (a legend's label scheme silently breaks whenever its item count or order drifts from the actual options).
 
-Format: `fit: N% · conf: N% ← recommended` — `fit` = comparative problem-fit across options (highest = the pick), `conf` = per-option epistemic self-confidence in that fit read (independent of fit). Mark the highest-`fit` option with trailing `←`. Show markers only when the choice is a real, open decision **and** the model has a real leaning — omit entirely for pure user-taste (no right answer) or forced/single-path choices. Full axis definitions, gating conditions, and marker-placement rules: `_full/communication.md`.
+Format: `fit: N% · conf: N% ← recommended` — `fit` = comparative problem-fit across options (highest = the pick), `conf` = per-option epistemic self-confidence in that fit read (independent of fit). Mark highest-`fit` option with trailing `←`. Show markers only when the choice is real, open **and** the model has a real leaning — omit entirely for pure user-taste (no right answer) or forced/single-path choices. Full axis definitions, gating conditions, marker-placement rules: `_full/communication.md`.
 
 ## Output Routing
 

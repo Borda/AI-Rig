@@ -11,7 +11,7 @@ allowed-tools: Read, Write, Bash, Agent, Glob, TaskCreate, TaskUpdate, TaskList,
 
 Validate agents and skills by measuring outputs against synthetic problems with defined ground truth. Primary signal: **calibration bias** — gap between self-reported confidence and actual recall. Well-calibrated agent reports 0.9 when it finds ~90% of issues. Miscalibrated: reports 0.9, finds 60%.
 
-Calibration data drives improvement loop: systematic gaps → instruction updates; persistent overconfidence → adjusted re-run thresholds in MEMORY.md.
+Calibration data drives improvement loop: systematic gaps: instruction updates; persistent overconfidence: adjusted re-run thresholds in MEMORY.md.
 
 NOT for: static routing overlap analysis (use /foundry:audit); manually reviewing skill output quality (use /develop:review (requires `develop` plugin)).
 
@@ -32,13 +32,13 @@ NOT for: static routing overlap analysis (use /foundry:audit); manually reviewin
 
   **Mutual exclusion validation** (check before any work):
 
-  - `--ab-test` + `--apply` together → hard error: "`--ab-test` and `--apply` are mutually exclusive. Pass one or neither."
-  - `--fast` + `--full` together → hard error: "Pass `--fast` or `--full`, not both."
-  - `--ab-test` without pace flag → default `--fast` silently (no error)
+  - `--ab-test` + `--apply` together: hard error: "`--ab-test` and `--apply` are mutually exclusive. Pass one or neither."
+  - `--fast` + `--full` together: hard error: "Pass `--fast` or `--full`, not both."
+  - `--ab-test` without pace flag: default `--fast` silently (no error)
 
-  **Unsupported flag check** — after all supported flags extracted (`--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+  **Unsupported flag check** — after all supported flags extracted (`--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--full`, `--ab-test`, `--apply`, `--skip-gate`, `--local`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
-  **Legacy positional tokens** (`ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint and stop. Example: "`ab` removed — use `--ab-test` flag: `/calibrate curator --ab-test`."
+  **Legacy positional tokens** (`ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint, stop. Example: "`ab` removed — use `--ab-test` flag: `/calibrate curator --ab-test`."
 
   **Scope tokens** (positional, space-separated — defaults to `all`):
 
@@ -141,7 +141,7 @@ From `$ARGUMENTS`, determine:
   - Any other token → tier 3: single agent or skill name; search `plugins/*/agents/<name>.md`, `.claude/agents/<name>.md`, `plugins/*/skills/<name>/SKILL.md`, `.claude/skills/<name>/SKILL.md`; error if no match
   - Multiple tokens → union: e.g. `oss research`, `curator shepherd`; each resolved independently
 
-**Empty resolution guard**: after resolving all scope tokens to target list, if list is empty (e.g. plugin matched but contains no calibratable agents/skills, such as `/calibrate codemap`), stop with:
+**Empty resolution guard**: after resolving all scope tokens to target list, list empty (e.g. plugin matched but contains no calibratable agents/skills, such as `/calibrate codemap`): stop with:
 
 ```text
 ! No calibratable agents/skills found for scope: <input-scope>
@@ -150,13 +150,13 @@ Verify: (a) plugin name spelled correctly, (b) plugin has agents/*.md or calibra
 
 Do not proceed to Step 2 — silent no-op produces no report and confuses callers.
 
-- **Pace**: `--full` → 10 problems; `--fast` → 3 problems; neither → default `--fast`
-- **A/B flag**: `--ab-test` → also spawn `general-purpose` baseline per problem
+- **Pace**: `--full`: 10 problems; `--fast`: 3 problems; neither: default `--fast`
+- **A/B flag**: `--ab-test`: also spawn `general-purpose` baseline per problem
 - **Apply flag**:
-  - `--apply` without pace flag → pure apply mode: skip Steps 2–5; go to Step 6
-  - `--apply` with `--fast`/`--full` → benchmark + auto-apply: run Steps 2–5 then continue to Step 6
+  - `--apply` without pace flag: pure apply mode: skip Steps 2–5, go to Step 6
+  - `--apply` with `--fast`/`--full`: benchmark + auto-apply: run Steps 2–5 then continue to Step 6
 
-If benchmark will run (i.e., `--fast` or `--full` present, with or without `--apply`): generate timestamp `YYYY-MM-DDTHH-MM-SSZ` (UTC, e.g. `2026-03-03T13-44-48Z`) explicitly via the Bash tool and persist for downstream steps (fresh-shell state loss between Bash() calls):
+Benchmark will run (i.e. `--fast` or `--full` present, with or without `--apply`): generate timestamp `YYYY-MM-DDTHH-MM-SSZ` (UTC, e.g. `2026-03-03T13-44-48Z`) explicitly via Bash tool, persist for downstream steps (fresh-shell state loss between Bash() calls):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -179,11 +179,11 @@ All run dirs use this timestamp.
 
 **Large fan-out gate** — after target list resolves (and before any task creation or pipeline spawn), when `--skip-gate` not passed:
 
-- **Skip entirely** in pure-apply mode (`--apply` without a pace flag) — zero pipelines spawn in this mode (routes straight to Step 6), so no confirmation is needed.
-- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`, `<plugin-name>` tier 2) — the target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per the mode-file table below). An exact spawn count is not knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark pace flag is set (`--fast` or `--full`), independent of any count.
-- **Tier-3 single-target scopes** (`<agent-name>`, `<skill-name>`) — the target list is already a concrete file (or small union of files), so the count is exact here: `SPAWN_ESTIMATE = <resolved-target-count> × (FULL_N if --full else FAST_N)`. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
+- **Skip entirely** in pure-apply mode (`--apply` without a pace flag) — zero pipelines spawn in this mode (routes straight to Step 6), so no confirmation needed.
+- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`, `<plugin-name>` tier 2) — target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per mode-file table below). An exact spawn count isn't knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark pace flag is set (`--fast` or `--full`), independent of any count.
+- **Tier-3 single-target scopes** (`<agent-name>`, `<skill-name>`) — target list is already a concrete file (or small union of files), so count is exact here: `SPAWN_ESTIMATE = <resolved-target-count> × (FULL_N if --full else FAST_N)`. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
 
-When gated (either branch), fire **even when `--apply` is set together with a pace flag** — `--apply` only skips the Step 3 proposal-review gate, not this one.
+When gated (either branch), fire **even when `--apply` is set together with a pace flag** — `--apply` only skips Step 3 proposal-review gate, not this one.
 
 Call `AskUserQuestion`:
 
@@ -215,11 +215,11 @@ Create tasks before proceeding:
 >
 > **Gate**: if the bash block above failed (non-zero exit or `$CALIB_MODES_DIR` empty) — stop immediately; do not proceed to pipeline spawns. Print: `! calibrate/modes/ directory not found — re-install foundry plugin then retry.`
 
-For each target mode in resolved target list, read corresponding mode file and execute spawn instructions. **At most 2 mode categories in flight at once**, and only with `$PIPELINE_BATCH_SIZE` halved to **2** (floor of 5÷2) for as long as two run concurrently. Rationale: the constraint being protected is peak agent count and context, not ordering — two categories at batch 2 peak at 4 concurrent pipelines, below the 5 a single category reaches on its own, so the resource ceiling is unchanged while wall-clock on `all` drops. Everything else stays serial: never issue a third category's spawns while two are running, and never restore batch size 5 until one of the two has fully returned its results.
+For each target mode in resolved target list, read corresponding mode file, execute spawn instructions. **At most 2 mode categories in flight at once**, and only with `$PIPELINE_BATCH_SIZE` halved to **2** (floor of 5÷2) for as long as two run concurrently. Rationale: the constraint being protected is peak agent count and context, not ordering — two categories at batch 2 peak at 4 concurrent pipelines, below the 5 a single category reaches on its own, so resource ceiling is unchanged while wall-clock on `all` drops. Everything else stays serial: never issue a third category's spawns while two are running, never restore batch size 5 until one of the two has fully returned its results.
 
 **Execution order for `all`**: agents → skills → routing → communication → rules, run as pairs in that order — (agents + skills), (routing + communication), then rules alone at batch 5. For each pair:
 
-1. **Guard** — call `TaskList`; if a category task (agents/skills/routing/communication/rules) is `in_progress` but its mode is **not** one of the categories currently in flight, call `TaskUpdate(that_task_id, completed)` before proceeding — corrects a missed completed call from a prior iteration. Never complete the task of a category still running: with two in flight, two category tasks are legitimately `in_progress`.
+1. **Guard** — call `TaskList`; a category task (agents/skills/routing/communication/rules) is `in_progress` but its mode is **not** one of the categories currently in flight: call `TaskUpdate(that_task_id, completed)` before proceeding — corrects a missed completed call from a prior iteration. Never complete the task of a category still running: with two in flight, two category tasks are legitimately `in_progress`.
 2. Mark both in-flight modes' tasks `in_progress` (all others stay `pending`)
 3. Spawn pipelines for both modes with `$PIPELINE_BATCH_SIZE` = 2 (= 5 when a category runs alone — see constants)
 4. Wait for all batch results from both modes before proceeding
@@ -238,7 +238,7 @@ For each target mode in resolved target list, read corresponding mode file and e
 
 For multiple tokens, merge resolved targets into per-mode groups before spawning — one pipeline per unique mode file needed, each carrying full target list.
 
-Before spawning **any** pipeline (when target includes `agents`, `skills`, or `all`), check cross-plugin availability. When `LOCAL_MODE=true`, check `plugins/` source tree (local edits not yet installed); otherwise check installed plugin cache:
+Before spawning **any** pipeline (target includes `agents`, `skills`, or `all`): check cross-plugin availability. `LOCAL_MODE=true`: check `plugins/` source tree (local edits not yet installed); otherwise check installed plugin cache:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -259,9 +259,9 @@ fi
 - **`agents` pipeline**: exclude `oss:cicd-steward` and `oss:shepherd` (requires `oss` plugin) if `$OSS_AVAILABLE` empty; exclude `research:data-steward` and `research:scientist` (requires `research` plugin) if `$RESEARCH_AVAILABLE` empty. Log: "oss/research plugin not installed — skipping <agent> calibration"
 - **`skills` pipeline**: exclude `/oss:review` (requires `oss` plugin) always (requires live GitHub PR — not calibratable with synthetic input; see `modes/skills.md`); exclude `/codemap-py:*` skills (requires `codemap` plugin) if `$CODEMAP_AVAILABLE` empty; exclude `/research:plan`, `/research:judge`, `/research:verify` (requires `research` plugin) if `$RESEARCH_AVAILABLE` empty; exclude `/develop:review` (requires `develop` plugin) if `$DEVELOP_AVAILABLE` empty. Log skip message per excluded skill.
 
-Fallback role descriptions for cross-plugin agents (if ever substituted with `general-purpose`) — run `cat "$_FS/agent-resolution.md"` (where `$_FS` is resolved via the cache-resolution block at the start of Step 2; if `$_FS` is empty, skip — role descriptions unavailable) and apply the matching fallback description.
+Fallback role descriptions for cross-plugin agents (if ever substituted with `general-purpose`): run `cat "$_FS/agent-resolution.md"` (`$_FS` resolved via cache-resolution block at start of Step 2; `$_FS` empty: skip — role descriptions unavailable), apply matching fallback description.
 
-Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, and extra instructions for pipeline subagent. Pipeline template lives at `$CALIB_MODES_DIR/../templates/pipeline-prompt.md`. **N override**: `communication` caps at fast=3 / full=5 (not global FULL_N=10) to prevent pipeline context overflow — run `cat "$CALIB_MODES_DIR/communication.md"` for details. **`rules` mode** spawns one `general-purpose` subagent per rule file (not standard pipeline template) — run `cat "$CALIB_MODES_DIR/rules.md"` for direct-spawn approach.
+Each mode file defines `<TARGET>`, `<DOMAIN>`, any N overrides, extra instructions for pipeline subagent. Pipeline template lives at `$CALIB_MODES_DIR/../templates/pipeline-prompt.md`. **N override**: `communication` caps at fast=3 / full=5 (not global FULL_N=10) to prevent pipeline context overflow — run `cat "$CALIB_MODES_DIR/communication.md"` for details. **`rules` mode** spawns one `general-purpose` subagent per rule file (not standard pipeline template) — run `cat "$CALIB_MODES_DIR/rules.md"` for direct-spawn approach.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -275,13 +275,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "
 
 ## Step 3: Collect results and print combined report
 
-**Completion handling** — pipeline spawns run in the background: issue the batch, end the turn, and resume on the completion notifications; never a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). As each returns, read that target's compact JSON; when absent, read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per the pipeline's graceful-exit protocol). Neither present → record `{"verdict":"timed_out"}` and mark the target `⏱` in the report; never omit a stalled target.
+**Completion handling** — pipeline spawns run in the background: issue the batch, end turn, resume on completion notifications; never a poll loop, a filler call, or a "waiting" line (`_FOUNDRY_SHARED/agent-spawn-protocol.md`). Each returns: read that target's compact JSON; absent: read `.reports/calibrate/<TIMESTAMP>/<TARGET>/result.jsonl` (written on every exit path per pipeline's graceful-exit protocol). Neither present: record `{"verdict":"timed_out"}`, mark target `⏱` in report; never omit a stalled target.
 
-**On timeout**: read `tail -100 <output_file>` for partial JSON; if none use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
+**On timeout**: read `tail -100 <output_file>` for partial JSON; none: use: `{"target":"<TARGET>","verdict":"timed_out","mean_recall":null,"gaps":["pipeline timed out — re-run individually with /calibrate <target> fast"]}`. Timed-out targets appear in report with ⏱ prefix and null metrics.
 
-After all pipeline subagents complete or time out: mark "Analyse and report" in_progress. Parse compact JSON summary from each. (Category tasks — "Calibrate agents", "Calibrate skills", etc. — are already marked `completed` inline during Step 2's sequential loop; do not re-mark them here.)
+After all pipeline subagents complete or time out: mark "Analyse and report" in_progress. Parse compact JSON summary from each. (Category tasks — "Calibrate agents", "Calibrate skills", etc. — already marked `completed` inline during Step 2's sequential loop; don't re-mark them here.)
 
-For any pipeline that returned without a compact JSON, use Glob (pattern `*/result.jsonl`, base `.reports/calibrate/<TIMESTAMP>/`) to check whether a result file was written. If `result.jsonl` exists, parse it as the compact JSON for that target. If neither compact JSON nor `result.jsonl` exists, synthesize: `{"target":"<TARGET>","verdict":"incomplete","mean_recall":null,"calibration_bias":null,"gaps":["pipeline returned no output — re-run: /calibrate <TARGET> --fast"]}` and mark that target with ⏱ in the report table.
+For any pipeline that returned without a compact JSON, use Glob (pattern `*/result.jsonl`, base `.reports/calibrate/<TIMESTAMP>/`) to check whether a result file was written. `result.jsonl` exists: parse it as compact JSON for that target. Neither compact JSON nor `result.jsonl` exists: synthesize: `{"target":"<TARGET>","verdict":"incomplete","mean_recall":null,"calibration_bias":null,"gaps":["pipeline returned no output — re-run: /calibrate <TARGET> --fast"]}`, mark that target with ⏱ in report table.
 
 Print combined benchmark report:
 
@@ -315,13 +315,13 @@ CALIB_MODES_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_
 cat "$CALIB_MODES_DIR/routing.md"
 ```
 
-Use the "Report format" section loaded above instead of the table above. Mark "Calibrate routing" completed.
+Use "Report format" section loaded above instead of table above. Mark "Calibrate routing" completed.
 
 Flag targets where recall < 0.70 or |bias| > 0.15 with ⚠.
 
 After table, print full content of each `proposal.md` for targets where `proposed_changes > 0`.
 
-If `--apply` **not** set: after printing proposals, print the two genuine re-run commands as plain copy-pasteable text, then fire **Follow-up gate** (unless `--skip-gate` passed):
+`--apply` **not** set: after printing proposals, print two genuine re-run commands as plain copy-pasteable text, then fire **Follow-up gate** (unless `--skip-gate` passed):
 
 ```text
 Re-run full depth   /calibrate <targets> --full
@@ -334,7 +334,7 @@ Call `AskUserQuestion` — do NOT write options as plain text. Map options direc
 - (a) label: `Apply proposals now` — description: apply in this session — proceed directly to Step 6 using the persisted TIMESTAMP, no re-invocation, no benchmark re-run
 - (b) label: `skip` — description: review proposal files manually at `.reports/calibrate/<TIMESTAMP>/<TARGET>/proposal.md`
 
-If `--apply` **was** set (benchmark + auto-apply mode), print `→ Auto-applying proposals now…` and proceed to Step 6.
+`--apply` **was** set (benchmark + auto-apply mode): print `→ Auto-applying proposals now…`, proceed to Step 6.
 
 Targets with verdict `calibrated` and no proposed changes get single line: `✓ <target> — no instruction changes needed`.
 
@@ -355,7 +355,7 @@ For each flagged target (recall < 0.70 or |bias| > 0.15):
 - **Bias > 0.15**: `→ Raise effective re-run threshold for <target> in MEMORY.md (default 0.70 → ~<mean_confidence>)`
 - **Bias < −0.15**: `→ <target> is conservative; threshold can stay at default`
 
-Proposals shown in Step 3 already surface actionable signals. Follow-up gate fires in Step 3 (unless `--skip-gate`). Mark "Analyse and report" completed. If `--apply` was set: proceed to Step 6.
+Proposals shown in Step 3 already surface actionable signals. Follow-up gate fires in Step 3 (unless `--skip-gate`). Mark "Analyse and report" completed. `--apply` was set: proceed to Step 6.
 
 ```bash
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
@@ -385,19 +385,19 @@ TIMESTAMP=$(basename "$LATEST")
 
 For each target in target list, check whether `.reports/calibrate/<TIMESTAMP>/<target>/proposal.md` exists. Collect targets with proposal (`found`) and without (`missing`).
 
-**Partial-match behavior**: `--apply` with mixed found/missing targets continues with found targets — does not halt on missing. For each **missing** target: print warning and skip (do not stop entire run): `⚠ No prior run for <target> — skipping. Re-run with --fast --apply to benchmark+apply, or --fast to benchmark only. (If target was skipped because its plugin was unavailable, install the plugin first, then re-run.)` Continue to next target. Only if ALL targets are missing: stop with `! No proposals found for any requested target` — nothing to apply. `--apply` without pace flag is intentional — see `<inputs>` definition; auto-triggering benchmark would contradict that contract.
+**Partial-match behavior**: `--apply` with mixed found/missing targets continues with found targets — doesn't halt on missing. For each **missing** target: print warning, skip (don't stop entire run): `⚠ No prior run for <target> — skipping. Re-run with --fast --apply to benchmark+apply, or --fast to benchmark only. (If target was skipped because its plugin was unavailable, install the plugin first, then re-run.)` Continue to next target. Only if ALL targets missing: stop with `! No proposals found for any requested target` — nothing to apply. `--apply` without pace flag is intentional — see `<inputs>` definition; auto-triggering benchmark would contradict that contract.
 
 **Print run's report before applying**: for each found target, read and print `.reports/calibrate/<TIMESTAMP>/<target>/benchmark-report.md` verbatim so user sees benchmark basis before any file changes.
 
 **Spawn one `foundry:curator` subagent per found target (`.md` files — agents and skills). Issue ALL spawns in single response — no waiting between spawns.**
 
-**Deduplicate by resolved physical path before spawning** — when two targets resolve to the same `<AGENT_FILE>` (e.g. bare name and plugin-prefixed name for the same logical agent), concurrent curator spawns race on identical Edit calls and the second write may clobber the first. Build a `RESOLVED_PATHS` map after the per-target path-resolution loop above; for any group of targets that share the same `<AGENT_FILE>` after resolution:
+**Deduplicate by resolved physical path before spawning** — two targets resolve to the same `<AGENT_FILE>` (e.g. bare name and plugin-prefixed name for the same logical agent): concurrent curator spawns race on identical Edit calls, second write may clobber the first. Build a `RESOLVED_PATHS` map after the per-target path-resolution loop above; for any group of targets sharing the same `<AGENT_FILE>` after resolution:
 
 - Spawn one curator at a time for that group (sequential, not parallel)
 - Log: `! Sequential apply for <target-a> and <target-b> — both resolve to <AGENT_FILE>`
 - Other independent path groups remain parallel
 
-**`<AGENT_FILE>` and `<PROPOSAL_PATH>` resolution**: before spawning, resolve file paths for each target from the project source tree (`plugins/`) — same three-tier ladder whether or not `--local` was passed. `<AGENT_FILE>` is a write target (curator Edits it): it must never resolve to `.claude/agents/` (never created by `/foundry:setup`) or the installed plugin cache under `$HOME/.claude/` — those are read-only surfaces, not write targets:
+**`<AGENT_FILE>` and `<PROPOSAL_PATH>` resolution**: before spawning, resolve file paths for each target from project source tree (`plugins/`) — same three-tier ladder whether or not `--local` was passed. `<AGENT_FILE>` is a write target (curator Edits it): must never resolve to `.claude/agents/` (never created by `/foundry:setup`) or installed plugin cache under `$HOME/.claude/` — those are read-only surfaces, not write targets:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -407,7 +407,7 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_agent_file.py" --name "<name>" --timestamp "$TIMESTAMP" $( [ "$LOCAL_MODE" = "true" ] && echo "--local" )  # timeout: 10000
 ```
 
-The script prints `agent-file=` and `proposal-path=` on stdout; read the values from there, not from shell variables. An empty `agent-file=` means resolution failed: skip that target — do not spawn curator for it — the warning the script already printed covers it. Never fall through to a cache path for a write target.
+The script prints `agent-file=` and `proposal-path=` on stdout; read values from there, not from shell variables. Empty `agent-file=` means resolution failed: skip that target — don't spawn curator for it — the warning script already printed covers it. Never fall through to a cache path for a write target.
 
 Each subagent receives this self-contained prompt (substitute `<TARGET>`, `<PROPOSAL_PATH>`, `<AGENT_FILE>` — resolved paths from above):
 
@@ -450,32 +450,32 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 <notes>
 
 - **Timeout handling**: phase and pipeline budgets (see constants block) prevent nested subagent hangs from cascading. Extension granted once if pipeline explains delay in output file — second unexplained stall still triggers cutoff. Timed-out pipelines appear with ⏱ prefix and `verdict:"timed_out"`; re-run individually with `/calibrate <target> --fast` after session.
-- **Context safety**: each target runs in own pipeline subagent — only compact JSON (~200 bytes) returns to main context per target. Sequential spawning prevents concurrent resource and token spike; accumulated context across all targets is still compact.
+- **Context safety**: each target runs in own pipeline subagent — only compact JSON (~200 bytes) returns to main context per target. Sequential spawning prevents concurrent resource and token spike; accumulated context across all targets still compact.
 - **Scorer delegation**: Phase 3a delegates scoring to per-problem `general-purpose` subagents. Each scorer reads response files from disk, returns ~200 bytes. Phase 3b runs Codex scorers sequentially via Bash (writes per-problem files). Phase 3c merges both into `scores.json`. Pipeline holds only compact JSONs regardless of N or A/B mode — no context budget concern.
 - **Nesting depth**: main → pipeline subagent → target/scorer agents (2 levels). Pipeline spawns target agents (Phase 2), Claude scorer agents (Phase 3a), Codex scoring Bash calls (Phase 3b) at same depth — no additional nesting.
 - `general-purpose` is built-in Claude Code agent type (no `.claude/agents/general-purpose.md` needed) — no custom system prompt, all tools available.
-- **Quasi-ground-truth limitation**: partially addressed by cross-model generation (Claude + Codex) — two model families produce independent ground truth, reducing same-family blind spots. Adversarial and ceiling-difficulty problems included in every run (see difficulty distribution rules in `templates/pipeline-prompt.md` Phase 1a) to test false-positive discipline and reveal upper-bound limits. Remaining gap: synthetically generated adversarial problems weaker than expert-authored ones; `generator_recall_delta` surfaces whether one generator's problems are systematically easier or harder. `ceiling_recall` (reported separately from `mean_recall`) is primary signal for upper-bound performance — partial recall (0.4–0.7) on ceiling problems expected and does not affect calibration verdict.
+- **Quasi-ground-truth limitation**: partially addressed by cross-model generation (Claude + Codex) — two model families produce independent ground truth, reducing same-family blind spots. Adversarial and ceiling-difficulty problems included in every run (see difficulty distribution rules in `templates/pipeline-prompt.md` Phase 1a) to test false-positive discipline, reveal upper-bound limits. Remaining gap: synthetically generated adversarial problems weaker than expert-authored ones; `generator_recall_delta` surfaces whether one generator's problems are systematically easier or harder. `ceiling_recall` (reported separately from `mean_recall`) is primary signal for upper-bound performance — partial recall (0.4–0.7) on ceiling problems expected, doesn't affect calibration verdict.
 - **Dual evaluation and scorer agreement**: Phase 3a (Claude) and Phase 3b (Codex) score each response independently. Phase 3c merges with Claude as 51% tiebreaker. `scorer_agreement` measures fraction of issues where both scorers agreed — low agreement (< SCORER_AGREEMENT_WARN=0.70) flags ambiguous ground truth or scorer blind spots. Severity disputes (scorers disagree >1 tier) excluded from SevAcc aggregate.
 - **File-based Codex handoff**: Codex writes all output (problem JSON, score JSON) directly to run dir. Avoids bash stdout corruption when capturing large JSON from shell subprocesses. Pipeline reads from disk, never from stdout capture.
-- **Historical comparability**: `result.jsonl` includes `"scoring":"dual|single"` and `"source_mode":"dual|claude-only"`. When analyzing trends in `calibrations.jsonl`, filter by these fields — dual-scored results not directly comparable to single-scored baselines.
-- **Calibration bias is key signal**: positive bias (overconfident) → raise agent's effective re-run threshold in MEMORY.md. Negative bias (underconfident) → confidence conservative, no action needed. Near-zero → confidence trustworthy.
+- **Historical comparability**: `result.jsonl` includes `"scoring":"dual|single"` and `"source_mode":"dual|claude-only"`. Analyzing trends in `calibrations.jsonl`: filter by these fields — dual-scored results not directly comparable to single-scored baselines.
+- **Calibration bias is key signal**: positive bias (overconfident): raise agent's effective re-run threshold in MEMORY.md. Negative bias (underconfident): confidence conservative, no action needed. Near-zero: confidence trustworthy.
 - **Do NOT use real project files**: benchmark only against synthetic inputs — no sensitive data and real files have no ground truth.
 - **Skill benchmarks** run skill as subagent against synthetic config or code; scored identically to agent benchmarks.
-- **Improvement loop**: systematic gaps → `<antipatterns-to-flag>` | consistent low recall → consider model tier upgrade (sonnet tier → opus tier) | large calibration bias → document adjusted threshold in MEMORY.md | re-calibrate after instruction changes to quantify improvement.
+- **Improvement loop**: systematic gaps → `<antipatterns-to-flag>` | consistent low recall: consider model tier upgrade (sonnet tier → opus tier) | large calibration bias: document adjusted threshold in MEMORY.md | re-calibrate after instruction changes to quantify improvement.
 - **Report always**: every invocation surfaces report — benchmark runs print new results table; `--apply` without pace flag prints saved report from last run before applying, so user always sees basis for changes before files touched.
 - **`--apply` semantics**: `--fast --apply` / `--full --apply` = run fresh benchmark then auto-apply new proposals. `--apply` alone = apply proposals from most recent past run without re-running benchmark.
-- **Stale proposals**: `--apply` uses verbatim text matching (`old_string` = **Current** from proposal). If agent file edited between benchmark run and `--apply`, any change whose **Current** text no longer matches is skipped with warning — no silent clobbering of intermediate edits.
-- **`routing` target vs `/audit` Check 12**: `/audit` Check 12 performs static analysis of description overlap (finds potential confusion zones); `/calibrate routing` tests behavioral impact — generates real routing decisions and measures whether descriptions actually disambiguate. Run in sequence: `/audit` first (fast, structural), then `/calibrate routing` (behavioral, slower). Complementary, not redundant.
+- **Stale proposals**: `--apply` uses verbatim text matching (`old_string` = **Current** from proposal). Agent file edited between benchmark run and `--apply`: any change whose **Current** text no longer matches is skipped with warning — no silent clobbering of intermediate edits.
+- **`routing` target vs `/audit` Check 12**: `/audit` Check 12 performs static analysis of description overlap (finds potential confusion zones); `/calibrate routing` tests behavioral impact — generates real routing decisions, measures whether descriptions actually disambiguate. Run in sequence: `/audit` first (fast, structural), then `/calibrate routing` (behavioral, slower). Complementary, not redundant.
 - **`routing`, `communication`, `rules` in `all`**: see `all` entry in `<inputs>` for authoritative definition — use explicit targets only when running single mode in isolation.
 - Follow-up chains:
-  - Recall < 0.70 or borderline → pick "Apply proposals" from gate → `/calibrate <agent>` to verify improvement — stop and escalate to user if recall still < 0.70 after this cycle (max 1 apply cycle per run)
-  - Calibration bias > 0.15 → add adjusted threshold to MEMORY.md → note in next audit
-  - Routing accuracy < 0.90 or hard accuracy < 0.80 → update descriptions for confused pairs → `/calibrate routing` to verify improvement
+  - Recall < 0.70 or borderline: pick "Apply proposals" from gate → `/calibrate <agent>` to verify improvement — stop, escalate to user if recall still < 0.70 after this cycle (max 1 apply cycle per run)
+  - Calibration bias > 0.15: add adjusted threshold to MEMORY.md, note in next audit
+  - Routing accuracy < 0.90 or hard accuracy < 0.80: update descriptions for confused pairs → `/calibrate routing` to verify improvement
   - Recommended cadence: run before and after any significant agent instruction change; run `/calibrate routing` after any agent description change; run `/calibrate communication` after any protocol or handoff change
-- **Internal Quality Loop suppressed during benchmarking**: Phase 2 prompt explicitly tells target agents not to self-review before answering. Ensures calibration measures raw instruction quality — not `(agent + loop)` composite. Loop enabled → inflates recall and confidence by unknown ratio, masks real instruction gaps, makes improvement attribution impossible.
+- **Internal Quality Loop suppressed during benchmarking**: Phase 2 prompt explicitly tells target agents not to self-review before answering. Ensures calibration measures raw instruction quality — not `(agent + loop)` composite. Loop enabled: inflates recall and confidence by unknown ratio, masks real instruction gaps, makes improvement attribution impossible.
 - **Skill-creator complement**: trigger accuracy and A/B description testing not yet implemented — future skill-creator skill from Anthropic would own this domain; run `/calibrate` for quality and recall.
-- **A/B interpretation**: every specialized agent adds system-prompt tokens — if `general-purpose` subagent matches recall and F1, specialization adds no value. `ab` mode quantifies gap per-target. `significant` (Δ>0.10) confirms agent's domain depth earns cost; `marginal` (0.05–0.10) suggests instruction improvements may help; `none` (\<0.05) signals agent's current instructions add no measurable lift over vanilla agent. Token cost informational (logged in scores.json) but not part of verdict — prioritize recall/F1 delta as primary signal. Role-specificity caveat: for agents whose domain is well-covered by general training data, `none` ΔRecall does NOT mean "retire agent" — specialization shows up in ΔSevAcc, ΔFmt, ΔTokens even when ΔRecall ≈ 0; positive ΔSevAcc/ΔFmt combined with negative ΔTokens still confirms specialist earns cost.
+- **A/B interpretation**: every specialized agent adds system-prompt tokens — `general-purpose` subagent matches recall and F1: specialization adds no value. `ab` mode quantifies gap per-target. `significant` (Δ>0.10) confirms agent's domain depth earns cost; `marginal` (0.05–0.10) suggests instruction improvements may help; `none` (\<0.05) signals agent's current instructions add no measurable lift over vanilla agent. Token cost informational (logged in scores.json) but not part of verdict — prioritize recall/F1 delta as primary signal. Role-specificity caveat: for agents whose domain is well-covered by general training data, `none` ΔRecall does NOT mean "retire agent" — specialization shows up in ΔSevAcc, ΔFmt, ΔTokens even when ΔRecall ≈ 0; positive ΔSevAcc/ΔFmt combined with negative ΔTokens still confirms specialist earns cost.
 - **AB mode nesting**: Phase 2b spawns `general-purpose` baseline agents inside pipeline subagent. Phase 3 spawns `general-purpose` scorer agents inside same pipeline subagent. All at 2 levels (main → pipeline → agents) — no additional depth.
-- **Mode files**: domain tables and mode-specific spawn instructions live in `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`. Add new target mode by creating new file in `modes/` and adding row to Step 2 dispatch table.
+- **Mode files**: domain tables and mode-specific spawn instructions live in `modes/agents.md`, `modes/skills.md`, `modes/routing.md`, `modes/communication.md`, `modes/rules.md`. Add new target mode by creating new file in `modes/`, adding row to Step 2 dispatch table.
 
 </notes>

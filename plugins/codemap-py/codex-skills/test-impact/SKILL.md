@@ -7,22 +7,22 @@ description: '`$codemap-py:test-impact qname [--no-mocks]`: affected tests; skip
 
 # Test Impact
 
-Find the minimum static-analysis test set for one changed function or module; do not run tests. Output a ready-to-run `pytest` command.
+Find minimum static-analysis test set for one changed function or module; never run tests. Output ready-to-run `pytest` command.
 
 - Function (`module::symbol`): BFS reverse calls, direct/transitive tests, plus `mock_patches`.
 - Module (bare `module`): BFS reverse imports, plus mocks of any module symbol.
 
-`not_covered` includes dynamic dispatch, hooks, and string dispatch, as with `fn-blast`; surface it, never silently omit it.
+`not_covered` includes dynamic dispatch, hooks, string dispatch, as with `fn-blast`; surface it, never silently omit.
 
 NOT for: all function callers (use `$codemap-py:query-code fn-rdeps <module::symbol> --exclude-tests`); module deps/blast radius (use `$codemap-py:query-code`); test execution.
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve its installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning; shell state does not persist.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute `PLUGIN_ROOT`, retain in reasoning; shell state doesn't persist.
 
 ## Inputs
 
-`<qname> [--no-mocks]`: `qname` is `module::symbol` or a bare dotted module; `--no-mocks` removes mock-only tests. If omitted, ask which changed: (a) `module::symbol`, (b) bare module, or (c) cancel; wait. Use the first non-flag token only. If tokens remain after `--no-mocks`, warn that one symbol is accepted per invocation and each remainder needs another invocation.
+`<qname> [--no-mocks]`: `qname` is `module::symbol` or bare dotted module; `--no-mocks` removes mock-only tests. If omitted, ask which changed: (a) `module::symbol`, (b) bare module, (c) cancel; wait. Use first non-flag token only. If tokens remain after `--no-mocks`, warn one symbol accepted per invocation, each remainder needs another invocation.
 
 ## Workflow
 
@@ -36,7 +36,7 @@ If index missing and `SCAN_NO_AUTOBUILD=1`, report `codemap index missing and SC
 
 ### 2. Parse
 
-Read JSON from CLI stdout; do not assume its first line is JSON because logs can surround it. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, and `index.hint`.
+Read JSON from CLI stdout; never assume first line is JSON — logs can surround it. Use `test_files`, `pytest_cmd`, `via_call`, `via_mock`, `index.not_covered`, `index.hint`.
 
 ### 3. Output
 

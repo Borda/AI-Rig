@@ -23,9 +23,9 @@ Diagnose unknown failures: broken local setup, environment mismatch, tool misbeh
   - `"CI fails but passes locally"`
   - `"uv run pytest can't find conftest.py"`
 
-- **`--fast`**: optional flag — skip Step 4 adversarial Codex review; use when speed matters more than thoroughness or Codex unavailable.
+- **`--fast`**: optional flag — skip Step 4 adversarial Codex review; use when speed matters more than thoroughness, or Codex unavailable.
 
-If $ARGUMENTS empty or too vague, use AskUserQuestion: "What exactly is failing or behaving unexpectedly? Include the command and any error output you can share."
+$ARGUMENTS empty or too vague: use AskUserQuestion: "What exactly is failing or behaving unexpectedly? Include the command and any error output you can share."
 
 </inputs>
 
@@ -64,11 +64,11 @@ From $ARGUMENTS extract:
 - **Where**: local / CI / both; which tool or command; which skill or hook if applicable
 - **When**: started recently (after change) or always broken; intermittent or consistent
 
-**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted (`--fast`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found: print `` ! Unknown flag(s): `--<token>`. Supported: `--fast`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 2: Gather signals
 
-**Init run directory unconditionally at start of Step 2** — `$INVESTIGATE_RUN` must be set even when Step 4 skipped (`--fast` path), so Step 6's read of `$INVESTIGATE_RUN/*-review.md` does not expand to `/codex-review.md` or unset reference. Step 4 creates review files only when adversarial review runs; Step 6 must guard reads with `[ -f <path> ]`.
+**Init run directory unconditionally at start of Step 2** — `$INVESTIGATE_RUN` must be set even when Step 4 skipped (`--fast` path), so Step 6's read of `$INVESTIGATE_RUN/*-review.md` doesn't expand to `/codex-review.md` or unset reference. Step 4 creates review files only when adversarial review runs; Step 6 must guard reads with `[ -f <path> ]`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -113,17 +113,17 @@ Use Grep with pattern `ERROR|WARN|failed|not found|exit` across `.notes/logs/`, 
 
 Capture all output before Step 3.
 
-After gathering evidence, capture top signals as working notes for Step 4 spawn prompts AND persist them to disk so the values survive the bash-state reset between Steps 2 → 3 → 4:
+After gathering evidence, capture top signals as working notes for Step 4 spawn prompts, persist to disk so values survive bash-state reset between Steps 2 → 3 → 4:
 
 - `SYMPTOM_DESCRIPTION` — verbatim from `$ARGUMENTS`
 - `KEY_SIGNALS` — write 3–5 bullet-point sentences summarizing the most diagnostic signals found above (tool versions, missing binaries, config anomalies, recent changes)
 
-Use the Write tool (NOT a `echo > $INVESTIGATE_RUN/...` heredoc, which loses bash variable state across tool calls) to write the captured values to disk so Step 4 spawn prompts can instruct subagents to Read them rather than relying on inline interpolation:
+Use Write tool (NOT `echo > $INVESTIGATE_RUN/...` heredoc, which loses bash variable state across tool calls) to write captured values to disk so Step 4 spawn prompts can instruct subagents to Read them rather than relying on inline interpolation:
 
 - `Write(file_path="<INVESTIGATE_RUN>/symptom.txt", content=<SYMPTOM_DESCRIPTION>)` — substitute `<INVESTIGATE_RUN>` with the path printed in the Step 2 bash output above
 - `Write(file_path="<INVESTIGATE_RUN>/signals.md", content=<KEY_SIGNALS>)`
 
-Step 4 spawn prompts must instruct the subagent to Read these files (not rely on inline `${SYMPTOM_DESCRIPTION}` interpolation, which the LLM can paraphrase or truncate under context pressure).
+Step 4 spawn prompts must instruct subagent to Read these files (not rely on inline `${SYMPTOM_DESCRIPTION}` interpolation, which LLM can paraphrase or truncate under context pressure).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -144,11 +144,11 @@ List candidate root causes ranked by probability, drawing only from gathered evi
 | 2 | … | … | … |
 | 3 | … | … | … |
 
-Capture the ranked hypothesis table as `HYPOTHESIS_TABLE` and persist it to disk before Step 4 — use the Write tool:
+Capture ranked hypothesis table as `HYPOTHESIS_TABLE`, persist to disk before Step 4 — use Write tool:
 
 - `Write(file_path="<INVESTIGATE_RUN>/hypotheses.md", content=<HYPOTHESIS_TABLE>)`
 
-This avoids LLM-paraphrase risk when inlining a long table into a spawn prompt. Step 4 spawn prompts will instruct the subagent to Read this file.
+Avoids LLM-paraphrase risk when inlining a long table into a spawn prompt. Step 4 spawn prompts instruct subagent to Read this file.
 
 Refresh the compaction contract now that ranking is done — the boundary moves into the Step 4–5 loop so a mid-loop compaction resumes from `hypotheses.md` instead of re-ranking:
 
@@ -174,9 +174,9 @@ Common categories:
 
 ## Step 4: Auxiliary review (optional)
 
-**Skip entirely** when `--fast` passed, or top hypothesis has strong direct evidence. (`foundry:challenger` is always available as part of foundry plugin, so the skip condition simplifies to: skip when `--fast` passed.) Skip → proceed to Step 5.
+**Skip entirely** when `--fast` passed, or top hypothesis has strong direct evidence. (`foundry:challenger` always available as part of foundry plugin, so skip condition simplifies to: skip when `--fast` passed.) Skip: proceed to Step 5.
 
-When `--fast`: mark Step 4 task as `deleted` (not completed — it was skipped).
+When `--fast`: mark Step 4 task `deleted` (not completed — it was skipped).
 
 Otherwise, set up adversarial review. Run dir created in Step 2; re-resolve path string here (bash state does not persist):
 
@@ -204,9 +204,9 @@ CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridg
 echo "CODEX_AVAILABLE=$CODEX_AVAILABLE"  # bash vars don't persist; branch below MUST read this value from stdout
 ```
 
-**Read `CODEX_AVAILABLE=…` from bash stdout above** (NOT shell state). Printed `true`: spawn Codex; else spawn `foundry:challenger`. Spawn prompts below instruct subagent to Read persisted symptom/signals/hypotheses files (written in Steps 2 and 3) — more reliable than inlining values, which the LLM can paraphrase under context pressure.
+**Read `CODEX_AVAILABLE=…` from bash stdout above** (NOT shell state). Printed `true`: spawn Codex; else spawn `foundry:challenger`. Spawn prompts below instruct subagent to Read persisted symptom/signals/hypotheses files (written in Steps 2 and 3) — more reliable than inlining values, which LLM can paraphrase under context pressure.
 
-If the bridge is available (requires `bridge@borda-ai-rig` installed and enabled) — substitute concrete path strings for `<INVESTIGATE_RUN>` and `<CODEX_OUT>` before constructing the prompt:
+Bridge available (requires `bridge@borda-ai-rig` installed and enabled): substitute concrete path strings for `<INVESTIGATE_RUN>` and `<CODEX_OUT>` before constructing prompt:
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -214,17 +214,17 @@ If the bridge is available (requires `bridge@borda-ai-rig` installed and enabled
 Skill(skill="bridge:review", args="Read-only adversarial review of hypothesis quality. Read <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, and <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blind spots, and surface alternative root causes. Write full findings to <CODEX_OUT> and return a compact result envelope.")
 ```
 
-Else (Codex unavailable) — substitute `<INVESTIGATE_RUN>` with the printed run-dir path:
+Else (Codex unavailable): substitute `<INVESTIGATE_RUN>` with printed run-dir path:
 
 ```text
 Agent(subagent_type="foundry:challenger", prompt="Adversarial review of hypothesis quality. Read these files for full context: <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blindspots, and surface alternative root causes. Read-only analysis only. Write full findings to <INVESTIGATE_RUN>/challenger-review.md using the Write tool. Return ONLY: {\"status\":\"done\",\"file\":\"<path>\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
-Before issuing the call: scan constructed prompt string for remaining `<` or `>` characters — if present, substitution incomplete; resolve before spawning.
+Before issuing call: scan constructed prompt string for remaining `<` or `>` characters — present means substitution incomplete; resolve before spawning.
 
 - Add challenger alternative hypotheses as new rows in Step 3 table
 - Re-rank if challenger gives stronger evidence for lower-ranked candidate
-- If challenger finds category not in common list, add it
+- Challenger finds category not in common list: add it
 
 ## Step 5: Probe top hypotheses
 
@@ -246,7 +246,7 @@ ls -la ~/.claude/hooks/
 diff <(jq -S . .claude/settings.json) <(jq -S . ~/.claude/settings.json) | head -40
 ```
 
-Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append each verdict to the probe ledger and refresh the contract — so a mid-loop compaction does not re-probe an already-decided hypothesis:
+Per probe: mark **Confirmed**, **Ruled out**, or **Inconclusive**. Append each verdict to probe ledger, refresh contract — so a mid-loop compaction doesn't re-probe an already-decided hypothesis:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -262,7 +262,7 @@ Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (
 
 ## Step 6: Report findings
 
-Re-resolve `$INVESTIGATE_RUN` from persisted path file (`cat "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"`). Guard each read with `[ -f <path> ]`: if `$INVESTIGATE_RUN/codex-review.md` exists, read it; if `$INVESTIGATE_RUN/challenger-review.md` exists, read it. Either or both may be absent (Step 4 skipped via `--fast`, or spawned agent failed silently). Incorporate new hypotheses or blindspots from existing files into Evidence section below; skip read entirely if neither file present — do NOT block on missing review files.
+Re-resolve `$INVESTIGATE_RUN` from persisted path file (`cat "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"`). Guard each read with `[ -f <path> ]`: `$INVESTIGATE_RUN/codex-review.md` exists, read it; `$INVESTIGATE_RUN/challenger-review.md` exists, read it. Either or both may be absent (Step 4 skipped via `--fast`, or spawned agent failed silently). Incorporate new hypotheses or blindspots from existing files into Evidence section below; skip read entirely if neither file present — do NOT block on missing review files.
 
 ```markdown
 ## Investigation: <symptom>
@@ -309,11 +309,11 @@ rm -f .temp/state/skill-contract.md ${TMPDIR:-/tmp}/investigate-verdicts-${CSID}
 
 - **Diagnosis only** — never apply fixes; hand off with specific recommended action
 - **Scope vs `/develop:debug`**: `/develop:debug` (requires `develop` plugin) needs known test failure, runs TDD fix loop. `/investigate` = "something wrong, don't know what" — cause may not be in application code
-- **Scope vs `/foundry:audit`**: `/foundry:audit` = scheduled quality sweep of `.claude/`. `/investigate` = triggered by live failure; two complement each other (investigate finds config symptom → audit confirms structural issue)
+- **Scope vs `/foundry:audit`**: `/foundry:audit` = scheduled quality sweep of `.claude/`. `/investigate` = triggered by live failure; two complement each other (investigate finds config symptom, audit confirms structural issue)
 - **Follow-up**: `/develop:fix` (requires `develop` plugin) for implementing resolution once root cause confirmed
 - **Broad first**: always complete Step 2 before hypothesising — premature anchoring = most common investigation failure
 - **Parallel probes**: run independent probes in single response, avoid serial latency
-- **Inconclusiveness valid**: report what ruled out and what info would close remaining gap — don't fabricate root cause to appear decisive
-- **Root-cause discipline**: drill to confirmed root cause before handoff — never hand off "likely cause"; if fix applied and symptoms persist, re-invoke investigate with residual symptom to continue the loop; full protocol in `rules/debugging.md`
+- **Inconclusiveness valid**: report what's ruled out, what info would close remaining gap — don't fabricate root cause to appear decisive
+- **Root-cause discipline**: drill to confirmed root cause before handoff — never hand off "likely cause"; fix applied and symptoms persist: re-invoke investigate with residual symptom to continue the loop; full protocol in `rules/debugging.md`
 
 </notes>

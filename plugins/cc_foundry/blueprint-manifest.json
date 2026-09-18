@@ -86,7 +86,7 @@
     },
     "0451574a9a72a4e46ea4da570b0585d2eafa6e4577aa704374cef03771c6b795": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "04521cc06b2b74f5dd3fd971f91f24186646774019393255fd654eccc0b401d5": {
       "kind": "command",
@@ -146,7 +146,7 @@
     },
     "07fd772bcd685b80299ea73e32e64127a691f6446a009786fa46489d728a204d": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "080e2d20154444c5b5bf591c794e7e84a7e4c1521505801422a443dc5b3a1939": {
       "kind": "command",
@@ -174,7 +174,7 @@
     },
     "0972f48c339cbbbb157b216b49fd4ee10ac6e70b5cb9df55f8cb1aa9e3432fbd": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "099758a37cc4c697328eff4fc023ac39215e7ba398d3b913a9a7fc22df915853": {
       "kind": "block",
@@ -358,7 +358,7 @@
     },
     "1315ad2f777d98ab59da604a9d727c56d6074faec10e81b9d54f3f5a9eab89dc": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:390"
+      "src": "skills/audit/templates/checks-shared.md:388"
     },
     "1332cc73cecf4cf0aee14d318476027199a0b40213886e473de5137d9655f135": {
       "kind": "block",
@@ -422,7 +422,7 @@
     },
     "16bc69fb1e79ad9f60c4b2df98d40b6b86714c0723b1d45b702596b88e8ed4cd": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "16e6113f428f8ab028c5d1acfcb4d14805f18eca8d7dac1e748bc69442a031e6": {
       "kind": "command",
@@ -550,7 +550,7 @@
     },
     "1bfb0936cbb1e8843aa7e28da061dc419ce94243bc0b0bd3640636ce77dd9e94": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "1c296db0893959870a77a43b6854b98b2caa6723521b5fc11e7671949ac8690e": {
       "kind": "command",
@@ -614,7 +614,7 @@
     },
     "1f982713d4359ac78acd428b14938b490bb1095173f470546bc01ca63ea90bd0": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "1fa75550faa5f1ac12d88843de6aeb27aac1475c5e138208774dd8c90161035b": {
       "kind": "command",
@@ -762,7 +762,7 @@
     },
     "285e07c51ed6fcb7980f3569df22984b01af9b5949671d993a569f904ffdcc47": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:360"
+      "src": "skills/audit/templates/checks-shared.md:358"
     },
     "2862ba675f9f56f0a532b4c1446bceef82d47e25b3bf8180a166bf0e1013da34": {
       "kind": "command",
@@ -834,7 +834,7 @@
     },
     "2b1620afb8b9c40abf5c762e32c16b81ed12aa25a20187aec9b28e642cfe3a6b": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "2b4c6bfc23321863214722863065a7575a51a0841243f1e3fac881af642fd214": {
       "kind": "command",
@@ -878,7 +878,7 @@
     },
     "2f8017d9f2928cef78bcbc290b40c9cab08cf31848e23c3f883137e3e471526d": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "2fbcae1c1a614247360b0a1410fa85c8ac03f7019e4ea1135d09ef77f3d4c0c7": {
       "kind": "block",
@@ -914,7 +914,7 @@
     },
     "30bb13f86a4495d1848f313a00ba894ff2622093f5b37cda4383abb7372fbf2e": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "30d0001f65f668614aa14137c7e866140687a44f44cd426a4e770367460bc3ce": {
       "kind": "command",
@@ -1066,7 +1066,7 @@
     },
     "395c853c62960c18c66775b409cd4707d72e97d3581e4025c2ee22f692824b59": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:390"
+      "src": "skills/audit/templates/checks-shared.md:388"
     },
     "39e8331347e51a1790b1ec5a85415d2be371ff02d136f1d73a36c6946d9a8754": {
       "kind": "command",
@@ -1078,7 +1078,7 @@
     },
     "39fdb1acfd81f9c9cdc39492d9e195ddbe535f4f317717ef12ec77b4ea835e08": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:376"
+      "src": "skills/audit/templates/checks-shared.md:374"
     },
     "3a474677cd23e96cccbdcf1f8a05c5b04319adc6cc74fb4b50c167667706d354": {
       "kind": "command",
@@ -1198,7 +1198,7 @@
     },
     "3f2d3643f4ca6d1debb8e55fa9612331ec3a05b0c260eeec517dc34197913a3f": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:436"
+      "src": "skills/audit/templates/checks-shared.md:434"
     },
     "3f44153325ce5ce4ce81d85540c199dd5c2f4d2e1ac68b98104ca82947abf4b1": {
       "kind": "block",
@@ -1338,7 +1338,7 @@
     },
     "4701442241e35d87055d30f3b726bc2395c321a492a0af5d1d22181b51eca564": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "473e407767a6c5a1a00cdad999de2ee7a8e836709eb77c4c10de80a01cf6f281": {
       "kind": "command",
@@ -1470,7 +1470,7 @@
     },
     "4e5e95fc2d3b5438fbcb150e6ddfc54aa7ee143b256f54518f5ce6aa2d07df60": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "4e5eedc84abc53b52f2a05ebbeaab67e80ad3d56f2338be6fa646ccbb431ae46": {
       "kind": "command",
@@ -1486,7 +1486,7 @@
     },
     "4ecc4bf7d037b04d2248b7a367b641dae86c1054db508aa4293969d1d538acdd": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "4ef922ad5df7ba386ff01ca461c03e49e0f8cdac240f5e1bd636b6c005fd32d6": {
       "kind": "block",
@@ -1922,7 +1922,7 @@
     },
     "6230e3cff36127e10717362aff5f5f204800e210c3487bb52e3fd0ce50d150f5": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "6376f76eb589432c411922b1ef9928fb38ee4cf57e45f2367dc6ce3c993533d2": {
       "kind": "command",
@@ -1982,7 +1982,7 @@
     },
     "65fca591ad7ea6e75c7aa204e4c5c53ecaa22fba5556f29e3e3d78b6ab38d45e": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "663ed4a6c770abba745e48e0a1a27b45cc3e3413851cd9eb3e13d76fe6778268": {
       "kind": "command",
@@ -2014,7 +2014,7 @@
     },
     "67299d3c983526768a2ccb8299d7bb5439a7ad37db432b79a8a2a55698345f62": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "674db4f5b2d3a90d26140930a56d34450b63c974091ae97c57c17bc3b3e270a3": {
       "kind": "block",
@@ -2074,7 +2074,7 @@
     },
     "696a654126319c8715d7154107efab8c5cdf3ae889609377a5b1248107188f96": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "6a96e7a7298a090a61f24056775e11844c6c1126090edd96c92fe4bc8c0c55ab": {
       "kind": "command",
@@ -2110,7 +2110,7 @@
     },
     "6b9a44da68079e7b5c97fb704171187fce400ac00a99a18c6a38d6cce66aaa80": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:436"
+      "src": "skills/audit/templates/checks-shared.md:434"
     },
     "6bd0d4f8debba001c62db130cc6ccf2801c9190b6acf47c3680850b3f0ebefa4": {
       "kind": "command",
@@ -2202,7 +2202,7 @@
     },
     "7117eaf55f49ee595f10688112e2bec406dcb3e3b675bb702701d1cc203af84b": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "71571434e1e15b4e099e2f77c04d446a6ba600b63dfef631241ab6febaf537b0": {
       "kind": "command",
@@ -2386,7 +2386,7 @@
     },
     "7b00bef606047a2259d22f2b6cb7892136fcde01332a5431f88b8a82a940e401": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "7b42e07a37a8cb4b0de711abe8ca9328b1d1a3eb68a7bdf39be69aa9fa0056c1": {
       "kind": "command",
@@ -2478,7 +2478,7 @@
     },
     "81337f0607685bcaa2d40eab6ff2aaa8c6d802666539d8c9d7ac4c9762f9a737": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:436"
+      "src": "skills/audit/templates/checks-shared.md:434"
     },
     "81802926852fb4db3d700663b86fc422b8e821166db42799b89f173d0d57158d": {
       "kind": "command",
@@ -2622,7 +2622,7 @@
     },
     "88f30ae820cbb200712b82a625ffa8c44e730f037f8a3b33b0bae293ef26420d": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "88f33c8effc8a0a04465de594c8711be2efb05040d5846c471da05bc3c62bd02": {
       "kind": "command",
@@ -2698,7 +2698,7 @@
     },
     "8c42600c669d37de59f5ec1a0a3adcc9ef2cf7423a67de07bfaa8b04f8d57af8": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "8c5eb8a2ebe73ac7c440d7997db9a81daf23244cd0ebaa57762d324b8b3ad797": {
       "kind": "block",
@@ -2730,7 +2730,7 @@
     },
     "8cfb201eb930f393f5806c5afdd6c7b73dc9fd1af288f8cdc930124221f6beba": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "8d107985ab09491f10acb63be49bbdbc25fff4e945213f8812f98a416929fa01": {
       "kind": "command",
@@ -2746,7 +2746,7 @@
     },
     "8d64e1d1df391239a17e37a182f51d49c47fa73683cbdafdf32ee607cdbc1110": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:376"
+      "src": "skills/audit/templates/checks-shared.md:374"
     },
     "8dc47eb9164214455332cf062aedd223f01c4c0c9e4a2eec1ea6b47ffbc95b21": {
       "kind": "block",
@@ -2830,7 +2830,7 @@
     },
     "917d51fd0b965981f1d73784f1e57ef4c55f9fdcece11d54a985c9e6b713ffc3": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "91de754f55a92fa7e43148fd7fcb9bc6f426200fe84ceb61484da5c08492c00b": {
       "kind": "command",
@@ -2930,7 +2930,7 @@
     },
     "9682ecf77fda5631bbe72080474d75588aa997bbddb80765a0ba0e61a2818f55": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "96e3bcb7ea0a491c5bb43b0f195ec938d2f89f942a1ae900c95c86a648df5526": {
       "kind": "command",
@@ -2990,7 +2990,7 @@
     },
     "9a5298bffe1aae4600eb7f9e23eae1b231f6e6ea8262fee28dd2d29f853fd8da": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "9a55e056d7a901af935d019900a7bd7a280951b2c6e0f458273a262bb946ef38": {
       "kind": "block",
@@ -3006,7 +3006,7 @@
     },
     "9b084bb0deb8103832e60e8d3eb602d02cec95b8eb8acd5c6b9c1277b31d4a24": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "9b25708a349ee937d1238b62246eb51ad6d656104cbb5b04dbaef163061b2b4c": {
       "kind": "command",
@@ -3394,7 +3394,7 @@
     },
     "ac72e686797deb10e1a0fcf58eda2598d49ba8e34f89cb2e9df1f3fde5de6691": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "acbd7ae73f17377ee3457ae20485a8edf6591170c957eac6df177febb399c540": {
       "kind": "command",
@@ -3594,7 +3594,7 @@
     },
     "b533bdfda783d80d2a5db56535ad8b1b2b7ff9285f2e8dfe2a4ec85eeb285133": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "b58d43271b427be4b79722989cfc4e80ec298321edec938f75d943a3707f9ef1": {
       "kind": "command",
@@ -3606,7 +3606,7 @@
     },
     "b5cf38dddcf61421f66fa60c04b827e1e7aa5119edd962dddb982ee43ab5e999": {
       "kind": "block",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "b6054c525e753305852d49e3d8ad729add24b369e99816ed7ec74ab2dc8dfea2": {
       "kind": "block",
@@ -3614,7 +3614,7 @@
     },
     "b6b0a8556cdc33c3aa73c12b91b0f06a97ae400406775d7cca7d7ae41206c420": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:360"
+      "src": "skills/audit/templates/checks-shared.md:358"
     },
     "b6eb9d229b93be3731f08c8985518d079e10123797bdcc5a0fb47c91ac9cc3f8": {
       "kind": "block",
@@ -3762,7 +3762,7 @@
     },
     "bebd800da5b4c5ae560d7612e3cede2a73857a23251fc8cfc95910918b1d8645": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "bec5c12142fe161f28afc60af48bc1e85953ee869a8c40410c8e7c5dca6c76d7": {
       "kind": "command",
@@ -3790,7 +3790,7 @@
     },
     "c0551417e2813e5f980edea3de40f612f71f4a89326a3090fd4d3e1d2eedca57": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "c08dcd88c7f5aab2a33f3e986efb11ac658fe9ff41427040571266c32d2541f4": {
       "kind": "command",
@@ -3802,7 +3802,7 @@
     },
     "c0db84a2e6ad4cce0e01d591a27cf2d48ba5a91786274d8942aaf82ddae3f30c": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "c105010ecc1a1a8392095d3eeee55f7f10e9dbcdccdd8fd28b89229ae8d18f69": {
       "kind": "command",
@@ -3910,7 +3910,7 @@
     },
     "c6cd3f41cd1d90f6c3728e04100bb3a08c292915ff1eb0f7a946b22c903eff91": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:390"
+      "src": "skills/audit/templates/checks-shared.md:388"
     },
     "c6e9f362c5806f742d81d8dde38450ae24f1ee7022c53abedb277112270a0aa4": {
       "kind": "command",
@@ -3978,7 +3978,7 @@
     },
     "cbc7e519cb40f90ec0819c622e58c24dffd1d91dd61877bb69d7f598e384e3de": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:376"
+      "src": "skills/audit/templates/checks-shared.md:374"
     },
     "cc609af2eedad5c7a9b74fd176f953c44915d188d9082b853a3d3e27c1d8f746": {
       "kind": "command",
@@ -4162,7 +4162,7 @@
     },
     "d684d59837d46261aac670cbca32176a52cfdf60f2cc7d046d66d1d2412e0b3d": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "d6a79cb31aa63d5379f1c70d298bee6cf9cd512e48218740ef59b85b954a208a": {
       "kind": "block",
@@ -4182,7 +4182,7 @@
     },
     "d780eec0eadb13812c7e386976f9e6ecc07a70f8c565a06ed7fc7400ef7ffcf6": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "d7b3825ca8102c2ce25642a5691962b212c6d3b9439ac9ce825ffeee7d1d0af1": {
       "kind": "command",
@@ -4306,7 +4306,7 @@
     },
     "e02c1daea244303652b9ef88b3fe32054b8f2e6dfe39eb53ab8fc7940f7fd78b": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:515"
+      "src": "skills/audit/templates/checks-shared.md:513"
     },
     "e04d787b3e882f449b960cfbef463e1c8fc0b1db3a9ede3ff2697955bbc9097c": {
       "kind": "block",
@@ -4522,7 +4522,7 @@
     },
     "eaba3374082c9dbed8ac680db4317e8212e92fdad74077eb52c6f09ca9403e44": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:360"
+      "src": "skills/audit/templates/checks-shared.md:358"
     },
     "eae64e7d5bb721019ab197a02a5ba567d4fc99c65255ddce8696e73a2e066e46": {
       "kind": "command",
@@ -4602,7 +4602,7 @@
     },
     "eef0542ed419580f98581404f5d2343643e53bbc35d51f9c4e85b5e2737c115f": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:415"
+      "src": "skills/audit/templates/checks-shared.md:413"
     },
     "ef6c886a8e47d0d190521bb5a9c08360456ec7d409059a206c890642459cd4ce": {
       "kind": "command",
@@ -4670,7 +4670,7 @@
     },
     "f3600a48b032514bee93d71e5f05a639e18bb4b250a4c2db67a45e2a89998d07": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:454"
+      "src": "skills/audit/templates/checks-shared.md:452"
     },
     "f36f1b6ccabb0582aab022027aa993c80a24e290e670404bece127534dfcb34c": {
       "kind": "command",
@@ -4726,7 +4726,7 @@
     },
     "f54c84d22b4810a43ffa3f3e1b9160e62ba4152c12bb058c9026af6d38b752ec": {
       "kind": "command",
-      "src": "skills/audit/templates/checks-shared.md:480"
+      "src": "skills/audit/templates/checks-shared.md:478"
     },
     "f5a5dff8c4fe78cdec6c382ac4981f3bcbf8c269fd8b7af22cd07ddb9a74f596": {
       "kind": "command",
@@ -4913,6 +4913,6 @@
       "src": "skills/investigate/SKILL.md:97"
     }
   },
-  "plugin": "cc_foundry@0.56.1",
+  "plugin": "cc_foundry@0.56.2",
   "schema": 1
 }

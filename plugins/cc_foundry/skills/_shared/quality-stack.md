@@ -1,8 +1,8 @@
 # Shared Quality Stack
 
-Used by develop mode skills (feature, fix, refactor). Canonical home: cc_foundry `_shared/quality-stack.md`; consumer plugins ship the propagated copy as `foundry--quality-stack.md` (source-plugin prefix — a plugin-local file can never collide with a propagated copy) and load it via `cat "$_SHARED/foundry--quality-stack.md"` (not the Read tool — `Bash(cat:*)` grant is version-proof).
+Used by develop mode skills (feature, fix, refactor). Canonical home: cc_foundry `_shared/quality-stack.md`; consumer plugins ship the propagated copy as `foundry--quality-stack.md` (source-plugin prefix — a plugin-local file can never collide with a propagated copy) and load via `cat "$_SHARED/foundry--quality-stack.md"` (not the Read tool — `Bash(cat:*)` grant is version-proof).
 
-> `$_SHARED` = **the loading plugin's own** `skills/_shared`, set by the consumer before `cat`-ing this file. This doc is a byte-identical `propagate_shared.py` copy present in every plugin that uses it, so it must never name a specific plugin's variable — the sibling files it loads below resolve out of whichever `_shared` the consumer set.
+> `$_SHARED` = **the loading plugin's own** `skills/_shared`, set by the consumer before `cat`-ing this file. This doc is a byte-identical `propagate_shared.py` copy present in every plugin using it, so it must never name a specific plugin's variable — the sibling files it loads below resolve out of whichever `_shared` the consumer set.
 
 Skip branch safety guard in `plan` mode — plan makes no code changes.
 
@@ -70,7 +70,7 @@ if [ $SUITE_EXIT -ne 0 ]; then
 fi
 ```
 
-When `PASS_COUNT < RETRY_COUNT` and `PASS_COUNT > 0` (test is genuinely flaky):
+`PASS_COUNT < RETRY_COUNT` and `PASS_COUNT > 0` (test genuinely flaky):
 
 - Print `⚠ FLAKY: test(s) passed $PASS_COUNT/$RETRY_COUNT retries`
 - **Do NOT fall through** — invoke `AskUserQuestion`:
@@ -107,7 +107,7 @@ Stack fails (tests, lint, type check) — pick rollback depth by scope:
 2. **Partial revert** — feature branch has mixed good/bad commits: `git revert <bad-commit>` (preserves history)
 3. **Full revert** — nothing salvageable: `git reset --hard <last-clean-sha>` — **confirm with user before running**; destructive
 
-Document option used in Final Report under "Recovery" subsection.
+Document option used in Final Report, "Recovery" subsection.
 
 ## Codex Pre-pass
 
@@ -121,7 +121,7 @@ cat "$_SHARED/codex-prepass.md"  # timeout: 5000
 
 ### Codex pre-pass: additional inline steps (step 1 is in the shared file)
 
-2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `codex:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only — no working-tree changes.
+2. **Collect findings**: build `CODEX_FINDINGS` — bullet list of every flagged issue from `codex:review` output. Nothing found or step skipped → set `CODEX_FINDINGS=""`. Review read-only, no working-tree changes.
 3. **Actor context**: note whether Codex involved (found real issues acted on). Pass as context when committing — `git-commit.md` decides trailers.
 
 Include `### Codex Pre-pass` section in final report:
@@ -132,13 +132,13 @@ Include `### Codex Pre-pass` section in final report:
 
 ## Progressive Review Loop
 
-Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — they run only on explicit user request. Escalation below uses `/develop:review` (local-diff multi-agent review; requires `develop` plugin — the consumers of this file).
+Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invoked from develop flows** — run only on explicit user request. Escalation below uses `/develop:review` (local-diff multi-agent review; requires `develop` plugin — the consumers of this file).
 
 **Cycle 1: Confidence-gated review escalation**
 
-- Compute concern signal after the quality stack: any unresolved critical/high finding, OR `CODEX_FINDINGS` non-empty and not yet verified. Envelope confidence alone is NOT a trigger — template envelopes print 0.88, so a `< 0.9` arm fired on nearly every run, nesting a full multi-agent `/develop:review` (~5-6 spawns) without a concrete finding to chase; low confidence without findings goes to the report as a stated gap instead
+- Compute concern signal after quality stack: any unresolved critical/high finding, OR `CODEX_FINDINGS` non-empty and not yet verified. Envelope confidence alone is NOT a trigger — template envelopes print 0.88, so a `< 0.9` arm fired on nearly every run, nesting a full multi-agent `/develop:review` (~5-6 spawns) without a concrete finding to chase; low confidence without findings goes to the report as a stated gap instead
 - No concern → skip directly to report; in the final report list optional follow-ups the user may explicitly request (`/develop:review` for a deeper local pass; `/oss:review` once a PR exists)
-- Concern present → invoke `/develop:review` scoped to the modified files. `CODEX_FINDINGS` non-empty → prepend to review brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS". Also seed the quality-stack's own findings as "already checked — verify, do not rediscover"
+- Concern present → invoke `/develop:review` scoped to the modified files. `CODEX_FINDINGS` non-empty → prepend to review brief: "Codex pre-pass found the following — verify these, do not rediscover: $CODEX_FINDINGS". Also seed quality-stack's own findings as "already checked — verify, do not rediscover"
 - Capture review state: `{agents_with_findings, unresolved_findings, files_reviewed}`
 - Clean (no critical/high findings): skip to report
 
@@ -151,7 +151,7 @@ Max 3 cycles. Applied after quality stack. **`oss:*` skills are NEVER auto-invok
 
 Replace bare agent names in spawn prompts with `foundry:` prefixed equivalents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`.
 
-**Health monitoring**: Agent calls run in background. Spawn, end turn, resume on completion notification — no filler tool call, no "waiting" turn, no sleep. No file activity across wake-ups for 15 min: use Read tool on `$RUN_DIR/<agent-name>.md` to surface partial results. Mark timed-out agents with ⏱ in final report.
+**Health monitoring**: Agent calls run in background. Spawn, end turn, resume on completion notification — no filler tool call, no "waiting" turn, no sleep. No file activity across wake-ups for 15 min → use Read tool on `$RUN_DIR/<agent-name>.md` to surface partial results. Mark timed-out agents with ⏱ in final report.
 
 - Skip agents clean in Cycle 1
 - Collect envelopes to update review state (don't read full finding files into context — check envelopes to determine if critical/high remain)
@@ -185,6 +185,6 @@ Load `codex-delegation.md` via `cat` (not the Read tool — `Bash(cat:*)` grant 
 cat "$_SHARED/codex-delegation.md"  # timeout: 5000
 ```
 
-Distinct from Codex pre-pass — pre-pass checks implementation diff for correctness; mechanical delegation outsources low-level follow-up work (scaffolding, boilerplate, migration scripts) after review loop closes.
+Distinct from Codex pre-pass — pre-pass checks implementation diff for correctness; mechanical delegation outsources low-level follow-up (scaffolding, boilerplate, migration scripts) after review loop closes.
 
 Include `### Codex Delegation` section in final report only when tasks delegated — omit entirely if nothing delegated.

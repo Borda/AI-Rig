@@ -83,7 +83,7 @@ cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
    No program.md found. Run /research:plan <goal> first, or provide a path: /research:judge <path.md>
    ```
 
-**Schema gate** — before parsing, count matching `## <Section>` headings against the known schema set (`Goal`, `Metric`, `Guard`, `Config`, `Notes`). Zero matches = the located file does not parse as a program.md (e.g. input resolution located an unrelated document) — stop immediately with the same "nothing found" error shown in step 4 above; do NOT proceed to J2's C1–C12 checklist. Distinct trigger from step 4 (file not locatable at all): this fires when a file IS located but its content doesn't match the expected schema.
+**Schema gate** — before parsing, count matching `## <Section>` headings against the known schema set (`Goal`, `Metric`, `Guard`, `Config`, `Notes`). Zero matches = located file doesn't parse as program.md (e.g. input resolution located an unrelated document) — stop immediately with the same "nothing found" error shown in step 4 above; do NOT proceed to J2's C1–C12 checklist. Distinct from step 4 (file not locatable at all): this fires when a file IS located but content doesn't match expected schema.
 
 **Parsing** — find `## <Section>` headings in program.md, extract first fenced code block per section, parse as `key: value` lines, warn on unrecognized keys. `--skip-validation` and `colab_hw` judge-specific, extracted independently.
 
@@ -144,7 +144,7 @@ echo "$RUN_DIR" > "${TMPDIR:-/tmp}/judge-run-dir-${CSID}"  # persist for J3 bloc
 
 **Spawn note**: J3 agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on each completion notification, check that agent's output file; if missing/empty mark it timed out (⏱). See J3 post-call checks below.
 
-Dispatch — scientist dimension always; architect dimension only when the complexity gate fires. When BOTH dimensions are active, J3 is ONE merged spawn covering both (two opus spawns for a single-file review pay 2× ~120,851 tok of fixed overhead for a workload far under the breakeven above); when only the scientist dimension is active, it is a single scientist spawn as before. Per-dimension output files and Confidence blocks are unchanged either way.
+Dispatch — scientist dimension always; architect dimension only when the complexity gate fires. When BOTH dimensions are active, J3 is ONE merged spawn covering both (two opus spawns for a single-file review pay 2× ~120,851 tok fixed overhead for a workload far under the breakeven above); when only the scientist dimension is active, it's a single scientist spawn as before. Per-dimension output files and Confidence blocks are unchanged either way.
 
 Before constructing J3 prompts, expand all bash variables into concrete paths — never pass literal `<path_to_program.md>` or `<RUN_DIR>` placeholders to agents:
 
@@ -178,7 +178,7 @@ When `SPAWN_ARCHITECT=false`: skip architect spawn; J5b precedence step 0 sets `
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-When `SPAWN_ARCHITECT=true`: spawn ONE merged reviewer via `Agent(subagent_type="research:scientist", prompt=<merged prompt>)` (opus) — build the merged prompt exactly per `judge-j3-prompts.md` §Merged spawn — envelope override (both templates with their individual `Return ONLY:` lines stripped, joined by `---`, closed with the override's single array-envelope instruction). The single spawn executes BOTH templates in order and writes `${RUN_DIR}/methodology.md` AND `${RUN_DIR}/scientific-review.md`, each with its own Confidence block. Full prompt templates (expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing):
+When `SPAWN_ARCHITECT=true`: spawn ONE merged reviewer via `Agent(subagent_type="research:scientist", prompt=<merged prompt>)` (opus) — build the merged prompt exactly per `judge-j3-prompts.md` §Merged spawn — envelope override (both templates with individual `Return ONLY:` lines stripped, joined by `---`, closed with the override's single array-envelope instruction). The single spawn executes BOTH templates in order, writes `${RUN_DIR}/methodology.md` AND `${RUN_DIR}/scientific-review.md`, each with its own Confidence block. Full prompt templates (expand `${PROGRAM_PATH}` and `${RUN_DIR}` before passing):
 
 > `$J3_ARCH_PROMPT` template externalized — load and follow protocol below § J3_ARCH_PROMPT (one load supplies both J3 templates).
 
@@ -330,7 +330,7 @@ Top-to-bottom; **first match wins**. BLOCKED takes precedence — stop at first 
 
 **Verdict matching rules**: all `*_rating` comparisons require exact string match. Reject partial/substring matches — e.g., `timed_out_partial` does NOT match `timed_out`; `flawed` does NOT match `fundamentally-flawed`. Use `==` equality only; never `=~`, `startswith`, or pattern matching.
 
-**Goodhart consolidation rule**: Goodhart's Law findings surface via two paths — J2 C2b (static, produces `critical` finding) and J3 agents (dynamic review, produces `methodology_rating` or `scientific_rating`). Before applying verdict table: if J3 architect or scientist explicitly flags Goodhart's Law as issue AND J2 didn't already flag it `critical`, promote to `critical` finding in J2 list (source: "J3-Goodhart"). Ensures both paths produce BLOCKED for Goodhart issues. Architect and scientist prompts already instruct `fundamentally-flawed` for Goodhart — this consolidation handles edge cases where rating falls below `fundamentally-flawed` but Goodhart still mentioned.
+**Goodhart consolidation rule**: Goodhart's Law findings surface via two paths — J2 C2b (static, produces `critical` finding) and J3 agents (dynamic review, produces `methodology_rating` or `scientific_rating`). Before applying verdict table: if J3 architect or scientist explicitly flags Goodhart's Law as issue AND J2 didn't already flag it `critical`, promote to `critical` finding in J2 list (source: "J3-Goodhart"). Ensures both paths produce BLOCKED for Goodhart issues. Architect/scientist prompts already instruct `fundamentally-flawed` for Goodhart — this consolidation handles edge cases where rating falls below `fundamentally-flawed` but Goodhart still mentioned.
 
 **Pre-compute**:
 

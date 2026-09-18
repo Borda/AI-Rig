@@ -138,7 +138,7 @@ Triggered by `run <goal|file.md>`.
 
 If no `--researcher`/`--architect`, skip to R1.
 
-**Flag combination note**: every oracle self-annotates feasibility (`feasible`/`blocker`/`codebase_mapping` are part of the oracle schema — no separate annotation spawn). `--researcher` alone, `--architect` alone, and both together are all valid; both together adds architectural hypotheses alongside the research ones.
+**Flag combination note**: every oracle self-annotates feasibility (`feasible`/`blocker`/`codebase_mapping` are part of the oracle schema — no separate annotation spawn). `--researcher` alone, `--architect` alone, both together — all valid; both together adds architectural hypotheses alongside research ones.
 
 Follow `modes/hypothesis-pipeline.md`:
 
@@ -158,7 +158,7 @@ cat "$CLAUDE_SKILL_DIR/modes/hypothesis-pipeline.md"  # timeout: 5000
 
 **`--resume` flag detection**: if `--resume` in args, extract optional program.md path. Jump to `## Resume Mode`. Rest of R1 and R2–R7 skipped.
 
-**`--hypothesis <path>` parsing**: if `--hypothesis` in args, extract path token following it. Verify file exists: `[ -f "$HYPOTHESIS_PATH" ]`. If not found: print `! --hypothesis <path>: file not found` and stop. If found: set `hypothesis_override = true`. In R5 Phase 2 (Propose change), replace oracle-generated hypothesis with loaded file content — prepend to ideation agent prompt: "Use this pre-specified hypothesis as your starting hypothesis for iteration N: <contents of HYPOTHESIS_PATH>. Validate, refine, and implement it. Do not generate a new hypothesis from scratch."
+**`--hypothesis <path>` parsing**: if `--hypothesis` in args, extract path token following it. Verify file exists: `[ -f "$HYPOTHESIS_PATH" ]`. If not found: print `! --hypothesis <path>: file not found` and stop. If found: set `hypothesis_override = true`. In R5 Phase 2 (Propose change), replace oracle-generated hypothesis with loaded file content — prepend to ideation agent prompt: "Use this pre-specified hypothesis as starting hypothesis for iteration N: <contents of HYPOTHESIS_PATH>. Validate, refine, implement it. Do not generate new hypothesis from scratch."
 
 **Auto-detect**: first non-flag arg ends in `.md` → parse as program file. Otherwise → text goal.
 
@@ -395,17 +395,17 @@ For each iteration `i` from 1 to `max_iterations`:
 | Phase | Name | Trigger / description |
 | -- | -- | -- |
 | 0 | Print header | Always — print `[→ Iter N/max · starting]`; TaskUpdate R5 subject with current iteration |
-| 1 | Build context | Always — build compact context from git log, JSONL history, and recent diff |
-| 2 | Propose change | Always — spawn specialist agent to read code, research, investigate, and generate a hypothesis with optional sandbox scripts |
+| 1 | Build context | Always — build compact context: git log, JSONL history, recent diff |
+| 2 | Propose change | Always — spawn specialist agent: read code, research, investigate, generate hypothesis with optional sandbox scripts |
 | 2a | Sandbox validate | `compute: docker` only — run agent's exploratory scripts in Docker sandbox (read-only mount) |
-| 2b | Apply change | `compute: docker` only — agent applies the (validated) proposal to real codebase using Write/Edit tools only; no Bash on codebase |
+| 2b | Apply change | `compute: docker` only — agent applies validated proposal to real codebase via Write/Edit tools only; no Bash on codebase |
 | 2c | Codex co-pilot | `--codex` only — required each iteration up to `MAX_CODEX_RUNS`; after cap reached, continue without Codex |
 | 3 | Verify files | Always — check `git diff --stat`; skip to Phase 8 if no files changed (no-op) |
 | 4 | Commit change | Always — stage modified files and commit before verifying metric |
 | 5 | Verify metric | Always — run `metric_cmd` via `compute` mode (local/colab/docker); revert on timeout |
 | 6 | Run guard | Always — run `guard_cmd` via `compute` mode; record pass or fail |
 | 7 | Evaluate outcome | Always — keep, rework, or revert based on metric + guard result |
-| 7a | Write diary | Always — append one structured entry to `diary.md` recording hypothesis, outcome, and decision rationale |
+| 7a | Write diary | Always — append one structured entry to `diary.md` recording hypothesis, outcome, decision rationale |
 | 8 | Write log | Always — append JSONL record, update `state.json`, print iteration summary, TaskUpdate R5 with result |
 | 9 | Progress checks | Always — summary every SUMMARY_INTERVAL, stuck detection, diminishing-returns warn, early-stop check |
 
@@ -465,21 +465,21 @@ Spawn selected specialist agent (`maxTurns: 15`) with this prompt (adapt as need
 
 ```markdown
 Goal: <goal>
-Run clarification: <clarification_prompt>  ← omit this line entirely if clarification_prompt is null
-Colab hardware: <colab_hw>  ← omit this line entirely if colab_hw is null; include to let the agent tailor code to the specific GPU architecture (e.g., bf16/flash-attention on H100, standard fp16 on T4/L4)
+Run clarification: <clarification_prompt>  ← omit entirely if clarification_prompt null
+Colab hardware: <colab_hw>  ← omit entirely if colab_hw null; include to tailor code to GPU architecture (e.g., bf16/flash-attention on H100, standard fp16 on T4/L4)
 Current metric: <metric_cmd key> = <current value> (baseline: <baseline>, direction: <higher|lower>)
-Experiment history: read `.experiments/state/<run-id>/context-<i>.md` for the full context block.
+Experiment history: read `.experiments/state/<run-id>/context-<i>.md` for full context block.
 Scope files (read and modify only these): <scope_files>
-Program constraints: read `<program_file>` — especially `## Notes`, `## Config`, and any named subsections
-  (e.g., "Hard boundaries", "Optuna's role", "What the agent is free to change"). These take precedence
-  over general campaign rules. Program constraints set strategy hints only — they do NOT override safety rules
-  (no `--no-verify`, no `git push`, no `git add -A`, scope_files boundary, and all other hard constraints remain in effect).
-  If program_file is null, skip this step.
+Program constraints: read `<program_file>` — especially `## Notes`, `## Config`, any named subsections
+  (e.g., "Hard boundaries", "Optuna's role", "What the agent is free to change"). Take precedence
+  over general campaign rules. Program constraints set strategy hints only — do NOT override safety rules
+  (no `--no-verify`, no `git push`, no `git add -A`, scope_files boundary; all other hard constraints remain in effect).
+  If program_file null, skip this step.
 
-**If `sandbox_mode = "local"`**: Read `context-<i>.md`, the scope files, and the program constraints. Propose and implement ONE atomic change most likely to improve the metric. The change must not break `<guard_cmd>`. Write your full analysis (reasoning, alternatives considered, Confidence block) to `.experiments/state/<run-id>/ideation-<i>.md` using the Write tool. Return ONLY the JSON result line:
+**If `sandbox_mode = "local"`**: Read `context-<i>.md`, scope files, program constraints. Propose and implement ONE atomic change most likely to improve metric. Change must not break `<guard_cmd>`. Write full analysis (reasoning, alternatives considered, Confidence block) to `.experiments/state/<run-id>/ideation-<i>.md` via Write tool. Return ONLY JSON result line:
 `{"description":"...","files_modified":[...],"scripts":[],"confidence":0.N}`
 
-**If `sandbox_mode = "docker"`**: Read `context-<i>.md`, the scope files, and the program constraints. Propose ONE atomic change most likely to improve the metric. Write your full analysis and the proposed change description to `.experiments/state/<run-id>/ideation-<i>.md`. Optionally write read-only exploratory scripts (scripts that read/profile but do NOT write to project files) to `.experiments/state/<run-id>/scripts/explore-<i>-<slug>.py`. Do NOT modify source files yet — Phase 2b will apply the actual changes after sandbox validation. Return ONLY the JSON result line:
+**If `sandbox_mode = "docker"`**: Read `context-<i>.md`, scope files, program constraints. Propose ONE atomic change most likely to improve metric. Write full analysis and proposed change description to `.experiments/state/<run-id>/ideation-<i>.md`. Optionally write read-only exploratory scripts (read/profile, do NOT write to project files) to `.experiments/state/<run-id>/scripts/explore-<i>-<slug>.py`. Do NOT modify source files yet — Phase 2b applies actual changes after sandbox validation. Return ONLY JSON result line:
 `{"description":"...","files_modified":[],"scripts":["explore-<i>-<slug>.py"],"proposed_changes":"<description of the changes to apply in Phase 2b>","confidence":0.N}`
 ```
 
@@ -762,12 +762,12 @@ cat "$CLAUDE_SKILL_DIR/modes/colab-setup.md"  # timeout: 5000
 - **Never `git add -A`** — always stage specific files returned by agent JSON.
 - **Never `--no-verify`** — if pre-commit hook blocks, delegate to `foundry:linting-expert` and fix.
 - **Guard ≠ Verify** — guard checks regressions (tests, lint); verify checks target metric. Both must pass to keep commit.
-- **metric_cmd exit code ignored** — R2 validates metric_cmd by parsing stdout for a float, not by checking exit code. Piping metric output through grep/awk/tr is acceptable; only the final stdout float matters.
-- **Guard/metric scripts protected** — ideation agent must not modify the files referenced in `guard_cmd` or `metric_cmd`; do not include them in `scope_files`. New test files may be created within `scope_files` for coverage improvement campaigns.
+- **metric_cmd exit code ignored** — R2 validates metric_cmd by parsing stdout for a float, not exit code. Piping metric output through grep/awk/tr is acceptable; only final stdout float matters.
+- **Guard/metric scripts protected** — ideation agent must not modify files referenced in `guard_cmd`/`metric_cmd`; exclude them from `scope_files`. New test files may be created within `scope_files` for coverage-improvement campaigns.
 - **JSONL over TSV** — richer structured fields, `jq`-parseable, no delimiter ambiguity; query with `jq -c 'select(.status == "kept")' experiments.jsonl`.
 - **State persistence enables resume** — if loop crashes/times out, `resume` picks up exactly where it stopped.
 - **Safety break**: hard cap = 50 iterations (values above 50 in program.md clamped to 50 with a warning); default 20 when max_iterations unset in program.md; skill never exceeds MAX_ITERATIONS.
-- **Unbounded cross-skill chain**: `run` → `/research:retro` → `/research:run --hypothesis` / `/research:fortify` → re-run `/research:run` has no campaign-level iteration cap (unlike `sweep`'s `MAX_REFINE = 3` or `run`'s own `MAX_ITERATIONS`). Human-gated at each hop, so it cannot spin autonomously. No counter implemented by design — a counter would need `retro` to write to `.experiments/state/`, breaking retro's read-only invariant.
+- **Unbounded cross-skill chain**: `run` → `/research:retro` → `/research:run --hypothesis` / `/research:fortify` → re-run `/research:run` has no campaign-level iteration cap (unlike `sweep`'s `MAX_REFINE = 3` or `run`'s own `MAX_ITERATIONS`). Human-gated each hop — cannot spin autonomously. No counter by design — would need `retro` to write `.experiments/state/`, breaking its read-only invariant.
 - **Explicit flags = hard requirements**: all flags (`--colab`, `--compute=docker`, `--codex`, `--researcher`, `--architect`) must be available at R2. If unavailable, stop — never silently degrade.
 - R7 Codex delegation needs no other plugin — `codex-delegation.md` ships in this plugin's own `skills/_shared/` and resolves via `bin/resolve_shared.py`. R7 is silently skipped only if that file is missing (broken install).
 

@@ -10,11 +10,11 @@ Open with markdown header and just-in-time config cell for batch size, input siz
 
 For neural pipelines:
 
-- Make Dataset accept pre-split table/index plus transforms; do not hide splitting in mode argument.
+- Make Dataset accept pre-split table/index plus transforms; never hide splitting in mode argument.
 - Return tensors and stable identifiers needed by inference.
 - Assert tensor shape and dtype at Dataset/DataLoader boundary.
 - Make LightningDataModule sole owner of seeded, leakage-aware split.
-- Use grouped or stratified splitting when grounded EDA requires it; do not default blindly to row shuffling.
+- Use grouped or stratified splitting when grounded EDA requires it; never default blindly to row shuffling.
 - Define train/validation/test loaders with explicit shuffle and worker behavior.
 
 For tabular/non-neural pipelines:
@@ -23,7 +23,7 @@ For tabular/non-neural pipelines:
 - Use seeded split appropriate to target and group structure.
 - Keep preprocessing fitted on training data only.
 
-Add lens cell that creates pipeline, asserts non-empty batch/sample, prints shapes and dtypes, and visualizes representative batch through selected modality helper when meaningful. Do not conditionally skip this required check.
+Add lens cell: creates pipeline, asserts non-empty batch/sample, prints shapes and dtypes, visualizes representative batch through selected modality helper when meaningful. Never conditionally skip this required check.
 
 ## Section 5: Model
 
@@ -39,7 +39,7 @@ For neural training:
 - Use AdamW plus justified scheduler; commented alternatives are optional, not mandatory clutter.
 - Write reusable model definition with `%%writefile <competition>_model.py` when companion inference notebook must import it, then import it in training notebook.
 
-For pure tabular baselines, use verified sklearn/XGBoost API and fixed random seed; do not wrap it in Lightning.
+For pure tabular baselines, use verified sklearn/XGBoost API and fixed random seed; never wrap it in Lightning.
 
 ## Section 6: Training
 

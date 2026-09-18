@@ -41,7 +41,7 @@ pre-commit run --all-files
 pre-commit autoupdate      # run regularly
 ```
 
-> **Tip**: Enable pre-commit.ci to auto-run + auto-fix hooks on every PR without local setup burden.
+> **Tip**: pre-commit.ci auto-runs + auto-fixes hooks per PR, no local setup needed.
 
 ## Version Pinning
 
@@ -63,17 +63,17 @@ Apply the matching context:
 
 **New live project config** (creating `.pre-commit-config.yaml` for first time for actual use):
 
-- Create minimal config with placeholder revs, then immediately run `pre-commit autoupdate` to populate real versions
+- Create minimal config with placeholder revs; immediately run `pre-commit autoupdate` to populate real versions
 - Don't manually write version strings; autoupdate sets them correctly from start
 - To update single hook: `pre-commit autoupdate --repo <repo-url>`
 
-Run `pre-commit autoupdate` as part of regular dependency updates (e.g., monthly or when upgrading other deps).
+Run `pre-commit autoupdate` with regular dependency updates (monthly, or when upgrading other deps).
 
 ## Version Verification
 
-After `pre-commit autoupdate`, cross-check ruff and mypy revs against pypi.org and pre-commit-hooks against its GitHub releases. Don't rely only on GitHub releases for ruff or mypy — pypi.org reflects published package versions. Use WebFetch when `pre-commit autoupdate` output is ambiguous (e.g., a rev updated before pypi metadata).
+After `pre-commit autoupdate`, cross-check ruff/mypy revs against pypi.org, pre-commit-hooks revs against its GitHub releases. Don't rely only on GitHub releases for ruff/mypy — pypi.org reflects published package versions. Use WebFetch when `pre-commit autoupdate` output is ambiguous (e.g. rev updated before pypi metadata).
 
-Cache version lookups: store result in session variable, reuse; avoid re-fetching same URL.
+Cache version lookups: store in session variable, reuse; avoid re-fetching same URL.
 
 ## Prohibited Patterns
 

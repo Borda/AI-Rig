@@ -23,15 +23,15 @@ Problem domain by agent:
 - `foundry:challenger` → plan/architecture challenges: missed assumptions, missing edge cases, unjustified blocker classification, skipped refutation step
 - `foundry:creator` → content quality: narrative arc gaps, audience-profile mismatches, voice inconsistency, missing story beats, out-of-scope format acceptance
 
-All agents support `ceiling` difficulty tier. Ceiling patterns by domain: `foundry:sw-engineer` → adversarial (idiomatic-looking but subtly wrong), concurrency bugs; `foundry:qa-specialist` → incomplete detectability (coverage gaps only visible at runtime); `foundry:perf-optimizer` → deep cross-function control flow; `research:data-steward` → adversarial (split contamination disguised as correct preprocessing); `foundry:solution-architect` → deep dependency tracing. Agents where ceiling infeasible (e.g., `foundry:linting-expert` — violations always statically detectable): generators may substitute hard problem.
+All agents support `ceiling` difficulty tier. Ceiling patterns by domain: `foundry:sw-engineer` → adversarial (idiomatic-looking but subtly wrong), concurrency bugs; `foundry:qa-specialist` → incomplete detectability (coverage gaps visible only at runtime); `foundry:perf-optimizer` → deep cross-function control flow; `research:data-steward` → adversarial (split contamination disguised as correct preprocessing); `foundry:solution-architect` → deep dependency tracing. Agents where ceiling infeasible (e.g., `foundry:linting-expert` — violations always statically detectable): generators may substitute hard problem.
 
 ### Step 2: Spawn agent pipeline subagents
 
 Mark "Calibrate agents" in_progress. **Availability check** (vars set in SKILL.md Step 2): skip `oss:*` agents if `$OSS_AVAILABLE` empty; skip `research:*` agents if `$RESEARCH_AVAILABLE` empty. Log: "<plugin> plugin not installed — skipping <agent> calibration" per excluded agent.
 
-Per agent in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories are in flight — see constants)**: issue up to that many agent pipeline spawns per response, wait for all in batch to return their compact JSON results, then spawn next batch. Agents within a batch run concurrently; batches sequential. Do NOT spawn all agents in a single response — with 14+ agents this spikes context and resource usage.
+Per agent in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many agent pipeline spawns per response, wait for all in batch to return compact JSON results, spawn next batch. Agents within a batch run concurrently; batches sequential. Do NOT spawn all agents in one response — 14+ agents spikes context and resource usage.
 
-Resolve the template dir first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
+Resolve template dir first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -39,7 +39,7 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/calibrate-state-${CSID}/local-mode" 2
 CALIB_TPL=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" calibrate templates $([ "$LOCAL_MODE" = "true" ] && echo --local))  # timeout: 5000
 ```
 
-Each subagent gets pipeline template from `$CALIB_TPL/pipeline-prompt.md` with substitutions:
+Each subagent gets pipeline template from `$CALIB_TPL/pipeline-prompt.md`, substitutions:
 
 - `<TARGET>` = agent name (e.g., `foundry:sw-engineer`)
 - `<DOMAIN>` = domain string from table above

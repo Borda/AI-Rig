@@ -2,13 +2,13 @@
 
 # `codemap-py.integration.v2` — integration protocol contract
 
-Reference contract for the `codemap-py integrate <audit|plan|apply|sync|demo>` engine (`src/codemap_py/integration.py`) and both runtime `integration` skill adapters. This file is the authoritative shipped contract: it fixes the marker format, consumer set, and plan/approval/journal shapes at the level of detail an implementer or parity test needs. The § labels cited below (§8.3 native integration skill, §9.3 consumer-source and native-update ownership, §8.5 symmetric optionality) are design-history section numbers retained as stable anchors for those citations.
+Reference contract for `codemap-py integrate <audit|plan|apply|sync|demo>` engine (`src/codemap_py/integration.py`) and both runtime `integration` skill adapters. This file is authoritative shipped contract: fixes marker format, consumer set, and plan/approval/journal shapes at level of detail an implementer or parity test needs. § labels cited below (§8.3 native integration skill, §9.3 consumer-source and native-update ownership, §8.5 symmetric optionality) are design-history section numbers retained as stable anchors for those citations.
 
 ## Protocol identity
 
 - Capability-protocol name: `codemap-py.integration.v2`.
 - Either host runtime (Claude Code, Codex) can target Claude Code, Codex, or both via `--runtime {claude,codex,both}`; neither runtime's adapter invokes the other host's model.
-- `codemap-py integrate` is the single pinned CLI surface both runtime `integration` skills wrap — the skill layer supplies interactive approval/AskUserQuestion flow, fresh-session instructions, and runtime CLI discovery; it never re-implements plan/approval/journal logic.
+- `codemap-py integrate` is single pinned CLI surface both runtime `integration` skills wrap — skill layer supplies interactive approval/AskUserQuestion flow, fresh-session instructions, and runtime CLI discovery; never re-implements plan/approval/journal logic.
 
 ## Pinned CLI surface (delivery-plan.md, authoritative)
 
@@ -20,7 +20,7 @@ Reference contract for the `codemap-py integrate <audit|plan|apply|sync|demo>` e
 | `sync` | `--source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...]` | local runtime plugin state | 0; 1 partial-fail/journal; 2 bad approve |
 | `demo` | `[--runtime ...]` | disposable evidence only | 0; 1 fail |
 
-`--approve` is valid only with an explicit mutation mode (`apply`/`sync`), a saved plan artifact, and the SHA-256 shown to the user. It never authorizes new targets, remote publish, git/marketplace mutation, instruction-file edits, or deletion (§8.3).
+`--approve` valid only with explicit mutation mode (`apply`/`sync`), saved plan artifact, and SHA-256 shown to user. Never authorizes new targets, remote publish, git/marketplace mutation, instruction-file edits, or deletion (§8.3).
 
 ## Closed consumer set (§8.3 — explicit mapping, not a discovery registry)
 
@@ -29,15 +29,15 @@ Reference contract for the `codemap-py integrate <audit|plan|apply|sync|demo>` e
 | Claude Code | `foundry`, `oss`, `develop`, `research` | `codemap-py` |
 | Codex | `codex-rig` | `codemap-py` |
 
-Target names and source roots are cross-checked against both marketplace manifests and plugin manifests before any mutation. Adding a consumer requires a plan revision to this table, not a runtime-discovered extension.
+Target names and source roots are cross-checked against both marketplace and plugin manifests before any mutation. Adding a consumer requires a plan revision to this table, not a runtime-discovered extension.
 
 ## Active consumer guidance versus integration metadata
 
-The Codex Rig provider target `shared/codemap-py-integration.md` is a metadata-only managed block: identity, protocol, and timestamp fields do not wire a launcher or make query guidance active. The active consumer contract is the `codex-rig` plugin's shipped `shared/codemap-contract.md` (requires the `codex-rig` plugin), whose adapter owns validated `CODEMAP_BIN`/PATH resolution, its probe, and one persisted context artifact reused by specialists. Integration audit checks provider identity and active guidance reachability/content separately; missing, unreachable, or outdated guidance is reported as a bounded source-maintenance finding or an existing approved `plan_sync` action. Managed metadata, matching installed bytes, or a native plugin listing without session provenance cannot prove active current-session wiring, and equal hashes alone cannot prove semantic currency. Provider setup never borrows another plugin's shared script or edits an installed cache.
+Codex Rig provider target `shared/codemap-py-integration.md` is a metadata-only managed block: identity, protocol, and timestamp fields don't wire a launcher or make query guidance active. Active consumer contract is `codex-rig` plugin's shipped `shared/codemap-contract.md` (requires `codex-rig` plugin), whose adapter owns validated `CODEMAP_BIN`/PATH resolution, its probe, and one persisted context artifact reused by specialists. Integration audit checks provider identity and active guidance reachability/content separately; missing, unreachable, or outdated guidance reports as a bounded source-maintenance finding or an existing approved `plan_sync` action. Managed metadata, matching installed bytes, or a native plugin listing without session provenance cannot prove active current-session wiring, and equal hashes alone cannot prove semantic currency. Provider setup never borrows another plugin's shared script or edits an installed cache.
 
 ## Managed-block marker format (source-owned consumer files)
 
-The engine owns only marked blocks and generated adapter files listed in its versioned target map (§9.3) — inside allowlisted, version-controlled consumer source files (e.g. `plugins/cc_foundry/skills/_shared/codemap-context.md`, `plugins/cc_oss/skills/_shared/codemap-gates.md`, a Codex-Rig adapter module). This replaces the removed installed-cache injection model: the marker idiom targets a checked-in source file, never an installed plugin cache path.
+Engine owns only marked blocks and generated adapter files listed in its versioned target map (§9.3) — inside allowlisted, version-controlled consumer source files (e.g. `plugins/cc_foundry/skills/_shared/codemap-context.md`, `plugins/cc_oss/skills/_shared/codemap-gates.md`, a Codex-Rig adapter module). Replaces removed installed-cache injection model: marker idiom targets a checked-in source file, never an installed plugin cache path.
 
 Marker shape (HTML-comment sentinels bound the re-injectable region; content outside the sentinels is consumer-owned and never touched):
 
@@ -48,7 +48,7 @@ Marker shape (HTML-comment sentinels bound the re-injectable region; content out
 ```
 
 - `v1` — block schema version (`BLOCK_SCHEMA_VERSION`), integer, bumped when the managed-block content shape changes (supersedes the retired cache-injection model's `BLOCK_VERSION`).
-- `sha256=<64-hex>` — full SHA-256 of the exact managed body the engine last wrote; `apply` recomputes the on-disk body hash and compares it against this stamp (and its plan before-state hash) to detect drift/foreign edits before touching anything (§9.3 step 1: "validate ... current block version/hash, and clean overlap"). The full digest is self-authenticating — a body edited out of band no longer matches its own stamp.
+- `sha256=<64-hex>` — full SHA-256 of exact managed body engine last wrote; `apply` recomputes on-disk body hash, compares against this stamp (and its plan before-state hash) to detect drift/foreign edits before touching anything (§9.3 step 1: "validate ... current block version/hash, and clean overlap"). Full digest is self-authenticating — a body edited out of band no longer matches its own stamp.
 - A file with sentinels present but a hash that doesn't match any version the engine generated is a **foreign/modified marker** — `apply` refuses it (§8.3: "refuse foreign/modified markers").
 - A file with no sentinels present is a first-time wiring target, handled by `plan`'s ordered-ops list, not by `apply`'s replace-in-place path.
 - One managed block per file per consumer contract; multiple codemap-py capabilities in the same consumer file (if ever needed) would require distinct sentinel names, not nested/overlapping regions — out of scope for `0.25.2`.
@@ -68,48 +68,48 @@ Marker shape (HTML-comment sentinels bound the re-injectable region; content out
 - expected post-state;
 - the plan's own SHA-256 (the value `--approve` binds to).
 
-`plan` never mutates source or runtime state — it only writes this artifact. `--consumers <csv>` narrows the target set to a subset of the closed consumer table above; an unknown consumer name is a `2`-class syntax error, not a silently-ignored no-op.
+`plan` never mutates source or runtime state — only writes this artifact. `--consumers <csv>` narrows target set to a subset of closed consumer table above; an unknown consumer name is a `2`-class syntax error, not a silently-ignored no-op.
 
 ## Approval binding
 
-- Approval binds the plan's SHA-256, not the plan's logical content — any edit to the plan artifact invalidates the SHA-256 the user approved, so `apply`/`sync` must re-verify the artifact's hash against `--approve` before doing anything else.
-- Immediately before **every** individual mutation (not just once at the start), the engine revalidates the target and its before-state; drift since planning invalidates the approval for that target and stops (§8.3).
+- Approval binds plan's SHA-256, not plan's logical content — any edit to plan artifact invalidates SHA-256 user approved, so `apply`/`sync` must re-verify artifact's hash against `--approve` before doing anything else.
+- Immediately before **every** individual mutation (not just once at start), engine revalidates target and its before-state; drift since planning invalidates approval for that target and stops (§8.3).
 
 ## Apply (`apply --plan <artifact> --approve <sha256>`)
 
 - Atomically updates current-version managed blocks in allowlisted consumer source files only.
 - Refuses: foreign/modified markers, path escapes outside the target repo, symlinks, installed- cache roots (never writes into `~/.claude/plugins/cache/...` or equivalent), dirty git overlap on the target file, or an unverified product identity.
 - Source writes retain before-images and use per-file atomic replacement (§9.3).
-- Leaves changes unstaged and uncommitted; reports the exact native reinstall/update commands the user would run next (§9.3) — `apply` never runs those commands itself.
-- Maintainer/source-checkout operation; an end user installing immutable releases normally uses `audit`, `sync`, and `demo` — `sync` never rewrites consumer source (§8.3).
+- Leaves changes unstaged and uncommitted; reports exact native reinstall/update commands the user would run next (§9.3) — `apply` never runs those commands itself.
+- Maintainer/source-checkout operation; an end user installing immutable releases normally uses `audit`, `sync`, `demo` — `sync` never rewrites consumer source (§8.3).
 
 ## Sync (`sync --source {local-candidate,release} --plan <artifact> --approve <sha256> [--runtime ...]`)
 
 - Executes only the approved native plugin-manager argv recorded in the plan; verifies selected package hashes and active roots; journals ordered partial failure; never mutates source or global instructions.
 - Two source modes, no implicit "latest":
-  - `local-candidate` — build a deterministic package + disposable local marketplace from the verified source checkout, bind its hashes in the plan, install only those bytes. Development/CI only; never claims an unpushed Git marketplace contains local changes.
+  - `local-candidate` — build a deterministic package + disposable local marketplace from verified source checkout, bind its hashes in the plan, install only those bytes. Development/CI only; never claims an unpushed Git marketplace contains local changes.
   - `release` — select an immutable Git ref + release-set manifest, verify marketplace and package hashes, install only that published identity.
 - Refuses when: an applied source tree was not built into the selected local candidate; installed bytes don't match the selected candidate/release hash; a mutable/default-branch source is presented as rollback/release evidence.
-- Coordinated `--runtime both` order: refresh/register the Codex marketplace, then `codex plugin add codemap-py@<marketplace>`, then `codex plugin add codex-rig@<marketplace>` — provider-then-consumer order is bound in the approved plan alongside the independently verified previous/absent rollback identity per product. Either standalone install order (provider-only, consumer-only) must still work outside coordinated sync (§8.5 symmetric optionality).
-- Never invokes Codex Rig's global-instructions installer (`install_global_agents.py`) and never writes `${CODEX_HOME}/AGENTS.md` — that managed block stays exclusively owned by Codex Rig's own `sync` (`scripts/sync_codex.py`); a coordinated `codemap-py integrate sync` yields a base `codex-rig` plugin without that block (§8.3).
+- Coordinated `--runtime both` order: refresh/register Codex marketplace, then `codex plugin add codemap-py@<marketplace>`, then `codex plugin add codex-rig@<marketplace>` — provider-then-consumer order bound in approved plan alongside independently verified previous/absent rollback identity per product. Either standalone install order (provider-only, consumer-only) must still work outside coordinated sync (§8.5 symmetric optionality).
+- Never invokes Codex Rig's global-instructions installer (`install_global_agents.py`), never writes `${CODEX_HOME}/AGENTS.md` — that managed block stays exclusively owned by Codex Rig's own `sync` (`scripts/sync_codex.py`); a coordinated `codemap-py integrate sync` yields a base `codex-rig` plugin without that block (§8.3).
 - Never calls `git push`, remote marketplace mutation, release publication, or direct installed- cache edits — "push" in this contract means only (1) update allowlisted source-owned consumer integration, and (2) install/reinstall those built plugin versions via native runtime CLIs (§8.3).
 
 ## Audit (`audit [--runtime {claude,codex,both}] [--json] [--since YYYY-MM-DD]`)
 
-- Zero-write, always. Reads bounded provider, consumer, managed-block, index, runtime-log, and usage evidence; it never runs `plan`, `apply`, `sync`, `index`, query self-heal, plugin-manager mutation, or global-instruction installation.
+- Zero-write, always. Reads bounded provider, consumer, managed-block, index, runtime-log, and usage evidence; never runs `plan`, `apply`, `sync`, `index`, query self-heal, plugin-manager mutation, or global-instruction installation.
 - `--runtime` selects `claude`, `codex`, or `both` (default). `--json` emits one schema-versioned report on stdout; diagnostics remain on stderr. `--since YYYY-MM-DD` bounds telemetry evidence; invalid dates and selectors exit `2`.
-- The top-level report contains `schema_version: 2`, `protocol: codemap-py.integration.v2`, `status` (`pass`, `warn`, or `fail`), `requested_runtime`, a `window`, provider/consumer and `shared_index` evidence, `runtime_logs`, `usage`, stable `findings`, and non-executable `remediation` records.
-- Provider evidence includes bounded `source_content` and `native_content` identities when those bytes are readable. A same-version content mismatch is reported as the high-severity `provider_same_version_content_drift` finding and remediates through `plan_sync`; matching versions alone are not proof of byte identity.
-- Consumer query guidance is checked separately for source and installed reachability/content. Stable findings are `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, and `consumer_query_guidance_drift`; remediation is `source_maintenance` unless the existing approved target map permits `plan_sync`. Static skill references prove reachability only, not semantic loading, self-outdated guidance, or current-session activation.
+- Top-level report contains `schema_version: 2`, `protocol: codemap-py.integration.v2`, `status` (`pass`, `warn`, or `fail`), `requested_runtime`, a `window`, provider/consumer and `shared_index` evidence, `runtime_logs`, `usage`, stable `findings`, and non-executable `remediation` records.
+- Provider evidence includes bounded `source_content` and `native_content` identities when those bytes are readable. A same-version content mismatch reports as high-severity `provider_same_version_content_drift` finding, remediates through `plan_sync`; matching versions alone are not proof of byte identity.
+- Consumer query guidance is checked separately for source and installed reachability/content. Stable findings: `consumer_query_guidance_missing`, `consumer_query_guidance_unreachable`, `consumer_query_guidance_drift`; remediation is `source_maintenance` unless existing approved target map permits `plan_sync`. Static skill references prove reachability only, not semantic loading, self-outdated guidance, or current-session activation.
 - `session_catalog` is explicitly `unobservable` when the native plugin listing has no session catalog provenance. Audit therefore makes no claim about live fresh-session activation or current session tool discovery.
-- Codex runtime evidence includes runtime-scoped CLI and tool shards from its hook configuration, but it has no skill-start hook, so skill telemetry and some cross-layer joins may be unavailable. Missing host layers remain evidence gaps, not healthy zero usage. Usage reports per-runtime summaries and `token_measurement.status: unavailable` because the host hook contract supplies no token usage.
+- Codex runtime evidence includes runtime-scoped CLI and tool shards from its hook configuration, but has no skill-start hook, so skill telemetry and some cross-layer joins may be unavailable. Missing host layers remain evidence gaps, not healthy zero usage. Usage reports per-runtime summaries and `token_measurement.status: unavailable` — host hook contract supplies no token usage.
 - Exit `0` means completed `pass` or `warn`; exit `1` means completed `fail` or a required runtime/filesystem probe failure; exit `2` means invalid syntax, runtime, date, or selection.
 - Stable finding codes include `runtime_log_isolation_bypassed`, `runtime_identity_missing`, `legacy_flat_logs_present`, `runtime_logs_not_observed`, `provider_version_drift`, `provider_same_version_content_drift`, `consumer_version_drift`, `consumer_same_version_content_drift`, `managed_block_invalid`, `split_index_roots`, `skill_telemetry_missing`, `refresh_without_query`, `index_stale_or_unknown`, and `index_degraded`. Findings carry `code`, `severity`, `status`, `evidence`, `affected_runtime`, and `remediation_kind`.
-- A known optional consumer that is absent remains a named successful state. Audit evidence never treats a declared runtime path as observed health, and never infers runtime identity or refresh provenance for legacy records.
+- A known optional consumer that is absent remains a named successful state. Audit evidence never treats a declared runtime path as observed health, never infers runtime identity or refresh provenance for legacy records.
 
 ## Demo (`demo [--runtime ...]`)
 
-- Runs `audit` plus one representative structural smoke query; records the protocol/version/evidence used. Disposable evidence only, unless a separate approval is given for anything durable. It does not claim a plain-vs-structural comparison, token savings, or current-session activation.
+- Runs `audit` plus one representative structural smoke query; records protocol/version/evidence used. Disposable evidence only, unless a separate approval is given for anything durable. Never claims a plain-vs-structural comparison, token savings, or current-session activation.
 
 ## State machine (journaled)
 
@@ -127,11 +127,11 @@ planned → approved → applying:<target> → verified:<target> → complete
 - `rollback-started` / `rollback-succeeded` / `rollback-failed` — entered only when a later target fails after an earlier target already succeeded; rollback actions are exactly and only what the approved plan's rollback-identities section contains — no improvised recovery.
 - `recovery-required` — terminal failure state when rollback itself cannot be verified; the report names exact successful/failed targets plus bounded manual recovery commands. This state is never auto-cleared — a human must resolve it.
 
-First-target success followed by second-target failure stops immediately; the engine does not continue attempting remaining targets (§8.3 step 5). Completion or rollback is claimed only after post-state identity/hash verification — never on the optimistic assumption that a command succeeded because it exited zero (§8.3 step 6).
+First-target success followed by second-target failure stops immediately; engine never continues attempting remaining targets (§8.3 step 5). Completion or rollback is claimed only after post-state identity/hash verification — never on the optimistic assumption that a command succeeded because it exited zero (§8.3 step 6).
 
 ## Journal and evidence
 
-- The journal and before-images live in a task-specific integration report, exclude credentials/tokens, and are never written inside a plugin cache (§8.3).
+- Journal and before-images live in a task-specific integration report, exclude credentials/tokens, never written inside a plugin cache (§8.3).
 - Cross-runtime mutation (`--runtime both`) is never described as atomic — each runtime's steps are individually journaled and individually verified.
 
 ## Symmetric optionality (§8.5 — binding on this contract's own behavior)

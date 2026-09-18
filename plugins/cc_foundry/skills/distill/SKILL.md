@@ -9,7 +9,7 @@ effort: low
 
 <objective>
 
-Analyze how Claude Code is used and surface concrete improvements — new agents/skills to reduce repetition, or consolidate lessons into governance files (rules, agent instructions, skill updates) — without duplicating what exists.
+Analyze how Claude Code is used, surface concrete improvements — new agents/skills to reduce repetition, or consolidate lessons into governance files (rules, agent instructions, skill updates) — without duplicating what exists.
 
 NOT for single-file edits or quality checks — use `/foundry:audit` for config quality checks. NOT for audit-only scan for extraction candidates (use `/foundry:audit --efficiency` instead of `distill executables` for detection-only).
 
@@ -18,13 +18,13 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
 <inputs>
 
 - **$ARGUMENTS**: optional. Modes:
-  - Omitted — analyze existing patterns and agents; generate suggestions proactively.
+  - Omitted: analyze existing patterns and agents; generate suggestions proactively.
   - `prune [--eager]` — evaluate project memory file for stale, redundant, or verbose entries. Default: advisory diff + apply prompt. `--eager`: score every entry (Usage likelihood × Impact → Tier P0/P1/P2), print full scored table with `#` column, let user select by tier or item numbers, delegate edits to `foundry:curator`.
-  - `memory [--eager]` — read `.notes/lessons.md` and memory feedback files, distill recurring patterns into proposed rule files, agent instruction updates, and skill workflow changes. `--eager`: include Pattern count, Strength, and Tier columns in proposal table; let user select clusters to promote by tier or item numbers; delegate writes to `foundry:curator`.
-  - `external <source> [--eager]` — analyse external plugin, skill, or agentic resource and produce structured adoption proposal. `<source>` is URL, file path, or local directory. `--eager`: lower adoption bar — recommend partial adoption even for single useful components.
-  - `executables [--eager] [<run-dir-or-report-path>]` — perform bin/ extraction from `/foundry:audit --efficiency` Check 33 candidates. Auto-detects latest run dir under `.reports/audit/`; pass optional path to target a specific run dir or report file. Runs inline Check 33 scan when no report exists. Default gates on HIGH/MEDIUM verdict. `--eager`: also surface LOW verdict clusters as extraction candidates. Spawns `foundry:sw-engineer` per cluster. Skip to **Mode: Executables Extraction** below.
+  - `memory [--eager]` — read `.notes/lessons.md` and memory feedback files, distill recurring patterns into proposed rule files, agent instruction updates, skill workflow changes. `--eager`: include Pattern count, Strength, Tier columns in proposal table; let user select clusters to promote by tier or item numbers; delegate writes to `foundry:curator`.
+  - `external <source> [--eager]` — analyse external plugin, skill, or agentic resource, produce structured adoption proposal. `<source>` is URL, file path, or local directory. `--eager`: lower adoption bar — recommend partial adoption even for single useful components.
+  - `executables [--eager] [<run-dir-or-report-path>]` — perform bin/ extraction from `/foundry:audit --efficiency` Check 33 candidates. Auto-detects latest run dir under `.reports/audit/`; pass optional path to target specific run dir or report file. Runs inline Check 33 scan when no report exists. Default gates on HIGH/MEDIUM verdict. `--eager`: also surface LOW verdict clusters as extraction candidates. Spawns `foundry:sw-engineer` per cluster. Skip to **Mode: Executables Extraction** below.
   - `[--eager] <recurring task description>` — use description as context when generating suggestions. `--eager`: lower frequency threshold from 3+ to 2+ occurrences; single high-effort occurrence also qualifies.
-  - `--project` — in `prune` and `memory` modes, show an interactive project picker: enumerate all slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens, then let user select which project(s) to operate on. Omit to operate across **all** projects automatically. Has no effect on other modes.
+  - `--project` — in `prune` and `memory` modes, show interactive project picker: enumerate all slugs under `~/.claude/projects/*/memory/` with MEMORY.md size in tokens, let user select which project(s) to operate on. Omit to operate across **all** projects automatically. No effect on other modes.
 
 </inputs>
 
@@ -54,7 +54,7 @@ echo "EAGER=$EAGER"  # shell vars don't persist across Bash calls — read from 
 echo "ARGUMENTS_STRIPPED=$ARGUMENTS"
 ```
 
-> **Note**: `EAGER` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `ARGUMENTS_STRIPPED=...`) and carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER` as a live shell variable in later steps — substitute the literal boolean value read from stdout.
+> **Note**: `EAGER` and stripped `ARGUMENTS` are set by this Bash block, but shell variable state does **not** persist across separate Bash() tool calls. After this block runs, read its stdout (`EAGER=true/false`, `ARGUMENTS_STRIPPED=...`), carry those values as model-context references for all subsequent mode dispatch and threshold decisions. Do not rely on `$EAGER` as a live shell variable in later steps — substitute the literal boolean value read from stdout.
 
 ```bash
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags project "$ARGUMENTS")"  # timeout: 5000
@@ -64,11 +64,11 @@ echo "PROJECT_FLAG=$PROJECT_FLAG"
 echo "ARGUMENTS_FINAL=$ARGUMENTS"
 ```
 
-> **Note**: `PROJECT_FLAG` does not persist across Bash calls. Read its value from the stdout line `PROJECT_FLAG=true/false` and carry as model-context reference. When `true`, the mode must run the interactive picker before operating.
+> **Note**: `PROJECT_FLAG` does not persist across Bash calls. Read its value from stdout line `PROJECT_FLAG=true/false`, carry as model-context reference. When `true`, mode must run interactive picker before operating.
 
 ## Step 1: Inventory existing agents and skills
 
-Use Glob tool to enumerate agents and skills across all sources — project-local AND plugin-namespaced — to avoid false-gap findings when candidate already exists in plugin:
+Use Glob tool to enumerate agents and skills across all sources — project-local AND plugin-namespaced — avoids false-gap findings when candidate already exists in plugin:
 
 - **Project-local**: pattern `agents/*.md`, path `.claude/`; pattern `skills/*/SKILL.md`, path `.claude/`
 - **Plugin source** (workspace): pattern `*/agents/*.md`, path `plugins/`; pattern `*/skills/*/SKILL.md`, path `plugins/`
@@ -78,7 +78,7 @@ For each agent/skill found, extract: name, description, tools, purpose. Tag each
 
 ## Step 2: Analyze work patterns
 
-> **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of the stripped `ARGUMENTS` (after `--eager` removal). Use this single rule consistently; do not rely on exact equality of the full `$ARGUMENTS` string, since trailing flags/spaces from prior parsing may differ.
+> **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of stripped `ARGUMENTS` (after `--eager` removal). Use this single rule consistently; don't rely on exact equality of the full `$ARGUMENTS` string — trailing flags/spaces from prior parsing may differ.
 
 **If first token equals `executables`** (i.e. `executables` alone or `executables <path>`, NOT a path or word that merely starts with the string `executables`): skip Steps 2–5 entirely and go to "Mode: Executables Extraction" below.
 
@@ -88,7 +88,7 @@ For each agent/skill found, extract: name, description, tools, purpose. Tag each
 
 **If first token equals `external`** (i.e. `external <source>`, NOT a word that merely starts with the string `external`): skip Steps 2–5 entirely and go to "Mode: External Distillation" below.
 
-Otherwise, look for signals of repetitive or specialist work. First three git commands are independent — run in parallel:
+Otherwise, look for signals of repetitive or specialist work. First three git commands independent — run in parallel:
 
 ```bash
 # timeout: 3000
@@ -106,15 +106,15 @@ If `$ARGUMENTS` provided, use as additional context for pattern analysis.
 
 ### Frequency Heuristics
 
-- **3+ occurrences** of pattern in recent history → candidate for automation
-- **2+ different projects** using same manual process → cross-project skill
-- **significant manual effort** per occurrence (subjective — use git history context) → high-value automation target
-- **Domain-specific knowledge** required → candidate for specialist agent (not just skill)
+- **3+ occurrences** of pattern in recent history: candidate for automation
+- **2+ different projects** using same manual process: cross-project skill
+- **significant manual effort** per occurrence (subjective — use git history context): high-value automation target
+- **Domain-specific knowledge** required: candidate for specialist agent (not just skill)
 
 With `--eager` (lower thresholds):
 
-- **2+ occurrences** → candidate for automation
-- **1 occurrence** with significant manual effort → qualifies as high-value candidate
+- **2+ occurrences**: candidate for automation
+- **1 occurrence** with significant manual effort: qualifies as high-value candidate
 - Domain-specific threshold unchanged
 
 ```bash
@@ -130,8 +130,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "
 For each identified pattern, check:
 
 1. **Already covered?** — search existing agent/skill descriptions for overlap
-2. **Frequent enough?** — recurring ≥ 3 times or clearly domain-specialized (See Step 2 heuristics — combine ≥3 occurrences with effort/frequency signals from Steps 1–2)
-3. **Would specialist add quality?** — does it require deep domain knowledge?
+2. **Frequent enough?** — recurring ≥3 times or clearly domain-specialized (see Step 2 heuristics — combine ≥3 occurrences with effort/frequency signals from Steps 1–2)
+3. **Would specialist add quality?** — needs deep domain knowledge?
 4. **Too narrow?** — single-use task doesn't warrant persistent agent
 
 Thresholds for recommendation:
@@ -153,9 +153,9 @@ For each candidate agent/skill:
 
 Anti-pattern checklist — reject candidate if any apply:
 
-1. **Role vs task confusion**: agents are roles, not tasks. Do not create agent for every different topic.
-2. **Near-duplicate**: candidate duplicates existing agent with slightly different name. Enhance existing instead.
-3. **Thin wrapper**: candidate skill just calls one agent with fixed args. Not enough value to justify new skill file. Exception: skills that add measure-first/measure-after bookends, multi-mode dispatch across 3+ agents, or safety breaks (retry limits, validation gates) justify wrapper even if only one agent executes for given invocation.
+1. **Role vs task confusion**: agents are roles, not tasks. Don't create agent per different topic.
+2. **Near-duplicate**: candidate duplicates existing agent, slightly different name. Enhance existing instead.
+3. **Thin wrapper**: candidate skill just calls one agent with fixed args. Not enough value for new skill file. Exception: skills adding measure-first/measure-after bookends, multi-mode dispatch across 3+ agents, or safety breaks (retry limits, validation gates) justify wrapper even if only one agent executes for given invocation.
 
 ## Step 5: Report
 
@@ -238,31 +238,31 @@ Execute the mode loaded above.
 
 - Skill is introspective: looks at tooling itself, not just code
 
-- Invoke periodically (e.g., monthly) or after burst of correction/feedback; one-time snapshot, not continuous monitor
+- Invoke periodically (e.g. monthly) or after burst of correction/feedback; one-time snapshot, not continuous monitor
 
 - Suggestions are proposals — review before creating new files
 
 - After creating new agent/skill from suggestion, re-run skill once to confirm gap resolved, then stop
 
-- **`memory` mode is primary consolidation path** — run after any session with significant corrections to prevent lesson drift into MEMORY.md noise
+- **`memory` mode is primary consolidation path** — run after any session with significant corrections, prevents lesson drift into MEMORY.md noise
 
 - **Agent Teams signal tracking**: when reviewing patterns, also look for:
 
-  - Skills using `--team` or team-mode heuristics more/less than expected → flag over/under-use relative to decision matrix in `CLAUDE.md § Agent Teams`
-  - Security findings in reviews for non-auth code → foundry:qa-specialist teammate scope too broad; narrow it
-  - Model tier mismatches (e.g., heavy analysis assigned to `sonnet` teammates) → flag for tier adjustment
+  - Skills using `--team` or team-mode heuristics more/less than expected: flag over/under-use relative to decision matrix in `CLAUDE.md § Agent Teams`
+  - Security findings in reviews for non-auth code: foundry:qa-specialist teammate scope too broad; narrow it
+  - Model tier mismatches (e.g. heavy analysis assigned to `sonnet` teammates): flag for tier adjustment
 
 - **`external` mode calibration**: two concrete GT fixture cases defined in calibrate skills mode file — find via `find "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}" -maxdepth 5 -path "*/calibrate/modes/skills.md" 2>/dev/null | head -1` with fallback to `plugins/cc_foundry/skills/calibrate/modes/skills.md`:
 
-  - **caveman plugin** — narrow, self-contained communication mode, no local structural overlap → GT: install-as-is recommended, Group A empty or thin
-  - **Karpathy autoresearch** — research automation tool, strong overlap with `research:` plugin structure → GT: Group A candidates map to research plugin, digest recommended, install-as-is not triggered
+  - **caveman plugin** — narrow, self-contained communication mode, no local structural overlap: GT install-as-is recommended, Group A empty or thin
+  - **Karpathy autoresearch** — research automation tool, strong overlap with `research:` plugin structure: GT Group A candidates map to research plugin, digest recommended, install-as-is not triggered
   - Ground truth = static snapshot of each tool's agent/skill/rule files (no live fetch needed); score adoption-table lane assignments against GT outcomes
 
 - Follow-up chains:
 
-  - Suggestion accepted for new agent/skill → `/foundry:manage create` to scaffold and register it
-  - Suggestion to enhance existing → edit agent/skill directly, then `/foundry:setup`
-  - `memory` proposals applied → `/foundry:setup` to propagate; `/foundry:audit rules` to verify new rule files structurally sound
-  - `executables` extraction complete → `/foundry:setup` to propagate bin/ scripts; run `/foundry:audit --efficiency` to confirm `clusters == 0`
+  - Suggestion accepted for new agent/skill: `/foundry:manage create` to scaffold and register it
+  - Suggestion to enhance existing: edit agent/skill directly, then `/foundry:setup`
+  - `memory` proposals applied: `/foundry:setup` to propagate; `/foundry:audit rules` to verify new rule files structurally sound
+  - `executables` extraction complete: `/foundry:setup` to propagate bin/ scripts; run `/foundry:audit --efficiency` to confirm `clusters == 0`
 
 </notes>

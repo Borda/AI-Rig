@@ -26,13 +26,13 @@ else
 fi
 ```
 
-**Short-circuit**: After the block runs, scan for `PRUNE_ABORT` (exact-line match). If present, stop prune mode and end with Confidence block. Otherwise, collect all `PRUNE_ENTRY:` lines — each has format `<slug> | <N>k tokens | <path>`.
+**Short-circuit**: after block runs, scan for `PRUNE_ABORT` (exact-line match). If present, stop prune mode, end with Confidence block. Otherwise collect all `PRUNE_ENTRY:` lines — each has format `<slug> | <N>k tokens | <path>`.
 
-**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>k)`, description = `prune this project's memory`. Max 4 options: if more than 4 projects found, take the 4 largest by token count and note in the question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip` and description `exit without changes`. Checked slugs → extract matching `<path>` fields as the working set.
+**If `PROJECT_FLAG == true`** (interactive picker): call `AskUserQuestion` with `multiSelect: true`. Build options from `PRUNE_ENTRY` lines — label = `<slug> (tokens=<N>k)`, description = `prune this project's memory`. Max 4 options: more than 4 projects found, take 4 largest by token count, note in question text that remaining projects were omitted (user can re-run). Always add a final option with label `Skip`, description `exit without changes`. Checked slugs: extract matching `<path>` fields as working set.
 
-**If `PROJECT_FLAG == false`**: use all `<path>` fields from PRUNE_ENTRY lines as the working set.
+**If `PROJECT_FLAG == false`**: use all `<path>` fields from PRUNE_ENTRY lines as working set.
 
-**Parallel analysis across projects** — for working sets with 2+ files, spawn one analysis agent per project simultaneously. For single-file working sets, run P1–P2 inline (no spawn).
+**Parallel analysis across projects** — working sets with 2+ files: spawn one analysis agent per project simultaneously. Single-file working sets: run P1–P2 inline (no spawn).
 
 Spawn one `Agent` per project with `model="sonnet"` (mechanical Drop/Trim/Keep classification — no reasoning tier needed; no schema — returns text analysis):
 
@@ -53,9 +53,9 @@ CONFIDENCE: 0.N
 
 Wait for all agents to complete. Merge into consolidated proposal list keyed by slug, labeling each section with its project slug.
 
-**If `$EAGER == true`** — skip P1–P3 below; execute P-eager steps:
+**If `$EAGER == true`**: skip P1–P3 below, execute P-eager steps:
 
-**P-eager-1**: Spawn one scoring agent per project in parallel with `model="sonnet"` (structured two-dimension scoring — no reasoning tier needed); working sets with 2+ files; inline for single file. Each agent scores every section in its assigned MEMORY.md:
+**P-eager-1**: spawn one scoring agent per project in parallel with `model="sonnet"` (structured two-dimension scoring — no reasoning tier needed); working sets with 2+ files; inline for single file. Each agent scores every section in its assigned MEMORY.md:
 
 ```text
 Read MEMORY.md at <absolute-path>.
@@ -101,7 +101,7 @@ Legend:
 - (c) label: `Specific items` — description: enter item numbers in next message; applies only those
 - (d) label: `Skip` — description: leave MEMORY.md untouched; user edits manually
 
-If user picks (c): print "Enter item numbers (e.g. 2, 4, 7):" and wait for next message; resolve item numbers against # column before proceeding.
+User picks (c): print "Enter item numbers (e.g. 2, 4, 7):", wait for next message; resolve item numbers against # column before proceeding.
 
 **P-eager-3**: Spawn one **foundry:curator** agent per project in parallel. Group selected `#` items by project slug; each agent receives only the items for its project. Substitute absolute memory file path inline before issuing each Agent call:
 
@@ -143,7 +143,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 - **Trim**: sections still accurate but containing implementation history or rationale no longer needed day-to-day — keep operational facts (what/where), drop why-it-was-built backstory
 - **Keep**: rules actively applied every session; project-specific facts absent from CLAUDE.md; anything model needs to act correctly
 
-**Memory-write gate** — project CLAUDE.md `Memory Policy` prohibits auto-writes to MEMORY.md. Prune mode runs read-only by default and produces advisory diff/report rather than applying edits silently:
+**Memory-write gate** — project CLAUDE.md `Memory Policy` prohibits auto-writes to MEMORY.md. Prune mode runs read-only by default, produces advisory diff/report rather than applying edits silently:
 
 **P1**: Read all memory files (parallel for 2+ files). Analyse each for stale, redundant, and verbose entries.
 
@@ -167,7 +167,7 @@ Prune proposals (apply manually unless explicitly approved below):
 - (b) label: `Show diff first` — description: print line-by-line preview before applying any change
 - (c) label: `Skip` — description: leave all MEMORY.md files untouched; user will edit manually
 
-Only after user picks (a) (or (b) followed by approval) may Edit be invoked on memory files. **Never apply prune edits silently.** Apply edits to all projects in parallel using Edit tool (one project per call, concurrent).
+Only after user picks (a) (or (b) followed by approval) may Edit be invoked on memory files. **Never apply prune edits silently.** Apply edits to all projects in parallel with Edit tool (one project per call, concurrent).
 
 Print consolidated summary after applying (or after user declines):
 

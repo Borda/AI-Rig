@@ -2,7 +2,7 @@
 
 ## File scope detection logic
 
-Executed as its own bash block after Step 1's `gh` fetch — fresh shell, so `CHANGED_FILES` is rehydrated from the sentinel that block writes.
+Executed as its own bash block after Step 1's `gh` fetch — fresh shell, so `CHANGED_FILES` rehydrated from sentinel that block writes.
 
 ### Mode flag assignment
 

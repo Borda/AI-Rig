@@ -7,7 +7,7 @@ description: Independently review and fix a scoped diff through bounded converge
 
 # Adversarial Loop
 
-Read and apply `../../shared/adversarial-loop.md` before dispatch or edits. That shared procedure owns the algorithm; this entrypoint owns Codex artifacts and the closing gate. Read `evidence-contract.md` before source capture or reviewer dispatch. Also read `../../shared/native-skill-contract.md` and `../../shared/specialist-orchestration.md` for authority, recurrence, reviewer admission, and evidence limits.
+Read, apply `../../shared/adversarial-loop.md` before dispatch or edits. That shared procedure owns the algorithm; this entrypoint owns Codex artifacts, the closing gate. Read `evidence-contract.md` before source capture or reviewer dispatch. Also read `../../shared/native-skill-contract.md` and `../../shared/specialist-orchestration.md` for authority, recurrence, reviewer admission, evidence limits.
 
 ## Input Schema
 
@@ -32,21 +32,21 @@ Read `../../shared/helper-cli-contract.md`; create a run with `create_run.py --s
 
 ### 02: Run the shared bounded procedure
 
-Follow the shared procedure, retaining `loop-ledger.json`, `round-<index>.diff`, current snapshot `current.diff`, and each independent report in this run. Read `adversarial_loop.py --help` and validate the ledger after each round. Structural finding, repeated signature, plateau, non-converging trend, unavailable independence, stale evidence, or exhausted rounds stops this loop as specified by the shared procedure. A `fixed-pending-verification` finding remains open.
+Follow the shared procedure, retaining `loop-ledger.json`, `round-<index>.diff`, current snapshot `current.diff`, each independent report in this run. Read `adversarial_loop.py --help`, validate the ledger after each round. Structural finding, repeated signature, plateau, non-converging trend, unavailable independence, stale evidence, or exhausted rounds stops this loop as specified by the shared procedure. A `fixed-pending-verification` finding remains open.
 
-Collect scoped source snapshots with the existing `collect_diff.py` snapshot mode and retain `loop-evidence.json` per `evidence-contract.md`. Use existing Code Review routing, frozen contexts, and specialist manifests for reviewer provenance; never manufacture a second runtime evidence format. Every participating reviewer receives the exact snapshot contents, diff, and response contract and returns one structured response containing every finding, with only the route-required provenance header outside it. Preserve original reports and runtime evidence.
+Collect scoped source snapshots with the existing `collect_diff.py` snapshot mode, retain `loop-evidence.json` per `evidence-contract.md`. Use existing Code Review routing, frozen contexts, specialist manifests for reviewer provenance; never manufacture a second runtime evidence format. Every participating reviewer receives the exact snapshot contents, diff, response contract, returns one structured response containing every finding, with only the route-required provenance header outside it. Preserve original reports and runtime evidence.
 
 This explicitly requested loop uses the shared orchestration policy's bounded serial-review exception, not additional parallel waves or write delegation. Re-plan and request a decision only when the next round needs new scope, authority, or a caller-specific approval. There is no fake independence fallback: parent-serial inspection stays labeled non-independent and cannot satisfy this skill's clean outcome.
 
 ### 03: Verify closure and run normal gates
 
-Require independent final current-diff coverage before reporting clean. Run `adversarial_loop.py --ledger <run-directory>/loop-ledger.json` for the computed stop decision, then this skill's `validate_evidence.py` for existing reviewer provenance, returned findings, dispatched source contents, and freshly recaptured current source. Derive the runtime log root and active `CODEX_THREAD_ID` from the observed host configuration, never from review input or the ledger. A declared identity or saved hash alone is insufficient. Never turn rejected evidence into accepted coverage.
+Require independent final current-diff coverage before reporting clean. Run `adversarial_loop.py --ledger <run-directory>/loop-ledger.json` for the computed stop decision, then this skill's `validate_evidence.py` for existing reviewer provenance, returned findings, dispatched source contents, freshly recaptured current source. Derive the runtime log root and active `CODEX_THREAD_ID` from the observed host configuration, never from review input or the ledger. A declared identity or saved hash alone is insufficient. Never turn rejected evidence into accepted coverage.
 
-Use `run_gates.py` for actual project lint, format, types, tests, and review, with explicit reasons for genuinely inapplicable checks. Include `adversarial_loop.py --ledger <run-directory>/loop-ledger.json --require-clean` in the review gate, along with checks of independent coverage, current source, and request conformance. The flag exits nonzero for a valid but non-clean loop, so a stopped ledger cannot masquerade as a passing review gate. Report `status=fail` with the concrete reason when the loop is not clean. For a supplied caller, resume its first unmet checkpoint and complete its ordinary gates and artifact contract too; neither result substitutes for the other.
+Use `run_gates.py` for actual project lint, format, types, tests, review, with explicit reasons for genuinely inapplicable checks. Include `adversarial_loop.py --ledger <run-directory>/loop-ledger.json --require-clean` in the review gate, along with checks of independent coverage, current source, request conformance. The flag exits nonzero for a valid but non-clean loop, so a stopped ledger cannot masquerade as a passing review gate. Report `status=fail` with the concrete reason when the loop is not clean. For a supplied caller, resume its first unmet checkpoint, complete its ordinary gates and artifact contract too; neither result substitutes for the other.
 
 ### 04: Validate and hand off
 
-Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `adversarial-loop`, and promote only validated artifacts. Include confidence evidence, gaps, recovery, and residual limits. Shared validation reruns evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness.
+Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `adversarial-loop`, promote only validated artifacts. Include confidence evidence, gaps, recovery, residual limits. Shared validation reruns evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness.
 
 ## Fail-Fast Rules
 
@@ -57,11 +57,11 @@ Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial
 
 ## Quality Gates
 
-Use `../../shared/quality-gates.md`. Required review evidence includes the validated ledger, original independent reports, current snapshot binding, finding dispositions, and caller completion when applicable. No finding disappears merely because it was not selected or a check became green.
+Use `../../shared/quality-gates.md`. Required review evidence includes the validated ledger, original independent reports, current snapshot binding, finding dispositions, caller completion when applicable. No finding disappears merely because it was not selected or a check became green.
 
 ## Calibration Hooks
 
-Cover clean review, pending fixes, unchanged signatures, structural stops, score boundaries, round cap, source changes after review, unavailable independent coverage, and self-contained reply topic. Exercise both recovery and truthful failed handoffs; never weaken independent coverage to pass calibration.
+Cover clean review, pending fixes, unchanged signatures, structural stops, score boundaries, round cap, source changes after review, unavailable independent coverage, self-contained reply topic. Exercise both recovery and truthful failed handoffs; never weaken independent coverage to pass calibration.
 
 ## Output Contract
 

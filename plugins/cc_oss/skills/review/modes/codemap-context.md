@@ -15,7 +15,7 @@
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 codemap_available=false
-# index dir anchors at git root, not cwd — subdir invocation otherwise reports no_index while index exists. PROJ = raw basename; scanner writes it unsanitized (space/+/non-ASCII survive). `[ -n ]` test, not `||`: `basename ""` exits 0, so the old fallback was dead and a non-git project got PROJ="".
+# index dir anchors at git root, not cwd — subdir invocation otherwise reports no_index. PROJ = raw basename, unsanitized (space/+/non-ASCII survive). `[ -n ]` not `||`: `basename ""` exits 0 — old fallback was dead, non-git project got PROJ="".
 _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
 PROJ=$(basename "$_ROOT")
 _IDX="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}"
@@ -26,7 +26,7 @@ CODEMAP_CONTEXT_STAGE="${TMPDIR:-/tmp}/oss-review-codemap-context-${CLEAN_ARGS}-
 CICD_ONLY_MODE="${CICD_ONLY_MODE:-false}"; DOCS_ONLY_MODE="${DOCS_ONLY_MODE:-false}"; DOCS_CICD_MODE="${DOCS_CICD_MODE:-false}"
 if [ "$CODEMAP_ENABLED" = "true" ] && command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
     codemap_available=true
-    # module names come from the index's own `name` field, never a sed transform: `pkg/__init__.py` is `pkg`, not `pkg.__init__`, and the old `grep -v '__init__$'` then dropped it entirely — an __init__-only PR got zero structural context. Files the index doesn't know resolve to nothing rather than a guessed name.
+    # module names from index's own `name` field, never sed transform: `pkg/__init__.py` is `pkg`, not `pkg.__init__` — old `grep -v '__init__$'` dropped it entirely, an __init__-only PR got zero structural context. Files index doesn't know resolve to nothing, not a guessed name.
     _CHANGED_PY=$(printf '%s\n' "$CHANGED_FILES" | grep '\.py$' | paste -sd, -)
     CHANGED_MODS=$(codemap-py query --timeout 10 central --top 100000 2>/dev/null | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_CHANGED_PY" --modules-only 2>/dev/null)
     {
@@ -73,7 +73,7 @@ echo "$CODEMAP_CONTEXT_STAGE"  > "${TMPDIR:-/tmp}/oss-review-codemap-context-sta
 
 ## Dimension-gated supplement — Step 2, AFTER lineup ranking, BEFORE the `$RUN_DIR` copy
 
-These query families feed exactly one dimension each; under the default `FANOUT_MAX` cap that dimension is often not spawned — running them for every PR was 57% of query volume with no benchmarked win. Gate on the **final ranked lineup**, not on PR mode flags:
+These query families feed exactly one dimension each; under default `FANOUT_MAX` cap that dimension is often not spawned — running them for every PR was 57% of query volume with no benchmarked win. Gate on **final ranked lineup**, not PR mode flags:
 
 - `foundry:qa-specialist` in the final lineup → run the qa block
 - `foundry:doc-scribe` in the final lineup → run the docs block
@@ -109,18 +109,18 @@ IFS= read -r CODEMAP_CONTEXT_STAGE < "${TMPDIR:-/tmp}/oss-review-codemap-context
 done < "${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}" >> "$CODEMAP_CONTEXT_STAGE"
 ```
 
-`codemap_available=true`: Step 2 copies `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` after `$RUN_DIR` is created. Every dimension-agent spawn prompt in Step 2 must then include a literal block (substituted from `$RUN_DIR/codemap-context.md`):
+`codemap_available=true`: Step 2 copies `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` after `$RUN_DIR` created. Every dimension-agent spawn prompt in Step 2 must then include a literal block (substituted from `$RUN_DIR/codemap-context.md`):
 
 ```text
 ## Structural Context (codemap-py, codemap_available=true)
 <content of $RUN_DIR/codemap-context.md>
 
-**Codemap-first protocol** (2026-08 audit, `codemap_substitution_contract` — availability without enforcement measured a 13.4:1 logged-reads-to-queries ratio; this is the fix, verbatim from codemap-py README's three-part contract):
-1. **Skill-first**: consult the structural context above BEFORE any Grep/Glob/Read aimed at imports, callers, test coverage, or doc coverage for a symbol already listed there — never re-derive what's already answered.
-2. **Bounded call budget**: context above insufficient for a symbol not listed → you may run codemap-py queries directly, max 3 additional queries this task.
+**Codemap-first protocol** (`codemap_substitution_contract` — availability without enforcement measured a 13.4:1 logged-reads-to-queries ratio; this is the fix, verbatim from codemap-py README's three-part contract):
+1. **Skill-first**: consult structural context above BEFORE any Grep/Glob/Read aimed at imports, callers, test coverage, or doc coverage for a symbol already listed there — never re-derive what's already answered.
+2. **Bounded call budget**: context above insufficient for a symbol not listed → may run codemap-py queries directly, max 3 additional queries this task.
 3. **Hard stop on `query_complete: true`**: any codemap-py result carrying `query_complete: true` (or legacy `exhaustive: true`) is final for that query direction — write the answer immediately, no follow-up Grep/Read/query to re-confirm it.
 
-For symbols listed in `uncovered`/`mock-rdeps`/`undocumented`/`xrefs --broken`/`fn-rdeps`/`fn-blast` above: trust codemap-py output as-is. Fall back to file reads only when codemap-py output is empty for a symbol you need, or a result shows `query_complete: false`/`degraded` and you must confirm by hand.
+For symbols listed in `uncovered`/`mock-rdeps`/`undocumented`/`xrefs --broken`/`fn-rdeps`/`fn-blast` above: trust codemap-py output as-is. Fall back to file reads only when codemap-py output empty for a symbol needed, or a result shows `query_complete: false`/`degraded` and you must confirm by hand.
 ```
 
 `codemap_available=false`: omit the block; agents proceed with current file-read behaviour.

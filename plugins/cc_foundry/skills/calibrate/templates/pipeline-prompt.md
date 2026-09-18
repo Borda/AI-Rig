@@ -4,7 +4,7 @@ AB mode: `<AB_MODE>` — when `true`, also run `general-purpose` baseline on eve
 
 Run dir: `.reports/calibrate/<TIMESTAMP>/<TARGET>/`
 
-**Scratchpad discipline**: the session scratchpad is shared across every concurrent calibration pipeline, not per-target. Write every bridge task file and any other intermediate you create inside your own run dir above — never a bare filename in the shared scratchpad. A generic name there (`codex-gen-task.txt`, etc.) gets silently overwritten by a sibling pipeline within seconds, and the caller then scores against the wrong domain's problems with no error surfaced.
+**Scratchpad discipline**: session scratchpad is shared across every concurrent calibration pipeline, not per-target. Write every bridge task file and any other intermediate you create inside your own run dir above — never a bare filename in the shared scratchpad. A generic name there (`codex-gen-task.txt`, etc.) gets silently overwritten by a sibling pipeline within seconds, caller then scores against wrong domain's problems with no error surfaced.
 
 ### Graceful-exit protocol
 
@@ -18,7 +18,7 @@ Safety net — Phase 4 always overwrites this with full results when it runs suc
 
 ### Pre-flight — Codex availability
 
-Check Codex availability once at pipeline start; set `CODEX_AVAILABLE` for all phases:
+Check Codex availability once at pipeline start, set `CODEX_AVAILABLE` for all phases:
 
 ```bash
 CODEX_STATUS=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_bridge.py" --status 2>/dev/null || echo "absent")
@@ -26,9 +26,9 @@ if [ "$CODEX_STATUS" = "available" ]; then CODEX_AVAILABLE=true; else CODEX_AVAI
 echo "bridge@borda-ai-rig: $CODEX_STATUS"
 ```
 
-The helper reads Claude's installed-plugin registry, marketplace cache, and enabled-plugin settings directly; it does not require a nested `claude plugin list` call from a background agent.
+The helper reads Claude's installed-plugin registry, marketplace cache, and enabled-plugin settings directly; doesn't require a nested `claude plugin list` call from a background agent.
 
-Codex integration active only for `agents` and `skills` modes. If pipeline spawned for `routing`, `communication`, or `rules`, treat `CODEX_AVAILABLE=false` — those modes test Claude-specific internals Codex lacks context for.
+Codex integration active only for `agents` and `skills` modes. Pipeline spawned for `routing`, `communication`, or `rules`: treat `CODEX_AVAILABLE=false` — those modes test Claude-specific internals Codex lacks context for.
 
 ### Pre-flight — local file resolution
 
@@ -68,7 +68,7 @@ if [ "$LOCAL_MODE" = "true" ]; then
 fi
 ```
 
-If local-mode resolution failed (`$TARGET_FILE` still empty above): write the graceful-exit `result.jsonl` line (see Graceful-exit protocol above) with `gaps` including `"local mode: no source file resolved for <TARGET>"`, then skip all remaining phases and return the compact JSON immediately (see Return value section) with `verdict:"incomplete"` — never a silent `exit 1`, never fall back to the installed cache.
+Local-mode resolution failed (`$TARGET_FILE` still empty above): write graceful-exit `result.jsonl` line (see Graceful-exit protocol above) with `gaps` including `"local mode: no source file resolved for <TARGET>"`, skip all remaining phases, return compact JSON immediately (see Return value section) with `verdict:"incomplete"` — never a silent `exit 1`, never fall back to installed cache.
 
 When `LOCAL_MODE=false` or source file not found: Phase 2 dispatches normally (agent by subagent_type, skill by cache/installed SKILL.md).
 
@@ -154,7 +154,7 @@ Claude generates all `<N>` in-scope problems + 1 out-of-scope using rules above.
 
 **Validate problems-codex.json** (skip if CODEX_AVAILABLE=false):
 
-Read file. Strip any markdown code fences or prose prefix/suffix — find first `[` and match to closing `]`. Parse and validate each entry:
+Read file. Strip any markdown code fences or prose prefix/suffix — find first `[`, match to closing `]`. Parse, validate each entry:
 
 Required fields: `problem_id` (string starting with `cx-`), `difficulty` (one of: `trivial`/`low`/`medium`/`high`/`extreme` — NOT `scope`), `task_prompt` (non-empty string), `input` (non-empty string), `ground_truth` (non-empty array; each item has `issue`, `location`, `severity`; `severity` must be one of: `critical`/`high`/`medium`/`low`).
 
@@ -189,7 +189,7 @@ Prompt for each subagent:
 
 **Context discipline**: subagents write to disk, return single-line acknowledgment. Pipeline agent must NOT accumulate their full analyses in context — scorers read from disk in Phase 3. `Wrote: <problem_id>` per agent = correct.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). When each subagent returns, check for `response-<problem_id>.md`; empty or missing → mark that problem `{"timed_out": true}` in scores.json and proceed. Never block indefinitely on single response.
+**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `response-<problem_id>.md`; empty or missing: mark that problem `{"timed_out": true}` in scores.json, proceed. Never block indefinitely on single response.
 
 For **agent targets** when `LOCAL_MODE=true` and `TARGET_FILE` set: spawn `general-purpose` subagent with TARGET_FILE content prepended ("You are an agent described by the following instructions: <content of TARGET_FILE>") — tests source tree definition rather than installed plugin. When LOCAL_MODE=false or TARGET_FILE empty: spawn `Agent(subagent_type="<TARGET>")` normally.
 
@@ -199,7 +199,7 @@ For **skill targets** (target starts with `/`): spawn `general-purpose` subagent
 
 Spawn one `general-purpose` subagent per problem using **identical prompt** as Phase 2 (same task_prompt + input + Confidence instruction), plus same write-and-acknowledge suffix pointing to `response-<problem_id>-general.md`. Issue ALL spawns in **single response** — no waiting between spawns.
 
-**Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns): when each subagent returns, check for `response-<problem_id>-general.md`; missing → proceed with partial baseline data.
+**Completion handling** — same as Phase 2 (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns): each subagent returns, check for `response-<problem_id>-general.md`; missing: proceed with partial baseline data.
 
 ### Phase 3a — Score responses via Claude scorers (parallel)
 
@@ -237,7 +237,7 @@ Each scorer receives this prompt (substitute `<PROBLEM_ID>`, `<GROUND_TRUTH_JSON
 >
 > Then return ONLY one line: `Scored: <PROBLEM_ID>`
 
-**Context discipline**: scorers write results to `score-<PROBLEM_ID>-claude.json` and return single-line acknowledgment (`Scored: <PROBLEM_ID>`). Do NOT accumulate inline JSON in pipeline context — Phase 3c reads from disk.
+**Context discipline**: scorers write results to `score-<PROBLEM_ID>-claude.json`, return single-line acknowledgment (`Scored: <PROBLEM_ID>`). Do NOT accumulate inline JSON in pipeline context — Phase 3c reads from disk.
 
 ### Phase 3b — Score responses via Codex (skip when CODEX_AVAILABLE=false — requires `bridge@borda-ai-rig`)
 
@@ -269,7 +269,7 @@ Write ONLY this JSON (no prose, no markdown fences, no trailing commas) to file 
 
 Return the JSON object in your response — do not attempt to write it to a file yourself.")
 
-Substitute `<PROBLEM_ID>` and `<GROUND_TRUTH_JSON>` per problem. Capture the JSON from the call's return value and write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/score-<PROBLEM_ID>-codex.json` yourself. If the returned payload is missing or unparsable after one retry, set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
+Substitute `<PROBLEM_ID>` and `<GROUND_TRUTH_JSON>` per problem. Capture JSON from call's return value, write it to `.reports/calibrate/<TIMESTAMP>/<TARGET>/score-<PROBLEM_ID>-codex.json` yourself. Returned payload missing or unparsable after one retry: set `scorer_mode: "single"` for that problem — Phase 3c uses Claude's score only.
 
 ### Phase 3c — Consensus merge
 
@@ -331,7 +331,7 @@ Verdict:
 - `bias > 0.15` → `overconfident`
 - `bias < −0.15` → `underconfident`
 
-The Write tool refuses any file whose exact basename is `report.md` from a subagent context ("Subagents should return findings as text, not write report files") — use `benchmark-report.md` instead. Write full report to `.reports/calibrate/<TIMESTAMP>/<TARGET>/benchmark-report.md` using this structure:
+Write tool refuses any file whose exact basename is `report.md` from a subagent context ("Subagents should return findings as text, not write report files") — use `benchmark-report.md` instead. Write full report to `.reports/calibrate/<TIMESTAMP>/<TARGET>/benchmark-report.md` using this structure:
 
 ```markdown
 ## Benchmark Report — <TARGET> — <date>
@@ -434,7 +434,7 @@ Write foundry:curator response verbatim to `.reports/calibrate/<TIMESTAMP>/<TARG
 
 ### Return value
 
-**CRITICAL — context discipline**: return ONLY compact JSON line below. No prose, no report summary, no table, no Confidence block, no additional output. Every extra byte accumulates in orchestrator context and can cause synthesis hang. All report content already on disk from Phase 4.
+**CRITICAL — context discipline**: return ONLY compact JSON line below. No prose, no report summary, no table, no Confidence block, no additional output. Every extra byte accumulates in orchestrator context, can cause synthesis hang. All report content already on disk from Phase 4.
 
 Return **only** this compact JSON (no prose before or after):
 

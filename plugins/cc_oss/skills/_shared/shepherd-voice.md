@@ -8,19 +8,19 @@ Scope: GitHub issue/PR comments, release notes, CHANGELOG entries, contributor-f
 
 `#N` in this draft = **only** a real GitHub issue/PR/discussion number already confirmed in context (e.g. the PR under review, an issue actually linked from the thread). `@name` = **only** a real GitHub username actually party to this thread (author, reviewer, mentioned contributor).
 
-Before finalizing any draft under this file's scope: scan for bare `#N` / `@name` and fix each:
+Before finalizing any draft under this file's scope: scan for bare `#N` / `@name`, fix each.
 
-- `#N` referring to a local ordinal (comment index, item number, list position, rank) and not a real GH issue/PR → drop the `#`, or use `No.N` / an ordinal word (`1st`, `item 3`)
+- `#N` referring to a local ordinal (comment index, item number, list position, rank), not a real GH issue/PR → drop the `#`, or use `No.N` / an ordinal word (`1st`, `item 3`)
 - `#N` referring to an issue/PR/discussion in a **different repo** than the one this draft posts to → bare `#N` resolves against the target repo only; use the full URL (`https://github.com/<owner>/<repo>/issues/N`) instead, never `#N` or `owner/repo#N`
 - `@name` that is not a real GitHub handle in this thread (a role label, a tool/package name, a decorator-like token) → drop the `@`
 - `@handle` that IS a real GitHub user but intent is genuinely uncertain (naming them in passing inside an internal note not addressed to them, e.g. "as suggested by X" in an analysis report) → drop the `@`, write the handle bare — never backtick-wrap it, backticks are for code-shaped tokens only, not for disguising a person's handle
-- Genuine same-repo GH issue/PR refs, and genuine contributor `@handle` mentions where a live ping is actually intended, stay as-is — that's the correct, intended use. Release-note and CHANGELOG contributor credit is standard, *deliberate* ping-intent (crediting them is the point) — leave it live, do not neutralize it
+- Genuine same-repo GH issue/PR refs, and genuine contributor `@handle` mentions where a live ping is actually intended, stay as-is — correct, intended use. Release-note and CHANGELOG contributor credit is standard, *deliberate* ping-intent (crediting them is the point) — leave it live, don't neutralize it
 
 Reason: this draft is markdown headed straight for a live GitHub comment/issue/PR/release — `#N` and `@name` render as clickable links/notifications there. A false one cross-links the wrong issue (or the wrong repo), or pings someone who wasn't meant to be notified.
 
 ### Humanizer Pass — companion, not a substitute
 
-Before any draft under this file's scope is shown as ready-to-post: run a `foundry:humanizer` pass (requires `foundry` plugin) after applying Shared Voice below, not instead of it. Shepherd Voice sets tone and structure; humanizer strips statistical AI-writing tells (banned vocabulary, formatting tics) that voice rules alone don't catch. If `foundry` plugin is absent, skip the pass and post with Shared Voice alone — do not attempt to reconstruct the checklist from memory; an unverified imitation is exactly the training-knowledge-as-evidence substitution `quality-gates.md` §Evidence Grounding forbids.
+Before any draft under this file's scope is shown as ready-to-post: run a `foundry:humanizer` pass (requires `foundry` plugin) after applying Shared Voice below, not instead of it. Shepherd Voice sets tone and structure; humanizer strips statistical AI-writing tells (banned vocabulary, formatting tics) voice rules alone don't catch. `foundry` plugin absent → skip the pass, post with Shared Voice alone — don't reconstruct the checklist from memory; an unverified imitation is exactly the training-knowledge-as-evidence substitution `quality-gates.md` §Evidence Grounding forbids.
 
 ### Shared Voice
 
@@ -28,11 +28,11 @@ Tone: dev talking to dev — peer-to-peer, polite, warm, constructive. Not gatek
 
 - **Acknowledge before critiquing**: open with genuine specific observation — `nice approach here` / `solid fix` — not performative (`thanks for your contribution!`); then move to feedback
 - **"I" not "you"**: `I find this hard to follow` not `you wrote confusing code` — feedback on code, not person
-- **Terse**: short phrases, no preamble — jump straight to point
+- **Terse**: short phrases, no preamble, jump straight to point
 - **Suggest, don't command**: frame alternatives as options anchored to known-good pattern — `see sklearn`, `similar to X above` — not directives
 - **Questions for intent**: `is line break really needed?` / `thoughts?` — interrogative when uncertain, imperative for obvious fixes (`put it on a new line`)
 - **Why in one sentence**: `introducing one more for loop instead of triple commands would make this much more readable`
-- **PR as mentoring**: beyond immediate fix, briefly name broader principle or pattern — `we generally avoid this because...` / `the convention here is X — helps with Y`. Light overlap into adjacent code fine when same pattern recurs nearby; stop there — don't expand into separate review
+- **PR as mentoring**: beyond immediate fix, briefly name broader principle or pattern — `we generally avoid this because...` / `the convention here is X — helps with Y`. Light overlap into adjacent code fine when same pattern recurs nearby; stop there, don't expand into separate review
 - **Declining — four steps**: (1) acknowledge effort genuinely, (2) explain why, (3) point to alternatives if any, (4) close decisively — `thanks for this; it adds complexity outside our core scope, so I'm closing — could work well as a standalone plugin though`
 - **Length**: inline comment = 1-2 sentences; issue reply = 2-4 sentences; release note item = 1 line
 - **Emoji sparingly**: 😺 🐰 🚩 — occasional, never performative
@@ -56,7 +56,7 @@ When included, vary phrasing: "apologies for not getting back sooner" / "apologi
 
 **`[blocking]`/`[suggestion]`/`[nit]` annotation prefixes for internal review reports only** — never in contributor-facing output. Severity communicated through structure (ordering, scope line count), not labels.
 
-> Scope: these annotation prefixes apply to PR review checklists and internal analysis only. See `<antipatterns-to-flag>` for enforcement.
+> Scope: annotation prefixes apply to PR review checklists and internal analysis only. See `<antipatterns-to-flag>` for enforcement.
 
 ### PR Replies — structural divergences
 
@@ -64,7 +64,7 @@ When included, vary phrasing: "apologies for not getting back sooner" / "apologi
 
 Two parts. Part 1 = Reply summary — always present, always information-complete on its own. Part 2 = Inline suggestions — optional, adds location-specific detail.
 
-**PART 1 — Reply summary** (always present; always complete, honest on its own):
+**PART 1 — Reply summary** (always present, always complete, honest on its own):
 
 1. **Acknowledgement + Praise** — `@handle` + warm specific opening; name what's genuinely good: technique, structural decision, test strategy, API choice — concrete, not generic ("great PR!"). 1–3 observations.
 2. **Areas needing improvement** — thematic, no counts, no itemisation, no "see below". Name concern areas concretely enough contributor knows what to look at without needing Part 2 (e.g. "error handling in `_run_tracker_on_detections` needs guard against empty detection files, and direct unit tests for that function are missing"). Omit entirely only when verdict is true LGTM.
@@ -84,12 +84,12 @@ One unified table — all findings in single place, no separate prose:
 
 - **Importance** values: `high`, `medium`, `low`
 - **Confidence** (0.0–1.0): certainty of finding based on evidence in diff
-- **Column order**: Importance and Confidence are two leftmost columns — most decision-relevant
+- **Column order**: Importance and Confidence are two leftmost columns, most decision-relevant
 - **Row ordering**: high → medium → low importance; within same tier, sort by Confidence descending
 - **Comment length**: 1-2 sentences per row; high-importance rows may use 2 sentences since no separate prose paragraph
 - **Use full GitHub Markdown** throughout: code spans, fenced blocks, `> blockquotes` for cited excerpts, inline links where helpful
 
-**When to produce both parts**: any request to write contributor reply, review summary for contributor, or `--reply` output from `/oss:review`. Produce Reply summary (Part 1) alone ONLY when no specific line-level issues (e.g., simple "LGTM"). Otherwise Part 2 table mandatory: any finding naming file:line MUST be table row — never embed file:line findings in Part 1 prose (Part 1 stays thematic per line 50).
+**When to produce both parts**: any request to write contributor reply, review summary for contributor, or `--reply` output from `/oss:review`. Produce Reply summary (Part 1) alone ONLY when no specific line-level issues (e.g., simple "LGTM"). Otherwise Part 2 table mandatory: any finding naming file:line MUST be table row, never embedded in Part 1 prose (Part 1 stays thematic per line 50).
 
 ### Issue Replies — structural divergences
 
@@ -142,16 +142,16 @@ Optional inserts between 4 and 5: tag bystanders (@mention others who reported s
 - **Confirmed / triaged**: state diagnosis in one sentence → set expectation (label, milestone, or "fixing in X") → close with next action.
 - **Answering a question**: direct answer first, context second, 2–4 sentences max.
 
-Use code spans/blocks for tracebacks, commands, config snippets. Avoid headers in short replies — prose reads faster than structured sections.
+Use code spans/blocks for tracebacks, commands, config snippets. Avoid headers in short replies, prose reads faster than structured sections.
 
 ### Discussion Replies — structural divergences
 
 *Shared voice applies. Format and mandatory elements only.*
 
-One comment, conversational tone, no inline table. Discussions = design-space conversations — reply is position, not verdict.
+One comment, conversational tone, no inline table. Discussions = design-space conversations, reply is position, not verdict.
 
 1. Engage with specific point raised (quote sparingly with `>` if thread is long)
-2. State position or answer directly — don't hedge before giving it
+2. State position or answer directly, don't hedge before giving it
 3. Add context, caveats, or trade-offs only if they change picture
 4. Close with invitation for follow-up if genuinely open (`thoughts?` / `does that address your concern?`) — omit if answer is clear-cut
 

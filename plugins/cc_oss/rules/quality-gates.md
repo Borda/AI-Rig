@@ -12,7 +12,7 @@ Governs `/oss:review` → `/oss:resolve`, pre-commit review, and contributor-PR 
 
 Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and recovery rules are mandatory.
 
-Never close a local fix before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or a stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still requires the owning workflow’s remaining gates.
+Never close a local fix before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or a stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (e.g. `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still requires the owning workflow's remaining gates.
 
 ## Confidence Block (required on all analysis tasks)
 
@@ -48,7 +48,7 @@ Every analysis agent **must** end with:
 
 ## Pre-Handover Check
 
-Trigger is a **specific unproven claim**, not a score crossing a line: premise no source read for, conclusion resting on one ambiguous signal, alternative never examined. Low score with every gap already documented → no dispatch; say so and hand over. When triggered and `bridge@borda-ai-rig` available → render and call `Skill(skill="bridge:review", args="Read-only adversarial review of <exact area and target paths>. Uncertain claims: <complete claim list>. Current evidence: <source paths or observations>. Challenge each claim, identify missing evidence and alternatives, and return actionable findings with locations; do not apply fixes.")`; never pass the placeholders or a workflow step label. Incorporate findings before handover. If the bridge is absent or disabled → state the gap and score explicitly so the user can decide to re-run.
+Trigger is a **specific unproven claim**, not a score crossing a line: premise no source read for, conclusion resting on one ambiguous signal, alternative never examined. Low score with every gap already documented → no dispatch; say so, hand over. When triggered and `bridge@borda-ai-rig` available → render and call `Skill(skill="bridge:review", args="Read-only adversarial review of <exact area and target paths>. Uncertain claims: <complete claim list>. Current evidence: <source paths or observations>. Challenge each claim, identify missing evidence and alternatives, and return actionable findings with locations; do not apply fixes.")`; never pass the placeholders or a workflow step label. Incorporate findings before handover. Bridge absent or disabled → state the gap and score explicitly, let the user decide to re-run.
 
 ## Link Verification
 
@@ -109,7 +109,7 @@ After required fields, add **skill-specific fields** for report type (e.g. PR, P
 
 ## Reporting Findings
 
-- **Coverage at the finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity; attach confidence + severity so later stage ranks. Severity words in output-routing ("omit medium/low detail") govern **printed summary** only — never what gets investigated or recorded; finding dropped at discovery not recoverable by filter. Never instruct agent to "only report high-severity issues" or "be conservative" — current models follow literally, investigate just as deep, report less
+- **Coverage at the finding stage, filtering downstream**: report every issue found, including low-confidence and low-severity; attach confidence + severity so later stage ranks. Severity words in output-routing ("omit medium/low detail") govern **printed summary** only, never what gets investigated or recorded; finding dropped at discovery not recoverable by filter. Never instruct agent to "only report high-severity issues" or "be conservative" — current models follow literally, investigate just as deep, report less
 - **Report before fixing**: state every finding before any fix — never silently mutate
 - **Per-fix narration**: before each file edit or tool call, state what changes and why
 - **! BREAKING format**: breaking findings = standalone block — never inline or buried in table row:

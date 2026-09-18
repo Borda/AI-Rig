@@ -14,8 +14,8 @@ git diff HEAD --stat
 
 **Skip** if:
 
-- `bridge@borda-ai-rig` is absent or disabled (i.e. `CODEX_AVAILABLE` resolved to `false` above)
-- `git diff HEAD --stat` shows only 1–3 lines changed, or changes are formatting, comments, whitespace, or variable renames only
+- `bridge@borda-ai-rig` absent or disabled (`CODEX_AVAILABLE` resolved `false` above)
+- `git diff HEAD --stat` shows only 1–3 lines changed, or changes are formatting/comments/whitespace/variable-rename only
 
 **Run** when changes include new logic, functions, conditionals, error paths, or restructured code (requires `bridge@borda-ai-rig`):
 
@@ -23,6 +23,6 @@ git diff HEAD --stat
 Skill(skill="bridge:review", args="Read-only adversarial review of the current working-tree changes. Identify bugs, missed edge cases, and inconsistencies; do not apply fixes.")
 ```
 
-**Inline fallback**: status is `absent` or `disabled` → skip bridge dispatch entirely. Go to cycle 1 from scratch.
+**Inline fallback**: status `absent` or `disabled` → skip bridge dispatch entirely. Go to cycle 1 from scratch.
 
-Codex findings = pre-flagged issues entering cycle 1. Codex found nothing or skipped → start cycle 1 from scratch.
+Codex findings = pre-flagged issues entering cycle 1. Nothing found or skipped → start cycle 1 from scratch.

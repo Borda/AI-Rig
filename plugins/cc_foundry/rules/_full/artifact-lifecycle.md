@@ -6,7 +6,7 @@ paths:
 
 ## Canonical artifact layout
 
-Runtime artifacts at **project root**, not inside `.claude/`. Skill output dirs use dot-prefix (`.reports/`, `.temp/`, `.plans/`, etc.) — signals ephemeral.
+Runtime artifacts at **project root**, not inside `.claude/`. Output dirs dot-prefixed (`.reports/`, `.temp/`, `.plans/`, etc.) — signals ephemeral.
 
 ```text
 .plans/
@@ -53,7 +53,7 @@ mkdir -p "$REPORT_DIR"
 
 Format: `YYYY-MM-DDTHH-MM-SSZ` (UTC, dashes throughout, filesystem-safe). Example: `.reports/calibrate/2026-03-27T20-06-22Z/`.
 
-Completed run always has `result.jsonl`. Incomplete runs (crashed, timed out) lack it — TTL hook skips them (kept for debugging).
+Completed run always has `result.jsonl`. Incomplete runs (crashed, timed out) lack it — TTL hook skips them, kept for debugging.
 
 ## TTL policy
 

@@ -2,7 +2,7 @@
 
 # Mode composition contract
 
-Select exactly one row. Read each named contract once from left to right and generate no unlisted section.
+Select exactly one row. Read each named contract once, left to right; generate no unlisted section.
 
 | Mode | Ordered contracts |
 | -- | -- |

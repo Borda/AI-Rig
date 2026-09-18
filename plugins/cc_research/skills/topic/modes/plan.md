@@ -13,7 +13,7 @@ Produce sequenced, dependency-ordered implementation plan from SOTA research fin
 
 ### Step P1: Gather research findings
 
-**P1-A — Auto-detected report**: when the no-argument auto-detect above found a recent `.reports/research/topic-*.md`, read that file. (Plan mode dispatches BEFORE Steps 2–3 and skips them — a "fresh" report never exists in the same run; the input is always a prior run's report.) Extract: Recommendation section, Implementation Plan, Key Hyperparameters, Gotchas, Integration with Current Codebase.
+**P1-A — Auto-detected report**: when the no-argument auto-detect above found a recent `.reports/research/topic-*.md`, read that file. (Plan mode dispatches BEFORE Steps 2–3, skips them — "fresh" report never exists in same run; input always prior run's report.) Extract: Recommendation section, Implementation Plan, Key Hyperparameters, Gotchas, Integration with Current Codebase.
 
 **P1-B — From existing output**: Read file at given path directly. Extract same sections.
 
@@ -42,15 +42,15 @@ echo "$PWD/$PLAN_OUT" > "${TMPDIR:-/tmp}/research-topic-report-file-${CSID}"
 Call `Agent(subagent_type="foundry:solution-architect", prompt=...)`:
 
 ```markdown
-Read the research findings file at <path from P1>.
-Analyze the current codebase to map the recommended method against existing code:
-1. Identify all files and modules relevant to the recommended method's domain
-2. Map existing abstractions: interfaces, base classes, patterns the codebase already uses
+Read research findings file at <path from P1>.
+Analyze current codebase to map recommended method against existing code:
+1. Identify all files/modules relevant to recommended method's domain
+2. Map existing abstractions: interfaces, base classes, patterns codebase already uses
 3. Identify integration points: where does the new method plug in?
 4. Flag conflicts: existing patterns that would need to change
 5. Estimate complexity per integration point (low/medium/high)
 
-Write your full analysis to `<$CODEBASE_OUT>` using the Write tool. (Substitute resolved path — not template variable.)
+Write full analysis to `<$CODEBASE_OUT>` via Write tool. (Substitute resolved path — not template variable.)
 Return ONLY a compact JSON envelope on your final line — nothing else after it:
 {"status":"done","integration_points":N,"conflicts":N,"file":"<$CODEBASE_OUT>","confidence":0.N,"summary":"N integration points, N conflicts"}
 ```

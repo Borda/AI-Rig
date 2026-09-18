@@ -13,7 +13,7 @@
 
 - Spawn sub-agents for isolation-motivated work (distinct role/system-prompt, adversarial check, model tier, worktree) regardless of size, and for work-displacement past the measured ~73-tool-call break-even — see `rules/claude-config.md` §Agent/Skill Spawn Discipline. Below that threshold with no isolation need: do it inline, spawn nothing
 - Prefer specialised agents over general-purpose once a spawn is warranted; offload research + exploration when it clears the threshold above
-- **Always pass explicit `subagent_type` matching the task**, even when the right specialist is already named in your own spawn prompt — §Agent Teams (below) is a separate, narrower gate (formal multi-agent Team protocol only); it does NOT restrict picking a specialist for an ordinary single-agent spawn, ad-hoc or background included. Omitting `subagent_type` defaults to `general-purpose` and hides the spawn from 🤖 status tracking. (Telemetry evidence + worked failure example: `rules/_full/CLAUDE-full.md` §Subagent Strategy.)
+- **Always pass explicit `subagent_type` matching the task**, even when the right specialist is already named in own spawn prompt — §Agent Teams (below) is a separate, narrower gate (formal multi-agent Team protocol only); it does NOT restrict picking a specialist for an ordinary single-agent spawn, ad-hoc or background included. Omitting `subagent_type` defaults to `general-purpose` and hides the spawn from 🤖 status tracking. (Telemetry evidence + worked failure example: `rules/_full/CLAUDE-full.md` §Subagent Strategy.)
 - Independent subtasks run parallel, not serial; one tack per sub-agent
 - **Context discipline**: spawn prompt = task inputs + instructions only. Include: working dir · input paths/vars · output target · return envelope format. Exclude: session history · prior-phase reasoning · inline file contents (pass path)
 - Complex problem → more compute via sub-agents, but only on genuinely independent, sizeable tracks. Never delegate work finishable in a handful of tool calls, never spawn several where one suffices, and **never spawn a subagent to verify or double-check own work** — current models self-verify natively; a verifier spawn compounds that behaviour instead of adding signal. Deterministic caps: `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`, `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` (Claude Code ≥ 2.1.217)
@@ -30,7 +30,7 @@
 - Ask "would staff engineer approve?"
 - **Diff against ask**: before done, diff output against literal request — every constraint honored, nothing silently dropped
 - **Confidence scores**: request `## Confidence` block from every analysis agent (protocol in Output Standards); surface low confidence — never drop uncertain findings
-- **No added self-recheck passes, except one gated on a named, checkable trigger** (e.g. a scope-boundary re-scan against a stated rule — targeted verification, not blanket re-verify). Current models mostly catch and fix their own mistakes without an unscoped re-verify prompt; instructions like "double-check your answer" or "re-verify before responding" compound with that behaviour and cost tokens without reliably improving results. Run the external proof above once, then report
+- **No added self-recheck passes, except one gated on a named, checkable trigger** (e.g. a scope-boundary re-scan against a stated rule — targeted verification, not blanket re-verify). Current models mostly catch and fix their own mistakes without an unscoped re-verify prompt; instructions like "double-check your answer" or "re-verify before responding" compound that behaviour, costing tokens without reliably improving results. Run the external proof above once, then report
 
 ### 5. Autonomous Bug Fixing
 
@@ -53,15 +53,15 @@ Canonical helper: `_FOUNDRY_SHARED/agent-spawn-protocol.md`. Skills may tighten 
 
 - Cache-read cost = live context size × turn count — dominant cost line; keep both small
 - Multi-phase skill runs (e.g. review → resolve): after phase report file written, `/compact` before the next phase; resume from report file, not transcript
-- **Never suggest `/clear`.** It discards the prompt cache, so the next call re-writes the full context at the cache-write rate — ~12.5× the read rate — and buys nothing back, because the rebuilt context is the same size. Measured 2026-08-08 on a `/oss:review`: one mid-run `/clear` cost 179,545 write tokens in a single call, 46% of that session's entire cache-write spend. **`/compact` is the tool for every case** — it pays the same rebuild once, then shrinks what is re-sent on every remaining turn. Measured 2026-08-08 across 41 real compactions in 5 sessions (`bin/cost_analyzer.py`, drop-detection method — a compaction is any call whose post-call context falls below 70% of the prior call's): median context shrink 70%, median rebuild cost $0.87, median break-even **~2 turns**, worst observed 14 turns. All 41 repaid before their session ended. Break-even scales with pre-compaction context size, not a fixed dollar figure — it is worth checking only in the closing turns of a session, never mid-run
-- Live context past ~40% of the model's window = smell — wrap phase, persist state to file, restart lean. Current 5-family models carry a 1M window (Haiku 4.5: 200K), and instruction-following holds across it, so the smell is **cost**, not capability: cache-read scales linearly with live size, and `autoCompactThreshold: 0.7` only fires at ~700K
+- **Never suggest `/clear`.** Discards the prompt cache: next call re-writes full context at cache-write rate — ~12.5× the read rate — buys nothing back, since rebuilt context is the same size. Measured 2026-08-08 on a `/oss:review`: one mid-run `/clear` cost 179,545 write tokens in a single call, 46% of that session's entire cache-write spend. **`/compact` is the tool for every case** — it pays the same rebuild once, then shrinks what is re-sent on every remaining turn. Measured 2026-08-08 across 41 real compactions in 5 sessions (`bin/cost_analyzer.py`, drop-detection method — a compaction is any call whose post-call context falls below 70% of the prior call's): median context shrink 70%, median rebuild cost $0.87, median break-even **~2 turns**, worst observed 14 turns. All 41 repaid before their session ended. Break-even scales with pre-compaction context size, not a fixed dollar figure — check only in the closing turns of a session, never mid-run
+- Live context past ~40% of model's window = smell — wrap phase, persist state to file, restart lean. Current 5-family models carry 1M window (Haiku 4.5: 200K); instruction-following holds across it, so the smell is **cost**, not capability: cache-read scales linearly with live size, `autoCompactThreshold: 0.7` only fires at ~700K
 - Batch tool calls: create all tasks in ONE response (parallel calls); pair `TaskUpdate` with next substantive tool call — never emit response with only task bookkeeping
 
 ## Pre-Authorized Operations
 
 Operations in `settings.json` pre-approved — execute direct. Not covered → restructure to match existing allow entry before requesting new permission; batch missing permissions into one ask.
 
-- **Plugin binary via `${CLAUDE_PLUGIN_ROOT}/bin/X`** (quoted, resolves to absolute versioned cache path) never matches bare `Bash(X:*)` allow entry — matcher compares literal command string, not basename. Re-prompts every call despite an existing bare-name allow entry for `X`. Fix at plugin's `permissions-allow.json`: path-scoped glob (`Bash(*/<plugin>/*/bin/*:*)`), not bare command name — survives version bumps too. Confirmed 2026-08-08 (codemap-py `scan-index`).
+- **Plugin binary via `${CLAUDE_PLUGIN_ROOT}/bin/X`** (quoted, resolves to absolute versioned cache path) never matches bare `Bash(X:*)` allow entry — matcher compares literal command string, not basename. Re-prompts every call despite existing bare-name allow entry for `X`. Fix at plugin's `permissions-allow.json`: path-scoped glob (`Bash(*/<plugin>/*/bin/*:*)`), not bare command name — survives version bumps too. Confirmed 2026-08-08 (codemap-py `scan-index`).
 
 **Tool efficiency rule** — native Claude tools (Read, Grep, Glob, Write, Edit, others) always available, never need `settings.json` approval; use first:
 
@@ -104,7 +104,7 @@ No load = every `TaskCreate` below silently never happens.
 - Orphaned / irrelevant → `TaskUpdate` status `deleted`
 - Genuinely continuing → keep, mark `in_progress`
 
-Expect an empty list. The store is per-session (`~/.claude/tasks/<session-key>/`) and a `completed` task's file is deleted, so nothing carries across sessions and a finished list erases itself. Triage covers this session's own residue — never treat an empty `TaskList` as proof that no work is in flight; check `.plans/active/` instead.
+Expect an empty list. Store is per-session (`~/.claude/tasks/<session-key>/`); a `completed` task's file is deleted, so nothing carries across sessions and a finished list erases itself. Triage covers this session's own residue — never treat an empty `TaskList` as proof no work is in flight; check `.plans/active/` instead.
 
 ### In-session task tracking
 

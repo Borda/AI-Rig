@@ -9,7 +9,7 @@
 > 1. **Cost ceiling** — `CODEX_ITER < MAX_CODEX_RUNS` (default `MAX_CODEX_RUNS=10`; even with `MAX_ITERATIONS=20`, Codex runs max 10 times).
 > 2. **Diminishing returns** — last 2 Codex passes both produced no code changes → skip Codex remaining iterations, append note to `diary.md`: `"Codex skipped from iter N — 2 consecutive no-ops"`.
 
-**Counters live in a file, never in prose.** `CODEX_ITER` and `CODEX_NOOP_STREAK` are persisted to `.experiments/state/<run-id>/codex-state` as JSON and re-read at every gate check. Prose-tracked counters are lost to a mid-run compaction, which silently re-opens the whole Codex budget. `CODEX_DISABLED` is **derived** at read time (`CODEX_NOOP_STREAK >= 2`), never stored — one less value that can go stale.
+**Counters live in a file, never in prose.** `CODEX_ITER` and `CODEX_NOOP_STREAK` are persisted to `.experiments/state/<run-id>/codex-state` as JSON and re-read at every gate check. Prose-tracked counters are lost to mid-run compaction — silently re-opens whole Codex budget. `CODEX_DISABLED` is **derived** at read time (`CODEX_NOOP_STREAK >= 2`), never stored — one less value that can go stale.
 
 Run at the **first** Phase 2c of the run, ahead of the gate check. The write is guarded on the file's absence, so re-running it after a resume or a compaction cannot reset a budget that is already part-spent:
 

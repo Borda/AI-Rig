@@ -326,7 +326,7 @@
     },
     "10cac40edd1fdaec743d41d34e1e37b6e4d7d50b851e399ba3cbaaa94bf52773": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:96"
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "1126675b16250f3818e52428c3507e73881add0b5f6204682b6b6dadcff403fd": {
       "kind": "command",
@@ -1022,7 +1022,7 @@
     },
     "370550878c941b03dedec9c4952723b2290449431a2bb045a9cf3cea9c8a105b": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:108"
+      "src": "skills/analyse/modes/thread.md:107"
     },
     "370d4ff71655630749f8f2bdc25c773f077805aafad494e14a4a399d5c38eb03": {
       "kind": "command",
@@ -1430,7 +1430,7 @@
     },
     "4eabbdf41e881bff160e9e17782c2cc0463f1a02b7cac6745a09576d93fcbfb7": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:199"
+      "src": "skills/analyse/modes/thread.md:198"
     },
     "4eb7c40608ec00770f563592384f4896672eca02ba171a9905f5f3be26067068": {
       "kind": "command",
@@ -1714,7 +1714,7 @@
     },
     "626e310dc774d1e922b09965df7a45cb9c7010d654eeabe4a6e99f07168972cb": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:96"
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "62a0883f4e834c88dd3d091cdc838e88c5a650bd36c6860e4b33a86b9016438b": {
       "kind": "command",
@@ -1926,7 +1926,7 @@
     },
     "6d2ea2de213177a303efaed6cd566b96c1365f34b313a117d4c313880a552a59": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:96"
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "6d436870eb57dec863aab6668839a616d530c848fba0341aea62347cddd49a8d": {
       "kind": "command",
@@ -2134,7 +2134,7 @@
     },
     "79846a75f5f0656f711fbf2b21b79a60e0d3513f1066f89da5b62e6c50547548": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:199"
+      "src": "skills/analyse/modes/thread.md:198"
     },
     "79a62656c847c7bb5ea1bd564e5c86ae1c71d575bf5becf74384253ef0604e68": {
       "kind": "block",
@@ -2298,7 +2298,7 @@
     },
     "81620890d418c028f7009f3d147afd552f0185aa195804a016d1955977bf1c3d": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:96"
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "8179bc6301ce3f3e4978b58acccb670354335c20eb116deaa9d0b585268e510b": {
       "kind": "command",
@@ -2410,7 +2410,7 @@
     },
     "87f2cbbada2b4fb6fd680b07f63537bb0bb3d533f4e3037595196fa67bc58f23": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:318"
+      "src": "skills/analyse/modes/thread.md:317"
     },
     "881cdab5353988503f69a19f8c494252ceac60fef5ffd81c6523d68717951bfc": {
       "kind": "command",
@@ -3070,7 +3070,7 @@
     },
     "aa0ebc2d2df609977b1c1d845ac2410a7771438ab3761edca8b213d21a3e79d6": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:199"
+      "src": "skills/analyse/modes/thread.md:198"
     },
     "aa3e34651118ad1bc6c5acfb305a1ba3c265700470f24e6ba4e9d9a042a3a6b9": {
       "kind": "command",
@@ -3374,7 +3374,7 @@
     },
     "bb5959e841be7df09a82b41cf8c9df13dd7301b0972d93bf33e108bda5c68c32": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:96"
+      "src": "skills/analyse/modes/thread.md:95"
     },
     "bb687f1bf5800cc4004a6aa35183db457aaacfb7f2f5c47e021b4f6c27103b3a": {
       "kind": "command",
@@ -3894,7 +3894,7 @@
     },
     "d4c22a2c57a332df73d7e1f9141d5e42ae2e3ec2d6b4ca889973ccd6213a4ebc": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:318"
+      "src": "skills/analyse/modes/thread.md:317"
     },
     "d51fc4d9211ec6954c28ac7abf70c7a119554b4d62949f29cba8c5fb9797858d": {
       "kind": "command",
@@ -3942,7 +3942,7 @@
     },
     "d70102cf7009e87b9ec728b8079e311d258f17a5d7d1cbf3911c07ac912bc353": {
       "kind": "command",
-      "src": "skills/analyse/modes/thread.md:318"
+      "src": "skills/analyse/modes/thread.md:317"
     },
     "d7292319fe476bf67ac848a94d5905ad797d09af91e6c8da153b3e8c3791a2bd": {
       "kind": "command",
@@ -4506,7 +4506,7 @@
     },
     "f812b583b01bd45f7cb0cdb1686e126d087ba86571d6a790ff1d46c2e468b3f9": {
       "kind": "block",
-      "src": "skills/analyse/modes/thread.md:72"
+      "src": "skills/analyse/modes/thread.md:71"
     },
     "f886c920cc8c891cb760d6c9c93ccc5ce8c9f8819259ae0634a0ee72cbaabc16": {
       "kind": "command",
@@ -4629,6 +4629,6 @@
       "src": "skills/resolve/SKILL.md:127"
     }
   },
-  "plugin": "cc_oss@0.36.7",
+  "plugin": "cc_oss@0.36.8",
   "schema": 1
 }

@@ -27,7 +27,7 @@ Deliver oss's rules to Claude's user-level rule namespace, and its own permissio
 
 **Why does oss deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases.
 
-NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, and only additively. Writes nothing under `~/.codex/`.
+NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only `permissions.allow` and `permissions.deny` arrays are touched, only additively. Writes nothing under `~/.codex/`.
 
 </objective>
 
@@ -80,7 +80,7 @@ python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name oss --plugin-root "$PLUGIN
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
 
-Ownership is proved before any replace or remove: the existing link must resolve under the current plugin root, or under the same `~/.claude/plugins/cache/<marketplace>/oss/` lineage as the current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
+Ownership proved before any replace or remove: existing link must resolve under current plugin root, or under same `~/.claude/plugins/cache/<marketplace>/oss/` lineage as current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
 
 ## Step 4: Conflicts
 
@@ -98,11 +98,11 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
-This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code does not read them from the plugin manifest, so without this step they are inert files — the allow entries never suppress a prompt and the deny entries never block anything.
+This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
 Merge is additive and idempotent: `unique` keeps entries already present from being duplicated, and no entry is ever removed. Each plugin merges only its own pair.
 
-Create the file when this is a first install, and back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
+Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -169,7 +169,7 @@ cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # 
 
 **Upgrade path**: `claude plugin install oss@borda-ai-rig` then `/oss:setup`. Links from the previous version share the install-cache lineage, so they refresh without prompting; a rule dropped in the new version has its link removed. `make sync-claude` runs `/oss:setup --approve` headlessly for every installed managed plugin that ships a setup skill, so a normal sync needs no manual step.
 
-**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall, and neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing the plugin, delete `~/.claude/rules/oss-*.md` by hand — they become dangling symlinks once the plugin cache version is gone.
+**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall, neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing the plugin, delete `~/.claude/rules/oss-*.md` by hand — they become dangling symlinks once plugin cache version is gone.
 
 **Testing**: setup is reachable only as `/oss:setup` after the plugin is installed. To exercise it locally, bump `version` in `plugins/cc_oss/.claude-plugin/plugin.json`, run `claude plugin install oss@borda-ai-rig` from the repo root to refresh the cache, then invoke the skill. `bin/sync_rules.py` is a byte-identical propagated copy of the canonical helper; its regression suite lives beside that canonical copy in the AI-Rig repository.
 

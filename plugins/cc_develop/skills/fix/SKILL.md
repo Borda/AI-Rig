@@ -14,10 +14,10 @@ Reproduce-first bug resolution. Capture bug in failing regression test, apply mi
 NOT for:
 
 - CI-only failures with no local traceback — use `/develop:debug` first (`--ci-run <run-id>` for GitHub Actions logs)
-- production incidents without any CI run or traceback (use `/foundry:investigate` (requires foundry plugin))
+- production incidents with no CI run or traceback (use `/foundry:investigate` (requires foundry plugin))
 - `.claude/` config issues (use `/foundry:audit` (requires foundry plugin))
 - non-Python projects (JS/TS/Go/Rust) — toolchain assumes pytest; use language-native toolchain instead
-- CSS/JS-only frontend changes (no Python source touched) — use `/develop:feature` for new frontend work or direct editing for surgical CSS/JS fixes; this skill's regression-test gate assumes pytest
+- CSS/JS-only frontend changes (no Python source touched) — use `/develop:feature` for new frontend work, or direct editing for surgical CSS/JS fixes; this skill's regression-test gate assumes pytest
 
 </objective>
 
@@ -67,7 +67,7 @@ Sets `$TEST_CMD` (full suite) and `$PYTEST_CMD` (pytest flags). Run at skill sta
 
 **Language preflight gate**: apply §Language preflight gate from `runner-detection.md` (loaded above) — sets `NON_PY` and runs the abort/continue question.
 
-**Optional `--plan <path>`**: if `$ARGUMENTS` contains `--plan <path>` (at any position), read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — use to populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`.
+**Optional `--plan <path>`**: `$ARGUMENTS` contains `--plan <path>` (any position) → read plan file first. Extract `Affected files`, `Risks`, `Suggested approach` — populate Step 1 analysis instead of cold codebase exploration. Skip agent feasibility re-check (already done in `/develop:plan`). Store plan path as `PLAN_FILE`.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -78,7 +78,7 @@ cat "$_DEV_SHARED/preflight-helpers.md"
 
 Execute --plan path extraction; sets `$PLAN_FILE`.
 
-**Checkpoint init**: creates `.developments/<TS>/` and captures path. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4), append `step: N — completed` to `$DEV_DIR/checkpoint.md`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
+**Checkpoint init**: creates `.developments/<TS>/`, captures path. Write `checkpoint.md` inside `$DEV_DIR`. After each major step (1, 2, 3, 4), append `step: N — completed` to `$DEV_DIR/checkpoint.md`. On skill start, check for existing `.developments/*/checkpoint.md` — offer resume from last completed step if found.
 
 ```bash
 # timeout: 5000
@@ -89,7 +89,7 @@ echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}"
 
 ## Fix Mode
 
-**Optional `--diagnosis <path>`**: if provided (from preceding `/develop:debug` session), read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, and evidence pre-populated from diagnosis file. Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then to Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery.
+**Optional `--diagnosis <path>`**: provided (from preceding `/develop:debug` session) → read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, evidence pre-populated from diagnosis file. Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery.
 
 ```bash
 DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>&1) || { echo "$DIAG_FILE"; exit 1; }  # timeout: 5000
@@ -99,7 +99,7 @@ Diagnosis file format: see `/develop:debug` Final Report section for canonical f
 
 ## Flag parsing
 
-Parse flags into actual shell variables (not prose) so downstream blocks see correct values. Persist to temp files for cross-block access (bash state lost between Bash() calls):
+Parse flags into shell variables (not prose) so downstream blocks see correct values. Persist to temp files for cross-block access (bash resets between calls):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -118,7 +118,7 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 
 > loads: worktree-isolation.md
 
-When `--worktree` set, offload the whole run into an isolated git worktree — **before** codemap resolve or any edit, so codemap scans + all mutations land in the worktree (per-worktree ephemeral index; parallel runs never share one index).
+`--worktree` set → offload the whole run into an isolated git worktree — **before** codemap resolve or any edit, so codemap scans + all mutations land in the worktree (per-worktree ephemeral index; parallel runs never share one index).
 
 ```bash
 # timeout: 5000
@@ -155,7 +155,7 @@ cat "$_DEV_SHARED/codemap-gates.md"
 
 Follow Gate A and Gate B.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--diagnosis`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--semble`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--diagnosis`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--semble`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 **Preflight** — if `CODEMAP_ENABLED=true`:
 
@@ -197,7 +197,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" fix "$ARGUMENTS"
 ```
 
-**Cross-repo adaptation** (when `REPO_NAME` set) — issue was filed against a different codebase. After fetching issue, analysis must:
+**Cross-repo adaptation** (`REPO_NAME` set) — issue filed against a different codebase. After fetching issue, analysis must:
 
 1. Understand bug's root cause intent from issue body — not just symptoms or described fix (which may reference upstream structure)
 2. Locate equivalent bug in LOCAL codebase — run Grep for relevant symbols/patterns; code paths may differ due to divergence
@@ -205,7 +205,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" f
 
 If error message or pattern provided: use Grep tool (pattern `<error_pattern>`, path `.`) to search codebase for failing code path.
 
-`<test_path>` is a **substitution token** — resolve failing test file/node (from `$ARGUMENTS` or fetched issue) into `TEST_PATH` before running; bash reads a literal `<...>` as stdin redirect. Redirect order is `>file 2>&1` (stdout to file, then stderr onto stdout) — reverse `2>&1 >file` loses stderr to terminal.
+`<test_path>` is a **substitution token** — resolve failing test file/node (from `$ARGUMENTS` or fetched issue) into `TEST_PATH` before running; bash reads a literal `<...>` as stdin redirect. Redirect order is `>file 2>&1` (stdout to file, then stderr onto stdout) — reversed (`2>&1 >file`) loses stderr to terminal.
 
 ```bash
 # timeout: 600000
@@ -219,7 +219,7 @@ else
 fi
 ```
 
-**Codemap route and target derivation** — resolve `CODEMAP_QUERY_KIND` before loading `codemap-context.md`. Use `skip` when the request supplies the exact file/symbol for a localized edit and no caller, dependency, blast-radius, test-impact, or coupling fact remains unresolved. Use `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, or `central` for one matching unresolved fact; use `standard` when the affected surface is not yet bounded or needs symbol/import context. An explicit structural/tool request overrides `skip`. User may pass an explicit suspect as `module.path::function`:
+**Codemap route and target derivation** — resolve `CODEMAP_QUERY_KIND` before loading `codemap-context.md`. Use `skip` when request supplies exact file/symbol for a localized edit and no caller, dependency, blast-radius, test-impact, or coupling fact remains unresolved. Use `callers`, `blast`, `dependencies`, `test-impact`, `coupling`, or `central` for one matching unresolved fact; use `standard` when affected surface isn't yet bounded or needs symbol/import context. An explicit structural/tool request overrides `skip`. User may pass an explicit suspect as `module.path::function`:
 
 ```bash
 # timeout: 5000
@@ -248,7 +248,7 @@ Spawn **foundry:sw-engineer** agent to analyze failing code path and identify:
 - Related code possibly affected by fix — blast radius
 - Recent commits touching this path (from git log output, if provided)
 
-**Direct-caller impact** — when `CODEMAP_ENABLED=true` and `TARGET_FN` was NOT supplied via `$ARGUMENTS`, derive suspect qualified name from sw-engineer Step 1 finding (module/function it named as minimal code surface), then run `fn-rdeps` for direct callers — benchmarked far cheaper than a plain caller walk (94k vs 1M+ tokens, +40pp accuracy). This block only fires when `TARGET_FN` was NOT pre-set from args — the pre-set case is already covered by the `fn-rdeps`/`fn-blast` queries inside shared `codemap-context.md`, which ran earlier using the persisted `TARGET_MODULE`/`TARGET_FN`:
+**Direct-caller impact** — `CODEMAP_ENABLED=true` and `TARGET_FN` NOT supplied via `$ARGUMENTS` → derive suspect qualified name from sw-engineer Step 1 finding (module/function named as minimal code surface), run `fn-rdeps` for direct callers — benchmarked far cheaper than a plain caller walk (94k vs 1M+ tokens, +40pp accuracy). Fires only when `TARGET_FN` NOT pre-set from args — pre-set case already covered by `fn-rdeps`/`fn-blast` queries inside shared `codemap-context.md`, which ran earlier using persisted `TARGET_MODULE`/`TARGET_FN`:
 
 ```bash
 # timeout: 6000
@@ -271,13 +271,13 @@ if [ "$CODEMAP_ENABLED" = "true" ] && [ -z "$TARGET_FN" ] && command -v codemap-
 fi
 ```
 
-> Derived qualified name comes from whatever Step 1 recorded in `$DEV_DIR/checkpoint.md` (write suspect there as `module::function` when you append `step: 1 — completed`). No suspect in `module::function` form recorded → skip silently; `central` baseline already ran.
+> Derived qualified name comes from whatever Step 1 recorded in `$DEV_DIR/checkpoint.md` (write suspect there as `module::function` when appending `step: 1 — completed`). No suspect in `module::function` form recorded → skip silently; `central` baseline already ran.
 
-**Cannot-reproduce gate**: if sw-engineer unable to identify root cause, traceback, or any failing test, invoke `AskUserQuestion` — do NOT proceed to Step 2 with no reproduction path:
+**Cannot-reproduce gate**: sw-engineer unable to identify root cause, traceback, or any failing test → invoke `AskUserQuestion` — do NOT proceed to Step 2 with no reproduction path:
 
 - question: "Cannot confirm root cause from available information. How to proceed?"
 - (a) Use `/develop:debug` — investigate interactively first
-- (b) Provide additional context — user pastes traceback, logs, or minimal reproduction; after user replies, re-run Step 1 analysis with new context in same session (DMI: cannot wait for next invocation; apply additional context inline)
+- (b) Provide additional context — user pastes traceback, logs, or minimal reproduction; after reply, re-run Step 1 analysis with new context same session (DMI: can't wait for next invocation; apply additional context inline)
 - (c) Use `/foundry:investigate` (requires foundry plugin) — for production incidents with no CI trace Stop until user provides option (b) context or selects a redirect.
 
 If root cause not definitively established after analysis, surface assumptions before proceeding:
@@ -296,7 +296,7 @@ cat "$_DEV_SHARED/premise-grounding.md"
 
 §Premise Grounding Gate. Apply using **fix** context from Skill contexts table.
 
-**Scope gate**: if root cause spans 3+ modules, flag complexity smell — options: "Narrow scope (Recommended)" / "Proceed anyway". When the plan-inline gate below will also fire (medium/large classification), do NOT open a separate window: defer this question and ask it in the SAME `AskUserQuestion` call as plan-inline's Proceed/Stop/Abort menu (both menus verbatim, two questions, one call — the two gates test overlapping "this is big" conditions back-to-back). Plan-inline not firing → single-question call here as usual.
+**Scope gate**: root cause spans 3+ modules → flag complexity smell — options: "Narrow scope (Recommended)" / "Proceed anyway". Plan-inline gate below will also fire (medium/large classification) → do NOT open a separate window: defer this question, ask it in the SAME `AskUserQuestion` call as plan-inline's Proceed/Stop/Abort menu (both menus verbatim, two questions, one call — the two gates test overlapping "this is big" conditions back-to-back). Plan-inline not firing → single-question call here as usual.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -309,13 +309,13 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 ## Challenger gate
 
-**Decision — three states** (default is NOT "skip": it runs on substantial fixes and auto-skips only small ones):
+**Decision — three states** (default is NOT "skip": runs on substantial fixes, auto-skips only small ones):
 
 1. `--no-challenge` (`CHALLENGE_ENABLED=false`) → **skip gate entirely**, any size.
 2. else `--challenge` (`IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED=false` = `true`) → **always run**, even on a small fix.
 3. else **default** → **run when fix is substantial** (multi-file, ≳50 lines, or touches public API); **auto-skip when small** (single file, ≲50 lines, no API change) — challenger adds little on trivial fixes.
 
-Both flags exist because they cover opposite regimes: `--no-challenge` suppresses gate on substantial fixes where it would otherwise fire; `--challenge` forces it on small fixes where it would otherwise auto-skip.
+Both flags exist for opposite regimes: `--no-challenge` suppresses gate on substantial fixes where it would otherwise fire; `--challenge` forces it on small fixes where it would otherwise auto-skip.
 
 Spawn `foundry:challenger` with root cause analysis from Step 1 (root cause, blast radius, assumptions, approach):
 
@@ -348,8 +348,8 @@ Parse result:
 
 2. For each candidate test found — critically assess coverage quality:
 
-   - Does it exercise exact failing path (correct inputs, correct assertions)?
-   - Or is it a weak test — broad mocking, trivially happy-path, partial assertion — that deflected the problem rather than caught it?
+   - Exercises exact failing path (correct inputs, correct assertions)?
+   - Or a weak test — broad mocking, trivially happy-path, partial assertion — that deflected the problem rather than caught it?
 
 3. Three outcomes from archaeology:
 
@@ -391,7 +391,7 @@ Spawn with context:
 - Use `pytest.mark.parametrize` if bug affects multiple input patterns
 - Add brief comment linking to issue if applicable (e.g., `# Regression test for #123`)
 
-**When to skip Path 1**: if bug purely internal (no user-facing flow exists), document why and proceed with Path 2 only.
+**When to skip Path 1**: bug purely internal (no user-facing flow exists) → document why, proceed with Path 2 only.
 
 Both tests must **fail** against current code before proceeding. Check exit codes for each independently:
 
@@ -406,7 +406,7 @@ GATE_P2=$?
 [ $GATE_P2 -eq 0 ] && echo "GATE FAIL (Path 2): test passed — bug not captured" || echo "GATE OK (Path 2): failed as expected (exit $GATE_P2)"
 ```
 
-If either gate exit is 0: stop. Bug not reproduced on that path. Do not apply fix. DMI skill — stop enforced via bash gate check:
+Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fix. DMI skill — stop enforced via bash gate check:
 
 ```bash
 # timeout: 3000
@@ -423,7 +423,7 @@ $PYTEST_CMD --tb=long <existing_test_file>::<existing_test_name> -v 2>&1 | tail 
 [ $GATE_EXIT -eq 0 ] && echo "GATE FAIL: fixed test still passes — weak test not corrected; revisit" || echo "GATE OK: fixed test fails as expected (exit $GATE_EXIT)"
 ```
 
-**Outcome B failure-mode verification**: scan traceback output above for expected error string from reported symptom. If traceback does NOT contain a recognizable match to reported bug symptom, surface: `⚠ Test fails but failure mode may differ from reported symptom — verify the test captures the actual bug before proceeding.`
+**Outcome B failure-mode verification**: scan traceback output above for expected error string from reported symptom. Traceback lacks a recognizable match to reported bug symptom → surface: `⚠ Test fails but failure mode may differ from reported symptom — verify the test captures the actual bug before proceeding.`
 
 ### Review: Validate the reproduction
 
@@ -435,7 +435,7 @@ Before applying fix, critically evaluate reproduction test(s):
 4. **Parametrization**: key variants covered if bug spans multiple input patterns?
 5. **Archaeology honesty**: if outcome B (weak test fixed), is test now harder to pass? Does it catch actual failure mode?
 
-If issue found: revise test(s) before applying fix. Flawed reproduction = fix validated against wrong criteria.
+Issue found → revise test(s) before applying fix. Flawed reproduction = fix validated against wrong criteria.
 
 ```bash
 # boundary 1: after reproduction, before edit (compaction-contract.md)
@@ -459,7 +459,7 @@ _OSS_SHARED=$(ls -d ~/.claude/plugins/cache/borda-ai-rig/oss/*/skills/_shared 2>
 [ -n "$_OSS_SHARED" ] && cat "$_OSS_SHARED/semver-rules.md" || echo "oss plugin absent — semver-rules.md unavailable, use standard SemVer rules"
 ```
 
-If `oss` plugin available (i.e., `$_OSS_SHARED` non-empty), use `semver-rules.md` above for semver classification guidance; otherwise use standard SemVer rules (BREAKING = major bump, new feature = minor, fix = patch). Breaking change definition: worked before → fails/behaves differently now → no prior warning/shim. If yes — stop, call `AskUserQuestion` before any edit. State: what worked before, what will break, why this fix approach needed. Proceed only on explicit user confirmation. One question per breaking change; group only when logically one atomic change. Prose question does NOT count — `AskUserQuestion` mandatory.
+`oss` plugin available (`$_OSS_SHARED` non-empty) → use `semver-rules.md` above for semver classification; else standard SemVer rules (BREAKING = major bump, new feature = minor, fix = patch). Breaking change definition: worked before → fails/behaves differently now → no prior warning/shim. Yes → stop, call `AskUserQuestion` before any edit. State: what worked before, what will break, why this fix approach needed. Proceed only on explicit user confirmation. One question per breaking change; group only when logically one atomic change. Prose question does NOT count — `AskUserQuestion` mandatory.
 
 Make minimal change to fix root cause:
 
@@ -480,7 +480,7 @@ Make minimal change to fix root cause:
 
    ````bash
    # timeout: 6000
-   DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>/dev/null)  # re-derive — bash state lost between Bash() calls
+   DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>/dev/null)  # re-derive — bash resets between calls
    REUSED_PYTEST_CMD=""
    if [ -n "$DIAG_FILE" ] && grep -q '^## Test Impact (codemap-py)' "$DIAG_FILE" 2>/dev/null; then
        # extract the fenced JSON block that follows the marker heading
@@ -551,7 +551,7 @@ Use scan to prioritize which criteria below get deepest scrutiny.
    - **Regression test quality**: test precisely isolates bug (fails before fix, passes after)
    - **Side effects**: full suite passes without new failures or unexpected warnings
 
-2. For every gap found: implement fix immediately — tighten patch, remove collateral edits, adjust test. Return to Step 3 for gap requiring re-examining fix approach.
+2. Every gap found → implement fix immediately — tighten patch, remove collateral edits, adjust test. Return to Step 3 for gap requiring re-examined fix approach.
 
 3. Re-run test suite:
 
@@ -559,9 +559,9 @@ Use scan to prioritize which criteria below get deepest scrutiny.
    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <test_dir>; PYTEST_EXIT=$?; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"  # timeout: 600000
    ```
 
-4. **Adjacent bugs** (observation only): scan for similar patterns; document in Follow-up — do not fix here, avoids scope creep.
+4. **Adjacent bugs** (observation only): scan for similar patterns; document in Follow-up — don't fix here, avoids scope creep.
 
-5. **Objective convergence check**: if findings this cycle identical to previous cycle (same locations, same issues), declare convergence and exit — further cycles won't resolve; surface to user instead.
+5. **Objective convergence check**: findings this cycle identical to previous (same locations, same issues) → declare convergence, exit — further cycles won't resolve; surface to user instead.
 
 6. **Only nits remain**: document in Follow-up, exit loop.
 
@@ -605,7 +605,7 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 
 ### Follow-up
 - [any related issues or code that should be reviewed]
-- [if no test runner: `rm <test_file>` — no test suite will re-execute it; it served the gate, now expendable. **Exception**: if test was introduced in this session and is definitively wrong, delete it. Never delete pre-existing regression tests — they represent captured behavior that predates this session.]
+- [no test runner → `rm <test_file>` — no test suite will re-execute it; it served the gate, now expendable. **Exception**: test introduced this session and definitively wrong → delete it. Never delete pre-existing regression tests — they represent captured behavior predating this session.]
 
 ## Confidence
 **Score**: 0.N — [high ≥0.9 | moderate 0.85–0.9 | low <0.85 ⚠]
@@ -633,10 +633,10 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 | Temptation | Reality |
 | -- | -- |
-| "I already know root cause from symptom" | Assumptions without verification fix wrong bug. Read code path first. |
+| "I already know root cause from symptom" | Unverified assumptions fix the wrong bug. Read code path first. |
 | "Regression test can wait — add after fix" | Fix without failing test = unverifiable. Test proves bug existed. |
 | "Clean up nearby code while here" | Scope creep produces side effects, obscures fix. Touch only root cause. |
 | "Targeted test passes — sufficient" | Targeted test shows bug fixed; full suite shows nothing else broke. Both required. |
-| "Fix obvious — Step 1 analysis overkill" | Obvious causes often symptoms. Analysis reveals actual root cause and blast radius. |
+| "Fix obvious — Step 1 analysis overkill" | Obvious causes are often symptoms. Analysis reveals actual root cause, blast radius. |
 
 </notes>

@@ -96,7 +96,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse_kaggle_args.py" -- 
 
 ### Kaggle CLI grounding
 
-Competition pages are login-walled; `WebFetch` returns partial or blocked content on many of them. Anyone requesting a competition notebook has a Kaggle account, so the CLI is the reliable path — real file names, sizes, actual `sample_submission.csv` header, no guessed schema.
+Competition pages are login-walled; `WebFetch` returns partial or blocked content on many. Anyone requesting a competition notebook has a Kaggle account, so the CLI is the reliable path — real file names, sizes, actual `sample_submission.csv` header, no guessed schema.
 
 Probe availability and auth in one block. CLI absence never aborts the skill — degrade to WebFetch/user facts:
 
@@ -248,7 +248,7 @@ echo "Mode: $MODE · Output: $OUTFILE"
 cat "$COMPOSITION_FILE"  # timeout: 5000
 ```
 
-Select the exact `$MODE` row from `composition.md` (loaded above) and cat each named contract once, from left to right, plus `style-rules.md` once:
+Select the exact `$MODE` row from `composition.md` (loaded above), cat each named contract once, left to right, plus `style-rules.md` once:
 
 ```bash
 _KAGGLE_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/kaggle/modes"

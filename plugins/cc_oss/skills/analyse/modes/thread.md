@@ -59,11 +59,10 @@ IFS= read -r NUMBER < "${TMPDIR:-/tmp}/analyse-clean-args-${CSID}" 2>/dev/null |
 gh pr view $NUMBER --json number,title,body,labels,reviews,statusCheckRollup,files,additions,deletions,commits,author  # timeout: 6000
 gh pr checks $NUMBER  # never cached — always live  # timeout: 15000
 gh pr diff $NUMBER --name-only  # never cached — always live  # timeout: 6000
-# inline code-review comments — `reviews` above carries only review bodies (may embed a
-# collapsed findings block per github-review-parsing.md); this endpoint is the only source
-# for per-line inline threads, never cached — always live. {owner}/{repo} is gh's own REST
-# path template (expands from the current repo, no extra `gh repo view` round-trip or its
-# failure mode — see the discussion block below re: REST-path-only substitution)
+# inline code-review comments — `reviews` above = review bodies only (may embed collapsed
+# findings block, see github-review-parsing.md); this endpoint is sole source for per-line
+# inline threads, never cached — always live. {owner}/{repo} = gh's own REST path template,
+# expands from current repo — no extra `gh repo view` round-trip or its failure mode (see discussion block below re: REST-path-only substitution).
 gh api "repos/{owner}/{repo}/pulls/$NUMBER/comments" --paginate  # timeout: 15000
 ```
 
@@ -329,7 +328,7 @@ echo "[analyse] report → $REPORT_FILE"
 
 Write full report to `$REPORT_FILE` (echoed above) using Write tool — **do not print full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` is missing or empty. A denial reading `oss:analyse report gate` means this write never happened — write the report, print its `---` header, then re-issue the question. The hook sees only whether the report exists, not whether the header was printed; the print step below remains the check for that.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` missing/empty. Denial `oss:analyse report gate` = write never happened — write report, print `---` header, re-issue question. Hook checks report exists only, not header printed; print step below is that check.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -338,7 +337,7 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/n
 cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 ```
 
-Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Issue Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`, ensure block opens with `---` on own line, entity line follows next line, `→ saved to <path>` line present at end, block closes with `---` on own line after it. Print terminal block: read '---' header from top of report file (lines 1–7 up to and including closing '---'), append '→ saved to <path>', print to terminal. Report file already contains block — no separate prepend step needed
+Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Issue Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`; block opens `---` own line, entity line next, `→ saved to <path>` at end, closes `---`. Print: read '---' header from report file (lines 1–7 incl. closing '---'), append '→ saved to <path>'. Report already has block — no separate prepend
 
 **⛔ DO NOT STOP — `REPLY_MODE=true`**: Skip Confidence block here — emitted in SKILL.md Step 6 after reply, or as last step of SKILL.md if not in reply mode. Proceed **immediately** to "Draft contributor reply" section in SKILL.md (Step 7). Response not complete until shepherd spawned and reply file written.
 

@@ -118,7 +118,7 @@ STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"
 FORTIFY_DIR_BASE="${FORTIFY_DIR_BASE:-.experiments}"
 ```
 
-> `METRIC_CMD`/`GUARD_CMD` are NOT defaulted here — they are sourced from the source-run `state.json` after `$RUN_ID` resolves (see block below). No fail-open default: `git diff --stat HEAD` always exits 0, so a defaulted guard would be a no-op that never catches ablation regressions.
+> `METRIC_CMD`/`GUARD_CMD` are NOT defaulted here — sourced from source-run `state.json` after `$RUN_ID` resolves (see block below). No fail-open default: `git diff --stat HEAD` always exits 0, so a defaulted guard would be a no-op that never catches ablation regressions.
 
 **Assign `$RUN_ID`** from input resolution above (must be set before guard block uses it):
 
@@ -223,8 +223,8 @@ Read:
 - experiments.jsonl at ${EXPERIMENTS_PATH} (filter for entries with status: 'kept')
 - diary.md at ${DIARY_PATH} (if exists)
 
-Identify 3-8 distinct logical components that were changed during this run.
-A component = a logically independent change that can be removed independently.
+Identify 3-8 distinct logical components changed during this run.
+A component = a logically independent change removable on its own.
 
 For each component produce one JSON line to ${FORTIFY_DIR}/ablation-candidates.jsonl:
 {
@@ -310,7 +310,7 @@ echo "$best_commit" > "${TMPDIR:-/tmp}/fortify-best-commit-${CSID}"  # for 4a wo
 
 **Loop control**: run 4a-init through 4g-advance once per line of `variants.jsonl`, in file order. The iteration cursor lives in the `fortify-variant-idx-${CSID}` sentinel (initialized to 1 above, advanced at 4g-advance — or by the resume guard on skip) — never in a shell variable, which would die between blocks. Stop the loop when 4a-init reports the cursor is past the last line.
 
-Each Bash call costs a ~12 s round-trip, so adjacent steps that share a first token and have no model decision between them are merged: 4a-init now carries the cursor read, the resume guard, and the cleanup pre-registration in one block, taking the loop from 13 calls per variant to 11. The remaining splits are load-bearing, not oversight — each is annotated at its own step (4b/4b-assert and the 4f pair keep `cd` out of compound commands; 4c's two calls keep `git` in first-token position; 4d and 4e each hold a `timeout: 360000` and cannot share one call under the 600 s ceiling; 4g-advance must follow 4g's on-disk record). Do not "optimize" them back together.
+Each Bash call costs a ~12 s round-trip, so adjacent steps sharing a first token with no model decision between them are merged: 4a-init now carries the cursor read, resume guard, and cleanup pre-registration in one block, taking the loop from 13 calls per variant to 11. The remaining splits are load-bearing, not oversight — each is annotated at its own step (4b/4b-assert and the 4f pair keep `cd` out of compound commands; 4c's two calls keep `git` in first-token position; 4d and 4e each hold a `timeout: 360000` and cannot share one call under the 600 s ceiling; 4g-advance must follow 4g's on-disk record). Do not "optimize" them back together.
 
 **4a-init. Read the current variant's spec by cursor + resume guard + pre-register cleanup path** (one block — must run before any 4a/4b/4c/4d/4e block, which all read the name it persists):
 
@@ -346,7 +346,7 @@ cd "$(cat "${TMPDIR:-/tmp}/fortify-dir-${CLAUDE_CODE_SESSION_ID:-$PPID}" 2>/dev/
 pwd | grep -q '/worktrees/' || { echo "! BLOCKED — not inside a variant worktree (4b cd failed); refusing to run revert/metric/guard against the main repo"; exit 1; }  # timeout: 3000
 ```
 
-> **Not merged into 4b — deliberate.** Folding the assertion into the `cd` call would put directory navigation and a command in one Bash call, which `claude-config.md` §Directory Navigation Commands forbids outright: a prefix allow-rule earned by the leading `cd` then covers whatever rides behind the `&&`, and here what rides behind it is the gate protecting the main working tree from 4c's `git revert`. The saved ~12 s is not worth widening that grant.
+> **Not merged into 4b — deliberate.** Folding the assertion into the `cd` call would put directory navigation and a command in one Bash call, which `claude-config.md` §Directory Navigation Commands forbids outright: a prefix allow-rule earned by the leading `cd` covers whatever rides behind the `&&`, and here what rides behind it is the gate protecting the main working tree from 4c's `git revert`. The saved ~12 s isn't worth widening that grant.
 
 `! BLOCKED` printed → do NOT run 4c/4d/4e. Nothing was created to clean up beyond the worktree itself: go to 4f, then 4g, then 4g-advance. Without this assertion a failed `cd` leaves CWD at the repo root and 4c's `git revert` commits into the user's checked-out branch.
 

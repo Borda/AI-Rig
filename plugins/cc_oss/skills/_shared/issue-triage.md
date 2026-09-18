@@ -22,16 +22,16 @@ Incoming issue
 - `bug` / `enhancement` / `question` / `documentation`
 - `needs-repro` — missing repro steps
 - `good first issue` — well-scoped, self-contained, clear acceptance criteria
-- `help wanted` — maintainer won't tackle soon but welcomes contribution
-- `wont-fix` — out of scope or by design (always explain why)
+- `help wanted` — maintainer won't tackle soon, welcomes contribution
+- `wont-fix` — out of scope or by design, always explain why
 - `breaking-change` — PR/issue involves API change
 
 ## Good First Issue Criteria
 
 Must have:
 
-1. Clear description of what change needed
+1. Clear description of change needed
 2. Pointer to relevant file(s)
-3. Acceptance criteria: what "done" look like?
+3. Acceptance criteria: what "done" looks like
 4. No architectural decisions required
 5. Estimated scope: 1 file, \<50 lines

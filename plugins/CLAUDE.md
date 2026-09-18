@@ -62,7 +62,7 @@ In `.md` plugin files, prose annotations, notes, and load directives use `>` blo
 - **Compress wording, never content**, for any comment encoding a constraint, a why-not, or a bug that was fixed — those comments are why the bug stays fixed. Losing one silently re-opens it.
 - **`.py` files are exempt**: Python docstrings and comments stay plain and extensive. They serve maintainers, and cost nothing at skill-load time.
 
-Worked before/after example: `AUTHORING.md` §Comment Compression.
+Worked before/after example, recurring casualties of a compression pass (modals, logic conjunctions, paragraph scope, actors/qualifiers, test-pinned sentences), and the pass-yield note: `AUTHORING.md` §Comment Compression.
 
 ## Code Density — Bash/Code Blocks
 

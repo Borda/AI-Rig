@@ -51,7 +51,7 @@
 
 **Next**:
 
-- Maintainer reviews and clicks Merge in the GitHub UI — a merge commit keeps the per-item commits; squash collapses them
+- Maintainer reviews, clicks Merge in GitHub UI — merge commit keeps per-item commits; squash collapses them
 
 ## Confidence
 

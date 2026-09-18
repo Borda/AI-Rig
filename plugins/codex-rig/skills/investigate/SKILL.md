@@ -40,7 +40,7 @@ Write `<run-directory>/symptom.md` with:
 
 ### 03: Gather signals before forming hypotheses
 
-Run `git log --oneline -10` and `python --version` as separate argv commands. Write their complete outputs to `<run-directory>/recent-commits.txt` and `<run-directory>/python-version.txt`; record either collection failure rather than treating empty file as successful evidence.
+Run `git log --oneline -10` and `python --version` as separate argv commands. Write their complete outputs to `<run-directory>/recent-commits.txt` and `<run-directory>/python-version.txt`; record either collection failure, never treat empty file as successful evidence.
 
 Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`, collect `working-tree` scope into `<run-directory>/baseline`; record collection failure, never treat as empty diff.
 
@@ -59,7 +59,7 @@ Include ≥3 plausible hypotheses unless failing command + code/log directly pro
 
 ### 05: Orchestrate specialist probes when hypotheses split by domain
 
-Read and apply `../../shared/specialist-orchestration.md` only for multi-domain symptoms or useful parallel evidence; do not load it for narrow deterministic failure with one obvious hypothesis.
+Read, apply `../../shared/specialist-orchestration.md` only for multi-domain symptoms or useful parallel evidence; never load it for narrow deterministic failure with one obvious hypothesis.
 
 Write `<run-directory>/specialist-probes.md` before fan-out: role, hypothesis, context path, expected falsification signal, mode (`spawned`, `substituted`, `not_triggered`).
 
@@ -81,7 +81,7 @@ Each context pack: symptom slice, relevant logs/touched files/environment facts,
 
 Use targeted probes confirming, ruling out, or narrowing one hypothesis at a time.
 
-Diagnosis does not authorize source fixes. Parent owns probe execution and log persistence; read-only specialists return findings or concrete probe request under [read-only work and executable probes](../../shared/specialist-orchestration.md#read-only-work-and-executable-probes). A request includes hypothesis, exact command/code, working directory, inputs, expected falsifier, and anticipated side effects. Inspect executable probes before running; use isolated disposable inputs for necessary writes and retain runtime approval boundaries. No safe child route does not prevent permitted parent-serial investigation. Denied or unavailable execution remains inconclusive, never confirmed; parent-run evidence is not independent specialist conclusion. Hand source remediation off only after root-cause gate.
+Diagnosis does not authorize source fixes. Parent owns probe execution and log persistence; read-only specialists return findings or concrete probe request under [read-only work and executable probes](../../shared/specialist-orchestration.md#read-only-work-and-executable-probes). A request includes hypothesis, exact command/code, working directory, inputs, expected falsifier, anticipated side effects. Inspect executable probes before running; use isolated disposable inputs for necessary writes, retain runtime approval boundaries. No safe child route does not prevent permitted parent-serial investigation. Denied or unavailable execution remains inconclusive, never confirmed; parent-run evidence is not independent specialist conclusion. Hand source remediation off only after root-cause gate.
 
 Each probe must have clear outcome:
 

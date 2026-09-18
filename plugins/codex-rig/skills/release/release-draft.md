@@ -24,4 +24,4 @@
 
 **Full changelog**: \<verified base/head comparison, or explained initial-release history link.>
 
-> Replace every placeholder. Use the project's tone and optional section emojis, preserving these section roles. Omit empty categories; preserve explicit no-migration/no-human-contributor statements only when supported by evidence. Keep readiness failures and internal evidence paths out of public prose except an appropriate draft status when blocked.
+> Replace every placeholder. Use project's tone and optional section emojis, preserving these section roles. Omit empty categories; preserve explicit no-migration/no-human-contributor statements only when supported by evidence. Keep readiness failures and internal evidence paths out of public prose except appropriate draft status when blocked.

@@ -33,7 +33,7 @@ Skill domains:
 
 Mark "Calibrate skills" in_progress. **Availability check** (vars set in SKILL.md Step 2): exclude skills marked with plugin requirements above when plugin absent. Log: "<plugin> plugin not installed — skipping <skill> calibration" per excluded skill.
 
-For each skill in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories are in flight — see constants)**: issue up to that many skill pipeline spawns per response, wait for all in batch to return their compact JSON results, then spawn next batch. Skills within a batch run concurrently; batches sequential. Do NOT spawn all skills in a single response.
+For each skill in domain table (after exclusions), spawn one `general-purpose` pipeline subagent. **Spawn in batches of `$PIPELINE_BATCH_SIZE` (5 when this category runs alone, 2 while two categories in flight — see constants)**: issue up to that many skill pipeline spawns per response, wait for all in batch to return compact JSON results, spawn next batch. Skills within a batch run concurrently; batches sequential. Do NOT spawn all skills in one response.
 
 For skill targets (target name starts with `/`): spawn `general-purpose` subagent with skill's `SKILL.md` content prepended as context, running against synthetic input from problem. Pipeline template write-and-acknowledge pattern still applies.
 
@@ -48,7 +48,7 @@ For `/research:judge`, calibration pattern mirrors `/audit`: inject N specific k
 
 For `/research:plan`, calibration measures output completeness: generate synthetic goal, score whether produced `program.md` (a) contains all four required sections (Goal, Metric, Guard, Config), (b) has `direction` field, (c) has non-empty `scope_files`, (d) includes plausible `metric_cmd`. Ground truth = checklist; recall = fraction of checklist items present.
 
-Resolve the template dir first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
+Resolve template dir first — no `~/.claude/skills/` copy exists (setup symlinks only `rules/*.md` and `TEAM_PROTOCOL.md`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -66,7 +66,7 @@ Each subagent receives pipeline template from `$CALIB_TPL/pipeline-prompt.md` wi
 - `<AB_MODE>` = `true` or `false`
 - `<LOCAL_MODE>` = `true` or `false` — from `--local` flag; when true pipeline resolves target file from source tree
 
-**Partial-calibration principle**: individual skill modes with deterministic, auditable outputs can be calibrated even when full orchestration skill cannot. Full `optimize run` loop (requires live metric commands, git state, real guard scripts) excluded. Sub-modes producing structured, inspectable output are in scope:
+**Partial-calibration principle**: individual skill modes with deterministic, auditable outputs can be calibrated even when full orchestration skill cannot. Full `optimize run` loop (requires live metric commands, git state, real guard scripts) excluded. Sub-modes producing structured, inspectable output in scope:
 
 - `optimize plan` — config wizard; output is `program.md` checkable against completeness schema
 - `optimize judge` — plan auditor; output is findings list checkable against injected known issues (same pattern as `/audit`)

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1
+
+- Compress skill and rule prose to the ultra-caveman tier for both hosts; behavior, test-pinned contract sentences, and structural literals are unchanged.
+
 ## 0.5.0
 
 - Add capability-aware native Codex questions across every Codex skill: prefer permitted synchronous controls for required decisions, asynchronous controls for independent follow-ups or lossless fallback, and plain chat when unsupported.

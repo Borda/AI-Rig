@@ -1,6 +1,6 @@
 # PR Review Checklist
 
-Five-category checklist for reviewing PRs in Python/ML/CV/AI OSS projects.
+Five-category checklist, reviewing PRs in Python/ML/CV/AI OSS projects.
 
 ## Correctness
 

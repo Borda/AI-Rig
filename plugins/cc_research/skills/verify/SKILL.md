@@ -45,7 +45,7 @@ Triggered by `verify <paper>` where `<paper>` is PDF path, arXiv URL, or multi-l
 4. Multi-line quoted text block — treat as literal paper content
 5. No paper argument — stop: `"No paper provided. Usage: /research:verify <paper.pdf|arxiv-url|'pasted text'> [--scope <glob>]"`
 
-**Pay for the paper once**: whatever the source above, write the resolved paper content to `$RUN_DIR/paper.md` (Write tool, right after the run-dir block below creates `$RUN_DIR`) — the V3 spawn prompt passes that path, never re-inlines the text and never re-fetches (a 20-page paper re-inlined is 15-25K tok billed twice).
+**Pay for the paper once**: whatever the source above, write resolved paper content to `$RUN_DIR/paper.md` (Write tool, right after run-dir block below creates `$RUN_DIR`) — V3 spawn prompt passes that path, never re-inlines text, never re-fetches (a 20-page paper re-inlined is 15-25K tok billed twice).
 
 From paper content, extract:
 
@@ -109,8 +109,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/verify-${_VTAG}-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
 IFS= read -r OUT < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null || OUT=""
-# T-C1: one call reports every empty value at once. A trailing `[ -z "$X" ] && { …; }`
-# guard also leaves the whole block's exit status at 1 whenever the value IS present.
+# T-C1: one call reports all empty values at once. Trailing `[ -z "$X" ] && { …; }`
+# guard leaves block exit status 1 even when value IS present.
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/require-vars.py" "$RUN_DIR" "verify: state files missing — V1 must run first" "$OUT" "verify: state files missing — V1 must run first" || exit 1
 ```
 
@@ -152,8 +152,8 @@ echo "$V2_STATUS" > "${TMPDIR:-/tmp}/verify-${_VTAG}-v2-status-${CSID}"
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
-# Default ok = fail open: V2 may legitimately not have written a status yet. Any value other
-# than `ok` closes the gate, so an unrecognised status is treated as a failure, not a pass.
+# Default ok = fail open — V2 may not have written status yet. Any non-`ok` value closes
+# gate: unrecognised status treated as failure, not pass.
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/gate-on-sentinel.py" "${TMPDIR:-/tmp}/verify-${_VTAG}-v2-status-${CSID}" ok ok "verify V3: dimension validation failed in V2 — skipping V3." || exit 1
 ```
 
@@ -173,38 +173,38 @@ cat "$_RESEARCH_SHARED/codemap-context.md"
 
 Execute its block (leave `TARGET_MODULE`/`TARGET_FN` empty for `central` baseline, or set `TARGET_MODULE` to key module from `scope_files`). Prepend output to scientist prompt under `## Structural Context (codemap-py)` heading so architecture (N) and eval (E) dimensions reference real import/coverage structure instead of re-reading every file.
 
-Codemap output non-empty: prepend this **codemap-first protocol** to the same heading (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use the Structural Context above for import/caller/coverage questions before any supplementary Grep on the same target; this does NOT relax the mandatory "Read each file listed in Codebase scope files" instruction below — formula (F) and hyperparameter (H) fidelity require the actual file contents, codemap cannot substitute for that line-level comparison. (2) **Bounded call budget** — up to 5 additional `codemap-py query` calls this audit (raised from the plugin default of 3: a verify pass spans up to 100 scope files across 5 dimensions, wider surface than a single-file edit). (3) **Hard stop on `query_complete: true`** (or legacy `exhaustive: true`) — that result is final for its direction, no follow-up Grep/query to re-confirm it. Codemap output empty: omit this paragraph — scientist proceeds with the full-file-read protocol below unchanged.
+Codemap output non-empty: prepend this **codemap-first protocol** to the same heading (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use Structural Context above for import/caller/coverage questions before any supplementary Grep on same target; does NOT relax mandatory "Read each file listed in Codebase scope files" instruction below — formula (F) and hyperparameter (H) fidelity require actual file contents; codemap cannot substitute for line-level comparison. (2) **Bounded call budget** — up to 5 additional `codemap-py query` calls this audit (raised from plugin default 3: verify pass spans up to 100 scope files across 5 dimensions — wider surface than single-file edit). (3) **Hard stop on `query_complete: true`** (or legacy `exhaustive: true`) — result final for its direction, no follow-up Grep/query to re-confirm it. Codemap output empty: omit this paragraph — scientist proceeds with full-file-read protocol below unchanged.
 
 <!-- Agent call runs in the background: spawn, end the turn, resume on the completion notification — never a filler call, a "waiting" line, or a sleep. HARD_CUTOFF (900s) is declared as a reference constant but is NOT enforceable within the skill — Agent() has no timeout parameter. On the notification, apply the single timeout policy declared in `<constants>`: check `$RUN_DIR/audit-raw.md`; if absent or empty, set `fidelity = null`, `status = TIMED_OUT`, mark ⏱ in report; if present, parse normally. Same limitation as research:topic. -->
 
-**Scientist prompt** — before constructing the Agent() call, substitute the actual computed value of `$RUN_DIR` (e.g. `.experiments/verify-2026-05-13T10-00-00Z`) into every path in the prompt below; an unexpanded `$RUN_DIR` reaches the agent as literal dollar-sign text, the audit lands in a directory literally named `$RUN_DIR`, and the post-call check reports a false `TIMED_OUT`:
+**Scientist prompt** — before constructing the Agent() call, substitute actual computed value of `$RUN_DIR` (e.g. `.experiments/verify-2026-05-13T10-00-00Z`) into every path in prompt below; unexpanded `$RUN_DIR` reaches agent as literal dollar-sign text: audit lands in directory literally named `$RUN_DIR`, post-call check reports false `TIMED_OUT`:
 
 ```markdown
-Act as an ML reproducibility auditor verifying implementation fidelity against a published paper.
+Act as ML reproducibility auditor verifying implementation fidelity against published paper.
 
 Paper: <title> (<year>) by <authors>
-Paper content: read $RUN_DIR/paper.md with the Read tool (never re-fetch the paper from the web)
+Paper content: read $RUN_DIR/paper.md via Read tool (never re-fetch paper from web)
 Claims to verify (from V1 extraction):
 <JSON claims table>
 
 Codebase scope files:
 <list of files from V2>
 
-Read the scope files mapped to each claim first (claim `section`/`type` names the relevant modules); do a full scope-file read-through only when the list has ≤40 files — your turn budget stalls near ~60 tool calls, and a wide scope read-all burns it before any auditing happens.
+Read scope files mapped to each claim first (claim `section`/`type` names relevant modules); full scope-file read-through only when list has ≤40 files — turn budget stalls near ~60 tool calls, wide scope read-all burns it before auditing happens.
 
 Active dimensions: <F,H,E,N,C or subset from --dim>
 
-Audit the implementation against the paper across the active dimensions:
+Audit implementation against paper across active dimensions:
 
-[F] Formula matching: every equation in the paper with concrete terms — does code implement the same math? Check loss functions, forward passes, normalization, gradient computations. Flag sign errors, missing terms, wrong reduction (mean vs sum).
+[F] Formula matching: every equation in paper with concrete terms — does code implement same math? Check loss functions, forward passes, normalization, gradient computations. Flag sign errors, missing terms, wrong reduction (mean vs sum).
 
-[H] Hyperparameter parity: every hyperparameter the paper specifies (LR, batch size, weight decay, momentum, scheduler, warmup steps, dropout, hidden dim) — do code defaults match paper values? Flag divergences.
+[H] Hyperparameter parity: every hyperparameter paper specifies (LR, batch size, weight decay, momentum, scheduler, warmup steps, dropout, hidden dim) — do code defaults match paper values? Flag divergences.
 
-[E] Eval protocol: does the evaluation pipeline match the paper? Same metric (e.g., mAP@0.5 vs mAP@[0.5:0.95]), same test split, same preprocessing at inference, same post-processing thresholds.
+[E] Eval protocol: does evaluation pipeline match paper? Same metric (e.g., mAP@0.5 vs mAP@[0.5:0.95]), same test split, same preprocessing at inference, same post-processing thresholds.
 
-[N] Notation consistency: variable names in code that map to paper notation — are they consistent? Flag confusing mappings (e.g., paper uses `alpha` for learning rate but code uses it for momentum).
+[N] Notation consistency: variable names in code mapping to paper notation — consistent? Flag confusing mappings (e.g., paper uses `alpha` for learning rate but code uses it for momentum).
 
-[C] Citation chain: does the implementation originate from the cited paper or a derivative? If code implements a variant from a different paper, flag.
+[C] Citation chain: does implementation originate from cited paper or a derivative? If code implements variant from different paper, flag.
 
 For each finding, produce:
 - claim_id: from claims table
@@ -212,14 +212,14 @@ For each finding, produce:
 - paper_reference: exact quote or equation from paper
 - code_reference: file:line in codebase
 - match_status: MATCH | MISMATCH | PARTIAL | UNVERIFIABLE
-  - PARTIAL: use when claim is debatable — code implements a valid variant but not the exact paper formulation; include both interpretations in `detail`
+  - PARTIAL: use when claim debatable — code implements valid variant but not exact paper formulation; include both interpretations in `detail`
 - severity: HIGH (would change results) | MEDIUM (affects reproducibility) | LOW (cosmetic)
 - detail: one-sentence explanation
 - fix: concrete one-line fix (e.g., "change `reduction='mean'` to `reduction='sum'`" or "set `bias=False`") — required for all MISMATCH and PARTIAL findings; omit only for MATCH and UNVERIFIABLE
 
 Also compute fidelity score: (MATCH + 0.5*PARTIAL) / total_verified_claims.
 
-Write full audit to $RUN_DIR/audit-raw.md using Write tool.
+Write full audit to $RUN_DIR/audit-raw.md via Write tool.
 Include ## Confidence block.
 Return ONLY: {"status":"done","claims_verified":N,"mismatches":N,"high":N,"medium":N,"low":N,"fidelity":0.N,"file":"$RUN_DIR/audit-raw.md","confidence":0.N}
 ```
@@ -245,7 +245,7 @@ Post-process envelope from scientist:
 ! BREAKING — HIGH severity mismatch in critical dimension (F or E). Fix before running experiments.
 ```
 
-**Do NOT write the partial report yet** — hold the partial-report markdown content in memory only. Premature writes to `$OUT` get overwritten by V5 if the user picks (b), and the (a) "keep partial report" description below is only honest if the write happens AFTER the user opts in.
+**Do NOT write the partial report yet** — hold partial-report markdown content in memory only. Premature writes to `$OUT` get overwritten by V5 if user picks (b); (a) "keep partial report" description below only honest if write happens AFTER user opts in.
 
 Invoke `AskUserQuestion` — do NOT write options as plain text:
 
@@ -253,7 +253,7 @@ Invoke `AskUserQuestion` — do NOT write options as plain text:
 - (a) label: `Stop here` — description: write partial report (passing claims only) to `$OUT`; fix mismatches and re-run `/research:verify`
 - (b) label: `Continue to full report` — description: proceed to V5/V6 and include failed claims in the full verification report
 
-**On (a)**: the (a) branch runs after an `AskUserQuestion` turn boundary, i.e. in a fresh Bash call — so rehydrate `$OUT` self-containedly rather than assuming V1's state-rehydration block ran in this shell. `_VTAG` must come from the pointer file, never be recomputed (V1 stamps it with `$(date +%s)`; a recompute yields a different, non-existent filename):
+**On (a)**: (a) branch runs after an `AskUserQuestion` turn boundary, i.e. fresh Bash call — rehydrate `$OUT` self-containedly rather than assuming V1's state-rehydration block ran in this shell. `_VTAG` must come from pointer file, never recomputed (V1 stamps it with `$(date +%s)`; a recompute yields different, non-existent filename):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -263,9 +263,9 @@ IFS= read -r OUT   < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null |
 echo "$OUT"
 ```
 
-The trailing `echo "$OUT"` is load-bearing: the Write tool takes a literal path and performs no shell expansion, so the resolved value must reach the transcript. Then write the held partial-report markdown to that path (verification table built so far plus a `! STRICT STOP — partial report; failed claims not yet written` banner at the top), surface the file path, and exit. Full audit remains at `$RUN_DIR/audit-raw.md`. Do NOT also dump the mismatch table to terminal — it is already inside the partial report.
+Trailing `echo "$OUT"` is load-bearing: Write tool takes literal path, performs no shell expansion — resolved value must reach transcript. Then write held partial-report markdown to that path (verification table built so far plus a `! STRICT STOP — partial report; failed claims not yet written` banner at top), surface file path, exit. Full audit remains at `$RUN_DIR/audit-raw.md`. Do NOT also dump mismatch table to terminal — already inside partial report.
 
-**On (b)**: discard the held partial-report markdown and proceed directly to V5/V6 — V5 writes the full report to `$OUT` (failed claims included).
+**On (b)**: discard held partial-report markdown, proceed directly to V5/V6 — V5 writes full report to `$OUT` (failed claims included).
 
 ### Step V5: Write verification report
 
@@ -350,11 +350,11 @@ Next: fix mismatches, then /research:verify <paper> --scope <glob>
 
 Omit "Next" line if no mismatches found.
 
-Call `AskUserQuestion` tool after V6 output — do NOT write options as plain text. Before invoking, check whether `/develop:fix` is available so we can mention it as a plain-text suggestion (verify has no `Skill` tool and `/develop:fix` has `disable-model-invocation: true`, so it can never be offered as a dispatchable option):
+Call `AskUserQuestion` tool after V6 output — do NOT write options as plain text. Before invoking, check whether `/develop:fix` is available so it can be mentioned as a plain-text suggestion (verify has no `Skill` tool and `/develop:fix` has `disable-model-invocation: true`, so it can never be offered as a dispatchable option):
 
 ```bash
 ls ~/.claude/plugins/cache/borda-ai-rig/develop/*/skills/fix/SKILL.md >/dev/null 2>&1 && DEVELOP_FIX_AVAILABLE=true || DEVELOP_FIX_AVAILABLE=false  # timeout: 5000
-echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # the `|| ...=false` fallback makes the block exit 0 either way, so stdout is the only surviving channel
+echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # `|| ...=false` fallback makes block exit 0 either way — stdout only surviving channel
 ```
 
 **Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, print as plain text before the question: "Tip: `/develop:fix` (requires `develop` plugin) can also implement these fixes — run it manually." Printed `false` → omit the tip entirely; never emit it on the assumption the plugin is present.
@@ -370,7 +370,7 @@ echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # the `|| ...=false` fallba
 - **Timeout advisory**: 900s HARD_CUTOFF is advisory only — a background `Agent()` cannot be interrupted mid-flight; on its completion notification check `$RUN_DIR/audit-raw.md`; if absent/empty → TIMED_OUT, mark ⏱.
 - Verify read-only — never modifies code, commits, or writes to `.experiments/state/`
 - `.experiments/verify-<timestamp>/` stores scientist agent's full audit output for reference
-- Verify run dirs don't write `result.jsonl` — exempt from 30-day TTL cleanup (exempt per `.claude/rules/foundry-artifact-lifecycle.md` — no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/verify-*/`)
+- Verify run dirs don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/verify-*/`)
 - Re-run verify after fixing mismatches to confirm fixes resolved flagged items
 - For papers with appendices beyond 20 pages, iterate Read with `pages: "21-40"` etc. to capture full hyperparameter tables
 - Fidelity score = ratio, not probability — 0.9 means 90% of verified claims match, not 90% confidence

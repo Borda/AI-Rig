@@ -27,9 +27,9 @@ Skip if `sandbox_mode = "local"` (Phase 2 already applied changes).
 Spawn same specialist agent (R3), `maxTurns: 10`:
 
 ```text
-Read the proposed change in `.experiments/state/<run-id>/ideation-<i>.md`.
-Apply the proposed change to the source files.
-Use Write and Edit tools ONLY — no Bash execution on the codebase files.
+Read proposed change in `.experiments/state/<run-id>/ideation-<i>.md`.
+Apply proposed change to source files.
+Use Write and Edit tools ONLY — no Bash execution on codebase files.
 Scope files (read and modify only these): <scope_files>
 Return ONLY: {"files_modified":[...]}
 ```

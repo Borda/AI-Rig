@@ -217,7 +217,7 @@ cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 
 Compact block format (loaded above). File absent → warn "run /foundry:setup — printing plain terminal output instead."
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while the `$REPORT_FILE` written in Step 4 is missing or empty. A denial reading `oss:analyse report gate` means Step 4 never produced the report — write it, print the block below, then re-issue the question. The hook sees only whether the report exists, not whether the block was printed; this step remains the check for that.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` written in Step 4 is missing or empty. Denial `oss:analyse report gate` = Step 4 never produced the report — write it, print the block below, re-issue question. Hook checks report exists only, not block printed; this step is that check.
 
 Print compact block to terminal. Three sections: header, exec summary, simplified scorecard. Axis rows must appear in numeric order 1–9; never reorder by score, weight, or status:
 

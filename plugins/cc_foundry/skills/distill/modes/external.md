@@ -2,7 +2,7 @@
 
 <!-- file: external.md — consumers: distill/SKILL.md -->
 
-Triggered when `$ARGUMENTS` begins with `external`. Analyse external plugin, skill, or agentic resource; produce structured adoption proposal for local Claude Code setup.
+Triggered when `$ARGUMENTS` begins with `external`. Analyse external plugin, skill, or agentic resource, produce structured adoption proposal for local Claude Code setup.
 
 ```bash
 EXT_RUN_DIR=".temp/distill/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
@@ -19,7 +19,7 @@ Identify source type:
 
 **E2: Fast read — structure and intent**
 
-Skim headings, frontmatter, filenames, top-level examples. Extract: purpose, target user, top-level architecture, routing logic. ≤ 2 reads per top-level file.
+Skim headings, frontmatter, filenames, top-level examples. Extract: purpose, target user, top-level architecture, routing logic. ≤2 reads per top-level file.
 
 **E3: Slow read — full content**
 
@@ -31,7 +31,7 @@ Record in working notes: source intent, architecture, routing, safety model, exp
 
 **E5: Identify standout implementation details**
 
-Use Grep for: hooks, validation gates, must/never constraints, fallback paths, scoring rubrics, unusual prompt patterns. Flag anything absent in local setup.
+Use Grep for: hooks, validation gates, must/never constraints, fallback paths, scoring rubrics, unusual prompt patterns. Flag anything absent from local setup.
 
 **E6: Source report**
 
@@ -59,7 +59,7 @@ Group local agents/skills/rules by responsibility, trigger conditions, gates, ou
 
 **E9–E10: Compare and split**
 
-For each candidate from E6, compare against local capability map. Assign to group:
+For each candidate from E6, compare against local capability map. Assign to a group:
 
 - **Group A — Align + improve**: maps onto existing local agent/skill/rule, improves without structural change
 - **Group B — Differentiated highlights**: novel pattern or design philosophy, doesn't map natively — interesting but requires larger structural work or conflicts with existing design
@@ -81,7 +81,7 @@ Exactly one of Adopt/Tweak/Discuss/Skip per item. "Local target" = specific file
 
 After scoring, apply this judgement:
 
-- **Recommend install-as-is** when: (a) Group A has ≤ 2 candidates AND source has coherent standalone design, OR (b) cumulative edit effort is L (large) for ≥ 3 candidates
+- **Recommend install-as-is** when: (a) Group A has ≤2 candidates AND source has coherent standalone design, OR (b) cumulative edit effort is L (large) for ≥3 candidates
 - If recommending: state justification — what source provides that local setup lacks, why cherry-picking would dilute value
 - Present as explicit option in E13 (option b); omit if not recommended
 
@@ -89,7 +89,7 @@ After scoring, apply this judgement:
 
 Before presenting proposals to user, spawn **foundry:challenger** to adversarially review adoption table. Challenger surfaces: claimed benefits already covered locally, cost/benefit miscalculations, proposals adding complexity without measurable gain.
 
-Substitute `$EXT_RUN_DIR` with its computed value (from `EXT_RUN_DIR=` block at top of this mode file) before issuing Agent call — spawned agents receive text, not shell context.
+Substitute `$EXT_RUN_DIR` with computed value (from `EXT_RUN_DIR=` block at top of this mode file) before issuing Agent call — spawned agents receive text, not shell context.
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -113,14 +113,14 @@ Return ONLY compact JSON as final line: {\"status\":\"done\",\"findings\":N,\"se
 ")
 ```
 
-After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate each adoption table row with challenger verdict — add **Verdict** column. Rows marked `DISCARD`: move to separate **Discarded by challenger** section below table with one-line reason. Rows marked `ADOPT_WITH_MODIFICATION`: update **Action** cell to `Tweak*`, add footnote with challenger's modification requirement. Confidence < 0.85 → flag that group's findings with ⚠, surface the named gap.
+After challenger returns: read `$EXT_RUN_DIR/challenger-review.md`. Annotate each adoption table row with challenger verdict — add **Verdict** column. Rows marked `DISCARD`: move to separate **Discarded by challenger** section below table with one-line reason. Rows marked `ADOPT_WITH_MODIFICATION`: update **Action** cell to `Tweak*`, add footnote with challenger's modification requirement. Confidence < 0.85: flag that group's findings with ⚠, surface named gap.
 
-**Fallback when challenger is unavailable or fails** — if `$EXT_RUN_DIR/challenger-review.md` does not exist after the spawn returns, OR the returned JSON envelope has `status != "done"`, OR the agent itself is missing (`foundry:challenger` not installed):
+**Fallback when challenger is unavailable or fails** — `$EXT_RUN_DIR/challenger-review.md` doesn't exist after spawn returns, OR returned JSON envelope has `status != "done"`, OR agent itself missing (`foundry:challenger` not installed):
 
 - Print: `⚠ Challenger review unavailable — proceeding without adversarial annotation. Manual review of adoption table recommended before E13 apply.`
-- Skip the per-row Verdict column and the **Discarded by challenger** section
-- Continue to E13 with the unannotated adoption table
-- Do NOT block the workflow — challenger is advisory, not gating
+- Skip per-row Verdict column and **Discarded by challenger** section
+- Continue to E13 with unannotated adoption table
+- Do NOT block workflow — challenger is advisory, not gating
 
 **E13: Gate — AskUserQuestion**
 
@@ -141,7 +141,7 @@ When install-as-is is NOT recommended, omit (b) and re-label to avoid gaps:
 **E14: Apply**
 
 - Option (a): reuse existing distill apply path — conflict pre-check + AskUserQuestion gate + Edit + git diff safety net (per Step L4). Limit edits to confirmed Group A targets only.
-- Option (b): print install command or path; do not apply automatically — plugin installation requires user action.
+- Option (b): print install command or path; don't apply automatically — plugin installation requires user action.
 
 **E15: Verify and report**
 
@@ -152,9 +152,9 @@ Print changed files. Run `git diff HEAD -- <files>` (`# timeout: 5000`), show ou
 Split changed file list from E14 into two groups; dispatch each to right reviewer (curator's NOT-for excludes hook/`.js` files):
 
 - **`.md` files** (agents, skills, rules, READMEs, modes/templates): spawn `foundry:curator`
-- **`.js` files** (hooks, helpers) and other code files (`.py`, `.ts`, `.sh`): spawn `foundry:sw-engineer` with the hook-authoring specialization
+- **`.js` files** (hooks, helpers) and other code files (`.py`, `.ts`, `.sh`): spawn `foundry:sw-engineer` with hook-authoring specialization
 
-Substitute `$EXT_RUN_DIR` with its computed path from `EXT_RUN_DIR=` block above. Issue both spawns in a single response when both groups non-empty (parallel review):
+Substitute `$EXT_RUN_DIR` with computed path from `EXT_RUN_DIR=` block above. Issue both spawns in one response when both groups non-empty (parallel review):
 
 ```text
 # .md files only
@@ -164,4 +164,4 @@ Agent(subagent_type="foundry:curator", prompt="Review Claude config files modifi
 Agent(subagent_type="foundry:sw-engineer", prompt="Apply the <hook-authoring> specialization from your agent definition. Review code files modified by /distill external mode: <list .js/.py/.ts/.sh files changed in E14>. Check: (1) file-header block present (PURPOSE, HOW IT WORKS, EXIT CODES); (2) exit-code semantics correct; (3) stdin pattern uses event-based accumulation; (4) subprocess calls use execFileSync/spawnSync with args array — no shell-string injection; (5) no unhandled exceptions escape. Write your full findings to ${EXT_RUN_DIR}/sw-engineer-external-review.md using the Write tool. Return ONLY: {\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"${EXT_RUN_DIR}/sw-engineer-external-review.md\",\"issues\":N,\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
-If critical findings returned by either reviewer: surface to user before marking complete. Non-critical findings: advisory only.
+Critical findings returned by either reviewer: surface to user before marking complete. Non-critical findings: advisory only.

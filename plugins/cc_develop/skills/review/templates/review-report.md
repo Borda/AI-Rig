@@ -23,13 +23,12 @@ Path:         → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
 ### Architecture & Quality
 
 - [sw-engineer findings]
-- [blocking] marked explicit
-- [nit] marked explicit
+- [blocking], [nit] marked explicit
 
 ### Test Coverage Gaps
 
 - [qa-specialist findings — top 5 missing tests]
-- ML code: non-determinism or missing seed issues
+- ML code: non-determinism, missing seed issues
 
 ### Performance Concerns
 
@@ -39,7 +38,7 @@ Path:         → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
 ### Documentation Gaps
 
 - [doc-scribe findings]
-- Public API without docstrings listed explicit
+- Public API without docstrings, listed explicit
 
 ### Static Analysis
 
@@ -61,8 +60,8 @@ Path:         → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
 
 (omit if Codex unavailable or no unique findings)
 
-- [unique findings from codex.md not already in agent sections]
-- Duplicate findings (same location as agent finding): omitted — see agent section
+- [unique findings from codex.md, not already in agent sections]
+- Duplicates (same location as agent finding): omitted — see agent section
 
 ### Recommended Next Steps
 

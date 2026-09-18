@@ -8,11 +8,11 @@ Triggered when `$ARGUMENTS == "memory"`. Read accumulated lessons and feedback, 
 
 Find and read all source material in parallel:
 
-Use Read tool on `.notes/lessons.md` (skip if file not found). Enumerate all project memory directories:
+Use Read tool on `.notes/lessons.md` (skip if not found). Enumerate all project memory directories:
 
 ```bash
 # timeout: 5000
-# Use -print0/read -d '' to handle spaces in paths
+# -print0/read -d '' handles spaces in paths
 while IFS= read -r -d '' d; do
     slug=$(echo "$d" | sed 's|.*/projects/||;s|/memory$||')
     fb_count=$(find "$d" -maxdepth 1 -name "feedback_*.md" 2>/dev/null | wc -l | tr -d ' ')
@@ -22,7 +22,7 @@ while IFS= read -r -d '' d; do
 done < <(find "$HOME/.claude/projects" -maxdepth 3 -name "memory" -type d -print0 2>/dev/null | sort -z)
 ```
 
-**If `PROJECT_FLAG == true`** (check model context from SKILL.md bash output): call `AskUserQuestion` with `multiSelect: true`. Build options from `MEM_DIR:` lines — label = `<slug> (tokens=<N>k)`, description = `<M> feedback files`. Max 4 options: if more than 4 projects found, take 4 largest by token count and note in question text that remaining projects omitted. Always add final option label `Skip`, description `exit without changes`. Checked slugs → extract matching directory paths as working set.
+**If `PROJECT_FLAG == true`** (check model context from SKILL.md bash output): call `AskUserQuestion` with `multiSelect: true`. Build options from `MEM_DIR:` lines — label = `<slug> (tokens=<N>k)`, description = `<M> feedback files`. Max 4 options: more than 4 projects found, take 4 largest by token count, note in question text that remaining projects omitted. Always add final option label `Skip`, description `exit without changes`. Checked slugs: extract matching directory paths as working set.
 
 **If `PROJECT_FLAG == false`**: use all directories from `MEM_DIR:` lines.
 
@@ -56,13 +56,13 @@ If `PROJ_ROOT` resolved (≠ `not_found`):
 - Run `git -C "$PROJ_ROOT" log --oneline -15 2>/dev/null` — recent work context
 - Use Glob (pattern `todo_*.md`, path `$PROJ_ROOT/.plans/active/`) and read found files
 
-Label collected context as `[Project grounding: <slug>]` and pass alongside feedback to Step L2.
+Label collected context as `[Project grounding: <slug>]`, pass alongside feedback to Step L2.
 
 If `PROJ_ROOT` not resolved: note `[Project grounding: <slug> — path not resolved]` in L2; treat ambiguous feedback for that project as `→ too narrow` unless evidence in feedback files themselves strong.
 
 ## Step L2: Cluster and classify
 
-**Scope check**: if material collected in Step L1 contains no lesson/feedback-shaped entries (no `.notes/lessons.md` findings, no `feedback_*.md` content resembling a correction, confirmation, or recurring pattern), report zero clusters and stop — do not force a disposition (e.g. `→ too narrow`) onto non-lesson input.
+**Scope check**: material collected in Step L1 contains no lesson/feedback-shaped entries (no `.notes/lessons.md` findings, no `feedback_*.md` content resembling a correction, confirmation, or recurring pattern): report zero clusters, stop — don't force a disposition (e.g. `→ too narrow`) onto non-lesson input.
 
 Group all lessons/feedback entries by domain. Use model reasoning to identify clusters of related items:
 
@@ -88,11 +88,11 @@ Thresholds:
 
 - **`→ rule`**: 2+ distinct lessons on same topic, or single lesson applying across ≥3 agents/skills
 - **`→ agent/skill update`**: lesson applies specifically to one file's behavior and not yet there
-- **`→ already covered`**: exact principle including scope already in target file — mark and skip. Before marking, verify scope matches: same terminology does not imply same scope. If lesson adds conditions not in existing rule (new agent population, new trigger context, new edge case), classify as `→ rule` or `→ agent/skill update` instead.
+- **`→ already covered`**: exact principle including scope already in target file — mark, skip. Before marking, verify scope matches: same terminology doesn't imply same scope. Lesson adds conditions not in existing rule (new agent population, new trigger context, new edge case): classify as `→ rule` or `→ agent/skill update` instead.
 
-**Duplicate detection**: Before finalizing proposals, scan all lessons for identical insights expressed with different wording. When two or more lessons reduce to same principle, consolidate into one entry — do not propose separate changes for duplicate lessons. Flag consolidation explicitly in proposals table.
+**Duplicate detection**: before finalizing proposals, scan all lessons for identical insights expressed with different wording. Two or more lessons reduce to same principle: consolidate into one entry — don't propose separate changes for duplicate lessons. Flag consolidation explicitly in proposals table.
 
-**Contradiction detection**: If two lessons make mutually exclusive claims about same topic, flag both with ⚠ CONTRADICTION and do not classify either as → rule or → agent/skill update. Surface to user for resolution.
+**Contradiction detection**: two lessons make mutually exclusive claims about same topic: flag both with ⚠ CONTRADICTION, don't classify either as → rule or → agent/skill update. Surface to user for resolution.
 
 ## Step L3: Generate proposals
 
@@ -150,7 +150,7 @@ Produce structured proposal table. Do not apply anything yet — report first.
 - L5: [lesson] → one-off, not generalizable
 ````
 
-**Agent/skill name verification**: For each → agent update and → skill update row, verify: (1) proposed target file/agent name matches the lesson content — if lesson mentions foundry:qa-specialist, target must be qa-specialist.md, not a different agent; (2) agent name is plugin-prefixed and exists in the roster from Step 1.
+**Agent/skill name verification**: for each → agent update and → skill update row, verify: (1) proposed target file/agent name matches lesson content — lesson mentions foundry:qa-specialist, target must be qa-specialist.md, not a different agent; (2) agent name is plugin-prefixed, exists in roster from Step 1.
 
 ## Step L4: Apply (with confirmation)
 
@@ -164,7 +164,7 @@ echo "RUN_DIR=$RUN_DIR"  # bash vars don't persist; read from stdout
 **Conflict pre-check** — before presenting question, run in parallel for every `→ rule` and `→ agent/skill update` proposal:
 
 1. **Existing content grep**: use Grep to search target file (if already exists) for section heading or key phrase delta would insert near. Hit = potential collision with existing content.
-2. **Cross-proposal collision**: if two proposals both target same file and same section heading, mark both ⚠ CONFLICT.
+2. **Cross-proposal collision**: two proposals both target same file and same section heading: mark both ⚠ CONFLICT.
 
 Annotate each conflicting proposal row with ⚠. If conflicts found, print above question:
 
@@ -182,7 +182,7 @@ Print (annotated) proposal table. Then call `AskUserQuestion` tool — do NOT wr
 - (b) label: `Review first` — description: show diff of each proposed change before writing
 - (c) label: `Skip` — description: discard proposals and exit without changes
 
-If user selects (a), apply changes:
+User selects (a), apply changes:
 
 - **New rule files**: Write tool to create `.claude/rules/<name>.md` with drafted content
 - **Agent updates**: Edit tool to insert new instruction into appropriate section of agent file
@@ -209,13 +209,13 @@ Applied N changes — <date>
 git diff HEAD -- <space-separated list of changed files>  # timeout: 5000
 ```
 
-Print diff. If anything unexpected appears, revert individual files before proceeding: `git checkout HEAD -- <file>`. Final safety net — changes recoverable until committed.
+Print diff. Anything unexpected appears: revert individual files before proceeding, `git checkout HEAD -- <file>`. Final safety net — changes recoverable until committed.
 
-**Quality gate**: After edits in L4, proceed to L5 (`foundry:curator` review) before considering the lesson applied. For agent or skill file edits specifically (not rule files), treat L5 curator findings as advisory — address any structural issues found before finalizing.
+**Quality gate**: after edits in L4, proceed to L5 (`foundry:curator` review) before considering lesson applied. For agent or skill file edits specifically (not rule files), treat L5 curator findings as advisory — address any structural issues found before finalizing.
 
 ## Step L5: curator review
 
-After applying changes, dispatch curator to audit created and modified config files. Substitute `$RUN_DIR` with the value printed by the Step L4 `RUN_DIR=` bash block above before issuing the Agent call — spawned agents receive text, not shell context (same pattern as `external.md`'s `$EXT_RUN_DIR` substitution note):
+After applying changes, dispatch curator to audit created and modified config files. Substitute `$RUN_DIR` with value printed by Step L4 `RUN_DIR=` bash block above before issuing Agent call — spawned agents receive text, not shell context (same pattern as `external.md`'s `$EXT_RUN_DIR` substitution note):
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -223,6 +223,6 @@ After applying changes, dispatch curator to audit created and modified config fi
 Agent(subagent_type="foundry:curator", prompt="Review the following Claude config files just created or modified by /distill:memory: <list new rule files and updated agent/skill files from Step L4>. Check: (1) quality — rules are concrete, not vague; (2) duplication — no overlap with existing files; (3) NOT-for boundary clarity; (4) structural consistency. Write your full findings to <RUN_DIR>/curator-review.md using the Write tool. Return ONLY a compact JSON envelope: {\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"file\":\"<RUN_DIR>/curator-review.md\",\"issues\":N,\"confidence\":0.N,\"summary\":\"<one-line>\"}")
 ```
 
-Surface curator findings as advisory block in terminal output. Do not block on curator findings — quality recommendations, not release gates.
+Surface curator findings as advisory block in terminal output. Don't block on curator findings — quality recommendations, not release gates.
 
 End response with `## Confidence` block per CLAUDE.md output standards.

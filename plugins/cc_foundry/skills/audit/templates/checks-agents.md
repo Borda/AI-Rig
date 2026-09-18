@@ -30,7 +30,7 @@ Use model reasoning. Classify each agent by tier from `<role>`, `description`, w
 - `plan-gated` + `sonnet` → **high**
 - `focused-execution` + `haiku` → **not a finding**
 
-**Important**: CLAUDE.md `## Agent Teams` specifies models for team-mode spawn — NOT mandate for agent frontmatter. Don't flag frontmatter models as violations for differing from CLAUDE.md team-mode spec.
+**Important**: CLAUDE.md `## Agent Teams` specifies models for team-mode spawn — NOT a mandate for agent frontmatter. Don't flag frontmatter models as violations for differing from CLAUDE.md team-mode spec.
 
 **Report only** — never auto-fix. Model assignments may be intentional trade-offs.
 
@@ -51,11 +51,11 @@ done
 
 ### Apply model reasoning:
 
-**20a — Overlap analysis**: Per agent pair, assess domain overlap. Flag pairs where descriptions don't disambiguate → **medium** per ambiguous pair.
+**20a — Overlap analysis**: per agent pair, assess domain overlap. Flag pairs where descriptions don't disambiguate → **medium** per ambiguous pair.
 
-**20b — NOT-for clause coverage**: Per high-overlap pair from 20a, check at least one agent has "NOT for" exclusion referencing other or its domain. Missing disambiguation → **medium**.
+**20b — NOT-for clause coverage**: per high-overlap pair from 20a, check at least one agent has "NOT for" exclusion referencing other or its domain. Missing disambiguation → **medium**.
 
-**20c — Trigger phrase specificity**: Per agent, check description's first clause states exclusive domain. Vague opener → **low**.
+**20c — Trigger phrase specificity**: per agent, check description's first clause states exclusive domain. Vague opener → **low**.
 
 **20d — Keep / sharpen / merge-prune decision**: Per overlap pair from 20a, explicit roster judgment:
 

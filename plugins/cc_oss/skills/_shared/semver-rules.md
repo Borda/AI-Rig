@@ -2,19 +2,19 @@
 
 ## What counts as a breaking change
 
-**Breaking change** = public-facing behavior worked before → fails or behaves differently now → without prior warning, deprecation notice, argument forwarding shim, or migration path offered in earlier release.
+**Breaking change** = public-facing behavior that worked before now fails or behaves differently, without prior warning, deprecation notice, argument forwarding shim, or migration path offered in an earlier release.
 
-Corollary: API deprecated in prior release (with warning + forwarding shim) and now removed = **✗ Removed**, not breaking change. Breaking change always a surprise; removal after proper deprecation is not.
+Corollary: API deprecated in a prior release (with warning + forwarding shim) and now removed = **✗ Removed**, not breaking change. Breaking change is always a surprise; removal after proper deprecation is not.
 
 ## Breaking Change Escalation Protocol
 
-Every detected breaking change = **stop, call `AskUserQuestion`, confirm intent before proceeding**.
+Every detected breaking change: **stop, call `AskUserQuestion`, confirm intent before proceeding**.
 
 - State: what worked before, what will break, why change needed
 - User must explicitly confirm "yes, intentional" — prose question in response body does NOT count (see `communication.md`)
 - Never batch-approve multiple breaking changes in one question unless they are logically one atomic change
-- Never proceed past breaking change silently even if reason seems obvious
-- Rule applies to all agents/skills reading this file: shepherd (PR review, release prep), plan (risk identification), fix (applying fix), audit (flagging `! BREAKING` findings)
+- Never proceed past a breaking change silently even if reason seems obvious
+- Applies to all agents/skills reading this file: shepherd (PR review, release prep), plan (risk identification), fix (applying fix), audit (flagging `! BREAKING` findings)
 
 ## MAJOR (X.0.0) — breaking changes (surprise incompatibilities)
 
@@ -41,7 +41,7 @@ Every detected breaking change = **stop, call `AskUserQuestion`, confirm intent 
 
 ## Deprecation Discipline
 
-Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) (Borda's package) — handles warning emission, argument forwarding, "warn once" behavior. Read latest docs on PyPI for current API and examples.
+Use [pyDeprecate](https://pypi.org/project/pyDeprecate/) (Borda's package) — handles warning emission, argument forwarding, "warn once" behavior. Read latest PyPI docs for current API and examples.
 
 - **Deprecation lifecycle**: deprecate in minor → keep ≥1 minor cycle → remove in next major
 - **Also**: add `.. deprecated:: X.Y.Z` Sphinx directive in docstring so docs generators render deprecation notice

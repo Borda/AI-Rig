@@ -8,7 +8,7 @@ effort: low
 
 <objective>
 
-Read `.cache/codemap/logs/` JSONL telemetry; analyze usage; write diagnostic report. Discover legacy flat shards + recursive `claude/`, `codex/`, `direct/` trees; keep legacy records unattributed. Codex hooks supply runtime-scoped CLI/tool shards, no skill-start events; missing skill telemetry and cross-layer joins remain evidence gaps.
+Read `.cache/codemap/logs/` JSONL telemetry; analyze usage; write diagnostic report. Discover legacy flat shards + recursive `claude/`, `codex/`, `direct/` trees; keep legacy records unattributed. Codex hooks supply runtime-scoped CLI/tool shards, no skill-start events; missing skill telemetry + cross-layer joins remain evidence gaps.
 
 NOT for: validating codemap installation health/integration (use `/codemap-py:integration audit`); building/querying structural index (use `/codemap-py:scan-codebase` or `/codemap-py:query-code`).
 
@@ -20,7 +20,7 @@ NOT for: validating codemap installation health/integration (use `/codemap-py:in
 
 - `--since <YYYY-MM-DD>` — filter to records on or after this date (default: all)
 - `--session <id>` — filter to a single session UUID
-- `--anonymize` — run `anonymize.py` on every log shard of all three layers (CLI, skill, tool) before reading; replaces qualified names with stable pseudonyms; keeps salt in `.cache/codemap/logs/.salt` (never included in output). Directory input preserves runtime topology below the export root and pseudonymizes shard session stems.
+- `--anonymize` — run `anonymize.py` on every log shard, all three layers (CLI, skill, tool), before reading; replaces qualified names with stable pseudonyms; keeps salt in `.cache/codemap/logs/.salt` (never in output). Directory input preserves runtime topology below export root, pseudonymizes shard session stems.
 - `--output <path>` — write report to this path (default: `.reports/codemap/debrief-<YYYY-MM-DD>.md`)
 
 ## Step 0: Verify logs exist
@@ -62,7 +62,7 @@ Read **every** returned path; concatenate before analysis. Single-file reads mis
 
 Each line = one JSON record. Filter `--since` against `ts`; filter `--session` when given.
 
-**`--session` guard**: when `--session <id>` given, session UUID may be absent from one or both log files (e.g., skills.jsonl records only skill events, not all CLI events). Filtering absent session ID returns empty set for that file — expected, not error. Report "session not found in <file>" rather than treating empty result as data loss.
+**`--session` guard**: session UUID may be absent from one or both log files (e.g. skills.jsonl records only skill events, not all CLI events). Filtering absent session ID returns empty set for that file — expected, not error. Report "session not found in <file>" rather than treating empty result as data loss.
 
 CLI record fields: `ts`, `layer`, `runtime`, `v`, `session`, `cmd`, `argv`, `result` (nested: `count`, `query_complete`, `completeness_reason`, `stale`, `method`, `not_covered`, `error`; index records also carry `trigger`, `changed_count`, `incremental`, `stale_before`, and `result_currency`), `timing_ms`, `stderr` (optional), `exit_code` (optional).
 

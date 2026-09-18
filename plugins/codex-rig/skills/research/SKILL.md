@@ -52,9 +52,9 @@ Source rules:
 - Prefer primary docs, papers, specs, release notes, code.
 - Use current live sources for volatile docs, dependencies, APIs.
 - Mark stale/unavailable source explicitly.
-- Do not cite secondary summaries for high-impact claims unless independently corroborated.
+- Never cite secondary summaries for high-impact claims unless independently corroborated.
 
-For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise do not load it. Write `<run-directory>/specialist-research-plan.md` with context packs for:
+For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../shared/specialist-orchestration.md` only when independent expertise improves correctness; otherwise never load it. Write `<run-directory>/specialist-research-plan.md` with context packs for:
 
 - `web-explorer`: current docs, release notes, API and dependency changes.
 - `scientist`: formulas, methodology, metrics, ablations, benchmark claims.
@@ -63,7 +63,7 @@ For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../sh
 - `data-steward`: datasets, splits, leakage, reproducibility.
 - `challenger`: unsupported recommendation or overconfident source synthesis.
 
-Do not send full papers, repositories, or all search results to every specialist. Give each only source excerpts, code files, questions needed for its axis.
+Never send full papers, repositories, or all search results to every specialist. Give each only source excerpts, code files, questions needed for its axis.
 
 ### 04: Map to codebase context when implementation is relevant
 
@@ -93,7 +93,7 @@ Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tre
 
 ### 07: Run review gate
 
-Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result.
+Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; never erase nonzero result.
 
 ### 08: Run shared gates and write the validated result artifact
 

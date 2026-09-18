@@ -23,8 +23,8 @@ TARGET_COL = "<grounded-target-column>"
 - Load the grounded training table or file index.
 - Display shape, head, dtypes, missing values, and appropriate descriptive statistics.
 - Confirm referenced files exist on a representative sample.
-- Fail fast on required resources — primary training table, file index, grounded target column: `assert not df_train.empty, "..."`. A competition guarantees these exist, so empty/missing here means the load itself is broken, not a state to print and roll past. Never `if df_train.empty: print("SKIP — ..."); ` and continue.
-- `if <resource> missing: ...` conditional-skip is valid **only** for optional resources — supplementary/external datasets, pretrained checkpoints, additional model storages — never for required ones. Even then, never skip silently: print what's missing and what section/analysis is skipped as a result.
+- Fail fast on required resources — primary training table, file index, grounded target column: `assert not df_train.empty, "..."`. A competition guarantees these exist, so empty/missing means the load is broken, not a state to print and roll past. Never `if df_train.empty: print("SKIP — ..."); ` and continue.
+- `if <resource> missing: ...` conditional-skip is valid **only** for optional resources — supplementary/external datasets, pretrained checkpoints, additional model storages — never for required ones. Even then, never skip silently: print what's missing and what section/analysis it skips.
 - Treat absent columns, duplicate identifiers, and unreadable samples explicitly (report the finding) — these are not competition-guaranteed and may legitimately vary.
 
 ### Target distribution

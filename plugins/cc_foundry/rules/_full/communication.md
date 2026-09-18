@@ -6,11 +6,11 @@ paths:
 
 ## Reply Visibility — Exemption Detail
 
-Box `╔═╗`/`╚═╝` zone creates header boundary. `▓▓▓` footer creates end boundary. Together they frame response against surrounding tool call output and hook logs. Unicode box-drawing only — no ANSI escape codes.
+Box `╔═╗`/`╚═╝` zone creates header boundary. `▓▓▓` footer creates end boundary. Together frame response against surrounding tool call output and hook logs. Unicode box-drawing only — no ANSI escape codes.
 
-**Exemption — machine-parsed responses**: omit box header and footer when response prompt contains `Return ONLY:` or `compact JSON envelope` — output parsed by parent orchestrator. Either keyword alone triggers exemption; both present also triggers it.
+**Exemption — machine-parsed responses**: omit box header and footer when response prompt contains `Return ONLY:` or `compact JSON envelope` — output parsed by parent orchestrator. Either keyword alone triggers exemption; both present also triggers.
 
-**Exemption — quality-gates report headers**: when reply leads with quality-gates `---` metadata block (skill's Output Routing report header — YAML between `---` delimiters converted to a two-column Markdown table per `quality-gates.md` Universal terminal-print rule, e.g. `/oss:review`, `/oss:resolve`, `/foundry:audit`, `/foundry:calibrate`), omit `╔═╗` box header — that table IS reply header and box would shadow it. Print the table as first block of reply; keep `▓` footer. Never emit both box header and metadata table in same reply.
+**Exemption — quality-gates report headers**: when reply leads with quality-gates `---` metadata block (skill's Output Routing report header — YAML between `---` delimiters converted to a two-column Markdown table per `quality-gates.md` Universal terminal-print rule, e.g. `/oss:review`, `/oss:resolve`, `/foundry:audit`, `/foundry:calibrate`), omit `╔═╗` box header — that table IS reply header, box would shadow it. Print the table as first block of reply; keep `▓` footer. Never emit both box header and metadata table in same reply.
 
 ## Artifact Framing — Format-Label Register Table
 
@@ -26,7 +26,7 @@ When format ambiguous, ask one question before writing.
 
 Labelled or annotated question (e.g. `[AskUserQuestion simulated] — What format?`) still plain text, still violates rule. Only actual tool invocation satisfies constraint.
 
-Describing, simulating, or annotating a tool call in any form — parenthetical ("AskUserQuestion would be invoked here"), bracket notation (`[Invoking AskUserQuestion: ...]`), or intent narration ("I would ask...") — is plain text and a violation. Call tool directly; emit no prose description of intent before or instead of call.
+Describing, simulating, or annotating a tool call in any form — parenthetical ("AskUserQuestion would be invoked here"), bracket notation (`[Invoking AskUserQuestion: ...]`), intent narration ("I would ask...") — is plain text, a violation. Call tool directly; emit no prose description of intent before or instead of the call.
 
 Compliant example — only valid form:
 
@@ -38,7 +38,7 @@ Compliant example — only valid form:
 
 ## Confidence Display — Full Specification
 
-For every `AskUserQuestion` multiple-choice call with a genuine model leaning: embed plain-text markers **inside each option's own `description` field** — never as a separate legend before the tool call. A standalone legend needs a label scheme (A/B/C or 1/2/3) mapped back to option order; that mapping silently breaks whenever the legend's item count or order drifts from the actual options (observed failure — legend keyed 3 letters against a 5-option call, no shared referent). Marker-in-description has no mapping step: reader sees the scores on the exact option they score.
+For every `AskUserQuestion` multiple-choice call with a genuine model leaning: embed plain-text markers **inside each option's own `description` field** — never as a separate legend before the tool call. A standalone legend needs a label scheme (A/B/C or 1/2/3) mapped back to option order; that mapping silently breaks whenever the legend's item count or order drifts from the actual options (observed failure — legend keyed 3 letters against a 5-option call, no shared referent). Marker-in-description skips the mapping step: reader sees the scores on the exact option they score.
 
 Format — two axes prefixed to `description`, `·` separator; `←` marks the recommended (highest-`fit`) option:
 
@@ -48,7 +48,7 @@ description: "fit: 55% · conf: 65% ← recommended — <rest of trade-off expla
 
 Rules:
 
-- **Plain text only** — `fit: N%` · `conf: N%`, exact integers, `·` separator. No emoji bar, no ANSI. (Emoji bars were dropped: hand-drawn glyphs malformed — stray digits like `🟩⬜⬜⬜⬜⬜2⬜`, coarse 20% buckets, width misalign per terminal. Plain numbers precise + unbreakable.)
+- **Plain text only** — `fit: N%` · `conf: N%`, exact integers, `·` separator. No emoji bar, no ANSI. (Emoji bars dropped: hand-drawn glyphs malformed — stray digits like `🟩⬜⬜⬜⬜⬜2⬜`, coarse 20% buckets, width misalign per terminal. Plain numbers precise + unbreakable.)
 - **Two distinct axes — never conflate**:
   - `fit: N%` = how well this option **addresses the problem** — comparative across options, spans them (need not sum to 100). Highest `fit` = the pick.
   - `conf: N%` = model's **self-confidence that its `fit` read is reliable** — epistemic, per-option, absolute (not comparative). Independent of fit: a high-`fit` pick may carry low `conf` when evidence is thin.

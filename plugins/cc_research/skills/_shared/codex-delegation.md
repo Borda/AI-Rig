@@ -5,7 +5,7 @@ Delegate only small, bounded tasks needing code read — not single-command task
 - **Complex linting**: ruff or mypy violations needing non-trivial code changes (not auto-fixable with `--fix`)
 - **Typing/mypy resolution**: type annotation fixes needing function contract understanding
 
-For each qualifying task, read target code, form an accurate self-contained brief, then use the installed bridge (requires `bridge@borda-ai-rig`):
+For each qualifying task: read target code, form accurate self-contained brief, then use the installed bridge (requires `bridge@borda-ai-rig`):
 
 ```text
 Skill(
@@ -14,7 +14,7 @@ Skill(
 )
 ```
 
-The bridge implementation writes direct to the working tree. Inspect via `git diff HEAD` after return. If the bridge is absent or disabled, report that status and continue without a legacy fallback.
+Bridge implementation writes direct to the working tree. Inspect via `git diff HEAD` after return. Bridge absent or disabled → report status, continue without a legacy fallback.
 
 **Don't delegate to Codex:**
 

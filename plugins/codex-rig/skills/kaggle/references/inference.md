@@ -20,7 +20,7 @@ Use test loader from training pipeline, move only inference outputs to CPU, reta
 
 ### Section 3: Load model
 
-Ground checkpoint path, format, model class, and required constructor arguments. Prefer importing `<competition>_model.py` emitted by training. If unavailable, define complete model class with verified imports rather than inventing API.
+Ground checkpoint path, format, model class, required constructor arguments. Prefer importing `<competition>_model.py` emitted by training. If unavailable, define complete model class with verified imports rather than inventing API.
 
 Choose loader by evidence:
 
@@ -29,7 +29,7 @@ Choose loader by evidence:
 - Serialized module: use `torch.load(..., map_location=DEVICE)` only when artifact is known to contain full trusted module.
 - Custom detector/MONAI model: verify installed constructor and checkpoint contract first.
 
-Fail clearly when no checkpoint matches; never index `sorted(...)[-1]` without empty-match guard. Set evaluation mode, move to selected device, and print model type, device, and parameter count.
+Fail clearly when no checkpoint matches; never index `sorted(...)[-1]` without empty-match guard. Set evaluation mode, move to selected device, print model type, device, parameter count.
 
 ### Section 4: Test data
 
@@ -40,7 +40,7 @@ Build label-free test Dataset/DataLoader or grounded modality equivalent:
 - set `shuffle=False`;
 - assert batch shape and dtype;
 - print sample and batch counts;
-- assert non-empty test data before constructing or iterating loader; do not use conditional empty-data branch.
+- assert non-empty test data before constructing or iterating loader; never use conditional empty-data branch.
 
 Detection may use single-image iteration when required by verified predictor API. Volumetric pipelines must preserve original shape metadata for output restoration.
 
@@ -69,4 +69,4 @@ Keep parameters in just-in-time config cell. Define helpers immediately before u
 
 ## Inference lens
 
-Assert prediction sample is available, then show it; print prediction/ID counts and shapes, check NaN/Inf and range constraints, and compare attached in-memory versus reloaded path when both exist. Do not make required lens conditional.
+Assert prediction sample available, then show it; print prediction/ID counts and shapes, check NaN/Inf and range constraints, compare attached in-memory versus reloaded path when both exist. Never make required lens conditional.

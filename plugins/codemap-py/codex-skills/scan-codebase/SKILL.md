@@ -7,7 +7,7 @@ description: '`$codemap-py:scan-codebase [flags]` only: Python index; never auto
 
 # Scan Codebase
 
-Python only: `ast.parse` records imports plus classes/functions/methods and line ranges for every `.py`; non-Python files are excluded. Writes `.cache/codemap/<project>.json` without external dependencies. A zero-Python project writes a valid empty index; downstream queries return no results. Symbol data lets `$codemap-py:query-code symbol`/`find-symbol` return target source instead of full-file reads (~70–94% fewer `Read` tokens).
+Python only: `ast.parse` records imports plus classes/functions/methods and line ranges for every `.py`; non-Python files excluded. Writes `.cache/codemap/<project>.json`, no external dependencies. A zero-Python project writes a valid empty index; downstream queries return no results. Symbol data lets `$codemap-py:query-code symbol`/`find-symbol` return target source instead of full-file reads (~70–94% fewer `Read` tokens).
 
 NOT for: existing-index query (use `$codemap-py:query-code`); integration health (use `$codemap-py:integration`).
 
@@ -15,7 +15,7 @@ NOT for: existing-index query (use `$codemap-py:query-code`); integration health
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed root once, replace `PLUGIN_ROOT` literally in commands, and retain it in reasoning; shell state does not persist.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, replace `PLUGIN_ROOT` literally in commands, retain in reasoning; shell state doesn't persist.
 
 ## Workflow
 
@@ -27,7 +27,7 @@ Parse only `--root <path>` and `--incremental`. For any other `--` token, report
 PLUGIN_ROOT/bin/codemap-py index [--root <path>] [--incremental]
 ```
 
-On Windows use `PLUGIN_ROOT\bin\codemap-py.cmd index ...`. `--root` names the index from `basename(<path>)`, unlike the default git-root basename. After a custom-root scan, retain the exact path printed by the scanner as `<emitted-index-path>`; a later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only and does not select the index. The scanner writes `<root>/.cache/codemap/<project>.json` (or `$CODEMAP_INDEX_DIR/<project>.json`) and prints indexed/degraded counts. On non-zero exit, report it and stop; do not retry silently (`1` index/filesystem failure, `2` syntax).
+On Windows use `PLUGIN_ROOT\bin\codemap-py.cmd index ...`. `--root` names index from `basename(<path>)`, unlike default git-root basename. After a custom-root scan, retain exact path printed by scanner as `<emitted-index-path>`; later query must use `--index <emitted-index-path> --root <same-root>`. `--root` is path resolution only, doesn't select the index. Scanner writes `<root>/.cache/codemap/<project>.json` (or `$CODEMAP_INDEX_DIR/<project>.json`), prints indexed/degraded counts. On non-zero exit, report it and stop; never retry silently (`1` index/filesystem failure, `2` syntax).
 
 ### 2. Report
 

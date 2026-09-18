@@ -2,7 +2,7 @@
 
 # J3 review prompt templates
 
-Loaded once at J3 start via `cat "$_RESEARCH_SHARED/judge-j3-prompts.md"`; supplies both templates. Expand `${PROGRAM_PATH}` and `${RUN_DIR}` to concrete values before passing to `Agent(...)` — see substitution requirement, judge/SKILL.md. When the complexity gate fires, both templates go into ONE merged `research:scientist` spawn (arch first, then sci, separated by `---`) — per-dimension output files and Confidence blocks stay exactly as each template specifies. Assembling that merged prompt has one rule that is easy to miss: drop each template's own `Return ONLY:` line and close with the combined array instruction in § Merged spawn — envelope override below.
+Loaded once at J3 start via `cat "$_RESEARCH_SHARED/judge-j3-prompts.md"`; supplies both templates. Expand `${PROGRAM_PATH}` and `${RUN_DIR}` to concrete values before passing to `Agent(...)` — see substitution requirement, judge/SKILL.md. When the complexity gate fires, both templates go into ONE merged `research:scientist` spawn (arch first, then sci, separated by `---`) — per-dimension output files and Confidence blocks stay exactly as each template specifies. Assembling that merged prompt has one easy-to-miss rule: drop each template's own `Return ONLY:` line, close with the combined array instruction in § Merged spawn — envelope override below.
 
 ## J3_ARCH_PROMPT (foundry:solution-architect)
 
@@ -15,7 +15,7 @@ Also read the codebase (Glob **/*.py, **/*.ts, **/*.js at project root, limit 50
 
 Review the experimental protocol across seven dimensions:
 
-1. **Hypothesis clarity**: Is the `## Goal` a clear, testable hypothesis? Can you tell what constitutes success vs failure? Vague goals produce unfocused experiments — flag if the hypothesis is ambiguous.
+1. **Hypothesis clarity**: Is `## Goal` a clear, testable hypothesis? Can you tell what constitutes success vs failure? Vague goals produce unfocused experiments — flag if ambiguous.
 2. **Measurement validity**: Does `<metric_cmd>` correctly operationalize the hypothesis? Does it measure what the goal actually intends? Could the metric move in the right direction while the underlying goal is NOT achieved (Goodhart's Law)? Could noise dominate signal at the expected delta scale? **Goodhart's Law is a verdict-level issue** — if this metric could improve while the actual goal is NOT achieved, rate `methodology_rating` as `fundamentally-flawed`, not `needs-refinement`.
 3. **Control adequacy**: Does `<guard_cmd>` serve as a valid control condition? Does it catch regressions that an ideation agent could inadvertently introduce? Is it too strict (would block valid improvements) or too permissive (would miss real breakage)? **Exit-code check**: verify that the guard command's exit code actually depends on test outcomes. Commands using awk with print (not exit), grep -c piped to a shell ignoring the count, or other patterns where exit code is always 0 = critical guard flaw regardless of semantic intent. Flag as critical, not medium.
 4. **Experimental scope**: Do the `scope_files` define a coherent experimental boundary? Are there known dependencies outside scope that could confound results? Is the scope too broad (unfocused changes) or too narrow (the real lever is outside scope)?
@@ -52,7 +52,7 @@ Return ONLY: {"status":"done","scientific_rating":"sound|needs-refinement|fundam
 
 ## Merged spawn — envelope override
 
-Each template above ends with its own single-object `Return ONLY:` line, written for the case where that template is the whole prompt. Concatenating the two would hand one agent two contradictory final-line contracts, and it would return one object instead of two. So when both dimensions go into one spawn, build the prompt as: J3_ARCH_PROMPT **with its `Return ONLY:` line removed**, then `---`, then J3_SCI_PROMPT **with its `Return ONLY:` line removed**, then this single closing instruction:
+Each template above ends with its own single-object `Return ONLY:` line, written for the case where that template is the whole prompt. Concatenating both would hand one agent two contradictory final-line contracts and return one object instead of two. So when both dimensions go into one spawn, build the prompt as: J3_ARCH_PROMPT **with its `Return ONLY:` line removed**, then `---`, then J3_SCI_PROMPT **with its `Return ONLY:` line removed**, then this single closing instruction:
 
 ```markdown
 ---

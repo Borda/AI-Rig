@@ -1,14 +1,14 @@
 # Preflight Helpers
 
-Shared preflight protocols for develop skills. Read + run relevant section(s) based on active flags.
+Shared preflight protocols for develop skills. Read + run relevant section(s) per active flags.
 
 ## Codemap + Semble Preflight
 
-Run when `SEMBLE_ENABLED=true`. Codemap availability already validated by `codemap_resolve.py` in flag-parsing phase — no additional check needed when `CODEMAP_ENABLED=true`.
+Run when `SEMBLE_ENABLED=true`. Codemap availability already validated by `codemap_resolve.py` in flag-parsing phase — no extra check needed when `CODEMAP_ENABLED=true`.
 
-**If `CODEMAP_ENABLED=true`**: no-op — `codemap_resolve.py` confirmed `codemap-py query` on PATH and index present before setting `CODEMAP_ENABLED=true`.
+**If `CODEMAP_ENABLED=true`**: no-op — `codemap_resolve.py` confirmed `codemap-py query` on PATH, index present before setting `CODEMAP_ENABLED=true`.
 
-**If `SEMBLE_ENABLED=true`**: verify `mcp__semble__search` in available tools. If not: print `! --semble requested but semble MCP server not configured. Configure: claude mcp add semble -s user -- uvx --from "semble[mcp]" semble` and stop.
+**If `SEMBLE_ENABLED=true`**: verify `mcp__semble__search` in available tools. Else: print `! --semble requested but semble MCP server not configured. Configure: claude mcp add semble -s user -- uvx --from "semble[mcp]" semble` and stop.
 
 ## --plan Path Extraction
 
@@ -31,7 +31,7 @@ echo "$PLAN_FILE" > "${TMPDIR:-/tmp}/dev-plan-file-${CSID}"
 
 Spawn prompt template for foundry:sw-engineer teammate spawns. Replace `[ROLE_PHRASE]` and `[FILE_SLUG]` with skill-specific values before inserting.
 
-Output filenames are per-skill contracts — the consumer skill's spawn prompts and monitor/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern in the template below — feature's Wave-1 gate and each monitor glob key on these exact names:
+Output filenames are per-skill contracts — the consumer skill's spawn prompts and monitor/gate expressions are the source of truth; this table mirrors them. Never invent a different shape from the generic `[FILE_SLUG]-[N]-[timestamp]` pattern below — feature's Wave-1 gate and each monitor glob key on these exact names:
 
 | skill | `[ROLE_PHRASE]` | output file(s) |
 | -- | -- | -- |

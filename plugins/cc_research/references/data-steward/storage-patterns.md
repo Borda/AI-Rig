@@ -60,9 +60,8 @@ Key considerations, volumetric data:
 
   import h5py
 
-  # 'w' TRUNCATES any existing file — use 'a' to add without destroying content.
-  # NEVER open 'w' while any reader (DataLoader worker, debug session) is open —
-  # concurrent 'w' corrupts active reads.
+  # 'w' TRUNCATES existing file — use 'a' to append. NEVER open 'w' while any reader
+  # (DataLoader worker, debug session) is open — concurrent 'w' corrupts active reads.
   with h5py.File("data.h5", "w") as f:
       # Align chunk size to patch size (e.g. 64x64x64) for minimal partial reads
       f.create_dataset("volumes", shape=(N, D, H, W), chunks=(1, 64, 64, 64), dtype="float32")

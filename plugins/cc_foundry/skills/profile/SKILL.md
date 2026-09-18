@@ -21,7 +21,7 @@ Bucket session **clock time** from `~/.claude/logs/{timings,invocations}.jsonl` 
 
 6. **Sessions ranked by cost** (window mode) — main $ vs subagent $ vs total $ per session, plus a per-command rollup; or **one session's deep-dive** (`--session-id`) — cost by main/sidechain × model tier, agent roster, top cache-rebuild calls, cold-start share
 
-Outputs a markdown report at `.reports/profile/<UTC-timestamp>/report.md` plus a `.temp/output-profile-...md` copy: per-session clock table, per-skill clock rollup, top-N longest single calls, plus a `## Tokens & cost` section scoped to the same window / `--session-id`.
+Outputs a markdown report at `.reports/profile/<UTC-timestamp>/report.md` plus a `.temp/output-profile-...md` copy: per-session clock table, per-skill clock rollup, top-N longest single calls, plus a `## Tokens & cost` section scoped to same window / `--session-id`.
 
 NOT for: per-line Python perf (use `foundry:perf-optimizer`); known failure diagnosis (use `/foundry:investigate`); a real billing statement (prices are public list rates, not effective plan rates).
 
@@ -71,7 +71,7 @@ mkdir -p "$REPORT_DIR"
 } | tee "${TMPDIR:-/tmp}/foundry-profile-state-${CSID}"
 ```
 
-Values persisted to `${TMPDIR:-/tmp}/foundry-profile-state-${CSID}`; Steps 2–3 re-source it (bash state does not persist across Bash calls, and `REPORT_DIR` carries a per-shell timestamp that cannot be re-derived).
+Values persisted to `${TMPDIR:-/tmp}/foundry-profile-state-${CSID}`; Steps 2–3 re-source it (bash state doesn't persist across Bash calls, and `REPORT_DIR` carries a per-shell timestamp that can't be re-derived).
 
 ## Step 2: Run analyzers — clock time, then tokens/cost
 
@@ -89,7 +89,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/timing_analyzer.py" \
 echo "time_exit=$?"
 ```
 
-`OPT_SID` left unquoted so empty expands to nothing (no flag). Exit code 1 → no sessions in window — surface that and stop; nothing in Step 2b can rescue a missing clock report, since `enforce-profile-header.js` keys on `report.md` specifically.
+`OPT_SID` left unquoted so empty expands to nothing (no flag). Exit code 1: no sessions in window — surface that, stop; nothing in Step 2b can rescue a missing clock report, since `enforce-profile-header.js` keys on `report.md` specifically.
 
 ## Step 2b: Run analyzer — tokens/cost (best-effort, appended)
 
@@ -112,7 +112,7 @@ fi
 echo "cost_exit=$COST_EXIT"
 ```
 
-Separate data source (transcripts under `~/.claude/projects/**`, not `timings.jsonl`), separate script, same `--since`/`--session-id`/`--top-n` scoping. `cost_exit=1` means no transcripts fell in the window (or no match for `--session-id`) — that is not fatal: the clock report still ships without a `## Tokens & cost` section. The two analyzers never share a report path write; only `report.md` is append-target and only after `cost_exit=0`, so a cost-side failure cannot corrupt or block the clock report.
+Separate data source (transcripts under `~/.claude/projects/**`, not `timings.jsonl`), separate script, same `--since`/`--session-id`/`--top-n` scoping. `cost_exit=1` means no transcripts fell in window (or no match for `--session-id`) — not fatal: clock report still ships without a `## Tokens & cost` section. The two analyzers never share a report path write; only `report.md` is append-target, only after `cost_exit=0`, so a cost-side failure can't corrupt or block the clock report.
 
 ## Step 3: Mark run complete
 
@@ -125,7 +125,7 @@ echo '{"status":"complete","since":"'"$SINCE"'","session_id":"'"$SESSION_ID"'","
 
 ## Step 4: Emit terminal output
 
-Read YAML header from `$REPORT_DIR/report.md` (first block between `---` lines) and render as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block. Then print `→ $REPORT_DIR/report.md`. Then read Headline split block plus top 3 sessions from per-session table, and — when a `## Tokens & cost` section is present — the window total or single-session total cost line, and surface both as executive summary (per quality-gates.md output routing).
+Read YAML header from `$REPORT_DIR/report.md` (first block between `---` lines), render as two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print raw `---`-delimited block. Then print `→ $REPORT_DIR/report.md`. Then read Headline split block plus top 3 sessions from per-session table, and — when a `## Tokens & cost` section is present — window total or single-session total cost line, surface both as executive summary (per quality-gates.md output routing).
 
 Also Write the long-output dump per quality-gates rule:
 
@@ -135,7 +135,7 @@ Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full r
 
 Where `<branch>` = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`.
 
-Backed structurally by `hooks/enforce-profile-header.js`: while the Step 1 state file is live and `$REPORT_DIR/report.md` is absent, Step 5's `AskUserQuestion` is denied, so the gate can never be reached from an ad-hoc in-context summary.
+Backed structurally by `hooks/enforce-profile-header.js`: while Step 1 state file is live and `$REPORT_DIR/report.md` is absent, Step 5's `AskUserQuestion` is denied, so the gate can never be reached from an ad-hoc in-context summary.
 
 ## Step 5: Follow-up gate
 
@@ -151,13 +151,13 @@ Invoke `AskUserQuestion` (denied by `enforce-profile-header.js` until Step 2 has
 
 - **Scope vs `/foundry:investigate`**: investigate diagnoses failures; profile measures wall time when things ran fine but slow.
 - **Scope vs `foundry:perf-optimizer`**: perf-optimizer profiles Python/ML code (CPU/GPU/IO); profile measures Claude Code session wall time.
-- **No model split on the clock side**: timings.jsonl `model` field is 100% null in the current task-log.js payload — the clock report does not break down by model tier. Documented in report Confidence Gaps. The `## Tokens & cost` section *does* break down by tier, but from a different data source (transcripts, not timings.jsonl) — the two never merge into one table.
-- **Subagent internals invisible to the clock side**: `timings.jsonl`'s hook fires only in the main Claude Code process; subagent internal tool calls do NOT hit it, so the reasoning bucket underestimates when subagent spawns dominate. The cost side does not have this gap — it reads each session's `subagents/agent-*.jsonl` transcripts directly, so subagent token spend is included, not inferred.
-- **Background agent join**: rows with `duration_ms < 1s` (a spawn-only row — every `Agent()` returns at dispatch) are matched against invocations.jsonl `started→completed` pairs by `(agent, desc)` substring within ±60s window. Concurrent same-type spawns may mispair.
-- **Bash clip**: any `duration_ms > 1h` for `tool=Bash` is clipped at 3,600,000 ms to avoid runaway-shell pollution; clip count surfaced in legend.
-- **Cost window filtering**: `cost_analyzer.py` uses each transcript's own row `timestamp` field for the `--since` cutoff (file mtime is only a cheap pre-filter to skip old files before parsing them), so the window is as accurate as the clock side's.
-- **Prices are public list rates**: `## Tokens & cost` dollar figures are proportional truth (useful for ranking and comparing), not a billing statement — effective plan rates may differ. Per-command `session $` also attributes a session's whole cost to every command it ran, so that column ranks, never sums.
-- **Cost section is best-effort**: if `cost_analyzer.py` finds no transcripts in the window (or no match for `--session-id`), it exits 1 and the `## Tokens & cost` section is simply omitted — the clock report still ships.
+- **No model split on clock side**: timings.jsonl `model` field is 100% null in current task-log.js payload — clock report doesn't break down by model tier. Documented in report Confidence Gaps. `## Tokens & cost` section *does* break down by tier, but from a different data source (transcripts, not timings.jsonl) — the two never merge into one table.
+- **Subagent internals invisible to clock side**: `timings.jsonl`'s hook fires only in main Claude Code process; subagent internal tool calls do NOT hit it, so reasoning bucket underestimates when subagent spawns dominate. Cost side lacks this gap — reads each session's `subagents/agent-*.jsonl` transcripts directly, so subagent token spend is included, not inferred.
+- **Background agent join**: rows with `duration_ms < 1s` (a spawn-only row — every `Agent()` returns at dispatch) matched against invocations.jsonl `started→completed` pairs by `(agent, desc)` substring within ±60s window. Concurrent same-type spawns may mispair.
+- **Bash clip**: any `duration_ms > 1h` for `tool=Bash` clipped at 3,600,000 ms to avoid runaway-shell pollution; clip count surfaced in legend.
+- **Cost window filtering**: `cost_analyzer.py` uses each transcript's own row `timestamp` field for `--since` cutoff (file mtime is only a cheap pre-filter to skip old files before parsing them), so window is as accurate as clock side's.
+- **Prices are public list rates**: `## Tokens & cost` dollar figures are proportional truth (useful for ranking, comparing), not a billing statement — effective plan rates may differ. Per-command `session $` also attributes a session's whole cost to every command it ran, so that column ranks, never sums.
+- **Cost section is best-effort**: `cost_analyzer.py` finds no transcripts in window (or no match for `--session-id`): exits 1, `## Tokens & cost` section simply omitted — clock report still ships.
 - **Read-only**: skill never edits source files. No commits, no pushes.
 
 </notes>

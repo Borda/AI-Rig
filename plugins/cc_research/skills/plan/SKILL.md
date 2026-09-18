@@ -65,8 +65,8 @@ Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, t
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
-# CLEAN_ARGS has flags and --keep "<items>" removed; the sed pair still strips the user's own
-# wrapping quotes, which no flag parser touches
+# CLEAN_ARGS has flags and --keep "<items>" removed; sed pair still strips user's own
+# wrapping quotes — no flag parser touches those
 _STRIPPED=$(echo "$CLEAN_ARGS" | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')  # timeout: 5000
 NONFLAG_TOKEN_COUNT=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | wc -l | tr -d ' ')  # timeout: 5000
 FILE_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | head -1)  # timeout: 5000
@@ -102,7 +102,7 @@ if [ $PROFILE_EXIT -ne 0 ]; then
 else
     PROFILE_AVAILABLE=true
     head -40 "$CPROFILE_OUT"  # timeout: 5000
-    # wall-clock number comes from cProfile's own header ("N function calls in X.XXX seconds") — label it "(measured under profiler)"; a second bare `time python` run costs up to 10 min for a number the run skill re-measures via metric_cmd anyway
+    # wall-clock number comes from cProfile's own header ("N function calls in X.XXX seconds") — label it "(measured under profiler)"; second bare `time python` run costs up to 10 min for number run skill re-measures via metric_cmd anyway
 fi
 ```
 
@@ -175,11 +175,11 @@ PLAN_RUN_DIR=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/make_run_d
 [ -z "$PLAN_RUN_DIR" ] && { echo "! make_run_dir.py returned empty — research plugin path resolution failed"; exit 1; }
 ```
 
-**Spawn note**: P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on the completion notifications, check the review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive the expected list from the launch batch, never from the gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
+**Spawn note**: P-P2 advisors (architect, scientist, perf) run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on completion notifications, check review file of each dimension ACTUALLY dispatched this run (subset of `plan-review-architect.md`, `plan-review-scientist.md`, `plan-review-perf.md` — derive expected list from launch batch, never from gates' full menu). Any expected file missing or empty = that dimension timed out: surface with ⏱ and continue to P-P3 with remaining advisor output.
 
 **Architect gate** — spawn `foundry:solution-architect` only when `scope_files` contains >1 file OR `agent_strategy = arch`. Single-file optimization goals skip architect (no architectural surface to validate; saves ~5–10 min opus-tier compute). Record skip reason in advisory block as `architect: skipped (single-file scope)`.
 
-When gate fires, before constructing the Agent() call, substitute the actual computed value of `$PLAN_RUN_DIR` into the prompt string (e.g. `.experiments/plan-2026-05-13T10-00-00Z`):
+When gate fires, before constructing the Agent() call, substitute actual computed value of `$PLAN_RUN_DIR` into the prompt string (e.g. `.experiments/plan-2026-05-13T10-00-00Z`):
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
@@ -187,7 +187,7 @@ When gate fires, before constructing the Agent() call, substitute the actual com
 Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed research experiment scope.\n\nGoal: <goal>\nScope files (newline-separated paths in a markdown code block):\n```\n<scope_files — one path per line>\n```\nMetric command: <metric_cmd>\n\nCheck: (1) Do scope_files cover the components relevant to the goal? List architectural dependencies outside scope that the ideation agent would need to touch. (2) Are there shared abstractions (base classes, imports, shared state) outside scope required for changes within it?\n\nWrite your full review to `<PLAN_RUN_DIR>/plan-review-architect.md` using the Write tool.\nReturn ONLY: {\"ok\":true|false,\"gaps\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-architect.md\",\"confidence\":0.N}")
 ````
 
-**Scientist/perf advisory — merged spawn unit.** Two keyword gates decide which dimensions are active: ML gate (`agent_strategy = ml` or goal contains accuracy, loss, model, training, inference, classification, regression) and perf gate (`agent_strategy = perf` or goal contains latency, throughput, wall-clock, speed, memory, FPS). When BOTH fire, spawn ONE agent covering both question sets — never two (their prompts overlap on metric_cmd validity, and each extra spawn pays ~120,851 tok of fixed overhead): agent type `research:scientist` when the ML gate fired, else `foundry:perf-optimizer`. When only one fires, spawn that single dimension as before. The merged spawn writes ONE FILE PER DIMENSION (own Confidence block each) and returns a JSON array, one element per dimension file. Substitute computed `$PLAN_RUN_DIR` before spawning:
+**Scientist/perf advisory — merged spawn unit.** Two keyword gates decide which dimensions are active: ML gate (`agent_strategy = ml` or goal contains accuracy, loss, model, training, inference, classification, regression) and perf gate (`agent_strategy = perf` or goal contains latency, throughput, wall-clock, speed, memory, FPS). When BOTH fire, spawn ONE agent covering both question sets — never two (their prompts overlap on metric_cmd validity, and each extra spawn pays ~120,851 tok of fixed overhead): agent type `research:scientist` when ML gate fired, else `foundry:perf-optimizer`. When only one fires, spawn that single dimension as before. Merged spawn writes ONE FILE PER DIMENSION (own Confidence block each), returns JSON array, one element per dimension file. Substitute computed `$PLAN_RUN_DIR` before spawning:
 
 ```text
 Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above>", prompt="Review a proposed experiment configuration across the listed dimensions.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\nAgent strategy: <agent_strategy>\n\n[ML dimension — include only when ML gate fired] Check: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-scientist.md` using the Write tool.\n\n[Perf dimension — include only when perf gate fired] Check: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-perf.md` using the Write tool.\n\nEach review file carries its own Confidence block — never blend the dimensions into one file.\nReturn ONLY a JSON array with one element per dimension file: [{\"dim\":\"scientist|perf\",\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-<dim>.md\",\"confidence\":0.N}, ...]")

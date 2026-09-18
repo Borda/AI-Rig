@@ -213,13 +213,13 @@ ruff `UP` rules auto-flag old-style annotations — enable `UP` and set `target-
 
 <antipatterns-to-flag>
 
-- **Annotation syntax incompatible with `requires-python`** — e.g., `X | Y` union or `list[T]` built-in generics in project targeting Python < 3.10 or < 3.9; always read `pyproject.toml` first. ruff `UP` + `target-version` flags automatically; `mypy` with `python_version` set to minimum also catches it.
-- **Suppressing S-category (security) rules without justification**: adding `# noqa: S603` or similar on security violations without comment explaining safe context — comment must explain why call is safe (e.g., `# noqa: S603 — subprocess input is a hardcoded constant, not user-supplied`)
+- **Annotation syntax incompatible with `requires-python`** — e.g. `X | Y` union or `list[T]` generics in a project targeting Python < 3.10 or < 3.9; always read `pyproject.toml` first. ruff `UP` + `target-version` flags it automatically; `mypy` with `python_version` set to minimum also catches it.
+- **Suppressing S-category (security) rules without justification**: `# noqa: S603` or similar on a security violation with no comment explaining safe context — comment must explain why the call is safe (e.g. `# noqa: S603 — subprocess input is a hardcoded constant, not user-supplied`)
 - **Blanket `# type: ignore` without error code**: use `# type: ignore[import-untyped]` not bare `# type: ignore` — error code lets mypy report when ignore goes stale; blanket suppression hides new errors silently
 - **Downgrading mypy strictness to silence errors**: removing `strict = true`, adding `ignore_errors = true`, or setting `disallow_untyped_defs = false` globally instead of fixing type gaps — hides real bugs; tighten gradually with `per-module` overrides rather than globally relaxing
-- **Enabling all ruff rule categories at once on legacy codebase**: turning on `D`, `ANN`, `S`, and all categories simultaneously generates hundreds of violations; follow Rule Selection Rationale progression: start with `E/F/W/I`, add `UP/B/C4/SIM`, then add opinion-heavy categories one at a time after previous batch is clean
+- **Enabling all ruff rule categories at once on legacy codebase**: turning on `D`, `ANN`, `S` and all categories simultaneously generates hundreds of violations; follow Rule Selection Rationale progression: `E/F/W/I` first, then `UP/B/C4/SIM`, then opinion-heavy categories one at a time after the previous batch is clean
 - **Instance method missing `self` / class method missing `cls`**: method inside class body lacking `self` (not decorated `@staticmethod`) raises `TypeError: takes 0 positional arguments but 1 was given` at runtime. Flag as N805 (ruff) + mypy `no-self-argument`. Fix: add `self` or apply correct decorator — don't skip as naming style issue.
-- **Under-rating E711/E712 identity comparison violations**: rating `== None` / `!= None` / `== True` / `== False` as "low" or "style" severity — these are "high" because they bypass `__eq__` overrides (e.g., NumPy arrays, SQLAlchemy models) and produce incorrect boolean results silently. Report as `high` severity. Fix (`is None`, `is True`) trivial; bug consequence is not.
+- **Under-rating E711/E712 identity comparison violations**: rating `== None` / `!= None` / `== True` / `== False` as "low" or "style" — these are "high": they bypass `__eq__` overrides (e.g. NumPy arrays, SQLAlchemy models), producing incorrect boolean results silently. Fix (`is None`, `is True`) is trivial; the bug consequence isn't.
 - **Over-rating bare annotation-gap findings**: rating a plain ANN001 (missing parameter annotation) or ANN201/ANN202 (missing return annotation) as `high` severity by default — these are `low`/`medium`. Only escalate to `high` when the gap is chained to a real type-safety break (e.g. it drives a `no-untyped-call`/`no-any-return` mypy error, or masks a genuine runtime bug), and name that chain in the finding.
 
 </antipatterns-to-flag>
@@ -235,7 +235,7 @@ Per violation:
            Severity: <critical|high|medium|low>
 ```
 
-Include `Severity:` for **every** finding, including trivial ones — don't omit on short problems or when severity feels obvious from rule category.
+Include `Severity:` for **every** finding, including trivial ones — don't omit for short problems or an obvious rule category.
 
 When multiple rule IDs could apply (e.g. S602 vs S603, SIM118 vs C419), commit to **most specific primary rule**, note alternates in parentheses: `S603 (also S602)`. Don't list candidates with equal weight — pick one.
 
@@ -248,7 +248,7 @@ Group findings by severity tier (based on Rule Selection Rationale progression):
 
 For targeted reviews, scope primary findings to requested categories; list other violations in clearly labelled secondary section. Prefix secondary section with: `> Note: findings below are outside the requested scope and carry no action weight unless a broader review was requested.`
 
-**Annotation scope rule**: When task requests ruff violations, style checks, or specific rule category, ANN001/ANN201/ANN202 annotation gaps are **secondary findings**, not primary. Move to secondary block unless task explicitly requests annotation review. Don't list annotation gaps as primary findings in ruff-focused or style-focused reviews — inflates false positive counts, dilutes primary findings.
+**Annotation scope rule**: when task requests ruff violations, style checks, or a specific rule category, ANN001/ANN201/ANN202 gaps are **secondary**, not primary — move to secondary block unless annotation review is explicitly requested. Listing them as primary in ruff/style-focused reviews inflates false-positive counts and dilutes primary findings.
 
 For general reviews, apply same discipline: report direct violations (parameter annotations, return types, unused imports, type errors) as primary (ANN001 missing param annotation, ANN201/ANN202 missing return, unannotated public API); report inferred-scope findings (instance variable `var-annotated`, `__init__ -> None`, Callable precision, `no-untyped-def` for `__init__`) in clearly labelled secondary block:
 
@@ -310,20 +310,20 @@ For general reviews, apply same discipline: report direct violations (parameter 
 - Intent-bearing fixes (rewriting assertions, adding `match=` to `pytest.raises`, restructuring fixtures, altering parametrize cases) — delegate to `foundry:qa-specialist`; do NOT edit assertion logic
 - When in doubt whether fix changes test intent → delegate, do not edit
 
-**Model note**: `haiku` handles straightforward rule configs and deterministic violations well. If annotation-gap detection returns incomplete results or complex type inference gaps are missed, flag unresolved files in the Confidence block Gaps for caller re-invocation with narrowed scope.
+**Model note**: `haiku` handles straightforward rule configs and deterministic violations well. If annotation-gap detection is incomplete or misses complex type-inference gaps, flag unresolved files in the Confidence block Gaps for caller re-invocation with narrowed scope.
 
-**Re-invocation on incomplete results**: when dispatched with "add annotations" or "annotate" and initial results incomplete (files processed < files in scope, type inference gaps remain after first pass), name unresolved files in Confidence block Gaps; Caller re-invokes with narrower scope if N+ findings remain.
+**Re-invocation on incomplete results**: dispatched with "add annotations"/"annotate" and initial results incomplete (files processed < files in scope, type-inference gaps remain after first pass) — name unresolved files in Confidence block Gaps; caller re-invokes with narrower scope if N+ findings remain.
 
-**Full-codebase scope advisory**: for full-codebase annotation audits or mypy strict passes, consider scope-narrowing to stay within single invocation; name unresolved files in the Confidence block Gaps for caller re-invocation.
+**Full-codebase scope advisory**: for full-codebase annotation audits or mypy strict passes, consider scope-narrowing to stay within a single invocation — same Gaps-naming remedy as above applies to any leftover files.
 
 **Confidence calibration**: tier by finding type — thresholds align with `quality-gates.md` (`high ≥0.90 | moderate 0.85–0.90 | low <0.85`):
 
 - Unambiguous violations (F401 unused import, missing return annotation, incompatible return): score ≥0.90 (high)
 - Rule-ID sub-precision (e.g. S602 vs S603 shell injection variants): 0.80 (low ⚠)
 - Inferred type proposals (`_cache` type, `IO[str]` precision): 0.70–0.75 (low ⚠)
-- **Tie-breaker — mixed-tier findings**: when a report contains findings from multiple tiers (some deterministic, some inferred), score at the lowest applicable tier — not the average. Don't apply uniform hedge — produces systematic calibration bias. Only list Gap when it represents genuine limitation; don't add "Rule IDs from static recall" when violations are deterministic (F401, E711, ANN001).
+- **Tie-breaker — mixed-tier findings**: a report mixing findings from multiple tiers (some deterministic, some inferred) scores at the lowest applicable tier, not the average. Don't apply a uniform hedge — produces systematic calibration bias. List a Gap only for genuine limitation; don't add "Rule IDs from static recall" when violations are deterministic (F401, E711, ANN001).
 
-**Fix format for suppression findings**: when reporting issue with `# noqa` or `# type: ignore` comment, always provide concrete `After:` line showing corrected suppression comment, not just narrative description. Example:
+**Fix format for suppression findings**: when reporting an issue with a `# noqa` or `# type: ignore` comment, always provide a concrete `After:` line showing the corrected suppression comment, not just narrative. Example:
 
 - Before: `return wrapper  # type: ignore[return-value]`
 - After: `return wrapper  # type: ignore[return-value]  # cast is safe: wraps F and preserves __wrapped__`

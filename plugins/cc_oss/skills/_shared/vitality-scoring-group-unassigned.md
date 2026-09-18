@@ -10,7 +10,7 @@
 
 ### Axis 10 — Supply-Chain Integrity
 
-(entirely absent from prior design; post-XZ-backdoor critical gap; OpenSSF Risk: High for all sub-checks)
+(entirely absent from prior design, post-XZ-backdoor critical gap, OpenSSF Risk: High for all sub-checks)
 
 **Data requirements** (new gh-scraper fetches needed — see Phase 2 note at file end):
 
@@ -78,7 +78,7 @@ Score — **impact tier** (not a health failure; 🔴 = low-impact, not broken):
 
 ### Axis 12 — Dependency Health (Libyears)
 
-(current design only checks "Dependabot config present" — no actual dep freshness signal; leading indicator where Axis 8 Dependabot alerts lagging)
+(current design only checks "Dependabot config present", no actual dep freshness signal; leading indicator where Axis 8 Dependabot alerts lagging)
 
 **Data requirements** (new gh-scraper fetches needed — see Phase 2 note):
 
@@ -120,7 +120,7 @@ Score:
 
 ### Axis 13 — Interface Stability & Community Engagement
 
-(two grouped signal sets, each scored 0–5; axis score = sum 0–10; split enables separate reporting of stability vs community health, keeping combined weight light)
+(two grouped signal sets, each scored 0–5; axis score = sum 0–10; split enables separate reporting of stability vs community health, keeps combined weight light)
 
 #### Group A — Interface Stability (scored 0–5)
 

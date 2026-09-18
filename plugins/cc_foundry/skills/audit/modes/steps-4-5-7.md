@@ -26,7 +26,7 @@ Run checks below. Native tools first (Glob, Grep, Read); Bash only for pipeline 
 - **sharpen** when both roles justified but descriptions/handoffs too fuzzy
 - **merge/prune** when roles differ mostly by tone or examples, not decision surface
 
-Don't leave overlap findings as vague "potential duplication." Audit must say which outcome applies and why.
+Don't leave overlap findings as vague "potential duplication." Audit must state which outcome applies and why.
 
 **Context discipline for Step 4**: write all check findings to `$RUN_DIR/system-checks.md` (Write tool after checks complete), not main context. Keep one-line status per check in context:
 
@@ -90,7 +90,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "
 
 ## Step 5: Aggregate and classify findings
 
-**Delegate aggregation** to consolidator agent to avoid flooding main context. Resolve the two absolute paths the consolidator must read — it runs in a fresh shell and cannot expand orchestrator variables, so these are interpolated as literal strings into the prompt below:
+**Delegate aggregation** to consolidator agent to avoid flooding main context. Resolve the two absolute paths the consolidator must read — it runs in a fresh shell, can't expand orchestrator variables, so these are interpolated as literal strings into the prompt below:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -104,7 +104,7 @@ Replace `<RUN_DIR>`, `<STATIC_FINDINGS_PATH>`, and `<SEVERITY_TABLE_PATH>` in th
 
 > "Read all finding files in `<RUN_DIR>/` (\*.md files from Steps 3–4, including `docs-freshness.md` if present) AND the deterministic Layer-1 results at `<STATIC_FINDINGS_PATH>` (Step 1b — one JSON object per check; each `\"status\":\"fail\"` object's `lines` array is a set of already-verified mechanical findings, severity per the check's known level: fence/mode-dispatch=high, tag/README-drift/bash-persistence/spawn-vars/shared-drift=medium, orphaned-bin/routing=medium). Run `cat "<SEVERITY_TABLE_PATH>"` via the Bash tool and apply its severity classification. Antipatterns that indicate severity under-classification are also in that file. Group all findings by severity (security, critical, high, medium, low). Apply the one-finding-per-issue rule: when a single location has multiple distinct problems at different severities, emit one finding entry per problem. Write the aggregated severity table to `<RUN_DIR>/aggregate.md` using the Write tool. End your aggregate.md file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements). Also write `<RUN_DIR>/summary.jsonl` — one compact JSON object per line, one line per finding: `{"file":"<basename>","sev":"security|critical|high|medium|low","id":"H1","line":"<line number or null>","category":"<category>","one_line":"<finding description>"}`. This file is what the orchestrator will read; aggregate.md is for human review only. Return ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/aggregate.md\",\"findings\":N,\"severity\":{\"security\":N,\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"N findings total: S security, C critical, H high, M medium, L low\"}`"
 
-Main context receives only that one-liner. Orchestrator MUST NOT read `aggregate.md` in full — 200–600 lines, overflows context on large audits. Use `$RUN_DIR/summary.jsonl` for all dispatch decisions in Steps 7 and 8.
+Main context receives only that one-liner. Orchestrator MUST NOT read `aggregate.md` in full — 200–600 lines, overflows context on large audits. Use `$RUN_DIR/summary.jsonl` for all dispatch decisions, Steps 7 and 8.
 
 ## Step 5b: Low-confidence remediation
 
@@ -139,7 +139,7 @@ If `CODEX_AVAILABLE=true`, resolve every placeholder in the following review bri
 
 If `CODEX_AVAILABLE=false`: log `[Step 5b] bridge@borda-ai-rig is ${CODEX_STATUS} — adversarial pass skipped.` Include note in final report `## Confidence` section.
 
-**After all three passes complete** for a slug: spawn **foundry:curator** mini-consolidator to merge `<slug>-rerun.md`, `docs-recheck-<slug>.md`, `codex-recheck-<slug>.md` → append `### Low-Confidence Remediation — <slug>` section to `aggregate.md` with reconciled findings (promoted corrections, confirmed findings, refuted findings). Update `summary.jsonl` with any net-new findings.
+**After all three passes complete** for a slug: spawn **foundry:curator** mini-consolidator to merge `<slug>-rerun.md`, `docs-recheck-<slug>.md`, `codex-recheck-<slug>.md`, append `### Low-Confidence Remediation — <slug>` section to `aggregate.md` with reconciled findings (promoted corrections, confirmed findings, refuted findings). Update `summary.jsonl` with any net-new findings.
 
 **Skip Step 5b entirely** when no Step 3 files scored below 0.80.
 
@@ -156,7 +156,7 @@ _PRESERVE="run-dir=$_RUN_DIR, aggregate=$_RUN_DIR/aggregate.md, summary=$_RUN_DI
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "report (after aggregate complete)" "$_RUN_DIR" "$_PRESERVE" "emit report → follow-up gate → optional fix mode (Steps 8-10) → Step 11"  # timeout: 5000
 ```
 
-Before emitting, read current `$RUN_DIR/summary.jsonl` (may have been updated by Step 5b with net-new promoted findings) and recompute severity totals. Then emit report (omit Upgrade Proposals if none passed genuine-value filter):
+Before emitting, read current `$RUN_DIR/summary.jsonl` (may have been updated by Step 5b with net-new promoted findings), recompute severity totals. Then emit report (omit Upgrade Proposals if none passed genuine-value filter):
 
 ```markdown
 ## Audit Report

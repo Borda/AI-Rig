@@ -10,7 +10,7 @@
 
 ## 🔄 Migration guide
 
-\<Breaking change = worked before, fails/differs now, no prior warning or deprecation shim. API deprecated (with warning + forwarding) in prior release then removed → classify as ❌ Removed, not ⚠️ Breaking Changes. Guide users on migration needed. Include before/after code for each breaking change. If none: "No migration required for this release.">
+\<Breaking change = worked before, fails/differs now, no prior warning or deprecation shim. API deprecated (with warning + forwarding) in prior release then removed → classify as ❌ Removed, not ⚠️ Breaking Changes. Guide migration; include before/after code for each breaking change. If none: "No migration required for this release.">
 
 <!-- Use Draft migration guide content — do not regenerate independently. -->
 

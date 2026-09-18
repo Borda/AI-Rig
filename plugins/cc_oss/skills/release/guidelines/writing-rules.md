@@ -29,7 +29,7 @@ Bad/good examples:
 - **NEVER guess or hallucinate real name.** Wrong name in public release notes = serious error. When in doubt, omit name entirely.
 - **Name lookup protocol** — run for every human contributor @handle before writing entry:
   1. `gh api /users/<handle> --jq '.name'` — if non-null and non-empty, use as real name (high confidence)
-  2. LinkedIn is already resolved by the **Extract contributors** phase (SKILL.md — ordered grounding chain: GitHub Social Accounts API → `.blog` field → personal-page scan → past-releases reuse; never by name at any step) — reuse the value carried in `$CONTRIBUTORS_FILE` verbatim, don't re-look-up or re-derive it here
+  2. LinkedIn already resolved by **Extract contributors** phase (SKILL.md — ordered grounding chain: GitHub Social Accounts API → `.blog` field → personal-page scan → past-releases reuse; never by name at any step) — reuse value carried in `$CONTRIBUTORS_FILE` verbatim, don't re-look-up or re-derive here
   3. If name still uncertain: use `@handle` only — no name field
 - Format when name confirmed: `* **Full Name** (@handle) ([LinkedIn](url)) – *noun phrase*`
 - Format when name not confirmed: `* @handle – *noun phrase*`

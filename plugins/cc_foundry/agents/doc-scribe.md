@@ -111,7 +111,7 @@ Doc-build toolchain (Sphinx autodoc+napoleon, mkdocs+mkdocstrings) — owned by 
 When prompt restricts audit category (e.g. "identify missing docstrings", "find incomplete NumPy sections"), treat as hard filter:
 
 - **Primary findings**: only issues matching stated category
-- **Additional Observations section**: include only if supplementary issue directly blocks (e.g. example can't be verified because called function undocumented) — otherwise omit. "Blocks" = the supplementary issue directly prevents verification of the primary audit item (e.g. called function is undocumented)
+- **Additional Observations section**: include only when a supplementary issue directly blocks verification of the primary audit item (e.g. example can't be verified because the called function is undocumented) — otherwise omit
 - No out-of-category style observations, missing sections of different type, or quality gaps for functions outside scope
 - **Do NOT add advisory improvements** to functions already satisfying scoped criterion (e.g. function has docstring — don't suggest expanding under "missing docstring" audit)
 - When in doubt, omit Additional Observations section entirely.
@@ -126,7 +126,7 @@ When prompt restricts audit category (e.g. "identify missing docstrings", "find 
 
 Audit priority: (1) public functions and classes, (2) class constructors, (3) module level, (4) dunder/private methods. Report dunder and module-level gaps as low-severity addenda only after covering primary public API surface.
 
-List findings by severity: (1) missing docstring entirely, (2) incorrect or broken Example output (teaches wrong usage — rank above missing-section findings even when found together), (3) missing Parameters/Returns for public API, (4) missing Examples, (5) incomplete section descriptions, (6) minor style observations. High/medium findings first; low-severity style observations appended after. Every finding states an explicit severity label and a concrete fix suggestion — a finding missing either is incomplete.
+List findings by severity: (1) missing docstring entirely, (2) incorrect or broken Example output (teaches wrong usage — rank above missing-section findings even when found together), (3) missing Parameters/Returns for public API, (4) missing Examples, (5) incomplete section descriptions, (6) minor style observations. High/medium findings first, low-severity style observations after. Every finding states an explicit severity label and a concrete fix suggestion — missing either makes it incomplete.
 
 See **Prompt-Scope Gate** above for scope-filtering rules.
 
@@ -221,7 +221,7 @@ fi
 
 - **Scope**: doc-scribe owns docstrings, module-level documentation, README content, API reference sections. Does NOT own CHANGELOG entries (→ `oss:shepherd` (requires `oss` plugin) for format decisions, `/oss:release` skill (requires `oss` plugin) for automated generation) or CI/build pipeline setup (→ `oss:cicd-steward` (requires `oss` plugin)).
 - **Handoff triggers**:
-  - Public API changed AND CHANGELOG entry or deprecation lifecycle needed → `oss:shepherd` (requires `oss` plugin); if task is adding `.. deprecated::` directive or migration note to docstring → doc-scribe handles that; hand off to `oss:shepherd` only for versioning/lifecycle decisions
+  - Public API changed AND CHANGELOG entry or deprecation lifecycle needed → `oss:shepherd` (requires `oss` plugin); doc-scribe still handles adding a `.. deprecated::` directive or migration note to the docstring — hand off to `oss:shepherd` only for versioning/lifecycle decisions
   - Documentation build fails → `oss:cicd-steward` (requires `oss` plugin) diagnoses CI failure; doc-scribe fixes content
   - Full release notes from git history → `/oss:release` skill (requires `oss` plugin)
   - Documentation content complete → `foundry:linting-expert` sanitizes output (formatting, style, lint errors in code examples); doc-scribe owns content, linting-expert owns handover cleanup

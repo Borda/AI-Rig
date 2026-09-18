@@ -11,7 +11,7 @@ effort: high
 
 Comprehensive code review of local files or working-tree diff. Spawns specialized sub-agents in parallel, consolidates findings into structured feedback with severity levels.
 
-NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>` (requires oss plugin)); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/foundry:manage` (requires foundry plugin) or `/foundry:audit` (requires foundry plugin)); non-Python-only projects (zero Python source files — pure JS/TS/Go/Rust) — review toolchain assumes Python/pytest; Python test-only targets where diff contains only test files (no `src/` or top-level `.py` source outside `tests/`) — review will be uninformative; for polyglot projects with Python source, reviews Python files only.
+NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHub thread analysis or PR reply drafting (use `/oss:analyse <PR#>` (requires oss plugin)); implementation (use `/develop:feature` or `/develop:fix`); `.claude/` config changes (use `/foundry:manage` (requires foundry plugin) or `/foundry:audit` (requires foundry plugin)); non-Python-only projects (zero Python source files — pure JS/TS/Go/Rust) — review toolchain assumes Python/pytest; Python test-only targets where diff contains only test files (no `src/` or top-level `.py` source outside `tests/`) — review is uninformative; polyglot projects with Python source review Python files only.
 
 </objective>
 
@@ -23,7 +23,7 @@ NOT for: GitHub PR review (use `/oss:review <PR#>` (requires oss plugin)); GitHu
   - **Scope**: Python source only. Non-Python file (YAML, JSON, shell script, etc.) → state out of scope, suggest appropriate tool. No findings.
   - `--no-challenge`: skip adversarial review (challenger runs by default)
   - `--challenge`: force challenger (Agent 7) even on small diff that small-diff auto-skip would otherwise skip
-  - `--full`: run **every** dimension the classification preselected, instead of only the `FANOUT_MAX` most relevant of them. Never widens the preselection — a dimension the FIX/CHORE/small-diff rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok of fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
+  - `--full`: run **every** dimension classification preselected, instead of only the `FANOUT_MAX` most relevant. Never widens preselection — a dimension the FIX/CHORE/small-diff rules ruled out stays out. **Not free**: each extra agent costs ~120,851 tok fixed overhead however little work it does. Default stays capped; pass this when depth matters more than cost.
   - `--codemap`: strict mode — stop and report if codemap not installed (on by default when installed; use `--no-codemap` to opt out)
   - `--semble`: enable semble semantic search companion (off by default)
 
@@ -44,11 +44,11 @@ else
 fi
 ```
 
-If `$OSS_AVAILABLE` is `skip`: proceed to Step 1 normally (path / diff / dir mode).
+`$OSS_AVAILABLE` is `skip` → proceed to Step 1 normally (path / diff / dir mode).
 
-If `$OSS_AVAILABLE` is `true`: call `AskUserQuestion` ONCE with BOTH questions in the same call (a second sequential window costs another human-idle round trip) — Q1: "Looks like you passed a PR/issue number. Did you mean to run `/oss:review $ARGUMENTS` (requires oss plugin) to review that PR?" Options: (a) "Yes — launch `/oss:review $ARGUMENTS`" · (b) "No — review local code". Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = Yes)". On (a): call `Skill(skill="oss:review", args="$ARGUMENTS")`, ignore Q2. On (b): use the Q2 response as `$REVIEW_ARGS` and proceed to Step 1 (Q2 empty → ask once more for the path).
+`$OSS_AVAILABLE` is `true` → call `AskUserQuestion` ONCE with BOTH questions in the same call (a second sequential window costs another human-idle round trip) — Q1: "Looks like you passed a PR/issue number. Did you mean to run `/oss:review $ARGUMENTS` (requires oss plugin) to review that PR?" Options: (a) "Yes — launch `/oss:review $ARGUMENTS`" · (b) "No — review local code". Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = Yes)". On (a): call `Skill(skill="oss:review", args="$ARGUMENTS")`, ignore Q2. On (b): use Q2 response as `$REVIEW_ARGS`, proceed to Step 1 (Q2 empty → ask once more for the path).
 
-If `$OSS_AVAILABLE` is `false`: call `AskUserQuestion` ONCE with BOTH questions — Q1: "Looks like you passed a PR/issue number, but oss plugin not installed — `/oss:review` unavailable. Review local code instead?" Options: (a) "Yes — review local code" · (b) "I need oss plugin". Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = b)". On (a): use the Q2 response as `$REVIEW_ARGS` and proceed to Step 1 (Q2 empty → ask once more). On (b): inform user: install with `claude plugin install oss@borda-ai-rig`.
+`$OSS_AVAILABLE` is `false` → call `AskUserQuestion` ONCE with BOTH questions — Q1: "Looks like you passed a PR/issue number, but oss plugin not installed — `/oss:review` unavailable. Review local code instead?" Options: (a) "Yes — review local code" · (b) "I need oss plugin". Q2: "If reviewing local code: provide the file path or directory (free text; skip if Q1 = b)". On (a): use Q2 response as `$REVIEW_ARGS`, proceed to Step 1 (Q2 empty → ask once more). On (b): inform user: install with `claude plugin install oss@borda-ai-rig`.
 
 </inputs>
 
@@ -109,9 +109,9 @@ After Step 1 completes (scope and `TARGET` known), create these tasks **before a
 - **"Step 1: Identify scope"** — mark `in_progress` at Step 1 start; mark `completed` when `TARGET` and `SCOPE` set and Python file check passes
 - **"Step 2: Codex co-review"** — create before Step 2 (skip task if Codex unavailable); mark `in_progress` before Codex spawn; mark `completed` when codex seed extracted (or timed out)
 - **"Step 3: Spawn review agents"** — mark `in_progress` before agents launch; mark `completed` when all agent output files collected (or health-monitoring cutoff reached)
-- **"Step 4: Cross-validate critical findings"** — mark `in_progress` before verifier spawns; mark `completed` when all verdicts received; **skip task creation when no critical/blocking findings exist after Step 3**
-- **"Step 5: Consolidate findings"** — mark `in_progress` before spawning consolidator; mark `completed` when consolidator returns its JSON envelope (Write to `review-report.md` done) — **do NOT mark completed for the terminal print, that's a separate task below**
-- **"Step 5b: Print report header"** — created **blockedBy** "Step 5: Consolidate findings"; mark `in_progress` immediately after the consolidator's envelope returns; mark `completed` only once the `---` header table has actually appeared in this response's output (not merely queued/intended). The consolidator's JSON envelope is a routing signal for the orchestrator, never a substitute for reading `$REPORT_DIR/review-report.md` and printing its header. **The follow-up gate's `AskUserQuestion` must not fire while this task is `pending`/`in_progress`** — a sibling skill (oss:review, identical consolidator+print architecture) had an incident where the hard-enforced tool call (`AskUserQuestion`) fired correctly while this prose-only print step got silently dropped; the dedicated task exists specifically to make the print step as trackable/enforceable as the tool calls around it.
+- **"Step 4: Cross-validate critical findings"** — mark `in_progress` before verifier spawns; `completed` when all verdicts received; **skip task creation when no critical/blocking findings exist after Step 3**
+- **"Step 5: Consolidate findings"** — mark `in_progress` before spawning consolidator; `completed` when consolidator returns its JSON envelope (Write to `review-report.md` done) — **do NOT mark completed for the terminal print, that's a separate task below**
+- **"Step 5b: Print report header"** — created **blockedBy** "Step 5: Consolidate findings"; mark `in_progress` immediately after consolidator's envelope returns; `completed` only once the `---` header table has actually appeared in this response's output (not merely queued/intended). Consolidator's JSON envelope is a routing signal for the orchestrator, never a substitute for reading `$REPORT_DIR/review-report.md` and printing its header. **The follow-up gate's `AskUserQuestion` must not fire while this task is `pending`/`in_progress`** — a sibling skill (oss:review, identical consolidator+print architecture) had an incident where the hard-enforced tool call (`AskUserQuestion`) fired correctly while this prose-only print step got silently dropped; the dedicated task exists specifically to make the print step as trackable/enforceable as the tool calls around it.
 
 ## Flag parsing
 
@@ -137,13 +137,13 @@ IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/d
 FANOUT_CAP=3; [ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
 ```
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--semble`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--semble`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
 > loads: worktree-isolation.md
 
-When `--worktree` set, run the review in an isolated git worktree so no dimension agent can accidentally mutate the main sources — **before** Step 1.
+`--worktree` set → run review in an isolated git worktree so no dimension agent can accidentally mutate main sources — **before** Step 1.
 
 ```bash
 # timeout: 5000
@@ -158,7 +158,7 @@ IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _
 cat "$_DEV_SHARED/worktree-isolation.md"
 ```
 
-`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: `$RUN_DIR` (`.temp/`) handoffs stay in the worktree, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid. Reviews committed HEAD state — uncommitted working-tree changes are not visible. Else skip — run in main tree.
+`WORKTREE_ENABLED=true` → follow §Enter (base off HEAD, `EnterWorktree(path=…)`). **Read-only skill** — obey §Deliverable: `$RUN_DIR` (`.temp/`) handoffs stay in the worktree, but `$REPORT_DIR` (the review report) is written to the **main tree** (`$_ORIG_ROOT`, wired at Step 2) so its printed path + follow-up gate stay valid. Reviews committed HEAD state — uncommitted working-tree changes aren't visible. Else skip — run in main tree.
 
 ```bash
 # CODEMAP_RAW → true/false; strict exits on unavailability  # timeout: 5000
@@ -201,11 +201,11 @@ Scope + non-Python impact check + Python filter in ONE pass — a single `git di
 ```bash
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS="$ARGUMENTS"   # re-derive — bash state lost between Bash() calls
+IFS= read -r REVIEW_ARGS < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || REVIEW_ARGS="$ARGUMENTS"   # re-derive — bash resets between calls
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/resolve_review_target.py" -- "$REVIEW_ARGS"
 ```
 
-Any `⚠` line printed above: include in report header regardless of whether Python files exist. No Python files → `resolve_review_target.py` prints `! Diff contains non-Python files only.` and Step 1 ends there (DMI skill — prose "stop" not executable).
+Any `⚠` line printed above: include in report header regardless of whether Python files exist. No Python files → `resolve_review_target.py` prints `! Diff contains non-Python files only.`, Step 1 ends there (DMI skill — prose "stop" not executable).
 
 ### Scope pre-check
 
@@ -217,11 +217,11 @@ Before spawning agents, classify diff:
 
 Skip optional agents by classification:
 
-- FIX → skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless the diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
+- FIX → skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
 - REFACTOR → skip Agent 6 (solution-architect), same exception — an already-exported public function's signature change still fires Agent 6
-- CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), and Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic means no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (cc_oss/skills/review/SKILL.md:182,198).
+- CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic = no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (cc_oss/skills/review/SKILL.md:182,198).
 - FEATURE/MIXED → spawn all agents
-- **Small-diff challenger skip** (any classification) — unless `--challenge` was passed (`CHALLENGE_FORCED=true`): diff is single file, \<50 lines changed, and introduces no new public API / exported symbol → also skip Agent 7 (challenger). Multi-file, ≥50 lines, or any new public API → challenger runs. `--no-challenge` (`CHALLENGE_ENABLED=false`) disables Agent 7 entirely regardless.
+- **Small-diff challenger skip** (any classification) — unless `--challenge` passed (`CHALLENGE_FORCED=true`): diff is single file, \<50 lines changed, introduces no new public API / exported symbol → also skip Agent 7 (challenger). Multi-file, ≥50 lines, or any new public API → challenger runs. `--no-challenge` (`CHALLENGE_ENABLED=false`) disables Agent 7 entirely regardless.
 
 ### Structural context + review pre-flight (codemap-py — only if `CODEMAP_ENABLED=true`)
 
@@ -256,7 +256,7 @@ echo "$codemap_available" > "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID
 
 Codemap context propagation in Step 3:
 
-- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once `$RUN_DIR` exists (Step 2). Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it, and results for skipped agents are injected nowhere): qa unit → `uncovered` + `mock-rdeps` entries; doc unit → `undocumented` + `xrefs --broken` entries; sw-engineer → `rdeps` + `central` + `diff-impact`. Entries whose only consumer was skipped by classification are not injected anywhere:
+- `codemap_available=true` → copy `$CODEMAP_CONTEXT_STAGE` to `$RUN_DIR/codemap-context.md` once `$RUN_DIR` exists (Step 2). Each dimension spawn prompt gets a literal block holding only ITS slice of the batch results (the whole block in every prompt re-bills every query result to consumers that never read it; results for skipped agents injected nowhere): qa unit → `uncovered` + `mock-rdeps` entries; doc unit → `undocumented` + `xrefs --broken` entries; sw-engineer → `rdeps` + `central` + `diff-impact`. Entries whose only consumer was skipped by classification aren't injected anywhere:
   ```text
   ## Structural Context (codemap-py, codemap_available=true)
   <this agent's slice of $RUN_DIR/codemap-context.md>
@@ -275,7 +275,7 @@ Codemap context propagation in Step 3:
 
 > Per-agent consumption guidance kept in sync with `$_DEV_SHARED/codemap-context.md` §Review-pipeline injection — update both on change.
 
-Tier annotation for Agent 1 (sw-engineer) only: label each module's `imported_by` count — **high risk** (>20), **moderate** (5–20), **low** (\<5). Agent 1 uses this to prioritize: high `imported_by` modules warrant deeper scrutiny on API compatibility, error handling, behavioural correctness — downstream callers outside diff not otherwise visible.
+Tier annotation for Agent 1 (sw-engineer) only: label each module's `imported_by` count — **high risk** (>20), **moderate** (5–20), **low** (\<5). Agent 1 uses this to prioritize: high `imported_by` modules warrant deeper scrutiny on API compatibility, error handling, behavioural correctness — downstream callers outside diff otherwise invisible.
 
 **Semble companion** (only if `SEMBLE_ENABLED=true`): include in Agent 1 spawn prompt:
 
@@ -344,7 +344,7 @@ Pass notice through to consolidator (Step 5) so it appears in final report heade
 
 ## Step 3: Spawn sub-agents in parallel
 
-**Spawn-count gate — apply before spawning anything.** Each agent costs ~120,851 tok of fixed overhead regardless of how little work it does, i.e. ~73 tool-calls' worth, plus ~12.0 s/call. Rules, all mandatory:
+**Spawn-count gate — apply before spawning anything.** Each agent costs ~120,851 tok fixed overhead regardless of how little work it does (~73 tool-calls' worth), plus ~12.0 s/call. Rules, all mandatory:
 
 Two stages, in order — never collapse them:
 
@@ -353,24 +353,24 @@ Two stages, in order — never collapse them:
 3. **Relevance ranking** (default only): rank the units by evidence — changed files and lines in their dimensions' territory, what the classification implies, what the structural context flagged (a merged unit ranks by its strongest surviving dimension) — and spawn the top `FANOUT_MAX` (3) units. With `--full` (`FANOUT_CAP=0`) skip this stage and spawn every unit of stage 2.
 
 - More work → give each agent more, never add agents.
-- **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Total work under ~73 calls → do it inline and spawn nothing.
+- **Spawn the fewest that keep each near `AGENT_CALL_BUDGET`** — not the most the cap allows. Total work under ~73 calls → do it inline, spawn nothing.
 - **Merge before you split**: two dimensions whose files overlap go to one agent, not two — the fixed pairs below are the floor, not the ceiling.
-- Every spawn prompt states the budget and requires an envelope even on exhaustion — `partial: true` plus what was finished.
+- Every spawn prompt states the budget, requires an envelope even on exhaustion — `partial: true` plus what was finished.
 - Dimensions dropped by the cap are listed in the report; never silently skipped.
 
 ### Merged spawn units (shared pattern with oss:review — each spawn costs ~120,851 tok fixed overhead, so paired dimensions share one spawn)
 
-- **Agents 3+6 = ONE `foundry:perf-optimizer` spawn** covering Performance + Architecture/API design — spawn when either dimension survives classification preselection; the prompt includes only the surviving dimensions' instructions (e.g. FIX with a public-signature change spawns this unit with only the Agent-6 dimension active).
+- **Agents 3+6 = ONE `foundry:perf-optimizer` spawn** covering Performance + Architecture/API design — spawn when either dimension survives classification preselection; prompt includes only surviving dimensions' instructions (e.g. FIX with a public-signature change spawns this unit with only the Agent-6 dimension active).
 - **Agents 4+5 = ONE `foundry:doc-scribe` spawn** covering Documentation + Linting — same rule.
-- Agents 1 (sw-engineer, incl. security augmentation), 2 (qa-specialist), and 7 (challenger) stay standalone spawns.
-- A merged spawn writes **one file per covered dimension**, each with its OWN full sections + Confidence block — never blended: `perf-optimizer.md` + `solution-architect.md`, or `doc-scribe.md` + `linting-expert.md`. Downstream contracts (consolidator filename list, Step-4 cross-validation "same type as origin", report sections) key on those files and stay unchanged.
-- Merged-spawn envelope = JSON array, one element per dimension file, same per-element schema as the standard envelope. An element absent from the array ⇒ that dimension gets the ⏱ marker — never silently omitted.
+- Agents 1 (sw-engineer, incl. security augmentation), 2 (qa-specialist), 7 (challenger) stay standalone spawns.
+- A merged spawn writes **one file per covered dimension**, each with its OWN full sections + Confidence block — never blended: `perf-optimizer.md` + `solution-architect.md`, or `doc-scribe.md` + `linting-expert.md`. Downstream contracts (consolidator filename list, Step-4 cross-validation "same type as origin", report sections) key on those files, stay unchanged.
+- Merged-spawn envelope = JSON array, one element per dimension file, same per-element schema as the standard envelope. Element absent from the array ⇒ that dimension gets the ⏱ marker — never silently omitted.
 
 **File-based handoff**:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash state lost between Bash() calls
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash resets between calls
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 cat "$_DEV_SHARED/file-handoff-protocol.md"
 ```
@@ -389,7 +389,7 @@ Inside agent prompt strings, leave `$RUN_DIR` literal — agent resolves it via 
 
 ### $VAR_LITERAL pre-expansion rule (canonical)
 
-Any OTHER shell variable inserted into an Agent spawn prompt string — `$REPORT_DIR_LITERAL`, `$REVIEW_CHECKLIST`, `$DATE`, `$_REVIEW_TEMPLATE` — must be substituted with its literal resolved value **before** building the Agent call. Bare variable name inside a quoted Agent prompt will NOT expand — spawned agent receives literal dollar-sign text, causing path mismatches. Resolve each to its value first; never pass bare `$VAR` name. (`$RUN_DIR` is the deliberate exception above — agents self-resolve it.)
+Any OTHER shell variable inserted into an Agent spawn prompt string — `$REPORT_DIR_LITERAL`, `$REVIEW_CHECKLIST`, `$DATE`, `$_REVIEW_TEMPLATE` — must be substituted with its literal resolved value **before** building the Agent call. Bare variable name inside a quoted Agent prompt will NOT expand — spawned agent receives literal dollar-sign text, causing path mismatches. Resolve each to its value first; never pass a bare `$VAR` name. (`$RUN_DIR` is the deliberate exception above — agents self-resolve it.)
 
 Resolve develop:review checklist path (version-agnostic):
 
@@ -418,20 +418,20 @@ if command -v jq >/dev/null 2>&1; then
 fi
 ```
 
-Replace `$REVIEW_CHECKLIST` in Agent 1 and consolidator spawn prompts with resolved path. **If empty, omit checklist instruction from those prompts entirely** — do not pass empty path.
+Replace `$REVIEW_CHECKLIST` in Agent 1 and consolidator spawn prompts with resolved path. **Empty → omit checklist instruction from those prompts entirely** — don't pass empty path.
 
 > See [$VAR_LITERAL pre-expansion rule (canonical)](#var_literal-pre-expansion-rule-canonical) — `$REVIEW_CHECKLIST` follows it; substitute its resolved value before inserting into any Agent spawn prompt.
 
-**Visible-degradation rule** — `$REVIEW_CHECKLIST` empty → print `⚠ REVIEW_CHECKLIST is empty — review scope undefined` at TOP of review output (before Findings), and consolidator prompt (Step 5) **must** insert into report header (YAML `---` block or first line before Findings): "Review checklist not applied (oss plugin not available) — severity anchors may be inconsistent." Silent degradation hides gap from reviewers, makes severity drift invisible.
+**Visible-degradation rule** — `$REVIEW_CHECKLIST` empty → print `⚠ REVIEW_CHECKLIST is empty — review scope undefined` at TOP of review output (before Findings), and consolidator prompt (Step 5) **must** insert into report header (YAML `---` block or first line before Findings): "Review checklist not applied (oss plugin not available) — severity anchors may be inconsistent." Silent degradation hides the gap from reviewers, makes severity drift invisible.
 
 **Finding evidence standard — applies to every agent, every finding:**
 
-- Every finding must cite specific `file:line` from diff as primary evidence — "I know this typically causes issues" without a diff citation is not a valid finding
+- Every finding must cite specific `file:line` from diff as primary evidence — "I know this typically causes issues" without a diff citation isn't a valid finding
 - Training knowledge and memory never sufficient evidence — read actual code in diff
 - Claims referencing external standards (OWASP, PEP, language spec, CVE) must cite the specific authoritative document — official spec, CVE entry, PEP text; a blog post or Stack Overflow answer referencing the standard is Tier 2 only
-- Tier 2 sources (blog, tutorial, forum, memory) require ≥3 genuinely independent sources OR experimental validation before claim becomes a finding; independent means different authors, different primary research with distinct origins — N posts all citing same original = 1 source
-- Citation tracing mandatory: for each Tier 2 source, follow its citations one level; if tracing reveals a Tier 1 source (official doc, CVE, spec) confirming the claim, treat as Tier 1 verified; if multiple Tier 2 sources share one origin, merge into one; count distinct origins only
-- When only Tier 2 available, distinct-origin count < 3, and no experiment run: downgrade finding to LOW or drop it; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone
+- Tier 2 sources (blog, tutorial, forum, memory) require ≥3 genuinely independent sources OR experimental validation before becoming a finding; independent means different authors, different primary research with distinct origins — N posts all citing same original = 1 source
+- Citation tracing mandatory: for each Tier 2 source, follow its citations one level; tracing reveals a Tier 1 source (official doc, CVE, spec) confirming the claim → treat as Tier 1 verified; multiple Tier 2 sources share one origin → merge into one; count distinct origins only
+- Only Tier 2 available, distinct-origin count < 3, no experiment run → downgrade finding to LOW or drop it; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone
 
 Launch spawn units simultaneously with Agent tool (security augmentation folded into Agent 1 — not separate spawn; Agent 6 optional; Agents 3+6 and 4+5 launch as merged units per §Merged spawn units). Every agent prompt must begin with the [run-dir preamble (canonical)](#run-dir-preamble-canonical) and end with:
 
@@ -439,7 +439,7 @@ Launch spawn units simultaneously with Agent tool (security augmentation folded 
 
 **Codemap-py context preamble (substituted by orchestrator)**: rehydrate `IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}" 2>/dev/null || codemap_available=false`. When `codemap_available=true`, each dimension spawn prompt is prefixed with its `## Structural Context (codemap-py, codemap_available=true)` slice from `$RUN_DIR/codemap-context.md` per the per-agent slicing rules in Step 1. Agents must read that block first and skip redundant Grep/Read on symbols already covered by codemap output. Block absent → fall back to current file-read behaviour. Challenger (Agent 7) unchanged.
 
-**Agent 1 — foundry:sw-engineer**: Review architecture, SOLID adherence, type safety, error handling, code structure. Check Python anti-patterns (bare `except:`, `import *`, mutable defaults). Flag blocking issues vs suggestions. `codemap_available=true`: read `rdeps` first (importer list per changed module) — skip importer-walk Reads on listed modules; verify only when needed for a specific finding.
+**Agent 1 — foundry:sw-engineer**: Review architecture, SOLID adherence, type safety, error handling, code structure. Check Python anti-patterns (bare `except:`, `import *`, mutable defaults). Flag blocking issues vs suggestions. `codemap_available=true`: read `rdeps` first (importer list per changed module) — skip importer-walk Reads on listed modules; verify only when a specific finding needs it.
 
 **API-consistency audit** (any diff hunk touching public API surface — new/changed function, method, class, constant, param, flag, return shape, or module placement; fires for new kwargs on already-exported functions too, not gated on `__init__.py` churn): for each public symbol added or changed, `Read` the ACTUAL surrounding surface from source — the existing function/class it lives beside, its siblings' signatures, the module it sits in — and validate the change against the established API principles, not in isolation:
 
@@ -462,7 +462,7 @@ Flag rules:
 
 Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIGH patterns as severity anchors. Respect suppressions list.
 
-**Agent 2 — foundry:qa-specialist**: Audit test coverage. Identify untested paths, missing edge cases, test quality issues. Check ML-specific issues (non-deterministic tests, missing seed pinning). List top 5 missing tests. `codemap_available=true`: read `uncovered` + `mock-rdeps` sections from codemap context block first — symbols listed in `uncovered` lack any test rdep; symbols listed in `mock-rdeps` are tested via mock (not falsely "untested"). Skip manual grep/Read of `tests/` for symbols codemap already classifies; fall back to file reads only when codemap output empty for a symbol needed or when verifying a specific finding. Explicitly check for missing tests in these patterns (GT-level findings, not afterthoughts):
+**Agent 2 — foundry:qa-specialist**: Audit test coverage. Identify untested paths, missing edge cases, test quality issues. Check ML-specific issues (non-deterministic tests, missing seed pinning). List top 5 missing tests. `codemap_available=true`: read `uncovered` + `mock-rdeps` sections from codemap context block first — symbols in `uncovered` lack any test rdep; symbols in `mock-rdeps` are tested via mock (not falsely "untested"). Skip manual grep/Read of `tests/` for symbols codemap already classifies; fall back to file reads only when codemap output empty for a needed symbol or verifying a specific finding. Explicitly check for missing tests in these patterns (GT-level findings, not afterthoughts):
 
 - Concurrent access to shared state (locks or shared variables present)
 - Error paths: calling methods in wrong order (e.g., `log()` before `start()`)
@@ -474,21 +474,21 @@ Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIG
 
 **Agent 3 — foundry:perf-optimizer** (merged spawn with Agent 6 — see §Merged spawn units): Analyze performance issues. Algorithmic complexity, Python loops that should be NumPy/torch ops, repeated computation, unnecessary I/O. ML code: check DataLoader config, mixed precision. Prioritize by impact. Findings to `$RUN_DIR/perf-optimizer.md`.
 
-**Agent 4 — foundry:doc-scribe** (merged spawn with Agent 5 — see §Merged spawn units): Check documentation completeness. Public APIs without docstrings, missing Google style sections, outdated README, CHANGELOG gaps. Verify examples run. `codemap_available=true`: read `undocumented` + `xrefs --broken` sections from codemap context block first — `undocumented` enumerates symbols missing docstrings; `xrefs --broken` enumerates stale Sphinx refs. Skip docstring-scan Reads on listed symbols; fall back to file reads only when codemap output empty for a symbol needed or when verifying a specific finding. Findings to `$RUN_DIR/doc-scribe.md`.
+**Agent 4 — foundry:doc-scribe** (merged spawn with Agent 5 — see §Merged spawn units): Check documentation completeness. Public APIs without docstrings, missing Google style sections, outdated README, CHANGELOG gaps. Verify examples run. `codemap_available=true`: read `undocumented` + `xrefs --broken` sections from codemap context block first — `undocumented` enumerates symbols missing docstrings; `xrefs --broken` enumerates stale Sphinx refs. Skip docstring-scan Reads on listed symbols; fall back to file reads only when codemap output empty for a needed symbol or verifying a specific finding. Findings to `$RUN_DIR/doc-scribe.md`.
 
 - **Algorithmic accuracy check**: Functions computing mathematical results (moving averages, statistics, transforms, distances) — verify docstring behavioral claims match implementation. Deviation from conventional definition → MEDIUM; docstring must document deviation, not state standard definition. **Deprecation check**: Check deprecated stdlib usage in public API surface only — skip private functions, classes, constants, and modules starting with `_`. E.g., `datetime.utcnow()` deprecated in 3.12, `os.path` vs `pathlib`. Flag deprecated stdlib as MEDIUM with replacement.
 
 **Agent 5 — foundry:linting-expert** (dimension covered by the Agent 4 merged spawn — see §Merged spawn units): Static analysis audit. Check ruff and mypy pass. Type annotation gaps on public APIs, suppressed violations without explanation, missing pre-commit hooks. Flag mismatched target Python version. Findings to `$RUN_DIR/linting-expert.md`.
 
-**Security augmentation (conditional — fold into Agent 1 prompt, not separate spawn)**: Target touches authentication, user input handling, dependency updates, or serialization → add to foundry:sw-engineer prompt (Agent 1): check SQL injection, XSS, insecure deserialization, hardcoded secrets, missing input validation. If dependency files changed: check pip-audit availability first — `if ! command -v pip-audit >/dev/null 2>&1; then echo "⚠ pip-audit not found — dependency vulnerability check skipped"; else <run pip-audit>; fi`. Skip for purely internal refactoring.
+**Security augmentation (conditional — fold into Agent 1 prompt, not separate spawn)**: target touches authentication, user input handling, dependency updates, or serialization → add to foundry:sw-engineer prompt (Agent 1): check SQL injection, XSS, insecure deserialization, hardcoded secrets, missing input validation. Dependency files changed → check pip-audit availability first — `if ! command -v pip-audit >/dev/null 2>&1; then echo "⚠ pip-audit not found — dependency vulnerability check skipped"; else <run pip-audit>; fi`. Skip for purely internal refactoring.
 
 **Agent 6 — foundry:solution-architect (optional, for changes touching public API boundaries; dimension covered by the Agent 3 merged spawn — see §Merged spawn units, findings to `$RUN_DIR/solution-architect.md`)**: Target touches `__init__.py` exports, adds/modifies Protocols or ABCs, changes module structure, introduces new public classes, **or changes the signature of any already-exported public function — added/removed/renamed params, new flags** → evaluate API design quality, coupling impact, backward compatibility, and consistency of any added symbol (name, placement, signature, param/flag, return shape) with the existing API surface — naming conventions, module organization, sibling patterns (e.g. a new bool that duplicates an existing `kind=`/`mode=` discriminator, or a helper added where an equivalent already lives → flag, reuse/extend the existing home instead). Skip for purely internal (non-exported) implementation changes.
 
 **Agent 7 — foundry:challenger (skip if `CHALLENGE_ENABLED=false`, or per Small-diff challenger skip in Scope pre-check when `CHALLENGE_FORCED=false`)**: Adversarial review of design decisions in diff. Attacks assumptions, missing edge cases, security risks, architectural concerns, complexity creep with mandatory refutation step. File-handoff: write full findings to `$RUN_DIR/challenger.md`. Return JSON: `{"status":"done","findings":N,"severity":{"critical":0,"high":0,"medium":0,"low":0},"file":"$RUN_DIR/challenger.md","confidence":0.88}`. Severity mapping: blockers → `high`; concerns → `medium`.
 
-**Challenger severity propagation**: when consolidator (Step 5) reads `challenger.md`, map challenger severity labels to review severity labels before merging — CRITICAL → `critical`, HIGH → `high`, MEDIUM → `medium`, LOW → `low`. Do not drop severity; if challenger uses non-standard labels (e.g. "blocker", "concern"), apply mapping: blockers → `high`, concerns → `medium`.
+**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map challenger severity labels to review severity labels before merging — CRITICAL → `critical`, HIGH → `high`, MEDIUM → `medium`, LOW → `low`. Never drop severity; challenger uses non-standard labels (e.g. "blocker", "concern") → apply mapping: blockers → `high`, concerns → `medium`.
 
-**Health monitoring**: agent calls run in the background. Spawn the batch, end the turn, and resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep. If an agent returns partial results or errors, use Read tool on `$RUN_DIR/<agent-name>.md` for details. Mark agents that returned empty or error with ⏱ in final report. Never silently omit agents that **failed** (returned error/partial) — they must appear with ⏱ marker. Agents that are **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
+**Health monitoring**: agent calls run in background. Spawn the batch, end the turn, resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep. Agent returns partial results or errors → use Read tool on `$RUN_DIR/<agent-name>.md` for details. Mark agents that returned empty or error with ⏱ in final report. Never silently omit agents that **failed** (returned error/partial) — must appear with ⏱ marker. Agents **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
 
 ```bash
 # compaction boundary 1 (compaction-contract.md §Lifecycle)
@@ -507,7 +507,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash state lost between Bash() calls
+IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash resets between calls
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR="$RUN_DIR"
 if [ ! -f "$_DEV_SHARED/foundry--cross-validation-protocol.md" ]; then
@@ -519,9 +519,9 @@ else
 fi
 ```
 
-If file present: follow cross-validation protocol printed above. File absent → skip Step 4 (warning printed above).
+File present → follow cross-validation protocol printed above. File absent → skip Step 4 (warning printed above).
 
-**Skill-specific**: use **same agent type** that raised finding as verifier (e.g., foundry:sw-engineer verifies foundry:sw-engineer's critical finding). **Spawn cap: max 3 verifier agents** — critical/blocking findings > 3 → group into batches of ≤2 findings per verifier (same origin type per batch); note grouped IDs in rationale; each finding still gets its own verdict. Same cap as the shared protocol and oss:review — unbounded verifier fanout costs ~120,851 tok per critical finding.
+**Skill-specific**: use **same agent type** that raised finding as verifier (e.g. foundry:sw-engineer verifies foundry:sw-engineer's critical finding). **Spawn cap: max 3 verifier agents** — critical/blocking findings > 3 → group into batches of ≤2 findings per verifier (same origin type per batch); note grouped IDs in rationale; each finding still gets its own verdict. Same cap as the shared protocol and oss:review — unbounded verifier fanout costs ~120,851 tok per critical finding.
 
 ## Step 5: Consolidate findings
 
@@ -535,11 +535,11 @@ _TPL="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/review/templates/consolid
 cat "$_TPL"
 ```
 
-Use as full consolidator instructions. Prepend the [run-dir preamble (canonical)](#run-dir-preamble-canonical) so consolidator self-resolves `$RUN_DIR`. Summary: read all finding files in `$RUN_DIR/`, apply consolidation rules, write report to `$REPORT_DIR_LITERAL/review-report.md`. Substitute `$REPORT_DIR_LITERAL`, `$DATE`, and `$REVIEW_CHECKLIST` with literal resolved values before inserting into spawn prompt — see [$VAR_LITERAL pre-expansion rule (canonical)](#var_literal-pre-expansion-rule-canonical); leave `$RUN_DIR` literal (agent self-resolves). Return ONLY compact JSON envelope: `{"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"$REPORT_DIR_LITERAL/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}`
+Use as full consolidator instructions. Prepend the [run-dir preamble (canonical)](#run-dir-preamble-canonical) so consolidator self-resolves `$RUN_DIR`. Summary: read all finding files in `$RUN_DIR/`, apply consolidation rules, write report to `$REPORT_DIR_LITERAL/review-report.md`. Substitute `$REPORT_DIR_LITERAL`, `$DATE`, `$REVIEW_CHECKLIST` with literal resolved values before inserting into spawn prompt — see [$VAR_LITERAL pre-expansion rule (canonical)](#var_literal-pre-expansion-rule-canonical); leave `$RUN_DIR` literal (agent self-resolves). Return ONLY compact JSON envelope: `{"status":"done","findings":N,"severity":{"critical":N,"high":N,"medium":N,"low":N},"file":"$REPORT_DIR_LITERAL/review-report.md","confidence":0.N,"summary":"<one-line verdict>"}`
 
 Main context receives only one-liner verdict.
 
-**Consolidator-unavailable fallback**: if `Agent` tool deferred or consolidator times out — read each agent finding file from `$RUN_DIR/` directly, apply same precision gate and density rules, synthesize consolidated report, write to `$REPORT_DIR/review-report.md` using Write tool.
+**Consolidator-unavailable fallback**: `Agent` tool deferred or consolidator times out → read each agent finding file from `$RUN_DIR/` directly, apply same precision gate and density rules, synthesize consolidated report, write to `$REPORT_DIR/review-report.md` using Write tool.
 
 Report format — resolve template path first:
 
@@ -549,7 +549,7 @@ _REVIEW_TEMPLATE="$_REVIEW_TEMPLATE/review-report.md"
 echo "$_REVIEW_TEMPLATE"
 ```
 
-Substitute the resolved literal path into the consolidator spawn prompt ("Read the report template at `<path>` with the Read tool — it defines the output structure"); do NOT cat the template into orchestrator context — that bills the same ~579 tok twice (once here, once inside the prompt).
+Substitute the resolved literal path into the consolidator spawn prompt ("Read the report template at `<path>` with the Read tool — it defines the output structure"); do NOT cat the template into orchestrator context — bills the same ~579 tok twice (once here, once inside the prompt).
 
 After parsing confidence scores: any agent scored < 0.7 → prepend **⚠ LOW CONFIDENCE** to that agent's findings section, state gap explicitly. Never silently drop uncertain findings.
 
@@ -567,7 +567,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 
 ## Step 6: Delegate implementation follow-up (optional)
 
-Re-hydrate `CODEX_OUT` from persisted temp file (Bash() state does not survive between calls): `IFS= read -r CODEX_OUT < "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}" 2>/dev/null || CODEX_OUT=""`. Skip Step 6 if `$CODEX_OUT` empty or file at that path does not exist.
+Re-hydrate `CODEX_OUT` from persisted temp file (Bash() state doesn't survive between calls): `IFS= read -r CODEX_OUT < "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}" 2>/dev/null || CODEX_OUT=""`. Skip Step 6 if `$CODEX_OUT` empty or file at that path doesn't exist.
 
 After consolidating, identify tasks Codex can implement directly — not style violations (pre-commit handles those), but work requiring meaningful code or documentation grounded in actual implementation.
 
@@ -593,13 +593,13 @@ Apply delegation criteria defined there (when found).
 
 Print `### Codex Delegation` section to terminal only when tasks actually delegated — omit entirely if nothing delegated.
 
-**Hard gate**: check "Step 5b: Print report header" task status before anything below. Not `completed` → the header table has not actually been printed yet — go back and do it now (see Step 5), then mark the task `completed`, before calling `AskUserQuestion` below.
+**Hard gate**: check "Step 5b: Print report header" task status before anything below. Not `completed` → header table hasn't actually been printed yet — go back and do it now (see Step 5), mark the task `completed`, before calling `AskUserQuestion` below.
 
-**Hook-enforced**: `hooks/enforce-review-header.js` (PreToolUse on `AskUserQuestion`) denies the follow-up gate's call while `$REPORT_DIR/review-report.md` is missing or empty. A denial reading `develop:review report gate` means Step 5 never produced the report — spawn the consolidator, print the header, then re-issue the question. The hook cannot see whether the print happened, only whether the report exists; the task above remains the check for the print itself.
+**Hook-enforced**: `hooks/enforce-review-header.js` (PreToolUse on `AskUserQuestion`) denies the follow-up gate's call while `$REPORT_DIR/review-report.md` is missing or empty. A denial reading `develop:review report gate` means Step 5 never produced the report — spawn the consolidator, print the header, re-issue the question. The hook can't see whether the print happened, only whether the report exists; the task above remains the check for the print itself.
 
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Any Step 6 Codex edits stay on the worktree branch for you to merge. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
-**Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): blocking issues found → `Run: /develop:fix` to reproduce with a test and apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
+**Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): blocking issues found → `Run: /develop:fix` to reproduce with a test, apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
 
 **Follow-up gate (NEVER SKIP)** — Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
@@ -619,13 +619,13 @@ rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compac
 
 - Critical issues always surfaced regardless of scope
 - Skip sections with no issues — no padding with "looks good". Reviewing isolated code without git context → skip Performance Concerns unless code itself shows performance issues.
-- **Signal-to-noise gate**: Function or class ≤50 lines with only 1–2 ground-level issues (critical/high) → no more than 2 medium/low findings beyond them. Remainder as `[nit]` in dedicated "Minor Observations" section — not elevated to same tier as high-severity findings.
+- **Signal-to-noise gate**: function or class ≤50 lines with only 1–2 ground-level issues (critical/high) → no more than 2 medium/low findings beyond them. Remainder as `[nit]` in dedicated "Minor Observations" section — not elevated to same tier as high-severity findings.
 - **Follow-up chains**:
-  - `[blocking]` bugs or regressions → `/develop:fix` to reproduce with test and apply targeted fix
+  - `[blocking]` bugs or regressions → `/develop:fix` to reproduce with test, apply targeted fix
   - Structural or quality issues → `/develop:refactor` for test-first improvements
   - Security findings in auth/input/deps → run `pip-audit` for dependency CVEs; address OWASP issues inline via `/develop:fix`
-  - Mechanical issues beyond Step 5 findings → when `bridge@borda-ai-rig` is available, call its `implement` skill with a brief that states the exact finding, target paths, current evidence, permitted edits, required result, stop condition, and verification command.
+  - Mechanical issues beyond Step 5 findings → `bridge@borda-ai-rig` available → call its `implement` skill with a brief stating the exact finding, target paths, current evidence, permitted edits, required result, stop condition, verification command.
   - Contributor-facing review of GitHub PR → use `/oss:review <PR#>` (requires oss plugin) instead
-- **Parallel agent cleanup**: after all spawn units complete, review `TaskList` — delete any tasks created by sub-agents (not by lead orchestrator). Sub-agent task creation unintended, can leave zombie tasks.
+- **Parallel agent cleanup**: after all spawn units complete, review `TaskList` — delete any tasks created by sub-agents (not by lead orchestrator). Sub-agent task creation is unintended, can leave zombie tasks.
 
 </notes>

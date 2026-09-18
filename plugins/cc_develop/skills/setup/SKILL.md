@@ -21,11 +21,11 @@ Deliver develop's rules to Claude's user-level rule namespace, and its own permi
 | `.claude-plugin/permissions-{allow,deny}.json` → `~/.claude/settings.json` | merged additively; nothing removed |
 | Any other key of `~/.claude/settings.json` | never touched |
 
-**Why namespaced?** Claude loads user rules from one flat directory. Four plugins ship a `rules/quality-gates.md`; installing source basenames would collide. Every rule installs as `<plugin>-<source-name>.md`, so `quality-gates.md` becomes `develop-quality-gates.md`. The prefix is inert — verified against Claude Code 2.1.220 that a filename prefix changes neither unconditional loading nor `paths:` frontmatter matching.
+**Why namespaced?** Claude loads user rules from one flat directory. Four plugins ship a `rules/quality-gates.md`; installing source basenames would collide. Every rule installs as `<plugin>-<source-name>.md` — `quality-gates.md` becomes `develop-quality-gates.md`. Prefix is inert — verified against Claude Code 2.1.220: a filename prefix changes neither unconditional loading nor `paths:` frontmatter matching.
 
 **Why symlink, not copy?** Rules load at session start. A symlink serves the installed version after every upgrade; a copy silently serves stale content forever.
 
-**Why does develop deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases.
+**Why does develop deliver only its own rules?** Each plugin installs independently. A plugin shipping a sibling's rules would break standalone installation, couple releases.
 
 NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, and only additively. Writes nothing under `~/.codex/`.
 
@@ -60,7 +60,7 @@ printf "  Python: %s\n" "$PYTHON_CMD"
 
 ## Step 2: Dry run — see what would change
 
-`$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `develop`; `rules/` is a real directory holding at least one non-empty regular `*.md`) and aborts before touching anything if any check fails.
+`$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `develop`; `rules/` is a real directory holding ≥1 non-empty regular `*.md`) and aborts before touching anything on any check failure.
 
 ```bash
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
@@ -80,7 +80,7 @@ python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PL
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
 
-Ownership is proved before any replace or remove: the existing link must resolve under the current plugin root, or under the same `~/.claude/plugins/cache/<marketplace>/develop/` lineage as the current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree is never adopted — path substrings are not evidence of ownership.
+Ownership proved before any replace or remove: existing link must resolve under current plugin root, or the same `~/.claude/plugins/cache/<marketplace>/develop/` lineage as current install. A link into another marketplace, another plugin, a source checkout, or a dotfiles tree never adopted — path substrings aren't evidence of ownership.
 
 ## Step 4: Conflicts
 
@@ -98,11 +98,11 @@ On **(b)**, re-run Step 3's command with `--approve` appended and report the res
 
 ## Step 5: Merge permissions.allow and permissions.deny
 
-This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code does not read them from the plugin manifest, so without this step they are inert files — the allow entries never suppress a prompt and the deny entries never block anything.
+This plugin ships its own `permissions-allow.json` and `permissions-deny.json`. Claude Code doesn't read them from the plugin manifest, so without this step they're inert files — allow entries never suppress a prompt, deny entries never block anything.
 
-Merge is additive and idempotent: `unique` keeps entries already present from being duplicated, and no entry is ever removed. Each plugin merges only its own pair.
+Merge is additive and idempotent: `unique` keeps existing entries from duplicating; no entry ever removed. Each plugin merges only its own pair.
 
-Create the file when this is a first install, and back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
+Create the file on first install, back it up before any write — a standalone install may reach this step with no `~/.claude/settings.json` at all:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -140,7 +140,7 @@ _jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.j
 
 Report: "Added N new permissions.deny entries (M already present)."
 
-Deny wins over allow in Claude Code, so merging both in either order yields the same effective policy.
+Deny wins over allow in Claude Code — merging both in either order yields the same effective policy.
 
 Validate what was written; settings.json that no longer parses is restored from the backup taken above:
 
@@ -167,11 +167,11 @@ cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # 
 
 <notes>
 
-**Upgrade path**: `claude plugin install develop@borda-ai-rig` then `/develop:setup`. Links from the previous version share the install-cache lineage, so they refresh without prompting; a rule dropped in the new version has its link removed. `make sync-claude` runs `/develop:setup --approve` headlessly for every installed managed plugin that ships a setup skill, so a normal sync needs no manual step.
+**Upgrade path**: `claude plugin install develop@borda-ai-rig` then `/develop:setup`. Links from the previous version share the install-cache lineage, so they refresh without prompting; a rule dropped in the new version has its link removed. `make sync-claude` runs `/develop:setup --approve` headlessly for every installed managed plugin shipping a setup skill — normal sync needs no manual step.
 
-**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall, and neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing the plugin, delete `~/.claude/rules/develop-*.md` by hand — they become dangling symlinks once the plugin cache version is gone.
+**Uninstall leaves state behind**: Claude Code runs no cleanup hook on uninstall; neither `claude plugin uninstall` nor `make clear-all` removes what setup created. After removing the plugin, delete `~/.claude/rules/develop-*.md` by hand — they become dangling symlinks once the plugin cache version is gone.
 
-**Testing**: setup is reachable only as `/develop:setup` after the plugin is installed. To exercise it locally, bump `version` in `plugins/cc_develop/.claude-plugin/plugin.json`, run `claude plugin install develop@borda-ai-rig` from the repo root to refresh the cache, then invoke the skill. `bin/sync_rules.py` itself is covered by `plugins/cc_develop/tests/test_sync_rules.py` against disposable home directories.
+**Testing**: setup reachable only as `/develop:setup` after plugin install. To exercise locally: bump `version` in `plugins/cc_develop/.claude-plugin/plugin.json`, run `claude plugin install develop@borda-ai-rig` from repo root to refresh cache, then invoke the skill. `bin/sync_rules.py` itself covered by `plugins/cc_develop/tests/test_sync_rules.py` against disposable home directories.
 
 **Follow-up gate omitted** — setup is one-shot; Step 6 is terminal output.
 

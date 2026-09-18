@@ -11,7 +11,7 @@ Run dir: `.reports/calibrate/<TIMESTAMP>/routing/`
 
 ### Phase 1 — Collect agent descriptions
 
-Enumerate the roster file set. Source tree (`plugins/*/agents/*.md`) is authoritative; the installed cache is the fallback when the source tree carries no agents; project-local `.claude/agents/*.md` is an override tier that is empty in most setups — `/foundry:setup` never creates that directory and purges stale entries from it, so it must never be the sole source:
+Enumerate roster file set. Source tree (`plugins/*/agents/*.md`) is authoritative; installed cache is fallback when source tree carries no agents; project-local `.claude/agents/*.md` is an override tier empty in most setups — `/foundry:setup` never creates that directory, purges stale entries from it, so it must never be the sole source:
 
 ```bash
 RUN_DIR=".reports/calibrate/<TIMESTAMP>/routing"
@@ -28,13 +28,13 @@ find .claude/agents -maxdepth 1 -name "*.md" 2>/dev/null >> "$RUN_DIR/roster-fil
 grep -c . "$RUN_DIR/roster-files.txt"
 ```
 
-**Empty-roster hard stop** — zero lines: do NOT generate problems, do NOT score, do NOT reconstruct a roster from memory. A fabricated roster yields a measured-looking `routing_accuracy` for a run that measured nothing, and that number lands in `calibrations.jsonl` history. Write this line to `.reports/calibrate/<TIMESTAMP>/routing/result.jsonl`, return it as the compact JSON, and skip Phases 2–4:
+**Empty-roster hard stop** — zero lines: do NOT generate problems, do NOT score, do NOT reconstruct a roster from memory. A fabricated roster yields a measured-looking `routing_accuracy` for a run that measured nothing, and that number lands in `calibrations.jsonl` history. Write this line to `.reports/calibrate/<TIMESTAMP>/routing/result.jsonl`, return it as compact JSON, skip Phases 2–4:
 
 `{"ts":"<TIMESTAMP>","target":"routing","mode":"<MODE>","routing_accuracy":null,"confusion_rate":null,"hard_accuracy":null,"auto_invoke_accuracy":null,"problems":0,"verdict":"incomplete","confused_pairs":[],"gaps":["no agent files found under plugins/*/agents/, the installed plugin cache, or .claude/agents/ — routing accuracy not measured"]}`
 
 Read each file listed in `roster-files.txt`. Per file, extract `name:` and `description:` from YAML frontmatter (between `---` delimiters).
 
-Roster entries must carry the **dispatch name**, not the bare frontmatter `name:` — that is what `expected_agent` and every selector answer are matched against: for `plugins/<dir>/agents/<n>.md` and cache `<plugin>/<ver>/agents/<n>.md`, use `<plugin>:<n>` (strip any leading `cc_` from `<dir>`); for `.claude/agents/<n>.md`, use bare `<n>`. Same dispatch name from more than one tier — keep the `.claude/` entry, else the source-tree entry.
+Roster entries must carry the **dispatch name**, not the bare frontmatter `name:` — that's what `expected_agent` and every selector answer are matched against: for `plugins/<dir>/agents/<n>.md` and cache `<plugin>/<ver>/agents/<n>.md`, use `<plugin>:<n>` (strip any leading `cc_` from `<dir>`); for `.claude/agents/<n>.md`, use bare `<n>`. Same dispatch name from more than one tier: keep `.claude/` entry, else source-tree entry.
 
 Build roster string, one line per agent:
 
@@ -94,7 +94,7 @@ Each selector gets this prompt (substitute `<ROSTER>`, `<TASK_PROMPT>`, `<PROBLE
 
 **Context discipline**: subagents write to disk, return single-line ack. Pipeline agent must NOT accumulate full analyses — scorers read from disk in Phase 3. `Wrote: <PROBLEM_ID>` per agent correct.
 
-**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). When each subagent returns, check for `selection-<PROBLEM_ID>.md`; missing → mark that problem `{"selected":null,"timed_out":true}` with ⏱ in report.
+**Completion handling** — spawns are blocking `Agent()` calls, so no poll loop is possible (`_FOUNDRY_SHARED/agent-spawn-protocol.md` §Synchronous spawns). Each subagent returns: check for `selection-<PROBLEM_ID>.md`; missing: mark that problem `{"selected":null,"timed_out":true}` with ⏱ in report.
 
 ### Phase 4 — Score
 

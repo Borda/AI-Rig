@@ -41,7 +41,7 @@
 
    **Axis-slug rule — the lead owns it, the agent never derives it.** For each axis the lead computes `<axis-slug>` from the axis name by: lowercasing, replacing every run of characters outside `[a-z0-9]` with a single `-`, then trimming leading and trailing `-`. Example: axis `Data Loading & Aug` → `data-loading-aug`.
 
-   The lead then **substitutes the resulting literal paths into that agent's prompt before constructing the `Agent()` call**: the template below must reach the agent with `<RUN_DIR>` and `<axis-slug>` already replaced by concrete text (e.g. `.experiments/run-team-2026-05-13T10-00-00Z/hypotheses-data-loading-aug.jsonl`). An unsubstituted placeholder reaches the agent as literal text, the agent writes to a wrongly-named path, and the liveness check below reports a false ⏱ on an agent that in fact succeeded. The lead **records the exact filename pair it put in each prompt** (jsonl path, md path) and checks those recorded paths — never a slug re-derived after the fact.
+   The lead then **substitutes the resulting literal paths into that agent's prompt before constructing the `Agent()` call**: the template below must reach the agent with `<RUN_DIR>` and `<axis-slug>` already replaced by concrete text (e.g. `.experiments/run-team-2026-05-13T10-00-00Z/hypotheses-data-loading-aug.jsonl`). Unsubstituted placeholder reaches agent as literal text: agent writes to wrongly-named path, liveness check below reports false ⏱ on agent that in fact succeeded. The lead **records the exact filename pair it put in each prompt** (jsonl path, md path) and checks those recorded paths — never a slug re-derived after the fact.
 
    Each hypothesis agent's spawn prompt:
 
@@ -83,7 +83,7 @@
    Call TaskUpdate(in_progress) when starting; TaskUpdate(completed) when done.
    ```
 
-**Spawn note**: hypothesis agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On the completion notifications, check the jsonl path **recorded for that agent at spawn time** (step 4's axis-slug rule) — not a freshly re-derived slug. Missing or empty → glob `<RUN_DIR>/hypotheses-*.jsonl` for a near-match first, since a mismatched name is a naming bug rather than a dead agent; still nothing → that agent timed out: read any partial output, surface with ⏱ in the Phase D report, never silently omit.
+**Spawn note**: hypothesis agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). On completion notifications, check jsonl path **recorded for that agent at spawn time** (step 4's axis-slug rule) — not a freshly re-derived slug. Missing or empty → glob `<RUN_DIR>/hypotheses-*.jsonl` for a near-match first, since a mismatched name is a naming bug rather than a dead agent; still nothing → that agent timed out: read any partial output, surface with ⏱ in the Phase D report, never silently omit.
 
 5. Collect compact JSON envelopes from all hypothesis agents. Do not read `.md` analysis files into lead context — inputs to Phase B queue assembly only.
 

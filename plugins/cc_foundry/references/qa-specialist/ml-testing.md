@@ -4,7 +4,7 @@
 
 Read only for ML model testing: PyTorch, TensorFlow, JAX, model inference, training-loop verification, or tensor-shape checks. Skip non-ML Python tasks.
 
-> **Framework scope**: all patterns below use PyTorch. For TF/JAX, adapt to `tf.debugging`/`jax.test_util`; seeding, assertion APIs, and DataLoader patterns differ.
+> **Framework scope**: patterns below use PyTorch. TF/JAX: adapt to `tf.debugging`/`jax.test_util` — seeding, assertion APIs, DataLoader patterns differ.
 
 ## Tensor Assertions (PyTorch)
 
@@ -43,11 +43,11 @@ def test_transform_preserves_range():
 
 > `reset_random_seeds` autouse fixture — see `_shared/pytest-config.md` for the canonical definition.
 
-Mark GPU tests with `@pytest.mark.gpu` and `@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")` so CPU-only runners skip them without breaking the suite.
+Mark GPU tests `@pytest.mark.gpu` + `@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")` — CPU-only runners skip them without breaking the suite.
 
 ## DataLoader Testing
 
-> **Determinism with `num_workers > 0`**: when the DataLoader uses worker processes, **each worker has its own RNG state**. Reproducibility tests are non-deterministic unless every worker is seeded via `worker_init_fn`. The `reset_random_seeds` autouse fixture seeds the main process only — it does NOT propagate into worker processes. Pass a `worker_init_fn` and a `torch.Generator` to `DataLoader`, or restrict tests to `num_workers=0`.
+> **Determinism with `num_workers > 0`**: worker processes each have their own RNG state. Reproducibility tests are non-deterministic unless every worker is seeded via `worker_init_fn`. The `reset_random_seeds` autouse fixture seeds the main process only — does NOT propagate into worker processes. Pass a `worker_init_fn` and a `torch.Generator` to `DataLoader`, or restrict tests to `num_workers=0`.
 
 ```python
 import random
@@ -75,7 +75,7 @@ def make_dataloader(dataset: torch.utils.data.Dataset, seed: int, num_workers: i
 
 
 def test_dataloader_reproducibility():
-    # Seed explicitly here — don't rely on autouse fixture ordering for dataset values
+    # Seed explicitly — don't rely on autouse fixture ordering for dataset values
     torch.manual_seed(42)
     ds = torch.utils.data.TensorDataset(torch.randn(16, 3, 224, 224))
     loader1 = make_dataloader(ds, seed=42)

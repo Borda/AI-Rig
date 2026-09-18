@@ -47,7 +47,7 @@ Infer `INTEL_AGENT` from `PR_LABELS` + `PR_TITLE` (lowercase, first match wins) 
 | `lint`, `style`, `format`, `ruff`, `mypy`, `typing`, `type hint`, `annotation`, `annotate`, `docstring`, `comments` | `foundry:linting-expert` |
 | (no match / mixed) | `foundry:sw-engineer` |
 
-**`--agent` override applies to `INTEL_AGENT`**: when caller passes `--agent <name>`, the resolved agent overrides the routing table for `INTEL_AGENT` as well as Step 8 implementation. The bridge implementation skill is never a classification agent, so fall back to the routing table for `INTEL_AGENT`.
+**`--agent` override applies to `INTEL_AGENT`**: when caller passes `--agent <name>`, resolved agent overrides routing table for `INTEL_AGENT` as well as Step 8 implementation. Bridge implementation skill is never a classification agent — fall back to routing table for `INTEL_AGENT`.
 
 Apply `agent-resolution.md` fallback to `INTEL_AGENT` (foundry absent → substitute with `general-purpose` + role prefix).
 
@@ -69,7 +69,7 @@ Inputs (substitute literal values — agent does not inherit shell variables):
 <!-- loads: github-review-parsing.md -->
 
 Read <_OSS_SHARED>/github-review-parsing.md first. Follow its fetch-completeness rule (both
-endpoints below are mandatory, neither alone is enough), its collapsed-`<details>`-block
+endpoints below mandatory, neither alone enough), its collapsed-`<details>`-block
 expansion rule (a review body listing suppressed/nested findings is never one item), and its
 cross-round dedup rule (same file+line recurring across reviews/timestamps merges to one item)
 for everything below.
@@ -102,7 +102,7 @@ Key invariant: location tracks "does this comment have a resolvable PullRequestR
 Synthesize contribution motivation (2–3 sentences using PR body + linked issues):
 what problem contributor solving, why this approach, expected user-visible outcome.
 Becomes priority lens for conflict resolution.
-**PR body = stated intent; thread = authoritative record**: PR descriptions often drift from actual implementation when reviewers request changes mid-review. When PR body conflicts with what thread discussion/reviewer requests agreed upon, thread wins. Use thread consensus to understand what was actually implemented, not original PR description.
+**PR body = stated intent; thread = authoritative record**: PR descriptions often drift from actual implementation when reviewers request changes mid-review. When PR body conflicts with what thread discussion/reviewer requests agreed, thread wins. Use thread consensus for what was actually implemented, not original PR description.
 
 Classify EVERY comment using these codes:
   [gh][req]      change required before merge (reviewer with write access / maintainer)
@@ -133,15 +133,15 @@ API, blank for report items), full_comment_text, location, origin.
   - origin ∈ {posted, suppressed-block}; default=posted. `suppressed-block` per github-review-parsing.md rule 2 — a finding pulled out of a review's collapsed/suppressed section rather than posted directly; carries the bot's own lower-confidence signal, never silently indistinguishable from a posted finding downstream.
 
 **Cross-round dedup pass** (github-review-parsing.md rule 3 — run before writing anything below):
-group two classified items only when ALL three are true — same file, wording is a
-close/near-identical match, AND position is consistent with recurrence (exact line match, OR
+group two classified items only when ALL three true — same file, wording is a
+close/near-identical match, AND position consistent with recurrence (exact line match, OR
 lines differ by an amount explainable by an intervening push, OR either item has no line).
-Wording match is never optional: same file + same/nearby line + unrelated wording never groups
+Wording match never optional: same file + same/nearby line + unrelated wording never groups
 — two unrelated findings can legitimately share or sit near a line. Collapse each group to ONE
-ACTION_ITEM — keep the most-resolvable occurrence's location/url (inline over discussion over
-report), highest severity seen in the group, union of classification codes if they differ. The
-number of groups collapsed (group size > 1) is the `<N> recurring findings merged` count in the
-Sources block below — no separate variable needed, it's already literal text in the file this
+ACTION_ITEM — keep most-resolvable occurrence's location/url (inline over discussion over
+report), highest severity seen in group, union of classification codes if they differ. Number
+of groups collapsed (group size > 1) is the `<N> recurring findings merged` count in the
+Sources block below — no separate variable needed, already literal text in the file this
 step writes.
 
 Write THREE files using the Write tool (expand <IMPL_DIR> to the literal path above):
@@ -194,7 +194,7 @@ fi
 [ "${RESOLVED_THREAD_IDS_COUNT:-0}" = "0" ] && echo "⚠ Could not fetch resolved thread status — some items may already be resolved; review table carefully"  # timeout: 3000
 ```
 
-Read `$IMPL_DIR/pr-intelligence.md` and print its contents (Sources block + motivation + action item table) **inline to terminal** — this is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply to it (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). All later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
+Read `$IMPL_DIR/pr-intelligence.md`, print its contents (Sources block + motivation + action item table) **inline to terminal** — only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
 
 ```bash
 jq -c ". | select(.id == <id>)" "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
@@ -202,4 +202,4 @@ jq -c ". | select(.id == <id>)" "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
 
 ### `[question]` item handling
 
-Answer `[question]` items resolvable from code — **no `AskUserQuestion` in this step**. Classify inline: code directly answers question → reclassify as `[req]` or `[suggest]` per reviewer intent; answer reveals known limitation or deferred work → keep `[question]` tag, append brief answer note. Unresolvable from code → keep `[question]` unchanged. All `[question]` items flow into Step 3d for user selection — user selecting one there implicitly approves implementation. Never self-promote without code evidence
+Answer `[question]` items resolvable from code — **no `AskUserQuestion` in this step**. Classify inline: code directly answers question → reclassify `[req]` or `[suggest]` per reviewer intent; answer reveals known limitation or deferred work → keep `[question]` tag, append brief answer note. Unresolvable from code → keep `[question]` unchanged. All `[question]` items flow into Step 3d for user selection — user selecting one there implicitly approves implementation. Never self-promote without code evidence

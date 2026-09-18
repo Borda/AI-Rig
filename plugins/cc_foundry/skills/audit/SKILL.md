@@ -9,7 +9,7 @@ effort: high
 
 <objective>
 
-Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, rules, settings.json, hooks. Spawns `foundry:curator` per-file, aggregates system-wide for cross-file issues — infinite loops, inventory drift, missing permissions, interop breaks. Reports findings; fix level chosen from follow-up gate.
+Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, rules, settings.json, hooks. Spawns `foundry:curator` per-file, aggregates system-wide for cross-file issues — infinite loops, inventory drift, missing permissions, interop breaks. Reports findings; fix level from follow-up gate.
 
 </objective>
 
@@ -102,7 +102,7 @@ Surface progress at milestones: after system-wide checks ("✓ Checks 1-20 compl
 
 ## Pre-flight checks
 
-**Context budget**: full audit (12+ agents, 14+ skills, 12 system checks) runs close to context limits. File-based handoff mandatory — every sub-agent writes full output to file, returns only compact JSON envelope. Sub-agent echoing findings to context = compaction before audit completes.
+**Context budget**: full audit (12+ agents, 14+ skills, 12 system checks) runs close to context limits. File-based handoff mandatory — every sub-agent writes full output to file, returns only compact JSON envelope. Sub-agent echoing findings to context = compaction before audit done.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -121,7 +121,7 @@ AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || p
 
 Place these three lines at the top of every Bash block in Steps 2–11 that references either variable.
 
-**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. If found: print `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after extracting supported flags (`--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`), scan `$ARGUMENTS` for remaining `--<token>` tokens. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--local`, `--upgrade`, `--adversarial`, `--efficiency`, `--skip-gate`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Step 1: Run pre-commit (if configured)
 
@@ -151,13 +151,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/audit_static.py" --scan-di
     --jsonl "${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl"  # timeout: 120000
 ```
 
-Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity. The whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; the driver is most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into the aggregate.
+Covered deterministically by the driver (map to legacy check IDs — do NOT re-run these as prose): **14a** tag symmetry · **14b** fence symmetry · **14c** README drift · **14d** mode-dispatch integrity · **14e** cross-plugin shared-file drift · **43** bash-variable persistence · **42** spawn-prompt `$VAR` (checks-skills.md) · **32d** orphaned bin/ scripts · **cli-flag-drift** SKILL.md flags vs argparse (`check_cli_flag_drift.py`, checks-index 42) · **R3** bin/computed-path reference integrity. Whole-repo checks (orphaned-bin, routing-links, shared-drift) always scope to `plugins/` regardless of `STATIC_SCOPE`; driver most complete in `--local` mode. Step 5 merges `static-findings.jsonl` into aggregate.
 
 > **Layer-1 recall is benchmarked** — `tests/test_audit_static.py` plants a known defect per scope-aware class and asserts the driver catches every one (100% mechanical recall), so this pass is trusted, not assumed.
 
 ## Step 1c: Layer-3 recurrence signal (attention weighting)
 
-Read a compact git-churn signal so audit attention follows *measured* churn — the files and change-classes that keep being re-fixed are where the next defect most likely hides. Report the dominant recurring-fix class, not only point findings.
+Read a compact git-churn signal so audit attention follows *measured* churn — files and change-classes that keep being re-fixed are where the next defect most likely hides. Report the dominant recurring-fix class, not only point findings.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -171,7 +171,7 @@ Use `churn-signal.json` (`commit_types`, `top_churn`, `recurring_hint`) to: (1) 
 
 Enumerate everything in scope with built-in tools. Run all Glob calls in parallel.
 
-**Plugin layout resolution** (`--local`/`plugins` scope — multi-plugin source tree, mandatory before the fixed-pattern Globs below): don't assume every plugin uses `skills/`+`agents/` — a plugin can override the convention in its own manifest (e.g. `plugins/codemap-py/.claude-plugin/plugin.json` declares `"skills": "./claude-skills/"`, not `./skills/`; a fixed `*/skills/*/SKILL.md` glob silently never matches it). Resolve each plugin's real dir names first:
+**Plugin layout resolution** (`--local`/`plugins` scope — multi-plugin source tree, mandatory before the fixed-pattern Globs below): don't assume every plugin uses `skills/`+`agents/` — a plugin can override the convention in its own manifest (e.g. `plugins/codemap-py/.claude-plugin/plugin.json` declares `"skills": "./claude-skills/"`, not `./skills/`; a fixed `*/skills/*/SKILL.md` glob silently never matches). Resolve each plugin's real dir names first:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -191,7 +191,7 @@ print(f'PLUGIN_LAYOUT: $plugin_name | skills={skills} | agents={agents}')
 fi
 ```
 
-For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not the hardcoded `skills`/`agents` names) when Globbing that plugin below — e.g. `codemap-py` prints `skills=claude-skills`, so Glob `claude-skills/*/SKILL.md` under `plugins/codemap-py/`, not `skills/*/SKILL.md`. Plugins with no manifest override resolve to the same `skills`/`agents` names the fixed patterns below already assume — no behavior change for them. **`codex-skills/`-style dirs for non-Claude-Code runtimes are intentionally excluded** — only the manifest-declared path is authoritative, since a heuristic `*skill*` name match would also sweep in skill dirs meant for a different agent runtime and produce false-positive findings against Claude Code's frontmatter schema.
+For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not hardcoded `skills`/`agents`) when Globbing that plugin below — e.g. `codemap-py` prints `skills=claude-skills`, so Glob `claude-skills/*/SKILL.md` under `plugins/codemap-py/`, not `skills/*/SKILL.md`. Plugins with no manifest override resolve to the same `skills`/`agents` names the fixed patterns already assume — no behavior change. **`codex-skills/`-style dirs for non-Claude-Code runtimes intentionally excluded** — only the manifest-declared path is authoritative; a heuristic `*skill*` match would also sweep in skill dirs for a different agent runtime, producing false positives against Claude Code's frontmatter schema.
 
 **Source selection by `LOCAL_MODE`**:
 
@@ -217,7 +217,7 @@ For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not the hard
 
 Merge into single flat inventory. When `LOCAL_MODE=true` and same logical name in both `plugins/` and `.claude/`, prefer plugin source — skip `.claude/` duplicate. Record full paths — Step 3 cross-reference checks depend on current inventory. If MEMORY.md not updated since last agent/skill added/removed, run live disk scan, not cached roster. Stale inventory = primary cause of false-negative cross-reference findings.
 
-**Coverage reconciliation** (`--local`/`plugins` scope only — mandatory, not optional): a plugin contributing zero files to the inventory is invisible to every downstream check and must never pass as a silent clean sweep — same failure shape as a check that always no-ops: absence of findings misread as absence of problems. The base set for this comparison is **every directory under `plugins/`**, not just the ones that produced a `PLUGIN_LAYOUT:` line above — a plugin with a missing or malformed `plugin.json` contributes no `PLUGIN_LAYOUT:` line either, and comparing against that subset would make it invisible all over again:
+**Coverage reconciliation** (`--local`/`plugins` scope only — mandatory, not optional): a plugin contributing zero files to the inventory is invisible to every downstream check and must never pass as a silent clean sweep — same failure shape as a check that always no-ops: absence of findings misread as absence of problems. Base set for this comparison is **every directory under `plugins/`**, not just ones that produced a `PLUGIN_LAYOUT:` line above — a plugin with a missing or malformed `plugin.json` contributes no `PLUGIN_LAYOUT:` line either, so comparing against that subset would make it invisible again:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -225,7 +225,7 @@ mkdir -p "${TMPDIR:-/tmp}/audit-state-${CSID}"
 find plugins -mindepth 1 -maxdepth 1 -type d ! -name ".*" 2>/dev/null | sed 's|plugins/||' | sort > "${TMPDIR:-/tmp}/audit-state-${CSID}/all-plugins"
 ```
 
-After inventory is built (model-context comparison — inventory already in context, not re-read from disk): compare every name in `all-plugins` against plugin names actually present in the inventory. For each plugin with zero inventory entries, print and persist in the **same** bash call (re-export `CSID` here too — a later call starts a fresh shell and an unexported `$CSID` silently writes to the wrong sentinel path):
+After inventory built (model-context comparison — inventory already in context, not re-read from disk): compare every name in `all-plugins` against plugin names actually present in inventory. For each plugin with zero inventory entries, print and persist in the **same** bash call (re-export `CSID` here too — a later call starts a fresh shell and an unexported `$CSID` silently writes to the wrong sentinel path):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -258,22 +258,22 @@ Step 11 reads this sentinel and surfaces it as a top-level report section — a 
 
 **Hard rule — no pre-reading**: Never call Read on agent/skill file before spawning foundry:curator. Spawned agent does the reading. Orchestrator reads only returned JSON envelope. Pre-reading 41 KB files into main context = defeats delegation + causes context overflow at scale.
 
-**Batching rule**: Always apply the grouping algorithm. Compute `EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total_files / MAX_BATCHES))` before grouping — caps total batches at `MAX_BATCHES` while guaranteeing `BATCH_SIZE_MIN` files per batch for adequate curator context. Group files into batches of up to `EFFECTIVE_BATCH`. Never spawn one agent per file. Total files ≤ `EFFECTIVE_BATCH` → one batch containing all files. Use `MAX_BATCHES_FAST` in place of `MAX_BATCHES` **only** when `--fast` was passed.
+**Batching rule**: Always apply the grouping algorithm. Compute `EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total_files / MAX_BATCHES))` before grouping — caps total batches at `MAX_BATCHES` while guaranteeing `BATCH_SIZE_MIN` files per batch for adequate curator context. Group files into batches up to `EFFECTIVE_BATCH`. Never spawn one agent per file. Total files ≤ `EFFECTIVE_BATCH` → one batch, all files. Use `MAX_BATCHES_FAST` in place of `MAX_BATCHES` **only** when `--fast` passed.
 
-**Spawn-count gate — apply before spawning anything**: every agent costs ~120,851 tok just to exist, i.e. ~73 tool-calls' worth of work (see `<constants>`). So **spawn the fewest agents that keep each one near `AGENT_CALL_BUDGET`**, not the most the cap allows. Two consequences, both mandatory:
+**Spawn-count gate — apply before spawning anything**: every agent costs ~120,851 tok just to exist, ~73 tool-calls' worth of work (see `<constants>`). **Spawn fewest agents keeping each near `AGENT_CALL_BUDGET`**, not the most the cap allows. Two mandatory consequences:
 
-- **Gate on Layer-1 signal.** Step 1b already ran ~10 deterministic checkers at zero LLM cost, and its results are authoritative for their classes. A file with no Layer-1 finding and no judgment-bearing content (no `Agent()` dispatch, no cross-file contract, no model/tool declaration) does **not** need a curator. Audit it by the static pass alone and say so in the report. Spawning a curator to re-confirm a clean mechanical result is the single most common waste in this skill.
-- **State the trade in the report.** Record agents spawned and the reason for that count. If `--fast` widened the fan-out, say that it bought wall-clock at roughly 120K tok per extra agent — never present the fast path as free.
+- **Gate on Layer-1 signal.** Step 1b already ran ~10 deterministic checkers at zero LLM cost, authoritative for their classes. A file with no Layer-1 finding and no judgment-bearing content (no `Agent()` dispatch, no cross-file contract, no model/tool declaration) does **not** need a curator — audit by static pass alone, say so in report. Spawning a curator to re-confirm a clean mechanical result is this skill's most common waste.
+- **State the trade in the report.** Record agents spawned + reason for that count. `--fast` widened fan-out → say it bought wall-clock at ~120K tok per extra agent — never present the fast path as free.
 
 **Budget line — include verbatim in every spawn prompt**: `If you approach your budget, stop cleanly and return the envelope with "partial": true and an accurate account of what you finished.` Measured: agents at ≤57 calls returned a clean envelope 5/5; agents at 87–142 calls stalled mid-task 3/5 and returned a progress fragment instead, forcing the orchestrator to reconstruct their state from disk.
 
-**Grouping algorithm**: (1) sort by plugin origin (`plugins/<name>/` prefix); (2) assign each plugin's files to batches, fill to `EFFECTIVE_BATCH` before next — keeps same-plugin files together; (3) remaining files (`.claude/` and mixed) fill open slots. Grouping plugin-first, not strictly ordered — unconnected files assigned randomly to reach `EFFECTIVE_BATCH`.
+**Grouping algorithm**: (1) sort by plugin origin (`plugins/<name>/` prefix); (2) assign each plugin's files to batches, fill to `EFFECTIVE_BATCH` before next — keeps same-plugin files together; (3) remaining files (`.claude/` and mixed) fill open slots. Plugin-first, not strictly ordered — unconnected files assigned randomly to reach `EFFECTIVE_BATCH`.
 
-**Layer-2 — judgment by domain, not by file (plugin scope)**: when the scope is `plugins`, `plugins <name>`, or a tier-2 plugin name, override the batch cap and group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even if that exceeds `EFFECTIVE_BATCH`. Whole-plugin context is what lets the curator catch cross-file breaks that per-file batching structurally misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, and version/description drift within the plugin. The curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check that every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, that shared constants/contracts agree across files, and that no skill references a removed mode/file." The mechanical checks are already done in Step 1b — spend this holistic pass on cross-file judgment only. (Very large plugins may still split, but keep agents+their dispatching skills in the same batch.)
+**Layer-2 — judgment by domain, not by file (plugin scope)**: scope `plugins`, `plugins <name>`, or tier-2 plugin name → override batch cap, group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even past `EFFECTIVE_BATCH`. Whole-plugin context lets the curator catch cross-file breaks per-file batching misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, version/description drift. Curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, shared constants/contracts agree across files, no skill references a removed mode/file." Mechanical checks already done in Step 1b — spend this holistic pass on cross-file judgment only. (Very large plugins may still split, but keep agents + their dispatching skills in the same batch.)
 
-For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, and the next ordinary user action. Record each producer's guaranteed postcondition against the next consumer's required precondition. Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, and lifetime. Question accepted design choices and tests that merely assert the chosen operation. Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case. Keep unexecuted probes and missing consumer context explicit; zero findings on inspected files do not establish end-to-end safety. Stay within the audit's existing scope and permissions.
+For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, next ordinary user action. Record each producer's guaranteed postcondition against the next consumer's required precondition. Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, lifetime. Question accepted design choices and tests that merely assert the chosen operation. Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case. Keep unexecuted probes and missing consumer context explicit — zero findings on inspected files doesn't establish end-to-end safety. Stay within the audit's existing scope and permissions.
 
-**Scope-restricted runs**: fewer than `EFFECTIVE_BATCH` files → one batch containing ALL files in scope (single foundry:curator spawn). Read only relevant template file(s) for active scope, not all 4.
+**Scope-restricted runs**: fewer than `EFFECTIVE_BATCH` files → one batch, ALL files in scope (single foundry:curator spawn). Read only relevant template file(s) for active scope, not all 4.
 
 Set up the run directory once before spawning any agents:
 
@@ -299,11 +299,11 @@ Spawn **foundry:curator** agents in batches of up to `EFFECTIVE_BATCH` (grouping
 
 Replace `<RUN_DIR>` with actual path, `<file-slug>` with plugin-prefixed unique slug (e.g. `foundry-shepherd`, `oss-analyse-SKILL`, `develop-fix-SKILL`). Slug chars: `[a-zA-Z0-9-]` only — no slashes, spaces, or dots.
 
-**Critical context discipline**: response body = JSON envelope on final line only. No other text, output summaries, or findings. All content to file.
+**Critical context discipline**: response body = JSON envelope, final line only. No other text, summaries, findings. All content to file.
 
 > Template file = canonical per-file audit criteria. Disk inventory and RUN_DIR path = runtime values injected per spawn.
 
-After spawns complete: short summaries in context; use to identify files with findings. Full content in run directory files.
+After spawns complete: short summaries in context; use to identify files with findings. Full content in run-dir files.
 
 **Health monitoring** (CLAUDE.md §6): apply the honest protocol in `$_FS/agent-spawn-protocol.md` — these curator batches return on completion; after each returns, read its `$RUN_DIR` output file. On empty/missing output: mark `timed_out`, surface with ⏱ in final report. Never omit timed-out agents.
 
@@ -414,11 +414,11 @@ Execute the mode loaded above.
 
 ## Combined-run output isolation
 
-When `--adversarial` and `--efficiency` both run in the same invocation: each mode writes its finding files to its own subdirectory to prevent overwriting — `$RUN_DIR/adversarial/` for adversarial mode output, `$RUN_DIR/efficiency/` for efficiency mode output. Step 5 consolidator reads both subdirs. Follow-up gate fires once after both complete with merged finding counts.
+When `--adversarial` and `--efficiency` both run in the same invocation: each mode writes finding files to its own subdirectory to prevent overwrite — `$RUN_DIR/adversarial/` for adversarial output, `$RUN_DIR/efficiency/` for efficiency output. Step 5 consolidator reads both subdirs. Follow-up gate fires once after both complete, merged finding counts.
 
 ## Follow-up gate
 
-**Always fires** unless `--skip-gate` passed (programmatic callers). Call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool call arguments.
+**Always fires** unless `--skip-gate` passed (programmatic callers). Call `AskUserQuestion` — do NOT write options as plain text first. Map options directly into tool-call arguments.
 
 When user picks fix option (a–c): run Steps 8–10 inline via `modes/fix.md` (state on disk in `summary.jsonl`); no recursive `/audit` call.
 
@@ -450,21 +450,21 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 
 <notes>
 
-- **`!` Breaking findings**: when skill or agent completely non-functional (check 7, broken cross-refs, invalid hook events), prefix finding with `!` and state impact + fix in one place — don't bury in table row. Surfaces as **`! BREAKING`** in bash output and as prominent callout in final report. **`! BREAKING` findings require user acknowledgment before audit proceeds past that check**: call `AskUserQuestion` — state what is broken and impact; user must explicitly confirm awareness before continuing. One question per distinct breaking finding; group only when logically one atomic issue. Batch up to 4 of those questions into a single `AskUserQuestion` call (communication.md per-call cap) — N breaking findings become `ceil(N/4)` calls, never N. Batching changes only how many calls carry the questions; every finding still gets its own question and its own acknowledgment. Prose acknowledgment in response body does NOT count — `AskUserQuestion` mandatory.
+- **`!` Breaking findings**: when skill or agent completely non-functional (check 7, broken cross-refs, invalid hook events), prefix finding with `!`, state impact + fix in one place — don't bury in table row. Surfaces as **`! BREAKING`** in bash output and as prominent callout in final report. **`! BREAKING` findings require user acknowledgment before audit proceeds past that check**: call `AskUserQuestion` — state what's broken and impact; user must explicitly confirm awareness before continuing. One question per distinct breaking finding; group only when logically one atomic issue. Batch up to 4 questions into a single `AskUserQuestion` call (communication.md per-call cap) — N breaking findings become `ceil(N/4)` calls, never N. Batching changes only call count; every finding still gets its own question and acknowledgment. Prose acknowledgment in response body does NOT count — `AskUserQuestion` mandatory.
 
 - **settings.json is hands-off**: missing permissions always reported, never auto-edited — structural JSON edits risk breaking Claude Code config loading
 
-- **Dead loops need human judgment**: cycle in follow-up chains may be intentional (e.g., refactor → review → fix → refactor) — flag and explain, don't auto-remove
+- **Dead loops need human judgment**: cycle in follow-up chains may be intentional (e.g. refactor → review → fix → refactor) — flag + explain, don't auto-remove
 
 - **Convergence loop replaces cycle cap**: fix loop runs until zero fixable findings or 5-pass hard limit — see `modes/fix.md` Step 10 for full protocol
 
 - **Relationship to curator**: `foundry:curator` = single-file reactive audit; `/audit` = system-wide sweep running foundry:curator at scale + cross-file checks
 
-- **Paths must be portable**: `.claude/` for project-relative, `~/` or `$HOME/` for home — never literal `/Users/<name>/` or `/home/<name>/` (anti-examples only); applies to ALL config files including `settings.json`
+- **Paths must be portable**: `.claude/` for project-relative, `~/` or `$HOME/` for home — never literal `/Users/<name>/` or `/home/<name>/` (anti-examples only); applies to ALL config files incl. `settings.json`
 
 - **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, append JSONL line to `.notes/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — never swallow errors silently.
 
-- **Parallel execution rule**: after Step 2, launch Steps 3 and 4 in same response — all foundry:curator spawns AND system-wide bash checks issued together. Do NOT run Step 3 first then Step 4. Aggregation (Step 5) waits for both. Docs-freshness web-explorer (within Step 4) launches in same parallel batch.
+- **Parallel execution rule**: after Step 2, launch Steps 3 and 4 in same response — all foundry:curator spawns AND system-wide bash checks issued together. Do NOT run Step 3 then Step 4. Aggregation (Step 5) waits for both. Docs-freshness web-explorer (within Step 4) launches in same parallel batch.
 
 - **Token cost**: Step 3 (foundry:curator spawns) most expensive. For quick structural scan needing only cross-reference + inventory validation, Step 4 system-wide checks often sufficient. Run `/audit agents` or `/audit skills` to scope, or skip Step 3 for fast pass when per-file quality trusted.
 

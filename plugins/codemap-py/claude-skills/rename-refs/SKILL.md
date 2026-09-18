@@ -40,7 +40,7 @@ Atomically rename Python symbol/module. Coverage:
 
 IDE/LSP coverage preview → `--dry-run`. Only 1:1 renames.
 
-NOT for: index builds (`/codemap-py:scan-codebase`); query-only work (`/codemap-py:query-code`); non-Python; ABC/Protocol symbols with subclass overrides. Static imports do not track overrides: manually review `fn-rdeps`; rename overrides explicitly. No `--index <path>`: always default project index. Monorepo `--root <pkg>` index from `/codemap-py:scan-codebase` is not auto-resolved because `resolve_proj_index.py` derives PROJ only from git-root basename. Before rename, confirm path via `resolve_index_env.py` or keep `--root` consistent with default scans.
+NOT for: index builds (`/codemap-py:scan-codebase`); query-only work (`/codemap-py:query-code`); non-Python; ABC/Protocol symbols with subclass overrides. Static imports don't track overrides: manually review `fn-rdeps`; rename overrides explicitly. No `--index <path>`: always default project index. Monorepo `--root <pkg>` index from `/codemap-py:scan-codebase` isn't auto-resolved — `resolve_proj_index.py` derives PROJ only from git-root basename. Before rename, confirm path via `resolve_index_env.py` or keep `--root` consistent with default scans.
 
 </objective>
 
@@ -124,7 +124,7 @@ IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}"
 [ -n "$PROJ" ] || { printf "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT\n"; exit 1; }
 [ -n "$INDEX" ] || { echo "! index not found — run /codemap-py:scan-codebase first"; exit 1; }
 SMOKE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/check_index_smoke.py" --index-path "$INDEX")  # timeout: 10000
-# python3 not jq — jq absent on stock Windows/CI; python3 already required by every bin/ helper here
+# python3 not jq — jq absent on stock Windows/CI; already required by every bin/ helper here
 STALE=$(printf '%s' "$SMOKE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('stale','unknown'))" 2>/dev/null || echo "unknown")
 ```
 
@@ -133,7 +133,7 @@ STALE=$(printf '%s' "$SMOKE_JSON" | python3 -c "import sys,json; print(json.load
 
 ## Step 2: Resolve targets
 
-All structural queries/rebuilds use `codemap-py` dispatcher, never `scan-query`/`scan-index`. Both routes use same in-engine shared query/exclusive scan leases, preventing mid-rename scan races. Dispatcher additionally owns interpreter probe; aliases skip it (`127` when no eligible CPython, including invalid `CODEMAP_PYTHON`) and are deprecated shims removed no earlier than `1.0.0`. Every block uses PATH-literal `codemap-py query …` / `codemap-py index …`; expansion-bearing path misses bare-name allow prefix and prompts each call. If bare command unavailable, use installed plugin's absolute `bin/codemap-py` launcher interactively.
+All structural queries/rebuilds use `codemap-py` dispatcher, never `scan-query`/`scan-index`. Both routes use same in-engine shared query/exclusive scan leases, preventing mid-rename scan races. Dispatcher also owns interpreter probe; aliases skip it (`127` when no eligible CPython, including invalid `CODEMAP_PYTHON`), deprecated shims removed no earlier than `1.0.0`. Every block uses PATH-literal `codemap-py query …` / `codemap-py index …`; expansion-bearing path misses bare-name allow prefix, prompts each call. If bare command unavailable, use installed plugin's absolute `bin/codemap-py` launcher interactively.
 
 **Symbol subcommand**:
 
@@ -176,7 +176,7 @@ printf '%s\n' "$SYM_QNAME"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-sym-qname-${C
 printf '%s\n' "$SYM_MODULE" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}"
 RDEPS_JSON=$(codemap-py query --timeout 20 fn-rdeps "${SYM_MODULE}::${SYM_QNAME}")
 RDEP_COUNT=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('count',0))" 2>/dev/null || echo "0")
-# forward-first, fail-closed — query_complete wins even when false. jq `//` falls through on false too, so false query_complete got overridden by true legacy exhaustive, arming the destructive gate on an incomplete graph.
+# forward-first, fail-closed — query_complete wins even when false. jq `//` falls through on false too: false query_complete got overridden by true legacy exhaustive, arming destructive gate on incomplete graph.
 EXHAUSTIVE=$(printf '%s' "$RDEPS_JSON" | python3 -c "import sys,json; i=json.load(sys.stdin).get('index',{}); v=i.get('query_complete', i.get('exhaustive', False)); print('true' if v is True else 'false')" 2>/dev/null || echo "false")
 printf '%s\n' "$RDEP_COUNT"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}"
 printf '%s\n' "$EXHAUSTIVE"  > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}"
@@ -240,7 +240,7 @@ Deprecation wrapper: <OLD_REF> kept as @deprecated alias → <NEW_REF>
 ```bash
 # timeout: 3000
 BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-'); BRANCH="${BRANCH:-main}"
-# never overwrite — only record of callers 51–N; same-day re-run would destroy the manual-edit list
+# never overwrite — only record of callers 51–N; same-day re-run would destroy manual-edit list
 BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d).md"; _n=1
 while [ -e "$BLAST_OUT" ]; do _n=$((_n+1)); BLAST_OUT=".temp/output-rename-refs-blast-${BRANCH}-$(date +%Y-%m-%d)-${_n}.md"; done
 printf '%s\n' "$BLAST_OUT"
@@ -394,7 +394,7 @@ Module-level import fix (whole-file scope, once per file):
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
-# OLD_MODULE_PATH set by Step 2 only — symbol OLD_REF can't carry module; re-deriving here previously put symbol name where module belonged (bug)
+# OLD_MODULE_PATH set by Step 2 only — symbol OLD_REF can't carry module; re-deriving here previously misplaced symbol name as module (bug)
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
 # dots literal, not any-char
 _OLD_MODULE_GREP=$(printf '%s' "$OLD_MODULE_PATH" | sed 's/\./\\./g')
@@ -483,7 +483,7 @@ else
     # dotted-path conversion may be wrong for src/ layouts — verify before git mv
     old_file_path=$(echo "$OLD_MODULE_PATH" | tr '.' '/').py
 fi
-# MED-15: check basename, not non-existence — index branch resolves real path (incl. __init__.py), so non-existence guard never fires where needed
+# MED-15: check basename not non-existence — index branch resolves real path (incl. __init__.py); non-existence guard never fires where needed
 case "$old_file_path" in
     */__init__.py|__init__.py)
         printf "! %s resolves to a package __init__.py (%s) — package directory rename (git mv) is out of scope for this skill; use 'git mv %s %s' directly\n" \
@@ -517,7 +517,7 @@ if [ -n "$SMOKE_INDEX" ]; then
     new_file_path=$(python3 -c "import json,sys; idx=json.load(open(sys.argv[1])); print(next((m.get('path','') for m in idx.get('modules',[]) if m.get('name')==sys.argv[2]), ''))" "$SMOKE_INDEX" "$NEW_MODULE_PATH" 2>/dev/null || echo "")
 fi
 if [ -z "$new_file_path" ]; then
-    # fallback dotted→path, src/ prefix from old_file_path — bash % strip not sed, multi-dot path would collide w/ sed's "/" delim
+    # fallback dotted→path, src/ prefix from old_file_path — bash % strip not sed: multi-dot path collides w/ sed's "/" delim
     _OLD_MODULE_DIR=$(echo "${OLD_MODULE_PATH%.*}" | tr '.' '/')
     _OLD_DIRNAME=$(dirname "$old_file_path")
     _OLD_PREFIX="${_OLD_DIRNAME%"$_OLD_MODULE_DIR"}"
@@ -612,7 +612,7 @@ Edit each `:mod:` ref to new module path. Basename-only matches require surround
 # timeout: 400000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
-# `codemap-py index` not scan-index alias — alias leases in-engine too, but skips the dispatcher's interpreter probe (exit 127) and is a deprecated shim. --incremental re-parses changed files only.
+# `codemap-py index` not scan-index alias — alias leases in-engine too but skips dispatcher's interpreter probe (exit 127) and is a deprecated shim. --incremental re-parses changed files only.
 codemap-py index --incremental --timeout 360
 _scan_rc=$?
 if [ "$_scan_rc" -ne 0 ]; then

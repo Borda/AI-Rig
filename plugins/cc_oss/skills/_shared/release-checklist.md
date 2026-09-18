@@ -17,20 +17,20 @@ Release notes format + CHANGELOG generation: use `/oss:release` skill. CI publis
 
 Trusted Publishing uses GitHub OpenID Connect (OIDC) — no `API_TOKEN` or `TWINE_PASSWORD` secret needed.
 
-1. **Create PyPI environment in GitHub** Settings → Environments → New environment → name it `pypi`. Add deployment protection rule (require reviewer) for safety.
+1. **Create PyPI environment in GitHub** Settings → Environments → New environment → name it `pypi`. Add deployment protection rule (require reviewer), for safety.
 
-2. **Register Trusted Publisher on PyPI** PyPI project → Manage → Publishing → Add new pending publisher:
+2. **Register Trusted Publisher on PyPI** PyPI project → Manage → Publishing → Add new pending publisher.
 
    - Owner: `<your-github-org-or-username>`
    - Repository: `<repo-name>`
    - Workflow filename: `publish.yml`
    - Environment: `pypi`
 
-3. **Verify `pyproject.toml` metadata complete** PyPI requires minimum: `[project]` with `name`, `version`, `description`, `requires-python`, `[project.urls]` with `Homepage`.
+3. **Verify `pyproject.toml` metadata complete** PyPI requires minimum: `[project]` with `name`, `version`, `description`, `requires-python`; `[project.urls]` with `Homepage`.
 
 4. **Create GitHub release** (user-run — agents never execute this step; print the commands as a copyable suggestion and stop) Tag the commit with `git tag vX.Y.Z`, then push it with `git push --tags`, then create the GitHub release from that tag with `gh release create`. `publish.yml` triggers on `release: published`, handles rest.
 
-> Step 4 is human-only: tag push and release creation are user-run, never agent-run (public-github.md §Forbidden + CLAUDE.md push safety rule). No AskUserQuestion gate — a confirmation prompt does not make a forbidden write permitted, and this file is also loaded inside the /oss:release pipeline where AskUserQuestion blocks indefinitely.
+> Step 4 is human-only: tag push and release creation are user-run, never agent-run (public-github.md §Forbidden + CLAUDE.md push safety rule). No AskUserQuestion gate — a confirmation prompt doesn't make a forbidden write permitted, and this file also loads inside the /oss:release pipeline where AskUserQuestion blocks indefinitely.
 
 ## Post-release
 

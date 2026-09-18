@@ -18,7 +18,7 @@ TaskCreate(
 )
 ```
 
-If `CODEX_AVAILABLE=false`: degrade gracefully — match `action-item-dispatch.md` routing. Classify the comment by intended `change` type (infer from comment text: mentions of tests → `test`; mentions of docs/README → `docs`; mentions of style/lint → `style`; configuration/CI → `config`/`ci`; default → `code`). Route to internal agent:
+If `CODEX_AVAILABLE=false`: degrade gracefully — match `action-item-dispatch.md` routing. Classify comment by intended `change` type (infer from comment text: mentions tests → `test`; docs/README → `docs`; style/lint → `style`; configuration/CI → `config`/`ci`; default → `code`). Route to internal agent:
 
 | Inferred `change` value | Fallback agent |
 | -- | -- |
@@ -28,11 +28,11 @@ If `CODEX_AVAILABLE=false`: degrade gracefully — match `action-item-dispatch.m
 | `style` | `foundry:linting-expert` |
 | ambiguous / config-only changes | `foundry:sw-engineer` |
 
-Print `⚠ bridge@borda-ai-rig is absent or disabled — falling back to <agent> for this comment.` Set `IMPL_AGENT=<fallback agent>`; proceed to Step 12a with the fallback. Skip the Codex review loop (Step 12b) when the bridge is unavailable — single dispatch only.
+Print `⚠ bridge@borda-ai-rig is absent or disabled — falling back to <agent> for this comment.` Set `IMPL_AGENT=<fallback agent>`; proceed to Step 12a with fallback. Skip Codex review loop (Step 12b) when bridge unavailable — single dispatch only.
 
 ### 12a: Dispatch
 
-**BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process the first 3, wait, continue with the next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries ~120,851 tok of fixed overhead whatever its item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
+**BATCH_SIZE=3** — dispatch at most 3 `Agent()` calls per response turn; wait for all to return before next batch. More comment items than that (multi-comment dispatch) → process first 3, wait, continue with next 3. Prevents rate-limit hits and unbounded parallel spawn. Lowered from 5 on cost evidence: each spawn carries ~120,851 tok fixed overhead regardless of item size, so a wide batch of small comments pays far more in overhead than the work is worth — batching narrower costs wall-clock, not tokens.
 
 Compute the scoped sentinel path via `compute_commit_sentinel.py`, touch it, and register a cleanup trap:
 
@@ -42,7 +42,7 @@ touch "$SENTINEL"  # timeout: 3000
 trap 'rm -f "$SENTINEL"' EXIT INT TERM
 ```
 
-Two dispatch forms, not one call with a swappable name: the bridge is a Skill and every fallback in the Step 12 table is a subagent type, so the branch picks the tool as well as the target. These are Claude Code tool calls, not shell commands.
+Two dispatch forms, not one call with a swappable name: bridge is a Skill, every fallback in Step 12 table is a subagent type — branch picks the tool, not just the target. These are Claude Code tool calls, not shell commands.
 
 ```text
 When CODEX_AVAILABLE=true:
@@ -98,7 +98,7 @@ cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 
 Execute its steps (loaded above).
 
-Commit authorization revoked automatically by `trap 'rm -f "$SENTINEL"' EXIT INT TERM` registered in Step 12a — `$SENTINEL` stays in scope for entire dispatch + review + gate sequence. Do **not** issue separate `rm -f /tmp/claude-commit-authorized` here; that path no longer used (sentinel now scoped per repo + branch per `git-commit.md`).
+Commit authorization revoked automatically by `trap 'rm -f "$SENTINEL"' EXIT INT TERM` registered in Step 12a — `$SENTINEL` stays in scope for entire dispatch+review+gate sequence. Do **not** issue separate `rm -f /tmp/claude-commit-authorized` here — path no longer used (sentinel now scoped per repo+branch per `git-commit.md`).
 
 Mark task `completed`:
 

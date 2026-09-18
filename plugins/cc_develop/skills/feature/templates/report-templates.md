@@ -8,16 +8,16 @@
 ## Feature Report: <feature name>
 
 ### Purpose
-[1-2 sentence description of what was built and why]
+[1-2 sentences: what built, why]
 
 ### Codebase Analysis
-- Reused: [list of existing utilities/patterns leveraged]
-- Modified: [files changed and why]
+- Reused: [existing utilities/patterns leveraged]
+- Modified: [files changed, why]
 - New files: [list]
 
 ### Demo Use-Case
 - Location: <file>::<test or doctest>
-- API: [the function/class signature exposed]
+- API: [exposed function/class signature]
 
 ### TDD Cycle
 - Tests written: N
@@ -31,12 +31,12 @@
 - Review: pass / N issues fixed (N cycles)
 
 ### Follow-up
-- [any deferred items, known limitations, or suggested next steps]
+- [deferred items, known limitations, suggested next steps]
 
 ## Confidence
 **Score**: 0.N — [high >=0.9 | moderate 0.85-0.9 | low <0.85 warn]
 **Gaps**:
-- [e.g., review cycle incomplete, edge cases not fully explored]
+- [e.g., review cycle incomplete, edge cases unexplored]
 
 **Refinements**: N passes.
 ```
@@ -52,12 +52,12 @@ Use when stopping after 3 review cycles with unresolved substantive issues:
 Implementation incomplete -- stopped after 3 review cycles.
 
 ### Remaining Issues
-- [list each unresolved substantive gap]
+- [each unresolved substantive gap]
 
 ### What Works
 - [completed parts, passing tests]
 
 ### Recommended Next Steps
-1. [most actionable next step to unblock]
+1. [most actionable step to unblock]
 2. [second step]
 ```

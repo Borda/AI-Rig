@@ -6,7 +6,7 @@ Triggered by `/audit --upgrade`. Read+executed by `/audit` when `--upgrade` flag
 
 **Trigger**: `/audit --upgrade`
 
-**Purpose**: Apply documented Claude Code improvements that passed genuine-value filter. Config changes applied + correctness-checked immediately. Capability changes A/B tested via mini calibrate pipeline — accepted only if Δrecall ≥ 0 and ΔF1 ≥ 0.
+**Purpose**: apply documented Claude Code improvements that passed genuine-value filter. Config changes applied + correctness-checked immediately. Capability changes A/B tested via mini calibrate pipeline — accepted only if Δrecall ≥ 0 and ΔF1 ≥ 0.
 
 **Task tracking**: TaskCreate "Fetch upgrade proposals", "Apply config proposals", "A/B test capability proposals". Mark in_progress/completed throughout.
 
@@ -20,7 +20,7 @@ Critical/high issues from recent `/audit` run: stop, print "⚠ Resolve critical
 
 **Always spawn fresh foundry:web-explorer** — no context from prior audit runs, cached docs, or memory. Every upgrade run fetches live docs.
 
-Run **Claude Code docs freshness** check from Step 4 of main audit workflow: spawn foundry:web-explorer, validate current config against latest docs, apply genuine-value filter, produce Upgrade Proposals table. Cap at 5 total (max 3 capability, any number config).
+Run **Claude Code docs freshness** check from Step 4 of main audit workflow: spawn foundry:web-explorer, validate current config against latest docs, apply genuine-value filter, produce Upgrade Proposals table. Cap 5 total (max 3 capability, any number config).
 
 **RTK hook alignment** — also run Check 10 from main audit workflow (inline, no subagent):
 

@@ -18,7 +18,7 @@ test -f "$MERGE_HEAD_FILE" && echo "MERGING" || echo "clean"
 
 **Case B — not MERGING**:
 
-Pull latest state for both branches before merging:
+Pull latest state, both branches, before merging:
 
 ```bash
 # 1. update source branch (ff-only; non-ff = force-pushed, use local)
@@ -129,20 +129,20 @@ You are resolving merge conflicts in a checked-out PR branch.
 
 ## Instructions
 For each conflicted file:
-1. Use the Read tool to inspect the full file and locate all conflict markers
-2. Determine the correct resolution using the contribution motivation above as the priority lens:
-   - Contributor's new functionality takes priority for files the PR owns (introduced or substantially rewrote)
-   - Base's independent refactors and config updates are always preserved
-   - When both sides changed the same logic, blend: keep the PR's semantic change while incorporating the base's structural update
-3. Use the Edit tool to apply targeted replacements that remove all conflict markers and produce the correct resolved content — do NOT rewrite the whole file; use Edit for minimal targeted replacements
-4. After resolving each file, stage it with: git add -- <file>  (timeout: 3000)
+1. Read tool: inspect full file, locate all conflict markers
+2. Determine correct resolution using contribution motivation above as priority lens:
+   - Contributor's new functionality takes priority for files PR owns (introduced or substantially rewrote)
+   - Base's independent refactors and config updates always preserved
+   - When both sides changed same logic, blend: keep PR's semantic change while incorporating base's structural update
+3. Edit tool: apply targeted replacements removing all conflict markers, producing correct resolved content — do NOT rewrite whole file; minimal targeted replacements only
+4. After resolving each file, stage it: git add -- <file>  (timeout: 3000)
 
 Return ONLY a compact JSON envelope — no prose, no explanation:
 {\"status\":\"done\",\"resolved\":N,\"staged\":N,\"confidence\":0.N}
 ")
 ```
 
-> **Health monitoring**: the spawn runs in the background — spawn, end the turn, resume on the completion notification; no filler call, no "waiting" line, no sleep. Nothing after ~15 min → surface partial results ⏱, proceed with staged files.
+> **Health monitoring**: spawn runs in background — spawn, end turn, resume on completion notification; no filler call, no "waiting" line, no sleep. Nothing after ~15 min → surface partial results ⏱, proceed with staged files.
 
 ### 7b: Verify and complete merge
 

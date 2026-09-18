@@ -20,11 +20,11 @@ Atomically rename one Python symbol/module: definition, `__all__` exports, calle
 
 Reject `--deprecate` with `--remove-if-no-callers` before analysis. Static limits: report a `getattr(obj, "old_name")` search advisory; cross-repo callers require `--deprecate` plus a SemVer bump for public API.
 
-NOT for: index build (`$codemap-py:scan-codebase`); query without rename intent (`$codemap-py:query-code`); non-Python; ABC/Protocol override renames (static imports do not track overrides—review `fn-rdeps`, then rename overrides explicitly). No `--index <path>`; use default project index. For monorepo packages, first run `$codemap-py:scan-codebase --root <pkg>`.
+NOT for: index build (`$codemap-py:scan-codebase`); query without rename intent (`$codemap-py:query-code`); non-Python; ABC/Protocol override renames (static imports don't track overrides—review `fn-rdeps`, then rename overrides explicitly). No `--index <path>`; use default project index. For monorepo packages, first run `$codemap-py:scan-codebase --root <pkg>`.
 
 ## Runtime note
 
-Codex has no `bin/` PATH entry or plugin-root variable. Resolve the installed root once, substitute `PLUGIN_ROOT`, and retain it in reasoning; shell state does not persist. Route missing input, stale-index, ambiguous-match, delete/abort, and dry-run/apply/abort questions through User Questions; preserve every feasible choice and wait for a valid bound answer before dependent changes.
+Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root once, substitute `PLUGIN_ROOT`, retain in reasoning; shell state doesn't persist. Route missing input, stale-index, ambiguous-match, delete/abort, and dry-run/apply/abort questions through User Questions; preserve every feasible choice, wait for valid bound answer before dependent changes.
 
 ## Workflow
 

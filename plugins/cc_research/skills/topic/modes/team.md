@@ -47,8 +47,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 SPAWN_BRANCH="$(git branch --show-current 2>/dev/null | tr "/" "-" || echo "main")"  # timeout: 3000
 SPAWN_DATE="$(date -u +%Y-%m-%d)"  # timeout: 3000
 mkdir -p .temp .reports/research  # timeout: 3000
-# Anti-overwrite per teammate: run this once per teammate before its spawn, with TNAME set to
-# that teammate's name, and substitute the resolved path (not the template) into its prompt:
+# Anti-overwrite per teammate: run once per teammate before its spawn, with TNAME set to
+# that teammate's name; substitute resolved path (not template) into its prompt:
 #   _TOUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .temp "output-research-$TNAME-$SPAWN_BRANCH-$SPAWN_DATE")  # timeout: 5000
 # Consolidator report path — same anti-overwrite rule as SKILL.md Step 3 (quality-gates.md)
 REPORT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "topic-$SPAWN_BRANCH-$SPAWN_DATE")  # timeout: 5000
@@ -56,10 +56,10 @@ REPORT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti
 echo "$PWD/$REPORT_OUT" > "${TMPDIR:-/tmp}/research-topic-report-file-${CSID}"
 ```
 
-For 3 teammates, spawn consolidator researcher agent: "Read the research files at [paths from deltas]. Synthesize into the Step 3 unified report structure. Write to `<$REPORT_OUT>` (substitute the resolved path from the bash block above — not the template variable). Return ONLY compact JSON: `{"status":"done","papers":N,"best_method":"<name>","confidence":0.N,"file":"<path>"}`"
+For 3 teammates, spawn consolidator researcher agent: "Read research files at [paths from deltas]. Synthesize into Step 3 unified report structure. Write to `<$REPORT_OUT>` (substitute resolved path from bash block above — not template variable). Return ONLY compact JSON: `{"status":"done","papers":N,"best_method":"<name>","confidence":0.N,"file":"<path>"}`"
 
 TaskUpdate "Print report header" → `in_progress`.
 
-**MANDATORY, not optional narration** — the consolidator's returned JSON is a routing signal only; it is never printed to the user and never satisfies this step. The consolidator wrote the full report to `<file>` (from its envelope) but printed nothing itself. Before returning control to SKILL.md's `## Follow-up gate`: (1) Read `<file>` (Read tool); (2) render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block; (3) append `→ saved to <file>`; (4) TaskUpdate "Print report header" → `completed` — only after the table has actually appeared in this response, never before. SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
+**MANDATORY, not optional narration** — the consolidator's returned JSON is a routing signal only; it is never printed to the user and never satisfies this step. Consolidator wrote full report to `<file>` (from its envelope) but printed nothing itself. Before returning control to SKILL.md's `## Follow-up gate`: (1) Read `<file>` (Read tool); (2) render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block; (3) append `→ saved to <file>`; (4) TaskUpdate "Print report header" → `completed` — only after the table has actually appeared in this response, never before. SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
 
 **Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook sees only whether the report exists, not whether the print happened; steps (1)–(4) above remain the check for the print itself.

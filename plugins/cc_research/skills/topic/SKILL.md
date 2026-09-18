@@ -56,7 +56,7 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 - status `deleted` if orphaned / no longer relevant
 - keep `in_progress` only if genuinely continuing
 
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation. Mark in_progress/completed throughout. Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response. This task exists because a sibling skill (oss:review) had an incident where a report was written correctly but the terminal print step got silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it. The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation. Mark in_progress/completed throughout. Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response. This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it. The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
 ## Step 1: Understand the codebase context
 
@@ -84,7 +84,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" top
 
 ```bash
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
-# scan CLEAN_ARGS, not the raw blob: --team and --keep "<items>" are already consumed, so a
+# scan CLEAN_ARGS, not raw blob: --team and --keep "<items>" already consumed — a
 # flag-shaped word inside a --keep value no longer reports as unknown
 UNKNOWN_FLAGS=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE -- '--[a-z][a-z0-9-]+' || true)  # timeout: 5000
 ```
@@ -104,11 +104,11 @@ Steps 2-3 execute only when neither `--team` nor `plan` mode is detected.
 
 ## Step 2: Research & codebase check (run in parallel)
 
-> **Parallelism scope**: 2a (Agent spawn) and 2b (Grep) issue in one response. Any WebSearch/WebFetch calls inside the researcher agent are issued sequentially — invoke all searches before synthesizing results. No mechanism exists to parallelize prose-driven searches across calls.
+> **Parallelism scope**: 2a (Agent spawn) and 2b (Grep) issue in one response. Any WebSearch/WebFetch calls inside the researcher agent are issued sequentially — invoke all searches before synthesizing results. No mechanism to parallelize prose-driven searches across calls.
 
 ### 2a: SOTA literature search (issue with 2b simultaneously in one response)
 
-**One owner for the search — decide first, never both**: `foundry:web-explorer` available (check below) → the AGENT owns the entire SOTA search and writes `$AGENT_OUT`; the orchestrator issues NO WebSearch/WebFetch of its own (a second inline pass re-fetches the same 5 papers and bills the full page text twice). Web-explorer unavailable → orchestrator conducts the search inline. Either way: find top 5 papers for `$ARGUMENTS`, produce comparison table (method, key idea, benchmark results, compute, code availability), recommend single best method given codebase constraints from Step 1.
+**One owner for the search — decide first, never both**: `foundry:web-explorer` available (check below) → AGENT owns entire SOTA search, writes `$AGENT_OUT`; orchestrator issues NO WebSearch/WebFetch of its own (a second inline pass re-fetches the same 5 papers and bills the full page text twice). Web-explorer unavailable → orchestrator conducts the search inline. Either way: find top 5 papers for `$ARGUMENTS`, produce comparison table (method, key idea, benchmark results, compute, code availability), recommend single best method given codebase constraints from Step 1.
 
 **Note**: never dispatch to `research:scientist` for broad SOTA surveys — scientist scoped to deep single-paper analysis with named paper anchor. Use `research:scientist` directly only when: (a) specific paper identified and needs deep analysis, (b) hypothesis generation for identified method, or (c) experiment design for concrete approach. Broad SOTA = web-explorer territory.
 
@@ -120,8 +120,8 @@ BRANCH=$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')  # t
 DATE=$(date +%Y-%m-%d)  # timeout: 3000
 mkdir -p .temp .reports/research  # timeout: 3000
 # anti-overwrite counter-suffix (quality-gates.md §Output Routing) — resolved by resolve-anti-overwrite-path.py
-# Step 3's report path is resolved HERE, not at Step 3: the hook gate below must exist from the
-# moment the run is committed to producing a report, not from the moment it remembers to.
+# Step 3 report path resolved HERE, not at Step 3: hook gate below must exist from moment
+# run commits to producing report, not from moment it remembers to.
 AGENT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .temp "output-research-agent-$BRANCH-$DATE")  # timeout: 5000
 REPORT_OUT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve-anti-overwrite-path.py" .reports/research "topic-$BRANCH-$DATE")  # timeout: 5000
 echo "$BRANCH" > "${TMPDIR:-/tmp}/topic-branch-${CSID}"
@@ -234,7 +234,7 @@ if [ -z "$REPORT_OUT" ]; then
 fi
 ```
 
-Write full report to `$REPORT_OUT` using Write tool (resolved by counter-suffix loop above) — **do not print full report to terminal**.
+Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix loop above) — **do not print full report to terminal**.
 
 TaskUpdate "Print report header" → `in_progress`.
 

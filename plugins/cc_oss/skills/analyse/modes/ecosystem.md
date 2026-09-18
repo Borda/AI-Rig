@@ -55,7 +55,7 @@ echo "[analyse] report → $REPORT_FILE"
 
 Write full report to `$REPORT_FILE` (echoed above) via Write tool — **no full analysis to terminal**.
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` is missing or empty. A denial reading `oss:analyse report gate` means this write never happened — write the report, print its header block, then re-issue the question. The hook sees only whether the report exists, not whether the header was printed; the print step below remains the check for that.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md Step 6a's follow-up question while `$REPORT_FILE` missing/empty. Denial `oss:analyse report gate` = write never happened — write report, print header block, re-issue question. Hook checks report exists only, not header printed; print step below is that check.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -64,14 +64,14 @@ IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/analyse-oss-shared-${CSID}" 2>/dev/n
 cat "$_OSS_SHARED/terminal-summaries.md"  # timeout: 5000
 ```
 
-Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`. Terminal block: `---` on own line, entity line next, `→ saved to <path>` at end, `---` close. Print by reading lines 1–6 of report file, append `→ saved to <path>`. Report already has block — no separate prepend needed
+Compact terminal summary template (loaded above). File absent → warn: "run /foundry:setup — printing plain terminal output instead." Use **Ecosystem Impact Summary** template. Replace `[skill-specific path]` with `$REPORT_FILE`. Terminal block: `---` own line, entity line next, `→ saved to <path>` at end, `---` close. Print lines 1–6 of report file, append `→ saved to <path>`. Report already has block — no separate prepend
 
 </workflow>
 
 <notes>
 
 - **GitHub search rate limit**: `gh api search/code` rate-limited ~30 req/min; `--paginate` may hit secondary limit on large sets — add `sleep 2` between pages if needed
-- **PyPI download counts**: johnnydep not installed by default; skip if unavailable; alternative: libraries.io API for reverse deps
+- **PyPI download counts**: johnnydep not installed by default; skip if unavailable; alt: libraries.io API for reverse deps
 - **Risk threshold calibration**: thresholds (5 consumers = High) guidelines for OSS Python libs; adjust for internal/enterprise repos where even 1 consumer may be critical
 - **conda-forge**: feedstock search returns repo names (`conda-forge/mypackage-feedstock`), not actual dependent packages — treat as 1 known consumer per feedstock found
 

@@ -2,36 +2,36 @@
 
 # Submission section contract
 
-Generate the final section from grounded sample-submission or competition output evidence.
+Generate final section from grounded sample-submission or competition output evidence.
 
 ## CSV classification/regression
 
-- Read the grounded sample submission.
-- Join predictions by stable ID when an ID column exists; do not rely on incidental row order.
-- Assign the exact grounded target column(s).
+- Read grounded sample submission.
+- Join predictions by stable ID if ID column exists; never rely on incidental row order.
+- Assign exact grounded target column(s).
 - Preserve required column order and row count.
 - Write `submission.csv` without an index.
 
 ## Detection
 
-- Use the grounded coordinate order, scale, class mapping, score precision, and empty-detection representation.
+- Use grounded coordinate order, scale, class mapping, score precision, empty-detection representation.
 - Format one prediction record per required sample ID.
-- Validate boxes are finite, ordered, and within expected image bounds.
+- Validate boxes finite, ordered, within expected image bounds.
 
 ## Segmentation or file outputs
 
 - Restore original spatial shape.
-- Use the grounded file format, dtype, naming, compression, and directory structure.
-- Validate the number of written files against expected sample IDs.
+- Use grounded file format, dtype, naming, compression, directory structure.
+- Validate written file count against expected sample IDs.
 
 ## Submission lens
 
-Always verify before reporting completion:
+Verify before reporting completion:
 
 - row/file count equals expected test count;
 - columns/schema and order match grounded evidence;
-- IDs are unique and cover the expected set;
+- IDs unique, cover expected set;
 - predictions contain no unintended NaN/Inf;
-- values, labels, boxes, and shapes satisfy grounded constraints.
+- values, labels, boxes, shapes satisfy grounded constraints.
 
-End CSV workflows with `# ! head submission.csv`; use an equivalent listing/schema check for non-CSV outputs. Display a small sample and print the final path.
+End CSV workflows with `# ! head submission.csv`; equivalent listing/schema check for non-CSV. Display small sample, print final path.
