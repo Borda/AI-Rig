@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.39.1
+
+- Fall back to permitted synchronous input for optional questions when async is unavailable or unsuitable.
+
+- Require permitted native Codex question controls for user choices, including generated scope expansions, repair approvals, finding selection, and commit modes. Use async when sync is unavailable or unsuitable, even without independent work; keep required answers pending and use plain chat only when neither control is suitable.
+
+- Present complete actionable options or native free text, preserving existing authorization, exact-digest syntax, and separate runtime permissions.
+
 ## 0.39.0
 
 - Consumers now read `claude-skills/_shared/codemap-gates.md` and `claude-skills/_shared/codemap-context.md` live from the active `codemap-py` install instead of shipping manifested copies. Every Claude consumer (`foundry`, `develop`, `oss`, `research`) resolves the contract through its own `resolve_shared_path.py codemap-py claude-skills/_shared` — the install record picks the version, and the resolver's newest-cache tier (which skips `.orphaned_at` dirs) is reached only when no usable install record exists or the recorded install lacks the subdir — and the five `codemap-py--*.md` copies are gone. A frozen copy drifted silently against whatever `codemap-py` the user actually ran; a live read cannot. Behavior deltas: a `codemap-py` CLI on `PATH` without the plugin installed used to load the consumer's frozen copy and now takes the consumer's fallback line instead, which is the intended degradation since the gates only make sense with the plugin's hooks present; loading the contract now needs `python` on `PATH` in every consumer (develop and research previously read their copy without an interpreter); and a source checkout with `codemap-py` installed reads the installed contract, not the checkout's — edit-and-run against `claude-skills/_shared/*.md` needs a reinstall or an uninstalled provider to hit the source-tree tier. The contract bodies are unchanged by this switch (the `v3` changes below are separate); only the consumer headers and intro lines of both files were rewritten, plus one example in the context contract's `partial` completeness bullet that named a semble fallback no consumer ships any more. The resolver fixes (un-prefixed source-tree fallback, registry lookup under `sys.executable` instead of a `python` PATH search) live in foundry.

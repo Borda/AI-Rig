@@ -22,7 +22,7 @@ Codex has no `bin/` PATH entry or plugin-root variable. Resolve installed root o
 
 ## Inputs
 
-`<qname> [--no-mocks]`: `qname` is `module::symbol` or bare dotted module; `--no-mocks` removes mock-only tests. If omitted, ask which changed: (a) `module::symbol`, (b) bare module, (c) cancel; wait. Use first non-flag token only. If tokens remain after `--no-mocks`, warn one symbol accepted per invocation, each remainder needs another invocation.
+`<qname> [--no-mocks]`: `qname` is `module::symbol` or bare dotted module; `--no-mocks` removes mock-only tests. If omitted, use User Questions to request the actual changed `module::symbol` or bare module, accepting `cancel` to stop; wait for the value. Use native free text unless grounded concrete targets can be offered; choosing a format name is not a target. Use first non-flag token only. If tokens remain after `--no-mocks`, warn one symbol accepted per invocation, each remainder needs another invocation.
 
 ## Workflow
 

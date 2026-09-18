@@ -29,6 +29,14 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
     [
         "request_user_input",
         "request_user_input_async",
+        "Synchronous unavailability alone never justifies plain chat.",
+        "For every user-facing choice",
+        "Use complete actionable values",
+        "If no independent work remains, yield",
+        (
+            "For an optional question, if async is unavailable or unsuitable, use sync when it is exposed, "
+            "permitted for that purpose, and can represent the complete input."
+        ),
         "permitted for that purpose",
         "all feasible choices",
         "(Recommended)",

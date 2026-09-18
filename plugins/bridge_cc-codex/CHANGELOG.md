@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Fall back to permitted synchronous input for optional questions when async is unavailable or unsuitable.
+
+- Require permitted native Codex question controls for user choices, including generated scope expansions, repair approvals, finding selection, and commit modes. Use async when sync is unavailable or unsuitable, even without independent work; keep required answers pending and use plain chat only when neither control is suitable.
+
+- Present complete actionable options or native free text, preserving existing authorization, exact-digest syntax, and separate runtime permissions.
+
 ## 0.5.1
 
 - Compress skill and rule prose to the ultra-caveman tier for both hosts; behavior, test-pinned contract sentences, and structural literals are unchanged.

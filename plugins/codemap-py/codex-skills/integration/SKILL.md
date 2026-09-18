@@ -50,7 +50,7 @@ If installed Codex lacks documented `--json`, use text output and mark structure
 
 ### 1. Resolve mode
 
-Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask which of those five modes and wait.
+Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the permitted async control when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements.
 
 ### 2. Run it
 

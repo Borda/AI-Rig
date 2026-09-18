@@ -20,9 +20,16 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     assert "- each finding as a separate commit" in commit_section
     assert "- leave unstaged" in commit_section
     assert "able to represent all four feasible modes" in commit_section
-    assert "otherwise use async or plain chat without hiding a mode behind Other" in commit_section
+    assert "otherwise invoke permitted async with all four choices" in commit_section
+    assert (
+        "Use plain chat only when neither native control is suitable; never hide a mode behind Other" in commit_section
+    )
     assert "never omit a feasible mode to fit a menu limit" in commit_section
-    assert "Do not stage before this question or before an explicit valid answer" in commit_section
+    assert "If an earlier explicit answer already supplies the mode" in commit_section
+    assert "omit the question and reuse that authorization" in commit_section
+    assert "Do not stage without an explicit valid answer bound to this plan" in commit_section
+    assert "If authorization is missing and runtime cannot ask" in commit_section
+    assert "Do not stage before this question" not in commit_section
     assert "silence, preselection, stale or duplicate replies cannot authorize staging" in commit_section
 
 

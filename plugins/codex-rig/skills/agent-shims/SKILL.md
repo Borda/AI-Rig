@@ -13,7 +13,7 @@ This is experimental lifecycle tool. Installing authenticated standalone agent T
 
 Accept exactly one action: `doctor`, `status`, `install`, or `remove`. Reject missing, extra, or unknown arguments without writes.
 
-Any follow-up question follows [User Questions](../../shared/native-skill-contract.md#user-questions): show accepted action names or required input format. Preserve the manager's exact-digest removal confirmation syntax; never substitute a generic yes/no response for that digest-bound input. The blocked `install` action still requires no approval prompt.
+Any follow-up question follows [User Questions](../../shared/native-skill-contract.md#user-questions): put accepted action names or required input format in the permitted native control after showing context; use plain chat only when neither native control is suitable. Preserve the manager's exact-digest removal confirmation syntax; never substitute a generic yes/no response for that digest-bound input. The blocked `install` action still requires no approval prompt.
 
 Locate `../../scripts/manage_role_agents.py` relative to this installed `SKILL.md`. Run it with current Python 3.10+ interpreter and selected action. Never copy manager, resolve it through source checkout, or edit generated agent files directly.
 
