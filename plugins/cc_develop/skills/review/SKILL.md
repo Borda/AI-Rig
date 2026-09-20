@@ -71,8 +71,10 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 
 - Key boundary: end of Step 3 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 6 follow-up.
+- Third boundary: immediately before the Step 6 follow-up gate — the idle window; refresh makes a mid-wait `/compact` lossless.
 - Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, per-agent finding file paths, --keep items.
 - Preserve at boundary 2: final report path.
+- Preserve at boundary 3: final report path.
 
 </compaction>
 
@@ -204,7 +206,7 @@ Skip optional agents by classification:
 - FIX → skip Agent 3 (perf-optimizer) and Agent 6 (solution-architect), unless diff changes an already-exported public function's signature (added/removed/renamed params, new flags) — then Agent 6 still runs per its own trigger (Agent 1's "API-consistency audit" subsection already checks the surface; Agent 6 adds design-quality/backward-compat judgment)
 - REFACTOR → skip Agent 6 (solution-architect), same exception — an already-exported public function's signature change still fires Agent 6
 - CHORE (config/deps, no logic) → skip Agent 2 (qa-specialist), Agent 3 (perf-optimizer), Agent 6 (solution-architect); keep Agent 1 (sw-engineer), Agent 4 (doc-scribe), Agent 5 (linting-expert). No logic = no test-gap, perf, or architecture surface — same saving pattern as `oss:review`'s DOCS_TYPING/TESTS_CI pre-classification (cc_oss/skills/review/SKILL.md:182,198).
-- FEATURE/MIXED → spawn all agents
+- FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) when a matching `.plans/active/*.md` exists — see §Agent 0 below
 - **Small-diff challenger skip** (any classification) — unless `--challenge` passed (`CHALLENGE_FORCED=true`): diff is single file, \<50 lines changed, introduces no new public API / exported symbol → also skip Agent 7 (challenger). Multi-file, ≥50 lines, or any new public API → challenger runs. `--no-challenge` (`CHALLENGE_ENABLED=false`) disables Agent 7 entirely regardless.
 
 ### Structural context + review pre-flight (codemap-py — only if `CODEMAP_ENABLED=true`)
@@ -322,6 +324,33 @@ Codex: first 10 items seeded to review agents; full list in $RUN_DIR/codex.md (N
 
 Pass notice through to consolidator (Step 5) so it appears in final report header, not just terminal scratch.
 
+### Agent 0 — blind-solve (FEATURE/MIXED with a matching plan file only, general-purpose)
+
+Anti-anchoring pre-step: before any agent reads the diff, spawn a standalone agent that derives its own **blueprint-level** solution to the problem the change solves — approach + key data structures + edge cases, not full implementation. Bounded: ~10 tool calls, output ≤1 page. Isolation-motivated spawn, not work displacement — the blind agent must not share the orchestrator's context, so the "under ~73 calls → inline" rule does not apply; it still pays the fixed per-spawn overhead, hence the double gate below.
+
+Problem statement = a matching plan file, nothing else. A local diff has no PR body; the last commit message describes the *previous* change when the target is the working tree, so it is never used. Gather with this block — no diff content is read:
+
+```bash
+# timeout: 10000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
+# pre-change ref: working-tree diff → HEAD is untouched; --worktree reviews committed HEAD → parent is the pre-change state
+if [ "$WORKTREE_ENABLED" = "true" ]; then PRE_REF=HEAD~1; CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); else PRE_REF=HEAD; CHANGED=$(git diff --name-only HEAD 2>/dev/null); fi
+STEMS=$(printf '%s\n' $CHANGED | sed -E 's#.*/##; s#\.py$##; s#^test_##' | sort -u | grep -v '^__init__$' | head -20)
+PLAN=""; for f in .plans/active/*.md; do [ -f "$f" ] || continue; for s in $STEMS; do grep -qi -- "$s" "$f" 2>/dev/null && { PLAN="$f"; break 2; }; done; done
+if [ -n "$PLAN" ]; then
+  { echo "## Plan: $PLAN"; sed -n '1,120p' "$PLAN"; echo; echo "## Changed files (names only)"; printf '%s\n' $CHANGED; echo; echo "PRE_REF=$PRE_REF"; } > "$RUN_DIR/blind-solve-input.md"
+  echo "blind-solve input: $RUN_DIR/blind-solve-input.md plan=$PLAN pre-ref=$PRE_REF"
+else
+  echo "blind-solve: skipped — no .plans/active/*.md mentions a changed module ($(printf '%s ' $STEMS))"
+fi
+```
+
+`blind-solve: skipped` → no spawn; note the skip in the report header. Otherwise spawn with the contents of `$RUN_DIR/blind-solve-input.md` verbatim, then: "Your only source for pre-change code is `git show <PRE_REF>:<path>` for files listed above. Never use Read, `cat`, `git diff`, or any working-tree path — the working tree contains the change under review. Sketch your own solution to the stated problem — approach, key data structures/functions, edge cases — in ≤1 page. Do not write full code." Write to `$RUN_DIR/blind-solve.md`, return `{"status":"done","file":"$RUN_DIR/blind-solve.md","confidence":0.N}`.
+
+Skip when classification is FIX/REFACTOR/CHORE (no fresh problem to solve blind) — checked before the block above runs. Launch in the same batch as the Step 3 spawn units — it needs no diff, nothing blocks it. Not a `FANOUT_MAX` unit — never counted against the cap, never ranked out, not part of any merged spawn unit.
+
 ## Step 3: Spawn sub-agents in parallel
 
 **Spawn-count gate — apply before spawning anything.** Each agent costs ~120,851 tok fixed overhead regardless of how little work it does (~73 tool-calls' worth), plus ~12.0 s/call. Rules, all mandatory:
@@ -413,7 +442,7 @@ Replace `$REVIEW_CHECKLIST` in Agent 1 and consolidator spawn prompts with resol
 - Citation tracing mandatory: for each Tier 2 source, follow its citations one level; tracing reveals a Tier 1 source (official doc, CVE, spec) confirming the claim → treat as Tier 1 verified; multiple Tier 2 sources share one origin → merge into one; count distinct origins only
 - Only Tier 2 available, distinct-origin count < 3, no experiment run → downgrade finding to LOW or drop it; never raise MEDIUM/HIGH/CRITICAL on Tier 2 alone
 
-Launch spawn units simultaneously with Agent tool (security augmentation folded into Agent 1 — not separate spawn; Agent 6 optional; Agents 3+6 and 4+5 launch as merged units per §Merged spawn units). Every agent prompt must begin with the [run-dir preamble (canonical)](#run-dir-preamble-canonical) and end with:
+Launch spawn units simultaneously with Agent tool (security augmentation folded into Agent 1 — not separate spawn; Agent 6 optional; Agents 3+6 and 4+5 launch as merged units per §Merged spawn units; Agent 0 blind-solve joins this batch on FEATURE/MIXED, outside the cap). Every agent prompt must begin with the [run-dir preamble (canonical)](#run-dir-preamble-canonical) and end with:
 
 > "Write your FULL findings (all sections, Confidence block) to `$RUN_DIR/<agent-name>.md` using the Write tool — where `<agent-name>` is e.g. `sw-engineer`, `qa-specialist`, `perf-optimizer`, `doc-scribe`, `linting-expert`, `solution-architect`. Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"findings\":N,\"severity\":{\"critical\":0,\"high\":1,\"medium\":2,\"low\":0},\"file\":\"$RUN_DIR/<agent-name>.md\",\"confidence\":0.88}`"
 
@@ -580,6 +609,18 @@ Print `### Codex Delegation` section to terminal only when tasks actually delega
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Any Step 6 Codex edits stay on the worktree branch for you to merge. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
 **Suggested next steps** (plain text, not selectable — `/develop:fix` and `/develop:refactor` both carry `disable-model-invocation: true`, so `Skill()` dispatch is impossible for either): blocking issues found → `Run: /develop:fix` to reproduce with a test, apply a targeted fix; structural/quality issues found → `Run: /develop:refactor` for test-first improvements.
+
+Refresh the contract right before the gate — boundary 2 was written before Step 6 pulled more into context — and print the hint so a long wait can be spent compacted:
+
+```bash
+# compaction boundary 3 — immediately before the follow-up idle gate (compaction-contract.md §Lifecycle)
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "follow-up gate" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md" "resume: re-read report header, re-issue follow-up AskUserQuestion"  # timeout: 5000
+```
+
+Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — report saved at <REPORT_DIR>/review-report.md, resume lossless. ``
 
 **Follow-up gate (NEVER SKIP)** — Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 

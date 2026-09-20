@@ -2113,6 +2113,6 @@
       "src": "skills/verify/SKILL.md:134"
     }
   },
-  "plugin": "cc_research@0.24.0",
+  "plugin": "cc_research@0.24.1",
   "schema": 1
 }

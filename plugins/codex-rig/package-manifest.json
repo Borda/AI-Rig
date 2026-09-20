@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "f48279002d44570f83810e9538910ab2b96bd97ef8a24511c50fc9c6b040de66"
+      "sha256": "c0b23217ce78316adeabbe1503a68a6c90a329f6097ea147403d9b51a734ad3d"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "74866ecaea7cd552b4587b24e7c7727cf09923807089ae6d4d7c2a4b9c77c49e"
+      "sha256": "2304f6217f9e45a16c65d203be567a33272aa4a7b0e3ec4df1e1269bf37e1bae"
     },
     {
       "mode": "0644",
@@ -553,7 +553,7 @@
     {
       "mode": "0644",
       "path": "skills/code-review/SKILL.md",
-      "sha256": "c6e502a2b9e5e883bf5f5a38447b16a40cc57937830308d055c5cf2388969601"
+      "sha256": "9511649a38c1f3801846b3615d97ee1fe434d46c4746995657e7edfbf1c64e88"
     },
     {
       "mode": "0644",
@@ -1333,5 +1333,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.20.3"
+  "version": "0.21.0"
 }

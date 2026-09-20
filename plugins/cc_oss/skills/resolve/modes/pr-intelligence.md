@@ -30,9 +30,11 @@ Set up implementation work directory and fetch repo name (used throughout the wo
 
 ```bash
 # absolute path required — subagents may have different CWD; relative path silently loses files
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -z "$IMPL_DIR" ] && IMPL_DIR=$(mktemp -d)  # timeout: 3000
 [[ "$IMPL_DIR" = /* ]] || IMPL_DIR=$(mktemp -d)
 mkdir -p "$IMPL_DIR"  # timeout: 3000
+echo "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # persist at creation — Step 3d gate can idle past a compaction; sentinel is how Step 8 finds the dir
 REPO_NAME=$(gh repo view --json name --jq .name 2>/dev/null)  # timeout: 6000
 ```
 

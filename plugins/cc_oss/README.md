@@ -263,6 +263,14 @@ Tier 2  Parallel review dimensions
         Default ranks units under a cap of three; qa-specialist is pinned
         outside the cap (security scan runs on every code PR)
         `--full` runs every unit selected by scope
+        FEATURE/MIXED scope adds a blind-solve pass outside the cap: one
+        isolated agent sketches its own blueprint from PR title/body/linked issues
+        without seeing the diff; consolidator reports where the blueprint
+        diverges from the PR (`### Design Divergence`), flagging divergences
+        that may be explained by context the agent lacked as questions
+        Before the final follow-up gate the skill refreshes its compaction
+        contract and prints a `/compact` hint — a long wait can be spent
+        compacted; resolve later reads the report file, not the transcript
         Without foundry, requested agents use general-purpose fallbacks
 
         Scope examples:
@@ -363,7 +371,7 @@ Apply review findings to codebase. Reads live PR comments, saved review report, 
 ```text
 /oss:resolve 55                # pr mode — apply fixes from live GitHub PR comments
 /oss:resolve report            # report mode — apply fixes from the saved /oss:review report
-/oss:resolve 55 report         # pr + report mode — both sources, deduplicated
+/oss:resolve 55 report         # pr + report mode — both sources, deduplicated (`report 55` works too)
 /oss:resolve                   # review-handoff mode — picks up from the last /oss:review run
 ```
 

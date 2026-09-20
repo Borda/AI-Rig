@@ -176,6 +176,8 @@ On close, skip structural context, T1, T2, specialist routing, detailed findings
 
 ### 03: T1 primary diff review
 
+Blind blueprint first, when declared tier is not `TRIVIAL` and the change adds behavior or public API (T0 evidence: PR body/title, `files.txt`, `numstat.txt` — not diff content). Before opening `diff.patch` or any changed file at head, read only PR title/body, linked issue bodies, and `files.txt` names; write `<run-directory>/blind-blueprint.md`: the problem restated in two lines, then your own blueprint-level solution — approach, key data structures/functions, edge cases — one page maximum, no code. Then open `diff.patch` for the axes below. Where diff and blueprint diverge: a divergence with a concrete defect and a required change becomes a canonical finding record; one that a prior decision, constraint, or incident could explain becomes a question to the author under `No-Finding Residual Risks` — never a `Findings` row, whose contract requires `required_change` and a status. Same thread means ordering-only isolation, not context isolation; add `Confidence Gaps` line `Blind blueprint written before diff in the same context; anchoring reduced, not eliminated.` Skip the blueprint for pure refactor, style, docs, dependency, or CI changes and when PR body and issues give no usable problem statement; record the skip reason in `Scope`, never invent a problem statement.
+
 Review axes, in order:
 
 - API and behavior regressions.

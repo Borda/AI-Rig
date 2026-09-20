@@ -57,8 +57,10 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 - Key boundary: end of Step 2 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 8 --reply.
+- Third boundary: immediately before the Step 7a follow-up gate — longest idle window; refresh makes a mid-wait `/compact` lossless.
 - Preserve at boundary 1: RUN_DIR, REPORT_DIR, PR# (CLEAN_ARGS), per-agent finding file paths.
 - Preserve at boundary 2: final report path, PR#, reply-mode flag.
+- Preserve at boundary 3: final report path, PR#.
 
 </compaction>
 
@@ -463,7 +465,7 @@ Skip optional agents by classification:
 
 - FIX scope → skip Agent 3 (perf-optimizer), Agent 6 (solution-architect)
 - REFACTOR scope → keep all agents; perf-optimizer runs to verify new structure isn't slower
-- FEATURE/MIXED → spawn all agents
+- FEATURE/MIXED → spawn all agents, plus Agent 0 (blind-solve) — see §Agent 0 below
 - CHORE scope → spawn Agents 1, 4, 5, 7 (challenger, if `CHALLENGE_ENABLED=true`), Codex (if available); skip Agents 2, 3, 6
   - **CHORE + dependency files exception**: diff includes `requirements*.txt`, `pyproject.toml`, `package*.json`, `Pipfile`, `poetry.lock`, `setup.cfg`, `*.lock` → keep Agent 2 (qa-specialist) for OWASP/CVE checks. Detect via `CHORE_DEPS` flag above. CHORE + non-deps → skip qa-specialist.
 
@@ -543,12 +545,17 @@ echo "scope_label=$SCOPE_LABEL_HIT duplicate=$DUPLICATE_HIT revert_candidate=${R
 
 **Challenger confirmation** (grounds 2 and 4 only — the two where accusing wrongdoing carries real reputational/legal stakes, so both share one call): only spawn when the orchestrator's own read of `PR_BODY`/diff/`CHANGED_FILES` raised a concrete suspicion for either — never spawn speculatively on every PR. Prompt: "Investigate PR #<N> (body: \<PR_BODY>, diff: changed files) for two things: (1) is its intent a by-design malicious/adversarial contribution or Code of Conduct violation, vs. an accidental mistake; (2) is any changed content plagiarized or under an incompatible license the contributor has no right to submit, vs. original/properly licensed work. Read the diff and linked issue if any. Return ONLY: `{\"conduct\":{\"verdict\":\"BY_DESIGN\"|\"ACCIDENTAL\"|\"N/A\",\"confidence\":0.N},\"license\":{\"verdict\":\"CONFLICT\"|\"CLEAN\"|\"N/A\",\"confidence\":0.N},\"rationale\":\"<one sentence per flagged verdict>\"}`". `ACCIDENTAL`/`CLEAN`, `N/A`, or `confidence <0.7` on either axis → that ground is not a reject, falls through as a normal finding.
 
-Any ground confirmed:
+Any ground confirmed — one block, two substitutions (`GATE_GROUND`, `GATE_REASON`); the whitelist aborts on an unedited placeholder or an unknown ground, so a verbatim run can never record the wrong code (`/oss:resolve` keys its refusal on it). This block carries user-chosen text, so it misses the blueprint manifest and prompts once — accepted: the reject gate fires rarely. <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_HEAD_SHA < "${TMPDIR:-/tmp}/oss-review-pr-head-sha-${CSID}" 2>/dev/null || PR_HEAD_SHA=""
-{ echo "GATE=REJECT_GOAL"; echo "GATE_SHA=${PR_HEAD_SHA}"; echo "GATE_REASON=<one-line evidence for the ground that fired>"; } > "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"  # substitute the actual REJECT_<GROUND> code (GOAL/CONDUCT/SCOPE/LICENSE/DUPLICATE/REVERTED/SPAM/PHILOSOPHY)
+GATE_GROUND="<REJECT_GROUND>"  # one of: REJECT_GOAL REJECT_CONDUCT REJECT_SCOPE REJECT_LICENSE REJECT_DUPLICATE REJECT_REVERTED REJECT_SPAM REJECT_PHILOSOPHY
+GATE_REASON="<one-line evidence for the ground that fired>"
+case "$GATE_GROUND" in REJECT_GOAL|REJECT_CONDUCT|REJECT_SCOPE|REJECT_LICENSE|REJECT_DUPLICATE|REJECT_REVERTED|REJECT_SPAM|REJECT_PHILOSOPHY) ;; *) echo "! BLOCKED — GATE_GROUND is '$GATE_GROUND', not one of the 8 REJECT_* codes; substitute it before running"; exit 1 ;; esac
+case "$GATE_REASON" in "<one-line evidence"*|"") echo "! BLOCKED — GATE_REASON still holds the placeholder; substitute the evidence line before running"; exit 1 ;; esac  # exact-prefix match: evidence may legitimately contain <https://…> URLs
+{ echo "GATE=${GATE_GROUND}"; echo "GATE_SHA=${PR_HEAD_SHA}"; echo "GATE_REASON=${GATE_REASON}"; } > "${TMPDIR:-/tmp}/oss-review-gate-${CSID}"  # timeout: 3000
+echo "gate: ${GATE_GROUND} @${PR_HEAD_SHA}"
 ```
 
 <!-- policy-sibling: plugins/cc_oss/skills/review/SKILL.md, plugins/cc_oss/skills/resolve/SKILL.md — `Gate: REJECT_* @<sha>` line format, both sides must agree -->
@@ -581,6 +588,34 @@ fi
 - `REPLY_MODE=false` → use `AskUserQuestion`: "A report path was passed without `--reply`. Did you mean `/oss:review <path.md> --reply`?" Options: (a) "Yes — continue with `--reply` mode" → set `REPLY_MODE=true`; then re-check: `[ ! -f "$REVIEW_FILE" ] && echo "Error: review file not found at $REVIEW_FILE" && exit 1`; proceed; (b) "No — review a PR instead" → print usage hint (`/oss:review <N> | path/to/dir`) and stop.
 - `REPLY_MODE=true` and `[ ! -f "$REVIEW_FILE" ]` → print `Error: report not found: $REVIEW_FILE` and stop.
 - `REPLY_MODE=true` and file exists → print `[direct] using $REVIEW_FILE` → **skip to Step 8**. Skip Steps 2–7.
+
+### Agent 0 — blind-solve (FEATURE/MIXED only, general-purpose)
+
+Anti-anchoring pre-step: before any agent reads the diff, spawn a standalone agent that derives its own **blueprint-level** solution to the problem the PR solves — approach + key data structures + edge cases, not full implementation. Bounded: ~10 tool calls, output ≤1 page. This spawn is isolation-motivated, not work displacement — the blind agent must not share the orchestrator's context, so the "under ~73 calls → inline" rule does not apply; it still costs the fixed per-spawn overhead, which is why it is gated to FEATURE/MIXED.
+
+Problem statement, in priority order: linked issue body (the original ask — outranks the PR's own framing when both exist) → PR title + body → changed file **names**. Gather it with this block; nothing here touches diff content:
+
+```bash
+# timeout: 15000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PR_NUM < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || PR_NUM=""
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+BASE_REF=$(gh pr view "$PR_NUM" --json baseRefName --jq .baseRefName 2>/dev/null)
+PR_BODY_TXT=$(gh pr view "$PR_NUM" --json body --jq .body 2>/dev/null)
+# issue bodies fetched raw here — the Step 2 issue agent runs in the same batch as Agent 0, its issue-<N>.md files do not exist yet
+ISSUE_REFS=$(printf '%s' "$PR_BODY_TXT" | grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?|refs?) #[0-9]+' | grep -oE '[0-9]+' | sort -u | head -3)
+{
+  for n in $ISSUE_REFS; do echo "## Linked issue #$n"; gh issue view "$n" --json title,body --jq '"\(.title)\n\n\(.body)"' 2>/dev/null; echo; done
+  echo "## PR"; gh pr view "$PR_NUM" --json title,body --jq '"\(.title)\n\n\(.body)"' 2>/dev/null
+  echo; echo "## Changed files (names only)"; gh pr diff "$PR_NUM" --name-only 2>/dev/null
+  echo; echo "BASE_REF=$BASE_REF"
+} > "$RUN_DIR/blind-solve-input.md"
+echo "blind-solve input: $RUN_DIR/blind-solve-input.md base=$BASE_REF"
+```
+
+Spawn prompt: the contents of `$RUN_DIR/blind-solve-input.md` verbatim, then: "Your only source for pre-change code is `git show origin/<BASE_REF>:<path>` for files listed above. Never use Read, `cat`, `gh pr diff`, `git diff`, or any working-tree path — the working tree may already contain the change. Sketch your own solution to the stated problem — approach, key data structures/functions, edge cases — in ≤1 page. Do not write full code." Write to `$RUN_DIR/foundry--blind-solve.md`, return `{"status":"done","file":"$RUN_DIR/foundry--blind-solve.md","confidence":0.N}`. `BASE_REF` comes from `baseRefName` deliberately — Step 3's `PR_BASE` (merge-base) isn't bound until after Step 2 launches. Launch in the same batch as the Step 2 agents.
+
+Skip when scope is FIX/REFACTOR/CHORE, DOCS_TYPING_MODE/TESTS_CI_MODE is true, or the gathered input has no issue and an empty/boilerplate PR body — note skip in report header, never fabricate a problem statement. Not a `FANOUT_MAX` unit — never counted against the cap, never ranked out.
 
 ## Step 2: Codex + parallel agent launch
 
@@ -690,7 +725,7 @@ Persist the monitor list from the **actual launch batch** — never re-derive it
 
 - `$RUN_DIR/foundry--codex.md` — only when the bridge review launched
 - `$RUN_DIR/issue-<N>.md` — one per linked issue the issue agent covers
-- one `$RUN_DIR/<agent>.md` per spawned review agent — basenames: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md`, `oss--cicd-steward.md`
+- one `$RUN_DIR/<agent>.md` per spawned review agent — basenames: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md`, `oss--cicd-steward.md`, `foundry--blind-solve.md` (Agent 0, FEATURE/MIXED only)
 
 Then arm the guard (fresh shell):
 
@@ -843,7 +878,7 @@ TaskUpdate "Step 5b: Print report header" → `in_progress`.
 
 **MANDATORY, not optional narration** — the consolidator's returned one-liner is a routing signal only; it is never printed to the user and never satisfies this step. Perform, in this exact order, in this same turn, before any other Step 5/6/7 text:
 
-1. Read `$REPORT_DIR/review-report.md` (Read tool).
+1. Read `$REPORT_DIR/review-report.md` (Read tool, `limit=25` — the `---` block only, with headroom for a `Gate:` line or a prepended note; the full report is 5–20K tok and nothing below the header is needed in main context here; findings are read per-item later, on demand).
 2. Extract every field from the opening `---` up to and including the closing `---` — `Title:`, `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `CI:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`.
 3. Render those 12 fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block. Append `→ saved to $REPORT_DIR/review-report.md`.
 4. TaskUpdate "Step 5b: Print report header" → `completed` (only once the table has actually appeared in this response).
@@ -889,6 +924,19 @@ Print `### Codex Delegation` only when tasks delegated — omit otherwise. Don't
 `REPLY_MODE=true`: proceed to Step 8 — no Confidence block here. `REPLY_MODE=false` — do NOT proceed to Step 8. Execute both sub-steps below:
 
 ### 7a — Follow-up gate
+
+This gate idles longest (measured up to 11 h on a real review). Refresh the contract right before it — boundary 2 was written before Step 6 pulled more into context — and print the hint so the user can `/compact` while deciding; a resolve follow-up then starts from the report file, not this transcript:
+
+```bash
+# compaction boundary 3 — immediately before the 7a idle gate (compaction-contract.md §Lifecycle)
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="n/a"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "follow-up gate (Step 7a)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "resume: re-read report header, re-issue Step 7a AskUserQuestion; /oss:resolve reads the report file directly"  # timeout: 5000
+```
+
+Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — report saved at <REPORT_DIR>/review-report.md, resume lossless. ``
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text. Single call — all options in one:
 

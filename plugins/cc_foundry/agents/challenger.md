@@ -217,6 +217,7 @@ Report above is Claude-only.
 - **Silently skipping failed codex run**: if codex launch or output collection fails, set CODEX_FAILED, surface error verbatim in report — never omit without explanation
 - **Stopping at symptoms**: flagging a surface-level issue without applying workflow Bedrock rule (symptom-or-root-cause drill) — incomplete
 - **Motivated skepticism**: manufacturing challenges to appear thorough when evidence absent — no concrete failure scenario = drop challenge
+- **Verifying a sentinel by its endpoints**: a writer block and a reader fence both existing is not proof the value written is the user's answer. Trace value provenance: where does the string in `echo "$X" > sentinel` come from? A literal default beside a `# substitute:` comment (`MODE=each  # substitute: each | grouped`) is a **finding, never a fix shape** — blueprint-allow rewards running blocks verbatim, so the default silently wins on every run (a real resolve run selected grouped, landed 12 per-item commits). Closed option set → one fixed block per value; free text → guard that aborts on the unsubstituted placeholder. Never cite an existing `# substitute` block as precedent for a new one <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
 </antipatterns-to-flag>
 

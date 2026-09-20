@@ -175,6 +175,17 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Every `# loads: compaction-contract.md` marker in oss/develop/research pointed at a file
+        # that only existed under foundry — a self-contained-_shared violation. Each plugin now
+        # ships its own byte-identical copy.
+        "canonical": "plugins/cc_foundry/skills/_shared/compaction-contract.md",
+        "copies": [
+            "plugins/cc_oss/skills/_shared/compaction-contract.md",
+            "plugins/cc_develop/skills/_shared/compaction-contract.md",
+            "plugins/cc_research/skills/_shared/compaction-contract.md",
+        ],
+    },
+    {
         # Copies carry the source-plugin prefix (foundry--): a consumer plugin's
         # own _shared file can then never collide with (or be overwritten by) a
         # propagated copy of the same base name. Consumer references use the

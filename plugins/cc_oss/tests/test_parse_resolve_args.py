@@ -60,6 +60,24 @@ class TestPrNumberMode:
         assert result["PR_NUMBER"] == "42"
         assert result["MODE"] == "pr+report"
 
+    @pytest.mark.parametrize(
+        "arguments",
+        [
+            pytest.param("report 42", id="report-leads-bare"),
+            pytest.param("report #42", id="report-leads-hash"),
+            pytest.param("  report   42 ", id="report-leads-whitespace"),
+        ],
+    )
+    def test_report_prefix_is_order_invariant(self, arguments: str) -> None:
+        """'report 42' routes exactly like '42 report' — MODE='pr+report', PR_NUMBER='42'.
+
+        Before this contract the leading form fell through to comment-dispatch with an empty PR_NUMBER, silently
+        treating the request as free-text comment content.
+        """
+        result = parse_resolve_args(arguments)
+        assert result["PR_NUMBER"] == "42"
+        assert result["MODE"] == "pr+report"
+
     def test_leading_whitespace_ignored(self) -> None:
         """Leading whitespace before digits is tolerated."""
         result = parse_resolve_args("  7")
@@ -82,6 +100,17 @@ class TestPrUrlMode:
         assert result["PR_URL"] == url
         assert result["PR_NUMBER"] == "7"
         assert result["MODE"] == "pr"
+
+    def test_report_prefix_before_url(self) -> None:
+        """'report <PR URL>' routes like '<PR URL> report' — MODE='pr+report', PR_NUMBER extracted.
+
+        The leading form previously fell through to comment-dispatch; the URL and number regexes now accept `report` in
+        either position.
+        """
+        result = parse_resolve_args("report https://github.com/owner/repo/pull/7")
+        assert result["PR_URL"] == "https://github.com/owner/repo/pull/7"
+        assert result["PR_NUMBER"] == "7"
+        assert result["MODE"] == "pr+report"
 
     def test_url_with_report_suffix(self) -> None:
         """GitHub URL + ' report' → MODE='pr+report', PR_NUMBER still extracted."""

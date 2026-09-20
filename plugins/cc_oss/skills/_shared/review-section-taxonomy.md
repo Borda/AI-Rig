@@ -15,6 +15,7 @@ Canonical section headers, grep keys, agent ownership, resolve triage type. Both
 | `### Cosmetic / Style` | `Cosmetic` | `foundry:linting-expert` | `[suggest]` | `style` |
 | `### API Design (if applicable)` | `API Design` | `foundry:solution-architect` | `[req]` (code-related) | `architecture` |
 | `### Codex Co-Review` | `Codex Co-Review` | `codex` | `[suggest]` | `code` |
+| `### Design Divergence` | (skip) | blind-solve (Agent 0) | — | — |
 | `### OSS Checks` | (skip) | — | — | — |
 | `### Issue Root Cause Alignment` | (skip) | — | — | — |
 | `### Recommended Next Steps` | (skip) | — | — | — |

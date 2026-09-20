@@ -30,7 +30,7 @@ Bare comment text → skip to Codex dispatch (Step 12).
   - Omitted → **review-handoff mode**: auto-detect PR from most recent `.reports/review/pr-*/run-*/review-report.md` or the legacy pre-rename `.reports/review/*/review-report.md` (both oss lineage, same schema) or `.reports/codex/review/*/review-notes.md` (codex lineage, detected but not parsed — see Step 0 lineage guard)
   - PR number (e.g. `42` or `#42`) or GitHub PR URL → **pr mode**
   - `report` (bare word) → **report mode**: latest review findings as action items; no GitHub re-fetch
-  - `42 report` or `<URL> report` → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass. The `report` word **adds** the report as a second source; it never suppresses the GitHub fetch — bare `report` (no PR number) is the no-GitHub mode
+  - `42 report` or `<URL> report` (order-invariant: `report 42` is the same request) → **pr + report mode**: aggregate live GitHub comments + review report, deduplicated in one pass. The `report` word **adds** the report as a second source; it never suppresses the GitHub fetch — bare `report` (no PR number) is the no-GitHub mode
   - Bare review comment text → **comment dispatch mode** (jumps to Step 12)
 - **`--no-challenge`**: optional — skip challenge gate per item; all selected items treated as `VALID`
 - **`--no-codemap`**: optional — disable codemap structural context (on by default when codemap installed + index present)
@@ -62,10 +62,13 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 
 > loads: compaction-contract.md
 
+- Boundary 0: before the Step 3d item-selection gate — longest idle window of the run; contract makes a mid-wait `/compact` lossless.
 - Key boundary: end of Step 8 — per-item implementation loop complete, before Step 9 lint gate. Contract overwrites on each iteration (latest state wins).
 - Second boundary: start of Step 11 — before final report write, after push.
-- Preserve at boundary 1: PR#, implemented/remaining item state.
-- Preserve at boundary 2: final report path, PR#.
+- Preserve at boundary 0: PR#, `IMPL_DIR`, `action-items.jsonl`, `pr-intelligence.md`, `pr-vars.sh` paths.
+- Preserve at boundary 1: PR#, implemented/remaining item state, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
+- Preserve at boundary 2: final report path, PR#, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
+- State that must survive a compaction lives in files under `$IMPL_DIR`, never only in-context: challenge verdicts (`challenge-log.txt`), item→task map (`item-tasks.tsv`), `IMPL_DIR` itself via the `resolve-impl-dir-${CSID}` sentinel written at `mktemp` time.
 
 </compaction>
 
@@ -188,9 +191,11 @@ ARGUMENTS="$CLEAN_ARGS"
 echo "$FLAG_NO_CHALLENGE" > "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}"  # read by Step 8 Phase 1
 echo "${VALUE_AGENT:-}" > "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
 echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 10 overwrites; a run that never reaches it must not inherit last run's `open`
-# same reason: a run that never reaches Step 3d (zero pending items, bulk skip-all) must not inherit last run's `stage`/`grouped`
-echo each > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"
+# same reason: a run that never reaches Step 3d (zero pending items, bulk skip-all) must not inherit last run's `stage`/`grouped`.
+# `unset`, not `each`: Step 8's merge fence aborts on it, so a skipped Step 3d block fails loud instead of landing per-item commits
+echo unset > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"
 echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # empty, not rm (danger filter): report mode skips Step 3b; a stale dir from the previous PR would feed its items into this run
 # defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
 trap 'rm -f "$tmpenv"' EXIT INT TERM
@@ -392,6 +397,21 @@ Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero
 
 Sort all pending items by severity descending (most impactful first).
 
+Longest idle window of the run sits here (median ~15 min, measured up to 16 h) — long enough for the prompt cache to expire, so the next turn rewrites the whole context at write rate. Persist a resume contract first, then print the hint so the user can `/compact` while waiting (skill can't trigger compaction itself):
+
+```bash
+# compaction boundary 0 — before the Step 3d idle gate (compaction-contract.md §Lifecycle)
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR=""
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
+_PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence.md, items=$_IMPL_DIR/action-items.jsonl, vars=$_IMPL_DIR/pr-vars.sh"
+[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion"  # timeout: 5000
+```
+
+Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+
 **Cap mechanics — read before building any call**: the tool cap is **4 questions per call**. The `Submit` tab is NOT a question — a 4-question call renders 5 tabs. Never stop at 3 questions believing the cap is reached, and never over-pack a question past 3 items to avoid opening a 4th. Within one question, `AskUserQuestion` appends "Type something" outside the option list, so 3 items + Type something = 4 visible rows; that is the **≤3 items/question** limit, a separate constraint from the 4-question cap.
 
 **Call layout — literal slot template, pick by pending-item count** (each AskUserQuestion window is pure human idle, median ~15 min — merge whenever the 4-question cap allows):
@@ -473,14 +493,69 @@ Topic-group question — multiSelect: FALSE
 
 Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · (d) or free text → `labels` (prompt for labels at Step 8) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
 
-Persist both once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, and its after-loop grouping reads the strategy; neither survives a fence boundary or a compaction on its own. Substitute the resolved values for the two literals before running:
+Persist both once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, and its after-loop grouping reads the strategy; neither survives a fence boundary or a compaction on its own.
+
+<!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
+
+Run **exactly one** commit-mode block — the one matching the user's answer — then, for `grouped` only, exactly one strategy block. Never edit a block's text to a different value: an edited block misses the blueprint manifest, and a block run unedited silently persists the wrong mode (a real run selected grouped, landed 12 per-item commits because the old single block carried `each` as its literal default).
+
+`(a)` each:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-COMMIT_MODE=each  # substitute: each | grouped | all | stage
-GROUP_STRATEGY=domain  # substitute: domain | file | specialist | labels
-echo "$COMMIT_MODE" > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
-echo "$GROUP_STRATEGY" > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
+echo each > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
+```
+
+`(b)` grouped:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo grouped > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
+```
+
+`(c)` all:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo all > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
+```
+
+`(d)` stage:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo stage > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"  # timeout: 3000
+```
+
+Strategy — `grouped` only; skip otherwise (Step 0 already wrote the `domain` default):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo file > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo specialist > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo labels > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"  # timeout: 3000
+```
+
+Then confirm what landed — the echoed line must match the user's answer before Step 3e starts:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _CM < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || _CM="unset"
+IFS= read -r _GS < "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}" 2>/dev/null || _GS="unset"
+echo "commit-mode=$_CM group-strategy=$_GS"  # timeout: 3000
 ```
 
 ```text
@@ -501,7 +576,18 @@ TaskCreate(
 )
 ```
 
-Store returned task ID in each `SELECTED_ITEMS` entry as `task_id`; the orchestrator holds this `{item_id: task_id}` map in-context and flips each task live during the Step 8 loop. **Applies to `pr` and `pr+report` modes only** — these are the only modes that run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks.
+Store returned task ID in each `SELECTED_ITEMS` entry as `task_id` **and** run this block once per item — the file is the map; the Step 8 loop reads task IDs from it (a compaction between here and Step 8 would otherwise orphan every per-item task):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+_ITEM_ID="<item_id>"; _TASK_ID="<task_id>"
+case "$_ITEM_ID$_TASK_ID" in *'<'*'>'*) echo "! BLOCKED — item/task id placeholder not substituted"; exit 1 ;; esac
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b never ran"; exit 1; }
+printf '%s\t%s\n' "$_ITEM_ID" "$_TASK_ID" >> "$IMPL_DIR/item-tasks.tsv"  # timeout: 3000
+```
+
+**Applies to `pr` and `pr+report` modes only** — these are the only modes that run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks.
 
 ## Step 4: Checkout PR branch
 
@@ -727,9 +813,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary1: post-impl loop, pre-lint gate (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-_PRESERVE="pr=${_PR_NUMBER}, items-implemented; next: lint/push/report"
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
+_PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv; next: lint/push/report"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "n/a" "${_PRESERVE}" "lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}" "lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"  # timeout: 5000
 ```
 
 ## Step 9: Lint and QA gate
@@ -777,6 +864,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-
 
 **Push authorization + post-PR gate — one `AskUserQuestion` call, two questions.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") the push question precedes any `git push`; the post-PR question rides in the same call because each window is pure human idle and Step 11 has nothing left to ask that the user cannot decide now. Never split these into two calls.
 
+Second-longest idle window (measured up to 11 h). Boundary-1 contract already names every file Step 11 needs; print this line in the reply before the call: `` Long wait? `/compact` now — commits landed, challenge log + item map in <IMPL_DIR>, resume lossless. ``
+
 Q1 — push. Must surface:
 
 - Target remote and branch: `$FORK_REMOTE/$HEAD_REF`
@@ -790,10 +879,20 @@ Options:
 
 Q2 — after the final report: (a) **Open PR in browser** (`gh pr view <PR_NUMBER> --web`) · (b) **Skip**. Persist the answer for Step 11 — substitute `open` for the literal when Q2 = (a), the fence itself assigns nothing else:
 
+Run exactly the block matching Q2 — never edit a block's value (same trap as the Step 3d commit-mode blocks: an unedited default silently wins). <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
+
+Q2 = (a) open:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-POST_PR_ACTION=skip  # substitute: open | skip
-echo "$POST_PR_ACTION" > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
+echo open > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
+```
+
+Q2 = (b) skip:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # read back at the end of Step 11  # timeout: 3000
 ```
 
 Only proceed to the `git push` below on Q1 option (a). On option (b): print `` → Push skipped — run `git push` manually when ready. `` and jump to Step 11 (Q2's answer still applies there).
@@ -826,9 +925,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary2: pre-final-report write (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-_PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write"
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
+_PRESERVE="pr=${_PR_NUMBER}, final-report=pending-write, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "n/a" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "final-report (after push)" "$_IMPL_DIR" "${_PRESERVE}" "write final report → post-PR action gate"  # timeout: 5000
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/templates/resolve-report.md"  # timeout: 5000
 ```
@@ -847,7 +947,7 @@ Report template (loaded above) — use for section structure.
 - `Commit`: short SHA (7 chars); `—` when `COMMIT_MODE=stage`
 - For `location: discussion` rows append `· thread (no GH resolve)` to Status — no GitHub Resolve button exists for PR main-thread comments
 
-Include `### Challenge Log` section in report, columns: `#` | `Finding` | `Evidence` | `Suggestion` | `Resolution`. Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
+Include `### Challenge Log` section in report — source of truth is `$IMPL_DIR/challenge-log.txt` (Read it; one `key=value` record per line, written by `action-item-dispatch.md` Phase 1), never a recollection of verdicts from earlier in the conversation. File absent or empty (Step 8 skipped, skip-all, or `--no-challenge`) → omit the section; never treat the failed Read as an error. Columns: `#` | `Finding` | `Evidence` | `Suggestion` | `Resolution`. Every cell must be self-contained — reader gets full context from that row alone, never by cross-referencing another row or recalling earlier conversation:
 
 - `Finding`: one-line gist of the reviewer's comment (from `finding` in `CHALLENGE_LOG`) — what was flagged, not just its id
 - `Evidence`: bracketed flag + reason on one line, e.g. `[VALID] — <evidence_why>` or `[REJECT] — <evidence_why>`. Reason never empty, never generic — state in a few words what the verdict was about. Never print a bare `VALID`/`REJECT`, bracketed or not, with no reason

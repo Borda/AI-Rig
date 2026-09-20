@@ -17,8 +17,8 @@ Emits four shell-quoted variable assignments:
 Match order (PR/URL/report tried before any string mutation, so prompts like
 ``#42 looks wrong`` still route to comment-dispatch rather than misroute):
 
-1. PR number (with optional leading ``#`` and optional trailing ``report``)
-2. GitHub PR URL (with optional trailing ``report``)
+1. PR number (with optional leading ``#``; ``report`` may lead or trail — ``42 report`` == ``report 42``)
+2. GitHub PR URL (``report`` may lead or trail)
 3. Bare ``report``
 4. Otherwise comment-dispatch (strip exactly one leading ``#``)
 
@@ -53,14 +53,16 @@ class ResolveMode(str, Enum):
     COMMENT_DISPATCH = "comment-dispatch"
 
 
-_PR_NUMBER_RE: Final = re.compile(r"^\s*#?(\d+)(\s+report)?\s*$")
-# group(2) captures the PR number from a .../pull/N path. A pasted PR link often carries a tab or
+# ``report`` may lead or trail the target — ``42 report`` and ``report 42`` are the same request.
+# Both positions are captured so either one flips MODE to pr+report.
+_PR_NUMBER_RE: Final = re.compile(r"^\s*(report\s+)?#?(\d+)(\s+report)?\s*$")
+# group(3) captures the PR number from a .../pull/N path. A pasted PR link often carries a tab or
 # thread tail (``/files``, ``/commits``, ``#discussion_r123``, ``?diff=split``); the tail is accepted
 # and dropped so PR_URL is the canonical PR reference ``gh`` understands.
-_PR_URL_RE: Final = re.compile(r"^\s*(https://github\.com/\S+?/pull/(\d+))(?:[/#?]\S*)?(\s+report)?\s*$")
+_PR_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?/pull/(\d+))(?:[/#?]\S*)?(\s+report)?\s*$")
 # Any other github.com URL (plain repo link, issue link) still routes on PR_URL alone with PR_NUMBER
 # empty — downstream gates then report ``n/a`` instead of handing the URL to comment dispatch.
-_GH_URL_RE: Final = re.compile(r"^\s*(https://github\.com/\S+?)(\s+report)?\s*$")
+_GH_URL_RE: Final = re.compile(r"^\s*(report\s+)?(https://github\.com/\S+?)(\s+report)?\s*$")
 _BARE_REPORT_RE: Final = re.compile(r"^\s*report\s*$")
 
 
@@ -73,6 +75,10 @@ def parse_resolve_args(arguments: str) -> dict[str, str]:
     True
     >>> parse_resolve_args("#42 report") == {
     ...     "PR_NUMBER": "42", "PR_URL": "", "MODE": "pr+report", "ARGUMENTS": "#42 report",
+    ... }
+    True
+    >>> parse_resolve_args("report 42") == {
+    ...     "PR_NUMBER": "42", "PR_URL": "", "MODE": "pr+report", "ARGUMENTS": "report 42",
     ... }
     True
     >>> parse_resolve_args("https://github.com/owner/repo/pull/7") == {
@@ -103,18 +109,18 @@ def parse_resolve_args(arguments: str) -> dict[str, str]:
 
     m = _PR_NUMBER_RE.match(arguments)
     if m:
-        pr_number = m.group(1)
-        mode = ResolveMode.PR_REPORT if m.group(2) else ResolveMode.PR
+        pr_number = m.group(2)
+        mode = ResolveMode.PR_REPORT if (m.group(1) or m.group(3)) else ResolveMode.PR
     else:
         m = _PR_URL_RE.match(arguments)
         gh = None if m else _GH_URL_RE.match(arguments)
         if m:
-            pr_url = m.group(1)
-            pr_number = m.group(2)  # reject-gate check and report-source lookup are PR-scoped on this
-            mode = ResolveMode.PR_REPORT if m.group(3) else ResolveMode.PR
+            pr_url = m.group(2)
+            pr_number = m.group(3)  # reject-gate check and report-source lookup are PR-scoped on this
+            mode = ResolveMode.PR_REPORT if (m.group(1) or m.group(4)) else ResolveMode.PR
         elif gh:
-            pr_url = gh.group(1)
-            mode = ResolveMode.PR_REPORT if gh.group(2) else ResolveMode.PR
+            pr_url = gh.group(2)
+            mode = ResolveMode.PR_REPORT if (gh.group(1) or gh.group(3)) else ResolveMode.PR
         elif _BARE_REPORT_RE.match(arguments):
             mode = ResolveMode.REPORT
         else:

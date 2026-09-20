@@ -20,6 +20,8 @@ Block format and placement rule: see `compaction-contract.md`.
 
 Hook rides auto-compact (85% context threshold) — no manual trigger. Compaction timing best-effort; only verbatim survival of *whatever contract exists* is deterministic.
 
+**Idle gates are the expensive boundary.** An `AskUserQuestion` the user may leave open for hours outlives the prompt-cache TTL; the next turn then rewrites the whole live context at write rate (~12.5× read). Measured across review/resolve sessions: cold starts were 40–44% of all cache-write tokens, single rewrites of 240k–320k tokens. A skill cannot compact itself, so at every gate expected to idle it (1) refreshes the contract so a mid-wait `/compact` is lossless, and (2) prints one hint line **in the reply** (prose — Bash stdout is not reliably shown to the user): `` Long wait? `/compact` now — <state> saved at <path>, resume lossless. `` The resumed skill re-reads its report/state files, never the transcript.
+
 > Manual sibling: `/foundry:session dump` before an explicit `/clear`. Contract = automatic, in-flight skill phase state, `.temp/state/skill-contract.md`; session handover = explicit, plan/decisions/lessons/files table/open loops, `.claude/state/session/`. Different trigger, different payload — never substitutes for the other.
 
 ### `keep:` semantics

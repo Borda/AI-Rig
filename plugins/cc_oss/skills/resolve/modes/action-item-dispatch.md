@@ -22,13 +22,14 @@ eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" 
 IMPL_AGENT="${VALUE_AGENT:-bridge:implement}"
 [ -n "$VALUE_AGENT" ] && echo "→ Using --agent: $IMPL_AGENT"
 
-# set in Step 3b (pr-intelligence subagent); idempotent if already set
-[ -z "$IMPL_DIR" ] && IMPL_DIR=$(mktemp -d)  # timeout: 3000
+# IMPL_DIR sentinel written at mktemp time in pr-intelligence.md — re-read here, never re-create
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -z "$IMPL_DIR" ] && { IMPL_DIR=$(mktemp -d); echo "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"; }  # timeout: 3000 — report-mode has no Step 3b
 mkdir -p "$IMPL_DIR"  # timeout: 3000
-echo "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # mktemp path dies with this block otherwise
 SELECTED_ITEMS="<space-separated selected ids>"
+case "$SELECTED_ITEMS" in *'<'*'>'*|"") echo "! BLOCKED — SELECTED_ITEMS still holds the placeholder; substitute the Step 3d ids before running this block"; exit 1 ;; esac
 printf '%s\n' "$SELECTED_ITEMS" > "$IMPL_DIR/selected-items.txt"
-CHALLENGE_LOG=()  # per-item records: id|finding|evidence|evidence_why|suggestion|suggestion_why|resolution|detail — rationale/detail text carried through to Step 11 report, never dropped
+CHALLENGE_LOG="$IMPL_DIR/challenge-log.txt"; : > "$CHALLENGE_LOG"  # one record per line: id=… finding=… evidence=… evidence_why=… suggestion=… suggestion_why=… resolution=… detail=… — file, not shell array: survives compaction + separate Bash calls, Step 11 renders from it
 ```
 
 **Concurrency guard — mutex + HEAD fingerprint** (Phase 2 holds worktrees open for the slowest specialist's whole runtime — minutes — so an external write to the branch, or a second resolve run, is far likelier to land mid-flight than under the old per-item design). The lock path is deterministic (recompute anytime from the git-common-dir + branch); the base SHA is a point-in-time value, so persist it to a tmpfile — shell vars don't survive between Step 8's separate bash calls:
@@ -250,7 +251,18 @@ Parse each group's per-item verdict array — same granularity as a single-item 
 - `evidence=VALID` + `suggestion=VALID` → `SUGGESTION_VERDICT[id]=VALID`; use original suggestion for implementation
 - `evidence=VALID` + `suggestion=REJECT` → `SUGGESTION_VERDICT[id]=REJECT`; self-resolve using `alternative` as guidance
 
-Append every surviving item's verdict to `CHALLENGE_LOG`: `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=VALID evidence_why=<evidence_rationale> suggestion=<VALID|REJECT> suggestion_why=<suggestion_rationale> resolution=<as-suggested|self-resolved> detail=<when suggestion=REJECT: the `alternative`text — what gets implemented instead; when suggestion=VALID: leave as`pending-impl:<id>`, Step 11 backfills it from the item's actual commit summary once Phase 2 lands, so the report never prints a bare label with no stated content>`. Items with `evidence=VALID` form `SURVIVING_ITEMS`.
+Every "append to `CHALLENGE_LOG`" in this file runs this block once per record — `$CHALLENGE_LOG` from the prelude is gone in later Bash calls, so the path is re-derived; `$_REC` is a shell variable, so apostrophes or quotes inside the reviewer's comment text cannot break it:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+_REC="<record: id=… finding=… evidence=… evidence_why=… suggestion=… suggestion_why=… resolution=… detail=…>"
+case "$_REC" in "<record:"*|"") echo "! BLOCKED — _REC still holds the placeholder; substitute the verdict record before running"; exit 1 ;; esac
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b/prelude never ran"; exit 1; }
+printf '%s\n' "$_REC" >> "$IMPL_DIR/challenge-log.txt"  # timeout: 3000
+```
+
+Append every surviving item's verdict (one line per item — the file is the log, no in-context copy): `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=VALID evidence_why=<evidence_rationale> suggestion=<VALID|REJECT> suggestion_why=<suggestion_rationale> resolution=<as-suggested|self-resolved> detail=<when suggestion=REJECT: the `alternative`text — what gets implemented instead; when suggestion=VALID: leave as`pending-impl:<id>`, Step 11 backfills it from the item's actual commit summary once Phase 2 lands, so the report never prints a bare label with no stated content>`. Items with `evidence=VALID` form `SURVIVING_ITEMS`.
 
 ### Phase 2: Implementation — parallel, one worktree per specialist
 
@@ -314,7 +326,8 @@ Build the cherry-pick plan in **original `SELECTED_ITEMS` priority order**, inte
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"  # Step 3d persists it; argparse rejects an empty value
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="unset"
+case "$COMMIT_MODE" in each|grouped|all|stage) echo "merge fence: COMMIT_MODE=$COMMIT_MODE" ;; *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE': Step 3d's commit-mode block never ran; run the block matching the user's answer, then re-run this fence"; exit 1 ;; esac  # fail closed — a silent default landed 12 per-item commits once
 CENTRALITY_FILE=""
 if [ -s "$IMPL_DIR/codemap-maps.json" ]; then
     CENTRALITY_FILE=$(mktemp)  # timeout: 3000
@@ -337,7 +350,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/merge_specialist_batch.py" \
 
 **Conflict** → two specialists touched overlapping code; the script stops mid-cherry-pick on the reported item (`CHERRY_PICK_HEAD` present) and returns the still-unapplied `remaining` entries. Route to `conflict-resolution.md`'s task-creation pattern (Step 5a), substituting `CHERRY_PICK_HEAD` for `MERGE_HEAD` in the state check; after resolving, `git cherry-pick --continue`, then re-invoke `merge_specialist_batch.py` with only the `remaining` entries.
 
-Mark item's task per `COMMIT_MODE`, right after its own cherry-pick lands — not when its specialist group returns (a group finishing early doesn't mean its items are safely on the PR branch yet):
+Mark item's task per `COMMIT_MODE`, right after its own cherry-pick lands — not when its specialist group returns (a group finishing early doesn't mean its items are safely on the PR branch yet). `<item.task_id>` below = the id paired with `<item_id>` in `$IMPL_DIR/item-tasks.tsv` (written at Step 3e) — read from the file, never from memory of the Step 3e TaskCreate calls:
 
 ```text
 # each / stage → completed now (commit landed, or staged = terminal; no "staged" task status)
@@ -431,14 +444,12 @@ for each item_id in GROUP_IDS:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" 2>/dev/null || PR_REF="#0"  # reload (Check 41: fresh shell) — set in Step 4
-N_AS_SUGGESTED=0; N_SELF_RESOLVED=0; N_REJECTED=0; SUMMARIES_FILE=""
-for _entry in "${CHALLENGE_LOG[@]}"; do
-    case "$_entry" in
-        *resolution=as-suggested*) N_AS_SUGGESTED=$(( N_AS_SUGGESTED + 1 )) ;;
-        *resolution=self-resolved*) N_SELF_RESOLVED=$(( N_SELF_RESOLVED + 1 )) ;;
-        *evidence=REJECT*) N_REJECTED=$(( N_REJECTED + 1 )) ;;
-    esac
-done
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+# grep -c prints 0 AND exits 1 on no match — `|| echo 0` would yield "0\n0" and commit_all_items.py rejects it; only a missing file leaves stdout empty
+N_AS_SUGGESTED=$(grep -c 'resolution=as-suggested' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_AS_SUGGESTED=${N_AS_SUGGESTED:-0}
+N_SELF_RESOLVED=$(grep -c 'resolution=self-resolved' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_SELF_RESOLVED=${N_SELF_RESOLVED:-0}
+N_REJECTED=$(grep -c 'evidence=REJECT' "$IMPL_DIR/challenge-log.txt" 2>/dev/null || :); N_REJECTED=${N_REJECTED:-0}
+SUMMARIES_FILE=""
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $( [ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "--codex" )  # timeout: 10000
 ```
 
