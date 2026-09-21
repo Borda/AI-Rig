@@ -17,6 +17,7 @@ from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer
 from test_code_remediate_final_outcome_validation import VALIDATOR
 from test_code_remediate_final_outcome_validation import _metadata as resolution_metadata, _write_action_items
 from test_final_handoff import _write_schema_v2_assess
+from test_code_remediate_work_bucket_validation import _write_workplan
 from test_review_finding_identity import _load_validator, _metadata, _result
 
 
@@ -554,9 +555,10 @@ def test_grouped_review_gate_intake_does_not_depend_on_display_words(tmp_path: P
     VALIDATOR._validate_code_remediate_report_intake({"metadata": metadata}, tmp_path)
 
 
-@pytest.mark.parametrize("item_type", ["code", "review-gate"])
-def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path, item_type: str) -> None:
-    """Exercise the outer validator, not just the no-selectable renderer branch."""
+def _write_remediation_candidate(
+    tmp_path: Path, item_type: str, selected_resolution: tuple[str, str] | None = None
+) -> Path:
+    """Write a complete report candidate, optionally selecting one explicit outcome for closure checks."""
     result_path = _write_schema_v2_assess(tmp_path)
     result = json.loads(result_path.read_text(encoding="utf-8"))
     metadata = result["metadata"]
@@ -566,10 +568,18 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
         item.update(
             item_type=item_type, selectable=False, triage_status="already-fixed", resolution_status="already-fixed"
         )
-    for field in ("triage_status_counts", "resolution_status_counts"):
-        table[field] = {status: 2 if status == "already-fixed" else 0 for status in table[field]}
-    table.update(selectable_rows_total=0, nonselectable_rows_total=2)
-    inventory = {"schema_version": 1, "selected_indexes": [], "items": copy.deepcopy(table["items"])}
+    if selected_resolution is not None:
+        table["items"][0].update(
+            selectable=True,
+            triage_status="valid",
+            resolution_status=selected_resolution[0],
+            resolved_how=selected_resolution[1],
+        )
+    for field, key in (("triage_status_counts", "triage_status"), ("resolution_status_counts", "resolution_status")):
+        table[field] = {status: sum(item[key] == status for item in table["items"]) for status in table[field]}
+    selected_indexes = [1] if selected_resolution is not None else []
+    table.update(selectable_rows_total=len(selected_indexes), nonselectable_rows_total=2 - len(selected_indexes))
+    inventory = {"schema_version": 1, "selected_indexes": selected_indexes, "items": copy.deepcopy(table["items"])}
     for item in inventory["items"]:
         item.update(summary="The original issue is already closed.", closure_evidence="Existing regression passes.")
     (tmp_path / "selection.json").write_text(json.dumps(inventory), encoding="utf-8")
@@ -578,10 +588,10 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
         mode="report",
         resolution_scope={
             "presentation_version": 2,
-            "selection_source": "none-selectable",
+            "selection_source": "explicit-input" if selected_indexes else "none-selectable",
             "prompt_presented": False,
-            "selection_confirmed_by_user": False,
-            "selected_indexes": [],
+            "selection_confirmed_by_user": bool(selected_indexes),
+            "selected_indexes": selected_indexes,
             "deferred_indexes": [],
             "selected_severity_groups": [],
         },
@@ -634,6 +644,24 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
             "unresolved_reason_groups": [],
         },
     )
+    if selected_indexes:
+        metadata["resolution_workplan"].update(
+            groups_total=1,
+            parent_owned_groups=1,
+            verifier_groups=1,
+            work_buckets=[
+                {
+                    "bucket_id": "B1",
+                    "selected_indexes": selected_indexes,
+                    "owner": "parent",
+                    "verifier": "qa-specialist",
+                    "context_pack_path": "resolution-workplan.md",
+                    "owned_paths": ["src/guard.py"],
+                    "execution_mode": "parent",
+                }
+            ],
+        )
+        _write_workplan(metadata, tmp_path)
     _write_action_items(metadata, tmp_path)
     with (tmp_path / "action-items.md").open("a", encoding="utf-8", newline="\n") as stream:
         stream.write("\n## Review Report Intake\n\nTwo report items already closed.\n")
@@ -642,6 +670,11 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff.update(skill="code-remediate", outcome={"title": "Remediation Summary", "summary": "Already closed."})
+    handoff["commit_disposition"] = {
+        "status": "not-applicable",
+        "reason": "All findings were already closed; no remediation-owned change exists.",
+        "evidence": "closure-log.md",
+    }
     rows, details, sources = [], [], []
     for position, item in enumerate(table["items"], 1):
         source_ids = [f"{source['kind']}:{source['source_id']}" for source in item["sources"]]
@@ -655,7 +688,7 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
                     item["severity"],
                     item["item_name"],
                     "\n".join(f"{s['kind']} [{s['source_id']}]" for s in item["sources"]),
-                    f"already-fixed — [O{position}]",
+                    f"{item['resolution_status']} — [O{position}]",
                     f"[E{position}] — owner/status: {item['owner_status']}",
                 ],
             }
@@ -688,6 +721,16 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
         metadata["final_handoff"][field] = binding[field]
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
+    return result_path
+
+
+@pytest.mark.parametrize("item_type", ["code", "review-gate"])
+def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path, item_type: str) -> None:
+    """Exercise the outer validator, not just the no-selectable renderer branch."""
+    result_path = _write_remediation_candidate(tmp_path, item_type)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    inventory = json.loads((tmp_path / "selection.json").read_text(encoding="utf-8"))
     VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
     base_oid, head_oid = "a" * 40, "b" * 40
@@ -830,6 +873,128 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
     merge_resolution_path.write_text(json.dumps(merge_resolution), encoding="utf-8")
     with pytest.raises(SystemExit, match="code-remediate-merge-resolution-pre-merge-head-mismatch"):
         VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+@pytest.mark.parametrize("status", ["pending", "committed"])
+@pytest.mark.parametrize(
+    ("unresolved", "has_plan", "evidence", "error"),
+    [
+        pytest.param("none", True, "commit-plan.md", None, id="closed-with-plan"),
+        pytest.param("none", False, "commit-plan.md", "remediation-commit-plan-missing", id="missing-plan"),
+        pytest.param("required", True, "commit-plan.md", "remediation-commit-closure-blocked", id="required-open"),
+        pytest.param("deferred", True, "commit-plan.md", None, id="explicit-deferment-outside-plan"),
+        pytest.param("selected-closed", True, "commit-plan.md", None, id="resolved-selected-row"),
+        pytest.param(
+            "deferred-clarification",
+            True,
+            "commit-plan.md",
+            "remediation-commit-closure-blocked",
+            id="clarification-is-not-deferment",
+        ),
+        pytest.param(
+            "table-only", True, "commit-plan.md", "remediation-commit-closure-blocked", id="stale-zero-summary"
+        ),
+        pytest.param(
+            "deferred-masked",
+            True,
+            "commit-plan.md",
+            "remediation-commit-closure-blocked",
+            id="blocked-row-masked-as-deferred",
+        ),
+        pytest.param(
+            "deferred-required",
+            True,
+            "commit-plan.md",
+            "remediation-commit-closure-blocked",
+            id="deferment-cannot-mask-required-count",
+        ),
+        pytest.param("none", True, "missing.md", "remediation-commit-evidence-invalid", id="missing-declared-evidence"),
+        pytest.param("none", True, "decision.md", None, id="separate-decision-record"),
+        pytest.param("none", True, "../outside.md", "remediation-commit-evidence-invalid", id="escaped-evidence"),
+        pytest.param(
+            "none",
+            True,
+            "linked.md",
+            "remediation-commit-evidence-invalid",
+            id="symlink-evidence",
+            marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"),
+        ),
+    ],
+)
+def test_commit_readiness_requires_closure_and_plan(
+    tmp_path: Path, status: str, unresolved: str, has_plan: bool, evidence: str, error: str | None
+) -> None:
+    """Reject readiness when the complete candidate declares unfinished work or lacks its plan."""
+    selected_resolution = (
+        None
+        if unresolved == "none"
+        else (
+            "unresolved",
+            "Deferred: User postponed this excluded path."
+            if unresolved == "deferred"
+            else "Blocked: Required regression remains.",
+        )
+    )
+    if unresolved == "selected-closed":
+        selected_resolution = ("implemented", "Implemented: Required regression passes.")
+    elif unresolved == "deferred-clarification":
+        selected_resolution = ("needs-clarification", "Deferred: No matching user decision.")
+    result_path = _write_remediation_candidate(tmp_path, "code", selected_resolution)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    if unresolved == "selected-closed":
+        metadata["unresolved_summary"].update(selected_items_total=1, selected_items_resolved=1)
+    elif unresolved not in {"none", "table-only"}:
+        # A stale closed table must not override the candidate's explicit unfinished-work record.
+        metadata["unresolved_summary"].update(
+            selected_items_total=1,
+            selected_items_unresolved=1,
+            local_actionable_items_unresolved=int(unresolved in {"required", "deferred-required"}),
+            all_local_actionable_items_closed=unresolved not in {"required", "deferred-required"},
+            user_deferred_items=int(unresolved.startswith("deferred")),
+            unresolved_reason_groups=[
+                {
+                    "reason": "user-deferred" if unresolved.startswith("deferred") else "local-code-or-doc",
+                    "count": 1,
+                    "owner": "user" if unresolved.startswith("deferred") else "codex",
+                    "next_action": "Complete the required regression.",
+                    "evidence_path": "closure-log.md",
+                }
+            ],
+        )
+        (tmp_path / "unresolved.txt").write_text(
+            "## Unresolved Work Summary\n\nOne required item remains.\n\n"
+            "## Why Selected Items Remain Unresolved\n\nClosure class: local-code-or-doc. "
+            "Next owner: codex. Attempted evidence: closure-log.md.\n\n"
+            "## Next Action\n\nComplete the required regression.\n",
+            encoding="utf-8",
+        )
+    if has_plan:
+        (tmp_path / "commit-plan.md").write_text(
+            "Verified local commit plan; user-deferred work excluded.\n", encoding="utf-8"
+        )
+    if evidence == "decision.md":
+        (tmp_path / evidence).write_text("Matching user decision for the recorded plan.\n", encoding="utf-8")
+    elif evidence == "linked.md":
+        (tmp_path / evidence).symlink_to(tmp_path / "commit-plan.md")
+    elif evidence == "../outside.md":
+        evidence = f"../{tmp_path.name}/commit-plan.md"
+    handoff_path = tmp_path / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["commit_disposition"] = {"status": status, "reason": "Recorded commit state.", "evidence": evidence}
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(
+        handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        metadata["final_handoff"][field] = binding[field]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    if error is None:
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+    else:
+        with pytest.raises(SystemExit, match=error):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("field", ["title", "summary", "closure_evidence", "action", "evidence"])

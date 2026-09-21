@@ -16,6 +16,11 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
     assert len(SKILLS) == 4
     reference = PLUGIN_ROOT / QUESTION_REFERENCE.split("#")[0]
     assert reference.is_file()
+    guide = reference.read_text(encoding="utf-8")
+    assert len(guide.split()) <= 350
+    assert "The root owns user questions" in guide
+    assert "codex-user-questions-details.md" in guide
+    assert reference.with_name("codex-user-questions-details.md").is_file()
     for skill in SKILLS:
         text = skill.read_text(encoding="utf-8")
         assert f"../../{QUESTION_REFERENCE}" in text, skill
@@ -73,8 +78,8 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
 def test_question_contract_keeps_required_safety_obligations(obligation: str) -> None:
     """Protect transport coverage and complete safety clauses, including their negations."""
     text = (PLUGIN_ROOT / QUESTION_REFERENCE.split("#")[0]).read_text(encoding="utf-8")
-    if "#user-questions" in QUESTION_REFERENCE:
-        text = text.split("## User Questions\n", 1)[1].split("\n## ", 1)[0]
+    details = PLUGIN_ROOT / QUESTION_REFERENCE.split("/")[0] / "codex-user-questions-details.md"
+    text += "\n" + details.read_text(encoding="utf-8")
     assert obligation.lower() in text.lower()
 
 

@@ -728,6 +728,8 @@ SCAN_NO_AUTOBUILD=1 codemap-py query --index <matching-index> rdeps mypackage.au
 
 ## 🔧 Six skills
 
+> Codex questions use a [short shared guide](shared/codex-user-questions.md), shipped locally by this plugin. The root asks with permitted native controls, meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host.
+
 Both runtimes expose these names:
 
 | Skill            | Purpose                                                                                              |
@@ -846,6 +848,8 @@ Run only the command for the runtime you installed into.
 <a id="-maintainer-documentation"></a>
 
 ## 📚 Maintainer documentation
+
+Resolver doctests preserve the caller's `TMPDIR`, including empty and absent values, and Python's temporary-directory cache, so downstream plugin tests retain their original temporary-directory boundary.
 
 - [`bin/README.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codemap-py/bin/README.md) documents shipped launchers, helpers, and compatibility shims.
 - [`scripts/README.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codemap-py/scripts/README.md) documents deterministic package builds, validation, and install probes.

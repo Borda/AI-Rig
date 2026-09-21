@@ -58,7 +58,10 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
 def test_user_questions_expose_answers_without_weakening_authorization() -> None:
     """Keep answer formats explicit while preserving native permission boundaries."""
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
-    questions = contract.split("## User Questions\n", 1)[1].split("\n## ", 1)[0]
+    question_guide = SHARED_CONTRACT.with_name("codex-user-questions.md")
+    assert "[Codex User Questions](codex-user-questions.md)" in contract
+    assert "codex-user-questions-details.md" in question_guide.read_text(encoding="utf-8")
+    questions = SHARED_CONTRACT.with_name("codex-user-questions-details.md").read_text(encoding="utf-8")
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
 
     assert "`Approve local merge` / `Deny local merge`" in questions
@@ -100,6 +103,21 @@ def test_shared_contract_defines_approval_brief_and_denial_turn_recovery() -> No
     assert "Do not issue an equivalent approval request in the current turn" in contract
     assert "Do not switch to a broader command" in contract
     assert "Ask the user to send a new message to resume" in contract
+
+
+@pytest.mark.parametrize("authorized", [False, True])
+def test_collection_prebrief_has_behavioral_consent_coverage(authorized: bool) -> None:
+    """Keep prebrief follow-through distinct from runtime permission and already-granted consent."""
+    cases = json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]
+    case_id = "code-review-prebrief-authorized" if authorized else "code-review-prebrief-needs-consent"
+    matching = [case for case in cases if case["id"] == case_id]
+    assert len(matching) == 1
+    case = matching[0]
+    assert case["target"] == "code-review"
+    assert case["expected_findings"] == []
+    assert "five-field" in case["prompt"]
+    assert "runtime permission" in case["prompt"]
+    assert ("no workflow question" if authorized else "request_user_input_async") in case["prompt"]
 
 
 @pytest.mark.parametrize(

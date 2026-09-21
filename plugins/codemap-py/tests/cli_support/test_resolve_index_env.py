@@ -16,6 +16,7 @@ Tests cover:
 from __future__ import annotations
 
 import importlib.util
+import doctest
 import os
 import shlex
 import subprocess
@@ -201,6 +202,28 @@ class TestFormatEvalLine:
         line = format_eval_line(tricky, "/tmp/idx.json")
         parts = dict(tok.split("=", 1) for tok in shlex.split(line) if "=" in tok)
         assert parts["PROJ"] == tricky
+
+
+@pytest.mark.parametrize("tmpdir_state", ["present", "empty", "absent"])
+@pytest.mark.parametrize("cached", [False, True])
+def test_tmpdir_doctest_preserves_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tmpdir_state: str, cached: bool
+) -> None:
+    """Prevent the resolver example from changing later tests' temporary-directory root."""
+    if tmpdir_state == "absent":
+        monkeypatch.delenv("TMPDIR", raising=False)
+    else:
+        monkeypatch.setenv("TMPDIR", str(tmp_path) if tmpdir_state == "present" else "")
+    before = ("TMPDIR" in os.environ, os.environ.get("TMPDIR"))
+    previous_cache = str(tmp_path) if cached else None
+    monkeypatch.setattr(tempfile, "tempdir", previous_cache)
+    example = doctest.DocTestFinder().find(_mod._resolve_tmpdir, globs=vars(_mod))[0]
+
+    result = doctest.DocTestRunner().run(example)
+
+    assert result.failed == 0
+    assert ("TMPDIR" in os.environ, os.environ.get("TMPDIR")) == before
+    assert tempfile.tempdir == previous_cache
 
 
 class TestMainHappyPath:

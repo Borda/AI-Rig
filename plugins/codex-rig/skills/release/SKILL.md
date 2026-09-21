@@ -3,7 +3,7 @@ name: release
 description: Draft release notes, changelogs, contributor credits, migration guides, and summaries from traced unreleased changes; assess SemVer readiness without publishing.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Release
 

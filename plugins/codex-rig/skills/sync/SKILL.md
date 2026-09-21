@@ -3,7 +3,7 @@ name: sync
 description: Dry-run active plugin cache drift; refresh/reinstall only with approval; keep shims separate.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Sync
 

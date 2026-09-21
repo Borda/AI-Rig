@@ -3,7 +3,7 @@ name: manage
 description: 'Manage Codex agents, skills, or config entries: create, update, or remove with guardrails.'
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Manage
 

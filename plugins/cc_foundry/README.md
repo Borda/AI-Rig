@@ -898,6 +898,8 @@ These Python helpers are installed workflow support and maintainer surfaces, not
 
 #### Reporting, synchronization, and transforms
 
+> The shared-file checker also keeps the short Codex question guide and conditional details identical across Codex Rig, Codemap and Bridge. Copies ship independently; installed plugins do not depend on one another.
+
 | Helper                        | Purpose                                                                 |
 | ----------------------------- | ----------------------------------------------------------------------- |
 | `audit_hook_coverage.py`      | Measure how often the auto-allow hooks fire across session transcripts. |

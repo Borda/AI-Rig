@@ -3,7 +3,7 @@ name: code-review
 description: Close PRs at an evidence gate or review local diffs/PRs with specialists and JSON artifacts.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Code Review
 

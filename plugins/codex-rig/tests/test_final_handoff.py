@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import subprocess
 import sys
@@ -407,7 +408,13 @@ def test_cli_render_and_check_bind_exact_file_digests(tmp_path: Path) -> None:
     handoff = tmp_path / "final-handoff.json"
     final = tmp_path / "final.md"
     validation = tmp_path / "final-handoff.validation.json"
-    handoff.write_text(json.dumps(_handoff_payload()), encoding="utf-8")
+    payload = _handoff_payload()
+    payload["commit_disposition"] = {
+        "status": "pending",
+        "reason": "Awaiting the user's commit choice; changes remain unstaged.",
+        "evidence": "commit-plan.md",
+    }
+    handoff.write_text(json.dumps(payload), encoding="utf-8")
 
     rendered = subprocess.run(
         [
@@ -463,6 +470,149 @@ def test_cli_render_and_check_bind_exact_file_digests(tmp_path: Path) -> None:
     )
     assert drifted.returncode != 0
     assert "rendered-final-mismatch" in drifted.stderr
+
+
+def test_new_remediation_render_requires_commit_disposition(tmp_path: Path) -> None:
+    """Prevent a remediation summary from silently skipping the commit checkpoint."""
+    finalizer = _load_finalizer()
+    handoff = tmp_path / "final-handoff.json"
+    handoff.write_text(json.dumps(_handoff_payload()), encoding="utf-8")
+
+    with pytest.raises(finalizer.HandoffError, match="remediation-commit-disposition-missing"):
+        finalizer.render_files(handoff, tmp_path / "final.md", tmp_path / "validation.json")
+    assert not (tmp_path / "final.md").exists()
+    assert not (tmp_path / "validation.json").exists()
+
+
+@pytest.mark.parametrize("status", ["pending", "blocked", "not-applicable", "declined", "committed"])
+@pytest.mark.parametrize("presentation_version", [1, 2])
+def test_remediation_commit_disposition_is_visible(status: str, presentation_version: int) -> None:
+    """Retain commit disposition and its evidence in every ordinary rendering."""
+    payload = _handoff_payload()
+    if presentation_version == 2:
+        payload["presentation_version"] = 2
+    reason = "The recorded commit plan explains the current decision."
+    payload["commit_disposition"] = {"status": status, "reason": reason, "evidence": "commit-plan.md"}
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert rendered.count(f"Commit: {status} — {reason} Evidence: commit-plan.md") == 1
+
+
+@pytest.mark.parametrize("status", ["pending", "committed"])
+@pytest.mark.parametrize("gate_status", ["fail", "timeout", "missing-command"])
+def test_remediation_commit_cannot_claim_readiness_with_failed_gate(status: str, gate_status: str) -> None:
+    """A missing or failed check must block commit readiness, including partial fixes."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["verification"][3]["status"] = gate_status
+    payload["commit_disposition"] = {"status": status, "reason": "One source fix passed.", "evidence": "commit-plan.md"}
+
+    with pytest.raises(finalizer.HandoffError, match="remediation-commit-verification-blocked"):
+        finalizer.render_handoff(payload)
+
+
+def test_declined_commit_does_not_claim_verification_readiness() -> None:
+    """A recorded leave-unstaged answer remains valid without authorizing any commit."""
+    payload = _handoff_payload()
+    payload["verification"][3]["status"] = "fail"
+    payload["commit_disposition"] = {
+        "status": "declined",
+        "reason": "User explicitly chose to leave changes unstaged; tests also failed.",
+        "evidence": "decision.md",
+    }
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert "Commit: declined" in rendered
+    assert "tests: fail" in rendered
+
+
+def test_partial_remediation_renders_explicit_commit_blocker(tmp_path: Path) -> None:
+    """Keep successful local work and missing verification distinct at closeout."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["presentation_version"] = 2
+    payload["verification"][3]["status"] = "fail"
+    payload["commit_disposition"] = {
+        "status": "blocked",
+        "reason": "Changes remain unstaged: required tests could not run; environment owner must repair dependencies.",
+        "evidence": "gates.json",
+    }
+    handoff = tmp_path / "final-handoff.json"
+    handoff.write_text(json.dumps(payload), encoding="utf-8")
+    finalizer.render_files(handoff, tmp_path / "final.md", tmp_path / "validation.json")
+
+    rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
+    assert "Commit: blocked — Changes remain unstaged: required tests could not run" in rendered
+    assert "environment owner must repair dependencies" in rendered
+    assert "Implemented" in rendered
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        pytest.param(None, id="null"),
+        pytest.param({}, id="empty"),
+        pytest.param({"status": "done", "reason": "Done", "evidence": "plan.md"}, id="unknown-status"),
+        pytest.param({"status": "blocked", "reason": " ", "evidence": "plan.md"}, id="missing-reason"),
+        pytest.param({"status": "declined", "reason": "User declined", "evidence": ""}, id="missing-evidence"),
+    ],
+)
+def test_remediation_rejects_incomplete_commit_disposition(disposition: object) -> None:
+    """Do not accept an empty or ambiguous commit decision as a completed checkpoint."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["commit_disposition"] = disposition
+
+    with pytest.raises(finalizer.HandoffError, match="commit-disposition"):
+        finalizer.render_handoff(payload)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "error"),
+    [
+        pytest.param("missing", "remediation-commit-disposition-missing", id="historical-input-new-candidate"),
+        pytest.param("failed-result", "remediation-commit-result-blocked", id="open-obligations-despite-green-gates"),
+    ],
+)
+def test_remediation_candidate_cannot_bypass_commit_checkpoint(tmp_path: Path, scenario: str, error: str) -> None:
+    """Reject a missing decision or false readiness through the complete result validator."""
+    result_path = _write_schema_v2_assess(tmp_path)
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    handoff_path = tmp_path / "final-handoff.json"
+    original = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff = _handoff_payload()
+    for key in ("verification", "confidence", "artifacts"):
+        handoff[key] = original[key]
+    if scenario == "failed-result":
+        result["status"] = "fail"
+        handoff["commit_disposition"] = {
+            "status": "pending",
+            "reason": "All executed gates passed, but selected obligations remain open.",
+            "evidence": "commit-plan.md",
+        }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    finalizer = _load_finalizer()
+    rendered = finalizer.render_handoff(handoff).encode("utf-8")
+    (tmp_path / "final.md").write_bytes(rendered)
+    binding = {
+        "schema_version": 1,
+        "status": "pass",
+        "skill": "code-remediate",
+        "branch": "standard",
+        "handoff_sha256": hashlib.sha256(handoff_path.read_bytes()).hexdigest(),
+        "rendered_sha256": hashlib.sha256(rendered).hexdigest(),
+    }
+    (tmp_path / "final-handoff.validation.json").write_text(json.dumps(binding), encoding="utf-8")
+    for key in ("handoff_sha256", "rendered_sha256"):
+        result["metadata"]["final_handoff"][key] = binding[key]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    # Historical evidence stays readable; copying it into a new candidate cannot skip the checkpoint.
+    finalizer.check_files(handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json")
+    with pytest.raises(SystemExit, match=error):
+        _load_shared_validator().validate("code-remediate", tmp_path, result_path)
 
 
 def _write_schema_v2_assess(tmp_path: Path) -> Path:

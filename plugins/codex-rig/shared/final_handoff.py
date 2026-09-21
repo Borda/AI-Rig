@@ -383,11 +383,33 @@ def _validate_caller_contract(payload: dict[str, Any], branch: str) -> None:
     _require_string(contract.get("output"), "caller-contract-output")
 
 
+def _validate_commit_disposition(handoff: dict[str, Any]) -> None:
+    """Validate an explicit remediation commit outcome without rewriting historical handoffs."""
+    if "commit_disposition" not in handoff:
+        return
+    if handoff["skill"] != "code-remediate":
+        raise HandoffError("commit-disposition-skill-mismatch")
+    disposition = _require_object(handoff["commit_disposition"], "commit-disposition")
+    if set(disposition) != {"status", "reason", "evidence"}:
+        raise HandoffError("commit-disposition-fields-invalid")
+    status = _require_string(disposition["status"], "commit-disposition-status")
+    if status not in {"pending", "blocked", "not-applicable", "declined", "committed"}:
+        raise HandoffError("commit-disposition-status-invalid")
+    _require_string(disposition["reason"], "commit-disposition-reason")
+    _require_string(disposition["evidence"], "commit-disposition-evidence")
+    if status in {"pending", "committed"} and any(
+        check["status"] not in {"pass", "not-applicable"} for check in handoff["verification"]
+    ):
+        raise HandoffError("remediation-commit-verification-blocked")
+
+
 def validate_handoff(payload: object) -> dict[str, Any]:
     """Validate and return one canonical final-handoff payload."""
     handoff = _require_object(payload, "handoff")
     presentation_version = handoff.get("presentation_version")
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
+    if "commit_disposition" in handoff:
+        expected_fields = expected_fields | {"commit_disposition"}
     if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
     if presentation_version is not None and (
@@ -413,6 +435,7 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     row_ids, represented_sources = _validate_tables(handoff, skill, branch)
     _validate_source_coverage(handoff, branch, represented_sources)
     _validate_verification(handoff)
+    _validate_commit_disposition(handoff)
     _validate_unavailable_review_verification(handoff, skill, branch, presentation_version)
     _validate_remaining(handoff, row_ids, branch)
     _validate_confidence(handoff)
@@ -695,6 +718,10 @@ def render_handoff(payload: object) -> str:
 
     lines.extend(("", "**Verification**", ""))
     lines.extend(f"- {entry['check']}: {entry['status']} — {entry['evidence']}" for entry in handoff["verification"])
+    if disposition := handoff.get("commit_disposition"):
+        lines.extend(
+            ("", f"Commit: {disposition['status']} — {disposition['reason']} Evidence: {disposition['evidence']}")
+        )
     lines.extend(("", "**Remaining**", ""))
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
     if remaining_by_id:
@@ -751,6 +778,10 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
         lines.extend(f"- {entry['check']}: {entry['status']} — {entry['evidence']}" for entry in visible_checks)
     else:
         lines.append("- Checks were not run; no executable verification applies to this branch.")
+    if disposition := handoff.get("commit_disposition"):
+        lines.extend(
+            ("", f"Commit: {disposition['status']} — {disposition['reason']} Evidence: {disposition['evidence']}")
+        )
 
     remaining_by_id = {item["row_id"]: item for item in handoff["remaining"]}
     if remaining_by_id:
@@ -797,9 +828,12 @@ def _require_siblings(*paths: Path) -> None:
 
 
 def render_files(handoff_path: Path, final_path: Path, validation_path: Path) -> dict[str, Any]:
-    """Render sibling files and return their digest-bound validation record."""
+    """Render a current handoff with required commit disposition and bind its sibling files."""
     _require_siblings(handoff_path, final_path, validation_path)
     handoff = validate_handoff(_load_json(handoff_path))
+    # New writes must close this checkpoint; check_files still accepts retained historical bytes.
+    if handoff["skill"] == "code-remediate" and "commit_disposition" not in handoff:
+        raise HandoffError("remediation-commit-disposition-missing")
     rendered = render_handoff(handoff).encode("utf-8")
     final_path.write_bytes(rendered)
     validation = {

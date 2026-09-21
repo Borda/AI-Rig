@@ -616,8 +616,10 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
                     raise SystemExit("code-review-final-handoff-finding-content-mismatch")
 
 
-def _validate_final_handoff(result: dict[str, Any], skill: str, out_dir: Path, gates: dict[str, Any]) -> None:
-    """Validate schema-v2 final-response artifacts while retaining schema-v1 readability."""
+def _validate_final_handoff(
+    result: dict[str, Any], skill: str, out_dir: Path, gates: dict[str, Any], *, candidate: bool = False
+) -> None:
+    """Validate final-response evidence and current candidates without rewriting historical results."""
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
         return
@@ -669,6 +671,64 @@ def _validate_final_handoff(result: dict[str, Any], skill: str, out_dir: Path, g
     }:
         raise SystemExit(f"{skill}-final-handoff-result-artifact-missing")
     if skill == "code-remediate":
+        disposition = handoff.get("commit_disposition")
+        if candidate and disposition is None:
+            raise SystemExit("remediation-commit-disposition-missing")
+        if disposition is not None:
+            if disposition["status"] in {"pending", "committed"}:
+                if result["status"] != "pass":
+                    raise SystemExit("remediation-commit-result-blocked")
+                # Explicit deferment outside the plan is not required closure; inconsistent counts still block.
+                _validate_code_remediate_unresolved_summary(metadata, out_dir)
+                _validate_code_remediate_scope_selection(metadata, out_dir)
+                _validate_code_remediate_final_resolution_table(metadata, out_dir)
+                unresolved = metadata["unresolved_summary"]
+                selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
+                selected_indexes = metadata["resolution_scope"]["selected_indexes"]
+                selected_items = [item for index, item in enumerate(selectable, 1) if index in selected_indexes]
+                open_items = [
+                    item
+                    for item in selected_items
+                    if item["resolution_status"].strip().casefold()
+                    in {
+                        "unresolved",
+                        "needs-clarification",
+                    }
+                ]
+                if (
+                    len(selected_items) != len(selected_indexes)
+                    or unresolved["selected_items_total"] != len(selected_items)
+                    or unresolved["selected_items_unresolved"] != len(open_items)
+                    or any(
+                        item["resolution_status"].strip().casefold() != "unresolved"
+                        or not item["resolved_how"].startswith("Deferred: ")
+                        for item in open_items
+                    )
+                    or unresolved["selected_items_unresolved"] != unresolved["user_deferred_items"]
+                    or not unresolved["all_local_actionable_items_closed"]
+                    or any(
+                        unresolved[key]
+                        for key in (
+                            "local_actionable_items_unresolved",
+                            "process_gate_items_unresolved",
+                            "environment_blocked_items",
+                            "external_owner_items",
+                        )
+                    )
+                    or any(
+                        group["reason"] != "user-deferred" or group["owner"] != "user"
+                        for group in unresolved["unresolved_reason_groups"]
+                    )
+                ):
+                    raise SystemExit("remediation-commit-closure-blocked")
+                plan = out_dir / "commit-plan.md"
+                if plan.is_symlink() or not plan.is_file():
+                    raise SystemExit("remediation-commit-plan-missing")
+                evidence = _code_remediate_run_path(
+                    out_dir, disposition["evidence"], "remediation-commit-evidence-invalid"
+                )
+                if not evidence.is_file():
+                    raise SystemExit("remediation-commit-evidence-invalid")
         _validate_code_remediate_final_handoff(result, handoff)
     elif skill == "code-review":
         _validate_code_review_final_handoff(result, handoff)
@@ -2585,7 +2645,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     gates = _validate_gates(out_dir)
     _validate_code_review_unavailable_gates(result, gates, skill)
     _reconcile_result_with_gates(result, gates)
-    _validate_final_handoff(result, skill, out_dir, gates)
+    _validate_final_handoff(result, skill, out_dir, gates, candidate=result_path.name == "result.candidate.json")
 
     requirement = SKILL_REQUIREMENTS.get(skill)
     if requirement is None:

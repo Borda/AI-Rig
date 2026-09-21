@@ -3,7 +3,7 @@ name: calibrate
 description: Calibrate skills/role cards for leaks/gaps with recall, precision, and confidence-accuracy checks.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Calibrate
 

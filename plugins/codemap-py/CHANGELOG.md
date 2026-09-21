@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.3
+
+- Restore the caller's temporary-directory environment and Python temp cache after the resolver doctest, preventing order-dependent failures in downstream plugin tests.
+
+- Share concise root-owned Codex question guidance with conditional approval and recovery details; retain plugin-local payloads and native presets plus custom input.
+
 ## 0.39.2
 
 - Recover rejected Codex question controls through an eligible alternate route without repeating report context; distinguish explicit host plain-text requirements from missing tools and preserve pending consent.

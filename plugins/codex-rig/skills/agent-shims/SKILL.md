@@ -3,7 +3,7 @@ name: agent-shims
 description: 'Safely manage Codex Rig role-agent shims: doctor, status, install, or remove; one action only.'
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Agent Shims
 

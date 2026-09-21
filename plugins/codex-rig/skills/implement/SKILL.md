@@ -3,7 +3,7 @@ name: implement
 description: Implement changes with a linear plan-build-verify workflow and measurable quality gates.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Implement
 

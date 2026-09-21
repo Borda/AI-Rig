@@ -35,6 +35,20 @@ from pathlib import Path
 # Each entry: the canonical file, and the copies that must equal it byte-for-byte.
 MANIFEST: list[dict[str, object]] = [
     {
+        "canonical": "plugins/codex-rig/shared/codex-user-questions.md",
+        "copies": [
+            "plugins/codemap-py/shared/codex-user-questions.md",
+            "plugins/bridge_cc-codex/rules/codex-user-questions.md",
+        ],
+    },
+    {
+        "canonical": "plugins/codex-rig/shared/codex-user-questions-details.md",
+        "copies": [
+            "plugins/codemap-py/shared/codex-user-questions-details.md",
+            "plugins/bridge_cc-codex/rules/codex-user-questions-details.md",
+        ],
+    },
+    {
         # Every skill that writes a compaction boundary contract needs this, and a
         # plugin may be installed alone, so each ships its own byte-identical copy.
         "canonical": "plugins/cc_foundry/bin/write_skill_contract.py",

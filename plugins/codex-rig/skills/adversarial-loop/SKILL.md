@@ -3,7 +3,7 @@ name: adversarial-loop
 description: Independently review and fix a scoped diff through bounded convergence rounds, with evidence-backed closure and explicit stop/recovery decisions. Use for requested adversarial review-and-fix loops, not a single read-only review.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Adversarial Loop
 

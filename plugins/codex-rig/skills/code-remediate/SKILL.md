@@ -3,7 +3,7 @@ name: code-remediate
 description: Apply selected review fixes; bare PR targets use current online items, while PR +review adds the latest matching artifact.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Code Remediate
 
@@ -362,6 +362,8 @@ Which findings should I remediate?
 - indexes: comma-separated indexes or ranges such as 1,3,5-7
 ```
 
+Presets: `All <N> findings` → `all`; `<highest populated severity>-severity findings only` → that severity, with subset count or actual IDs. Omit the severity preset when it equals all. Put the custom grammar above in the control; apply shared User Questions for root delivery, recommendation, binding and pending state.
+
 A terminal/tool rendering alone never satisfies this interaction: collapsed output, `Read resolution-scope.md` summaries, status messages, artifact links without the ledger, and announcements that the ledger is rendering do not expose selectable options. Do not repeat the question/options in both prose and a native control. Preserve custom severity/index/range syntax; a suggested format label alone is incomplete. Bind the decision key to the immutable item/source inventory in existing resolution metadata and durable ledger; a delayed `all` cannot select a refreshed inventory.
 
 If opening the control fails, resume at that question checkpoint, not context rendering. A Default-mode rejection of sync does not prove async unavailable: apply User Questions recovery to the same pending inventory and use eligible async. If a higher-priority host rule instead mandates plain text, name that restriction and ask the missing question once within its limits. Do not repeat the delivered scope table or invent finding IDs from selection indexes; labels must use actual ledger IDs or clearly numeric indexes.
@@ -522,7 +524,14 @@ Use closure classes: `local-code-or-doc`, `process-gate`, `independent-review`, 
 
 ### 11: Write And Validate Result Artifact
 
-Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `CODE_REMEDIATE_METADATA`, validate `code-remediate`, promote only validated candidate.
+Before rendering the handoff, record `final-handoff.json.commit_disposition` with exactly `status`, `reason`, and `evidence` as defined in `../../shared/final-handoff-contract.md`. This checkpoint applies to successful, partial, blocked, resumed, and no-change runs. A summary must never silently omit the commit decision.
+
+- Failed required checks, a failed/timeout result, incomplete required closure, or unproven ownership/destination: use `blocked`; state why changes remain unstaged, the next owner/action, and the actual gate/closure/ownership evidence. Do not ask for commit authorization while blocked.
+- No remediation-owned tracked change: use `not-applicable` with closure evidence; do not manufacture a commit plan or question. Existing tracked changes with disputed ownership are `blocked`, not a no-change result.
+- Eligible changes: write `<run-directory>/commit-plan.md` now, listing only resolved remediation-owned tracked paths and mapping each to its selected finding and work-bucket topic. Record exclusions, destination, current verification, and any existing bound answer. Explicit user-deferred work outside this plan may remain nonblocking under the shared commit-disposition contract; record the matching deferment and excluded paths, never relabel required unresolved work as deferred. Use `pending` until the optional commit is completed or declined; identify an already-authorized commit still awaiting execution accurately rather than asking again.
+- An explicit matching leave-unstaged answer: use `declined`, cite that answer in the existing decision record, and leave changes unstaged. Silence or unavailable input is not a decline.
+
+Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `CODE_REMEDIATE_METADATA` and validate the `code-remediate` candidate. Do not promote or emit terminal output yet: continue to step 12, including after blocked or partial remediation. This continuation takes precedence over the shared handoff's ordinary promote-and-output sequence.
 
 `CODE_REMEDIATE_METADATA` records:
 
@@ -542,7 +551,7 @@ For `mode=pr`, also include selected PR target plus `pr-routing.json`, `target-b
 
 ### 12: Offer An Opt-In Commit After Verified Remediation
 
-After all selected implementation, closure checks, shared quality gates, and result validation finish, write `<run-directory>/commit-plan.md`. It lists only resolved remediation-owned tracked paths and maps each path to its selected finding and work-bucket topic. Do not write plan or ask when no remediation-owned tracked change exists. Otherwise, show complete compact plan, ownership exclusions, and verification limits. If an earlier explicit answer already supplies the mode and still unambiguously authorizes this plan's paths, destination, grouping, and current verification, record that binding, omit the question and reuse that authorization. Ask exactly once through User Questions only for a missing or materially changed decision. Use sync only if permitted for authorization and able to represent all four feasible modes; otherwise invoke permitted async with all four choices. Use plain chat only when neither native control is suitable; never hide a mode behind Other. The following are canonical choices, not prose to repeat beside a native control:
+After shared quality gates and result validation finish, inspect the recorded commit disposition before final output. For `blocked`, `not-applicable`, or `declined`, skip staging and the question, then complete the final handoff below with the explicit reason. For `pending`, show the complete compact `commit-plan.md`, ownership exclusions, destination, and verification limits. If an earlier explicit answer already supplies the mode and still unambiguously authorizes this plan's paths, destination, grouping, and current verification, record that binding, omit the question and reuse that authorization. Ask exactly once through User Questions only for a missing or materially changed decision. Use sync only if permitted for authorization and able to represent all four feasible modes; otherwise invoke permitted async with all four choices. Use plain chat only when neither native control is suitable; never hide a mode behind Other. The following are canonical choices, not prose to repeat beside a native control:
 
 ```text
 Commit verified remediation-owned changes?
@@ -579,6 +588,8 @@ Co-authored-by: Codex <codex@openai.com>
 
 Do not commit for remediation summary alone or without user's explicit authorization. Creating new remediation commit never authorizes rewriting existing commit. Amend, rebase, reset, squash, fixup, and equivalent history edits require explicit request for that exact operation. After every commit, verify its stored message, `HEAD`, and post-commit index/worktree state through shared template before attempting another unit.
 
+Complete the final handoff with the actual disposition. A submitted question without an answer stays `pending`: record the question/plan binding and emit only the pending handoff before yielding; never repeat its live menu or stage. Unavailable input also stays `pending` with the actual limitation. On resume, recover that decision and continue the first unmet checkpoint. A valid leave-unstaged answer becomes `declined`; a preflight or execution failure becomes `blocked`, retaining any already-created commit hashes and uncommitted units. Only after every authorized unit and post-commit check succeeds use `committed`, with hashes, mode and plan evidence. Re-render and revalidate the candidate when disposition changes; then promote and emit the exact validated handoff. Never present the earlier pending render as the completed commit outcome.
+
 ## Fail-fast Rules
 
 01. Missing findings source in report mode, an explicit report path, or a report alias => fail. A bare PR has current online PR evidence as its findings source and must not fail or request `code-review` merely because no assessed review artifact exists. 01a. `+review`, `+report`, or `report` shorthand without matching target code-review report => fail: "run `$code-review <target>` first or provide a report path".
@@ -590,7 +601,7 @@ Do not commit for remediation summary alone or without user's explicit authoriza
 07. Online thread/comment fixed without valid triage status => fail.
 08. Duplicate/out-of-scope/already-fixed review thread/comment edited, not recorded => fail. Review concern classified or skipped as stale, including after conflict-resolution line drift => fail.
 09. Result artifact validator failure => fail.
-10. Result artifact missing => fail.
+10. Result artifact missing => fail. A new remediation handoff omits `commit_disposition`, silently skips step 12, or claims commit readiness with failed verification/result => fail: `remediation-commit-disposition-missing` or `remediation-commit-verification-blocked`.
 11. `<run-directory>/action-items.md` lacks complete review item resolution table => fail.
 12. PR mode uses `curl`, `raw.githubusercontent.com`, or copied `head-files/` snapshots for code inspection/edits => fail.
 13. `<run-directory>/resolution-scope.md` lacks `Resolution Scope Selection` before edits => fail.
@@ -692,7 +703,7 @@ Final chat follows shared ordered frame:
 - `Results`: derive handoff machine cells from `CODE_REMEDIATE_METADATA.final_resolution_table.items`, with one row for every ingested item, including non-selectable, rejected, resolved, and unselected rows. Preserve item and source order. Keep exact six machine columns `Item | Severity | Finding | Sources | Outcome | Evidence / next action`, and set table `layout=concise`.
   - Keep every genuine source pointer in its bound machine cell, joined with newline in source order. The renderer shows `ID | Severity | Finding | Resolution | Outcome`, expanding bound resolution text once in overview. ID-only detail blocks retain full source and evidence/next-action details; do not repeat findings, resolutions or outcome status.
   - Keep Outcome as `<resolution_status> — [O<n>]`, Evidence / next action as `[E<n>] — owner/status: <owner_status>`, and their exact bound `details` values in JSON. The concise renderer expands resolution in overview and evidence below; do not expose ungrouped O/E list. Historical grouped and legacy handoffs retain their exact rendering.
-- Apply shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules. List every unresolved/deferred item with owner/action; link result and full ledger; for `mode=pr`, add merge-prestage evidence and remaining collision risk.
+- Apply shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules. Include the explicit rendered commit disposition, reason and evidence even when commit cannot be offered. List every unresolved/deferred item with owner/action; link result and full ledger; for `mode=pr`, add merge-prestage evidence and remaining collision risk.
 - `Item`: exact stable input item ID; keep numeric selection indexes separate and explain them in selection overview.
 - `Outcome`: use an explicit disposition and concrete reason in bound `resolved_how`:
   - `Implemented: <exact finding-specific change>` or `Verified without code changes: <existing behavior or fresh closure evidence>`.

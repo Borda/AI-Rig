@@ -3,7 +3,7 @@ name: kaggle
 description: Build/extend grounded Kaggle Jupytext notebooks for training, EDA, inference, or resume workflows, grounding schema and submission format through the authenticated kaggle CLI.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Kaggle
 

@@ -213,6 +213,8 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 
 ## 📦 Install for Codex
 
+> Codex questions use a [short shared guide](rules/codex-user-questions.md), shipped locally by this plugin. The root asks with permitted native controls, meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host.
+
 Register the repository marketplace and add the Codex plugin:
 
 ```bash

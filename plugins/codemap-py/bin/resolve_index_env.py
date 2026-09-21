@@ -169,8 +169,10 @@ def _resolve_tmpdir() -> str:
 
     Examples:
         >>> import os, tempfile
-        >>> _ = os.environ.pop("TMPDIR", None)
-        >>> _resolve_tmpdir() == tempfile.gettempdir()
+        >>> from unittest.mock import patch
+        >>> with patch.dict(os.environ), patch.object(tempfile, "tempdir", tempfile.tempdir):
+        ...     _ = os.environ.pop("TMPDIR", None)
+        ...     _resolve_tmpdir() == tempfile.gettempdir()
         True
     """
     tmpdir = os.environ.get("TMPDIR")

@@ -14,7 +14,7 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     commit_section = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
 
-    assert "shared quality gates, and result validation finish" in commit_section
+    assert "shared quality gates and result validation finish" in commit_section
     assert "- all at once" in commit_section
     assert "- group findings by topic" in commit_section
     assert "- each finding as a separate commit" in commit_section
@@ -31,6 +31,22 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     assert "If authorization is missing and runtime cannot ask" in commit_section
     assert "Do not stage before this question" not in commit_section
     assert "silence, preselection, stale or duplicate replies cannot authorize staging" in commit_section
+
+
+def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
+    """Keep failed and successful closeouts on the explicit commit checkpoint."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
+    commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
+    shared = (PLUGIN_ROOT / "shared" / "final-handoff-contract.md").read_text(encoding="utf-8")
+
+    assert "final-handoff.json.commit_disposition" in preparation
+    assert "Do not promote or emit terminal output yet: continue to step 12" in preparation
+    assert "Do not ask for commit authorization while blocked" in preparation
+    assert "Silence or unavailable input is not a decline" in preparation
+    assert "A submitted question without an answer stays `pending`" in commit
+    assert "Re-render and revalidate the candidate when disposition changes" in commit
+    assert "Result validation alone must never skip this continuation" in shared
 
 
 def test_remediation_commit_stages_only_proven_owned_paths() -> None:

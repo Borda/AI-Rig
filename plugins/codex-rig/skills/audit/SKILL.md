@@ -3,7 +3,7 @@ name: audit
 description: Audit Codex configuration and workflow contracts, including failures between individually successful steps, plus prompt-efficiency drift; emit evidence-backed gaps and measurable gates.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Audit
 

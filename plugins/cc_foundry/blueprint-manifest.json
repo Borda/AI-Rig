@@ -4725,6 +4725,6 @@
       "src": "skills/investigate/SKILL.md:97"
     }
   },
-  "plugin": "cc_foundry@0.57.2",
+  "plugin": "cc_foundry@0.57.3",
   "schema": 1
 }

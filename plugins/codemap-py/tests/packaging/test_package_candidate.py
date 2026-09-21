@@ -102,7 +102,9 @@ def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: 
     assert (_PLUGIN_ROOT / reference).is_file()
     original_paths = set(modes)
     modes[reference] = False
-    assert set(modes) - original_paths <= {reference}
+    details = "shared/codex-user-questions-details.md"
+    modes[details] = False
+    assert set(modes) - original_paths <= {reference, details}
     mode_map = tmp_path / "candidate-modes.json"
     mode_map.write_text(json.dumps(modes), encoding="utf-8")
     output = tmp_path / "package"
@@ -115,6 +117,7 @@ def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: 
     )
     assert built.returncode == 0, built.stdout + built.stderr
     assert (output / reference).read_bytes() == (_PLUGIN_ROOT / reference).read_bytes()
+    assert (output / details).read_bytes() == (_PLUGIN_ROOT / details).read_bytes()
     skills = list((output / "codex-skills").glob("*/SKILL.md"))
     assert len(skills) == 6
     for skill in skills:

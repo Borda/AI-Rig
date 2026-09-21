@@ -3,7 +3,7 @@ name: investigate
 description: Investigate code debugging and root-cause narrowing; use measurable gates before fixes.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Investigate
 

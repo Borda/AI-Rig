@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.21.3
+
+- Enforce required-work closure, a local commit plan, and valid declared evidence before accepting commit readiness; allow explicitly user-deferred work outside the plan without hiding required blockers. Cover collection prebrief native consent separately from runtime permission and existing preapproval.
+
+- Require an explicit remediation commit disposition before final output; preserve the native commit-mode choice after validation and explain blocked/no-change closeouts. Reject new reports that omit the checkpoint or claim commit readiness with failed verification while keeping historical reports readable.
+
+- Share concise root-owned question guidance across all Codex skills; load detailed approval and recovery rules conditionally and check identical plugin-local copies.
+
+- Specify native remediation selection with concrete all/severity presets and built-in custom index/range input; omit duplicate presets and preserve pending answer binding. Correct README prompt ownership and explain host-required plain-text fallback without promising a UI override.
+
 ## 0.21.2
 
 - Recover failed scope-question controls without repeating the report: use eligible async after synchronous rejection, honor explicit host plain-text requirements, and retain accurate capability evidence and pending selection.

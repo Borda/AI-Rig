@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.4
+
+- Share concise root-owned Codex question guidance with conditional approval and recovery details; retain plugin-local payloads and native presets plus custom input.
+
 ## 0.5.3
 
 - Recover rejected Codex question controls through an eligible alternate route without repeating report context; distinguish explicit host plain-text requirements from missing tools and preserve pending consent.

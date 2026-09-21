@@ -3,7 +3,7 @@ name: optimize
 description: Optimize a measurable metric with bounded iterations, guardrails, and regression gates.
 ---
 
-> Before asking, read [User Questions](../../shared/native-skill-contract.md#user-questions).
+> Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
 # Optimize
 
