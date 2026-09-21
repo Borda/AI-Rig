@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3
+
+- Recover rejected Codex question controls through an eligible alternate route without repeating report context; distinguish explicit host plain-text requirements from missing tools and preserve pending consent.
+
 ## 0.5.2
 
 - Fall back to permitted synchronous input for optional questions when async is unavailable or unsuitable.

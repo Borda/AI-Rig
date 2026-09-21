@@ -2,6 +2,28 @@
   "cases": [
     {
       "expected_findings": [
+        "eligible-async-skipped-after-sync-rejection",
+        "scope-context-replayed",
+        "question-capability-overclaimed"
+      ],
+      "id": "code-remediate-rejected-sync-skips-async",
+      "prompt": "A remediation workflow displays a complete pending scope ledger. Its sync question returns an unavailable-in-current-mode error. Async is currently exposed and permitted for required scope decisions, but the agent claims native questions are unavailable and repeats the complete ledger with a prose menu. Assess recovery. A rejected call opened no question and supplied no consent; use eligible async once for the unchanged inventory, keep complete index/range/severity syntax in the control, and retain pending state. Do not repeat delivered context.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-host-mandates-plain-text",
+      "prompt": "A higher-priority active host instruction explicitly requires a concise plain-text question for required workflow decisions and forbids prose multiple-choice menus. The plugin normally prefers native controls, and async worked in a previous turn. The agent records the current host restriction, displays the complete required scope context once, then asks one concise plain-text question without a menu or an unavailable-tool claim. It keeps the immutable selection pending until an explicit valid response. Assess this correct policy-aware fallback; earlier tool success cannot override current host instructions.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-remediate-rejected-sync-async-recovery",
+      "prompt": "A complete remediation scope ledger has already been delivered. Sync rejects the active mode before opening a question. The agent inspects current exposure and restrictions, confirms async is eligible, invokes it once for the same keyed inventory with concrete suggested scopes and custom index/range/severity grammar, then yields without another menu or duplicate ledger. Its existing notes retain rejection evidence and the pending state; no answer or edit is inferred from tool success. Assess this correct recovery without claiming a live UI guarantee.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
         "review-completion-before-promotion",
         "applicable-gate-failure-skipped"
       ],
@@ -2237,5 +2259,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.31"
+  "version": "1.32"
 }

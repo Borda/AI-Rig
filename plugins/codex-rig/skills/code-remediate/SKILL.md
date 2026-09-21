@@ -349,11 +349,11 @@ Before accepting explicit scope or prompting for one, complete pre-edit `<run-di
 
 For omitted `remediation_scope`, record pending state before prompting: `selection source: user-prompt`, exact prompt below, `user selection confirmed before editing: false`, and no selected indexes or severity groups. Retain resolved online items as nonselectable inventory entries and documented omitted count; do not add them to choice table.
 
-Read the complete `<run-directory>/resolution-scope.md` through the filesystem tool and render it unabridged before any scope prompt or edits. Immediately append `Full report: <run-directory>/action-items.md`; do not use shell output or a persisted path variable to assemble this context.
+Read the complete `<run-directory>/resolution-scope.md` through the filesystem tool before any scope prompt or edits; the single assistant context message below owns its user-facing delivery. Do not use shell output or a persisted path variable to assemble this context.
 
 The `Full report` path must appear immediately after unabridged scope context and target `<run-directory>/action-items.md`, complete normalized resolution report. The link supplements scope context; do not replace context with a `Selectable items:` summary, shortened numbered list, artifact link, or ellipsis. The rendered table must let user choose from full item id/source, severity, summary, and closure evidence without opening another file.
 
-Immediately after the terminal command returns, emit one user-visible assistant message containing the exact unabridged `resolution-scope.md` content and `Full report: <action-items.md path>`. Then follow User Questions to ask once in a permitted native control. The control owns this question and the complete accepted syntax; only plain-chat fallback appends the question and choices to that same context message:
+Immediately after the terminal command returns, emit one user-visible assistant message containing the exact unabridged `resolution-scope.md` content and `Full report: <run-directory>/action-items.md`. Then follow User Questions to ask once in a permitted native control. The control owns this question and the complete accepted syntax; only plain-chat fallback appends the question and choices to that same context message:
 
 ```text
 Which findings should I remediate?
@@ -363,6 +363,8 @@ Which findings should I remediate?
 ```
 
 A terminal/tool rendering alone never satisfies this interaction: collapsed output, `Read resolution-scope.md` summaries, status messages, artifact links without the ledger, and announcements that the ledger is rendering do not expose selectable options. Do not repeat the question/options in both prose and a native control. Preserve custom severity/index/range syntax; a suggested format label alone is incomplete. Bind the decision key to the immutable item/source inventory in existing resolution metadata and durable ledger; a delayed `all` cannot select a refreshed inventory.
+
+If opening the control fails, resume at that question checkpoint, not context rendering. A Default-mode rejection of sync does not prove async unavailable: apply User Questions recovery to the same pending inventory and use eligible async. If a higher-priority host rule instead mandates plain text, name that restriction and ask the missing question once within its limits. Do not repeat the delivered scope table or invent finding IDs from selection indexes; labels must use actual ledger IDs or clearly numeric indexes.
 
 If `remediation_scope` supplied, it is user selection: apply without re-asking; still write and print complete `<run-directory>/resolution-scope.md` before edits, but omit question and choices from user-visible message. If omitted and selectable items exist, stop before edits and ask exactly once using the context/control ordering above. An async return or empty sync result leaves selection pending, not confirmed. Never infer `all`, silently select only code-editable items, or use default selection. If runtime cannot ask at all, fail `scope-selection-required` before edit. If none selectable, write and print `none-selectable`, skip implementation, continue gates/artifact.
 

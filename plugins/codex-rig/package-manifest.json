@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "47ced2834abe81dc57a28bd5febab1ac92b73e14f3700b5ee14149dcb431c78b"
+      "sha256": "b9372a0b700fadb350702b573025d4029fb68c026528c6b8d68078a58e0179a9"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "19cb34e62760c19391b8ac14574f7b1b04b7e9d07ad0fb44ef54449c281a4e12"
+      "sha256": "1a1a9691be677f5619b6650ace3b17663115ddab1ae8a14df941c1fb497388f1"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "a325d6da07050505297d779985b1d1986b4ddbff7da619d2f5c8b80d56fb4dac"
+      "sha256": "e8dda6deb3483256589f5c9441a238d8fd87ed1cff908ea576a066ac9dd0fc8a"
     },
     {
       "mode": "0644",
@@ -163,12 +163,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "7187490770739a7a485fbfbecc5d277297501a527d5c3adf27c212c4ea31eece"
+      "sha256": "90785724133caa23649f57116974521735e0ce62ed5ccc31cf635653410e93dc"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "e4a566a5a6234f5c57eb3af4f0abc3414dffae8d57d1500b8883b7e13c3e91cc"
+      "sha256": "28f78d4b910fbaa0ccad6d3bb62cbe11781d19cd6e5861417c2f5f0acf4051e0"
     },
     {
       "mode": "0644",
@@ -413,7 +413,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "6d2ead10080c77a65d3c0c62f4322989384dbf35a75807202916179269f372d5"
+      "sha256": "c66ff83926f26c4a9b56d87ee8a7628431a63cc56f66206ffeae5fbf11c9d044"
     },
     {
       "mode": "0644",
@@ -538,7 +538,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "d2b1f51c60fbb2bd4bbde1c629c130f6f4f06ed0a40ff1fa173c0c6427318cf3"
+      "sha256": "70f02c2aa98d4c226fce40c9d0ca86387f6b6791378acfd0297bebeb3fcb2b5e"
     },
     {
       "mode": "0644",
@@ -883,7 +883,7 @@
     {
       "mode": "0644",
       "path": "tests/test_codex_user_questions.py",
-      "sha256": "7c156bc6fef724f6a0c90197b00de04be1f99279b4cfdbe25aa8459b37f1c620"
+      "sha256": "a19a15082471928e3d5a6484aa727f8bc1989b574498e6f68c426601a841198f"
     },
     {
       "mode": "0644",
@@ -1338,5 +1338,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.21.1"
+  "version": "0.21.2"
 }

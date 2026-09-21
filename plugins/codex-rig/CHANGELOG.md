@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.21.2
+
+- Recover failed scope-question controls without repeating the report: use eligible async after synchronous rejection, honor explicit host plain-text requirements, and retain accurate capability evidence and pending selection.
+
 ## 0.21.1
 
 - Accept current and historical collector checkout diagnostics in unavailable PR reviews, while rejecting malformed fields and keeping raw command details out of the handoff.
