@@ -22,6 +22,49 @@ def test_code_review_preflights_specialist_manifest_before_candidate() -> None:
     assert "never invent missing attempt provenance" in skill
 
 
+@pytest.mark.installed_plugin
+def test_review_closure_is_ordered_at_the_execution_checkpoint() -> None:
+    """Prevent manifest preflight or drafted output from becoming the final review step."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    checkpoint = skill.split("### 12:", 1)[1].split("## Fail-fast Rules", 1)[0]
+    actions = (
+        "final_handoff.py render",
+        "write-result.py",
+        "review-specific validator",
+        "shared validator",
+        "promote",
+        "find-review-report.py --complete-run",
+    )
+    positions = [checkpoint.index(action) for action in actions]
+    assert positions == sorted(positions)
+    assert "Preflight success is not review completion" in checkpoint
+    assert "Emit only successful completion stdout verbatim" in checkpoint
+
+
+@pytest.mark.installed_plugin
+def test_review_gate_failure_keeps_artifact_closure_required() -> None:
+    """Prevent direct check receipts from bypassing canonical failed-gate reconciliation."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    gates = skill.split("### 07:", 1)[1].split("### 08:", 1)[0]
+    assert "direct-check receipts do not replace `gates.json`" in gates
+    assert "status=fail" in gates
+    assert "continue through step 12" in gates
+    assert "Preserve the failed attempt" in gates
+
+
+@pytest.mark.installed_plugin
+def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
+    """Keep failed execution visible when recovery hands a review to remediation."""
+    quality = (PLUGIN_ROOT / "shared" / "quality-gates.md").read_text(encoding="utf-8")
+    remediation = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+
+    assert "execution failure never makes an applicable check `not-applicable`" in quality
+    assert "archive runner-owned receipts under `gate-attempts/<NNN>`" in quality
+    assert "reject failed-to-skipped reclassification" in quality
+    assert "return to Code Review step 12 under existing authorization" in remediation
+    assert "Preserve the candidate recovery's same-parent and bounded-retry conditions" in remediation
+
+
 def test_remediation_revalidates_same_session_candidate_before_promotion() -> None:
     """Recover a valid candidate without bypassing either review validator."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8").lower()

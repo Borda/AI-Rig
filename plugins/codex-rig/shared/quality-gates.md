@@ -33,6 +33,7 @@ Optional but recommended:
 
 ## Fail rules
 
+- An execution failure never makes an applicable check `not-applicable`. Missing tools, launcher panics, or sandbox restrictions require diagnosis and preserved failed evidence. Direct-check receipts may support diagnosis but cannot turn the canonical gate green; rerun an equivalent check through `run_gates.py` with the verified project environment or retain `fail`/`timeout`. Same-directory reruns archive runner-owned receipts under `gate-attempts/<NNN>` before executing and reject failed-to-skipped reclassification. Incomplete prior state blocks overwrite; diagnose it before starting a separately scoped run.
 - Any `critical` finding => `status=fail`
 - Any failed check in `checks_failed` => `status=fail`
 - Missing command/tool for required gate => `status=fail`

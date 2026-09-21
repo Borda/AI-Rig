@@ -12,7 +12,9 @@ workflow verdict.
 
 It runs local commands supplied by a workflow and writes gate records; it does not decide release readiness, repair
 source state, or hide failed output. Each gate must have either a command or an explicit skip reason, and commands are
-executed independently with a per-gate timeout.
+executed independently with a per-gate timeout. Same-directory reruns archive previous runner-owned receipts under
+``gate-attempts/<NNN>`` before writing; a failed applicable check cannot become skipped. Incomplete prior state blocks
+overwrite and requires diagnosis rather than discarding evidence.
 
 ## Usage
 
@@ -48,6 +50,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -399,6 +402,48 @@ def run_check(
     return result
 
 
+def preserve_previous_attempt(output: Path, skip_reasons: dict[str, str]) -> None:
+    """Archive existing gate evidence before rerun, refusing failed-to-skipped recovery.
+
+    Re-executing a failed check can establish success; changing its applicability cannot. Incomplete or unreadable
+    previous state requires a separate diagnosed run rather than overwriting the only retained evidence.
+    """
+    artifacts = ("gates.json", "gates.txt", "failed.txt", "gates.checks.jsonl", CHECKS_DIRNAME)
+    if not any((output / name).exists() for name in artifacts):
+        return
+    prior = json.loads((output / "gates.json").read_text(encoding="utf-8"))
+    checks = prior.get("checks") if isinstance(prior, dict) else None
+    if not isinstance(checks, list) or len(checks) != len(GATE_IDS):
+        raise ValueError("invalid-previous-gates")
+    if any(not isinstance(check, dict) or not isinstance(check.get("id"), str) for check in checks):
+        raise ValueError("invalid-previous-gates")
+    if {check["id"] for check in checks} != set(GATE_IDS):
+        raise ValueError("invalid-previous-gates")
+    for check in checks:
+        if check.get("status") not in ("pass", "not-applicable", "fail", "timeout", "missing-command"):
+            raise ValueError("invalid-previous-gates")
+        if skip_reasons[check["id"]] and check["status"] in {"fail", "timeout", "missing-command"}:
+            raise ValueError(f"cannot-skip-failed-gate:{check['id']}; rerun its command or diagnose a new scoped run")
+
+    # Copy only runner-owned receipts; preserve originals until the full archive succeeds.
+    history = output / "gate-attempts"
+    history.mkdir(exist_ok=True)
+    index = 1
+    while True:
+        archive = history / f"{index:03d}"
+        try:
+            archive.mkdir()
+            break
+        except FileExistsError:
+            index += 1
+    for name in artifacts:
+        source = output / name
+        if source.is_dir():
+            shutil.copytree(source, archive / name)
+        elif source.is_file():
+            shutil.copy2(source, archive / name)
+
+
 def main() -> int:
     """Run all five gates and write their canonical aggregate artifacts."""
     arguments = parse_args()
@@ -408,8 +453,6 @@ def main() -> int:
         return 2
 
     output: Path = arguments.out
-    checks_dir = output / CHECKS_DIRNAME
-    checks_dir.mkdir(parents=True, exist_ok=True)
     commands = {gate_id: getattr(arguments, gate_id) for gate_id in GATE_IDS}
     defaults = default_commands(sys.platform)
     for gate_id in GATE_IDS:
@@ -418,6 +461,13 @@ def main() -> int:
     if not Path("src").is_dir() and not getattr(arguments, "types"):
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
+
+    try:
+        preserve_previous_attempt(output, skip_reasons)
+    except (OSError, ValueError) as error:
+        print(f"gate-recovery-blocked:{error}", file=sys.stderr)
+        return 2
+    (output / CHECKS_DIRNAME).mkdir(parents=True, exist_ok=True)
 
     checks = [
         run_check(

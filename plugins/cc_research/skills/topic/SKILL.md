@@ -238,7 +238,7 @@ Write full report to `$REPORT_OUT` via Write tool (resolved by counter-suffix lo
 
 TaskUpdate "Print report header" → `in_progress`.
 
-Print compact terminal summary — MANDATORY, do this in the same turn as the write above, then TaskUpdate "Print report header" → `completed` only once it has actually appeared in this response:
+Read the saved report and render every `---` header field as a two-column `Field | Value` table in file order, in this same turn. Then print the compact summary below; TaskUpdate "Print report header" → `completed` only after the matching table appears in this response:
 
 ```text
 ---
@@ -252,7 +252,7 @@ Confidence:  [aggregate score] — [key gaps]
 ---
 ```
 
-**Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the `## Follow-up gate` call while the report file named by the `research-topic-report-file` sentinel (written at Step 2a) is missing or empty. A denial reading `research:topic report gate` means the report was never written — write it to that exact path, print its `---` header, then re-issue the question. The hook sees only whether the report exists, not whether the print happened; the "Print report header" task remains the check for the print itself.
+**Hook-enforced**: `hooks/enforce-topic-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `topic`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
@@ -295,6 +295,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — topic research complet
 
 Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
+- header: `topic`
 - question: "What next?"
 - (a) label: `/research:plan` — description: design a research program from these findings
 - (b) label: `/develop:feature` — description: implement based on findings (requires `develop` plugin)

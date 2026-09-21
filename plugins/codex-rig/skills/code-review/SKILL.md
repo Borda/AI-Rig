@@ -347,6 +347,8 @@ When `online-review-summary.json` reports `pr_metadata_transport=public-https-fa
 
 Inspect `python PLUGIN_ROOT/shared/run_gates.py --help`; run every project-relevant review gate with explicit command/skip reason.
 
+A failed quality check does not cancel artifact closure. Inspect the recorded command, stdout, and stderr; direct-check receipts do not replace `gates.json`. Preserve the failed attempt before any evidence-backed rerun with the project's existing environment and equivalent check scope. A local launcher failure, including an `uv` subprocess failure, is process evidence, not a source finding. If checks remain failed, retain them in the canonical gate/result evidence (`status=fail`, or `timeout` when applicable), reconcile the decision and handoff, and continue through step 12. If valid gate evidence cannot be produced, use the blocked-handoff output with the exact unmet checkpoint; never substitute an informal review verdict.
+
 ### 08: Classify findings using `../../shared/severity-map.md`
 
 ### 09: Compute the structured review decision and update `Decision Summary`
@@ -424,7 +426,16 @@ Confidence must be honest/objectively verifiable. Never raise it to pass gate; i
 
 Run review validator with `--manifest-only` against completed run directory and current parent thread before writing `result.candidate.json`. It preflights routed specialist manifest shape and provenance, including one or two sequential attempts for every spawned pass. If it fails, preserve manifest and completed specialist evidence, repair only deterministic bookkeeping that has evidence, then rerun this preflight once; never invent missing attempt provenance or create candidate before preflight passes.
 
-Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with `CODE_REVIEW_METADATA` and `FOLLOW_UP`; run review-specific validator before shared validator for `code-review`; promote only candidate accepted by both.
+Preflight success is not review completion. Follow `../../shared/helper-cli-contract.md` and authoritative help; finish this ordered sequence before reporting the assessed verdict, including `needs-more-work`:
+
+1. Follow `../../shared/final-handoff-contract.md` to prepare the branch-appropriate handoff, then run `final_handoff.py render` to bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`.
+2. Run `write-result.py` with `CODE_REVIEW_METADATA` and `FOLLOW_UP` to write `result.candidate.json`, retaining canonical failed checks and final-handoff binding.
+3. Run the review-specific validator against that candidate and this run's actual parent-thread provenance.
+4. Run the shared validator for `code-review` against the same candidate and run.
+5. Only after both validators pass, promote that candidate to `result.json`.
+6. Run `find-review-report.py --complete-run <run-directory>` through the Output Contract's completion checkpoint. Emit only successful completion stdout verbatim; rendering and promotion alone never authorize final output.
+
+Resume the first unmet checkpoint under existing authorization; reuse only still-valid source, gate, and specialist evidence. Missing artifacts require completing this sequence, not another source review or specialist launch merely for bookkeeping. Failed validation follows the bounded recovery below; stop only for an actual unresolved blocker, with preliminary evidence labeled and no assessed verdict.
 
 `CODE_REVIEW_METADATA.specialist_passes` mirrors every triggered specialist entry; `review_run_id`/`review_input_sha256` mirror top-level values. Strict portable spawned passes mirror their validated runtime summary, while instruction-bounded native inspection route uses validator-defined inspection evidence and must not claim portable sandbox or approval controls. `CODE_REVIEW_METADATA.scope` matches normalized scope. For assessed reviews, `CODE_REVIEW_METADATA.review_decision` mirrors `Decision Summary` recommendation, summary, rationale. A terminal collection failure records `review_status=unavailable` with source findings not assessed and merge decision not made. A terminal close records `review_status=closed` plus validated `close_decision`, with source findings not assessed and detailed review skipped. Both terminal shapes use exactly zero `critical`, `high`, `medium`, and `low` findings and omit normal recommendations/follow-up and assessed-review metadata. Every assessed non-`accept-as-is` PR and every `needs-more-work` result in another scope carries validated canonical `Review Findings and Merge Blocks` table in `review-notes.md`; terminal unavailable and closed results use their canonical prose and no table. An assessed review with unavailable thread-resolution evidence includes canonical thread confidence gap and unresolved/deferred closure rationale. `CODE_REVIEW_METADATA.confidence_recovery` mirrors `Confidence Calibration` and includes `initial_confidence`, `final_confidence`, `status`, `evidence`, `recovery_actions`, `remaining_limits`. `CODE_REVIEW_METADATA.confidence_gap_closures` has one closure per non-empty `confidence_gaps`, with `status=closed|unresolved|deferred` and matching evidence/rationale.
 
@@ -478,7 +489,9 @@ Update calibration when review routing, severity discipline, decision vocabulary
 
 ## Output Contract
 
-Before writing result candidate, follow `../../shared/final-handoff-contract.md`: use branch `assessed`, `unavailable`, or `closed` exactly as review result requires; render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim. Terminal `unavailable` and `closed` branches forbid tables; explicitly requested exact caller format uses `caller-contract`.
+Complete step 12 before final output. Follow `../../shared/final-handoff-contract.md` with branch `assessed`, `unavailable`, or `closed` exactly as review result requires. Terminal `unavailable` and `closed` branches forbid tables; explicitly requested exact caller format uses `caller-contract` and retains the same artifact closure and completion checkpoint.
+
+Only after the completion checkpoint succeeds, emit `final.md` verbatim through that command's successful stdout.
 
 Use `../../shared/quality-gates.md`.
 

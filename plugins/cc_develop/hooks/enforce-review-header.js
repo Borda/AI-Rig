@@ -1,57 +1,15 @@
 #!/usr/bin/env node
-// enforce-review-header.js — PreToolUse hook (matcher: AskUserQuestion)
-//
-// PURPOSE
-//   /develop:review must print the consolidated report's `---` header block to
-//   the terminal (SKILL.md Step 5b) before the Step 6 follow-up gate's
-//   `AskUserQuestion` fires. That ordering is a prose-only mandate, and the
-//   structurally identical mandate in /oss:review was skipped in a real run: no
-//   consolidator spawned, no `review-report.md` written, no header printed — yet
-//   `AskUserQuestion` (a hard tool call) still fired, so the user saw an ad-hoc
-//   summary instead of the report header. This hook converts the mandate into a
-//   structural gate: while a develop:review run is in flight and its report file
-//   is absent from disk, `AskUserQuestion` is denied with instructions to finish
-//   Step 5 + Step 5b first.
-//
-// HOW IT WORKS
-//   1. Inspect only PreToolUse calls for `AskUserQuestion`; everything else
-//      exits 0 with no output (passthrough).
-//   2. Resolve CSID the way SKILL.md's bash does (`${CLAUDE_CODE_SESSION_ID:-$PPID}`):
-//      env `CLAUDE_CODE_SESSION_ID` first, then the hook payload's `session_id`
-//      (same value Claude Code reports to hooks), then `process.ppid` as a
-//      best-effort stand-in for bash's `$PPID`. Candidates are tried in order;
-//      a candidate that names no sentinel simply does not match.
-//   3. Look for `${TMPDIR:-/tmp}/dev-review-report-dir-<CSID>`, written by
-//      Step 2 the moment `$REPORT_DIR` exists. No sentinel → allow: either no
-//      review is running, or it has not reached Step 2 yet (so review's own
-//      Step 0/1 questions — the codemap Gate A/B prompts among them — and every
-//      other skill's questions stay unblocked).
-//   4. Sentinel present → read `$REPORT_DIR` from it, require it to look like a
-//      review report dir and to exist on disk, then check
-//      `$REPORT_DIR/review-report.md`. Present and non-empty → allow. Missing
-//      or empty → deny, naming Step 5 / Step 5b in the reason.
-//   5. Every can't-tell case (unreadable sentinel, implausible path, vanished
-//      report dir, stale sentinel) resolves to allow.
-//
-//   KNOWN LIMITATION — stale sentinel. A run that dies between Step 2 and
-//   Step 5 leaves the sentinel behind with no report, and nothing on disk
-//   distinguishes that from a live run that skipped the print. Bounding on the
-//   sentinel's mtime (written once, at Step 2) caps the blast radius: past
-//   STALE_MS the gate stops firing, so a session can never be permanently
-//   unable to ask a question. The reverse cost — a review still running after
-//   STALE_MS loses enforcement — only restores the pre-hook status quo.
-//   Secondary limitation: hooks are session-wide, so a subagent spawned mid
-//   review is gated too. Review subagents are non-interactive by contract
-//   (they write files and return envelopes), so this is intended.
-//
-// EXIT CODES
-//   0  always — passthrough (no output) or decision JSON on stdout.
-//      Deliberate deviation from the "gatekeeper crash → block" guidance in
-//      hook-authoring.md: this gate protects workflow integrity, not a security
-//      boundary. Failing closed on a hook bug would strand the session with no
-//      way to ask the user anything, while failing open merely restores the
-//      prose-only mandate. Matches sentinel-read-allow.js, which also emits a
-//      permissionDecision yet exits 0 on any internal error.
+// Enforce develop:review's report-delivery boundary before its workflow follow-up.
+// Only PreToolUse AskUserQuestion with this workflow's header/known labels is
+// gated. Diagnostic/recovery questions remain available. The existing
+// session sentinel, path checks, and TTL define whether this run is active.
+// Require a nonempty report and delivery of its complete matching header table
+// in the parent's transcript before the follow-up; a mere file is insufficient.
+// Missing/unreadable delivery evidence denies the transition with a recovery
+// reason. No active sentinel, expired/implausible state, or malformed hook
+// payload passes through. Unexpected hook failures retain the legacy fail-open
+// behavior: this is a workflow guard, not a security or UI-rendering guarantee.
+// Exit 0 always; stdout is empty for passthrough or contains the denial JSON.
 
 "use strict";
 
@@ -175,7 +133,7 @@ function denyReason(sentinelPath, now) {
     "(print report header) have not completed. Go back: spawn the consolidator agent and let it write " +
     `${REPORT_FILENAME}, then Read that file and print its \`---\` header block to the terminal. Call ` +
     "AskUserQuestion only after that header has actually appeared in your response. If the consolidator " +
-    "genuinely cannot run, report that failure and stop instead of asking the user. If no develop:review is " +
+    "genuinely cannot run, report that failure and block this follow-up; diagnostic/recovery questions remain available. If no develop:review is " +
     "actually in flight (an aborted run left this sentinel behind), clear it with: " +
     `\`rm -f ${sentinelPath}\` — then re-issue the question.`
   );
@@ -207,33 +165,20 @@ if (require.main === module) {
       const data = JSON.parse(raw);
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
+      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      if (!isWorkflowFollowUp(data.tool_input, "develop:review")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
       if (!sentinel) process.exit(0);
 
-      const reason = denyReason(sentinel, Date.now());
-      if (!reason) {
-        // Additive nudge, not a deny — see report-header-table.js for why a
-        // missing table rides as additionalContext instead of blocking.
-        try {
-          const { assistantTextSinceLastUserTurn, hasHeaderTable, tableReminder } = require("./report-header-table.js");
-          const text = assistantTextSinceLastUserTurn(data.transcript_path);
-          if (text && !hasHeaderTable(text)) {
-            process.stdout.write(
-              JSON.stringify({
-                hookSpecificOutput: {
-                  hookEventName: "PreToolUse",
-                  permissionDecision: "allow",
-                  additionalContext: tableReminder("develop:review", "Step 5b (print report header)"),
-                },
-              }),
-            );
-          }
-        } catch (_) {
-          // Missing/broken copy of the shared detector — fall through to plain allow.
-        }
-        process.exit(0);
+      let reason = denyReason(sentinel, Date.now());
+      const active = activeReportDir(sentinel, Date.now());
+      if (!reason && active) {
+        const problem = deliveryProblem(path.join(active, REPORT_FILENAME), data.transcript_path);
+        if (problem)
+          reason = "develop:review report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }
+      if (!reason) process.exit(0);
 
       process.stdout.write(
         JSON.stringify({

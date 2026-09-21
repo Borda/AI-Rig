@@ -135,12 +135,13 @@ Write(file_path=".temp/output-profile-<branch>-<YYYY-MM-DD>.md", content=<full r
 
 Where `<branch>` = `$(git branch --show-current 2>/dev/null | tr '/' '-' || echo 'main')`.
 
-Backed structurally by `hooks/enforce-profile-header.js`: while Step 1 state file is live and `$REPORT_DIR/report.md` is absent, Step 5's `AskUserQuestion` is denied, so the gate can never be reached from an ad-hoc in-context summary.
+Backed by `hooks/enforce-profile-header.js`: while Step 1 state is live, Step 5's workflow follow-up requires a saved report and its matching header table in the current parent reply. Missing/unreadable delivery evidence blocks that transition; print it again before retrying. Diagnostic/recovery questions remain available under their own question header, not `profile`.
 
 ## Step 5: Follow-up gate
 
 Invoke `AskUserQuestion` (denied by `enforce-profile-header.js` until Step 2 has written `report.md` — if the analyzer found no sessions, report that and stop instead of asking):
 
+- header: `profile`
 - (a) Drill into slowest session — re-run with `--session-id <id>`
 - (b) Re-run with different window (`--since 7d`, `--since 30d`)
 - (c) Skip — done

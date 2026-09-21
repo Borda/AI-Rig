@@ -1,72 +1,15 @@
 #!/usr/bin/env node
-// enforce-analyse-header.js — PreToolUse hook (matcher: AskUserQuestion)
-//
-// PURPOSE
-//   Each /oss:analyse mode must write its report file and print that report's
-//   `---` header block to the terminal before SKILL.md Step 6a's follow-up
-//   `AskUserQuestion` fires (modes/thread.md "Print terminal block: read '---'
-//   header from top of report file", modes/ecosystem.md "Print by reading lines
-//   1–6 of report file", modes/vitality.md "Print compact block to terminal").
-//   The sibling /oss:review workflow carried the same prose-only mandate and a
-//   real run skipped it outright: no report written, no header printed, yet the
-//   follow-up question (a hard tool call) still fired, so the user chose a next
-//   step from an ad-hoc summary. This hook makes the ordering structural: while
-//   an analyse run is in flight and knows where its report goes, but that report
-//   is absent from disk, `AskUserQuestion` is denied.
-//
-// WHY THE SENTINEL IS WRITTEN BY THE MODE FILES
-//   SKILL.md Step 1 writes `analyse-report-file-<CSID>` unconditionally, but at
-//   that point `$REPORT_FILE` is empty for every analysis mode — it holds a path
-//   only in DIRECT_PATH_MODE (`/oss:analyse path/to/report.md --reply`), where
-//   the file is required to exist already. Each mode therefore rewrites the
-//   sentinel with its own report path immediately *before* the Write that
-//   creates it (thread.md and ecosystem.md just above their report-write step,
-//   vitality.md in Step 4 where `$REPORT_FILE` is first built). That is exactly
-//   the race window this gate needs, and it is uniform across all three modes.
-//   An empty sentinel (Step 1, mode not yet reached) reads as "cannot tell" and
-//   allows — which is what keeps Step 1's unsupported-flag question unblocked.
-//
-// HOW IT WORKS
-//   1. Inspect only PreToolUse calls for `AskUserQuestion`; everything else
-//      exits 0 with no output (passthrough).
-//   2. Resolve CSID the way SKILL.md's bash does (`${CLAUDE_CODE_SESSION_ID:-$PPID}`):
-//      env `CLAUDE_CODE_SESSION_ID` first, then the hook payload's `session_id`
-//      (same value Claude Code reports to hooks), then `process.ppid` as a
-//      best-effort stand-in for bash's `$PPID`. Candidates are tried in order;
-//      a candidate that names no sentinel simply does not match.
-//   3. Look for `${TMPDIR:-/tmp}/analyse-report-file-<CSID>`. No sentinel → allow:
-//      no analyse run has started, so every other skill's questions pass through.
-//   4. Sentinel present → read the report path from it. The skill builds report
-//      paths relative to the repo root (`.reports/analyse/<mode>/…`), so resolve
-//      against the payload's `cwd` and require the analyse-report marker.
-//   5. Report file present and non-empty → allow. Missing or empty → deny,
-//      naming the mode's report step in the reason.
-//   6. Every can't-tell case (empty or unreadable sentinel, implausible path,
-//      stale sentinel) resolves to allow.
-//
-//   KNOWN LIMITATION — stale sentinel. A run that dies between the mode's
-//   sentinel write and its report Write leaves the sentinel behind with no
-//   report, and nothing on disk distinguishes that from a live run that skipped
-//   the print. Bounding on the sentinel's mtime caps the blast radius: past
-//   STALE_MS the gate stops firing, so a session can never be permanently unable
-//   to ask a question. The reverse cost — an analyse still running after
-//   STALE_MS loses enforcement — only restores the prose-only mandate.
-//   Secondary limitation: the gate proves the report exists, not that its header
-//   was printed, and a same-day rerun of thread/ecosystem mode reuses the same
-//   filename, so the previous run's file satisfies the check. Both match
-//   enforce-review-header.js; the mode files keep the print itself as prose.
-//   Third: hooks are session-wide, so a subagent spawned mid analyse is gated
-//   too. Analyse subagents are non-interactive by contract (they write files and
-//   return envelopes), so this is intended.
-//
-// EXIT CODES
-//   0  always — passthrough (no output) or decision JSON on stdout.
-//      Deliberate deviation from the "gatekeeper crash → block" guidance in
-//      hook-authoring.md: this gate protects workflow integrity, not a security
-//      boundary. Failing closed on a hook bug would strand the session with no
-//      way to ask the user anything, while failing open merely restores the
-//      prose-only mandate. Matches sentinel-read-allow.js, which also emits a
-//      permissionDecision yet exits 0 on any internal error.
+// Enforce oss:analyse's report-delivery boundary before its workflow follow-up.
+// Only PreToolUse AskUserQuestion with this workflow's header/known labels is
+// gated. Diagnostic/recovery questions remain available. The existing
+// session sentinel, path checks, and TTL define whether this run is active.
+// Require a nonempty report and delivery of its complete matching header table
+// in the parent's transcript before the follow-up; a mere file is insufficient.
+// Missing/unreadable delivery evidence denies the transition with a recovery
+// reason. No active sentinel, expired/implausible state, or malformed hook
+// payload passes through. Unexpected hook failures retain the legacy fail-open
+// behavior: this is a workflow guard, not a security or UI-rendering guarantee.
+// Exit 0 always; stdout is empty for passthrough or contains the denial JSON.
 
 "use strict";
 
@@ -191,7 +134,7 @@ function denyReason(sentinelPath, cwd, now) {
     "report and Step 6a's follow-up question would describe an unsaved analysis. Go back: write the report " +
     "with the Write tool, then Read it and print its `---` header block to the terminal. Call " +
     "AskUserQuestion only after that header has actually appeared in your response. If the report genuinely " +
-    "cannot be produced, report that failure and stop instead of asking the user."
+    "cannot be produced, report that failure and block this follow-up; diagnostic/recovery questions remain available."
   );
 }
 
@@ -221,36 +164,20 @@ if (require.main === module) {
       const data = JSON.parse(raw);
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
+      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      if (!isWorkflowFollowUp(data.tool_input, "oss:analyse")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
       if (!sentinel) process.exit(0);
 
-      const reason = denyReason(sentinel, data.cwd, Date.now());
-      if (!reason) {
-        // Additive nudge, not a deny — see report-header-table.js for why a
-        // missing table rides as additionalContext instead of blocking.
-        try {
-          const { assistantTextSinceLastUserTurn, hasHeaderTable, tableReminder } = require("./report-header-table.js");
-          const text = assistantTextSinceLastUserTurn(data.transcript_path);
-          if (text && !hasHeaderTable(text)) {
-            process.stdout.write(
-              JSON.stringify({
-                hookSpecificOutput: {
-                  hookEventName: "PreToolUse",
-                  permissionDecision: "allow",
-                  additionalContext: tableReminder(
-                    "oss:analyse",
-                    "printing the report's --- header as a two-column table (quality-gates.md §Report File Format)",
-                  ),
-                },
-              }),
-            );
-          }
-        } catch (_) {
-          // Missing/broken copy of the shared detector — fall through to plain allow.
-        }
-        process.exit(0);
+      let reason = denyReason(sentinel, data.cwd, Date.now());
+      const active = activeReportFile(sentinel, data.cwd, Date.now());
+      if (!reason && active) {
+        const problem = deliveryProblem(active, data.transcript_path);
+        if (problem)
+          reason = "oss:analyse report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }
+      if (!reason) process.exit(0);
 
       process.stdout.write(
         JSON.stringify({

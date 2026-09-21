@@ -1,59 +1,13 @@
-// report-header-table.js — shared helper for the six `enforce-*-header.js`
-// hooks (oss:review/analyse, develop:review, foundry:audit/profile,
-// research:topic).
-//
-// PURPOSE
-//   Each sibling hook already denies `AskUserQuestion` while the skill's
-//   report file is missing (Step N: consolidate). None of them checked
-//   whether the printed reply actually rendered the report's `---` header as
-//   the two-column Markdown table `quality-gates.md` §Report File Format
-//   mandates ("Universal terminal-print rule") — that mandate is prose-only.
-//   A real run (oss:review, PR #1303) skipped the table and printed the raw
-//   `---` fields verbatim; the file-existence gate had nothing to catch it.
-//   This module gives every sibling hook a second, additive check: when the
-//   report file exists but no table appears in the assistant's own text since
-//   the last human turn, nudge instead of block (see NOT A DENY GATE below).
-//
-// HOW IT WORKS
-//   1. `assistantTextSinceLastUserTurn(transcriptPath)` tail-reads the
-//      session's JSONL transcript (same bounded-read technique as
-//      `task-log.js`'s PreCompact branch — last ~200 KB, not the whole file),
-//      walks backward from the end to the most recent **human** `user` row,
-//      and concatenates every `assistant` row's `text` content blocks from
-//      that point forward, skipping `isSidechain` rows (subagent output).
-//      A "human" user row is one whose content is not a bare `tool_result`
-//      array — the transcript also carries `tool_result` rows (the previous
-//      tool call's return value), plus non-`user`/`assistant` rows
-//      (`queue-operation`, `attachment`, `last-prompt`, `mode`,
-//      `permission-mode`) that are not turn boundaries at all and must be
-//      skipped, not mistaken for one.
-//   2. `hasHeaderTable(text)` returns true when `text` contains a Markdown
-//      pipe table (a `|`-delimited header row, a `| --- | --- |`-shaped
-//      separator row, and at least `MIN_TABLE_ROWS` data rows) or the
-//      documented `·`-separated one-line fallback
-//      (`verdict: ... · findings: ...`) that SKILL.md permits when the
-//      report read itself fails.
-//   3. `tableReminder(skillLabel)` builds the `additionalContext` string a
-//      caller attaches when `hasHeaderTable` is false.
-//
-// NOT A DENY GATE
-//   Unlike the file-existence check each hook already performs, a missing
-//   table never denies the tool call — `additionalContext` rides along with
-//   `permissionDecision: "allow"`. Per PreToolUse docs, `additionalContext`
-//   surfaces "next to the tool result", i.e. after the question is already
-//   answered — corrective, not preventive, and deliberately so: a hard deny
-//   here would risk false blocks (a table printed several tool calls earlier
-//   in the same turn, or the documented `·`-fallback line) with no way for
-//   the model to tell a false block from a real one. A missed reminder still
-//   regresses to the pre-existing prose-only mandate, never worse.
-//
-// DISTRIBUTION
-//   Canonical copy lives in cc_foundry; byte-identical copies in cc_oss,
-//   cc_develop, cc_research via `propagate_shared.py` (same mechanism as
-//   `agent-router.js` / `sentinel-read-allow.js`). Every caller `require`s
-//   this file inside a try/catch and fails open on throw, so a standalone
-//   plugin install missing its copy never breaks the file-existence gate it
-//   already relies on.
+// Shared report-delivery checks for six workflow follow-up hooks.
+// Active sentinels scope enforcement to their owning workflow question;
+// diagnostic/recovery questions remain usable. A completed report must have
+// its current header rendered in one parent-visible table since the last
+// human turn. Audit uses its pre-question findings aggregate instead.
+// Missing/unreadable delivery evidence denies the transition, not the session.
+// Transcript inspection is bounded to 200 KB; earlier output must be reprinted.
+// This is a workflow guard, not proof of UI rendering or semantic correctness.
+// Canonical copy: cc_foundry; propagate_shared.py distributes identical local
+// copies to independently installed cc_oss, cc_develop, and cc_research.
 
 "use strict";
 
@@ -178,4 +132,117 @@ module.exports = {
   isHumanUserContent,
   tableReminder,
   MIN_TABLE_ROWS,
+  isWorkflowFollowUp,
+  deliveryProblem,
 };
+
+/** Recognize only the documented follow-up question; recovery questions stay usable. */
+function isWorkflowFollowUp(toolInput, skill) {
+  const questions = toolInput && Array.isArray(toolInput.questions) ? toolInput.questions : [];
+  return questions.some((question) => {
+    if (!question) return false;
+    const labels = (Array.isArray(question.options) ? question.options : []).map((option) =>
+      String((option && option.label) || "").toLowerCase(),
+    );
+    const headers = {
+      "oss:review": "oss-review",
+      "oss:analyse": "oss-analyse",
+      "develop:review": "dev-review",
+      "foundry:audit": "audit",
+      "foundry:profile": "profile",
+      "research:topic": "topic",
+    };
+    if (question.header) return question.header === headers[skill];
+    if (skill === "foundry:audit") {
+      return labels.some((label) => label.includes("fix auto-fixable") || label.includes("fix all"));
+    }
+    const prefixes = {
+      "oss:review": ["/oss:resolve", "walk through findings"],
+      "oss:analyse": ["/develop:fix", "draft reply", "/oss:analyse", "/oss:review"],
+      "develop:review": ["walk through findings"],
+      "foundry:profile": ["drill into slowest session", "re-run with different window"],
+      "research:topic": ["/research:plan"],
+    };
+    return labels.some((label) => (prefixes[skill] || []).some((prefix) => label.startsWith(prefix)));
+  });
+}
+
+/** Check current report content against the parent-visible delivery, not just arbitrary table presence. */
+function deliveryProblem(reportFile, transcriptPath) {
+  let content;
+  try {
+    content = fs.readFileSync(reportFile, "utf8");
+  } catch (_) {
+    return "report is unreadable; recover its producer before following up";
+  }
+  const text = assistantTextSinceLastUserTurn(transcriptPath);
+  if (!text) return "report delivery is unverified; print the report in this turn before following up";
+  const normalize = (value) => value.replace(/\s+/g, " ").trim();
+  const delivered = normalize(text);
+  if (reportFile.endsWith("summary.jsonl")) {
+    // Audit asks before its final report exists; bind to the pre-question aggregate instead.
+    let findings;
+    try {
+      findings = content
+        .split(/\r?\n/)
+        .filter((line) => line.trim())
+        .map((line) => JSON.parse(line));
+    } catch (_) {
+      return "audit aggregate is malformed; finish consolidation before following up";
+    }
+    if (
+      findings.some(
+        (finding) =>
+          !finding ||
+          typeof finding.one_line !== "string" ||
+          !finding.one_line.trim() ||
+          !["security", "critical", "high", "medium", "low"].includes(finding.sev),
+      )
+    ) {
+      return "audit aggregate is incomplete; finish consolidation before following up";
+    }
+    if (
+      !/\bAudit Report\b/.test(text) ||
+      !new RegExp(`\\bTotal: ${findings.length}\\b`).test(delivered) ||
+      findings.some(
+        (finding) =>
+          !delivered.includes(normalize(finding.one_line)) &&
+          !delivered.includes(normalize(finding.one_line).replace(/\|/g, "\\|")),
+      )
+    ) {
+      return "current audit findings were not delivered; emit Step 7 before following up";
+    }
+    return null;
+  }
+  const header = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  const fields = header ? Array.from(header[1].matchAll(/^([^:\r\n]+):[ \t]*(.+)$/gm)) : [];
+  if (
+    fields.length < MIN_TABLE_ROWS ||
+    fields.length !== header[1].split(/\r?\n/).length ||
+    new Set(fields.map((field) => field[1].trim())).size !== fields.length ||
+    fields.some((field) => !field[2].trim()) ||
+    !fields.some((field) => field[1].trim() === "Title")
+  ) {
+    return "report header is incomplete; finish the report before following up";
+  }
+  // Match one complete table, so a random table plus raw header prose cannot authorize the transition.
+  const tables = text.match(/(?:^\s*\|[^\n]+\|\s*$\n?)+/gm) || [];
+  const matches = tables.some((table) => {
+    const lines = table.trim().split(/\r?\n/);
+    if (lines.length < 2 || !/^\s*\|[\s:|-]+\|\s*$/.test(lines[1])) return false;
+    const rows = lines.slice(2).map((line) =>
+      line
+        .trim()
+        .slice(1, -1)
+        .split(/(?<!\\)\|/)
+        .map((cell) => normalize(cell.replace(/\\\|/g, "|"))),
+    );
+    return fields.every((field) =>
+      rows.some((row) => row.length === 2 && row[0] === normalize(field[1]) && row[1] === normalize(field[2])),
+    );
+  });
+  if (!matches) {
+    return "current report header was not delivered; print every header field as a table before following up";
+  }
+  return null;
+}

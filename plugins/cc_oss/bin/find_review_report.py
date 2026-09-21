@@ -7,8 +7,10 @@ line, and blocks when that line still carries a ``REJECT_<GROUND>`` verdict. A r
 goal, conduct, scope, licence, duplicate, revert, spam, or philosophy — and editing code cannot clear it.
 
 The block is lifted only when the PR head has moved since the rejection was recorded: new state, so the ground may no
-longer hold and the run continues with a warning. Every other outcome (no report, no ``Gate:`` line, ``PASS``,
-``BLOCK``) imposes no restriction — those are ordinary findings that resolve exists to fix.
+longer hold and the run continues with a warning. No report, or a complete ``PASS``/``BLOCK`` report, permits
+the PR workflow to proceed. A newer missing, malformed, or incomplete publication blocks; it cannot erase a rejection.
+Explicit ``--report`` intake applies the same completeness check to report-only mode; a rejection remains blocked
+there until the user selects the PR-aware workflow or reruns the review.
 
 ``--path-out FILE`` additionally publishes the resolved report path (empty file when the PR has none), so
 ``oss:resolve`` reuses this PR-scoped lookup for its report-merge step instead of running a second,
@@ -19,7 +21,7 @@ Usage:
 
 Exit codes:
     0 — no restriction, or the head moved since the rejection
-    1 — the PR is still rejected at its current head
+    1 — rejected, incomplete report, or failed report-path publication
 """
 
 from __future__ import annotations
@@ -90,26 +92,45 @@ def newest_report_for_pr(pr_number: str, root: Path | None = None) -> Path | Non
     if pr_dir.is_dir():
         run_dirs = sorted((d for d in pr_dir.glob("run-*") if d.is_dir()), key=_run_sort_key, reverse=True)
         for run_dir in run_dirs:
-            report = run_dir / "review-report.md"
-            if report.is_file():
-                return report
+            if _RUN_RE.fullmatch(run_dir.name):
+                # The newest allocated run owns the decision, even when its producer has not published yet.
+                return run_dir / "review-report.md"
     return _legacy_report_for_pr(pr_number, base)
 
 
 def gate_line(report: Path) -> str:
-    """Return the report's first ``Gate:`` line, or an empty string when it has none.
+    """Return the decision only from a complete, unambiguous report header.
 
     Args:
         report: Path to a review report.
 
     Returns:
-        The full gate line, stripped of its trailing newline.
+        The normalized gate line, or an empty string for missing or incomplete publication.
     """
     try:
         lines = report.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    return next((line for line in lines if line.startswith(_GATE_PREFIX)), "")
+    if not lines or lines[0].strip() != "---":
+        return ""
+    try:
+        end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
+    except StopIteration:
+        return ""
+    fields: dict[str, str] = {}
+    for line in lines[1:end]:
+        key, separator, value = line.partition(":")
+        if not separator or key.strip() in fields:
+            return ""
+        fields[key.strip()] = value.strip()
+    if not all(fields.get(key) for key in ("Title", "PR", "Gate", "Outcome", "Summary")):
+        return ""
+    if fields["Gate"].startswith("REJECT_"):
+        if not fields["Outcome"].startswith("N/A"):
+            return ""
+    elif fields["Outcome"] not in {"APPROVE", "NEEDS_WORK", "REQUEST_CHANGES"}:
+        return ""
+    return f"{_GATE_PREFIX} {fields['Gate']}"
 
 
 def reject_sha(line: str) -> str:
@@ -149,17 +170,15 @@ def current_head_sha(pr_number: str, timeout: int) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-def _write_path_out(path_out: str, report: Path | None) -> None:
+def _write_path_out(path_out: str, report: Path | None) -> bool:
     """Publish the resolved report path so the caller reuses this lookup instead of re-globbing.
 
     The gate already resolves the newest report *for this PR*; ``oss:resolve`` previously parsed only the
     printed verdict and then ran its own newest-of-any-PR glob. Writing the path here gives both the reject
     gate and the report-merge step one PR-scoped answer.
 
-    A write failure never changes the exit code: the gate's verdict is the load-bearing output, and the caller
-    treats a missing or empty sentinel as "no report", falling back to its own lookup. It is reported on
-    stderr rather than swallowed, because the caller may still hold a *stale* sentinel from an earlier run —
-    the consumer's ``[ -f ]`` check catches a vanished report, but not a wrong one.
+    A write failure returns false and blocks the consumer: an earlier run's sentinel may still name a real but wrong
+    report. A warning alone cannot establish the next consumer's input identity.
 
     Args:
         path_out: Destination file; no-op when empty.
@@ -170,16 +189,18 @@ def _write_path_out(path_out: str, report: Path | None) -> None:
         >>> from pathlib import Path
         >>> with tempfile.TemporaryDirectory() as tmp:
         ...     out = Path(tmp) / "sentinel"
-        ...     _write_path_out(str(out), None)
+        ...     _ = _write_path_out(str(out), None)
         ...     out.read_text(encoding="utf-8")
         ''
     """
     if not path_out:
-        return
+        return True
     try:
         Path(path_out).write_text(f"{report.as_posix()}\n" if report else "", encoding="utf-8", newline="\n")
     except OSError as exc:
         print(f"[gate] ⚠ could not write --path-out {path_out}: {exc} — a stale sentinel may remain", file=sys.stderr)
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -189,13 +210,15 @@ def main(argv: list[str] | None = None) -> int:
         argv: Argument list override for testing. Defaults to ``sys.argv[1:]``.
 
     Returns:
-        Exit code — 0 when resolve may proceed, 1 when the PR is still rejected.
+        Exit code — 0 when resolve may proceed, 1 when the report boundary is blocked.
     """
     parser = argparse.ArgumentParser(
         prog="find_review_report.py",
         description="Enforce the oss:review reject gate for a PR before oss:resolve starts.",
     )
-    parser.add_argument("--pr", default="", help="PR number (empty or 'n/a' skips the check).")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--pr", default="", help="PR number (empty or 'n/a' skips the check).")
+    source.add_argument("--report", type=Path, help="Validate the selected report-only input before consuming it.")
     parser.add_argument("--timeout", type=int, default=6, help="Max subprocess wait in seconds (default: 6).")
     parser.add_argument(
         "--path-out",
@@ -208,24 +231,32 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
     pr_number = args.pr.strip()
-    if not pr_number or pr_number == "n/a":
-        _write_path_out(args.path_out, None)
+    if args.report is None and (not pr_number or pr_number == "n/a"):
+        if not _write_path_out(args.path_out, None):
+            return 1
         print("[gate] no PR number — reject-gate check skipped")
         return 0
 
-    report = newest_report_for_pr(pr_number)
-    _write_path_out(args.path_out, report)
+    report = args.report if args.report is not None else newest_report_for_pr(pr_number)
     if report is None:
+        if not _write_path_out(args.path_out, None):
+            return 1
         print(f"[gate] no review report names PR #{pr_number} — no restriction")
         return 0
 
     line = gate_line(report)
+    if re.fullmatch(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?", line) is None:
+        _write_path_out(args.path_out, None)
+        print(f"⛔ BLOCKED — incomplete-review-report: {report}; finish or rerun /oss:review before resolve")
+        return 1
+    if not _write_path_out(args.path_out, report):
+        return 1
     if "REJECT_" not in line:
         print(f"[gate] {line or 'no Gate: field'} ({report}) — no restriction")
         return 0
 
     recorded = reject_sha(line)
-    current = current_head_sha(pr_number, args.timeout)
+    current = current_head_sha(pr_number, args.timeout) if pr_number else ""
     if recorded and current and recorded != current:
         print(
             f"⚠ PR #{pr_number} rejected ({line}), head moved {recorded}→{current} — state changed, proceeding. "

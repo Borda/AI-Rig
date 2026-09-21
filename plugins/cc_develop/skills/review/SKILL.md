@@ -604,7 +604,7 @@ Print `### Codex Delegation` section to terminal only when tasks actually delega
 
 **Hard gate**: check "Step 5b: Print report header" task status before anything below. Not `completed` → header table hasn't actually been printed yet — go back and do it now (see Step 5), mark the task `completed`, before calling `AskUserQuestion` below.
 
-**Hook-enforced**: `hooks/enforce-review-header.js` (PreToolUse on `AskUserQuestion`) denies the follow-up gate's call while `$REPORT_DIR/review-report.md` is missing or empty. A denial reading `develop:review report gate` means Step 5 never produced the report — spawn the consolidator, print the header, re-issue the question. The hook can't see whether the print happened, only whether the report exists; the task above remains the check for the print itself.
+**Hook-enforced**: `hooks/enforce-review-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `dev-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 **Worktree exit** — if `WORKTREE_ENABLED=true`: the report already lives in the main tree (§Deliverable). Follow `worktree-isolation.md` §Exit — capture branch, call `ExitWorktree(action="keep")`, append the `Worktree` block to the report/output. Any Step 6 Codex edits stay on the worktree branch for you to merge. Exit **before** the follow-up gate so the `/develop:fix`/`/develop:refactor` next-step suggestions below point at the main tree. Never auto-merge.
 
@@ -624,6 +624,7 @@ Then print this line **in the reply** (prose, not Bash stdout — tool output is
 
 **Follow-up gate (NEVER SKIP)** — Call `AskUserQuestion` tool — do NOT write options as plain text first. Map options directly into tool call arguments:
 
+- header: `dev-review`
 - question: "What next?"
 - (a) label: `walk through findings` — description: go through each finding interactively
 - (b) label: `skip` — description: no action

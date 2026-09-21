@@ -498,8 +498,9 @@ def test_shared_validator_failure_suppresses_final_text(assessed_pr: Path) -> No
     assert "review-validation-failed:" in completed.stderr
 
 
-def test_failed_quality_gate_cannot_complete_an_approval(assessed_pr: Path) -> None:
-    """A digest-consistent approval must still be rejected when its quality gate failed."""
+@pytest.mark.parametrize("recommendation", ["accept-as-is", "needs-more-work"])
+def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, recommendation: str) -> None:
+    """Publish failed checks only with a validated, discoverable nonapproval handoff."""
     result_path = assessed_pr / "result.json"
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result.update(status="fail", checks_failed=["tests"])
@@ -511,6 +512,36 @@ def test_failed_quality_gate_cannot_complete_an_approval(assessed_pr: Path) -> N
     handoff_path = assessed_pr / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     next(check for check in handoff["verification"] if check["check"] == "tests")["status"] = "fail"
+    if recommendation == "needs-more-work":
+        result["metadata"]["review_decision"]["recommendation"] = recommendation
+        result["metadata"]["operational_blockers"] = [{"id": "G-1"}]
+        handoff["outcome"]["summary"] = "Recommendation: needs-more-work."
+        next(row for row in handoff["tables"][0]["rows"] if row["cells"][0] == "Suggestion")["cells"][1] = "needs work"
+        handoff["tables"].append(
+            {
+                "heading": "Review Findings and Merge Blocks",
+                "layout": "grouped",
+                "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+                "rows": [
+                    {
+                        "id": "G-1",
+                        "title": "G-1",
+                        "cells": ["G-1", "Resolve test execution failure.", "gates.json", "Required"],
+                        "source_ids": ["gate:tests"],
+                    }
+                ],
+            }
+        )
+        handoff["source_records"].append({"id": "gate:tests", "evidence": "gates.json"})
+        handoff["source_coverage"].update(source_records_total=6, represented_source_records_total=6)
+        notes = assessed_pr / "review-notes.md"
+        notes.write_text(
+            notes.read_text(encoding="utf-8") + "\n\n## Review Findings and Merge Blocks\n\n"
+            "| Finding / area | Required change | Evidence | Status |\n"
+            "| --- | --- | --- | --- |\n"
+            "| G-1 | Resolve test execution failure. | gates.json | Required |\n",
+            encoding="utf-8",
+        )
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
         handoff_path, assessed_pr / "final.md", assessed_pr / "final-handoff.validation.json"
@@ -526,9 +557,20 @@ def test_failed_quality_gate_cannot_complete_an_approval(assessed_pr: Path) -> N
         text=True,
     )
 
-    assert completed.returncode == 1
-    assert completed.stdout == ""
-    assert "review-approval-with-failed-gates" in completed.stderr
+    if recommendation == "accept-as-is":
+        assert completed.returncode == 1
+        assert completed.stdout == ""
+        assert "review-approval-with-failed-gates" in completed.stderr
+    else:
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout == (assessed_pr / "final.md").read_text(encoding="utf-8")
+        lookup = subprocess.run(
+            [sys.executable, str(FINDER), "--target", "#123", "--reports-dir", str(assessed_pr.parent.parent)],
+            capture_output=True,
+            text=True,
+        )
+        assert lookup.returncode == 0, lookup.stderr
+        assert Path(lookup.stdout.strip()) == result_path
 
 
 @pytest.mark.parametrize(

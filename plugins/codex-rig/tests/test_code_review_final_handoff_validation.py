@@ -12,6 +12,8 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 CODE_REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
+FINALIZER = PLUGIN_ROOT / "shared" / "final_handoff.py"
+GATE_IDS = ("lint", "format", "types", "tests", "review")
 SUGGESTIONS = {
     "accept-as-is": "approve",
     "minor-changes": "minor changes",
@@ -33,6 +35,142 @@ def _load_validator(
 
 
 VALIDATOR = _load_validator()
+
+
+def _write_complete_unavailable_v2_artifact(out_dir: Path, checkout_state: dict[str, object]) -> Path:
+    """Write one rendered unavailable-review result bound to current checkout-state evidence."""
+    for gate_id in GATE_IDS:
+        for suffix in ("command.txt", "stdout.txt", "stderr.txt"):
+            (out_dir / f"{gate_id}.{suffix}").write_text("", encoding="utf-8")
+    checks = [
+        {
+            "id": gate_id,
+            "status": "not-applicable",
+            "exit_code": 0,
+            "duration_seconds": 0.0,
+            "command_path": f"{gate_id}.command.txt",
+            "stdout": f"{gate_id}.stdout.txt",
+            "stderr": f"{gate_id}.stderr.txt",
+            "reason": "PR evidence collection stopped before review gates.",
+        }
+        for gate_id in GATE_IDS
+    ]
+    (out_dir / "gates.json").write_text(
+        json.dumps({"status": "pass", "checks_failed": [], "checks": checks}), encoding="utf-8"
+    )
+    code = "github-network:gh-pr-view"
+    (out_dir / "pr-error.txt").write_text(code + "\n", encoding="utf-8")
+    (out_dir / "pr-target.txt").write_text("123\n", encoding="utf-8")
+    (out_dir / "checkout-state.json").write_text(json.dumps(checkout_state), encoding="utf-8")
+    recovery_action = "Retry the unchanged collector later; no review or merge decision was made."
+    recovery_action += " Inspect the local checkout state before retrying."
+    (out_dir / "review-notes.md").write_text(
+        "# PR Review Availability: unavailable\n\n"
+        "Source findings: not assessed\n\n"
+        "Merge decision: not made\n\n"
+        "Process diagnostic: `github-network:gh-pr-view`. This is a workflow/integration failure, not a PR finding or "
+        "merge block.\n\n"
+        f"Recovery: {recovery_action}\n\n"
+        "Evidence: `pr-error.txt`.\n",
+        encoding="utf-8",
+    )
+    confidence_gap = "Core PR source verification did not complete; no source review or merge decision was made."
+    closures = [
+        {
+            "gap": confidence_gap,
+            "status": "unresolved",
+            "rationale": "A local checkout command may have changed state, but no verified source bundle was produced.",
+        }
+    ]
+    recovery = {
+        "initial_confidence": 0.9,
+        "final_confidence": 0.9,
+        "status": "fair",
+        "evidence": ["The classified collection failure and conservative checkout-state evidence were retained."],
+        "recovery_actions": ["Stopped before source review."],
+        "remaining_limits": ["PR correctness was not assessed; inspect local checkout state before retrying."],
+    }
+    result_path = out_dir / "result.json"
+    checkout_status = checkout_state["status"]
+    handoff = {
+        "schema_version": 1,
+        "presentation_version": 2,
+        "skill": "code-review",
+        "branch": "unavailable",
+        "outcome": {
+            "title": "PR Review Availability",
+            "summary": (
+                "I could not retrieve the PR metadata, so the review has not started. "
+                "Reason: `github-network:gh-pr-view`. Checkout diagnostic: local worktree state is changed or unknown "
+                f"after `{checkout_status}`. The collector did not retain a more specific cause."
+            ),
+        },
+        "tables": [],
+        "source_records": [],
+        "source_coverage": {
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        "verification": [
+            {"check": gate_id, "status": "not-applicable", "evidence": f"{gate_id}.stdout.txt"} for gate_id in GATE_IDS
+        ],
+        "remaining": [
+            {
+                "row_id": "collection-recovery",
+                "item": "PR collection stopped at `github-network:gh-pr-view`.",
+                "owner": "code-review",
+                "next_action": (
+                    "Inspect the classified `gh-pr-view` collector failure and local checkout state before retrying. "
+                    "Resume only after a fresh collector run produces and validates the PR source bundle."
+                ),
+            }
+        ],
+        "next_steps": ["collection-recovery"],
+        "confidence": {"score": 0.9, "band": "fair", "limits": recovery["remaining_limits"], "gaps": closures},
+        "artifacts": [
+            {"label": "Collection failure", "path": "pr-error.txt"},
+            {"label": "Checkout state", "path": "checkout-state.json"},
+            {"label": "Result", "path": str(result_path)},
+        ],
+        "caller_contract": None,
+    }
+    handoff_path = out_dir / "final-handoff.json"
+    final_path = out_dir / "final.md"
+    validation_path = out_dir / "final-handoff.validation.json"
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    finalizer = _load_validator(FINALIZER, "code_review_unavailable_finalizer")
+    validation = finalizer.render_files(handoff_path, final_path, validation_path)
+    metadata = {
+        "scope": "pr",
+        "risk_tier": "HIGH_RISK",
+        "review_status": "unavailable",
+        "collection_failure": {"code": code, "artifact": "pr-error.txt"},
+        "confidence_gaps": [confidence_gap],
+        "confidence_gap_closures": closures,
+        "confidence_recovery": recovery,
+        "final_handoff": {
+            "schema_version": 1,
+            "handoff_path": str(handoff_path),
+            "handoff_sha256": validation["handoff_sha256"],
+            "rendered_path": str(final_path),
+            "rendered_sha256": validation["rendered_sha256"],
+            "validation_path": str(validation_path),
+            "branch": "unavailable",
+        },
+    }
+    result = {
+        "schema_version": 2,
+        "status": "fail",
+        "checks_run": list(GATE_IDS),
+        "checks_failed": [],
+        "findings": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+        "confidence": 0.9,
+        "artifact_path": str(result_path),
+        "metadata": metadata,
+    }
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    return result_path
 
 
 def _result(recommendation: str) -> dict[str, object]:
@@ -181,8 +319,42 @@ def test_review_handoff_rejects_a_new_candidate_missing_the_canonical_marker() -
         "Rerun CI. Resume only after a fresh collector run produces and validates the PR source bundle.",
     ],
 )
+@pytest.mark.parametrize(
+    "checkout_state",
+    [
+        pytest.param(
+            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+            id="legacy-started",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": None,
+            },
+            id="collector-succeeded-unverified",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {
+                    "command": "gh pr checkout https://github.com/Borda/AI-Rig/pull/123",
+                    "code": "github-network:local-pr-checkout",
+                    "diagnostics": {
+                        "exit_code": 1,
+                        "failure_class": "github-network",
+                        "failure_reason": "connection-reset",
+                        "label": "local-pr-checkout",
+                    },
+                },
+            },
+            id="collector-failed-gh-recovery",
+        ),
+    ],
+)
 def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
-    tmp_path: Path, invalid_action: str
+    tmp_path: Path, invalid_action: str, checkout_state: dict[str, object]
 ) -> None:
     """Reject a generic checkout-repair message that omits the observed collection failure."""
     code = "command-failed:local-pr-checkout"
@@ -198,9 +370,9 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
         ),
         encoding="utf-8",
     )
-    (tmp_path / "checkout-state.json").write_text(
-        json.dumps({"status": "checkout-command-started", "local_state": "changed-or-unknown"}), encoding="utf-8"
-    )
+    (tmp_path / "checkout-state.json").write_text(json.dumps(checkout_state), encoding="utf-8")
+    checkout_status = checkout_state["status"]
+    assert isinstance(checkout_status, str)
     handoff = {
         "presentation_version": 2,
         "branch": "unavailable",
@@ -231,7 +403,7 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
         "I could not check out the latest PR commit, so the review has not started. "
         "Reason: `command-failed:local-pr-checkout`. Command diagnostic: `local-pr-checkout` exited 1 "
         "(`github-command-failed`; reason `unclassified`). Checkout diagnostic: local worktree state is changed or unknown after "
-        "`checkout-command-started`. The collector did not retain a more specific cause."
+        f"`{checkout_status}`. The collector did not retain a more specific cause."
     )
     handoff["remaining"] = [
         {
@@ -291,7 +463,7 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
         "I could not check out the latest PR commit, so the review has not started. "
         "Reason: `command-failed:local-pr-checkout`. Command diagnostic: `local-pr-checkout` exited 1 "
         "(`github-command-failed`; reason `unclassified`). Checkout diagnostic: local worktree state is changed or unknown after "
-        f"`checkout-command-started`. Worktree preflight: local head `{current_head}`; expected PR head "
+        f"`{checkout_status}`. Worktree preflight: local head `{current_head}`; expected PR head "
         f"`{expected_head}`. The collector did not retain a more specific cause."
     )
     handoff["remaining"][0]["next_action"] = (
@@ -302,3 +474,48 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
     (tmp_path / "final-handoff.json").write_text(json.dumps(handoff), encoding="utf-8")
 
     review_validator._validate_unavailable_final_handoff(tmp_path, metadata)
+
+
+@pytest.mark.parametrize(
+    "checkout_state",
+    [
+        pytest.param(
+            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+            id="legacy-started",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": None,
+            },
+            id="collector-succeeded-unverified",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {
+                    "command": "gh pr checkout https://github.com/Borda/AI-Rig/pull/123",
+                    "code": "github-network:local-pr-checkout",
+                    "diagnostics": {
+                        "exit_code": 1,
+                        "failure_class": "github-network",
+                        "failure_reason": "connection-reset",
+                        "label": "local-pr-checkout",
+                    },
+                },
+            },
+            id="collector-failed-gh-recovery",
+        ),
+    ],
+)
+def test_unavailable_v2_handoff_current_checkout_states_pass_both_validators(
+    tmp_path: Path, checkout_state: dict[str, object]
+) -> None:
+    """Bind rendered unavailable handoffs to legacy and current collector checkout states."""
+    result_path = _write_complete_unavailable_v2_artifact(tmp_path, checkout_state)
+    review_validator = _load_validator(CODE_REVIEW_VALIDATOR, "code_review_complete_handoff_validator")
+
+    review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+    VALIDATOR.validate("code-review", tmp_path, result_path)

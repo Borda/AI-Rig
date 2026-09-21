@@ -1,84 +1,15 @@
 #!/usr/bin/env node
-// enforce-audit-header.js — PreToolUse hook (matcher: AskUserQuestion)
-//
-// PURPOSE
-//   /foundry:audit's follow-up gate (SKILL.md §Follow-up gate, fired from Step 7)
-//   asks the user which fix level to run, quoting severity counts that Step 5's
-//   consolidator agent produces in `$RUN_DIR/summary.jsonl`. Sibling skills hit a
-//   real incident where the analogous prose-only ordering was skipped outright —
-//   no consolidator spawned, no consolidated artifact written, yet the follow-up
-//   `AskUserQuestion` (a hard tool call) still fired, so the user was asked to
-//   pick a fix level based on an ad-hoc in-context summary. This hook makes the
-//   ordering structural: while an audit run is in flight and its Step 5 aggregate
-//   is absent from disk, the follow-up gate is denied.
-//
-// WHY summary.jsonl AND NOT report.md
-//   /oss:review gates on its final report because there the report is written
-//   (Step 5) *before* the question (Step 7a). foundry:audit is inverted: the
-//   follow-up gate fires at Step 7, the fix loop runs at Steps 8–10, and
-//   `$RUN_DIR/report.md` is only written at Step 11 — after the gate, in every
-//   path (SKILL.md Step 7 → modes/fix.md line 5 → Step 11). Gating the gate on
-//   report.md would therefore deadlock the skill: the question could never fire,
-//   so Step 11 could never be reached to write the file. `summary.jsonl` is the
-//   correct analogue — it is the consolidator's output, it is what SKILL.md
-//   requires the orchestrator to read before emitting the report ("Before
-//   emitting, read current $RUN_DIR/summary.jsonl ... recompute severity
-//   totals"), and it is written at Step 5, strictly before the gate.
-//
-// WHY ONLY THE FOLLOW-UP GATE IS INSPECTED
-//   audit legitimately asks other questions while a run is in flight, before
-//   Step 5 has produced anything: the `! BREAKING` finding acknowledgment
-//   (SKILL.md <notes>, fired mid-Step-4) and the unsupported-flag prompt. A
-//   blanket deny would block those and stall the run. The follow-up gate is
-//   identified instead by its HARD RULE fixed option labels — SKILL.md mandates
-//   `Fix auto-fixable (Recommended)` and `Fix ALL` verbatim on every firing — so
-//   only that one call is gated and every other question passes through.
-//
-// HOW IT WORKS
-//   1. Inspect only PreToolUse calls for `AskUserQuestion`; everything else
-//      exits 0 with no output (passthrough).
-//   2. Resolve CSID the way SKILL.md's bash does (`${CLAUDE_CODE_SESSION_ID:-$PPID}`):
-//      env `CLAUDE_CODE_SESSION_ID` first, then the hook payload's `session_id`
-//      (same value Claude Code reports to hooks), then `process.ppid` as a
-//      best-effort stand-in for bash's `$PPID`. Candidates are tried in order;
-//      a candidate that names no sentinel simply does not match.
-//   3. Look for `${TMPDIR:-/tmp}/audit-state-<CSID>/run-dir`, written by Step 3
-//      the moment `$RUN_DIR` exists. No sentinel → allow: either no audit is
-//      running, or it has not reached Step 3 yet. This is the pre-existing
-//      sentinel — audit needed no new one, because Step 5's output path is
-//      deterministically `$RUN_DIR/summary.jsonl`.
-//   4. Sentinel present → read `$RUN_DIR` from it. make_run_dir.py is called
-//      with the relative base `.reports/audit`, so the stored path is normally
-//      relative; resolve it against the payload's `cwd` before use. Require the
-//      result to look like an audit run dir and to exist on disk.
-//   5. Question is the follow-up gate (fixed labels) and `$RUN_DIR/summary.jsonl`
-//      is missing or empty → deny, naming Step 5. Anything else → allow.
-//   6. Every can't-tell case (unreadable sentinel, implausible path, vanished
-//      run dir, stale sentinel, unexpected tool_input shape) resolves to allow.
-//
-//   KNOWN LIMITATION — stale sentinel. `audit-state-<CSID>/` is never cleaned up
-//   during a session, so a run that dies between Step 3 and Step 5 leaves the
-//   sentinel behind with no aggregate, and nothing on disk distinguishes that
-//   from a live run that skipped consolidation. Bounding on the sentinel's mtime
-//   (written once, at Step 3) caps the blast radius: past STALE_MS the gate
-//   stops firing. The label matching in step 5 above already limits collateral
-//   damage to follow-up-gate-shaped questions only.
-//   Secondary limitation: hooks are session-wide, so a subagent spawned mid
-//   audit is gated too. Audit subagents are non-interactive by contract (they
-//   write files and return envelopes), so this is intended.
-//
-//   NOT AFFECTED — `--skip-gate`. That flag suppresses the follow-up gate
-//   entirely, so no AskUserQuestion with those labels is ever emitted and there
-//   is nothing for this hook to deny. It needs no detection on disk.
-//
-// EXIT CODES
-//   0  always — passthrough (no output) or decision JSON on stdout.
-//      Deliberate deviation from the "gatekeeper crash → block" guidance in
-//      hook-authoring.md: this gate protects workflow integrity, not a security
-//      boundary. Failing closed on a hook bug would strand the session with no
-//      way to ask the user anything, while failing open merely restores the
-//      prose-only mandate. Matches sentinel-read-allow.js, which also emits a
-//      permissionDecision yet exits 0 on any internal error.
+// Enforce foundry:audit's report-delivery boundary before its workflow follow-up.
+// Only PreToolUse AskUserQuestion with this workflow's header/known labels is
+// gated. Diagnostic/recovery questions remain available. The existing
+// session sentinel, path checks, and TTL define whether this run is active.
+// Require aggregate.md, valid summary.jsonl, and current-turn delivery of the
+// audit heading, exact finding total, and every finding before the fix question.
+// Missing/unreadable delivery evidence denies the transition with a recovery
+// reason. No active sentinel, expired/implausible state, or malformed hook
+// payload passes through. Unexpected hook failures retain the legacy fail-open
+// behavior: this is a workflow guard, not a security or UI-rendering guarantee.
+// Exit 0 always; stdout is empty for passthrough or contains the denial JSON.
 
 "use strict";
 
@@ -200,10 +131,13 @@ function activeRunDir(sentinelPath, cwd, now) {
   }
 }
 
-/** True once the Step 5 consolidator has written a non-empty summary.jsonl. */
+/** True once Step 5 has written its aggregate and summary, including a valid zero-finding summary. */
 function aggregateWritten(runDir) {
   try {
-    return fs.statSync(path.join(runDir, AGGREGATE_FILENAME)).size > 0;
+    return (
+      fs.statSync(path.join(runDir, AGGREGATE_FILENAME)).isFile() &&
+      fs.statSync(path.join(runDir, "aggregate.md")).size > 0
+    );
   } catch (_) {
     return false;
   }
@@ -212,12 +146,16 @@ function aggregateWritten(runDir) {
 /**
  * True when `toolInput` is audit's follow-up gate rather than one of the other
  * questions a run legitimately asks (`! BREAKING` acknowledgment, unsupported
- * flag). Recognised by the verbatim fixed option labels; any unexpected shape
+ * flag). Recognised by the audit header or verbatim fixed option labels; any unexpected shape
  * reads as "not the gate", keeping the hook fail-open.
  */
 function isFollowUpGate(toolInput) {
   const questions = toolInput && Array.isArray(toolInput.questions) ? toolInput.questions : [];
   for (const question of questions) {
+    if (question && question.header) {
+      if (question.header === "audit") return true;
+      continue;
+    }
     const options = question && Array.isArray(question.options) ? question.options : [];
     for (const option of options) {
       const label = option && typeof option.label === "string" ? option.label.toLowerCase() : "";
@@ -238,7 +176,7 @@ function denyReason(sentinelPath, toolInput, cwd, now) {
     "findings) has not completed and the follow-up gate's severity counts have no source. Go back: spawn " +
     `the foundry:curator consolidator and let it write aggregate.md and ${AGGREGATE_FILENAME}, then read ` +
     "that summary and emit the Step 7 report. Call AskUserQuestion only after those exist. If the " +
-    "consolidator genuinely cannot run, report that failure and stop instead of asking the user."
+    "consolidator genuinely cannot run, keep this fix transition blocked; diagnostic/recovery questions remain available."
   );
 }
 
@@ -269,33 +207,20 @@ if (require.main === module) {
       const data = JSON.parse(raw);
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
+      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      if (!isWorkflowFollowUp(data.tool_input, "foundry:audit")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
       if (!sentinel) process.exit(0);
 
-      const reason = denyReason(sentinel, data.tool_input, data.cwd, Date.now());
-      if (!reason) {
-        // Additive nudge, not a deny — see report-header-table.js for why a
-        // missing table rides as additionalContext instead of blocking.
-        try {
-          const { assistantTextSinceLastUserTurn, hasHeaderTable, tableReminder } = require("./report-header-table.js");
-          const text = assistantTextSinceLastUserTurn(data.transcript_path);
-          if (text && !hasHeaderTable(text)) {
-            process.stdout.write(
-              JSON.stringify({
-                hookSpecificOutput: {
-                  hookEventName: "PreToolUse",
-                  permissionDecision: "allow",
-                  additionalContext: tableReminder("foundry:audit", "Step 11b (terminal output)"),
-                },
-              }),
-            );
-          }
-        } catch (_) {
-          // Missing/broken copy of the shared detector — fall through to plain allow.
-        }
-        process.exit(0);
+      let reason = denyReason(sentinel, data.tool_input, data.cwd, Date.now());
+      const active = activeRunDir(sentinel, data.cwd, Date.now());
+      if (!reason && active) {
+        const problem = deliveryProblem(path.join(active, AGGREGATE_FILENAME), data.transcript_path);
+        if (problem)
+          reason = "foundry:audit report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }
+      if (!reason) process.exit(0);
 
       process.stdout.write(
         JSON.stringify({

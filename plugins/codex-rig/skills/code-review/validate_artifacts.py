@@ -176,6 +176,9 @@ UNAVAILABLE_RECOVERY_ACTIONS = {
 }
 CHECKOUT_STATE_RECOVERY_SUFFIX = " Inspect the local checkout state before retrying."
 SAFE_DIAGNOSTIC_IDENTIFIER = re.compile(r"[a-z][a-z0-9-]*\Z")
+SAFE_GH_CHECKOUT_COMMAND = re.compile(
+    r"gh pr checkout https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]*\Z"
+)
 UNAVAILABLE_HUMAN_SUMMARIES = {
     "gh-pr-view": "I could not retrieve the PR metadata, so the review has not started.",
     "local-pr-checkout": "I could not check out the latest PR commit, so the review has not started.",
@@ -748,15 +751,7 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
     target = target_path.read_text(encoding="utf-8").strip() if target_path.is_file() else ""
     if not target or any(character.isspace() for character in target):
         raise SystemExit("unavailable-review-missing-pr-target")
-    checkout_state_path = out_dir / "checkout-state.json"
-    checkout_state: dict[str, object] | None = None
-    if checkout_state_path.is_file():
-        checkout_state = _load_json(checkout_state_path)
-        if checkout_state not in (
-            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
-            {"status": "checkout-command-succeeded-unverified", "local_state": "changed-or-unknown"},
-        ):
-            raise SystemExit("unavailable-review-invalid-checkout-state")
+    checkout_state = _unavailable_checkout_state(out_dir)
     findings = result.get("findings")
     expected_finding_levels = {"critical", "high", "medium", "low"}
     if (
@@ -988,17 +983,80 @@ def _unavailable_command_diagnostic(out_dir: Path, code: str) -> tuple[str, str 
     return f"Command diagnostic: `{label}` exited {exit_code} (`{failure_class}`{reason_detail}).", reason
 
 
-def _unavailable_checkout_diagnostic(out_dir: Path) -> str | None:
-    """Render the existing conservative checkout-state record without inferring a failure cause."""
+def _unavailable_checkout_state(out_dir: Path) -> dict[str, object] | None:
+    """Load one bounded collector checkout-state record while preserving legacy evidence."""
     path = out_dir / "checkout-state.json"
     if not path.is_file():
         return None
     state = _load_json(path)
-    if state not in (
-        {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
-        {"status": "checkout-command-succeeded-unverified", "local_state": "changed-or-unknown"},
+    status = state.get("status")
+    if state.get("local_state") != "changed-or-unknown":
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+    if status == "checkout-command-started":
+        if set(state) != {"status", "local_state"}:
+            raise SystemExit("unavailable-review-invalid-checkout-state")
+        return state
+    if status == "checkout-command-succeeded-unverified":
+        expected_fields = {"status", "local_state", "gh_checkout_failure"}
+        if set(state) == {"status", "local_state"}:
+            return state
+        if set(state) != expected_fields:
+            raise SystemExit("unavailable-review-invalid-checkout-state")
+        failure = state["gh_checkout_failure"]
+        if failure is not None:
+            _validate_unavailable_gh_checkout_failure(failure)
+        return state
+    if status == "gh-checkout-failed-recovery-assessment-started":
+        if set(state) != {"status", "local_state", "gh_checkout_failure"}:
+            raise SystemExit("unavailable-review-invalid-checkout-state")
+        _validate_unavailable_gh_checkout_failure(state["gh_checkout_failure"])
+        return state
+    raise SystemExit("unavailable-review-invalid-checkout-state")
+
+
+def _validate_unavailable_gh_checkout_failure(failure: object) -> None:
+    """Require credential-opaque fields from a failed local ``gh pr checkout`` command."""
+    if not isinstance(failure, dict) or set(failure) != {"command", "code", "diagnostics"}:
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+    command = failure["command"]
+    code = failure["code"]
+    diagnostics = failure["diagnostics"]
+    if (
+        not isinstance(command, str)
+        or not SAFE_GH_CHECKOUT_COMMAND.fullmatch(command)
+        or not isinstance(code, str)
+        or not re.fullmatch(r"[a-z][a-z0-9-]*(?::[A-Za-z0-9._-]+){1,2}", code)
     ):
-        raise SystemExit("unavailable-review-command-diagnostic-invalid")
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+    if diagnostics is None:
+        return
+    allowed_fields = {"exit_code", "failure_class", "failure_reason", "label"}
+    if not isinstance(diagnostics, dict) or not {"failure_class", "label"} <= set(diagnostics):
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+    if set(diagnostics) - allowed_fields:
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+    exit_code = diagnostics.get("exit_code")
+    failure_class = diagnostics["failure_class"]
+    failure_reason = diagnostics.get("failure_reason")
+    label = diagnostics["label"]
+    if (
+        (exit_code is not None and type(exit_code) is not int)
+        or not isinstance(failure_class, str)
+        or not SAFE_DIAGNOSTIC_IDENTIFIER.fullmatch(failure_class)
+        or (
+            failure_reason is not None
+            and (not isinstance(failure_reason, str) or not SAFE_DIAGNOSTIC_IDENTIFIER.fullmatch(failure_reason))
+        )
+        or label != "local-pr-checkout"
+    ):
+        raise SystemExit("unavailable-review-invalid-checkout-state")
+
+
+def _unavailable_checkout_diagnostic(out_dir: Path) -> str | None:
+    """Render only the validated fixed checkout status, never command or diagnostic payloads."""
+    state = _unavailable_checkout_state(out_dir)
+    if state is None:
+        return None
     return f"Checkout diagnostic: local worktree state is changed or unknown after `{state['status']}`."
 
 

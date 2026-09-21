@@ -39,7 +39,7 @@ def _ask_payload(**overrides: object) -> dict:
     payload: dict = {
         "hook_event_name": "PreToolUse",
         "tool_name": "AskUserQuestion",
-        "tool_input": {"questions": [{"question": "What next?"}]},
+        "tool_input": {"questions": [{"question": "What next?", "header": "topic"}]},
     }
     payload.update(overrides)
     return payload
@@ -132,12 +132,12 @@ def test_empty_report_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) ->
 
 
 @_skip_node_unavailable
-def test_written_report_passes_through(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
-    """Report present → hook stays silent and the call proceeds."""
+def test_written_report_without_delivery_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_file, _ = topic_run
     report_file.write_text("---\nResearch — efficient transformers\n---\n", encoding="utf-8")
 
-    assert _run(tmp_path, _ask_payload()) == {}
+    assert _denial_reason(_run(tmp_path, _ask_payload())) is not None
 
 
 def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
@@ -162,7 +162,7 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
     """Table already printed this turn → allow with no additionalContext nudge."""
     report_file, _ = topic_run
-    report_file.write_text("---\nResearch — efficient transformers\n---\n", encoding="utf-8")
+    report_file.write_text("---\nTitle: x\nDate: y\nMethod: z\n---\n", encoding="utf-8")
     transcript = _write_transcript(
         tmp_path, "| Field | Value |\n| --- | --- |\n| Title | x |\n| Date | y |\n| Method | z |\n"
     )
@@ -171,8 +171,8 @@ def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, topi
 
 
 @_skip_node_unavailable
-def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
-    """Raw YAML fields printed instead of a table → nudge naming research:topic."""
+def test_report_written_without_table_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_file, _ = topic_run
     report_file.write_text("---\nResearch — efficient transformers\n---\n", encoding="utf-8")
     transcript = _write_transcript(tmp_path, "Title: efficient transformers\nDate: 2026-08-08\n")
@@ -180,19 +180,19 @@ def test_report_written_without_table_in_reply_gets_reminder(tmp_path: Path, top
     result = _run(tmp_path, _ask_payload(transcript_path=str(transcript)))
 
     hook_output = result.get("hookSpecificOutput", {})
-    assert hook_output.get("permissionDecision") == "allow"
-    assert "research:topic" in hook_output.get("additionalContext", "")
+    assert hook_output.get("permissionDecision") == "deny"
+    assert "report" in hook_output.get("permissionDecisionReason", "")
 
 
 @_skip_node_unavailable
-def test_report_written_unreadable_transcript_has_no_reminder(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
-    """transcript_path pointing at a nonexistent file can't be read → fail open, no false nudge."""
+def test_report_written_unreadable_transcript_is_denied(tmp_path: Path, topic_run: tuple[Path, Path]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_file, _ = topic_run
     report_file.write_text("---\nResearch — efficient transformers\n---\n", encoding="utf-8")
 
     result = _run(tmp_path, _ask_payload(transcript_path=str(tmp_path / "missing.jsonl")))
 
-    assert result == {}
+    assert _denial_reason(result) is not None
 
 
 @_skip_node_unavailable

@@ -38,6 +38,8 @@ Run `create_run.py --skill code-remediate` per `../../shared/helper-cli-contract
 
 ### 02: Normalize input and optional report findings
 
+For an incomplete requested review, return to Code Review step 12 under existing authorization and complete its ordered artifact closure before intake. Preflight success and direct-check receipts are preliminary evidence; applicable gate failures cannot become `not-applicable` to complete the handoff. Preserve the candidate recovery's same-parent and bounded-retry conditions below; completing missing artifacts never authorizes inventing provenance or skipping source-freshness checks.
+
 Shorthand rules:
 
 - Normalize a standalone `--approve-gh` before target or report parsing: set `approve_gh=true`. Remove `--approve-gh` before invoking `collect_pr.py`; it is a skill flag, not a collector option. Never infer it from PR evidence; only direct user invocation may supply it. Repeated exact `--approve-gh` is idempotent. Reject `--approve-gh=<value>` as `approve-gh-invalid-value`.

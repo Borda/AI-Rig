@@ -92,6 +92,126 @@ def test_empty_text_is_not_detected() -> None:
     assert _call("hasHeaderTable", "") is False
 
 
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "text", ["", "| Field | Value |\n| --- | --- |\n| Title | unrelated |\n| Outcome | PASS |\n| Summary | old |"]
+)
+def test_delivery_rejects_absent_or_unrelated_table(tmp_path: Path, text: str) -> None:
+    """File presence and another report's table cannot establish this report's delivery."""
+    report = tmp_path / "report.md"
+    report.write_text("---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n", encoding="utf-8")
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
+    )
+    assert _call("deliveryProblem", str(report), str(transcript)) is not None
+
+
+@_skip_node_unavailable
+def test_delivery_accepts_bound_header(tmp_path: Path) -> None:
+    """The current complete header table permits the follow-up transition."""
+    report = tmp_path / "report.md"
+    report.write_text("---\nTitle: Current review\nOutcome: PASS\nSummary: Verified result\n---\n", encoding="utf-8")
+    text = "| Field | Value |\n| --- | --- |\n| Title | Current review |\n| Outcome | PASS |\n| Summary | Verified result |"
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
+    )
+    assert _call("deliveryProblem", str(report), str(transcript)) is None
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("saved", "delivered", "matches"),
+    [
+        pytest.param(r"C:\reports\q", "C:reportsq", False, id="path-separators-missing"),
+        pytest.param("A|B", "AB", False, id="literal-pipe-missing"),
+        pytest.param("A*B", "AB", False, id="literal-star-missing"),
+        pytest.param("A`B", "AB", False, id="literal-backtick-missing"),
+        pytest.param(r"C:\reports\q", r"C:\reports\q", True, id="literal-path-delivered"),
+        pytest.param("A|B", r"A\|B", True, id="table-pipe-escaped"),
+    ],
+)
+def test_delivery_preserves_literal_header_values(tmp_path: Path, saved: str, delivered: str, matches: bool) -> None:
+    """Formatting tolerance cannot equate different paths or erase literal header characters."""
+    report = tmp_path / "report.md"
+    report.write_text(f"---\nTitle: Current\nOutcome: PASS\nPath: {saved}\n---\n", encoding="utf-8")
+    text = f"| Field | Value |\n| --- | --- |\n| Title | Current |\n| Outcome | PASS |\n| Path | {delivered} |"
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
+    )
+    problem = _call("deliveryProblem", str(report), str(transcript))
+    if matches:
+        assert problem is None
+    else:
+        assert (
+            problem
+            == "current report header was not delivered; print every header field as a table before following up"
+        )
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    ("delivered", "matches"),
+    [
+        pytest.param("AB", False, id="audit-pipe-missing"),
+        pytest.param("A|B", True, id="audit-literal-pipe"),
+        pytest.param(r"A\|B", True, id="audit-table-pipe-escaped"),
+    ],
+)
+def test_audit_delivery_preserves_literal_finding(tmp_path: Path, delivered: str, matches: bool) -> None:
+    """Audit findings retain literal punctuation rather than accepting a different description."""
+    report = tmp_path / "summary.jsonl"
+    report.write_text(json.dumps({"sev": "high", "one_line": "A|B"}) + "\n", encoding="utf-8")
+    text = f"## Audit Report\nTotal: 1\n{delivered}"
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
+    )
+    problem = _call("deliveryProblem", str(report), str(transcript))
+    if matches:
+        assert problem is None
+    else:
+        assert problem == "current audit findings were not delivered; emit Step 7 before following up"
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "skill", ["oss:review", "oss:analyse", "develop:review", "research:topic", "foundry:profile", "foundry:audit"]
+)
+def test_recovery_question_is_not_a_follow_up(skill: str) -> None:
+    """Missing report delivery must not prevent asking how to recover the producer."""
+    question = {
+        "questions": [
+            {"question": "The producer failed. Retry or stop?", "options": [{"label": "Retry"}, {"label": "Stop"}]}
+        ]
+    }
+    assert _call("isWorkflowFollowUp", question, skill) is False
+
+
+@_skip_node_unavailable
+@pytest.mark.parametrize(
+    "skill", ["oss:review", "oss:analyse", "develop:review", "research:topic", "foundry:profile", "foundry:audit"]
+)
+def test_unrelated_what_next_is_not_a_follow_up(skill: str) -> None:
+    """A generic question cannot activate a different workflow's report gate."""
+    question = {
+        "questions": [
+            {"question": "What next?", "header": "Recovery", "options": [{"label": "Retry"}, {"label": "Stop"}]}
+        ]
+    }
+    assert _call("isWorkflowFollowUp", question, skill) is False
+
+
+@_skip_node_unavailable
+def test_raw_fields_plus_unrelated_table_do_not_prove_delivery(tmp_path: Path) -> None:
+    """Header fields must occur as rows in one matching table, not elsewhere in prose."""
+    report = tmp_path / "report.md"
+    report.write_text("---\nTitle: Current\nOutcome: PASS\nSummary: Verified\n---\n", encoding="utf-8")
+    text = "Title Current Outcome PASS Summary Verified\n| Field | Value |\n| --- | --- |\n| Title | Other |\n| Outcome | PASS |\n| Summary | Stale |"
+    transcript = _write_transcript(
+        tmp_path, [{"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}}]
+    )
+    assert _call("deliveryProblem", str(report), str(transcript)) is not None
+
+
 # ── assistantTextSinceLastUserTurn ─────────────────────────────────────────
 
 

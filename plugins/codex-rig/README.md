@@ -4,11 +4,13 @@ Codex Rig is OpenAI Codex product in [Borda's AI-Rig](https://github.com/Borda/A
 
 Calibration measures instruction quality against synthetic cases. It is not evidence that any individual run is correct.
 
+Review completion requires the full ordered closure after manifest preflight: render the handoff, write the candidate, pass review-specific and shared validation, promote the result, then pass the completion lookup before emitting its bound output. `+review` can discover the result after that closure succeeds; notes and unpromoted candidates remain ineligible. A failed applicable check remains failed until an equivalent canonical rerun succeeds; a launcher failure or direct-check receipt cannot justify `not-applicable`. Incomplete reviews resume at the first unmet checkpoint with retained evidence.
+
 Selected read-only review passes run concurrently by default and may inspect the same source files. The parent keeps the snapshot stable and coordinates checkout, writes, and final gates; reports distinguish observed parallelism from capacity-limited or explicitly requested serial execution. PR receipt validation accepts the collector's actual supported checkout route while retaining commit-identity and provenance checks.
 
 The package covers capabilities Codex can currently install and verify. It contains no MCP server and no native bundled agent registrations. Parallel work uses runtime blank agent with exact role card injected when that route is available; inline role pass is serial fallback. Persistent named-agent routing remains platform-blocked until Codex exposes verifiable custom-agent selector. The split schema, approval allowlist, synchronization gates, runtime evidence, telemetry, fallback, and promotion lifecycle are defined in [`ARCHITECTURE.md`](https://github.com/Borda/AI-Rig/blob/main/plugins/codex-rig/ARCHITECTURE.md).
 
-> Current release: `0.20.0`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
+> Current release: `0.21.1`. Codex Rig is peer product to foundry, oss, develop, research, and codemap-py—not copy of repository's `.codex/` configuration.
 
 <details markdown="1">
 <summary><strong>📋 Contents</strong></summary>
@@ -390,7 +392,9 @@ Paid live A/B calibration is separate, explicit, and never implied by offline re
 
 ## 🧾 Approval prompts and commit handoffs
 
-Explicit local review intake validates canonical `result.json` with both existing artifact validators before remediation consumes it. Metadata-only, draft, altered-evidence, and differently named local files fail closed; PR-only automatic discovery is unchanged. For a different producer session, the finder accepts the existing `--parent-thread-id` and `--codex-home` evidence-location options without bypassing provenance checks. Its default validation context remains the current runtime.
+Explicit local and PR review intake validates canonical `result.json` with both artifact validators before remediation consumes it. Metadata-only, draft, altered-evidence, and differently named files fail closed. Automatic discovery remains PR-only and validates its selected result before returning it. PR intake defaults to the recorded producer thread, not the consuming session; `--parent-thread-id` and `--codex-home` overrides never bypass provenance checks. Local completion retains current runtime defaults.
+
+Same-directory gate reruns archive prior runner-owned evidence under `gate-attempts/<NNN>` before executing. A failed, timed-out, or missing-command check cannot become skipped; re-execute it through the canonical runner. Unreadable or incomplete prior evidence blocks overwrite and requires diagnosis.
 
 New final handoffs use `presentation_version=2`: plain-English explanation first, no empty Results section, one concise line for checks not run, and each recovery action shown once. Unavailable review explanations bind actual collector failure to retained safe command and checkout evidence; missing cause details stay explicitly unknown. Machine records remain complete, historical rendered bytes stay unchanged, and explicitly requested exact caller output is preserved.
 
@@ -555,6 +559,8 @@ NO_MKDOCS_2_WARNING=1 python3 -m mkdocs build --strict
 ```
 
 On Windows, use `python` in place of `python3`; `build_package.py --check`, package validation, calibration, and tests are native. Authoritative manifest regeneration (`--update`) remains POSIX-only because released mode bits are part of package contract.
+
+The repository's `codex-rig-changelog-version` pre-commit hook requires an exact `## <version>` heading in `CHANGELOG.md` for the current `.codex-plugin/plugin.json` version. The heading may appear anywhere; the hook checks presence, not release-note content. This guard is pre-commit-only, not part of package validation or pytest.
 
 The package is accepted only when generated manifest is current, every recorded file hash matches, plugin-only copied-tree tests pass, lifecycle safety tests pass, Windows collection and path behavior pass, offline calibration harness passes, and public documentation builds without warnings.
 

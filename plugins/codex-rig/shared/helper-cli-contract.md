@@ -45,9 +45,11 @@ Result lifecycle:
 3. `write-result.py` writes schema-v2 `result.candidate.json`, reconciles status with gate evidence, requires final-handoff binding in metadata.
 4. Run configured skill-specific validation.
 5. `validate-artifacts.py` validates shared and skill-specific artifact contract, reruns `final_handoff.py check`, reconciles handoff with gates, confidence, workflow evidence.
-6. Rename only validated candidate to `result.json`, then emit validated `final.md` bytes verbatim.
+6. Rename only validated candidate to `result.json`. For code-review, complete the lookup below before emitting any final bytes; other artifact workflows emit validated `final.md` bytes verbatim.
 
 For code-review, step 6 finishes through `find-review-report.py --complete-run <run-directory>`: both artifact validators rerun against canonical promoted result; assessed PR lookup must select that exact result before any final bytes are emitted. A failed handoff starts with plain-English explanation of incomplete operation, then its exact process status, retained evidence, specific next action—not normal assessed-final verdict or bare blocker code. This command is read-only, does not repair or promote candidates; caller owns permitted diagnosis and evidence-backed recovery.
+
+Review intake through `--target` or `--result` also reruns both artifact validators before returning the canonical artifact path. PR intake uses its recorded producer thread by default; an explicit producer override remains validated. Discovery metadata alone never makes a report actionable, including historical reports whose supported schema still must pass its validators.
 
 Never hand-write `result.json`, promote unvalidated candidate, manually reconstruct validated final text, or infer flags from stale examples. See `final-handoff-contract.md`.
 

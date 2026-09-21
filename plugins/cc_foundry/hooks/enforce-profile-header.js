@@ -1,85 +1,15 @@
 #!/usr/bin/env node
-// enforce-profile-header.js — PreToolUse hook (matcher: AskUserQuestion)
-//
-// PURPOSE
-//   /foundry:profile must print the report's `---` YAML header block plus the
-//   `→ $REPORT_DIR/report.md` path to the terminal (SKILL.md Step 4) before
-//   Step 5's follow-up `AskUserQuestion` fires. That ordering was a prose-only
-//   mandate — and profile carries it with weaker scaffolding than its siblings:
-//   its single tracked task covers "run analyzer + render report" as a whole, so
-//   nothing structural distinguishes a run that printed the header from one that
-//   jumped straight to the question. A sibling skill (/oss:review) hit exactly
-//   that incident: no report written, no header printed, yet the follow-up
-//   `AskUserQuestion` (a hard tool call) still fired and the user was asked to
-//   choose a drill-down from an ad-hoc in-context summary. This hook makes the
-//   ordering structural: while a profile run is in flight and its report is
-//   absent from disk, `AskUserQuestion` is denied.
-//
-// WHAT THIS GATE DOES AND DOES NOT PROVE
-//   It proves the artifact Step 4 must read actually exists. It cannot prove the
-//   header was pasted into the response — no hook observes assistant text. The
-//   failure mode it removes is the expensive one (question asked with no report
-//   behind it at all); printing from a report that demonstrably exists stays a
-//   prose mandate, backed by the deny reason naming Step 4 explicitly.
-//
-// WHY report.md AND NOT result.jsonl
-//   Step 2 writes `$REPORT_DIR/report.md` (the analyzer's `--output`), Step 3
-//   writes `result.jsonl`, Step 4 prints, Step 5 asks. Both artifacts precede the
-//   question, so either would work as a marker; report.md is the file Step 4 is
-//   required to read and the one whose absence makes the print impossible, which
-//   makes it the honest thing to gate on and the actionable thing to name.
-//
-// ANALYZER-FOUND-NOTHING PATH IS DENIED BY DESIGN
-//   `timing_analyzer.py` exits 1 without writing report.md when no session falls
-//   in the window. SKILL.md Step 2 requires the run to "surface that and stop" —
-//   no follow-up question is authorised on that path — so denying it matches the
-//   skill contract rather than fighting it. The deny reason says as much: report
-//   the failure and stop instead of asking.
-//
-// HOW IT WORKS
-//   1. Inspect only PreToolUse calls for `AskUserQuestion`; everything else
-//      exits 0 with no output (passthrough).
-//   2. Resolve CSID the way SKILL.md's bash does (`${CLAUDE_CODE_SESSION_ID:-$PPID}`):
-//      env `CLAUDE_CODE_SESSION_ID` first, then the hook payload's `session_id`
-//      (same value Claude Code reports to hooks), then `process.ppid` as a
-//      best-effort stand-in for bash's `$PPID`. Candidates are tried in order;
-//      a candidate that names no sentinel simply does not match.
-//   3. Look for `${TMPDIR:-/tmp}/foundry-profile-state-<CSID>`, written by Step 1
-//      the moment `$REPORT_DIR` exists. No sentinel → allow: either no profile is
-//      running, or it has not reached Step 1 yet, so every other skill's
-//      questions stay unblocked.
-//   4. Sentinel present → parse `REPORT_DIR` out of it. Unlike the flat one-path
-//      sentinels other skills write, this file is a shell fragment of `KEY=VALUE`
-//      lines (`REPORT_DIR`, `SINCE`, `SESSION_ID`, `TOP_N`) that Steps 2–3
-//      re-source with `.`. It is parsed line-wise, never executed. Step 1 builds
-//      the relative `.reports/profile/$STAMP`, so the stored value is normally
-//      relative; resolve it against the payload's `cwd` before use, then require
-//      it to look like a profile report dir and to exist on disk.
-//   5. `$REPORT_DIR/report.md` present and non-empty → allow. Missing or empty →
-//      deny, naming Step 2 / Step 4 in the reason.
-//   6. Every can't-tell case (unreadable sentinel, no `REPORT_DIR` line,
-//      implausible path, vanished report dir, stale sentinel) resolves to allow.
-//
-//   KNOWN LIMITATION — stale sentinel. The state file is never cleaned up during
-//   a session, so a run that dies between Step 1 and Step 2 leaves it behind with
-//   no report, and nothing on disk distinguishes that from a live run that
-//   skipped the print. Bounding on the sentinel's mtime (written once, at Step 1)
-//   caps the blast radius: past STALE_MS the gate stops firing, so a session can
-//   never be permanently unable to ask a question. The reverse cost — a profile
-//   still running after STALE_MS loses enforcement — only restores the pre-hook
-//   status quo.
-//   Secondary limitation: hooks are session-wide, so a subagent spawned mid
-//   profile is gated too. profile spawns none (it is a pure log read: three Bash
-//   calls, one Read, one Write), so nothing is affected in practice.
-//
-// EXIT CODES
-//   0  always — passthrough (no output) or decision JSON on stdout.
-//      Deliberate deviation from the "gatekeeper crash → block" guidance in
-//      hook-authoring.md: this gate protects workflow integrity, not a security
-//      boundary. Failing closed on a hook bug would strand the session with no
-//      way to ask the user anything, while failing open merely restores the
-//      prose-only mandate. Matches sentinel-read-allow.js, which also emits a
-//      permissionDecision yet exits 0 on any internal error.
+// Enforce foundry:profile's report-delivery boundary before its workflow follow-up.
+// Only PreToolUse AskUserQuestion with this workflow's header/known labels is
+// gated. Diagnostic/recovery questions remain available. The existing
+// session sentinel, path checks, and TTL define whether this run is active.
+// Require a nonempty report and delivery of its complete matching header table
+// in the parent's transcript before the follow-up; a mere file is insufficient.
+// Missing/unreadable delivery evidence denies the transition with a recovery
+// reason. No active sentinel, expired/implausible state, or malformed hook
+// payload passes through. Unexpected hook failures retain the legacy fail-open
+// behavior: this is a workflow guard, not a security or UI-rendering guarantee.
+// Exit 0 always; stdout is empty for passthrough or contains the denial JSON.
 
 "use strict";
 
@@ -279,33 +209,20 @@ if (require.main === module) {
       const data = JSON.parse(raw);
       if (data.hook_event_name && data.hook_event_name !== "PreToolUse") process.exit(0);
       if (data.tool_name !== "AskUserQuestion") process.exit(0);
+      const { isWorkflowFollowUp, deliveryProblem } = require("./report-header-table.js");
+      if (!isWorkflowFollowUp(data.tool_input, "foundry:profile")) process.exit(0);
 
       const sentinel = findSentinel(sentinelDir(), csidCandidates(process.env, data, process.ppid));
       if (!sentinel) process.exit(0);
 
-      const reason = denyReason(sentinel, data.cwd, Date.now());
-      if (!reason) {
-        // Additive nudge, not a deny — see report-header-table.js for why a
-        // missing table rides as additionalContext instead of blocking.
-        try {
-          const { assistantTextSinceLastUserTurn, hasHeaderTable, tableReminder } = require("./report-header-table.js");
-          const text = assistantTextSinceLastUserTurn(data.transcript_path);
-          if (text && !hasHeaderTable(text)) {
-            process.stdout.write(
-              JSON.stringify({
-                hookSpecificOutput: {
-                  hookEventName: "PreToolUse",
-                  permissionDecision: "allow",
-                  additionalContext: tableReminder("foundry:profile", "Step 4b (print report header)"),
-                },
-              }),
-            );
-          }
-        } catch (_) {
-          // Missing/broken copy of the shared detector — fall through to plain allow.
-        }
-        process.exit(0);
+      let reason = denyReason(sentinel, data.cwd, Date.now());
+      const active = activeReportDir(sentinel, data.cwd, Date.now());
+      if (!reason && active) {
+        const problem = deliveryProblem(path.join(active, REPORT_FILENAME), data.transcript_path);
+        if (problem)
+          reason = "foundry:profile report gate — " + problem + ". Diagnostic/recovery questions remain available.";
       }
+      if (!reason) process.exit(0);
 
       process.stdout.write(
         JSON.stringify({

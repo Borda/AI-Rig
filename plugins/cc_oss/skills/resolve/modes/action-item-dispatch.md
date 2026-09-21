@@ -247,7 +247,7 @@ fi
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
 - Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN, same as the C1 missing-element rule above; never append that item to `CHALLENGE_LOG` on this pass. Re-dispatch it alone (single-item challenge call, same domain) once; still empty on retry → append with `evidence_why="challenge agent returned no rationale after retry"` rather than an empty field — SKILL.md's render must never receive an empty `suggestion_why`/`evidence_why` to fabricate filler for.
-- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <evidence_rationale>`; set type `[challenged:reject]`; append to `CHALLENGE_LOG`: `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=REJECT evidence_why=<evidence_rationale> suggestion=— suggestion_why=— resolution=rejected detail=<evidence_rationale>`; drop from `SURVIVING_ITEMS`
+- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <evidence_rationale>`; set type `[challenged:reject]`; append to `CHALLENGE_LOG`: `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=REJECT evidence_why=<evidence_rationale> suggestion=— suggestion_why=— resolution=rejected detail=<evidence_rationale>`; drop from `SURVIVING_ITEMS`; close its task — rejected item never reaches Phase 2/3, the only other place a `TaskUpdate` runs. The append block below prints the task id to dispose; call `TaskUpdate(status="deleted")` on it.
 - `evidence=VALID` + `suggestion=VALID` → `SUGGESTION_VERDICT[id]=VALID`; use original suggestion for implementation
 - `evidence=VALID` + `suggestion=REJECT` → `SUGGESTION_VERDICT[id]=REJECT`; self-resolve using `alternative` as guidance
 
@@ -260,6 +260,13 @@ _REC="<record: id=… finding=… evidence=… evidence_why=… suggestion=… s
 case "$_REC" in "<record:"*|"") echo "! BLOCKED — _REC still holds the placeholder; substitute the verdict record before running"; exit 1 ;; esac
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b/prelude never ran"; exit 1; }
 printf '%s\n' "$_REC" >> "$IMPL_DIR/challenge-log.txt"  # timeout: 3000
+# evidence=REJECT → this item stops here; print its task id so the caller can dispose it (see bullet above)
+case "$_REC" in *"evidence=REJECT"*)
+    _ID=$(printf '%s\n' "$_REC" | sed -n 's/^id=\([0-9]*\).*/\1/p')
+    _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+    echo "TaskUpdate target (deleted): item=$_ID task=$_TID"  # timeout: 3000
+    ;;
+esac
 ```
 
 Append every surviving item's verdict (one line per item — the file is the log, no in-context copy): `id=<id> finding=<full_comment_text, truncate ~80 chars> evidence=VALID evidence_why=<evidence_rationale> suggestion=<VALID|REJECT> suggestion_why=<suggestion_rationale> resolution=<as-suggested|self-resolved> detail=<when suggestion=REJECT: the `alternative`text — what gets implemented instead; when suggestion=VALID: leave as`pending-impl:<id>`, Step 11 backfills it from the item's actual commit summary once Phase 2 lands, so the report never prints a bare label with no stated content>`. Items with `evidence=VALID` form `SURVIVING_ITEMS`.
@@ -303,7 +310,7 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 
 > **Health monitoring**: parallel foreground dispatch — same rule as any multi-agent fan-out (CLAUDE.md §6). No response from a group within ~15 min → surface partial results from the groups that did return; mark the stalled group ⏱, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
 
-Parse each group's JSON: `commits` entries feed Phase 3's merge plan; `skipped` entries record `skipped — <reason>` (no empty commit, no cherry-pick attempt).
+Parse each group's JSON: `commits` entries feed Phase 3's merge plan; `skipped` entries record `skipped — <reason>` (no empty commit, no cherry-pick attempt) and append `item_id\treason` to `$IMPL_DIR/skipped-items.txt` — durable record so the close-out below survives a compaction between here and Phase 3.
 
 ### Phase 3: Merge-back — sequential, orchestrator-owned
 
@@ -359,7 +366,19 @@ if COMMIT_MODE == "each" or COMMIT_MODE == "stage":
     TaskUpdate(task_id=<item.task_id>, status="completed")
 ```
 
-No commit for an item (it was in Phase 2's `skipped` list) → record the agent's reason; do NOT create an empty commit or add it to `PLAN_FILE`.
+No commit for an item (it was in Phase 2's `skipped` list) → record the agent's reason; do NOT create an empty commit or add it to `PLAN_FILE`. Close its task now, same terminal status as REJECT (no implementation landed):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+while IFS=$'\t' read -r item_id _reason; do
+    case "$item_id" in "") continue ;; esac
+    _TID=$(awk -F'\t' -v id="$item_id" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+    echo "TaskUpdate target (deleted): item=$item_id task=$_TID"  # timeout: 3000
+done < "$IMPL_DIR/skipped-items.txt"
+```
+
+Call `TaskUpdate(task_id=<printed task id>, status="deleted")` per line above.
 
 Cleanup — remove each specialist worktree once all its commits are cherry-picked, then release the resolve mutex (recompute the deterministic lock path — the entry-block shell var is gone by this separate bash call):
 
@@ -432,12 +451,18 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" \
 
 Commit subject format: `<topic>: <combined summary of items in group>` (≤72 chars total; truncate combined summary with `…` if needed). One commit per unique topic. Print `→ Committed group "<topic>" — items <ids>` after each commit.
 
-After each successful group commit, flip the tasks for that group to completed:
+After each successful group commit, flip the tasks for that group to completed — task id from `item-tasks.tsv`, never from memory (same rule as `:353`, a compaction since Step 3e would have dropped `SELECTED_ITEMS[item_id].task_id`):
 
-```text
-for each item_id in GROUP_IDS:
-    TaskUpdate(task_id=<SELECTED_ITEMS[item_id].task_id>, status="completed")
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+for item_id in "${GROUP_IDS[@]}"; do
+    _TID=$(awk -F'\t' -v id="$item_id" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+    echo "TaskUpdate target: item=$item_id task=$_TID"  # timeout: 3000
+done
 ```
+
+Call `TaskUpdate(task_id=<printed task id>, status="completed")` per line above.
 
 **After loop — `COMMIT_MODE=all` only**: derive counters from `CHALLENGE_LOG`, create single commit:
 
@@ -453,12 +478,21 @@ SUMMARIES_FILE=""
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_all_items.py" "$PR_REF" "$N_AS_SUGGESTED" "$N_SELF_RESOLVED" "$N_REJECTED" "$SUMMARIES_FILE" $( [ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "--codex" )  # timeout: 10000
 ```
 
-After the commit succeeds, flip all staged items to completed (deferred from per-item loop body where commit had not yet happened):
+After the commit succeeds, flip all staged items to completed (deferred from per-item loop body where commit had not yet happened) — excludes ids already closed above (REJECT, `skipped-items.txt`); task id from `item-tasks.tsv`, never from memory:
 
-```text
-for each item in SELECTED_ITEMS where status != "skipped":
-    TaskUpdate(task_id=<item.task_id>, status="completed")
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+_SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
+_REJECTED_IDS=$(grep 'evidence=REJECT' "$IMPL_DIR/challenge-log.txt" 2>/dev/null | sed -n 's/^id=\([0-9]*\).*/\1/p')
+while IFS=$'\t' read -r item_id task_id; do
+    case "$item_id" in "") continue ;; esac
+    { printf '%s\n' "$_SKIPPED_IDS" "$_REJECTED_IDS" | grep -qx "$item_id"; } && continue  # already closed
+    echo "TaskUpdate target: item=$item_id task=$task_id"  # timeout: 3000
+done < "$IMPL_DIR/item-tasks.tsv"
 ```
+
+Call `TaskUpdate(task_id=<printed task id>, status="completed")` per surviving line.
 
 ## Step 8 — design scope & residual limitations
 

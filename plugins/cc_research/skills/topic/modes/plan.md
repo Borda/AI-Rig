@@ -60,6 +60,14 @@ Return ONLY a compact JSON envelope on your final line — nothing else after it
 Read both files (research findings from P1 + codebase analysis from P2). Produce phased plan, write to `$PLAN_OUT` (resolved path from P1 bash block):
 
 ```markdown
+---
+Title: Research Plan — [method name]
+Topic: [original arguments]
+Outcome: [ready / needs work]
+Summary: [phase count, task count, top risk]
+Path: [resolved PLAN_OUT]
+---
+
 ## Implementation Roadmap: [method name]
 Topic: [original $ARGUMENTS]
 
@@ -99,7 +107,7 @@ Topic: [original $ARGUMENTS]
 
 TaskUpdate "Print report header" → `in_progress`.
 
-Print compact terminal summary — MANDATORY, same turn as the write above; TaskUpdate "Print report header" → `completed` only once it has actually appeared in this response. **Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies SKILL.md's Follow-up gate call while `$PLAN_OUT` (sentinel path from P1) is missing or empty. The hook sees only whether the plan file exists, not whether the print happened; the task above remains the check for the print itself.
+Read `$PLAN_OUT` and render every `---` header field as a two-column `Field | Value` table in file order. Print the compact summary below in the same turn, then TaskUpdate "Print report header" → `completed`. The topic hook blocks only the workflow follow-up until the saved header matches the current parent-visible table. Diagnostic/recovery questions remain available; unreadable delivery evidence does not authorize the follow-up.
 
 ```text
 ---

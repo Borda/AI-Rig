@@ -179,12 +179,12 @@ def test_empty_aggregate_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, 
 
 
 @_skip_node_unavailable
-def test_written_aggregate_passes_through(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
-    """Consolidator output present → hook stays silent and the gate proceeds."""
+def test_written_aggregate_without_delivery_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
+    """Consolidator output alone does not establish user delivery."""
     run_dir, _, cwd = audit_run
     (run_dir / "summary.jsonl").write_text('{"file":"a.md","sev":"high"}\n', encoding="utf-8")
 
-    assert _run(tmp_path, _gate_payload(cwd=cwd)) == {}
+    assert _denial_reason(_run(tmp_path, _gate_payload(cwd=cwd))) is not None
 
 
 def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
@@ -199,24 +199,44 @@ def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
 
 
 @_skip_node_unavailable
-def test_aggregate_written_with_table_in_reply_has_no_reminder(
-    tmp_path: Path, audit_run: tuple[Path, Path, str]
+@pytest.mark.parametrize("count", [0, 1])
+def test_current_aggregate_delivered_before_follow_up(
+    tmp_path: Path, audit_run: tuple[Path, Path, str], count: int
 ) -> None:
-    """Table already printed this turn → allow with no additionalContext nudge."""
+    """A valid empty audit or its actual findings can advance after Step 7 delivery."""
     run_dir, _, cwd = audit_run
-    (run_dir / "summary.jsonl").write_text('{"file":"a.md","sev":"high"}\n', encoding="utf-8")
+    finding = {"file": "a.md", "sev": "high", "one_line": "Missing reference"}
+    (run_dir / "summary.jsonl").write_text(json.dumps(finding) + "\n" if count else "", encoding="utf-8")
+    (run_dir / "aggregate.md").write_text("Consolidation complete.\n", encoding="utf-8")
     transcript = _write_transcript(
-        tmp_path, "| Field | Value |\n| --- | --- |\n| Title | x |\n| Scope | y |\n| Outcome | z |\n"
+        tmp_path, f"## Audit Report\nTotal: {count}\n" + ("Missing reference" if count else "No findings.")
     )
 
     assert _run(tmp_path, _gate_payload(cwd=cwd, transcript_path=str(transcript))) == {}
 
 
 @_skip_node_unavailable
-def test_aggregate_written_without_table_in_reply_gets_reminder(
+def test_tagged_follow_up_requires_aggregate_even_without_legacy_labels(
     tmp_path: Path, audit_run: tuple[Path, Path, str]
 ) -> None:
-    """Raw YAML fields printed instead of a table → nudge naming Step 11b."""
+    """The explicit workflow header must not bypass consolidation for a zero-finding summary."""
+    run_dir, _, cwd = audit_run
+    (run_dir / "summary.jsonl").touch()
+    transcript = _write_transcript(tmp_path, "## Audit Report\nTotal: 0\nNo findings.")
+    payload = _gate_payload(cwd=cwd, transcript_path=str(transcript))
+    payload["tool_input"] = {"questions": [{"header": "audit", "question": "What next?"}]}
+
+    reason = _denial_reason(_run(tmp_path, payload))
+
+    assert reason is not None
+    assert "Step 5" in reason
+
+
+@_skip_node_unavailable
+def test_aggregate_written_without_findings_in_reply_is_denied(
+    tmp_path: Path, audit_run: tuple[Path, Path, str]
+) -> None:
+    """An unrelated summary cannot authorize the audit follow-up."""
     run_dir, _, cwd = audit_run
     (run_dir / "summary.jsonl").write_text('{"file":"a.md","sev":"high"}\n', encoding="utf-8")
     transcript = _write_transcript(tmp_path, "Title: audit\nOutcome: NEEDS_ATTENTION\n")
@@ -224,21 +244,19 @@ def test_aggregate_written_without_table_in_reply_gets_reminder(
     result = _run(tmp_path, _gate_payload(cwd=cwd, transcript_path=str(transcript)))
 
     hook_output = result.get("hookSpecificOutput", {})
-    assert hook_output.get("permissionDecision") == "allow"
-    assert "Step 11b" in hook_output.get("additionalContext", "")
+    assert hook_output.get("permissionDecision") == "deny"
+    assert "report gate" in hook_output.get("permissionDecisionReason", "")
 
 
 @_skip_node_unavailable
-def test_aggregate_written_unreadable_transcript_has_no_reminder(
-    tmp_path: Path, audit_run: tuple[Path, Path, str]
-) -> None:
-    """transcript_path pointing at a nonexistent file can't be read → fail open, no false nudge."""
+def test_aggregate_written_unreadable_transcript_is_denied(tmp_path: Path, audit_run: tuple[Path, Path, str]) -> None:
+    """Unverifiable delivery cannot authorize the audit follow-up."""
     run_dir, _, cwd = audit_run
     (run_dir / "summary.jsonl").write_text('{"file":"a.md","sev":"high"}\n', encoding="utf-8")
 
     result = _run(tmp_path, _gate_payload(cwd=cwd, transcript_path=str(tmp_path / "missing.jsonl")))
 
-    assert result == {}
+    assert _denial_reason(result) is not None
 
 
 @_skip_node_unavailable

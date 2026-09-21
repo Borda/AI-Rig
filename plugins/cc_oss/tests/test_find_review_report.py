@@ -27,9 +27,11 @@ def _write_report(root: Path, run_id: str, pr: str, gate: str = "", mtime: int |
     """Create a review report for ``pr`` under its ``run_id`` run directory, with an optional ``Gate:`` line."""
     report = root / ".reports/review" / f"pr-{pr}" / run_id / "review-report.md"
     report.parent.mkdir(parents=True, exist_ok=True)
-    body = f"# Review\nPR: #{pr}\n"
+    body = f"---\nTitle: Review\nPR: #{pr}\n"
     if gate:
         body += f"Gate: {gate}\n"
+    outcome = "N/A — rejected at gate" if gate.startswith("REJECT_") else "NEEDS_WORK"
+    body += f"Outcome: {outcome}\nSummary: Reviewed the change.\n---\n"
     report.write_text(body, encoding="utf-8")
     if mtime is not None:
         os.utime(report, (mtime, mtime))
@@ -148,6 +150,22 @@ def test_main_allows_when_no_report(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert frr.main(["--pr", "42"]) == 0
 
 
+@pytest.mark.parametrize("gate", ["", "PENDING", "PASSING"])
+def test_incomplete_latest_report_cannot_clear_prior_rejection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, gate: str
+) -> None:
+    """Stop intake before an unfinished publication can replace the standing decision."""
+    monkeypatch.chdir(tmp_path)
+    _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
+    _write_report(tmp_path, "run-002", "42", gate=gate)
+    selected = tmp_path / "selected.txt"
+    selected.write_text("stale report path", encoding="utf-8")
+
+    assert frr.main(["--pr", "42", "--path-out", str(selected)]) == 1
+    assert "incomplete-review-report" in capsys.readouterr().out
+    assert selected.read_text(encoding="utf-8") == ""
+
+
 @pytest.mark.parametrize("gate", ["PASS", "BLOCK"])
 def test_main_allows_non_reject_gates(gate: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``PASS`` and ``BLOCK`` are ordinary findings, not premise problems."""
@@ -235,17 +253,28 @@ def test_path_out_written_before_reject_block(
     capsys.readouterr()
 
 
-def test_path_out_unwritable_does_not_break_gate(
+def test_path_out_unwritable_blocks_stale_consumption(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    """The verdict is load-bearing; a sentinel write failure must not change it, only warn on stderr.
-
-    A silent failure would leave the caller trusting whatever stale sentinel an earlier run wrote.
-    """
+    """Failed publication must stop a consumer from trusting an earlier run's sentinel."""
     monkeypatch.chdir(tmp_path)
     _write_report(tmp_path, "run-001", "42", gate="PASS")
     unwritable = tmp_path / "missing-dir" / "sentinel"
-    assert frr.main(["--pr", "42", "--path-out", str(unwritable)]) == 0
+    assert frr.main(["--pr", "42", "--path-out", str(unwritable)]) == 1
     captured = capsys.readouterr()
-    assert "no restriction" in captured.out
+    assert "no restriction" not in captured.out
     assert "could not write --path-out" in captured.err
+
+
+def test_explicit_incomplete_report_blocks(tmp_path: Path) -> None:
+    """Report-only intake must not bypass the same publication check as PR intake."""
+    report = _write_report(tmp_path, "run-001", "42")
+    assert frr.main(["--report", str(report)]) == 1
+
+
+def test_newest_unpublished_run_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An allocated but unfinished newest run cannot resurrect an older completed decision."""
+    monkeypatch.chdir(tmp_path)
+    _write_report(tmp_path, "run-001", "42", gate="PASS")
+    (tmp_path / ".reports/review/pr-42/run-002").mkdir()
+    assert frr.main(["--pr", "42"]) == 1

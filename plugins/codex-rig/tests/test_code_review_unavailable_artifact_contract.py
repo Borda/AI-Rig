@@ -13,6 +13,16 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REVIEW_VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
 SHARED_VALIDATOR_PATH = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
 GATE_IDS = ("lint", "format", "types", "tests", "review")
+GH_CHECKOUT_FAILURE = {
+    "command": "gh pr checkout https://github.com/Borda/AI-Rig/pull/123",
+    "code": "github-network:local-pr-checkout",
+    "diagnostics": {
+        "exit_code": 1,
+        "failure_class": "github-network",
+        "failure_reason": "connection-reset",
+        "label": "local-pr-checkout",
+    },
+}
 
 
 def _load_module(path: Path, name: str) -> object:
@@ -31,7 +41,7 @@ def _write_unavailable_artifact(
     finding_table: bool = False,
     extra_result: dict[str, object] | None = None,
     extra_notes: str = "",
-    checkout_started: bool = False,
+    checkout_state: dict[str, object] | None = None,
 ) -> Path:
     """Write the smallest terminal PR-collection artifact accepted by both validators."""
     for gate_id in GATE_IDS:
@@ -55,13 +65,10 @@ def _write_unavailable_artifact(
     )
     (out_dir / "pr-error.txt").write_text("github-network:gh-pr-view\n", encoding="utf-8")
     (out_dir / "pr-target.txt").write_text("123\n", encoding="utf-8")
-    if checkout_started:
-        (out_dir / "checkout-state.json").write_text(
-            json.dumps({"status": "checkout-command-started", "local_state": "changed-or-unknown"}),
-            encoding="utf-8",
-        )
+    if checkout_state is not None:
+        (out_dir / "checkout-state.json").write_text(json.dumps(checkout_state), encoding="utf-8")
     recovery_action = "Retry the unchanged collector later; no review or merge decision was made."
-    if checkout_started:
+    if checkout_state is not None:
         recovery_action += " Inspect the local checkout state before retrying."
     notes = (
         "# PR Review Availability: unavailable\n\n"
@@ -95,7 +102,7 @@ def _write_unavailable_artifact(
                 "status": "unresolved",
                 "rationale": (
                     "A local checkout command may have changed state, but no verified source bundle was produced."
-                    if checkout_started
+                    if checkout_state is not None
                     else "Core source verification did not complete; retained collection artifacts may be partial and were not assessed."
                 ),
             }
@@ -106,13 +113,13 @@ def _write_unavailable_artifact(
             "status": "fair",
             "evidence": [
                 "The classified collection failure and conservative checkout-state evidence were retained."
-                if checkout_started
+                if checkout_state is not None
                 else "The classified collection failure and any current-attempt collector artifacts were retained."
             ],
             "recovery_actions": ["Stopped before source review."],
             "remaining_limits": [
                 "PR correctness was not assessed; inspect local checkout state before retrying."
-                if checkout_started
+                if checkout_state is not None
                 else "PR correctness was not assessed."
             ],
         },
@@ -177,12 +184,142 @@ def test_unavailable_pr_artifact_is_accepted_without_assessed_review_evidence(tm
     shared_validator.validate("code-review", tmp_path, result_path)
 
 
-def test_unavailable_pr_artifact_retains_conservative_checkout_state(tmp_path: Path) -> None:
-    """Allow terminal evidence that warns a failed checkout may have changed local state."""
+@pytest.mark.parametrize(
+    "checkout_state",
+    [
+        pytest.param(
+            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+            id="historical-checkout-started",
+        ),
+        pytest.param(
+            {"status": "checkout-command-succeeded-unverified", "local_state": "changed-or-unknown"},
+            id="historical-succeeded-unverified",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": None,
+            },
+            id="collector-succeeded-unverified",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": GH_CHECKOUT_FAILURE,
+            },
+            id="collector-failed-gh-recovery",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": GH_CHECKOUT_FAILURE,
+            },
+            id="collector-fallback-remains-unverified",
+        ),
+    ],
+)
+def test_unavailable_pr_artifact_accepts_collector_checkout_states(
+    tmp_path: Path, checkout_state: dict[str, object]
+) -> None:
+    """Accept bounded legacy and current collector checkout-state records."""
     review_validator = _load_module(REVIEW_VALIDATOR_PATH, "code_review_validator")
-    result_path = _write_unavailable_artifact(tmp_path, checkout_started=True)
+    result_path = _write_unavailable_artifact(tmp_path, checkout_state=checkout_state)
 
     review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+
+
+@pytest.mark.parametrize(
+    "checkout_state",
+    [
+        pytest.param(
+            {"status": "unknown", "local_state": "changed-or-unknown"},
+            id="unknown-status",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {**GH_CHECKOUT_FAILURE, "stderr": "credential=secret"},
+            },
+            id="failure-diagnostics-raw-stderr",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {**GH_CHECKOUT_FAILURE, "diagnostics": {"label": "wrong"}},
+            },
+            id="failure-diagnostics-wrong-label",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {
+                    **GH_CHECKOUT_FAILURE,
+                    "diagnostics": {
+                        "failure_class": "github-network",
+                        "label": "local-pr-checkout",
+                        "stderr": "credential=secret",
+                    },
+                },
+            },
+            id="failure-diagnostics-extra-field",
+        ),
+        pytest.param(
+            {
+                "status": "gh-checkout-failed-recovery-assessment-started",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": {
+                    **GH_CHECKOUT_FAILURE,
+                    "command": "gh pr checkout https://token@github.com/Borda/AI-Rig/pull/123",
+                },
+            },
+            id="failure-command-credential-url",
+        ),
+        pytest.param(
+            {
+                "status": "checkout-command-succeeded-unverified",
+                "local_state": "changed-or-unknown",
+                "gh_checkout_failure": None,
+                "unexpected": True,
+            },
+            id="state-extra-field",
+        ),
+    ],
+)
+def test_unavailable_pr_artifact_rejects_malformed_checkout_state(
+    tmp_path: Path, checkout_state: dict[str, object]
+) -> None:
+    """Reject checkout-state fields that are not produced by the bounded collector schema."""
+    review_validator = _load_module(REVIEW_VALIDATOR_PATH, "code_review_validator")
+    result_path = _write_unavailable_artifact(tmp_path, checkout_state=checkout_state)
+
+    with pytest.raises(SystemExit, match="unavailable-review-invalid-checkout-state"):
+        review_validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+
+
+def test_unavailable_checkout_diagnostic_omits_collector_command_and_diagnostics(tmp_path: Path) -> None:
+    """Render only the fixed checkout status, never command or diagnostic payloads."""
+    review_validator = _load_module(REVIEW_VALIDATOR_PATH, "code_review_validator")
+    state = {
+        "status": "gh-checkout-failed-recovery-assessment-started",
+        "local_state": "changed-or-unknown",
+        "gh_checkout_failure": GH_CHECKOUT_FAILURE,
+    }
+    _write_unavailable_artifact(tmp_path, checkout_state=state)
+
+    diagnostic = review_validator._unavailable_checkout_diagnostic(tmp_path)
+
+    assert diagnostic == (
+        "Checkout diagnostic: local worktree state is changed or unknown after "
+        "`gh-checkout-failed-recovery-assessment-started`."
+    )
+    assert GH_CHECKOUT_FAILURE["command"] not in diagnostic
+    assert GH_CHECKOUT_FAILURE["code"] not in diagnostic
 
 
 @pytest.mark.parametrize(

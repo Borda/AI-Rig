@@ -11,8 +11,9 @@ reached an assessed verdict, or a terminal close disposition.
 
 It scans local report directories and JSON identity files without querying GitHub or changing report content. Completion
 mode runs both packaged artifact validators before allowing final text to leave the producer boundary. Explicit local
-intake reuses that same validation, including source and final-handoff bindings, before returning the artifact path.
-Matching accepts a PR number, ``#number``, or exact normalized URL and checks ``pr.json`` identity and result metadata.
+and PR intake reuse that same validation, including source and applicable final-handoff bindings, before returning the
+artifact path. Matching accepts a PR number, ``#number``, or exact normalized URL and checks ``pr.json`` identity and
+result metadata.
 
 ## Usage
 
@@ -34,9 +35,10 @@ exists.
 It prints one matching assessed local review-artifact path, choosing the numerically highest PR-scoped run before any
 compatible timestamped artifact across canonical and legacy report roots. Target lookup requires PR scope and a
 recognized ``metadata.review_decision.recommendation`` in addition to PR identity. Explicit intake accepts all four
-declared review scopes without requiring PR identity; local artifacts must be canonical ``result.json`` files that pass
+declared review scopes without requiring PR identity; all artifacts must be canonical ``result.json`` files that pass
 both validators. Existing ``--parent-thread-id`` and ``--codex-home`` options identify evidence from another producer
-session. Without overrides, validation uses current runtime defaults. It does not broaden target lookup.
+session. PR intake defaults to the recorded producer thread, not the consuming session, while revalidating its evidence.
+Local completion retains current runtime defaults. It does not broaden target lookup.
 
 ## Failure
 
@@ -109,7 +111,7 @@ def review_result_kind(result_path: Path, *, allow_local: bool = False) -> str:
 def require_assessed_review_result(
     result_path: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None
 ) -> Path:
-    """Validate explicit local artifacts while retaining the existing PR disposition selector.
+    """Validate assessed artifacts before explicit or discovered report intake.
 
     Local intake reuses the producer completion boundary and its optional evidence-location and thread overrides. It
     returns only the selected path, never the producer's final text.
@@ -123,11 +125,20 @@ def require_assessed_review_result(
         raise LookupError("matching-review-closed-not-remediable")
     if kind != "assessed":
         raise LookupError("invalid-review-report-rerun-code-review")
+    if result_path.name != "result.json":
+        raise LookupError("invalid-review-report-rerun-code-review")
     payload = json.loads(result_path.read_text(encoding="utf-8"))
-    if payload["metadata"]["scope"] != "pr":
-        # Completion validates the canonical filename; never certify a different file through a valid sibling.
-        if result_path.name != "result.json":
-            raise LookupError("invalid-review-report-rerun-code-review")
+    if payload["metadata"]["scope"] == "pr":
+        # Intake can run in a later session. Revalidate the recorded producer's evidence, not the consumer's identity.
+        manifest_path = result_path.parent / "specialist-manifest.json"
+        if parent_thread_id is None and manifest_path.is_file():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            producer = manifest.get("parent_thread_id") if isinstance(manifest, dict) else None
+            if not isinstance(producer, str) or not producer.strip():
+                raise LookupError("review-validation-failed:missing-producer-thread")
+            parent_thread_id = producer
+        validate_review_result(result_path, codex_home=codex_home, parent_thread_id=parent_thread_id)
+    else:
         complete_review_run(result_path.parent, codex_home=codex_home, parent_thread_id=parent_thread_id)
     return result_path
 
@@ -200,7 +211,7 @@ def _artifact_matches_target(artifact: ReviewArtifact, target: str, *, allow_tar
 
 
 def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
-    """Return the newest code-review result across current and legacy roots."""
+    """Discover the newest result; callers must validate it before treating it as assessed evidence."""
     normalized_target = target.strip().rstrip("/")
     matches: list[ReviewArtifact] = []
     candidate_matches: list[ReviewArtifact] = []
@@ -265,16 +276,12 @@ def find_latest_review_report(target: str, reports_dirs: list[Path]) -> Path:
     return matches[0].path
 
 
-def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None) -> bytes:
-    """Emit only a validated promoted review whose PR handoff survives consumer discovery.
-
-    This read-only completion boundary deliberately does not repair or promote artifacts. Validator failures retain
-    their diagnostics; neither a drafted final Markdown file nor a canonical filename establishes completion.
-    """
-    run_dir = run_dir.resolve()
-    result_path = run_dir / "result.json"
-    if not result_path.is_file():
-        raise LookupError(f"review-result-not-promoted:{run_dir}")
+def validate_review_result(
+    result_path: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None
+) -> dict[str, Any]:
+    """Run both artifact validators on the selected bytes, retaining supported historical schemas."""
+    result_path = result_path.resolve()
+    run_dir = result_path.parent
     plugin_root = Path(__file__).resolve().parents[1]
     review_command = [
         sys.executable,
@@ -305,6 +312,23 @@ def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent
             diagnostic = (completed.stderr or completed.stdout).strip()
             raise LookupError(f"review-validation-failed:{diagnostic}")
     payload = json.loads(result_bytes)
+    if result_path.read_bytes() != result_bytes:
+        raise LookupError("review-completion-result-changed")
+    return payload
+
+
+def complete_review_run(run_dir: Path, *, codex_home: Path | None = None, parent_thread_id: str | None = None) -> bytes:
+    """Emit only a validated promoted review whose PR handoff survives consumer discovery.
+
+    This read-only boundary never repairs or promotes artifacts. Intake shares its validators, but only new producer
+    completion requires bound schema-v2 final bytes; supported historical reports remain consumable after validation.
+    """
+    run_dir = run_dir.resolve()
+    result_path = run_dir / "result.json"
+    if not result_path.is_file():
+        raise LookupError(f"review-result-not-promoted:{run_dir}")
+    result_bytes = result_path.read_bytes()
+    payload = validate_review_result(result_path, codex_home=codex_home, parent_thread_id=parent_thread_id)
     if payload.get("schema_version") != 2:
         raise LookupError("review-completion-requires-bound-schema-v2")
     metadata = payload["metadata"]
@@ -334,8 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--target", help="PR number, #number, or PR URL.")
     source.add_argument("--result", type=Path, help="Explicit result path that must be an assessed review.")
     source.add_argument("--complete-run", type=Path, help="Validate a promoted run and emit only its bound final text.")
-    parser.add_argument("--codex-home", type=Path, help="Completion or local-intake validator's rollout-log root.")
-    parser.add_argument("--parent-thread-id", help="Completion or local-intake validator's producer thread identity.")
+    parser.add_argument("--codex-home", type=Path, help="Completion or intake validator's rollout-log root.")
+    parser.add_argument("--parent-thread-id", help="Completion or intake validator's producer thread identity.")
     parser.add_argument(
         "--reports-dir",
         default=CURRENT_REPORTS_DIR,
@@ -361,7 +385,10 @@ def main(argv: list[str] | None = None) -> int:
         reports_dirs = [args.reports_dir]
         if args.reports_dir == CURRENT_REPORTS_DIR:
             reports_dirs.append(LEGACY_REPORTS_DIR)
-        print(find_latest_review_report(args.target, reports_dirs))
+        selected = find_latest_review_report(args.target, reports_dirs)
+        print(
+            require_assessed_review_result(selected, codex_home=args.codex_home, parent_thread_id=args.parent_thread_id)
+        )
     except (LookupError, OSError, ValueError, subprocess.TimeoutExpired) as exc:
         if args.complete_run is not None:
             print(

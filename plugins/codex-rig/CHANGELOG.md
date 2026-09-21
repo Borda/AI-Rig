@@ -1,11 +1,22 @@
 # Changelog
 
+## 0.21.1
+
+- Accept current and historical collector checkout diagnostics in unavailable PR reviews, while rejecting malformed fields and keeping raw command details out of the handoff.
+- Revalidate PR report intake with both artifact validators, using the recorded producer thread across sessions; reject metadata-only and altered-evidence reports.
+- Archive same-directory gate attempts before reruns and reject failed-to-skipped recovery without changing the prior evidence.
+- Make review artifact closure explicit at the execution checkpoint, including failed reviews and resumed report intake; emit final output only after the completion lookup.
+- Preserve applicable gate failures and their logs instead of replacing launcher failures with skipped checks or direct-check claims.
+
+## 0.21.0
+
+- Add a pre-diff blind blueprint for nontrivial behavior or public-API reviews: derive a one-page proposed solution from the problem statement before opening the diff or changed source. Skip unsuitable changes or missing problem statements with a recorded reason.
+- Compare the blueprint with the implementation; record concrete defects as findings and explainable design divergences as author questions under residual risks. Disclose that same-thread ordering reduces anchoring without providing context isolation.
+
 ## 0.20.3
 
 - Fall back to permitted synchronous input for optional questions when async is unsuitable; reuse existing explicit commit-mode authorization when it still matches the complete verified plan, asking again only for missing or materially changed decisions.
-
 - Require permitted native Codex question controls for user choices, including generated scope expansions, repair approvals, finding selection, and commit modes. Use async when sync is unavailable or unsuitable, even without independent work; keep required answers pending and use plain chat only when neither control is suitable.
-
 - Present complete actionable options or native free text, preserving existing authorization, exact-digest syntax, and separate runtime permissions.
 
 ## 0.20.2
@@ -464,6 +475,14 @@
 - Keep MCP and native plugin-bundled agent registration out of scope.
 
 Known limit: standalone shim installation proves ownership and link integrity, not selection by the active collaboration interface. Runtimes without an explicit custom-agent selector use blank-agent role injection.
+
+## 0.2.0
+
+> Historical development builds: `0.2.0+codex.20260718221820`, `0.2.0+codex.20260718223537`, and `0.2.0+codex.20260719085017`.
+
+- Add the `agent-shims` manager for whole-roster diagnosis, status, installation, removal, and interrupted-transaction recovery, with exact-digest approval for mutations and fresh-session guidance. This describes the historical lifecycle; version 0.2.1 subsequently blocked new shim installation pending runtime-selection verification.
+- Add an optional read-only SessionStart shim-health diagnostic for startup and resume, separate from installation and lifecycle authorization.
+- Document public GitHub installation and guarded update/uninstall recovery; add installed-package, process-death recovery, and platform-boundary acceptance checks while retaining the then-POSIX-only shim-management limit.
 
 ## 0.1.0
 

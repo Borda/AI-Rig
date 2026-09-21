@@ -2393,7 +2393,7 @@ def run_write_result(run: CalibrationRun, out_path: Path, metadata: dict[str, An
 
 
 def selftest_find_review_report(run: CalibrationRun, selftest_dir: Path) -> None:
-    """Check PR-scoped run selection and historical flat-directory fallback."""
+    """Reject metadata-only PR intake in current and historical report layouts."""
     fixture = selftest_dir / "review-reports"
     older = fixture / "2026-01-01T00-00-00Z"
     newer = fixture / "pr-123" / "run-002"
@@ -2408,12 +2408,9 @@ def selftest_find_review_report(run: CalibrationRun, selftest_dir: Path) -> None
             '{"number": 123, "url": "https://github.com/example/repo/pull/123"}\n',
             encoding="utf-8",
         )
-    expected = newer / "result.json"
     result = run_command(cli_argv(run.paths.find_review_report, "--target", "#123", "--reports-dir", fixture))
-    if result.returncode != 0:
-        run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:match")
-    elif result.stdout.strip() != str(expected):
-        run.fail_and_leak("shared-script-selftests", f"selftest-mismatch:find-review-report:{result.stdout.strip()}")
+    if result.returncode == 0 or result.stdout.strip() or "review-validation-failed" not in result.stderr:
+        run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:metadata-only-intake")
     missing = run_command(cli_argv(run.paths.find_review_report, "--target", "#999", "--reports-dir", fixture))
     if missing.returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:missing-target")
@@ -2429,9 +2426,12 @@ def selftest_find_review_report(run: CalibrationRun, selftest_dir: Path) -> None
             encoding="utf-8",
         )
     compatibility = run_command(cli_argv(run.paths.find_review_report, "--target", "#321"), cwd=compatibility_root)
-    expected_legacy = legacy.relative_to(compatibility_root) / "result.json"
-    if compatibility.returncode != 0 or compatibility.stdout.strip() != str(expected_legacy):
-        run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:legacy-fallback")
+    if (
+        compatibility.returncode == 0
+        or compatibility.stdout.strip()
+        or "review-validation-failed" not in compatibility.stderr
+    ):
+        run.fail_and_leak("shared-script-selftests", "selftest-failed:find-review-report:legacy-metadata-only-intake")
 
 
 def selftest_validate_artifacts(run: CalibrationRun, selftest_dir: Path) -> None:

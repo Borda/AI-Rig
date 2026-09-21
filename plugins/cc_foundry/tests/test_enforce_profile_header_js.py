@@ -64,7 +64,7 @@ def _ask_payload(**overrides: object) -> dict:
     payload: dict = {
         "hook_event_name": "PreToolUse",
         "tool_name": "AskUserQuestion",
-        "tool_input": {"questions": [{"question": "What next?"}]},
+        "tool_input": {"questions": [{"question": "What next?", "header": "profile"}]},
     }
     payload.update(overrides)
     return payload
@@ -166,12 +166,12 @@ def test_empty_report_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, s
 
 
 @_skip_node_unavailable
-def test_written_report_passes_through(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
-    """Analyzer output present → hook stays silent and the call proceeds."""
+def test_written_report_without_delivery_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_dir, _, cwd = profile_run
     (report_dir / "report.md").write_text("---\nTitle: profile\n---\n", encoding="utf-8")
 
-    assert _run(tmp_path, _ask_payload(cwd=cwd)) == {}
+    assert _denial_reason(_run(tmp_path, _ask_payload(cwd=cwd))) is not None
 
 
 def _write_transcript(tmp_path: Path, assistant_text: str) -> Path:
@@ -191,7 +191,7 @@ def test_report_written_with_table_in_reply_has_no_reminder(
 ) -> None:
     """Table already printed this turn → allow with no additionalContext nudge."""
     report_dir, _, cwd = profile_run
-    (report_dir / "report.md").write_text("---\nTitle: profile\n---\n", encoding="utf-8")
+    (report_dir / "report.md").write_text("---\nTitle: x\nSince: y\nTop N: z\n---\n", encoding="utf-8")
     transcript = _write_transcript(
         tmp_path, "| Field | Value |\n| --- | --- |\n| Title | x |\n| Since | y |\n| Top N | z |\n"
     )
@@ -200,10 +200,8 @@ def test_report_written_with_table_in_reply_has_no_reminder(
 
 
 @_skip_node_unavailable
-def test_report_written_without_table_in_reply_gets_reminder(
-    tmp_path: Path, profile_run: tuple[Path, Path, str]
-) -> None:
-    """Raw YAML fields printed instead of a table → nudge naming Step 4b."""
+def test_report_written_without_table_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_dir, _, cwd = profile_run
     (report_dir / "report.md").write_text("---\nTitle: profile\n---\n", encoding="utf-8")
     transcript = _write_transcript(tmp_path, "Title: profile\nSince: 24h\n")
@@ -211,21 +209,19 @@ def test_report_written_without_table_in_reply_gets_reminder(
     result = _run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(transcript)))
 
     hook_output = result.get("hookSpecificOutput", {})
-    assert hook_output.get("permissionDecision") == "allow"
-    assert "Step 4b" in hook_output.get("additionalContext", "")
+    assert hook_output.get("permissionDecision") == "deny"
+    assert "report" in hook_output.get("permissionDecisionReason", "")
 
 
 @_skip_node_unavailable
-def test_report_written_unreadable_transcript_has_no_reminder(
-    tmp_path: Path, profile_run: tuple[Path, Path, str]
-) -> None:
-    """transcript_path pointing at a nonexistent file can't be read → fail open, no false nudge."""
+def test_report_written_unreadable_transcript_is_denied(tmp_path: Path, profile_run: tuple[Path, Path, str]) -> None:
+    """Unverified report delivery must block only the follow-up transition."""
     report_dir, _, cwd = profile_run
     (report_dir / "report.md").write_text("---\nTitle: profile\n---\n", encoding="utf-8")
 
     result = _run(tmp_path, _ask_payload(cwd=cwd, transcript_path=str(tmp_path / "missing.jsonl")))
 
-    assert result == {}
+    assert _denial_reason(result) is not None
 
 
 @_skip_node_unavailable

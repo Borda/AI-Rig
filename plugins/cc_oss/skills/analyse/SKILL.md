@@ -318,12 +318,13 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 
 ### 6a — Follow-up gate
 
-**Hook-enforced**: `hooks/enforce-analyse-header.js` (PreToolUse on `AskUserQuestion`) denies this call while the report path each mode file writes to `${TMPDIR:-/tmp}/analyse-report-file-${CSID}` names a missing or empty file. Denial `oss:analyse report gate` = mode never wrote its report — write it, print `---` header, re-issue question.
+**Hook-enforced**: `hooks/enforce-analyse-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-analyse`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
 Invoke `AskUserQuestion`. Options depend on mode:
 
 **Thread mode** (`$CLEAN_ARGS` is a number):
 
+- header: `oss-analyse`
 - question: "What next?"
 - (a) label: `/develop:fix` — description: diagnose and fix the reported issue (requires `develop` plugin)
 - (b) label: `/develop:feature` — description: implement as new feature (requires `develop` plugin)
@@ -332,6 +333,7 @@ Invoke `AskUserQuestion`. Options depend on mode:
 
 **Vitality / ecosystem mode** (`$CLEAN_ARGS` is `vitality` or `ecosystem`):
 
+- header: `oss-analyse`
 - question: "What next?"
 - (a) label: `/oss:analyse <N> --reply` — description: draft reply for specific thread
 - (b) label: `/oss:review <N>` — description: full code review for specific PR (requires `oss` plugin)

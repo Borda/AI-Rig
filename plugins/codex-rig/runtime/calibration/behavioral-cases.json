@@ -2,6 +2,21 @@
   "cases": [
     {
       "expected_findings": [
+        "review-completion-before-promotion",
+        "applicable-gate-failure-skipped"
+      ],
+      "id": "code-review-preflight-only-handoff",
+      "prompt": "A review gathers source evidence, records a needs-more-work decision and passes specialist manifest preflight. Its test launcher failed, so it replaces canonical failed checks with not-applicable records citing direct-check success, then emits the verdict without rendering a handoff, writing a candidate, validating, promoting or running completion lookup. Assess the handoff. Preserve failed attempts; direct-check receipts cannot replace canonical gates. Finish ordered artifact closure under existing authorization and emit only successful completion stdout; if closure remains blocked, label evidence preliminary and name the unmet checkpoint. Report-backed remediation must not consume notes or fall back to an older result.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-failed-check-complete-handoff",
+      "prompt": "A source review has a failed applicable test check. The agent preserves its logs and canonical failure status, records an actionable operational blocker, and reconciles the needs-more-work decision with failed verification. After manifest preflight it renders the handoff, writes a status=fail candidate, passes review-specific and shared artifact validators, promotes to result.json, and successfully runs the completion lookup which confirms report discovery. It emits only that command's bound output. Assess this correct distinction between a completed review reporting failed verification and an incomplete artifact workflow. No passing-source or test claim is made; subsequent remediation can ingest the validated failed report.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "available-native-question-bypassed"
       ],
       "id": "implement-optional-question-sync-fallback",
@@ -2222,5 +2237,5 @@
     "min_precision": 0.75,
     "min_recall": 0.75
   },
-  "version": "1.30"
+  "version": "1.31"
 }

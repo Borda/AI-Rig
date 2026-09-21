@@ -176,6 +176,6 @@ Before emitting, read current `$RUN_DIR/summary.jsonl` (may have been updated by
 |---|---------|------|-----------|
 ```
 
-After report → fire **Follow-up gate**. If user picks fix option (a–c), proceed inline to fix mode (Steps 8–10, loaded from `modes/fix.md`). Otherwise skip to Step 11.
+After report → fire **Follow-up gate**, with question header `audit`. The hook requires `aggregate.md`, valid `summary.jsonl`, and current parent-visible `Audit Report`, exact `Total: N`, and every finding's `one_line`. A zero-finding summary is valid when its aggregate exists. Missing/unreadable delivery blocks only this fix transition; diagnostic/recovery questions use a different header and remain available. Do not require Step 11's final report before Step 7. If user picks fix option (a–c), proceed inline to fix mode (Steps 8–10, loaded from `modes/fix.md`). Otherwise skip to Step 11.
 
 Returns to SKILL.md Steps 8–10 (fix dispatch, gated) / Step 11 (final report).

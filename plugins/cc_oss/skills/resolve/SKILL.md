@@ -220,7 +220,7 @@ echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeou
 
 ### Reject-gate check (every mode — run the block even without a `PR_NUMBER`)
 
-`oss:review`'s acceptance gate can reject a PR at the premise level — `Gate: REJECT_<GROUND> @<sha>`, one of `GOAL`/`CONDUCT`/`SCOPE`/`LICENSE`/`DUPLICATE`/`REVERTED`/`SPAM`/`PHILOSOPHY` (see `oss:review` SKILL.md Stage 1 for what each means). Premise problem, not fixable by `/oss:resolve` editing code — never start the fix pipeline on a PR still in that state, regardless of which of the 8 grounds fired. `Gate: BLOCK` and anything else (`PASS`, or no `Gate:` field at all — pre-gate reports) impose no restriction here — ordinary fixable findings, exactly what resolve exists for.
+`oss:review`'s acceptance gate can reject a PR at the premise level — `Gate: REJECT_<GROUND> @<sha>`, one of `GOAL`/`CONDUCT`/`SCOPE`/`LICENSE`/`DUPLICATE`/`REVERTED`/`SPAM`/`PHILOSOPHY` (see `oss:review` SKILL.md Stage 1 for what each means). Premise problem, not fixable by `/oss:resolve` editing code — never start the fix pipeline on a PR still in that state, regardless of which of the 8 grounds fired. Only complete `PASS` or `BLOCK` reports are actionable fix queues. Missing, malformed, or ambiguous decision headers block the workflow; a newer unfinished run cannot replace an earlier decision. No prior report still permits PR-comments-only mode. Report-only mode also validates the selected report; it cannot clear a rejection by bypassing PR-aware intake.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -230,7 +230,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$
     --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"  # timeout: 6000
 ```
 
-The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`) is the **PR-scoped** answer to "does a review report for this PR already exist". Steps 3a and 3c read it first and glob only on a miss — never re-derive it from the gate's printed line, and never let the printed `Gate: …` verdict be the only thing parsed out of this block. With no `PR_NUMBER` the script skips the check and writes an **empty** sentinel — that write is why the block runs in every mode: a bare `/oss:resolve report` after an earlier `/oss:resolve 42 report` in the same session would otherwise inherit PR 42's path.
+The gate's `--path-out` sentinel (`${TMPDIR:-/tmp}/resolve-report-file-${CSID}`) is the **PR-scoped** answer to "does a review report for this PR already exist". Steps 3a and 3c reuse it; PR-scoped misses never glob another PR — never re-derive it from the gate's printed line, and never let the printed `Gate: …` verdict be the only thing parsed out of this block. A path-publication failure stops the workflow. With no `PR_NUMBER` the script skips the check and writes an **empty** sentinel — that write is why the block runs in every mode: a bare `/oss:resolve report` after an earlier `/oss:resolve 42 report` in the same session would otherwise inherit PR 42's path.
 
 ### Report source resolution (`report` and `pr + report` modes)
 
@@ -243,7 +243,7 @@ IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null
 # re-run the PR-scoped lookup here (idempotent): the sentinel is trustworthy only if the reject gate ran THIS run for THIS PR.
 # Its exit 1 = still-rejected PR; never swallow that — a skipped gate block would otherwise resolve a rejected PR silently
 if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "n/a" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" >/dev/null || { echo "REPORT_STATUS=rejected"; exit 1; }  # timeout: 6000
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" || { echo "REPORT_STATUS=blocked"; exit 1; }  # timeout: 6000
 fi
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 [ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
@@ -257,14 +257,18 @@ echo "$REPORT_FILE" > "${TMPDIR:-/tmp}/resolve-report-file-${CSID}"
 case "$REPORT_FILE" in
     "")                      echo "REPORT_STATUS=missing" ;;
     .reports/codex/review/*) echo "REPORT_STATUS=codex-lineage" ;;
-    *)                       echo "REPORT_STATUS=ok" ;;
+    *)
+        if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "n/a" ]; then
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" || { echo "REPORT_STATUS=blocked"; exit 1; }  # timeout: 6000
+        fi
+        echo "REPORT_STATUS=ok" ;;
 esac
 echo "REPORT_FILE=$REPORT_FILE"
 ```
 
 Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 
-- `rejected` → stop; the reject-gate block above already printed the `⛔ BLOCKED` verdict and why (a still-rejected PR is a premise problem, not a fix queue)
+- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, incomplete report, or failed path publication). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
 - `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c. **Never start a review when a report is already resolved.**
 - `codex-lineage` → this parser reads `oss:review`'s section schema only, not codex's flat H1/H2/M1-bullet schema. Treat as `missing` for the gate below, stating the lineage as the reason.
 - `missing` with **no `PR_NUMBER`** (bare `report` on the current branch) → nothing to offer: there is no second source and no PR to review. Stop with `No review report found in .reports/review/ or .reports/codex/review/ — run /oss:review <PR#> first, or provide a PR number`.
@@ -803,6 +807,16 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 `action-item-dispatch.md` (loaded above) — execute its prelude (IMPL_AGENT routing, IMPL_DIR init, blast-radius scan, plus a branch mutex + HEAD fingerprint so a second concurrent resolve aborts and an external mid-flight write surfaces at merge-back), then run its three-phase dispatch directly in the orchestrator: Phase 1 challenge (parallel by domain, read-only) → Phase 2 implementation (parallel, one isolated `git worktree` per specialist; groups formed by specialist then a file-ownership + import-coupling tiebreak so items that would collide on same file — or across an import edge — land in one worktree) → Phase 3 merge-back (sequential cherry-pick, whole worktree groups ordered most-central-first so foundational commits land before dependents, `TaskUpdate` per item as its commit lands). `TaskUpdate` calls stay orchestrator-owned throughout — Phase 1/2 subagents never touch task list (subagent can't drive parent's task list); only Phase 3, run by orchestrator itself after each cherry-pick, flips a task to `completed`. Explains why tasks flip in item-priority order during Phase 3 even though the work producing them ran concurrently in Phase 2.
 
 `action-item-dispatch.md` caps a single pass at 20 items and gates >20 behind `AskUserQuestion` (split into ≤20 batches · `[req]` only · proceed with all). On "proceed with all", run the same three-phase dispatch over every item — more specialist groups in Phase 2, slower Phase 3 merge-back at that size, but no separate code path.
+
+**Straggler gate — before flipping `TASK_IMPL`**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never flip `TASK_IMPL` over an open child — that hid the original leak.
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
+[ -f "$IMPL_DIR/item-tasks.tsv" ] && cut -f2 "$IMPL_DIR/item-tasks.tsv" || echo "n/a — report mode or no items selected"  # timeout: 3000
+```
+
+Bash printed no ids (or `n/a`) → no per-item tasks were created, proceed straight to the flip below. Otherwise: call `TaskList`; any printed task id whose status is not `completed`/`deleted` is a straggler — print it, then dispose it now: id in `$IMPL_DIR/challenge-log.txt` with `evidence=REJECT`, or in `$IMPL_DIR/skipped-items.txt` → `TaskUpdate(status="deleted")`; else (it landed a commit and only the flip was missed) → `TaskUpdate(status="completed")`. Only then:
 
 ```text
 TaskUpdate(task_id=TASK_IMPL, status="completed")

@@ -385,21 +385,53 @@ def test_only_unavailable_reports_require_a_new_code_review(tmp_path: Path) -> N
         finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
 
 
-def test_explicit_pr_report_retains_existing_disposition_selection(tmp_path: Path) -> None:
-    """Keep the existing PR selector behavior outside the local-intake repair."""
-    result = tmp_path / "result.json"
+@pytest.mark.parametrize("intake", ["explicit", "target"])
+def test_pr_metadata_only_report_is_rejected(tmp_path: Path, intake: str) -> None:
+    """PR intake must not accept a disposition without the producer's required evidence."""
+    report_dir = tmp_path / "run"
+    report_dir.mkdir()
+    (report_dir / "pr.json").write_text(json.dumps({"number": 123}), encoding="utf-8")
+    result = report_dir / "result.json"
     result.write_text(
         json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
         encoding="utf-8",
     )
 
-    completed = subprocess.run(
-        [sys.executable, str(FINDER_PATH), "--result", str(result)], capture_output=True, text=True, check=False
-    )
+    args = ["--result", str(result)] if intake == "explicit" else ["--target", "123", "--reports-dir", str(tmp_path)]
+    completed = subprocess.run([sys.executable, str(FINDER_PATH), *args], capture_output=True, text=True, check=False)
 
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == str(result)
-    assert completed.stderr == ""
+    assert completed.returncode == 1
+    assert completed.stdout == ""
+    assert "review-validation-failed:" in completed.stderr
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("schema", [1, 2])
+def test_pr_intake_revalidates_recorded_producer_across_sessions(tmp_path: Path, schema: int) -> None:
+    """Retain validated historical PR intake without confusing the current thread with the producer."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    path = run / "result.json"
+    if schema == 1:
+        result = json.loads(path.read_text(encoding="utf-8"))
+        result.pop("schema_version")
+        path.write_text(json.dumps(result), encoding="utf-8")
+        routing_path = run / "pr-routing.json"
+        routing = json.loads(routing_path.read_text(encoding="utf-8"))
+        routing["local_checkout_command"] = "gh pr checkout 123"
+        routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    for args in (["--result", str(path)], ["--target", "123", "--reports-dir", str(run.parent.parent)]):
+        completed = subprocess.run(
+            [sys.executable, str(FINDER_PATH), *args], capture_output=True, text=True, check=False
+        )
+        assert completed.returncode == 0, completed.stderr
+        assert Path(completed.stdout.strip()) == path
+    (run / "diff.patch").write_text("Unreviewed replacement diff.\n", encoding="utf-8")
+    damaged = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--result", str(path)], capture_output=True, text=True, check=False
+    )
+    assert damaged.returncode == 1
+    assert damaged.stdout == ""
+    assert "review-validation-failed:" in damaged.stderr
 
 
 @pytest.mark.integration

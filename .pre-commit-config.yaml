@@ -395,6 +395,18 @@ repos:
         # Coverage: maintained benchmark docs/scripts plus the tracked methodology policy; excludes generated, result, and test trees.
         files: ^benchmarks/(?!manifests/|results/|tests/).*\.(md|py|sh)$|^benchmarks/policy/provider-parity-methodology\.json$
 
+      - id: codex-rig-changelog-version
+        name: "📝 Codex Rig version has a changelog heading"
+        language: system
+        entry: >-
+          python3 -c "import json, sys; from pathlib import Path;
+          root = Path('plugins/codex-rig');
+          version = json.loads((root / '.codex-plugin/plugin.json').read_text(encoding='utf-8'))['version'];
+          heading = '## ' + version;
+          sys.exit(0 if heading in (root / 'CHANGELOG.md').read_text(encoding='utf-8').splitlines() else 'Missing changelog heading: ' + heading)"
+        pass_filenames: false
+        always_run: true
+
       - id: codex-rig-package-manifest
         name: "🔐 Codex Rig package manifest update"
         language: system
