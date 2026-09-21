@@ -220,8 +220,10 @@ def main(argv: list[str] | None = None) -> int:
     native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
     env_tmpdir = os.environ.get("TMPDIR")
     tmpdir = Path(env_tmpdir if env_tmpdir and native(env_tmpdir).is_absolute() else tempfile.gettempdir())
-    (tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}").write_text(str(codex_available).lower())
-    (tmpdir / f"resolve-preflight-GH_OK-{csid}").write_text("true")
+    (tmpdir / f"resolve-preflight-CODEX_AVAILABLE-{csid}").write_text(
+        f"{str(codex_available).lower()}\n", encoding="utf-8", newline="\n"
+    )
+    (tmpdir / f"resolve-preflight-GH_OK-{csid}").write_text("true\n", encoding="utf-8", newline="\n")
     return 0
 
 

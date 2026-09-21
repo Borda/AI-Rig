@@ -22,8 +22,13 @@ Usage:
         --files <file1> [<file2>...]
 
 Exit codes:
-    0 — commit succeeded (or staging area was empty — no-op)
+    0 — commit succeeded
     1 — bad args, message file missing, or commit failed
+    3 — staging area empty for the given ``--files`` after add — no commit created. Distinct from 0
+        (never a silent no-op success): a caller whose combined-reset design pre-stages other groups'
+        files alongside this group's must be able to tell "nothing to commit for these paths" from
+        "committed" — treating both as 0 let one group's commit silently absorb every other group's
+        staged diff while every later group reported success for doing nothing.
 """
 
 from __future__ import annotations
@@ -235,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Exit code: 1 on bad args or commit failure; 0 on success or empty stage.
+        Exit code: 1 on bad args or commit failure; 3 on empty stage (no commit created); 0 on success.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
@@ -308,9 +313,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"commit_action_item: git add failed (exit {add_proc.returncode})", file=sys.stderr)
             return add_proc.returncode
 
-        # Empty staging area → nothing to commit.
+        # Empty staging area for THESE files → nothing to commit. Scoped with `-- *files`, not a bare
+        # `git diff --cached --quiet` — an unscoped check reads true (has staged changes) whenever any
+        # OTHER path is staged in the index, which a caller collapsing multiple groups into one staged
+        # diff via a combined reset does deliberately; scoping is what lets this group's own emptiness
+        # be told apart from "some unrelated group's diff happens to still be staged".
         cached_proc = subprocess.run(  # noqa: S603
-            [git, "diff", "--cached", "--quiet"],
+            [git, "diff", "--cached", "--quiet", "--", *files],
             check=False,
         )
         if cached_proc.returncode == 0:
@@ -318,9 +327,19 @@ def main(argv: list[str] | None = None) -> int:
                 "commit_action_item: staging area empty after add — no commit created",
                 file=sys.stderr,
             )
-            return 0
+            return 3
 
-        result = subprocess.run([git, "commit", "-F", msg_file], check=False)  # noqa: S603
+        # Pathspec the commit — commits only THESE files' staged state, leaving any other group's
+        # files staged untouched for their own subsequent commit. Without `-- *files`, `git commit`
+        # commits the entire index: the first of several sequential per-group commits (a combined
+        # reset stages every group's diff at once) would silently absorb every later group's changes,
+        # and each later group's own commit call would then find nothing staged for its files.
+        # NOTE: a partial `git commit -- <paths>` commits the WORKING-TREE content of those paths, not
+        # necessarily the staged (index) content — invisible here because every caller's flow leaves
+        # index and working tree identical for these files (a soft reset touches only the index). Any
+        # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
+        # `add`) would silently commit content the caller never staged.
+        result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)  # noqa: S603
         return result.returncode
     finally:
         sentinel.unlink(missing_ok=True)

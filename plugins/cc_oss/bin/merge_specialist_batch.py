@@ -11,12 +11,19 @@ one at a time, in the caller-supplied priority order (interleaved across
 specialists, not grouped by specialist), so history order matches the
 review's severity ranking regardless of which specialist finished first.
 
-For ``--commit-mode`` other than ``each``, each cherry-picked commit is
-immediately soft-reset (``git reset --soft HEAD~1``) right after it lands —
-the diff stays staged (index) but the commit object is undone. This matches
-the "stage first, commit-mode-specific commit later" contract that
-action-item-dispatch.md's post-loop COMMIT_MODE=grouped/all/stage sections
-already assume — they operate on staged-but-uncommitted changes.
+For ``--commit-mode`` other than ``each``, every entry still lands as a real
+commit during the loop (an in-progress soft-reset would leave the index
+non-clean, and Git refuses the *next* cherry-pick against a non-clean index
+even when the two entries touch disjoint files — confirmed empirically,
+``git cherry-pick`` exits 128 with "your local changes would be overwritten"
+before it even attempts the merge). Once every entry in the plan has applied
+cleanly, one combined ``git reset --soft HEAD~<n>`` (``n`` = entries applied)
+collapses them into a single staged diff — the "stage first, commit-mode-
+specific commit later" contract that action-item-dispatch.md's post-loop
+COMMIT_MODE=grouped/all/stage sections already assume. A conflict mid-plan
+leaves every already-applied entry as a real, uncollapsed commit — never
+reset — so the repository state matches ``git cherry-pick``'s ordinary
+partial-progress state exactly, with no reset in flight to reason about.
 
 Usage:
     merge_specialist_batch.py --plan <plan.json> --commit-mode <each|grouped|all|stage>
@@ -218,8 +225,8 @@ def _conflicted_files(git: str) -> list[str]:
     return [f for f in proc.stdout.splitlines() if f.strip()]
 
 
-def run_plan(entries: list[PlanEntry], commit_mode: CommitMode) -> dict[str, object]:
-    """Cherry-pick each plan entry in order, soft-resetting when not in ``each`` mode.
+def run_plan(entries: list[PlanEntry], commit_mode: CommitMode, base_sha: str | None = None) -> dict[str, object]:
+    """Cherry-pick each plan entry in order, then collapse the whole plan with one combined reset in non-``each`` mode.
 
     Stops at the first cherry-pick conflict and leaves the repository in that
     conflicted state (matching how Step 5's merge-conflict handling expects to
@@ -229,8 +236,24 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode) -> dict[str, obj
     Args:
         entries: Ordered cherry-pick plan.
         commit_mode: A ``CommitMode`` member. Any mode other than
-            ``CommitMode.EACH`` triggers an immediate soft-reset after each
-            successful cherry-pick.
+            ``CommitMode.EACH`` collapses every applied entry into one
+            staged diff via a single combined soft-reset, once the whole
+            plan has landed cleanly — never per entry (see module docstring
+            for why a per-entry reset breaks the next cherry-pick).
+        base_sha: When given, the combined reset targets this fixed commit
+            instead of ``HEAD~<entries applied this call>``, and fires even when
+            THIS call's own ``entries`` is empty (a resumed call whose last
+            remaining entry conflicted on its first attempt applies nothing —
+            gating on ``applied`` would leave the run's earlier commits
+            permanently uncollapsed, the one call that could ever fix that
+            refusing to). Required for a correct **resumed** call after a
+            conflict: a resumed call's ``entries`` only holds the *remaining*
+            plan, so ``HEAD~len(applied)`` would collapse only the entries
+            picked in *this* call and leave every entry applied before the
+            conflict (plus the one resolved via ``--continue``) as permanent
+            real commits — the caller's original branch tip before *any* pass
+            is the one fixed point every pass (first or resumed, whether or
+            not it applies anything) can reset to correctly.
 
     Returns:
         A mapping with ``applied``, ``conflict``, and ``remaining`` fields.
@@ -254,9 +277,20 @@ def run_plan(entries: list[PlanEntry], commit_mode: CommitMode) -> dict[str, obj
                 },
                 "remaining": [e.item_id for e in entries[i + 1 :]],
             }
-        if commit_mode != CommitMode.EACH:
-            subprocess.run([git, "reset", "--soft", "HEAD~1"], check=False, timeout=3)  # noqa: S603
         applied.append(entry.item_id)
+    if commit_mode != CommitMode.EACH:
+        if base_sha:
+            # Unconditional on `applied` here — a call that cherry-picks ZERO entries (the very last
+            # plan entry conflicted on its first attempt, so `remaining` comes back empty and this
+            # call's own `applied` is []) still needs to collapse whatever earlier calls in the SAME
+            # run left as real commits on top of `base_sha`. Gating on `applied` (as the HEAD~n
+            # fallback below still must) left that one call the only one that could ever collapse the
+            # run refusing to, stranding real commits in `stage` mode with no recovery route.
+            subprocess.run([git, "reset", "--soft", "--end-of-options", base_sha], check=False, timeout=3)  # noqa: S603
+        elif applied:
+            subprocess.run(  # noqa: S603
+                [git, "reset", "--soft", "--end-of-options", f"HEAD~{len(applied)}"], check=False, timeout=3
+            )
     return {"applied": applied, "conflict": None, "remaining": []}
 
 
@@ -284,6 +318,15 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional JSON map {module: score}; reorders whole worktree groups most-central-first.",
     )
+    parser.add_argument(
+        "--base-sha",
+        default=None,
+        help=(
+            "Branch tip before the FIRST call of this merge session (first pass or resumed). "
+            "Required for a correct combined reset on a resumed call after a conflict — see "
+            "run_plan's base_sha docstring. Same validation as a plan entry's sha."
+        ),
+    )
     args = parser.parse_args(argv)
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
@@ -295,12 +338,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": str(exc)}))
         return 2
 
+    if args.base_sha is not None and not _SHA_RE.match(args.base_sha):
+        print(json.dumps({"error": f"invalid --base-sha: {args.base_sha!r}"}))
+        return 2
+
     if args.centrality_file:
         with open(args.centrality_file, encoding="utf-8") as f:
             centrality = {str(k): float(v) for k, v in json.load(f).items()}
         entries = order_plan(entries, centrality)
 
-    result = run_plan(entries, CommitMode(args.commit_mode))
+    result = run_plan(entries, CommitMode(args.commit_mode), base_sha=args.base_sha)
     print(json.dumps(result))
     return 0 if result["conflict"] is None else 1
 

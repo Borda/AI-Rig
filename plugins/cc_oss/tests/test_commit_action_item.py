@@ -63,6 +63,7 @@ def test_golden_build_invocation_constructs_expected_commands(monkeypatch: pytes
     assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/b.md"]]
     assert len(commit_calls) == 1
     assert commit_calls[0][:3] == ["/fake/git", "commit", "-F"]
+    assert commit_calls[0][-3:] == ["--", "src/a.py", "docs/b.md"]
 
 
 def test_golden_message_file_invocation_constructs_expected_commands(
@@ -79,7 +80,7 @@ def test_golden_message_file_invocation_constructs_expected_commands(
     add_calls = [c for c in calls if len(c) > 1 and c[1] == "add"]
     commit_calls = [c for c in calls if len(c) > 1 and c[1] == "commit"]
     assert add_calls == [["/fake/git", "add", "--", "src/a.py", "docs/b.md"]]
-    assert commit_calls == [["/fake/git", "commit", "-F", str(msg)]]
+    assert commit_calls == [["/fake/git", "commit", "-F", str(msg), "--", "src/a.py", "docs/b.md"]]
 
 
 class _FakeCompleted:
@@ -163,18 +164,24 @@ def _make_git_mock(
     return _fake_run
 
 
-def test_empty_stage_exits_0(
+def test_empty_stage_exits_3(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Staging area empty after add → exit 0, 'staging area empty' in stderr."""
+    """Staging area empty after add → exit 3 (distinct from 0), 'staging area empty' in stderr.
+
+    Not 0: a caller whose combined-reset design pre-stages several groups' files at once must be
+    able to tell "nothing staged for THESE files" from "committed" — treating both as 0 let one
+    group's commit silently absorb every other group's staged diff while later groups reported
+    success for creating no commit at all (the defect this exit code exists to make visible).
+    """
     msg = tmp_path / "msg.txt"
     msg.write_text("msg\n")
     monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
     monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(empty_stage=True))
     rc = cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
-    assert rc == 0
+    assert rc == 3
     assert "staging area empty" in capsys.readouterr().err
 
 
@@ -188,6 +195,23 @@ def test_empty_stage_no_commit_called(monkeypatch: pytest.MonkeyPatch, tmp_path:
     cai.main(["--message-file", str(msg), "--files", str(tmp_path / "f.py")])
     commit_calls = [c for c in calls if "commit" in c]
     assert not commit_calls
+
+
+def test_cached_diff_check_scoped_to_given_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The empty-stage check is scoped with `-- *files`, not a bare `git diff --cached --quiet`.
+
+    An unscoped check reads "has staged changes" whenever ANY other path is staged in the index — which a caller
+    collapsing several groups' diffs into one staged tree via a combined reset does deliberately. Scoping is what lets
+    this call's own files being empty be told apart from some other group's diff still sitting staged.
+    """
+    msg = tmp_path / "msg.txt"
+    msg.write_text("msg\n")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(cai, "which", lambda _: "/fake/git")
+    monkeypatch.setattr(cai.subprocess, "run", _make_git_mock(calls=calls))
+    cai.main(["--message-file", str(msg), "--files", "src/a.py", "docs/b.md"])
+    diff_calls = [c for c in calls if len(c) > 1 and c[1] == "diff"]
+    assert diff_calls == [["/fake/git", "diff", "--cached", "--quiet", "--", "src/a.py", "docs/b.md"]]
 
 
 def test_successful_commit_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

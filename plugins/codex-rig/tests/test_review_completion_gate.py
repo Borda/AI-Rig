@@ -555,6 +555,7 @@ def test_failed_quality_gate_requires_nonapproval_handoff(assessed_pr: Path, rec
         [sys.executable, str(FINDER), "--complete-run", str(assessed_pr), "--parent-thread-id", "thread"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
     if recommendation == "accept-as-is":

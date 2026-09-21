@@ -587,6 +587,10 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
 _ITEM_ID="<item_id>"; _TASK_ID="<task_id>"
 case "$_ITEM_ID$_TASK_ID" in *'<'*'>'*) echo "! BLOCKED — item/task id placeholder not substituted"; exit 1 ;; esac
+# checked separately, not concatenated: an empty _ITEM_ID with a valid _TASK_ID passes the placeholder
+# check above (no "<>" in the joined string) and would write a malformed "\tNNN" row that every
+# downstream numeric-only guard reading item-tasks.tsv parses as a wrong-but-valid-looking item_id
+case "$_ITEM_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id '$_ITEM_ID' is not numeric; cannot write item-tasks.tsv"; exit 1 ;; esac
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b never ran"; exit 1; }
 printf '%s\t%s\n' "$_ITEM_ID" "$_TASK_ID" >> "$IMPL_DIR/item-tasks.tsv"  # timeout: 3000
 ```
@@ -808,15 +812,75 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 
 `action-item-dispatch.md` caps a single pass at 20 items and gates >20 behind `AskUserQuestion` (split into ≤20 batches · `[req]` only · proceed with all). On "proceed with all", run the same three-phase dispatch over every item — more specialist groups in Phase 2, slower Phase 3 merge-back at that size, but no separate code path.
 
-**Straggler gate — before flipping `TASK_IMPL`**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never flip `TASK_IMPL` over an open child — that hid the original leak.
+**Straggler gate — before flipping `TASK_IMPL`**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never flip `TASK_IMPL` over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || IMPL_DIR=""
-[ -f "$IMPL_DIR/item-tasks.tsv" ] && cut -f2 "$IMPL_DIR/item-tasks.tsv" || echo "n/a — report mode or no items selected"  # timeout: 3000
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; cannot verify child tasks before flipping TASK_IMPL"; exit 1; }
+if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+    _SKIPPED_IDS=$(cut -f1 "$IMPL_DIR/skipped-items.txt" 2>/dev/null)
+    # anchored right after id= — resolution= is the field placed there, before any free-text field
+    # (action-item-dispatch.md's producer template), so a reviewer's quoted text can never match it
+    _REJECTED_IDS=$(grep -iE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected' "$IMPL_DIR/challenge-log.txt" 2>/dev/null | sed -n 's/^id[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')
+    while IFS=$'\t' read -r item_id task_id; do
+        case "$item_id" in ''|*[!0-9]*) continue ;; esac
+        { printf '%s\n' "$_SKIPPED_IDS" "$_REJECTED_IDS" | grep -qx "$item_id"; } && printf 'closed: item=%s (rejected/skipped)\n' "$item_id" && continue
+        [ -n "$task_id" ] || { echo "! skipping — item $item_id has an empty task id in item-tasks.tsv"; continue; }
+        printf 'check: item=%s task=%s\n' "$item_id" "$task_id"  # not rejected/skipped — must have landed a commit; verify below, never assume
+    done < "$IMPL_DIR/item-tasks.tsv"
+else
+    echo "n/a — report mode or no items selected"
+fi
+# timeout: 3000
 ```
 
-Bash printed no ids (or `n/a`) → no per-item tasks were created, proceed straight to the flip below. Otherwise: call `TaskList`; any printed task id whose status is not `completed`/`deleted` is a straggler — print it, then dispose it now: id in `$IMPL_DIR/challenge-log.txt` with `evidence=REJECT`, or in `$IMPL_DIR/skipped-items.txt` → `TaskUpdate(status="deleted")`; else (it landed a commit and only the flip was missed) → `TaskUpdate(status="completed")`. Only then:
+Bash printed `n/a` → no per-item tasks were created, proceed straight to the flip below. `closed:` lines need nothing further. A `! skipping` line names a malformed row (empty task id) — investigate `item-tasks.tsv` directly via `TaskList`/`grep` for that item id before proceeding; never guess its status. For every `check:` line: call `TaskList`; if that task is already `completed`/`deleted`, done. If it's still open, do NOT default it to `completed` — confirm independently that item's commit is actually on the branch before calling `TaskUpdate(status="completed")`. The confirmation command depends on `COMMIT_MODE` — only `each` carries a per-item attribution token; `grouped` folds several ids into one message; `all`/`stage` carry none at all (`stage` never commits — the diff stays staged, per its own contract). A lost `resolve-base-sha` sentinel degrades the confirmation to an unscoped search across the whole branch, which can false-confirm a never-implemented item against a prior run's commit on the same branch — the block below warns and treats any match with extra suspicion in that case; both reads and the mode dispatch happen inside it, not by hand:
+
+Run once per printed `check:` line, substituting that line's `item_id`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || COMMIT_MODE="each"
+IFS= read -r _BASE_SHA < "${TMPDIR:-/tmp}/resolve-base-sha-${CSID}" 2>/dev/null || _BASE_SHA=""
+[ -n "$_BASE_SHA" ] || echo "⚠ resolve-base-sha sentinel missing — confirmation below is unscoped, verify the matched commit's date/author before trusting it"
+_ITEM_ID="<item_id from a printed check: line>"
+case "$_ITEM_ID" in '<'*'>') echo "! BLOCKED — item_id placeholder not substituted"; exit 1 ;; esac
+case "$COMMIT_MODE" in
+    each)
+        # anchored to the literal attribution token commit_action_item.py --build emits, and
+        # range-bound to this run's commits — an unanchored, unscoped grep can match a different
+        # item's id as a substring (No.1 inside No.12) or a prior run's commit on the same branch
+        git log --oneline -E --grep="\[resolve No\.${_ITEM_ID}\]" ${_BASE_SHA:+"$_BASE_SHA..HEAD"}  # timeout: 5000
+        ;;
+    grouped)
+        # tokenize, exact-match — no boundary regex at all. Two prior attempts at this command were
+        # both wrong, in opposite directions: (1) --grep="items .*\b${_ITEM_ID}\b" never matches
+        # anything (\b is a GNU extension, does not compile under `git log -E`'s POSIX ERE); (2) a
+        # boundary-regex replacement against --oneline output is fail-open — --oneline prints only
+        # the commit subject, never the body where the item list lives, so it matches stray digits
+        # in the abbreviated sha or unrelated subject text and false-confirms items that never
+        # landed. --format=%B reads the full body (where "[resolve group] … items <ids>" actually
+        # is), isolates that one line per commit, splits it into whitespace-delimited tokens, and
+        # requires an EXACT token match — a group's own "PR #1" text can never satisfy grep -qx
+        # against a bare ${_ITEM_ID}, and "30" can never satisfy a check for "3". Verified against a
+        # live multi-commit repo (two group commits, ids "30 4" and "7 8"): every real id matched,
+        # "1" (present only inside "PR #1", not the items list) did not.
+        git log --format=%B --grep="items" ${_BASE_SHA:+"$_BASE_SHA..HEAD"} \
+            | grep -E '^\[resolve group\]' | tr ' ' '\n' | grep -qx "${_ITEM_ID}" \
+            && echo "MATCH — item ${_ITEM_ID} found in a group commit" \
+            || echo "NO MATCH — item ${_ITEM_ID} not found in any group commit"  # timeout: 5000
+        ;;
+    all|stage)
+        echo "no per-item token exists in the commit message for COMMIT_MODE=$COMMIT_MODE — grep cannot confirm this item; use this turn's own memory of Phase 3's PLAN_FILE/cherry-pick output, or: git diff --cached --stat / git show --stat against the item's .file"
+        ;;
+    *)
+        echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE', not each/grouped/all/stage"; exit 1
+        ;;
+esac
+```
+
+No confirming commit found → this item was never closed by any exit path; that's the exact defect this gate exists to catch — surface it via `AskUserQuestion` (dispose as `deleted` with a stated reason, or leave open and investigate) rather than guessing either status. Only once every printed id is accounted for:
 
 ```text
 TaskUpdate(task_id=TASK_IMPL, status="completed")

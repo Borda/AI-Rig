@@ -753,6 +753,7 @@ These helpers are installed workflow support and maintainer surfaces, not additi
 
 | Helper                       | Purpose                                                                                           |
 | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `build_merge_plan.py`        | Assemble Phase 3's cherry-pick plan from Phase 2's per-group commit ledger.                       |
 | `commit_action_item.py`      | Manage the commit sentinel around one resolve action-item commit.                                 |
 | `commit_all_items.py`        | Create a bulk commit summarizing resolved review items with a native temp-root sentinel.          |
 | `commit_lint_fixes.py`       | Stage tracked lint changes and create the lint-fix commit with a native temp-root sentinel.       |

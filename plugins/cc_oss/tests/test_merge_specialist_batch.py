@@ -1,8 +1,8 @@
 """Tests for ``bin/merge_specialist_batch.py``.
 
 ``subprocess.run`` and module-level ``which`` are monkeypatched — no real ``git`` invocations. Covers plan parsing, the
-each-mode passthrough (no soft-reset), the non-each soft-reset behaviour, and conflict handling that stops the plan and
-reports remaining entries.
+each-mode passthrough (no soft-reset), the non-each deferred combined soft-reset, and conflict handling that stops the
+plan and reports remaining entries without resetting any already-applied commit.
 """
 
 from __future__ import annotations
@@ -126,7 +126,7 @@ class TestRunPlanEachMode:
 
 
 class TestRunPlanNonEachMode:
-    """run_plan with commit_mode in {grouped, all, stage}: soft-reset after each pick."""
+    """run_plan with commit_mode in {grouped, all, stage}: one combined soft-reset after the whole plan lands."""
 
     @pytest.mark.parametrize(
         "mode",
@@ -136,14 +136,75 @@ class TestRunPlanNonEachMode:
             pytest.param(msb.CommitMode.STAGE, id="stage"),
         ],
     )
-    def test_soft_reset_after_each_pick(self, monkeypatch: pytest.MonkeyPatch, mode: msb.CommitMode) -> None:
-        """Each successful cherry-pick is immediately soft-reset in non-each modes."""
+    def test_single_combined_reset_after_full_plan(self, monkeypatch: pytest.MonkeyPatch, mode: msb.CommitMode) -> None:
+        """Two clean cherry-picks in non-each mode land as real commits, then collapse via one HEAD~2 reset.
+
+        Resetting per entry would leave the index non-clean for the next cherry-pick — RF14: a real ``git cherry-pick``
+        against an index carrying a prior entry's staged-but-uncommitted diff exits 128 even when the two entries touch
+        disjoint files. Each entry must land as a real commit during the loop; only the fully-applied plan collapses, in
+        one combined reset sized by entry count.
+        """
         recorded = _patch_git(monkeypatch)
         entries = [msb.PlanEntry(item_id="1", sha="aaa"), msb.PlanEntry(item_id="2", sha="bbb")]
         result = msb.run_plan(entries, mode)
         assert result["applied"] == ["1", "2"]
-        reset_calls = [c for c in recorded if c[1] == "reset" and c[2:] == ["--soft", "HEAD~1"]]
-        assert len(reset_calls) == 2
+        pick_shas = [c[3] for c in recorded if c[1] == "cherry-pick"]
+        assert pick_shas == ["aaa", "bbb"]  # both picked as real commits, no reset between them
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "HEAD~2"]]
+
+    def test_single_entry_reset_sized_head_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A one-entry non-each plan resets by exactly HEAD~1, not a fixed HEAD~1 constant reused for any count."""
+        recorded = _patch_git(monkeypatch)
+        entries = [msb.PlanEntry(item_id="1", sha="aaa")]
+        msb.run_plan(entries, msb.CommitMode.GROUPED)
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "HEAD~1"]]
+
+    def test_base_sha_resets_to_fixed_target_not_head_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A ``base_sha`` reset targets that fixed commit, not ``HEAD~<len(applied)>``.
+
+        W2: a resumed call after a conflict only re-applies the ``remaining`` entries, so sizing the
+        reset off this call's own ``len(applied)`` collapses only those entries and leaves every
+        entry applied in an earlier call as a permanent real commit. Resetting to the branch tip from
+        before the FIRST call (first or resumed) is correct regardless of how many calls it took.
+        """
+        recorded = _patch_git(monkeypatch)
+        entries = [msb.PlanEntry(item_id="3", sha="ccc")]  # a resumed call's shorter remaining-only plan
+        msb.run_plan(entries, msb.CommitMode.STAGE, base_sha="deadbeef")
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "deadbeef"]]
+
+    def test_no_base_sha_falls_back_to_head_count(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Omitting ``base_sha`` preserves the original ``HEAD~<len(applied)>`` behavior."""
+        recorded = _patch_git(monkeypatch)
+        entries = [msb.PlanEntry(item_id="1", sha="aaa")]
+        msb.run_plan(entries, msb.CommitMode.STAGE, base_sha=None)
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "HEAD~1"]]
+
+    def test_base_sha_collapses_even_with_empty_plan(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty plan with ``base_sha`` still resets — W2's 3rd-round gap, closed.
+
+        The conflict landed on the LAST plan entry: the resumed call's own plan is empty
+        (``remaining`` came back ``[]``), so ``applied`` is also ``[]`` for this call — but every
+        earlier entry from this run still sits on the branch as a real, uncollapsed commit above
+        ``base_sha``. Gating the reset on ``applied`` (as the no-``base_sha`` fallback still must)
+        left this the one call that could ever collapse the run refusing to, stranding real commits
+        in ``stage`` mode with no recovery route.
+        """
+        recorded = _patch_git(monkeypatch)
+        result = msb.run_plan([], msb.CommitMode.STAGE, base_sha="deadbeef")
+        assert result == {"applied": [], "conflict": None, "remaining": []}
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "deadbeef"]]
+
+    def test_no_base_sha_empty_plan_never_resets(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty plan with NO ``base_sha`` issues no reset — there is nothing to size ``HEAD~0`` against."""
+        recorded = _patch_git(monkeypatch)
+        msb.run_plan([], msb.CommitMode.STAGE, base_sha=None)
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == []
 
 
 class TestRunPlanConflict:
@@ -172,6 +233,23 @@ class TestRunPlanConflict:
         reset_calls = [c for c in recorded if c[1] == "reset"]
         assert reset_calls == []
 
+    def test_partial_success_then_conflict_leaves_applied_entries_uncollapsed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An earlier successful entry is never reset when a later entry in the same non-each plan conflicts.
+
+        RF14: resetting entry 1 before entry 2 is attempted is exactly the per-entry-reset bug — the
+        partial-progress state (real commit for entry 1, in-progress conflicted cherry-pick for entry 2)
+        must match ``git cherry-pick``'s own partial-progress state, with no reset ever in flight.
+        """
+        recorded = _patch_git(monkeypatch, cherry_pick_rc_by_sha={"bbb": 1}, conflicted_files_out="src/foo.py\n")
+        entries = [msb.PlanEntry(item_id="1", sha="aaa"), msb.PlanEntry(item_id="2", sha="bbb")]
+        result = msb.run_plan(entries, msb.CommitMode.GROUPED)
+        assert result["applied"] == ["1"]
+        assert result["conflict"]["item_id"] == "2"
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == []
+
 
 class TestMainCli:
     """Read a merge plan and report its conflict state through the command line."""
@@ -197,6 +275,30 @@ class TestMainCli:
         rc = msb.main(["--plan", str(plan_file), "--commit-mode", "each"])
         assert rc == 1
         assert '"conflict"' in capsys.readouterr().out
+
+    def test_base_sha_reaches_run_plan_as_reset_target(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--base-sha`` on the CLI reaches ``run_plan`` and is used as the combined-reset target."""
+        recorded = _patch_git(monkeypatch)
+        plan_file = tmp_path / "plan.json"
+        plan_file.write_text('[{"item_id": "1", "sha": "aaa1111"}]', encoding="utf-8")
+        rc = msb.main(["--plan", str(plan_file), "--commit-mode", "stage", "--base-sha", "deadbeef"])
+        assert rc == 0
+        reset_calls = [c for c in recorded if c[1] == "reset"]
+        assert reset_calls == [["/fake/git", "reset", "--soft", "--end-of-options", "deadbeef"]]
+
+    def test_invalid_base_sha_exits_2(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A ``--base-sha`` failing the sha-shape guard → exit 2, JSON error, no git call attempted."""
+        recorded = _patch_git(monkeypatch)
+        plan_file = tmp_path / "plan.json"
+        plan_file.write_text('[{"item_id": "1", "sha": "aaa1111"}]', encoding="utf-8")
+        rc = msb.main(["--plan", str(plan_file), "--commit-mode", "stage", "--base-sha", "not-a-sha!"])
+        assert rc == 2
+        assert '"error"' in capsys.readouterr().out
+        assert recorded == []
 
     def test_invalid_plan_sha_exits_2(
         self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

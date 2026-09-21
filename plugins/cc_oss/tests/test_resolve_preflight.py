@@ -96,8 +96,8 @@ def test_gh_ok_codex_absent_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.chdir(tmp_path)
     rc = rp.main([])
     assert rc == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false"
-    assert (tmp_path / "resolve-preflight-GH_OK-shared").read_text() == "true"
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false\n"
+    assert (tmp_path / "resolve-preflight-GH_OK-shared").read_text() == "true\n"
 
 
 def test_windows_preflight_uses_native_tempdir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ def test_windows_preflight_uses_native_tempdir(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.chdir(tmp_path)
 
     assert rp.main([]) == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false"
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false\n"
 
 
 def _install_bridge(home: Path, *, enabled: bool = True) -> None:
@@ -161,7 +161,7 @@ def test_gh_ok_bridge_enabled_exits_0(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.chdir(tmp_path)
     rc = rp.main([])
     assert rc == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "true"
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "true\n"
 
 
 def test_gh_ok_bridge_disabled_is_unavailable(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -176,7 +176,30 @@ def test_gh_ok_bridge_disabled_is_unavailable(monkeypatch: pytest.MonkeyPatch, t
     monkeypatch.chdir(tmp_path)
     rc = rp.main([])
     assert rc == 0
-    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false"
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_text() == "false\n"
+
+
+def test_sentinel_writes_end_with_trailing_newline(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Both preflight sentinels end with a trailing newline the consuming ``read`` line needs.
+
+    ``IFS= read -r VAR < "$sentinel" || VAR=default`` (the shared sentinel-read idiom every mode file in oss:resolve
+    uses) returns non-zero on a file with no trailing newline, so the ``||`` silently overwrites a real value with the
+    default — confirmed live: a bare ``"true"`` sentinel made ``CODEX_AVAILABLE`` read back as ``false`` under both zsh
+    and bash. Byte-exact, not ``.read_text()`` equality, so a regression back to the bare form is caught even if some
+    other read path tolerated it.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(rp, "which", lambda cmd: "/fake/" + cmd)
+    monkeypatch.setattr(rp.Path, "home", classmethod(lambda _cls: tmp_path / "home"))
+    monkeypatch.setattr(
+        rp.subprocess,
+        "run",
+        _dispatch({"gh auth": (0, ""), "git remote": (0, ""), "git rev-parse": (1, "")}),
+    )
+    monkeypatch.chdir(tmp_path)
+    assert rp.main([]) == 0
+    assert (tmp_path / "resolve-preflight-CODEX_AVAILABLE-shared").read_bytes().endswith(b"\n")
+    assert (tmp_path / "resolve-preflight-GH_OK-shared").read_bytes().endswith(b"\n")
 
 
 def test_gh_cache_hit_skips_auth(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
