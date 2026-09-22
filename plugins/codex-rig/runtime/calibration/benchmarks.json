@@ -224,7 +224,7 @@
     ]
   },
   "skills": {
-    "adversarial-loop": [
+    "challenge-resolve": [
       "CODEX_THREAD_ID",
       "one structured response containing every finding",
       "## Input Schema",

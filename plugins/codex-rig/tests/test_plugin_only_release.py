@@ -23,7 +23,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PLUGIN_ROOT.parents[1]
 EXPECTED_SKILLS = (
     "agent-shims",
-    "adversarial-loop",
+    "challenge-resolve",
     "assess",
     "audit",
     "calibrate",
@@ -248,7 +248,7 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
     """Keep loop calibration aligned with its executable convergence boundary."""
     calibration = PLUGIN_ROOT / "runtime" / "calibration"
     case_file = calibration / "behavioral-cases.json"
-    cases = {item["id"]: item for item in _load_json(case_file)["cases"] if item.get("target") == "adversarial-loop"}
+    cases = {item["id"]: item for item in _load_json(case_file)["cases"] if item.get("target") == "challenge-resolve"}
     expected = {
         "adversarial-loop-independent-closure",
         "adversarial-loop-stop-conditions",
@@ -263,11 +263,11 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
     # The re-read never rescues the assertion — both outcomes still fail, they just fail legibly.
     if set(cases) != expected:
         first_digest = hashlib.sha256(case_file.read_bytes()).hexdigest()[:12]
-        recheck = {item["id"] for item in _load_json(case_file)["cases"] if item.get("target") == "adversarial-loop"}
+        recheck = {item["id"] for item in _load_json(case_file)["cases"] if item.get("target") == "challenge-resolve"}
         second_digest = hashlib.sha256(case_file.read_bytes()).hexdigest()[:12]
         verdict = "transient read" if recheck == expected and first_digest == second_digest else "case list drifted"
         raise AssertionError(
-            f"adversarial-loop {verdict}: missing={sorted(expected - set(cases))} "
+            f"challenge-resolve {verdict}: missing={sorted(expected - set(cases))} "
             f"unexpected={sorted(set(cases) - expected)} "
             f"re-read={sorted(recheck)} sha256[:12]={first_digest}->{second_digest}"
         )

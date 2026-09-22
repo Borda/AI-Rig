@@ -62,7 +62,7 @@ def _write_loop(
     )
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["skill"] = "adversarial-loop"
+    handoff["skill"] = "challenge-resolve"
     handoff["outcome"] = {"title": "Parser review", "summary": "Parser review is clean; no code fixes were needed."}
     handoff["tables"] = [
         {
@@ -96,10 +96,10 @@ def test_public_validator_accepts_clean_current_loop(tmp_path: Path, monkeypatch
     """Accept the complete loop and reject a changed current snapshot."""
     result_path = _write_loop(tmp_path, monkeypatch)
     validator = _load_shared_validator()
-    validator.validate("adversarial-loop", tmp_path, result_path)
+    validator.validate("challenge-resolve", tmp_path, result_path)
     (tmp_path / "current.diff").write_bytes(b"unreviewed change")
     with pytest.raises(SystemExit, match="adversarial-loop-snapshot-digest-mismatch:current.diff"):
-        validator.validate("adversarial-loop", tmp_path, result_path)
+        validator.validate("challenge-resolve", tmp_path, result_path)
 
 
 def test_public_validator_requires_bound_parent_actions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,21 +108,17 @@ def test_public_validator_requires_bound_parent_actions(tmp_path: Path, monkeypa
     validator = _load_shared_validator()
     (tmp_path / "loop-actions.json").unlink()
     with pytest.raises(SystemExit, match="adversarial-loop-invalid-actions:"):
-        validator.validate("adversarial-loop", tmp_path, result_path)
+        validator.validate("challenge-resolve", tmp_path, result_path)
 
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["metadata"].pop("action_contract_version")
     result_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(SystemExit, match="adversarial-loop-action-contract-required"):
-        validator.validate("adversarial-loop", tmp_path, result_path)
+        validator.validate("challenge-resolve", tmp_path, result_path)
     final_path = tmp_path / "result.json"
     final_path.write_text(json.dumps(result), encoding="utf-8")
     with pytest.raises(SystemExit, match="adversarial-loop-action-contract-required"):
-        validator.validate("adversarial-loop", tmp_path, final_path)
-
-    validator.validate("adversarial-loop", tmp_path, final_path, allow_legacy_loop_actions=True)
-    with pytest.raises(SystemExit, match="adversarial-loop-legacy-actions-final-only"):
-        validator.validate("adversarial-loop", tmp_path, result_path, allow_legacy_loop_actions=True)
+        validator.validate("challenge-resolve", tmp_path, final_path)
 
 
 def test_public_validator_accepts_verified_structural_carryover(
@@ -140,7 +136,7 @@ def test_public_validator_accepts_verified_structural_carryover(
     ]
     result_path = _write_loop(tmp_path, monkeypatch, findings=findings)
 
-    _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+    _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
     ledger = json.loads((tmp_path / "loop-ledger.json").read_text(encoding="utf-8"))
     assert ledger["rounds"][0]["findings"] == findings
 
@@ -164,7 +160,7 @@ def test_public_validator_rejects_unbound_review_evidence(
     else:
         (tmp_path / "review" / "specialist-manifest.json").unlink()
     with pytest.raises(SystemExit, match="adversarial-loop-evidence-invalid:"):
-        _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+        _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("mutation", ["drop-review", "claim-clean", "escape-report", "change-table"])
@@ -196,7 +192,7 @@ def test_public_validator_rejects_false_loop_closure(
         result_path.write_text(json.dumps(result), encoding="utf-8")
     ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
     with pytest.raises(SystemExit, match="adversarial-loop-"):
-        _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+        _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
 def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_findings(
@@ -283,7 +279,7 @@ def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_fin
     result["metadata"]["final_handoff"].update({key: validation[key] for key in ("handoff_sha256", "rendered_sha256")})
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
-    _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+    _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
 def test_public_validator_rejects_nonclean_loop_hidden_as_pass(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -312,7 +308,7 @@ def test_public_validator_rejects_nonclean_loop_hidden_as_pass(tmp_path: Path, m
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     with pytest.raises(SystemExit, match="result-checks-failed-gate-mismatch"):
-        _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+        _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("review_status", ["fail", "pass"])
@@ -380,9 +376,9 @@ def test_public_validator_accepts_unavailable_loop_with_not_run_row(
 
     if review_status == "pass":
         with pytest.raises(SystemExit, match="adversarial-loop-nonclean-review-gate"):
-            _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+            _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
     else:
-        _load_shared_validator().validate("adversarial-loop", tmp_path, result_path)
+        _load_shared_validator().validate("challenge-resolve", tmp_path, result_path)
     rendered = (tmp_path / "final.md").read_text(encoding="utf-8")
     assert "| not-run | Not assessed | N/A | independence-unavailable | loop-report.md |" in rendered
     assert "| 1 |" not in rendered

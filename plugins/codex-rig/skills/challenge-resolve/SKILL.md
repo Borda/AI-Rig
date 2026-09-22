@@ -1,11 +1,11 @@
 ---
-name: adversarial-loop
+name: challenge-resolve
 description: Independently review and fix a scoped diff through bounded convergence rounds, with evidence-backed closure and explicit stop/recovery decisions. Use for requested adversarial review-and-fix loops, not a single read-only review.
 ---
 
 > Before asking, read [User Questions](../../shared/codex-user-questions.md).
 
-# Adversarial Loop
+# Challenge and Resolve
 
 Read, apply `../../shared/adversarial-loop.md` before dispatch or edits. That shared procedure owns the algorithm; this entrypoint owns Codex artifacts, the closing gate. Read `evidence-contract.md` before source capture or reviewer dispatch. Also read `../../shared/native-skill-contract.md` and `../../shared/specialist-orchestration.md` for authority, recurrence, reviewer admission, evidence limits.
 
@@ -28,7 +28,7 @@ Use default max 3 review rounds, including initial W_0. In-scope feasible fixes 
 
 ### 01: Establish scope and evidence ownership
 
-Read `../../shared/helper-cli-contract.md`; create a run with `create_run.py --skill adversarial-loop`. Record `caller_run` when supplied, without overwriting its artifacts. Retain baseline source and acceptance evidence. Write `loop-report.md` with `Scope`, `Rounds`, `Findings`, `Recovery`, and `Verification` sections. Identify implementation author and allowed reviewer route before dispatch.
+Read `../../shared/helper-cli-contract.md`; create a run with `create_run.py --skill challenge-resolve`. Record `caller_run` when supplied, without overwriting its artifacts. Retain baseline source and acceptance evidence. Write `loop-report.md` with `Scope`, `Rounds`, `Findings`, `Recovery`, and `Verification` sections. Identify implementation author and allowed reviewer route before dispatch.
 
 ### 02: Run the shared bounded procedure
 
@@ -46,7 +46,7 @@ Use `run_gates.py` for actual project lint, format, types, tests, review, with e
 
 ### 04: Validate and hand off
 
-Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`, and keep `action_contract_version: 1` in result metadata. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `adversarial-loop`, promote only validated artifacts. Include confidence evidence, gaps, recovery, residual limits. Default validation requires the action contract for candidate and final results; the archive-only `--allow-legacy-loop-actions` exception is never a promotion path. Shared validation reruns action and evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness. The host has no table-delivery receipt: report the once-per-round chat timing as an instruction-level limit, not a machine-verified guarantee.
+Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`, and keep `action_contract_version: 1` in result metadata. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `challenge-resolve`, promote only validated artifacts. Include confidence evidence, gaps, recovery, residual limits. Default validation requires the action contract for candidate and final results; older artifacts lacking it can be read as data but cannot be validated under the current contract. Shared validation reruns action and evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness. The host has no table-delivery receipt: report the once-per-round chat timing as an instruction-level limit, not a machine-verified guarantee.
 
 ## Fail-Fast Rules
 
@@ -75,4 +75,4 @@ Follow `../../shared/final-handoff-contract.md`; after validation and promotion 
 - With no validated round, report the missing evidence in prose, not a `not-run` / `N/A` progress table. A status update without a new round does not repeat the table; never invent a clean row or omit a table due after an actual round.
 - Show the score series and each remaining finding's disposition, reason, owner, and next action. Report actual implemented fixes separately from evidence-only closure; no code fixes means say so. The common result counts fold security into critical and nit into low; the ledger retains all six tiers.
 - `Next steps`: recommended recovery and relevant alternatives on stops; ask only for the missing decision.
-- Confidence includes independence/provenance and execution limits, not just a number. Artifact: `.reports/codex/adversarial-loop/<timestamp>/result.json`.
+- Confidence includes independence/provenance and execution limits, not just a number. Artifact: `.reports/codex/challenge-resolve/<timestamp>/result.json`.

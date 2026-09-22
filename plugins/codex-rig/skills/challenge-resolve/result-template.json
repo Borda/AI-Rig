@@ -1,5 +1,5 @@
 {
-  "artifact_path": ".reports/codex/adversarial-loop/<timestamp>/result.json",
+  "artifact_path": ".reports/codex/challenge-resolve/<timestamp>/result.json",
   "checks_failed": [],
   "checks_run": [
     "lint",
@@ -41,12 +41,12 @@
     },
     "final_handoff": {
       "branch": "standard",
-      "handoff_path": ".reports/codex/adversarial-loop/<timestamp>/final-handoff.json",
+      "handoff_path": ".reports/codex/challenge-resolve/<timestamp>/final-handoff.json",
       "handoff_sha256": "sha256",
-      "rendered_path": ".reports/codex/adversarial-loop/<timestamp>/final.md",
+      "rendered_path": ".reports/codex/challenge-resolve/<timestamp>/final.md",
       "rendered_sha256": "sha256",
       "schema_version": 1,
-      "validation_path": ".reports/codex/adversarial-loop/<timestamp>/final-handoff.validation.json"
+      "validation_path": ".reports/codex/challenge-resolve/<timestamp>/final-handoff.validation.json"
     }
   },
   "schema_version": 2,

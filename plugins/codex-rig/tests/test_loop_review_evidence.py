@@ -14,7 +14,7 @@ import pytest
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "adversarial-loop" / "validate_evidence.py"
+VALIDATOR_PATH = PLUGIN_ROOT / "skills" / "challenge-resolve" / "validate_evidence.py"
 
 
 @pytest.fixture(autouse=True)

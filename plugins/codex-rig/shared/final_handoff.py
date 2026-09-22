@@ -54,7 +54,7 @@ GATE_IDS = ("lint", "format", "types", "tests", "review")
 GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
 GAP_STATUSES = {"closed", "unresolved", "deferred"}
 STANDARD_COLUMNS = {
-    "adversarial-loop": ("Iteration", "Open findings", "Weighted score", "Decision", "Evidence"),
+    "challenge-resolve": ("Iteration", "Open findings", "Weighted score", "Decision", "Evidence"),
     "audit": ("Item", "Severity / impact", "Decision", "Evidence", "Next action"),
     "calibrate": ("Check / metric", "Result", "Evidence", "Next action"),
     "assess": ("Finding", "Impact", "Decision", "Evidence", "Next action"),

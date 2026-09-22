@@ -10,7 +10,7 @@ deterministic convergence structure but cannot prove a claimed reviewer inspecte
 ## Scope
 
 Read only ``loop-ledger.json``, ``loop-evidence.json``, retained source snapshots, and completed code-review runs below
-one adversarial-loop run. The validator delegates route, role, child-lineage, and returned-output checks to Code
+one challenge-resolve run. The validator delegates route, role, child-lineage, and returned-output checks to Code
 Review's existing manifest-only validator; it creates no reviewer, modifies no artifact, and makes no network call. It
 supports schema-five native inspection and schema-four App Server evidence because both retain an actual reviewer thread
 identifier and frozen context bytes. Older schemas are rejected rather than reimplementing their provenance rules here.
@@ -36,7 +36,7 @@ permitted review rather than repairing provenance declarations after the fact.
 
 ## Used by
 
-The adversarial-loop skill's parent-owned closure gate invokes this module before it accepts a clean review loop;
+The challenge-resolve skill's parent-owned closure gate invokes this module before it accepts a clean review loop;
 focused artifact tests exercise valid native evidence and forged identity, report, source, and context mutations.
 """
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.24.0
+
+- Rename the `adversarial-loop` skill invocation to `challenge-resolve` while retaining the shared procedure and reviewer wire format; remove the unprovable archive-validation opt-out so final results require the same bound action record as candidates.
+
 ## 0.23.0
 
 - Run bounded challenges as collect → report old/new once → fix feasible findings → escalate unresolved severe findings → repeat until clean, three rounds or plateau; validate one parent action per open finding, avoid placeholder progress tables, and distinguish advisory reviewer token targets from enforced caps. Table delivery count remains an instruction-level limit without a host transcript receipt.

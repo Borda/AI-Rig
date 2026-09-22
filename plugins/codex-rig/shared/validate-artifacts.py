@@ -17,8 +17,8 @@ resolution tables, identity, and merge evidence.
 
 Run ``python validate-artifacts.py --skill <id> --out <directory> --result <candidate.json>`` before promoting a result.
 The result path may be a candidate or final JSON, but the output directory must contain the canonical gate and section
-artifacts required for the selected skill. ``--allow-legacy-loop-actions`` is an explicit inspection-only exception for
-archived adversarial-loop ``result.json`` files predating the action contract; never use it for candidate promotion.
+artifacts required for the selected skill. Older loop results remain readable as JSON, but cannot bypass current
+validation by claiming an unverifiable archive identity.
 
 ## Used by
 
@@ -193,7 +193,7 @@ PR_THREAD_CONFIDENCE_GAP = "PR review-thread resolution status was unavailable; 
 PR_PUBLIC_FALLBACK_MAX_CONFIDENCE = 0.89
 
 SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
-    "adversarial-loop": {
+    "challenge-resolve": {
         "files": {
             "loop-ledger.json": [],
             "loop-report.md": ["Scope", "Rounds", "Findings", "Recovery", "Verification"],
@@ -2423,9 +2423,7 @@ def _validate_code_remediate_merge_resolution(
         raise SystemExit("code-remediate-merge-resolution-metadata-mismatch")
 
 
-def _validate_adversarial_loop(
-    result: dict[str, Any], out_dir: Path, gates: dict[str, Any], result_path: Path, *, allow_legacy_actions: bool
-) -> None:
+def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dict[str, Any]) -> None:
     """Bind the loop decision to retained snapshots, reports, and visible result rows."""
     if result.get("schema_version") != 2:
         raise SystemExit("adversarial-loop-schema-v2-required")
@@ -2439,11 +2437,7 @@ def _validate_adversarial_loop(
     if completed.returncode:
         raise SystemExit("adversarial-loop-invalid-ledger:" + completed.stderr.strip())
     action_contract = result.get("metadata", {}).get("action_contract_version")
-    if allow_legacy_actions and result_path.name != "result.json":
-        raise SystemExit("adversarial-loop-legacy-actions-final-only")
-    if (type(action_contract) is not int or action_contract != 1) and not (
-        allow_legacy_actions and action_contract is None
-    ):
+    if type(action_contract) is not int or action_contract != 1:
         raise SystemExit("adversarial-loop-action-contract-required")
     if action_contract == 1:
         actions = subprocess.run(
@@ -2498,7 +2492,9 @@ def _validate_adversarial_loop(
     if result["findings"] != expected_findings:
         raise SystemExit("adversarial-loop-finding-count-mismatch")
     _validate_adversarial_loop_rows(out_dir, ledger, summary)
-    evidence_validator = Path(__file__).resolve().parent.parent / "skills" / "adversarial-loop" / "validate_evidence.py"
+    evidence_validator = (
+        Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "validate_evidence.py"
+    )
     evidence = subprocess.run(
         [sys.executable, str(evidence_validator), "--out", str(out_dir)],
         capture_output=True,
@@ -2692,7 +2688,7 @@ def _validate_release_draft(text: str) -> None:
         raise SystemExit("release-draft-comparison-missing")
 
 
-def validate(skill: str, out_dir: Path, result_path: Path, *, allow_legacy_loop_actions: bool = False) -> None:
+def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     """Validate shared workflow evidence and the selected skill's completion contract."""
     result = _load_json(result_path)
     _require_result_shape(result)
@@ -2720,8 +2716,8 @@ def validate(skill: str, out_dir: Path, result_path: Path, *, allow_legacy_loop_
     _validate_confidence_recovery(result, skill)
     if skill == "release":
         _validate_release_communication(result, out_dir, gates)
-    if skill == "adversarial-loop":
-        _validate_adversarial_loop(result, out_dir, gates, result_path, allow_legacy_actions=allow_legacy_loop_actions)
+    if skill == "challenge-resolve":
+        _validate_adversarial_loop(result, out_dir, gates)
     if skill == "code-remediate":
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
@@ -2863,14 +2859,9 @@ def main() -> int:
     )
     parser.add_argument("--out", required=True, type=Path, help="Skill artifact directory.")
     parser.add_argument("--result", required=True, type=Path, help="Candidate result JSON to validate.")
-    parser.add_argument(
-        "--allow-legacy-loop-actions",
-        action="store_true",
-        help="Inspect an archived adversarial-loop result.json without the newer action contract; never use for promotion.",
-    )
     args = parser.parse_args()
 
-    validate(args.skill, args.out, args.result, allow_legacy_loop_actions=args.allow_legacy_loop_actions)
+    validate(args.skill, args.out, args.result)
     return 0
 
 

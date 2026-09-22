@@ -6,7 +6,7 @@
       ],
       "id": "adversarial-loop-premature-progress-table",
       "prompt": "An independent challenge has reviewer outputs, but provenance validation and one required coverage axis are incomplete. The parent repeatedly prints a not-run/N/A convergence table in status updates and a recovery question, despite having no completed validated round. Assess the timing and propose a factual prose status until the first valid challenge finishes.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [
@@ -297,7 +297,7 @@
       ],
       "id": "adversarial-loop-owner-and-response-binding",
       "prompt": "A loop reuses an authentic past reviewer response while the current host session is that same reviewer, but declares the old parent as implementation author. The response contains a missing-guard finding in prose after an empty structured findings block. Both source and returned bytes match retained evidence. Determine whether clean acceptance is justified, what must be bound to the active host, and how to prevent finding prose from being silently discarded without rewriting the original response.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [
@@ -308,7 +308,7 @@
       ],
       "id": "adversarial-loop-independent-closure",
       "prompt": "Assess an adversarial review loop that starts counting only after the first fix, marks findings fixed before an independent reviewer verifies the current diff, and declares the loop clean because the original reviewer reread its own patch. Require W_0, keep fixed-pending-verification findings open, and require an independent final review of the current diff before a clean result. Do not replace unavailable independent coverage with an invented fallback; report the actual stop condition, evidence, owner, and next action.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [
@@ -320,13 +320,13 @@
       ],
       "id": "adversarial-loop-stop-conditions",
       "prompt": "Assess an adversarial loop that changes an out-of-scope public API to fix a structural finding without required approval, repeats a finding without root-cause evidence, silently leaves an unfixable high finding un-escalated, continues after weighted-score plateau, and runs a fourth review. Distinguish feasible in-scope fixes from missing authority; retain scores, evidence, and owner/action for every stop.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [],
       "id": "adversarial-loop-five-step-convergence",
       "prompt": "A scoped loop freezes and independently challenges the initial source, validates every finding, then shows one cumulative old/new table. It fixes all feasible in-scope findings, records why none of the remaining high or critical findings is unfixable, and freezes a new snapshot. The second challenge independently verifies fixes, its score halves, and the parent shows the updated table once before the next fixes. The third challenge independently verifies the current snapshot clean. No table appears during pending status messages; reviewer output targets 1500 tokens and is labeled advisory because the host exposes no hard cap. The parent completes the caller gates without a fourth review.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [
@@ -336,7 +336,7 @@
       ],
       "id": "adversarial-loop-progress-transcript",
       "prompt": "A challenge-resolve workflow completes two independently reviewed iterations. After the first it prints only 'review complete'. After the second it prints one row containing total findings per severity, without prior rows or a score. Its JSON ledger retains both reviews and stable finding signatures. Assess the user-visible progress reporting against the workflow contract.",
-      "target": "adversarial-loop"
+      "target": "challenge-resolve"
     },
     {
       "expected_findings": [

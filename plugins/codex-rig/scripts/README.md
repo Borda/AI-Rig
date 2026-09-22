@@ -246,7 +246,7 @@ The progress table has exactly `Iteration | Critical | High | Medium | Low | Nit
 
 `--require-clean` remains an independent exit-status gate. The final adversarial-loop result table is not replaced by this in-turn stderr transcript.
 
-The shared artifact validator requires `action_contract_version: 1` and a valid `loop-actions.json` for new candidate and final adversarial-loop results. Its explicit `--allow-legacy-loop-actions` option is for inspecting archived `result.json` only; it cannot validate a candidate for promotion.
+The shared artifact validator requires `action_contract_version: 1` and a valid `loop-actions.json` for both candidate and final `challenge-resolve` results. Older files may be read as data, but have no unverified archive exception in current validation.
 
 </details>
 

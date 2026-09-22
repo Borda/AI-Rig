@@ -11,7 +11,7 @@ See the [fixed recurrence and root-cause policy](../../shared/native-skill-contr
 
 Run linear implementation with strict gates.
 
-When independent review findings are fixed in a cycle, read `../../shared/adversarial-loop.md` and apply its bounded convergence and stop rules. Use the `adversarial-loop` skill for an explicitly requested standalone loop; this workflow still owns its normal completion gates.
+When independent review findings are fixed in a cycle, read `../../shared/adversarial-loop.md` and apply its bounded convergence and stop rules. Use the `challenge-resolve` skill for an explicitly requested standalone loop; this workflow still owns its normal completion gates.
 
 ## Input Schema
 
