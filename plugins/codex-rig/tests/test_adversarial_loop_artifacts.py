@@ -30,6 +30,36 @@ def _write_loop(
         "scores": [0],
         "rounds": [{"index": 1, "score": 0, "counts": counts, "decision": "clean"}],
     }
+    result["metadata"]["action_contract_version"] = 1
+    open_findings = [
+        finding for finding in findings or [] if finding["disposition"] in {"open", "fixed-pending-verification"}
+    ]
+    (tmp_path / "loop-actions.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "rounds": [
+                    {
+                        "index": 1,
+                        "actions": [
+                            {
+                                "signature": finding["signature"],
+                                "decision": (
+                                    "escalate" if finding["tier"] in {"security", "critical", "high"} else "defer"
+                                ),
+                                "evidence": ["The finding remains open pending the next scoped action."],
+                                "owner": "parent",
+                                "next_action": "Request the needed scope or independent verification.",
+                                "root_cause": None,
+                            }
+                            for finding in open_findings
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     handoff_path = tmp_path / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff["skill"] = "adversarial-loop"
@@ -70,6 +100,29 @@ def test_public_validator_accepts_clean_current_loop(tmp_path: Path, monkeypatch
     (tmp_path / "current.diff").write_bytes(b"unreviewed change")
     with pytest.raises(SystemExit, match="adversarial-loop-snapshot-digest-mismatch:current.diff"):
         validator.validate("adversarial-loop", tmp_path, result_path)
+
+
+def test_public_validator_requires_bound_parent_actions(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a new result whose finding actions are missing or bypassed."""
+    result_path = _write_loop(tmp_path, monkeypatch)
+    validator = _load_shared_validator()
+    (tmp_path / "loop-actions.json").unlink()
+    with pytest.raises(SystemExit, match="adversarial-loop-invalid-actions:"):
+        validator.validate("adversarial-loop", tmp_path, result_path)
+
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["metadata"].pop("action_contract_version")
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(SystemExit, match="adversarial-loop-action-contract-required"):
+        validator.validate("adversarial-loop", tmp_path, result_path)
+    final_path = tmp_path / "result.json"
+    final_path.write_text(json.dumps(result), encoding="utf-8")
+    with pytest.raises(SystemExit, match="adversarial-loop-action-contract-required"):
+        validator.validate("adversarial-loop", tmp_path, final_path)
+
+    validator.validate("adversarial-loop", tmp_path, final_path, allow_legacy_loop_actions=True)
+    with pytest.raises(SystemExit, match="adversarial-loop-legacy-actions-final-only"):
+        validator.validate("adversarial-loop", tmp_path, result_path, allow_legacy_loop_actions=True)
 
 
 def test_public_validator_accepts_verified_structural_carryover(
@@ -149,10 +202,10 @@ def test_public_validator_rejects_false_loop_closure(
 def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_findings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep a structural stop, failed review gate, and folded result counts visible.
+    """Keep an authority-blocked structural finding and folded result counts visible.
 
-    Prevents a stopped review from being rendered as an accepted outcome or from losing its security and nit findings in
-    the common result counts.
+    A structural flag alone leaves the score active; the parent still fails acceptance when the required contract-change
+    authority is absent, without losing security and nit findings in common result counts.
     """
     findings = [
         {
@@ -186,15 +239,15 @@ def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_fin
         metadata={
             **result["metadata"],
             "adversarial_loop": {
-                "status": "stopped",
-                "reason": "structural-finding",
+                "status": "active",
+                "reason": "baseline",
                 "scores": [21],
                 "rounds": [
                     {
                         "index": 1,
                         "score": 21,
                         "counts": {"security": 1, "critical": 0, "high": 0, "medium": 0, "low": 0, "nit": 1},
-                        "decision": "structural-finding",
+                        "decision": "baseline",
                     }
                 ],
             },
@@ -204,13 +257,13 @@ def test_public_validator_accepts_stopped_loop_with_failed_review_and_folded_fin
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
     handoff["outcome"] = {
         "title": "Parser review",
-        "summary": "Parser review stopped at a shared contract boundary.",
+        "summary": "Parser review cannot fix the shared contract without approval.",
     }
     handoff["tables"][0]["rows"][0]["cells"] = [
         "1",
         "security=1, critical=0, high=0, medium=0, low=0, nit=1",
         "21",
-        "structural-finding",
+        "baseline",
         "review-1.md",
     ]
     handoff["verification"][-1] = {"check": "review", "status": "fail", "evidence": "review.stdout.txt"}
@@ -275,6 +328,7 @@ def test_public_validator_accepts_unavailable_loop_with_not_run_row(
     ledger = json.loads((tmp_path / "loop-ledger.json").read_text(encoding="utf-8"))
     ledger["rounds"] = []
     (tmp_path / "loop-ledger.json").write_text(json.dumps(ledger), encoding="utf-8")
+    (tmp_path / "loop-actions.json").write_text(json.dumps({"schema_version": 1, "rounds": []}), encoding="utf-8")
     evidence_path = tmp_path / "loop-evidence.json"
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     evidence["rounds"] = []

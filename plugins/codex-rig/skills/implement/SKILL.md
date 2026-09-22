@@ -132,10 +132,10 @@ Before spawning or substituting specialists, write `<run-directory>/specialist-p
 
 Required orchestration patterns:
 
-- public API or architecture: `sw-engineer` for implementation, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when user expressly requests Sol or selects that role; it returns bounded read-only design artifact to Terra parent/session, which continues and accepts.
+- public API or architecture: `sw-engineer` for implementation, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the Sol parent/session, which continues and accepts.
 - bug fix or regression: `investigate` or equivalent root-cause evidence first, then `sw-engineer` for fix and `qa-specialist` for failure-before/pass-after proof.
 - CI/tooling: `cicd-steward` for workflow behavior and `linting-expert` for ruff/mypy/pre-commit or suppression policy.
-- security-sensitive code: Terra parent/session scopes risk before implementation and pairs `sw-engineer` with `qa-specialist` as needed. Use read-only `security-auditor` only when user expressly requests Sol or selects that role; it returns bounded evidence artifact to Terra parent/session, which continues and accepts.
+- security-sensitive code: the Sol parent/session scopes risk before implementation and pairs `sw-engineer` with `qa-specialist` as needed. Use read-only `security-auditor` only when the user expressly requests that advisory pass or selects the role; it returns bounded evidence to the Sol parent/session, which continues and accepts.
 - ML/data/research behavior: `data-steward` for data contracts, `scientist` for method/metric validity, `squeezer` for performance claims, plus `qa-specialist` for tensor boundary tests.
 - docs-impacting behavior: `doc-scribe` gets only verified public behavior, API signatures, examples, and migration notes; do not send unrelated implementation details.
 - high-risk or broad changes: `challenger` runs after draft plan or diff to stress-test assumptions and residual risk.

@@ -188,7 +188,7 @@ def _expected_challenger_bytes(
     text = f'''# codex-rig-shim schema=1 plugin=codex-rig install_id={INSTALL_ID} role_id=challenger package_hash=sha256:{manifest_hash} role_hash=sha256:{role["sha256"]} bootstrap=1 generator=1
 name = "codex-rig-challenger"
 description = "Thin linked Codex Rig challenger role; unavailable unless the current installed plugin verifies."
-model = "gpt-5.6-terra"
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 approval_policy = "on-request"
 sandbox_mode = "read-only"

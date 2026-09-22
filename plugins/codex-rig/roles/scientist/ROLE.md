@@ -1,7 +1,7 @@
 ---
 role_id: scientist
 name: codex-rig-scientist
-model: gpt-5.6-terra
+model: gpt-6-sol
 model_reasoning_effort: high
 approval_policy: on-request
 sandbox_mode: workspace-write

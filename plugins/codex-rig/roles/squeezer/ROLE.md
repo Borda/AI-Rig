@@ -1,8 +1,8 @@
 ---
 role_id: squeezer
 name: codex-rig-squeezer
-model: gpt-5.6-terra
-model_reasoning_effort: high
+model: gpt-6-sol
+model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: read-only
 fallback_modes: [shim, built-in-injected, inline]

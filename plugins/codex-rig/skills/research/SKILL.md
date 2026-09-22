@@ -58,7 +58,7 @@ For `sota`, `paper`, `methodology`, or `code-fidelity`, read and apply `../../sh
 
 - `web-explorer`: current docs, release notes, API and dependency changes.
 - `scientist`: formulas, methodology, metrics, ablations, benchmark claims.
-- `solution-architect`: only when user expressly requests Sol or selects that role for implementation fit, API boundaries, or migration shape; it returns bounded read-only design artifact to Terra parent/session for next action and acceptance.
+- `solution-architect`: only when user expressly requests that advisory pass or selects the role for implementation fit, API boundaries, or migration shape; it returns a bounded read-only design artifact to the Sol parent/session for next action and acceptance.
 - `squeezer`: performance or resource claims.
 - `data-steward`: datasets, splits, leakage, reproducibility.
 - `challenger`: unsupported recommendation or overconfident source synthesis.

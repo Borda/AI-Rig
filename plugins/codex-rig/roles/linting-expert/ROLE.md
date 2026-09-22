@@ -1,8 +1,8 @@
 ---
 role_id: linting-expert
 name: codex-rig-linting-expert
-model: gpt-5.6-luna
-model_reasoning_effort: high
+model: gpt-6-luna
+model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: workspace-write
 fallback_modes: [shim, built-in-injected, inline]

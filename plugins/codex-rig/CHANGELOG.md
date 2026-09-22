@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.23.0
+
+- Run bounded challenges as collect → report old/new once → fix feasible findings → escalate unresolved severe findings → repeat until clean, three rounds or plateau; validate one parent action per open finding, avoid placeholder progress tables, and distinguish advisory reviewer token targets from enforced caps. Table delivery count remains an instruction-level limit without a host transcript receipt.
+- Route the normal Codex parent and all fifteen specialist roles to explicit GPT-6 Sol/Luna model-and-effort assignments, keep architecture/security advisors opt-in, and mark GPT-5.6 paid calibration as historical rather than GPT-6 acceptance evidence.
+- Resolve numeric PR targets to a unique canonical GitHub URL before proposing reusable collector approval; keep workflow consent separate from loaded host permission and reject ambiguous repository identity.
+- Review verified PR commits in detached isolated worktrees, preserving the invoking checkout and binding source-dependent gates to the recorded worktree. Remediation retains its attached-branch checkout contract.
+- Reject malformed review risk tiers before specialist work and require explicit role IDs on new parent-only substitute outputs while preserving historical artifact compatibility.
+
 ## 0.22.0
 
 - Require reviewer attribution and the aggregate summary when promoting new assessed review candidates without retroactively rejecting historical reports. Non-PR assessed candidates must now carry a `Review Snapshot` table, which earlier releases did not require — a breaking change for that promotion path only; stored artifacts still read unchanged. Require convergence tables in challenge updates, approval/recovery questions and pauses, including unvalidated runs.

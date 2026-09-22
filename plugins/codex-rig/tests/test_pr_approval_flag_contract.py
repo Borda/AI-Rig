@@ -149,7 +149,8 @@ def test_shared_contract_bounds_reusable_pr_collector_prefix_to_canonical_url() 
     assert "Canonical repository URL is mandatory" in preapproval
     assert "numeric PR cross-repository leak" in preapproval
     assert "one unambiguous local GitHub repository" in preapproval
-    assert "current-branch/no explicit PR or ambiguous remotes" in preapproval
+    assert "ask for a canonical PR URL" in preapproval
+    assert "current-branch/no explicit PR" in preapproval
     assert "one-shot collection without prefix" in preapproval
     assert "Validate a URL target as a canonical GitHub PR URL" in preapproval
     assert '`sandbox_permissions="require_escalated"`' in preapproval
@@ -163,6 +164,40 @@ def test_shared_contract_bounds_reusable_pr_collector_prefix_to_canonical_url() 
     assert "takes precedence over generic RTK routing" in preapproval
     assert "zero prompts" not in preapproval.lower()
     assert "automatic expiry" not in preapproval.lower()
+
+
+@pytest.mark.installed_plugin
+def test_numeric_pr_is_canonicalized_before_first_collector_command() -> None:
+    """Keep numeric user input out of the owning command, not just its saved rule."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    preapproval = contract.split("## PR Collection Preapproval\n", 1)[1].split("\n## ", 1)[0]
+
+    assert "Before the first `collect_pr.py` invocation" in preapproval
+    assert (
+        "replace a numeric user target with that locally bound canonical URL in the actual `--target` argument"
+        in preapproval
+    )
+    assert "The command and `prefix_rule` must contain the same URL" in preapproval
+    assert "never put the numeric input or `--out` path in the reusable prefix" in preapproval
+    assert "Do not launch a numeric-target collector command while claiming canonical-URL preapproval" in preapproval
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    "skill_path",
+    [
+        pytest.param(CODE_REVIEW_SKILL, id="code-review"),
+        pytest.param(CODE_REMEDIATE_SKILL, id="code-remediate"),
+        pytest.param(PLUGIN_ROOT / "skills" / "assess" / "SKILL.md", id="assess"),
+    ],
+)
+def test_pr_collector_consumers_bind_numeric_target_before_execution(skill_path: Path) -> None:
+    """Keep each PR collection workflow on the same repository-qualified command boundary."""
+    skill = skill_path.read_text(encoding="utf-8")
+
+    assert "select-git-remote.py --canonical-pr-url" in skill
+    assert "collector `--target`" in skill or "Collect `COLLECTION_TARGET`" in skill
+    assert "prefix" in skill
 
 
 @pytest.mark.installed_plugin

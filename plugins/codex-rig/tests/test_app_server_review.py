@@ -162,14 +162,14 @@ def _effective_config(*, disabled: bool) -> dict[str, object]:
     }
 
 
-def _thread_result(role_index: int, model: str) -> dict[str, object]:
+def _thread_result(role_index: int, model: str, effort: str) -> dict[str, object]:
     """Return the observed no-turn thread control response for one role."""
     return {
         "thread": {"id": f"thread-{role_index}"},
         "sandbox": {"type": "readOnly", "networkAccess": False},
         "approvalPolicy": "never",
         "model": model,
-        "reasoningEffort": "high",
+        "reasoningEffort": effort,
     }
 
 
@@ -192,7 +192,7 @@ def _launches_for_plan(
     # App Server may notify lifecycle state while the matching request is pending.
     second.append({"jsonrpc": "2.0", "method": "thread/started", "params": {}})
     for index, node in enumerate(plan["nodes"], start=3):
-        second.append(_response(index, _thread_result(index - 3, node["model"])))
+        second.append(_response(index, _thread_result(index - 3, node["model"], node["reasoning_effort"])))
     request_id = 3 + len(plan["nodes"])
     for node in plan["nodes"]:
         context = (plan_path.parent / node["context_path"]).read_text(encoding="utf-8")
@@ -2018,6 +2018,14 @@ def test_validate_evidence_binds_canonical_roles_and_outputs(tmp_path: Path) -> 
         "approval_policy": "never",
         "consumer_id": "code-review",
     }
+
+
+def test_app_server_rejects_explicit_selection_advisors(tmp_path: Path) -> None:
+    """Keep architecture and security advisors outside automatic review dispatch."""
+    plan_path, evidence_path = review_evidence_files(tmp_path, roles=("security-auditor",))
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-role-model-unsupported"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 
 @pytest.mark.parametrize(

@@ -89,25 +89,23 @@ AGENTS = (
     "scientist",
     "delegation-lead",
 )
-DEFAULT_MODEL = "gpt-5.6-terra"
-REVIEW_MODEL = "gpt-5.6-terra"
-CRITICAL_MODEL = "gpt-5.6-sol"
-SUPPORT_MODEL = "gpt-5.6-luna"
+DEFAULT_MODEL = "gpt-6-sol"
+REVIEW_MODEL = "gpt-6-sol"
+CRITICAL_MODEL = "gpt-6-sol"
+SUPPORT_MODEL = "gpt-6-luna"
 SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL}
-SOL_MODEL_AGENTS = {
-    "security-auditor",
-    "solution-architect",
-}
 LUNA_MODEL_AGENTS = {
     "cicd-steward",
+    "curator",
     "delegation-lead",
     "doc-scribe",
     "linting-expert",
     "oss-shepherd",
     "web-explorer",
 }
-TERRA_MODEL_AGENTS = set(AGENTS) - SOL_MODEL_AGENTS - LUNA_MODEL_AGENTS
-HIGH_EFFORT_AGENTS = set(AGENTS)
+SOL_MODEL_AGENTS = set(AGENTS) - LUNA_MODEL_AGENTS
+MEDIUM_EFFORT_AGENTS = {"linting-expert", "qa-specialist", "squeezer", "sw-engineer", "web-explorer"}
+HIGH_EFFORT_AGENTS = set(AGENTS) - MEDIUM_EFFORT_AGENTS
 RECURRENCE_POLICY_LINK = "../../shared/native-skill-contract.md#recurrence-and-root-cause-policy"
 RECURRENCE_POLICY_SKILLS = frozenset({"code-remediate", "implement", "investigate"})
 RECURRENCE_POLICY_ROLES = frozenset({"delegation-lead"})
@@ -473,8 +471,8 @@ def _sha256_file(path: Path) -> str:
 def _derive_role_assignments(
     scores: dict[str, dict[str, Any]], route_policy: dict[str, Any], adjudication: dict[str, Any]
 ) -> dict[str, str]:
-    """Derive active role models from accepted paired evidence."""
-    assignments = {agent: DEFAULT_MODEL for agent in AGENTS}
+    """Derive historical GPT-5.6 role models from the archived paired evidence."""
+    assignments = {agent: "gpt-5.6-terra" for agent in AGENTS}
     gain_threshold = float(adjudication["candidate_quality_gain_threshold"])
     cost_ratio_max = float(adjudication["candidate_aggregate_cost_ratio_max"])
 
@@ -500,11 +498,50 @@ def _derive_role_assignments(
 
 
 def check_accepted_route_evidence(run: CalibrationRun) -> None:
-    """Bind active model pins to hashed paid evidence and classify its roster freshness."""
+    """Validate active GPT-6 assignments and archived GPT-5.6 paid evidence separately."""
     try:
         payload = json.loads(run.paths.accepted_route_evidence.read_text(encoding="utf-8"))
-        if payload.get("schema_version") != 2 or payload.get("reasoning_effort") != "high":
+        if payload.get("schema_version") != 3 or payload.get("reasoning_effort") != "high":
             raise ValueError("unsupported accepted-route evidence schema or effort")
+        active = payload["active_assignments"]
+        if (
+            not isinstance(active, dict)
+            or active.get("parent")
+            != {
+                "model": CRITICAL_MODEL,
+                "reasoning_effort": "medium",
+            }
+            or active.get("deep_review")
+            != {
+                "model": REVIEW_MODEL,
+                "reasoning_effort": "high",
+                "activation": "explicit-effort-override",
+            }
+        ):
+            raise ValueError("active parent or deep-review assignment mismatch")
+        if payload.get("active_assignment_basis") != {
+            "decided_at": "2026-09-22",
+            "decision": "explicit-user-rollover",
+            "gpt6_quality_cost_evidence": "pending-paired-evaluation",
+        }:
+            raise ValueError("active GPT-6 evidence status mismatch")
+        role_groups = active.get("roles")
+        if not isinstance(role_groups, dict) or set(role_groups) != {CRITICAL_MODEL, SUPPORT_MODEL}:
+            raise ValueError("active role model groups mismatch")
+        declared_active: dict[str, tuple[str, str]] = {}
+        for model, efforts in role_groups.items():
+            if not isinstance(efforts, dict) or set(efforts) != {"medium", "high"}:
+                raise ValueError(f"active role effort groups malformed: {model}")
+            for effort, roles in efforts.items():
+                if not isinstance(roles, list) or not all(isinstance(role, str) for role in roles):
+                    raise ValueError(f"active role list malformed: {model}/{effort}")
+                for role in roles:
+                    if role in declared_active:
+                        raise ValueError(f"duplicate active role assignment: {role}")
+                    declared_active[role] = (model, effort)
+        expected_active = {agent: (expected_agent_model(agent), expected_agent_effort(agent)) for agent in AGENTS}
+        if declared_active != expected_active:
+            raise ValueError("active GPT-6 assignments do not match role policy")
         evidence_skill_roster = payload.get("skill_roster")
         if not isinstance(evidence_skill_roster, list) or not all(
             isinstance(skill, str) for skill in evidence_skill_roster
@@ -513,7 +550,7 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
         sol_selection = payload.get("sol_role_selection")
         if sol_selection != {
             "mode": "bounded-read-only-advisory",
-            "parent_model": DEFAULT_MODEL,
+            "parent_model": "gpt-5.6-terra",
             "parent_owns_final_acceptance": True,
             "requires_explicit_user_request_or_agent_selection": True,
         }:
@@ -545,23 +582,15 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
 
         route_policy = json.loads(run.paths.live_route_policy.read_text(encoding="utf-8"))["routes"]
         derived = _derive_role_assignments(scores, route_policy, payload["adjudication"])
-        declared = {agent: model for model, agents in payload["active_assignments"].items() for agent in agents}
-        configured = {agent: expected_agent_model(agent) for agent in AGENTS}
-        if set(declared) != set(AGENTS) or declared != derived or configured != derived:
-            raise ValueError("accepted route assignments do not match evidence or active pins")
+        declared = {agent: model for model, agents in payload["historical_assignments"].items() for agent in agents}
+        if set(declared) != set(AGENTS) or declared != derived:
+            raise ValueError("historical route assignments do not match evidence")
     except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
         run.fail_and_leak("accepted-route-evidence", f"accepted-route-evidence-invalid:{exc}")
         return
 
-    if tuple(evidence_skill_roster) != SKILLS:
-        run.append_check(f"accepted-route-evidence=archived-stale:skill-roster-mismatch:live-calls={observed_rows}")
-        return
-
-    run.accepted_route_evidence_current = True
-    run.append_check(
-        "accepted-route-evidence=ok:"
-        f"live-calls={observed_rows}:luna-agents={len(LUNA_MODEL_AGENTS)}:sol-agents={len(SOL_MODEL_AGENTS)}"
-    )
+    run.append_check("active-assignments=gpt-6:user-directed:quality-cost-unmeasured")
+    run.append_check(f"accepted-route-evidence=archived-stale:gpt-5.6-baseline:live-calls={observed_rows}")
 
 
 def check_behavioral_cases_version(run: CalibrationRun) -> None:
@@ -715,8 +744,6 @@ def expected_agent_model(agent: str) -> str | None:
         return CRITICAL_MODEL
     if agent in LUNA_MODEL_AGENTS:
         return SUPPORT_MODEL
-    if agent in TERRA_MODEL_AGENTS:
-        return DEFAULT_MODEL
     return None
 
 
@@ -724,6 +751,8 @@ def expected_agent_effort(agent: str) -> str | None:
     """Return the expected reasoning effort for an agent."""
     if agent in HIGH_EFFORT_AGENTS:
         return "high"
+    if agent in MEDIUM_EFFORT_AGENTS:
+        return "medium"
     return None
 
 
@@ -757,7 +786,7 @@ def check_core_configs(run: CalibrationRun) -> None:
     if run.paths.project_cfg is not None:
         check_model(run, run.paths.project_cfg, "project-config", "project-model-default", DEFAULT_MODEL)
         check_review_model(run, run.paths.project_cfg, "project-config")
-        check_reasoning_effort(run, run.paths.project_cfg, "high", "project-config", "reasoning-effort-policy")
+        check_reasoning_effort(run, run.paths.project_cfg, "medium", "project-config", "reasoning-effort-policy")
     else:
         run.append_check("project-config=not-applicable:plugin-layout")
     check_supported_active_models(run)
@@ -1864,7 +1893,7 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
                 "type": "thread_settings_applied",
                 "thread_settings": {
                     "model": DEFAULT_MODEL,
-                    "reasoning_effort": "high",
+                    "reasoning_effort": "medium",
                     "approval_policy": "never",
                     "permission_profile": {
                         "type": "managed",
@@ -1879,7 +1908,7 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
             "payload": {
                 "turn_id": turn_id,
                 "model": DEFAULT_MODEL,
-                "effort": "high",
+                "effort": "medium",
                 "approval_policy": "never",
                 "sandbox_policy": {"type": "read-only"},
                 "permission_profile": {"type": "managed", "network": "restricted"},
@@ -1942,7 +1971,7 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
         "attempt": 1,
         "context_path": str(context),
         "context_sha256": context_sha,
-        "effort": "high",
+        "effort": "medium",
         "event_id": event_id,
         "model": DEFAULT_MODEL,
         "output_path": str(output),
@@ -2155,8 +2184,8 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     if run_command(command).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:review-validator-context-binding")
     manifest["passes"][0]["attempts"][0]["agent_path"] = agent_path
-    manifest["passes"][0]["attempts"][0]["model"] = CRITICAL_MODEL
-    child_rows[2]["payload"]["model"] = CRITICAL_MODEL
+    manifest["passes"][0]["attempts"][0]["model"] = SUPPORT_MODEL
+    child_rows[2]["payload"]["model"] = SUPPORT_MODEL
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     child_rollout.write_text("".join(json.dumps(row) + "\n" for row in child_rows), encoding="utf-8")
     if run_command(command).returncode == 0:
@@ -2832,7 +2861,7 @@ def build_recommendations(
         )
     if live_routes.get("status") == "insufficient-evidence" and not accepted_route_evidence:
         follow_up.append(
-            "Run the explicit paid paired campaign before promoting provisional Luna/Terra/Sol routes to measured acceptance."
+            "Design and run a GPT-6 Sol/Luna model-and-effort paired campaign before claiming measured quality or cost acceptance."
         )
     if int(freshness.get("missing_observed_at", 0) or 0) > 0:
         follow_up.append("Backfill missing observed_at timestamps in behavioral observations.")

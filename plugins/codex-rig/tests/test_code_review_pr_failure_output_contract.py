@@ -51,7 +51,8 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
     assert "Start with a plain-English explanation of the stopped operation and its effect" in terminal_gate
     assert "`Reason:` with the classified failure before verification" in terminal_gate
     assert "worktree-preflight.json" in terminal_gate
-    assert "`overlapping_paths`" in terminal_gate
+    assert "invoking-worktree edits are not checkout overlap" in terminal_gate
+    assert "review-worktree creation or source-state failure" in terminal_gate
     assert "For retryable `github-network`, `github-rate-limit`, or `command-timeout`" in skill
     assert "suggest filing a Codex Rig bug" in skill
 

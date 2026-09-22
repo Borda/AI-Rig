@@ -1,27 +1,49 @@
 {
   "accepted_at": "2026-07-11",
+  "active_assignment_basis": {
+    "decided_at": "2026-09-22",
+    "decision": "explicit-user-rollover",
+    "gpt6_quality_cost_evidence": "pending-paired-evaluation"
+  },
   "active_assignments": {
-    "gpt-5.6-luna": [
-      "cicd-steward",
-      "delegation-lead",
-      "doc-scribe",
-      "linting-expert",
-      "oss-shepherd",
-      "web-explorer"
-    ],
-    "gpt-5.6-sol": [
-      "security-auditor",
-      "solution-architect"
-    ],
-    "gpt-5.6-terra": [
-      "challenger",
-      "curator",
-      "data-steward",
-      "qa-specialist",
-      "scientist",
-      "squeezer",
-      "sw-engineer"
-    ]
+    "deep_review": {
+      "activation": "explicit-effort-override",
+      "model": "gpt-6-sol",
+      "reasoning_effort": "high"
+    },
+    "parent": {
+      "model": "gpt-6-sol",
+      "reasoning_effort": "medium"
+    },
+    "roles": {
+      "gpt-6-luna": {
+        "high": [
+          "cicd-steward",
+          "curator",
+          "delegation-lead",
+          "doc-scribe",
+          "oss-shepherd"
+        ],
+        "medium": [
+          "linting-expert",
+          "web-explorer"
+        ]
+      },
+      "gpt-6-sol": {
+        "high": [
+          "challenger",
+          "data-steward",
+          "scientist",
+          "security-auditor",
+          "solution-architect"
+        ],
+        "medium": [
+          "qa-specialist",
+          "squeezer",
+          "sw-engineer"
+        ]
+      }
+    }
   },
   "adjudication": {
     "candidate_aggregate_cost_ratio_max": 1.0,
@@ -87,11 +109,34 @@
       "strict_status": "fail"
     }
   ],
+  "historical_assignments": {
+    "gpt-5.6-luna": [
+      "cicd-steward",
+      "delegation-lead",
+      "doc-scribe",
+      "linting-expert",
+      "oss-shepherd",
+      "web-explorer"
+    ],
+    "gpt-5.6-sol": [
+      "security-auditor",
+      "solution-architect"
+    ],
+    "gpt-5.6-terra": [
+      "challenger",
+      "curator",
+      "data-steward",
+      "qa-specialist",
+      "scientist",
+      "squeezer",
+      "sw-engineer"
+    ]
+  },
   "monetary_pricing_verified": false,
   "observed_live_calls": 57,
   "pricing_basis": "normalized-token-v1:uncached+0.1*cached+4*output",
   "reasoning_effort": "high",
-  "schema_version": 2,
+  "schema_version": 3,
   "skill_roster": [
     "code-review",
     "develop",

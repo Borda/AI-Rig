@@ -2,10 +2,10 @@
   "cases": [
     {
       "expected_findings": [
-        "convergence-table-omitted"
+        "premature-convergence-table"
       ],
-      "id": "adversarial-loop-unvalidated-progress-table",
-      "prompt": "An independent challenge has reviewer outputs, but provenance validation and one required coverage axis are incomplete. The parent asks for a scoped recovery decision using prose only, omitting the convergence table because there is no validated round yet.",
+      "id": "adversarial-loop-premature-progress-table",
+      "prompt": "An independent challenge has reviewer outputs, but provenance validation and one required coverage axis are incomplete. The parent repeatedly prints a not-run/N/A convergence table in status updates and a recovery question, despite having no completed validated round. Assess the timing and propose a factual prose status until the first valid challenge finishes.",
       "target": "adversarial-loop"
     },
     {
@@ -312,13 +312,20 @@
     },
     {
       "expected_findings": [
-        "structural-finding-loop-continued",
-        "repeated-signature-loop-continued",
+        "unauthorized-structural-fix",
+        "unresolved-severe-finding-not-escalated",
+        "repeated-finding-root-cause-missing",
         "plateau-or-nonconvergence-not-stopped",
         "iteration-cap-exceeded"
       ],
       "id": "adversarial-loop-stop-conditions",
-      "prompt": "Assess an adversarial loop that keeps fixing after a structural finding, repeats the same finding signature in consecutive rounds, continues after weighted-score plateau or non-convergence, and runs a fourth review despite the default three-round cap. Stop at every governing condition, preserve the weighted-score series and unresolved finding evidence, and make the final reply self-contained about the decision topic rather than pretending the loop converged.",
+      "prompt": "Assess an adversarial loop that changes an out-of-scope public API to fix a structural finding without required approval, repeats a finding without root-cause evidence, silently leaves an unfixable high finding un-escalated, continues after weighted-score plateau, and runs a fourth review. Distinguish feasible in-scope fixes from missing authority; retain scores, evidence, and owner/action for every stop.",
+      "target": "adversarial-loop"
+    },
+    {
+      "expected_findings": [],
+      "id": "adversarial-loop-five-step-convergence",
+      "prompt": "A scoped loop freezes and independently challenges the initial source, validates every finding, then shows one cumulative old/new table. It fixes all feasible in-scope findings, records why none of the remaining high or critical findings is unfixable, and freezes a new snapshot. The second challenge independently verifies fixes, its score halves, and the parent shows the updated table once before the next fixes. The third challenge independently verifies the current snapshot clean. No table appears during pending status messages; reviewer output targets 1500 tokens and is labeled advisory because the host exposes no hard cap. The parent completes the caller gates without a fourth review.",
       "target": "adversarial-loop"
     },
     {

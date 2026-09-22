@@ -19,19 +19,23 @@ Run ``python shared/adversarial_loop.py --ledger path/to/ledger.json``. Import `
 validation errors, or ``summarize_ledger`` for the inferred status, reason, and open-finding scores.
 
 Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
-completed round to repeat its cumulative severity table on stderr, leaving machine-readable stdout unchanged.
+completed round to print its cumulative severity table on stderr, leaving machine-readable stdout unchanged. Add
+``--actions path/to/loop-actions.json`` after parent triage to bind every open finding to a resolution action.
 
 ## Outputs
 
 The read-only CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an
 invalid ledger yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON
 summary but exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, grouping
-security with critical for display while retaining their distinct weights. No input files are modified.
+security with critical for display while retaining their distinct weights; no table is printed before a completed round.
+Action validation checks record consistency, not whether a claimed fix or cause is true. No input files are modified.
 
 ## Failure
 
-The contract blocks clean acceptance without current-snapshot independent coverage, stops structural, repeated-open,
-plateau, nonconverging, and capped loops, and rejects malformed records or history that loses a stable finding.
+The contract blocks clean acceptance without current-snapshot independent coverage, stops plateau, nonconverging, and
+capped loops, and rejects malformed records or history that loses a stable finding. Scope and authority checks for
+structural or severe fixes remain with the parent workflow. A repeated fix without root-cause evidence is rejected by
+the optional action validation.
 
 ## Used by
 
@@ -60,6 +64,11 @@ _ROUND_KEYS = {"index", "reviewer", "snapshot", "report_path", "findings"}
 _REVIEWER_KEYS = {"identity", "independent"}
 _SNAPSHOT_KEYS = {"revision", "diff_digest"}
 _FINDING_KEYS = {"signature", "tier", "structural", "disposition", "evidence"}
+_ACTION_ROOT_KEYS = {"schema_version", "rounds"}
+_ACTION_ROUND_KEYS = {"index", "actions"}
+_ACTION_KEYS = {"signature", "decision", "evidence", "owner", "next_action", "root_cause"}
+_ROOT_CAUSE_KEYS = {"claim", "evidence", "falsification", "rejected_alternative"}
+_ACTION_DECISIONS = {"fix", "escalate", "defer"}
 
 
 def _text(value: object) -> bool:
@@ -234,7 +243,6 @@ def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
     assert isinstance(author, str)
     scores: list[int] = []
     round_summaries: list[dict[str, object]] = []
-    previous_open: set[str] = set()
     for position, round_record in enumerate(rounds, start=1):
         assert isinstance(round_record, dict)
         if not _is_independent_round(round_record, author):
@@ -253,12 +261,7 @@ def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
         score = _score(round_record)
         scores.append(score)
         decision = "baseline" if position == 1 else "converging"
-        open_signatures = {finding["signature"] for finding in findings if finding["disposition"] in _OPEN_DISPOSITIONS}
-        if any(finding["structural"] and finding["disposition"] in _OPEN_DISPOSITIONS for finding in findings):
-            decision = "structural-finding"
-        elif previous_open & open_signatures:
-            decision = "consecutive-open-finding"
-        elif score == 0:
+        if score == 0:
             snapshot = round_record["snapshot"]
             if snapshot != payload["current_snapshot"]:
                 decision = "stale-review"
@@ -275,7 +278,6 @@ def _summary_from_valid(payload: dict[str, Any]) -> dict[str, object]:
         round_summaries.append({"index": position, "score": score, "counts": counts, "decision": decision})
         if decision not in {"baseline", "converging"}:
             return {"status": "stopped", "reason": decision, "scores": scores, "rounds": round_summaries}
-        previous_open = open_signatures
     return {"status": "active", "reason": round_summaries[-1]["decision"], "scores": scores, "rounds": round_summaries}
 
 
@@ -288,8 +290,88 @@ def summarize_ledger(payload: object) -> dict[str, object]:
     return _summary_from_valid(payload)
 
 
+def validate_actions(ledger: object, payload: object) -> list[str]:
+    """Bind parent triage and resolution evidence to each open reviewed finding."""
+    errors = validate_ledger(ledger)
+    if errors:
+        return errors
+    assert isinstance(ledger, dict)
+    root = _exact_keys(payload, _ACTION_ROOT_KEYS, "actions", errors)
+    if root is None:
+        return errors
+    if root.get("schema_version") != 1 or isinstance(root.get("schema_version"), bool):
+        errors.append("actions-schema-version-invalid")
+    rounds = root.get("rounds")
+    if not isinstance(rounds, list) or len(rounds) != len(ledger["rounds"]):
+        errors.append("actions-rounds-mismatch")
+        return errors
+    prior_open: set[str] = set()
+    occurrence_counts: dict[str, int] = {}
+    for index, (review, action_value) in enumerate(zip(ledger["rounds"], rounds, strict=True), start=1):
+        action_round = _exact_keys(action_value, _ACTION_ROUND_KEYS, f"round-{index}-actions", errors)
+        if action_round is None:
+            continue
+        if action_round.get("index") != index or isinstance(action_round.get("index"), bool):
+            errors.append(f"round-{index}-actions-index-invalid")
+        items = action_round.get("actions")
+        if not isinstance(items, list):
+            errors.append(f"round-{index}-actions-list-required")
+            continue
+        open_findings = {
+            finding["signature"]: finding
+            for finding in review["findings"]
+            if finding["disposition"] in _OPEN_DISPOSITIONS
+        }
+        observed: set[str] = set()
+        for value in items:
+            action = _exact_keys(value, _ACTION_KEYS, f"round-{index}-action", errors)
+            if action is None:
+                continue
+            signature = action.get("signature")
+            if not _text(signature):
+                errors.append(f"round-{index}-action-signature-required")
+                continue
+            if signature in observed:
+                errors.append(f"round-{index}-action-duplicate:{signature}")
+            observed.add(signature)
+            finding = open_findings.get(signature)
+            if finding is None:
+                errors.append(f"round-{index}-action-not-open:{signature}")
+                continue
+            decision = action.get("decision")
+            if not isinstance(decision, str) or decision not in _ACTION_DECISIONS:
+                errors.append(f"round-{index}-action-decision-invalid:{signature}")
+            if finding["tier"] in {"security", "critical", "high"} and decision == "defer":
+                errors.append(f"round-{index}-severe-finding-must-fix-or-escalate:{signature}")
+            evidence = action.get("evidence")
+            if not isinstance(evidence, list) or not evidence or any(not _text(item) for item in evidence):
+                errors.append(f"round-{index}-action-evidence-required:{signature}")
+            for field in ("owner", "next_action"):
+                if not _text(action.get(field)):
+                    errors.append(f"round-{index}-action-{field}-required:{signature}")
+            root_cause = action.get("root_cause")
+            if root_cause is not None:
+                cause = _exact_keys(root_cause, _ROOT_CAUSE_KEYS, f"round-{index}-root-cause", errors)
+                if cause is not None:
+                    for field in _ROOT_CAUSE_KEYS:
+                        if not _text(cause.get(field)):
+                            errors.append(f"round-{index}-root-cause-{field}-required:{signature}")
+            if signature in prior_open and decision == "fix" and root_cause is None:
+                errors.append(f"round-{index}-repeat-root-cause-required:{signature}")
+            if occurrence_counts.get(signature, 0) >= 2 and decision == "fix":
+                errors.append(f"round-{index}-third-occurrence-must-stop:{signature}")
+        for signature in open_findings.keys() - observed:
+            errors.append(f"round-{index}-action-missing:{signature}")
+        prior_open = set(open_findings)
+        for signature in open_findings:
+            occurrence_counts[signature] = occurrence_counts.get(signature, 0) + 1
+    return errors
+
+
 def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
     """Render validated completed history with separate old and new open totals."""
+    if not completed_rounds:
+        return ""
     lines = [
         "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |",
         "| --- | --- | --- | --- | --- | --- | --- |",
@@ -309,8 +391,6 @@ def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
         lines.append("| " + " | ".join(cells) + " |")
         # Closed signatures remain history so a later reopened finding is old, not newly discovered.
         seen.update(finding["signature"] for finding in round_record["findings"])
-    if not completed_rounds:
-        lines.append("| not-run | N/A | N/A | N/A | N/A | N/A | N/A |")
     lines.append("")
     lines.append(
         "Cells: old + new open findings (including pending verification); old = seen in any prior completed round. "
@@ -326,6 +406,7 @@ def main() -> int:
     parser.add_argument("--ledger", required=True, type=Path, help="Ledger JSON path.")
     parser.add_argument("--require-clean", action="store_true", help="Exit nonzero unless the valid summary is clean.")
     parser.add_argument("--progress", action="store_true", help="Repeat the cumulative progress table on stderr.")
+    parser.add_argument("--actions", type=Path, help="Validate per-finding parent actions against the ledger.")
     args = parser.parse_args()
     try:
         with args.ledger.open(encoding="utf-8") as handle:
@@ -337,6 +418,14 @@ def main() -> int:
         )
         return 1
     errors = validate_ledger(payload)
+    if not errors and args.actions is not None:
+        try:
+            with args.actions.open(encoding="utf-8") as handle:
+                actions = json.load(handle)
+        except (OSError, json.JSONDecodeError) as error:
+            errors.append(f"actions-read-failed:{error}")
+        else:
+            errors.extend(validate_actions(payload, actions))
     if errors:
         print(
             json.dumps({"status": "invalid", "reason": "invalid-ledger", "errors": errors}, sort_keys=True),
@@ -344,7 +433,7 @@ def main() -> int:
         )
         return 1
     summary = summarize_ledger(payload)
-    if args.progress:
+    if args.progress and summary["rounds"]:
         print(_render_progress(payload, len(summary["rounds"])), file=sys.stderr)
     print(json.dumps(summary, sort_keys=True))
     return 0 if not args.require_clean or summary["reason"] == "clean" else 1

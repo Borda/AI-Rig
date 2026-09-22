@@ -16,10 +16,12 @@ target/head evidence, and records checkout identity without using forced Git ope
 ## Usage
 
 Run ``python collect_pr.py --target <number-or-url> --out <directory> [--checkout] [--checkout-mode review|remediate]``
-from code-review or code-remediate PR mode. Review may fall back to a detached exact commit after a failed GitHub branch
-checkout; remediation first requires GitHub's attached branch checkout, then permits only a same-repository original
-branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
-directory is supported because the collector removes its own prior evidence before starting a new attempt.
+from code-review or code-remediate PR mode. Review creates or verifies a detached worktree at the exact fetched PR
+commit, beside the report when ignored by Git or in a deterministic temporary path otherwise; it never changes the
+invoking checkout. Remediation first requires GitHub's attached branch checkout, then permits only a same-repository
+original branch recovery. Fork recovery stops for the remediation workflow's bounded adversarial path. Reusing an output
+directory is supported because the collector removes its own prior evidence before starting a new attempt; a prior
+review worktree is reused only when it remains clean and bound to the same repository and exact commit.
 
 ## Used by
 
@@ -44,11 +46,13 @@ and diagnostics from the current attempt if a later core step fails.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -138,6 +142,7 @@ COLLECTOR_EVIDENCE_ARTIFACTS = (
     "review-threads-error.txt",
     "review-threads.json",
     "reviews.json",
+    "source-worktree-context.json",
     "status.txt",
     "target-branch.json",
     "unresolved-review-threads.json",
@@ -196,12 +201,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--out", required=True, type=Path, help="Artifact directory")
     parser.add_argument("--target", default="", help="PR number, canonical GitHub URL, or empty for current branch")
-    parser.add_argument("--checkout", action="store_true", help="Fetch and update the verified local PR checkout")
+    parser.add_argument("--checkout", action="store_true", help="Fetch and prepare verified local PR source")
     parser.add_argument(
         "--checkout-mode",
         choices=sorted(CHECKOUT_MODES),
         default="review",
-        help="Use a detached review fallback or GitHub-first remediation with same-repository branch recovery",
+        help="Use an isolated detached review worktree or GitHub-first remediation branch checkout",
     )
     parser.add_argument("--timeout-seconds", type=int, default=60, help="Per-command timeout")
     tokens = sys.argv[1:] if argv is None else argv
@@ -672,6 +677,7 @@ def _review_artifacts(
     if pr_state not in VALID_PR_STATES:
         raise CollectionError("unsupported-pr-state")
     head_repo = _head_repository(payload)
+    review_path = output.resolve().with_name(f"{output.name}-review-worktree")
     routing = {
         "base_repo": base_repo,
         "base_host": base_host,
@@ -687,7 +693,7 @@ def _review_artifacts(
         "is_cross_repository": bool(payload.get("isCrossRepository")),
         "same_repo": bool(head_repo and base_repo and head_repo.casefold() == base_repo.casefold()),
         "local_checkout_required": True,
-        "local_checkout_command": f"git checkout --detach {payload.get('headRefOid')}",
+        "local_checkout_command": f"git worktree add --detach {review_path} {payload.get('headRefOid')}",
         "force_policy": "never pass --force to git or gh automatically; stop and ask the user first",
         "source_policy": (
             "inspect the exact local checkout and derive its diff locally; use public REST metadata with unavailable "
@@ -737,6 +743,8 @@ def _worktree_preflight(
     current_head: str,
     base_oid: str,
     head_oid: str,
+    preserve_main: bool = False,
+    artifact_name: str = "worktree-preflight.json",
 ) -> None:
     """Block only local state that can overwrite or misrepresent the reviewed PR source."""
     tracked_paths = _git_path_list(
@@ -799,7 +807,7 @@ def _worktree_preflight(
     elif current_head == head_oid:
         status = "already-at-pr-head"
     _write_json(
-        output / "worktree-preflight.json",
+        output / artifact_name,
         {
             "phase": phase,
             "status": status,
@@ -813,6 +821,8 @@ def _worktree_preflight(
             "overlapping_pr_paths": overlapping_pr_paths,
         },
     )
+    if preserve_main:
+        return
     error_phase = "before-pr-checkout" if phase == "before-checkout" else "after-pr-checkout"
     if unmerged_paths:
         raise CollectionError(f"unresolved-index-{error_phase}")
@@ -820,6 +830,179 @@ def _worktree_preflight(
         raise CollectionError(f"dirty-pr-worktree-{error_phase}")
     if overlapping_paths:
         raise CollectionError("dirty-tracked-worktree-overlap-before-pr-checkout")
+
+
+def _review_worktree_checkout(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    *,
+    base_oid: str,
+    head_oid: str,
+) -> dict[str, Any]:
+    """Create or verify an isolated detached worktree at the fetched PR head."""
+    source = Path(
+        _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "source-worktree").decode().strip()
+    ).resolve()
+    report = output.resolve()
+    review = report.with_name(f"{output.name}-review-worktree")
+    worktree_location = "report-adjacent"
+    if source == review:
+        raise CollectionError("review-worktree-path-is-source")
+    if source in review.parents:
+        relative = review.relative_to(source).as_posix()
+        try:
+            _run(run, ["git", "check-ignore", "-q", "--", relative], timeout, "review-worktree-ignore-check")
+        except CollectionError as error:
+            if str(error) != "command-failed:review-worktree-ignore-check" or error.diagnostics is None:
+                raise
+            if error.diagnostics.get("exit_code") != 1:
+                raise
+            key = hashlib.sha256(report.as_posix().encode("utf-8")).hexdigest()[:16]
+            review = Path(tempfile.gettempdir()).resolve() / f"codex-pr-review-{key}-review-worktree"
+            worktree_location = "temporary-fallback"
+            if source == review or source in review.parents:
+                raise CollectionError("review-worktree-temporary-path-not-isolated")
+    current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
+    _worktree_preflight(
+        run,
+        timeout,
+        output,
+        phase="source-worktree-context",
+        current_head=current_head,
+        base_oid=base_oid,
+        head_oid=head_oid,
+        preserve_main=True,
+        artifact_name="source-worktree-context.json",
+    )
+    command = ["git", "worktree", "add", "--detach", str(review), head_oid]
+    routing["checkout_mode"] = "review"
+    routing["local_checkout_command"] = " ".join(command)
+    routing["checkout_method"] = "git-detached-review-worktree"
+    _write_json(output / "pr-routing.json", routing)
+    if review.is_symlink():
+        raise CollectionError("review-worktree-path-is-symlink")
+    reused = review.exists()
+    if reused and not review.is_dir():
+        raise CollectionError("review-worktree-path-occupied")
+    if not reused:
+        _write_json(
+            output / "checkout-state.json",
+            {
+                "status": "worktree-create-started",
+                "local_state": "main-worktree-unchanged; new-worktree-unknown",
+                "worktree": review.as_posix(),
+            },
+        )
+        _run(run, command, timeout, "review-worktree-add")
+        _write_json(
+            output / "checkout-state.json",
+            {
+                "status": "worktree-create-succeeded-unverified",
+                "local_state": "main-worktree-unchanged; new-worktree-unverified",
+                "worktree": review.as_posix(),
+            },
+        )
+    main_git_dir = (
+        _run(run, ["git", "rev-parse", "--git-common-dir"], timeout, "source-common-git-dir").decode().strip()
+    )
+    try:
+        review_git_dir = (
+            _run(run, ["git", "-C", str(review), "rev-parse", "--git-common-dir"], timeout, "review-common-git-dir")
+            .decode()
+            .strip()
+        )
+    except CollectionError as error:
+        raise CollectionError("review-worktree-path-not-registered") from error
+    main_common = (source / main_git_dir).resolve()
+    review_common = (review / review_git_dir).resolve()
+    if main_common != review_common:
+        raise CollectionError("review-worktree-repository-mismatch")
+    review_root = (
+        _run(run, ["git", "-C", str(review), "rev-parse", "--show-toplevel"], timeout, "review-worktree-root")
+        .decode()
+        .strip()
+    )
+    if Path(review_root).resolve() != review:
+        raise CollectionError("review-worktree-path-mismatch")
+    local_head = (
+        _run(run, ["git", "-C", str(review), "rev-parse", "HEAD"], timeout, "review-worktree-head").decode().strip()
+    )
+    if local_head != head_oid:
+        raise CollectionError("local-checkout-head-mismatch")
+    branch = (
+        _run(run, ["git", "-C", str(review), "branch", "--show-current"], timeout, "review-worktree-branch")
+        .decode()
+        .strip()
+    )
+    if branch:
+        raise CollectionError("review-worktree-not-detached")
+    status = _run(run, ["git", "-C", str(review), "status", "--porcelain", "-z"], timeout, "review-worktree-status")
+    if status:
+        raise CollectionError("review-worktree-dirty")
+    _write_json(
+        output / "worktree-preflight.json",
+        {
+            "phase": "after-checkout",
+            "status": "already-at-pr-head",
+            "worktree": review.as_posix(),
+            "current_head": local_head,
+            "expected_head": head_oid,
+            "dirty_paths": [],
+            "unmerged_paths": [],
+            "pr_paths": _git_path_list(
+                _run(
+                    run,
+                    ["git", "-C", str(review), "diff", "--name-only", "-z", f"{base_oid}...{head_oid}", "--"],
+                    timeout,
+                    "review-pr-paths",
+                )
+            ),
+            "checkout_paths": [],
+            "overlapping_paths": [],
+            "overlapping_pr_paths": [],
+        },
+    )
+    if _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-review-source-head").decode().strip() != current_head:
+        raise CollectionError("source-worktree-head-changed")
+    checkout_evidence = {
+        "status": "checked-out",
+        "pr_number": routing.get("pr_number"),
+        "pr_url": routing.get("pr_url"),
+        "local_branch": "",
+        "worktree": review.as_posix(),
+        "collection_run_dir": output.resolve().as_posix(),
+        "worktree_location": worktree_location,
+        "source_worktree": source.as_posix(),
+        "worktree_lifecycle": "preserved-for-review",
+        "local_head": local_head,
+        "expected_head": head_oid,
+        "head_matches_pr": True,
+        "checkout_mode": "review",
+        "checkout_method": "git-detached-review-worktree",
+        "command": "not-run: existing exact clean review worktree" if reused else " ".join(command),
+        "gh_checkout_failure": None,
+        "target_branch_artifact": "target-branch.json",
+        "pr_head_fetch_artifact": "pr-head-fetch.json",
+        "diff_source": "verified-local-checkout",
+        "diff_base_oid": base_oid,
+        "diff_head_oid": head_oid,
+        "diff_command": f"git -C {review} diff --binary {base_oid}...{head_oid} --",
+        "force_policy": "no --force was used; ask the user before any forced checkout",
+        "source_policy": "isolated detached worktree is authoritative for read-only code inspection",
+    }
+    _write_json(output / "local-checkout.json", checkout_evidence)
+    _write_json(
+        output / "checkout-state.json",
+        {
+            "status": "checkout-verified",
+            "local_state": "isolated-exact-pr-head; main-worktree-unchanged",
+            "local_head": local_head,
+            "worktree": review.as_posix(),
+        },
+    )
+    return checkout_evidence
 
 
 def _checkout(
@@ -832,7 +1015,7 @@ def _checkout(
     *,
     checkout_mode: str,
 ) -> dict[str, Any]:
-    """Fetch verified target/head refs and update the local PR checkout without force."""
+    """Fetch verified target/head refs and prepare mode-specific local PR source."""
     url = routing.get("pr_url")
     number = routing.get("pr_number")
     base_ref = routing.get("base_ref")
@@ -942,6 +1125,9 @@ def _checkout(
     else:
         raise CollectionError("missing-pr-checkout-identity")
 
+    if checkout_mode == "review":
+        return _review_worktree_checkout(run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid)
+
     current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
     _worktree_preflight(
         run,
@@ -953,11 +1139,8 @@ def _checkout(
         head_oid=head_oid,
     )
     gh_checkout_argv = ["gh", "pr", "checkout", url]
-    detached_checkout_argv = ["git", "checkout", "--detach", head_oid]
     routing["checkout_mode"] = checkout_mode
-    routing["local_checkout_command"] = " ".join(
-        gh_checkout_argv if checkout_mode == "remediate" else detached_checkout_argv
-    )
+    routing["local_checkout_command"] = " ".join(gh_checkout_argv)
     _write_json(output / "pr-routing.json", routing)
     checkout_command = "not-run: already at expected PR head"
     checkout_method = "already-at-head"
@@ -997,11 +1180,7 @@ def _checkout(
                 base_oid=base_oid,
                 head_oid=head_oid,
             )
-            if checkout_mode == "review":
-                _run(run, detached_checkout_argv, timeout, "local-pr-checkout-fallback")
-                checkout_command = " ".join(detached_checkout_argv)
-                checkout_method = "git-detached-review-fallback"
-            elif routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
+            if routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
                 raise CollectionError(
                     "remediation-gh-checkout-recovery-required", diagnostics=error.diagnostics
                 ) from error
@@ -1236,9 +1415,10 @@ def collect_pr(
                 checkout_mode=checkout_mode,
             )
             revision_range = f"{checkout_evidence['diff_base_oid']}...{checkout_evidence['diff_head_oid']}"
+            diff_prefix = ["git", "-C", checkout_evidence["worktree"]] if checkout_mode == "review" else ["git"]
             diff = _run(
                 command_runner,
-                ["git", "diff", "--binary", revision_range, "--"],
+                [*diff_prefix, "diff", "--binary", revision_range, "--"],
                 timeout_seconds,
                 "local-pr-diff",
             )
@@ -1246,7 +1426,7 @@ def collect_pr(
             (output / "diffstat.txt").write_bytes(
                 _optional_command_output(
                     command_runner,
-                    ["git", "diff", "--stat", revision_range, "--"],
+                    [*diff_prefix, "diff", "--stat", revision_range, "--"],
                     timeout_seconds,
                     "diff-stat",
                 )
@@ -1254,7 +1434,7 @@ def collect_pr(
             (output / "numstat.txt").write_bytes(
                 _optional_command_output(
                     command_runner,
-                    ["git", "diff", "--numstat", revision_range, "--"],
+                    [*diff_prefix, "diff", "--numstat", revision_range, "--"],
                     timeout_seconds,
                     "diff-numstat",
                 )

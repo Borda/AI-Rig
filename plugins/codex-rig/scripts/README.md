@@ -233,17 +233,20 @@ python3 plugins/codex-rig/scripts/verify_role_link.py --plugin-root /path/to/cod
 <details>
 <summary><strong>Ledger validation and in-turn progress transcript</strong></summary>
 
-**Purpose:** Validates one bounded adversarial-review ledger and emits its deterministic JSON summary without modifying the ledger. The optional `--progress` flag writes the complete cumulative progress table and legend to stderr while keeping JSON stdout unchanged.
+**Purpose:** Validates one bounded adversarial-review ledger and emits its deterministic JSON summary without modifying the ledger. The optional `--progress` flag writes the complete cumulative progress table and legend to stderr while keeping JSON stdout unchanged. The optional `--actions` flag binds parent triage and resolution records to every open finding; it checks completeness, not the truth of a claimed fix.
 
 **Usage** (contract; the progress rendering is exercised by the adversarial-loop test suite):
 
 ```bash
 python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress
+python3 plugins/codex-rig/shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json
 ```
 
-The progress table has exactly `Iteration | Critical | High | Medium | Low | Nits | Weighted score`. Every numeric cell is literal `old + new`: currently open signatures seen in any prior round, including signatures that were closed and later reopened, plus signatures first seen in the current round. Only `open` and `fixed-pending-verification` count; security and critical combine in the display, while scoring retains weights `20/10/6/4/2/1`. A full cumulative table is printed after each completed round; an empty ledger emits `not-run` with `N/A` cells rather than an unreviewed zero row.
+The progress table has exactly `Iteration | Critical | High | Medium | Low | Nits | Weighted score`. Every numeric cell is literal `old + new`: currently open signatures seen in any prior round, including signatures that were closed and later reopened, plus signatures first seen in the current round. Only `open` and `fixed-pending-verification` count; security and critical combine in the display, while scoring retains weights `20/10/6/4/2/1`. Invoke after each newly completed validated round; an empty ledger prints no progress table or unreviewed zero row. Feasible structural or repeated findings may continue when score and authority permit; plateau, nonconvergence, three rounds and unavailable evidence still stop.
 
 `--require-clean` remains an independent exit-status gate. The final adversarial-loop result table is not replaced by this in-turn stderr transcript.
+
+The shared artifact validator requires `action_contract_version: 1` and a valid `loop-actions.json` for new candidate and final adversarial-loop results. Its explicit `--allow-legacy-loop-actions` option is for inspecting archived `result.json` only; it cannot validate a candidate for promotion.
 
 </details>
 

@@ -1,7 +1,7 @@
 ---
 role_id: curator
 name: codex-rig-curator
-model: gpt-5.6-terra
+model: gpt-6-luna
 model_reasoning_effort: high
 approval_policy: on-request
 sandbox_mode: workspace-write

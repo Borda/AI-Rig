@@ -633,6 +633,8 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
         item.pop("attempts")
         item.pop("selected_attempt")
         item["mode"] = "substituted"
+        output = assessed / item["output_path"]
+        output.write_text(f"role_id: {item['role']}\n\nBounded parent-only review evidence.\n", encoding="utf-8")
     fixture["plan"].update(
         independent_review_required=False,
         independence_requirement_evidence=None,

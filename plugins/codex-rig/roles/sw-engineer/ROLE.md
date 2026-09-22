@@ -1,8 +1,8 @@
 ---
 role_id: sw-engineer
 name: codex-rig-sw-engineer
-model: gpt-5.6-terra
-model_reasoning_effort: high
+model: gpt-6-sol
+model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: workspace-write
 fallback_modes: [shim, built-in-injected, inline]

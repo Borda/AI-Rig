@@ -17,7 +17,8 @@ are retained in the rejected-candidate details.
 
 Run ``python select-git-remote.py --expected-url <url> --cwd <repository>`` through ``collect_pr.py`` with the canonical
 PR URL and local repository context. Use ``--identity-only`` when only normalized base-repository identity is needed and
-no local Git remote lookup should occur.
+no local Git remote lookup should occur. Before the first PR collector call for a numeric user target, run ``python
+select-git-remote.py --canonical-pr-url <positive-number> --cwd <repository>`` to bind a URL approval rule.
 
 ## Used by
 
@@ -28,13 +29,15 @@ chosen remote before recording target and head checkout evidence, so the selecti
 
 It emits a JSON-compatible selected remote record including the expected identity and all local candidates considered.
 When multiple exact matches exist, ``origin`` wins the deterministic ordering; the payload still lists every matching
-name and URL for auditability.
+name and URL for auditability. Numeric PR resolution emits only a canonical URL on stdout, so the caller can use
+identical URL arguments in the actual collector command and its proposed host approval prefix.
 
 ## Failure
 
 Malformed authoritative URL or no exact match exits non-zero so PR collection does not use a guessed fork. Multiple
 exact matches are not treated as an error: the deterministic selector prefers ``origin`` and reports every matching
-candidate for auditability.
+candidate for auditability. Numeric PR resolution exits non-zero when no unique configured GitHub repository identity
+exists; it never contacts GitHub or mutates remotes.
 """
 
 from __future__ import annotations
@@ -126,16 +129,69 @@ def select_remote(expected_url: str, remotes: dict[str, list[str]]) -> dict[str,
     }
 
 
+def canonical_pr_url(number: str, remotes: dict[str, list[str]]) -> str:
+    """Bind a positive PR number to exactly one configured GitHub repository."""
+    if not re.fullmatch(r"[1-9][0-9]*", number):
+        raise ValueError("invalid-pr-number")
+    repositories: set[str] = set()
+    for urls in remotes.values():
+        for url in urls:
+            try:
+                identity = parse_repository_url(url)
+            except ValueError:
+                continue
+            if identity.host != "github.com":
+                continue
+            scp_match = re.fullmatch(r"(?:[^@/\s]+@)?github\.com:([^\s]+)", url, flags=re.IGNORECASE)
+            if scp_match:
+                path = scp_match.group(1)
+            else:
+                try:
+                    parsed = urlparse(url)
+                    port = parsed.port
+                except ValueError:
+                    continue
+                if (
+                    parsed.scheme not in {"git", "https", "ssh"}
+                    or parsed.hostname != "github.com"
+                    or port is not None
+                    or parsed.query
+                    or parsed.fragment
+                    or parsed.password
+                    or (parsed.username and parsed.scheme != "ssh")
+                ):
+                    continue
+                path = parsed.path.lstrip("/")
+            parts = path.removesuffix(".git").split("/")
+            if len(parts) != 2 or any(
+                not re.fullmatch(r"[A-Za-z0-9_.-]+", part) or part in {".", ".."} for part in parts
+            ):
+                continue
+            repositories.add(identity.repository)
+    if not repositories:
+        raise ValueError("no-github-repository")
+    if len(repositories) != 1:
+        raise ValueError("ambiguous-github-repositories")
+    return f"https://github.com/{next(iter(repositories))}/pull/{number}"
+
+
 def main() -> int:
-    """Parse arguments and emit the selected matching remote as JSON."""
+    """Emit a selected remote record or locally resolved canonical PR URL."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-url", required=True, help="Authoritative GitHub PR or repository URL.")
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument("--expected-url", help="Authoritative GitHub PR or repository URL.")
+    target.add_argument("--canonical-pr-url", help="Positive PR number to bind to one configured GitHub repository.")
     parser.add_argument("--cwd", type=Path, default=Path.cwd(), help="Local repository used for remote matching.")
     parser.add_argument(
         "--identity-only", action="store_true", help="Return normalized host/repository identity without Git lookup."
     )
     args = parser.parse_args()
     try:
+        if args.canonical_pr_url is not None:
+            if args.identity_only:
+                parser.error("--identity-only requires --expected-url")
+            print(canonical_pr_url(args.canonical_pr_url, read_remotes(args.cwd)))
+            return 0
         if args.identity_only:
             payload = asdict(parse_repository_url(args.expected_url))
         else:

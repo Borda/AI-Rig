@@ -22,7 +22,7 @@ Read, apply `../../shared/adversarial-loop.md` before dispatch or edits. That sh
 }
 ```
 
-Use default max 3 review rounds, including initial W_0. No implicit authorization for structural changes, commits, installs, network access, or publication. A caller's stricter scope or admission still applies.
+Use default max 3 review rounds, including initial W_0. In-scope feasible fixes are authorized by a review-and-fix request; a structural finding does not authorize scope expansion, public API changes, commits, installs, network access or publication. A caller's stricter scope or admission still applies.
 
 ## Workflow
 
@@ -32,11 +32,11 @@ Read `../../shared/helper-cli-contract.md`; create a run with `create_run.py --s
 
 ### 02: Run the shared bounded procedure
 
-Follow the shared procedure, retaining `loop-ledger.json`, `round-<index>.diff`, current snapshot `current.diff`, each independent report in this run. Read `adversarial_loop.py --help`, validate the ledger after each round, and invoke `adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress` after every completed challenge-resolve round, immediately after triage/validation and before any next fix, review, or stop. Show the full cumulative stderr table user-facing; its exact columns are `Iteration | Critical | High | Medium | Low | Nits | Weighted score`, with literal `old + new` numeric cells, combined security+critical display, score weights 20/10/6/4/2/1, and no fabricated zero row. Keep the final canonical `Results` table unchanged. Structural finding, repeated signature, plateau, non-converging trend, unavailable independence, stale evidence, or exhausted rounds stops this loop as specified by the shared procedure. A `fixed-pending-verification` finding remains open.
+Follow the shared five-step procedure: challenge and collect findings; report the old/new table once after each validated round; resolve every feasible in-scope finding; escalate unresolved `security`, `critical` or `high`; repeat until clean, three rounds, plateau or a non-converging score. Retain `loop-ledger.json`, `loop-actions.json`, `round-<index>.diff`, current snapshot `current.diff` and each independent report. Read `adversarial_loop.py --help`, validate the ledger after each round, and invoke `adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress` only after a newly completed challenge, before the next fix, review or stop. Show its full cumulative stderr table with `Iteration | Critical | High | Medium | Low | Nits | Weighted score` and literal `old + new` cells. Never show a placeholder progress table before a validated round or repeat the table in unrelated status updates. Keep the final canonical `Results` table unchanged. Structural or repeated findings alone do not stop an authorized feasible fix; scope, authority, recurrence, plateau, missing independence, stale evidence and exhausted rounds retain their shared stop rules. A `fixed-pending-verification` finding remains open. After resolution/escalation, bind every open finding to an action and run `adversarial_loop.py --ledger <run-directory>/loop-ledger.json --actions <run-directory>/loop-actions.json` before another challenge or final handoff. The helper validates recorded actions, not their truth; the parent must inspect feasibility and fix evidence.
 
 Collect scoped source snapshots with the existing `collect_diff.py` snapshot mode, retain `loop-evidence.json` per `evidence-contract.md`. Use existing Code Review routing, frozen contexts, specialist manifests for reviewer provenance; never manufacture a second runtime evidence format. Every participating reviewer receives the exact snapshot contents, diff, response contract, returns one structured response containing every finding, with only the route-required provenance header outside it. Preserve original reports and runtime evidence.
 
-This explicitly requested loop uses the shared orchestration policy's bounded serial-review exception, not additional parallel waves or write delegation. Re-plan and request a decision only when the next round needs new scope, authority, or a caller-specific approval. There is no fake independence fallback: parent-serial inspection stays labeled non-independent and cannot satisfy this skill's clean outcome.
+This explicitly requested loop uses the shared orchestration policy's bounded serial-review exception, not additional parallel waves or write delegation. Set a 1,500-output-token hard reviewer limit when the runtime supports it; otherwise request that target, record its advisory status, and never truncate findings. Re-plan and request a decision only when the next round needs new scope, authority, or a caller-specific approval. There is no fake independence fallback: parent-serial inspection stays labeled non-independent and cannot satisfy this skill's clean outcome.
 
 ### 03: Verify closure and run normal gates
 
@@ -46,12 +46,12 @@ Use `run_gates.py` for actual project lint, format, types, tests, review, with e
 
 ### 04: Validate and hand off
 
-Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `adversarial-loop`, promote only validated artifacts. Include confidence evidence, gaps, recovery, residual limits. Shared validation reruns evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness.
+Store the checker's exact JSON summary in `ADVERSARIAL_LOOP_METADATA.adversarial_loop`, and keep `action_contract_version: 1` in result metadata. Follow the shared helper lifecycle: render bound handoff, write candidate with `write-result.py`, validate as `adversarial-loop`, promote only validated artifacts. Include confidence evidence, gaps, recovery, residual limits. Default validation requires the action contract for candidate and final results; the archive-only `--allow-legacy-loop-actions` exception is never a promotion path. Shared validation reruns action and evidence validation as well as binding the computed decision and visible output. Existing native or App Server evidence retains its actual trust level; neither becomes cryptographic proof of source correctness. The host has no table-delivery receipt: report the once-per-round chat timing as an instruction-level limit, not a machine-verified guarantee.
 
 ## Fail-Fast Rules
 
 - Missing scope, specification, source, or required independent route prevents clean completion.
-- Shared hard stops take precedence over improvement and passing tests; never apply a structural fix inside this loop.
+- Shared hard stops take precedence over improvement and passing tests; a structural fix needs explicit authority only when it expands scope or crosses another approval boundary.
 - A malformed ledger, missing report, snapshot mismatch, or unverified closure blocks acceptance. Preserve the failed evidence and give the specific recovery, not a bare unresolved status.
 - A clean loop does not waive caller completion checks, authorization, or recurrence rules.
 
@@ -61,7 +61,7 @@ Use `../../shared/quality-gates.md`. Required review evidence includes the valid
 
 ## Calibration Hooks
 
-Cover clean review, pending fixes, unchanged signatures, structural stops, score boundaries, round cap, source changes after review, unavailable independent coverage, self-contained reply topic. Exercise both recovery and truthful failed handoffs; never weaken independent coverage to pass calibration.
+Cover clean review, pending fixes, repeated signatures with improving score, feasible structural fixes, authority stops, score boundaries, round cap, source changes after review, unavailable independent coverage, table timing, severe-finding escalation, reviewer budget fidelity and self-contained reply topic. Exercise both recovery and truthful failed handoffs; never weaken independent coverage to pass calibration.
 
 ## Output Contract
 
@@ -71,8 +71,8 @@ Follow `../../shared/final-handoff-contract.md`; after validation and promotion 
 
 - `Outcome`: identify the reviewed topic and `clean` or the specific stop reason.
 - `Results`: exactly `Iteration | Open findings | Weighted score | Decision | Evidence`, one row per independent round. Use one-based index, counts in `security=0, critical=0, high=0, medium=0, low=0, nit=0` order with actual values, computed score, exact checker decision, and the retained report path. For no independent round use `not-run | Not assessed | N/A | independence-unavailable | loop-report.md`.
-- During execution, show the complete cumulative `--progress` table after every completed round; this in-turn transcript is separate from and does not replace the canonical `Results` table above.
-- Apply the shared Table delivery checkpoint to every challenge status update, approval/recovery question, pause, and final handoff, including resumed or unvalidated runs. With no validated round, show `not-run` / `N/A`; incomplete coverage is never a reason to omit the table or invent a clean row.
+- During execution, show the cumulative `--progress` table once after each newly completed validated round, before fixes or the next review. This in-turn transcript is separate from the canonical final `Results` table.
+- With no validated round, report the missing evidence in prose, not a `not-run` / `N/A` progress table. A status update without a new round does not repeat the table; never invent a clean row or omit a table due after an actual round.
 - Show the score series and each remaining finding's disposition, reason, owner, and next action. Report actual implemented fixes separately from evidence-only closure; no code fixes means say so. The common result counts fold security into critical and nit into low; the ledger retains all six tiers.
 - `Next steps`: recommended recovery and relevant alternatives on stops; ask only for the missing decision.
 - Confidence includes independence/provenance and execution limits, not just a number. Artifact: `.reports/codex/adversarial-loop/<timestamp>/result.json`.

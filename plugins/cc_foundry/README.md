@@ -1,12 +1,12 @@
 # 🏭 foundry — Claude Code Plugin
 
-Independent challenge loops show the convergence table in status updates, approval/recovery questions and pauses, even before a validated round (`not-run` / `N/A`); final handoffs retain the canonical Results table.
+Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
 
 OSS Claude Code configuration for Python/ML projects: 10 specialist agents, 11 skills, event-driven hooks, and repeatable audit and calibration workflows.
 
 Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action. They challenge identity, ownership, destination, lifetime, and resume assumptions with concrete counterexamples and report untested handoffs.
 
-Each completed challenge-resolve round emits a full cumulative progress table before any next fix, review, or stop. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; every numeric cell is literal `old + new`, partitioning currently open and fixed-pending-verification signatures into those seen in any prior round, including closed-then-reopened signatures, and those first seen in the current round. Verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. The final result table stays unchanged, and empty rounds emit `not-run` with `N/A` cells without an unreviewed zero row.
+Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean, three reviews or plateau. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
 
 Optional Codemap guidance is shipped locally with foundry; loading it does not read another plugin's private shared directory. Codemap queries still require the `codemap-py` plugin, with file-read fallback when the CLI or local contract is unavailable.
 

@@ -148,17 +148,100 @@ def test_ratio_boundaries_and_round_cap_are_deterministic() -> None:
     assert module.summarize_ledger(capped)["reason"] == "round-cap"
 
 
-def test_structural_and_consecutive_open_findings_stop_immediately() -> None:
-    """Prevent loop fixes for structural changes and unresolved repeated findings."""
+def test_feasible_structural_and_repeated_findings_can_converge() -> None:
+    """Keep authorized structural and repeated findings eligible for another challenge."""
     module = _load_module()
     structural = _ledger(_round(1, [_finding("contract-change", structural=True)]))
-    pending = _ledger(
-        _round(1, [_finding("finding-a", disposition="fixed-pending-verification")]),
-        _round(2, [_finding("finding-a", disposition="fixed-pending-verification")]),
+    repeated = _ledger(
+        _round(1, [_finding("finding-a"), _finding("finding-b")]),
+        _round(2, [_finding("finding-a"), _finding("finding-b", disposition="verified-fixed")]),
     )
 
-    assert module.summarize_ledger(structural)["reason"] == "structural-finding"
-    assert module.summarize_ledger(pending)["reason"] == "consecutive-open-finding"
+    assert module.summarize_ledger(structural)["reason"] == "baseline"
+    assert module.validate_ledger(repeated) == []
+    assert module.summarize_ledger(repeated)["reason"] == "converging"
+
+
+def test_actions_bind_every_open_finding_and_severe_escalation() -> None:
+    """Reject silent omission or deferral of an unresolved high-severity finding."""
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("boundary"), _finding("typo", "low")]))
+    actions = {
+        "schema_version": 1,
+        "rounds": [
+            {
+                "index": 1,
+                "actions": [
+                    {
+                        "signature": "boundary",
+                        "decision": "escalate",
+                        "evidence": ["Contract change exceeds current authority."],
+                        "owner": "parent",
+                        "next_action": "Request approval for the contract change.",
+                        "root_cause": None,
+                    },
+                    {
+                        "signature": "typo",
+                        "decision": "defer",
+                        "evidence": ["Copy change is outside the approved file set."],
+                        "owner": "parent",
+                        "next_action": "Request the copy file in scope.",
+                        "root_cause": None,
+                    },
+                ],
+            }
+        ],
+    }
+
+    assert module.validate_actions(ledger, actions) == []
+    actions["rounds"][0]["actions"].pop()
+    assert "round-1-action-missing:typo" in module.validate_actions(ledger, actions)
+    actions["rounds"][0]["actions"][0]["decision"] = "defer"
+    assert "round-1-severe-finding-must-fix-or-escalate:boundary" in module.validate_actions(ledger, actions)
+
+
+def test_repeated_open_finding_requires_root_cause_before_another_fix() -> None:
+    """Tie a repeat-fix attempt to a falsifiable cause, not merely an improving score."""
+    module = _load_module()
+    ledger = _ledger(
+        _round(1, [_finding("repeat")]),
+        _round(2, [_finding("repeat"), _finding("new", "low")]),
+    )
+    action = {
+        "signature": "repeat",
+        "decision": "fix",
+        "evidence": ["Changed parser boundary and added regression."],
+        "owner": "parent",
+        "next_action": "Request independent verification on the corrected snapshot.",
+        "root_cause": None,
+    }
+    actions = {
+        "schema_version": 1,
+        "rounds": [
+            {"index": 1, "actions": [action.copy()]},
+            {
+                "index": 2,
+                "actions": [
+                    action.copy(),
+                    {
+                        **action,
+                        "signature": "new",
+                        "decision": "defer",
+                        "evidence": ["Low-severity copy change needs a separate scope."],
+                    },
+                ],
+            },
+        ],
+    }
+
+    assert "round-2-repeat-root-cause-required:repeat" in module.validate_actions(ledger, actions)
+    actions["rounds"][1]["actions"][0]["root_cause"] = {
+        "claim": "Parser fallback bypassed the boundary check.",
+        "evidence": "The repeated report names the fallback path.",
+        "falsification": "Run the fallback regression with the old branch.",
+        "rejected_alternative": "Input corruption was excluded by the retained source snapshot.",
+    }
+    assert module.validate_actions(ledger, actions) == []
 
 
 @pytest.mark.parametrize(
@@ -166,8 +249,8 @@ def test_structural_and_consecutive_open_findings_stop_immediately() -> None:
     [
         pytest.param("rejected", "clean", 0, id="refuted-structural-finding"),
         pytest.param("verified-fixed", "clean", 0, id="verified-structural-carryover"),
-        pytest.param("open", "structural-finding", 6, id="open-structural-finding"),
-        pytest.param("fixed-pending-verification", "structural-finding", 6, id="unverified-structural-fix"),
+        pytest.param("open", "baseline", 6, id="open-structural-finding"),
+        pytest.param("fixed-pending-verification", "baseline", 6, id="unverified-structural-fix"),
     ],
 )
 def test_structural_stop_respects_verified_disposition(disposition: str, decision: str, score: int) -> None:
@@ -185,7 +268,7 @@ def test_validator_rejects_a_round_after_a_terminal_decision(later_disposition: 
     """Require a separately scoped run instead of extending a stopped ledger."""
     module = _load_module()
     continued = _ledger(
-        _round(1, [_finding("contract-change", structural=True)]),
+        _round(1, [_finding("contract-change", disposition="verified-fixed", structural=True)]),
         _round(2, [_finding("contract-change", disposition=later_disposition, structural=True)]),
     )
 
@@ -393,7 +476,7 @@ def test_cli_progress_reprints_history_and_splits_old_new_weights(tmp_path: Path
     assert "| 2 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
     assert json.loads(baseline.stdout) == _load_module().summarize_ledger(_ledger(_round(1, first)))
     assert json.loads(updated.stdout) == _load_module().summarize_ledger(ledger)
-    assert json.loads(updated.stdout)["reason"] == "consecutive-open-finding"
+    assert json.loads(updated.stdout)["reason"] == "plateau"
 
 
 def test_cli_progress_counts_reopened_signatures_as_old(tmp_path: Path) -> None:
@@ -416,8 +499,8 @@ def test_cli_progress_counts_reopened_signatures_as_old(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("independent", [True, False])
-def test_cli_progress_does_not_invent_unreviewed_rows(tmp_path: Path, independent: bool) -> None:
-    """Distinguish unavailable review from a clean reviewed zero score."""
+def test_cli_progress_omits_table_before_any_completed_review(tmp_path: Path, independent: bool) -> None:
+    """Keep unavailable review status factual without a placeholder table."""
     ledger = _ledger() if independent else _ledger(_round(1, [], independent=False))
     ledger_path = tmp_path / "ledger.json"
     ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
@@ -428,8 +511,8 @@ def test_cli_progress_does_not_invent_unreviewed_rows(tmp_path: Path, independen
         check=False,
     )
     assert result.returncode == 0
-    assert "| not-run | N/A | N/A | N/A | N/A | N/A | N/A |" in result.stderr
-    assert "0 + 0" not in result.stderr
+    assert result.stderr == ""
+    assert json.loads(result.stdout)["reason"] == "independence-unavailable"
 
 
 @pytest.mark.parametrize("independent", [True, False])
@@ -471,8 +554,11 @@ def test_cli_progress_separates_legend_from_markdown_table(tmp_path: Path, compl
 
     assert result.returncode == 0
     table, separator, legend = result.stderr.partition("\n\n")
-    assert separator == "\n\n"
-    assert len(table.splitlines()) == 2 + max(1, completed_reviews)
-    assert all(line.startswith("| ") and line.endswith(" |") for line in table.splitlines())
-    assert legend.startswith("Cells: old + new open findings")
-    assert "Cells:" not in table
+    if completed_reviews == 0:
+        assert result.stderr == ""
+    else:
+        assert separator == "\n\n"
+        assert len(table.splitlines()) == 2 + completed_reviews
+        assert all(line.startswith("| ") and line.endswith(" |") for line in table.splitlines())
+        assert legend.startswith("Cells: old + new open findings")
+        assert "Cells:" not in table

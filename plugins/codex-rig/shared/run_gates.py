@@ -5,8 +5,8 @@
 
 Execute configured lint, format, type, test, and review checks while preserving per-gate evidence and timeout
 classification. An optional expected Git head binds each executable check to a clean source observation before and after
-its command. The gate runner turns each command into a named record that result validation can reconcile with the
-workflow verdict.
+its command. An optional absolute worktree path binds those observations and gate commands to one checkout. The gate
+runner turns each command into a named record that result validation can reconcile with the workflow verdict.
 
 ## Scope
 
@@ -20,6 +20,11 @@ overwrite and requires diagnosis rather than discarding evidence.
 
 Run ``python run_gates.py --out <directory>`` with explicit commands or documented skip reasons for each applicable
 gate. Add ``--expected-head <full-lowercase-sha>`` to require a matching clean Git checkout around executable checks.
+Add ``--worktree <absolute-path>`` with the expected head to select the exact checkout used for source inspection and
+commands, while retaining artifacts under ``--out``.
+For Python project tests, add ``--pytest-python <absolute-executable>``, one or more ``--pytest-import <module>``
+values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pytest and inspects imported modules in the
+same Python process; it cannot be combined with a free-form ``--tests`` command.
 Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
 value supplied through ``--timeout-seconds`` separately.
 
@@ -32,9 +37,11 @@ records without interpreting arbitrary gate names.
 ## Outputs
 
 It writes ``gates.json``, ``gates.txt``, ``failed.txt``, ``gates.checks.jsonl``, and per-gate command/stdout/stderr
-files. Guarded executable records include their expected head plus before/after source receipts. Records distinguish
+files. Worktree-bound runs record the selected checkout at the top level and in each executable source receipt. Guarded
+executable records include their expected head plus before/after source receipts. Records distinguish
 pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is bounded to protect
 artifact size.
+Import-bound test records contain the interpreter environment and each module's resolved, Git-tracked source origin.
 
 ## Failure
 
@@ -42,6 +49,8 @@ A missing command, non-zero command result, timeout, source mismatch or dirtines
 requested gate, or unwritable artifact directory is retained as explicit gate evidence. The CLI returns ``1`` for failed
 gates, ``124`` for a timeout, and ``2`` for invalid input such as a newline in a skip reason, allowing callers to
 classify the run without parsing prose.
+An imported module outside the selected worktree or absent from its Git index fails the test gate; a module not loaded
+in the pytest process or without a file origin leaves import proof inconclusive and also fails closed.
 """
 
 from __future__ import annotations
@@ -56,13 +65,22 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 DEFAULT_TIMEOUT_SECONDS = 900
 CHECKS_DIRNAME = "checks"
 SOURCE_INSPECTION_TIMEOUT_SECONDS = 30
+PYTHON_MODULE_PATTERN = re.compile(r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*")
+
+
+class PythonTestSpec(NamedTuple):
+    """Describe one in-process pytest invocation with import origins to verify."""
+
+    interpreter: Path
+    modules: tuple[str, ...]
+    arguments: tuple[str, ...]
 
 
 def positive_integer(value: str) -> int:
@@ -115,7 +133,51 @@ def parse_args() -> argparse.Namespace:
         type=full_git_sha,
         help="Optional clean Git HEAD required before and after every executable gate.",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--worktree",
+        type=Path,
+        help="Absolute checkout root for all source inspections and executable gates; requires --expected-head.",
+    )
+    parser.add_argument("--pytest-python", type=Path, help="Absolute Python executable for import-bound pytest tests.")
+    parser.add_argument(
+        "--pytest-import",
+        action="append",
+        default=[],
+        help="Module that pytest must actually import from the worktree.",
+    )
+    parser.add_argument("--pytest-args-json", help="JSON array of arguments passed directly to in-process pytest.")
+    arguments = parser.parse_args()
+    if arguments.worktree is not None:
+        if not arguments.worktree.is_absolute() or not arguments.worktree.is_dir():
+            parser.error("invalid-worktree: expected an existing absolute directory")
+        if arguments.expected_head is None:
+            parser.error("invalid-worktree: --expected-head is required")
+        arguments.worktree = arguments.worktree.resolve()
+    if arguments.pytest_python is not None:
+        if arguments.worktree is None:
+            parser.error("invalid-pytest-python: --worktree is required")
+        if not arguments.pytest_python.is_absolute() or not arguments.pytest_python.is_file():
+            parser.error("invalid-pytest-python: expected an existing absolute executable")
+        if arguments.tests or arguments.skip_tests:
+            parser.error("invalid-pytest-python: free-form or skipped tests conflict with import-bound pytest")
+        if not arguments.pytest_import or any(
+            PYTHON_MODULE_PATTERN.fullmatch(name) is None for name in arguments.pytest_import
+        ):
+            parser.error("invalid-pytest-import: at least one valid module name is required")
+        try:
+            pytest_arguments = json.loads(arguments.pytest_args_json or "[]")
+        except json.JSONDecodeError:
+            parser.error("invalid-pytest-args-json: expected an array of strings")
+        if not isinstance(pytest_arguments, list) or any(not isinstance(value, str) for value in pytest_arguments):
+            parser.error("invalid-pytest-args-json: expected an array of strings")
+        arguments.python_test = PythonTestSpec(
+            arguments.pytest_python.absolute(), tuple(dict.fromkeys(arguments.pytest_import)), tuple(pytest_arguments)
+        )
+    else:
+        if arguments.pytest_import or arguments.pytest_args_json is not None:
+            parser.error("invalid-pytest-python: --pytest-python is required")
+        arguments.python_test = None
+    return arguments
 
 
 def command_argv(command: str, platform: str | None = None) -> list[str]:
@@ -211,23 +273,27 @@ def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
     process.wait()
 
 
-def execute_command(command: str, timeout: int, stdout_path: Path, stderr_path: Path) -> tuple[int, float]:
+def execute_command(
+    command: str | list[str], timeout: int, stdout_path: Path, stderr_path: Path, worktree: Path | None = None
+) -> tuple[int, float]:
     """Execute one command with bounded runtime and captured output."""
     started = time.monotonic()
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
+    argv = command_argv(command, platform) if isinstance(command, str) else command
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
         try:
             process = subprocess.Popen(
-                command_argv(command, platform),
+                argv,
                 stdout=stdout,
                 stderr=stderr,
                 text=True,
+                cwd=worktree,
                 start_new_session=platform != "win32",
                 creationflags=creationflags,
             )
         except FileNotFoundError:
-            stderr.write(f"missing-command:{command_argv(command, platform)[0]}\n")
+            stderr.write(f"missing-command:{argv[0]}\n")
             return 127, time.monotonic() - started
         try:
             return process.wait(timeout=timeout), time.monotonic() - started
@@ -235,6 +301,71 @@ def execute_command(command: str, timeout: int, stdout_path: Path, stderr_path: 
             terminate_process(process, platform)
             stderr.write(f"timeout: exceeded {timeout} seconds\n")
             return 124, time.monotonic() - started
+
+
+def inspect_imported_module(name: str, worktree: Path) -> dict[str, Any]:
+    """Check one module actually loaded by pytest against tracked checkout source."""
+    module = sys.modules.get(name)
+    if module is None:
+        return {"origin": None, "tracked": False, "status": "inconclusive", "reason": "module-not-imported"}
+    raw_origin = getattr(module, "__file__", None)
+    if not isinstance(raw_origin, str):
+        return {"origin": None, "tracked": False, "status": "inconclusive", "reason": "module-has-no-file"}
+    origin = Path(raw_origin).resolve()
+    try:
+        relative = origin.relative_to(worktree).as_posix()
+    except ValueError:
+        return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "origin-outside-worktree"}
+    try:
+        tracked = (
+            subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", relative],
+                cwd=worktree,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        tracked = False
+    return {
+        "origin": origin.as_posix(),
+        "tracked": tracked,
+        "status": "pass" if tracked else "fail",
+        "reason": None if tracked else "origin-not-tracked",
+    }
+
+
+def run_python_tests_child(arguments: list[str]) -> int:
+    """Run pytest and inspect imports inside the same interpreter and process."""
+    if len(arguments) != 5:
+        print("invalid-python-test-child-arguments", file=sys.stderr)
+        return 2
+    worktree = Path(arguments[0]).resolve()
+    proof_path = Path(arguments[1])
+    modules = json.loads(arguments[2])
+    pytest_arguments = json.loads(arguments[3])
+    invoked_interpreter = arguments[4]
+    # Pytest is optional for all other gate modes and belongs to the selected test environment.
+    import pytest
+
+    test_exit_code = int(pytest.main(pytest_arguments))
+    origins = {name: inspect_imported_module(name, worktree) for name in modules}
+    statuses = {entry["status"] for entry in origins.values()}
+    status = "fail" if "fail" in statuses else "inconclusive" if "inconclusive" in statuses else "pass"
+    proof = {
+        "mode": "in-process-pytest",
+        "status": status,
+        "invoked_interpreter": invoked_interpreter,
+        "runtime_interpreter": Path(sys.executable).absolute().as_posix(),
+        "sys_prefix": Path(sys.prefix).absolute().as_posix(),
+        "worktree": worktree.as_posix(),
+        "modules": origins,
+    }
+    proof_path.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8", newline="\n")
+    return test_exit_code if test_exit_code else 0 if status == "pass" else 1
 
 
 def check_paths(gate_id: str, out_dir: Path) -> tuple[dict[str, Path], dict[str, str]]:
@@ -272,12 +403,24 @@ def skipped_check(gate_id: str, reason: str, paths: dict[str, Path], recorded: d
     }
 
 
-def inspect_source() -> dict[str, str]:
-    """Return the current Git head and porcelain status, or a failed inspection receipt."""
+def inspect_source(worktree: Path | None = None) -> dict[str, str]:
+    """Return the selected Git checkout head and status, or a failed inspection receipt."""
     empty = {"head": "", "status": ""}
     try:
+        if worktree is not None:
+            root = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+            )
+            if root.returncode != 0 or not root.stdout.strip() or Path(root.stdout.strip()).resolve() != worktree:
+                return {**empty, "error": "selected-worktree-is-not-checkout-root"}
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"],
+            cwd=worktree,
             capture_output=True,
             text=True,
             check=False,
@@ -289,6 +432,7 @@ def inspect_source() -> dict[str, str]:
         # Repository ignore settings must not conceal changed release dependencies.
         status = subprocess.run(
             ["git", "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none"],
+            cwd=worktree,
             capture_output=True,
             text=True,
             check=False,
@@ -326,12 +470,14 @@ def run_check(
     timeout: int,
     out_dir: Path,
     expected_head: str | None,
+    worktree: Path | None = None,
+    python_test: PythonTestSpec | None = None,
 ) -> dict[str, Any]:
     """Run one gate or record its explicit not-applicable status."""
     paths, recorded = check_paths(gate_id, out_dir)
     if skip_reason:
         return skipped_check(gate_id, skip_reason, paths, recorded)
-    if not command:
+    if not command and not (gate_id == "tests" and python_test is not None):
         paths["stdout"].write_text("", encoding="utf-8")
         paths["stderr"].write_text("missing command\n", encoding="utf-8")
         paths["command"].write_text("", encoding="utf-8")
@@ -346,11 +492,29 @@ def run_check(
             "reason": "no command configured for required gate",
         }
 
+    python_test_argv: list[str] | None = None
+    proof_path = out_dir / CHECKS_DIRNAME / "tests.python-imports.json"
+    if gate_id == "tests" and python_test is not None:
+        assert worktree is not None
+        proof_path.unlink(missing_ok=True)
+        python_test_argv = [
+            str(python_test.interpreter),
+            str(Path(__file__).resolve()),
+            "--_python-tests-child",
+            worktree.as_posix(),
+            str(proof_path.resolve()),
+            json.dumps(python_test.modules),
+            json.dumps(python_test.arguments),
+            python_test.interpreter.as_posix(),
+        ]
+        command = f"argv-json:{json.dumps(python_test_argv)}"
     paths["command"].write_text(f"{command}\n", encoding="utf-8")
     source: dict[str, Any] | None = None
     if expected_head is not None:
-        before = inspect_source()
+        before = inspect_source(worktree)
         source = {"expected_head": expected_head, "before": before, "after": None}
+        if worktree is not None:
+            source["worktree"] = worktree.as_posix()
         error = source_guard_error(before, expected_head)
         if error is not None:
             paths["stdout"].write_text("", encoding="utf-8")
@@ -366,7 +530,9 @@ def run_check(
                 "source": source,
             }
 
-    exit_code, duration = execute_command(command, timeout, paths["stdout"], paths["stderr"])
+    exit_code, duration = execute_command(
+        python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree
+    )
     status = (
         "pass"
         if exit_code == 0
@@ -385,8 +551,27 @@ def run_check(
         "stdout": recorded["stdout"],
         "stderr": recorded["stderr"],
     }
+    if python_test_argv is not None:
+        try:
+            proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            proof = {
+                "mode": "in-process-pytest",
+                "status": "inconclusive",
+                "invoked_interpreter": python_test.interpreter.as_posix(),
+                "runtime_interpreter": None,
+                "sys_prefix": None,
+                "worktree": worktree.as_posix(),
+                "modules": {},
+                "reason": "proof-missing-or-invalid",
+            }
+        result["python_imports"] = proof
+        if proof.get("status") != "pass":
+            append_stderr(paths["stderr"], f"python-import-origin:{proof.get('status', 'invalid')}")
+            if result["status"] == "pass":
+                result["status"] = "fail"
     if source is not None:
-        after = inspect_source()
+        after = inspect_source(worktree)
         source["after"] = after
         result["source"] = source
         error = source_guard_error(after, expected_head)
@@ -458,7 +643,7 @@ def main() -> int:
     for gate_id in GATE_IDS:
         if not commands[gate_id]:
             commands[gate_id] = defaults[gate_id]
-    if not Path("src").is_dir() and not getattr(arguments, "types"):
+    if not ((arguments.worktree or Path.cwd()) / "src").is_dir() and not getattr(arguments, "types"):
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
 
@@ -477,6 +662,8 @@ def main() -> int:
             arguments.timeout_seconds,
             output,
             arguments.expected_head,
+            arguments.worktree,
+            arguments.python_test,
         )
         for gate_id in GATE_IDS
     ]
@@ -498,6 +685,8 @@ def main() -> int:
         "checks_not_applicable": not_applicable,
         "checks": checks,
     }
+    if arguments.worktree is not None:
+        payload["source"] = {"worktree": arguments.worktree.as_posix(), "expected_head": arguments.expected_head}
     result_path = output / "gates.json"
     result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(result_path)
@@ -505,4 +694,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--_python-tests-child"]:
+        sys.exit(run_python_tests_child(sys.argv[2:]))
     sys.exit(main())

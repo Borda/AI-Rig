@@ -637,7 +637,7 @@ def test_serial_substitutes_cannot_complete_independent_review(assessed_pr: Path
     for role in roles:
         output = assessed_pr / f"{role}.md"
         output.write_text(
-            f"{role}: bounded inline review found no additional issue; independence remains unavailable.\n",
+            f"role_id: {role}\nBounded inline review found no additional issue; independence remains unavailable.\n",
             encoding="utf-8",
         )
         passes.append(

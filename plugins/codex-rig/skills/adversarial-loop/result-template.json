@@ -16,6 +16,7 @@
     "medium": 0
   },
   "metadata": {
+    "action_contract_version": 1,
     "adversarial_loop": {
       "reason": "independence-unavailable",
       "rounds": [],

@@ -68,7 +68,7 @@ Recommended probe routing:
 - `qa-specialist`: flaky tests, failing assertions, regression reproduction, missing edge-case evidence.
 - `cicd-steward`: CI-only failure, matrix/cache/permission divergence, release workflow failures.
 - `linting-expert`: ruff, mypy, pre-commit, tool version or suppression anomalies.
-- `security-auditor`: only when user expressly requests Sol or selects that role for auth, secret handling, deserialization, dependency, or permission-related failures; return its bounded read-only evidence artifact to Terra parent/session for remediation and acceptance.
+- `security-auditor`: only when user expressly requests that advisory pass or selects that role for auth, secret handling, deserialization, dependency, or permission-related failures; return its bounded read-only evidence artifact to the Sol parent/session for remediation and acceptance.
 - `data-steward`: data split, leakage, augmentation, DataLoader, or reproducibility anomalies.
 - `squeezer`: performance regressions, memory/OOM, throughput drops, GPU sync suspicion.
 - `scientist`: metric instability, paper/method mismatch, experiment validity.

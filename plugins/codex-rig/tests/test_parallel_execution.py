@@ -47,6 +47,7 @@ def _write_role(roles_dir: Path, role_id: str) -> str:
         64
     """
     path = roles_dir / role_id / "ROLE.md"
+    effort = "medium" if role_id == "qa-specialist" else "high"
     path.parent.mkdir(parents=True)
     path.write_text(
         "\n".join(
@@ -54,8 +55,8 @@ def _write_role(roles_dir: Path, role_id: str) -> str:
                 "---",
                 f"role_id: {role_id}",
                 f"name: codex-rig-{role_id}",
-                "model: gpt-5.6-terra",
-                "model_reasoning_effort: high",
+                "model: gpt-6-sol",
+                f"model_reasoning_effort: {effort}",
                 "approval_policy: on-request",
                 "sandbox_mode: read-only",
                 "---",
@@ -215,6 +216,7 @@ def _runtime_fixture(
         }
     ]
     for index, node in enumerate(manifest["stages"][0]["nodes"], start=1):  # type: ignore[index]
+        effort = "medium" if node["role_id"] == "qa-specialist" else "high"
         attempt = node["attempts"][0]
         thread_id = f"child-{index}"
         task_name = f"runtime_{node['node_id'].lower()}"
@@ -333,8 +335,8 @@ def _runtime_fixture(
                     "payload": {
                         "type": "thread_settings_applied",
                         "thread_settings": {
-                            "model": "gpt-5.6-terra",
-                            "reasoning_effort": "high",
+                            "model": "gpt-6-sol",
+                            "reasoning_effort": effort,
                             "approval_policy": "on-request",
                             "permission_profile": {
                                 "type": "managed",
@@ -350,8 +352,8 @@ def _runtime_fixture(
                     "type": "turn_context",
                     "payload": {
                         "turn_id": turn_id,
-                        "model": "gpt-5.6-terra",
-                        "effort": "high",
+                        "model": "gpt-6-sol",
+                        "effort": effort,
                         "approval_policy": "on-request",
                         "sandbox_policy": {"type": "read-only"},
                         "permission_profile": {"type": "managed", "network": False},

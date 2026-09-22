@@ -34,9 +34,10 @@ unknown-size rows, and any mechanically detected high-risk or configuration path
 
 ## Failure
 
-Missing or malformed routing JSON, a non-object payload, unreadable diff evidence, or an unwritable output path exits
-non-zero with the underlying local error. The helper never invents semantic signals or lowers the declared tier, and the
-final validator still rejects underclassification, incomplete signals, or inconsistent specialist routing.
+Missing or malformed routing JSON, a non-object payload, missing or invalid reviewer ``risk_tier``, unreadable diff
+evidence, or an unwritable output path exits non-zero with the underlying local error. The helper never invents semantic
+signals or lowers the declared tier, and the final validator still rejects underclassification, incomplete signals, or
+inconsistent specialist routing.
 """
 
 from __future__ import annotations
@@ -126,11 +127,13 @@ def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
 
 
 def synchronize_routing(out_dir: Path) -> Path:
-    """Replace model-authored mechanical fields with values derived from the run evidence."""
+    """Validate the reviewer tier and replace model-authored mechanical fields with derived evidence."""
     routing_path = out_dir / "review-routing.json"
     payload: Any = json.loads(routing_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"expected JSON object: {routing_path}")
+    if payload.get("risk_tier") not in {"TRIVIAL", "LOCAL", "BROAD", "HIGH_RISK"}:
+        raise ValueError(f"invalid-risk-tier:{payload.get('risk_tier')!r}")
     tier, evidence, _ = derive_mechanical_risk(out_dir)
     payload["mechanical_risk_tier"] = tier
     payload["mechanical_risk_evidence"] = evidence

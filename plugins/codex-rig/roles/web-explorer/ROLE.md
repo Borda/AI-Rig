@@ -1,8 +1,8 @@
 ---
 role_id: web-explorer
 name: codex-rig-web-explorer
-model: gpt-5.6-luna
-model_reasoning_effort: high
+model: gpt-6-luna
+model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: read-only
 fallback_modes: [shim, built-in-injected, inline]

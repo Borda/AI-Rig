@@ -362,7 +362,7 @@ The sync paths differ as follows:
 | Direct `plugins/codex-rig/scripts/sync_codex.py` | Installs or updates managed Codex plugins, authenticated Codex Rig block, and owned GitHub reader rules; it does not project repository model defaults or personal policy. |
 | Root `make sync-codex`                           | Additionally projects root `model` and `review_model` from `.codex/config.toml` and authenticated personal-policy block from `.codex/global-session-policy.md`.            |
 
-The current repository policy keeps parent session on Terra and permits Sol only for explicitly requested advisory pass or explicitly selected Sol agent.
+The current repository policy selects Sol/medium for normal parent sessions and Sol/high for deliberate deep review. Architecture/security specialist roles still require explicit selection. Codex has no separate `review_model_reasoning_effort` setting, so `/review` inherits the session effort unless invoked with `-c 'model_reasoning_effort="high"'`.
 
 From AI-Rig checkout:
 

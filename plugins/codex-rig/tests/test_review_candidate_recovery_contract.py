@@ -210,4 +210,4 @@ def test_merge_resume_preserves_both_checkpoints_and_protected_path_redaction() 
     assert "partial recovery, not a completed merge" in remediation
     assert "pre-merge source receipts" in remediation
     assert "post_merge_head" in remediation
-    assert "do not insert protected path lists into the bound summary" in review
+    assert "do not insert protected path lists into the bound summary" in review.lower()

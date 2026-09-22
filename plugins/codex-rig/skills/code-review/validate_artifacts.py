@@ -1244,6 +1244,144 @@ def _validate_verified_pr_source(
         or (preflight.get("status") == "safe-unrelated-dirty-paths" and not preflight.get("dirty_paths"))
     ):
         raise SystemExit("pr-source-worktree-preflight-invalid")
+    if routing.get("checkout_method") == "git-detached-review-worktree":
+        _validate_review_worktree_source(out_dir, base_oid, head_oid, checkout, preflight)
+
+
+def _validate_review_worktree_source(
+    out_dir: Path, base_oid: str, head_oid: str, checkout: dict[str, Any], preflight: dict[str, Any]
+) -> None:
+    """Bind isolated checkout and gate receipts to the exact reviewed PR worktree."""
+    collection_run_dir = checkout.get("collection_run_dir")
+    if not isinstance(collection_run_dir, str) or not Path(collection_run_dir).is_absolute():
+        raise SystemExit("pr-source-review-worktree-invalid")
+    original_run = Path(collection_run_dir)
+    source = checkout.get("source_worktree")
+    worktree = checkout.get("worktree")
+    location = checkout.get("worktree_location")
+    if not isinstance(worktree, str) or not Path(worktree).is_absolute() or not isinstance(source, str):
+        raise SystemExit("pr-source-review-worktree-invalid")
+    if location == "report-adjacent":
+        expected_worktree = original_run.with_name(f"{original_run.name}-review-worktree")
+        location_valid = worktree == expected_worktree.as_posix()
+    elif location == "temporary-fallback":
+        digest = hashlib.sha256(collection_run_dir.encode("utf-8")).hexdigest()[:16]
+        expected_name = f"codex-pr-review-{digest}-review-worktree"
+        location_valid = (
+            Path(worktree).name == expected_name
+            and Path(worktree).resolve().as_posix() == worktree
+            and not Path(worktree).is_relative_to(Path(source).resolve())
+        )
+    else:
+        location_valid = False
+    checkout_state = _load_json(out_dir / "checkout-state.json")
+    source_context = _load_json(out_dir / "source-worktree-context.json")
+    if (
+        not location_valid
+        or original_run != original_run.resolve()
+        or not Path(source).is_absolute()
+        or source != Path(source).resolve().as_posix()
+        or Path(source).resolve().as_posix() == worktree
+        or checkout.get("local_branch") != ""
+        or checkout.get("worktree_lifecycle") != "preserved-for-review"
+        or preflight.get("worktree") != worktree
+        or checkout_state.get("status") != "checkout-verified"
+        or checkout_state.get("local_state") != "isolated-exact-pr-head; main-worktree-unchanged"
+        or checkout_state.get("local_head") != head_oid
+        or checkout_state.get("worktree") != worktree
+        or source_context.get("phase") != "source-worktree-context"
+        or source_context.get("expected_head") != head_oid
+        or not isinstance(source_context.get("current_head"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", source_context["current_head"]) is None
+    ):
+        raise SystemExit("pr-source-review-worktree-invalid")
+
+    gates = _load_json(out_dir / "gates.json")
+    gate_source = gates.get("source")
+    checks = gates.get("checks")
+    if (
+        not isinstance(gate_source, dict)
+        or gate_source.get("worktree") != worktree
+        or gate_source.get("expected_head") != head_oid
+        or not isinstance(checks, list)
+    ):
+        raise SystemExit("pr-source-review-gates-worktree-mismatch")
+    for check in checks:
+        if not isinstance(check, dict):
+            raise SystemExit("pr-source-review-gates-worktree-mismatch")
+        if check.get("status") in {"not-applicable", "missing-command"}:
+            continue
+        receipt = check.get("source")
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("worktree") != worktree
+            or receipt.get("expected_head") != head_oid
+        ):
+            raise SystemExit("pr-source-review-gates-worktree-mismatch")
+        if check.get("status") == "pass" and any(
+            not isinstance(receipt.get(phase), dict)
+            or receipt[phase].get("head") != head_oid
+            or receipt[phase].get("status") != ""
+            or receipt[phase].get("error") is not None
+            for phase in ("before", "after")
+        ):
+            raise SystemExit("pr-source-review-gates-source-invalid")
+    _validate_pr_review_gate_command(out_dir, checks, base_oid, head_oid)
+    _validate_pr_tests_import_proof(checks, worktree)
+
+
+def _validate_pr_review_gate_command(out_dir: Path, checks: list[dict[str, Any]], base_oid: str, head_oid: str) -> None:
+    """Require a passing review gate to inspect the committed PR diff."""
+    review_checks = [check for check in checks if check.get("id") == "review"]
+    if len(review_checks) != 1:
+        raise SystemExit("pr-source-review-gate-command-invalid")
+    review_check = review_checks[0]
+    if review_check.get("status") == "not-applicable":
+        raise SystemExit("pr-source-review-gate-command-invalid")
+    command_path = _resolve_path(out_dir, review_check.get("command_path"))
+    if not command_path.is_file():
+        raise SystemExit("pr-source-review-gate-command-invalid")
+    expected_command = f"git diff --check {base_oid}...{head_oid}"
+    if command_path.read_text(encoding="utf-8").strip() != expected_command:
+        raise SystemExit("pr-source-review-gate-command-invalid")
+
+
+def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str) -> None:
+    """Require passing PR tests to show imported project modules came from the reviewed worktree."""
+    tests_checks = [check for check in checks if check.get("id") == "tests"]
+    if len(tests_checks) != 1:
+        raise SystemExit("pr-source-review-tests-import-proof-invalid")
+    tests_check = tests_checks[0]
+    if tests_check.get("status") != "pass":
+        return
+    proof = tests_check.get("python_imports")
+    if (
+        not isinstance(proof, dict)
+        or proof.get("mode") != "in-process-pytest"
+        or proof.get("status") != "pass"
+        or proof.get("worktree") != worktree
+        or any(
+            not isinstance(proof.get(field), str) or not Path(proof[field]).is_absolute()
+            for field in ("invoked_interpreter", "runtime_interpreter", "sys_prefix")
+        )
+        or not isinstance(proof.get("modules"), dict)
+        or not proof["modules"]
+    ):
+        raise SystemExit("pr-source-review-tests-import-proof-invalid")
+    source_root = Path(worktree).resolve()
+    for name, module in proof["modules"].items():
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(module, dict)
+            or module.get("status") != "pass"
+            or module.get("tracked") is not True
+            or module.get("reason") is not None
+            or not isinstance(module.get("origin"), str)
+            or not Path(module["origin"]).is_absolute()
+            or not Path(module["origin"]).resolve().is_relative_to(source_root)
+        ):
+            raise SystemExit("pr-source-review-tests-import-proof-invalid")
 
 
 def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dict[str, Any], scope: str) -> None:
@@ -2233,7 +2371,10 @@ def _validate_manifest_entries(
                 substitute_output = output_path.read_text(encoding="utf-8").strip()
             except OSError as error:
                 raise SystemExit(f"manifest-substitute-output-not-role-bound:{role}") from error
-            if not substitute_output or role not in substitute_output:
+            first_line = substitute_output.splitlines()[0].strip() if substitute_output else ""
+            explicit_header = first_line == f"role_id: {role}"
+            legacy_heading = first_line == f"{role}:" or re.fullmatch(rf"#{{1,6}}\s+{re.escape(role)}", first_line)
+            if not explicit_header and (schema_version == 5 or not legacy_heading):
                 raise SystemExit(f"manifest-substitute-output-not-role-bound:{role}")
         by_role[role] = item
 
@@ -2369,18 +2510,25 @@ def _validate_result(
             raise SystemExit("pr-routing-force-policy-missing")
         if result.get("schema_version") == 2:
             # Older receipts omit the method; current collectors record the operation actually performed.
+            review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
             checkout_commands = {
                 None: f"git checkout --detach {routing.get('head_oid')}",
                 "gh-pr-checkout": f"gh pr checkout {routing.get('pr_url')}",
                 "git-detached-review-fallback": f"git checkout --detach {routing.get('head_oid')}",
+                "git-detached-review-worktree": f"git worktree add --detach {review_worktree} {routing.get('head_oid')}",
                 "already-at-head": "not-run: already at expected PR head",
             }
             method = routing.get("checkout_method")
             expected_checkout = checkout_commands.get(method) if isinstance(method, (str, type(None))) else None
+            receipt_command = checkout.get("command")
+            valid_receipt_command = receipt_command == expected_checkout or (
+                method == "git-detached-review-worktree"
+                and receipt_command == "not-run: existing exact clean review worktree"
+            )
             if (
                 expected_checkout is None
                 or routing.get("local_checkout_command") != expected_checkout
-                or checkout.get("command") != expected_checkout
+                or not valid_receipt_command
                 or checkout.get("checkout_method") != method
                 or routing.get("checkout_mode") != (None if method is None else "review")
                 or checkout.get("checkout_mode") != routing.get("checkout_mode")
@@ -2429,7 +2577,13 @@ def _validate_result(
             raise SystemExit("pr-local-checkout-expected-head-missing")
         if checkout.get("local_head") != checkout.get("expected_head"):
             raise SystemExit("pr-local-checkout-oid-mismatch")
-        expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+        if routing.get("checkout_method") == "git-detached-review-worktree":
+            review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
+            expected_diff_command = (
+                f"git -C {review_worktree} diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+            )
+        else:
+            expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
         if (
             checkout.get("diff_source") != "verified-local-checkout"
             or checkout.get("diff_base_oid") != routing.get("base_oid")

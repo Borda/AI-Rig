@@ -50,7 +50,7 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 3. Read-only advisory route unavailable/unverified → ask human for missing advisory-route decision; never claim enforced isolation. Keep that route stopped while continuing unrelated authorized work or already-permitted source-inspection alternative with its limitations disclosed.
 4. Parent may run that one action.
 5. Action makes no material progress or closure condition unmet → stop that workstream and ask human with ledger, advisory evidence, current hypotheses, rejected alternatives, one recommended next step with alternatives, and evidence or decision needed to resume. Explain which unaffected work can continue.
-6. Never resets/weakens repeated-obstacle policy; closure-attempt count resets only when its condition fulfilled or materially replaced by recorded user direction or external-state evidence; Luna never escalates bounded support to Sol, Sol stays architecture/security-only.
+6. Never resets/weakens repeated-obstacle policy; closure-attempt count resets only when its condition fulfilled or materially replaced by recorded user direction or external-state evidence; Luna never escalates bounded support to Sol, and Astra requires a separate evidenced escalation.
 
 ## Coordination Discipline
 
@@ -65,16 +65,16 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 ## Runtime Effort Policy
 
-- Session default, review parent, implementation, verification, data, performance, research, curation, adversarial-challenge specialists use `gpt-5.6-terra` at `high`.
-- Delegation coordination, documentation, CI/CD stewardship, web-evidence, OSS triage, static-analysis specialists use `gpt-5.6-luna` at `high`.
-- Final behavior-changing and executable acceptance decisions stay with Terra parent/session.
-- `gpt-5.6-sol` at `high` stays pinned only for `security-auditor` and `solution-architect`, selected solely when user expressly requests Sol or names one of those agents.
-- Selected Sol pass stays read-only, returns bounded evidence/artifacts, hands next action + final acceptance back to Terra.
-- Luna activation = explicit user preference, kept separate from recorded strict route failure.
+- Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
+- Delegation, documentation, CI/CD, web evidence, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis and web evidence start at `medium`, the others at `high`.
+- Final behavior-changing and executable acceptance decisions stay with the Sol parent/session.
+- `security-auditor` and `solution-architect` use `gpt-6-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
+- Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
 
-Default reasoning effort `high` for every configured role. Reserve `xhigh`/`max` for explicit task-level escalation after representative evidence shows `high` insufficient:
+Reasoning effort is role-specific. Reserve `xhigh`/`max` for explicit task-level escalation after representative evidence shows the assigned effort insufficient. Codex has no separate review-effort config key; `/review` inherits session `medium` unless the invocation explicitly sets `model_reasoning_effort="high"`.
 
-- `high`: bounded support, static analysis, implementation, verification, runtime, CI, data, performance, adversarial, architecture, security, research work.
+- `medium`: normal coding, verification, performance analysis, linting, and web-evidence work.
+- `high`: challenge, deep review, data/research method, coordination, documentation, CI, OSS triage, curation, architecture, and security work.
 
 ______________________________________________________________________
 
@@ -184,7 +184,7 @@ Every test must pass The Suspicious Check:
   - Issues, releases, repositories, Discussions use `github_read.py` direct.
   - New collector needs written bundle contract, consumer workflow, regression tests; don't create parity wrappers around single read.
 - `git` CLI allowed for local repo ops + read-only fetch to update local PR branch: status, diff, log, show, fetch, add, commit, local branch creation/deletion/listing, switch/restore/reset/clean, local merge/cherry-pick under normal approval rules.
-  - Prefer GitHub CLI for GitHub metadata through the packaged reader/collector boundary. For review, `gh pr checkout <canonical PR URL>` is primary when checkout is needed; a verified detached checkout at the exact PR commit is a review-only fallback. Remediation must use collector `checkout_mode=remediate`, try `gh pr checkout <canonical PR URL>`, and keep an attached branch; after failure, only a verified same-repository checkout of the actual PR branch is allowed, while fork recovery uses the shared bounded adversarial route and returns to successful `gh` checkout. Native `gh` or an authorized same-repository checkout may create or update the original PR branch/tracking, but no manual exact-commit fallback, generated branch, or tracking repair is permitted. Normal fetches use no persistent ref destinations; the same-repository fallback may instead perform a guarded local update of an explicitly selected remote-tracking ref from the already fetched, verified PR head, using the observed prior value and preserving divergent or concurrently changed refs, for native tracking creation, without a second network fetch. The collector captures exact verified commit IDs, preserves unrelated work, and records the observed checkout mode. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On a separately verified PR branch with verified upstream and confirmed clean index/worktree, authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add redundant pull. Do not merge, rebase, reset, discard user changes, or manually change tracking configuration merely to refresh review or remediation.
+  - Prefer GitHub CLI for GitHub metadata through the packaged reader/collector boundary. For read-only review, fetch and verify the exact PR commit, then inspect it in a detached isolated worktree without switching the invoking branch or reusing its dirty files; bind source-dependent gates to that worktree. Remediation must use collector `checkout_mode=remediate`, try `gh pr checkout <canonical PR URL>`, and keep an attached branch; after failure, only a verified same-repository checkout of the actual PR branch is allowed, while fork recovery uses the shared bounded adversarial route and returns to successful `gh` checkout. Native `gh` or an authorized same-repository checkout may create or update the original PR branch/tracking, but no manual exact-commit fallback, generated branch, or tracking repair is permitted. Normal fetches use no persistent ref destinations; the same-repository fallback may instead perform a guarded local update of an explicitly selected remote-tracking ref from the already fetched, verified PR head, using the observed prior value and preserving divergent or concurrently changed refs, for native tracking creation, without a second network fetch. The collector captures exact verified commit IDs, preserves unrelated work, and records the observed checkout mode. Fresh PR and target source are agent-owned preparation; fetch both before conflict analysis. On a separately verified PR branch with verified upstream and confirmed clean index/worktree, authorized `git pull --ff-only` may update local source; reverify HEAD against fresh PR metadata. The collector's fetched and verified checkout already supplies fresh source, so do not add redundant pull. Do not merge, rebase, reset, discard user changes, or manually change tracking configuration merely to refresh review or remediation.
   - Never use manual `git` for remote mutation/state changes: no push, clone, remote update, ls-remote, submodule remote update, upstream tracking changes, or remote config changes. Native `gh pr checkout` and the explicitly authorized same-repository original-branch checkout are documented checkout operations and may perform their own local branch/tracking setup. A fast-forward-only pull is remote read plus local update, not remote publication; it still needs owning command's network approval.
 - Never run `git`/`gh` with `--force`, `--force-with-lease`, or command-specific forced update flag automatically. If forced git/gh operation seems necessary → stop before running, explain exactly why force is needed, what local/remote state it can overwrite, and ask user for explicit confirmation.
 - No escalation requests for forbidden remote/online mutations. Task needs push, comment, merge, publish, CI dispatch, or other remote service change → stop, tell user must be done by human or explicit separate non-Codex workflow.
@@ -239,7 +239,7 @@ ______________________________________________________________________
 
 Default: main agent for indivisible work.
 
-Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna, Terra, Sol roles expected to cut total cost or elapsed time after coordination overhead.
+Use `delegation-lead` when task has multiple separable workstreams and routing across configured Luna and Sol roles expected to cut total cost or elapsed time after coordination overhead.
 
 Stay in main agent when:
 
@@ -251,7 +251,7 @@ Stay in main agent when:
 Use delegation lead when:
 
 - 2+ independent domains, file sets, evidence searches, or verification commands can proceed w/o overlapping ownership
-- Lower-cost registered Luna role can own bounded support work while Terra/Sol retains behavior, architecture, security, executable acceptance
+- Lower-cost registered Luna role can own bounded support work while the Sol parent retains behavior, architecture, security, and executable acceptance
 - Parallel work likely cuts wall time w/o flooding every specialist w/ same context
 - Task needs explicit routing ledger + consolidated handover
 
@@ -284,8 +284,8 @@ Parent agent responsibilities:
 ### Model escalation policy
 
 - Use Codex Rig's `delegation-lead` role card plus packaged role trigger/skip boundaries as detailed routing source.
-- Prefer lowest-cost capable role: Luna for coordination + bounded support domains, Terra for implementation/runtime/testing + final executable verification, Sol only for solution architecture or security.
-- Luna support roles hand executable verification, release-blocking, API/runtime-changing ownership to appropriate Terra/Sol owner.
+- Prefer lowest-cost capable model and effort: Luna for bounded support and curation, Sol for implementation/runtime/testing and final executable verification; architecture/security advisor roles require explicit selection.
+- Luna support roles hand executable verification, release-blocking, API/runtime-changing ownership to the Sol parent or owning specialist.
 - Observed reasoning-progress stalls permit one advisory capability escalation only under packaged `shared/specialist-orchestration.md` protocol.
 - Parallelize only disjoint evidence, tests, docs, profiling work w/ clear ownership.
 - Every delegated workstream must pass packaged handover gate before parent acceptance.

@@ -99,7 +99,7 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
     assert "../_shared/" not in skill
     for required in (
         "role_id: challenger",
-        "model: gpt-5.6-terra",
+        "model: gpt-6-sol",
         "model_reasoning_effort: high",
         "approval_policy: on-request",
         "sandbox_mode: read-only",
@@ -118,7 +118,7 @@ def test_representative_skill_and_role_are_cache_portable() -> None:
     package_manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
     role_entry = package_manifest["roles"][0]
     assert role_entry["runtime"] == {
-        "model": "gpt-5.6-terra",
+        "model": "gpt-6-sol",
         "model_reasoning_effort": "high",
         "approval_policy": "on-request",
         "sandbox_mode": "read-only",

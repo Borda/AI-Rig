@@ -1,13 +1,13 @@
 # 🎭 Codex Rig Roles
 
-Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages Codex specialist: its model tier, sandbox and approval posture, and trigger/evidence/execution/handover/confidence contract that keeps it inside its lane. This README explains two things maintainer needs before touching role card: three-tier model-routing schema that decides which model role runs on, and schema every `ROLE.md` must satisfy to pass calibration harness.
+Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages Codex specialist: its model, reasoning effort, sandbox and approval posture, and trigger/evidence/execution/handover/confidence contract. This README explains the active GPT-6 routing map and the card schema checked by calibration.
 
 <details open>
 <summary><strong>Navigation</strong></summary>
 
 ## 📋 Contents
 
-- [Three-tier model-routing schema](#-three-tier-model-routing-schema)
+- [GPT-6 model and effort routing](#-gpt-6-model-and-effort-routing)
 - [Role roster](#-role-roster)
 - [Role-card contract](#-role-card-contract)
 - [Fallback modes](#-fallback-modes)
@@ -18,25 +18,26 @@ Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages
 
 > Current limits at a glance: role cards are behavioral profiles, not proof of native persistent-agent selection; Sol roles are read-only advisory paths, and new shim installation remains platform-blocked.
 
-## 🎚️ Three-tier model-routing schema
+## 🎚️ GPT-6 model and effort routing
 
-Every role runs on one of three `gpt-5.6-<tier>` models. All fifteen roles share same `model_reasoning_effort: high`, `approval_policy: on-request`, and `fallback_modes: [shim, built-in-injected, inline]` — only `model` and `sandbox_mode` vary per role.
+Every role runs on `gpt-6-sol` or `gpt-6-luna` with independently assigned `medium` or `high` reasoning effort. All fifteen roles share `approval_policy: on-request` and `fallback_modes: [shim, built-in-injected, inline]`; sandbox mode remains role-specific. Astra has no standing route.
 
-| Tier      | Model           | Purpose                                                                                                                                                                              | Roles                                                                                             |
-| --------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| **Sol**   | `gpt-5.6-sol`   | Deepest reasoning — architecture and security decisions that are expensive to get wrong and cheap to slow down.                                                                      | `solution-architect` (read-only), `security-auditor` (read-only)                                  |
-| **Terra** | `gpt-5.6-terra` | Core build-and-verify work, plus roles that own final parent-facing decision — implementation, executable acceptance, adversarial review, data integrity, research, and performance. | `sw-engineer`, `qa-specialist`, `challenger`, `curator`, `data-steward`, `scientist`, `squeezer`  |
-| **Luna**  | `gpt-5.6-luna`  | Cost-aware coordination and execution — documentation, CI/CD, static analysis, web evidence, OSS triage, and delegation coordination itself.                                         | `doc-scribe`, `cicd-steward`, `delegation-lead`, `linting-expert`, `oss-shepherd`, `web-explorer` |
+| Model        | Effort   | Roles                                                                               |
+| ------------ | -------- | ----------------------------------------------------------------------------------- |
+| `gpt-6-sol`  | `medium` | `sw-engineer`, `qa-specialist`, `squeezer`                                          |
+| `gpt-6-sol`  | `high`   | `challenger`, `data-steward`, `scientist`, `security-auditor`, `solution-architect` |
+| `gpt-6-luna` | `medium` | `linting-expert`, `web-explorer`                                                    |
+| `gpt-6-luna` | `high`   | `cicd-steward`, `curator`, `delegation-lead`, `doc-scribe`, `oss-shepherd`          |
 
 ### Rationale
 
 <details>
 <summary><strong>Evidence behind tier and sandbox assignments</strong></summary>
 
-The tier assignment is not preference guess — it is recorded, evidence-derived routing state in `runtime/calibration/accepted-route-evidence.json`. That file's `active_assignments` block lists same three tier-to-role mappings above, and its `adjudication` block explains why:
+The GPT-6 assignments are an explicit user-directed rollout. `runtime/calibration/accepted-route-evidence.json` records the current model-and-effort map in `active_assignments`, including parent Sol/medium and deep-review Sol/high requiring an explicit effort override. `active_assignment_basis` marks GPT-6 quality/cost evidence pending; the `historical_assignments` and `adjudication` sections retain the separate GPT-5.6 paid baseline and explain the older decisions:
 
-- `delegation-lead` runs on Luna by explicit human override: rationale is "a cost-aware delegation leader that uses Luna for coordination while routing implementation and executable acceptance to Terra and architecture/security to Sol; the strict Luna route failure remains preserved."
-- `cicd-steward`, `doc-scribe`, `linting-expert`, `oss-shepherd`, and `web-explorer` run on Luna by second override, for same reason: documentation, CI/CD stewardship, web evidence, OSS triage, and static analysis stay on Luna, while architecture and security stay on Sol and general implementation plus final parent decisions stay on Terra.
+- `delegation-lead` used Luna by explicit human override while the older Terra parent retained implementation and executable acceptance.
+- `cicd-steward`, `doc-scribe`, `linting-expert`, `oss-shepherd`, and `web-explorer` used Luna by a second override for bounded support.
 - `adjudication.luna_strict_failure_preserved: true` means strict-route calibration result — Luna failed strict quality bar on its own (`luna-score.json` records `strict_status: "fail"`) — is kept on record rather than silently overwritten by human override. The override changes assignment; it does not erase evidence that produced different strict answer.
 - The adjudication rule itself only accepts evidence-derived candidate "with zero pair quality regressions and either mean F1 gain >= 0.01 or geometric-mean normalized cost ratio \<= 1.0" — human overrides above are recorded as explicit exceptions to that rule, not replacements for it.
 
@@ -44,29 +45,29 @@ The tier assignment is not preference guess — it is recorded, evidence-derived
 
 ### Task-difficulty selection
 
-Role selection uses canonical [model-difficulty policy](../shared/specialist-orchestration.md#delegation-lead-and-model-routing), not model preference. Luna is limited to bounded support; Terra owns behavior and executable verification; Sol is reserved for architecture and security. The routing record must cite current task boundary or observed lower-tier insufficiency to escalate, and evidenced scope split to de-escalate; cost alone is insufficient.
+Role selection uses canonical [model-difficulty policy](../shared/specialist-orchestration.md#delegation-lead-and-model-routing). Luna owns bounded support and curation; Sol parent owns behavior and executable verification; architecture/security specialist roles still require explicit selection. The routing record must cite task boundary or observed insufficiency before model or effort escalation; cost alone is insufficient.
 
 </details>
 
 ## 🤖 Role roster
 
-| Role                 | Tier  | Sandbox mode    | Purpose                                                                                                 |
-| -------------------- | ----- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| `solution-architect` | Sol   | read-only       | System-design specialist for architecture, public API contracts, migrations, and module boundaries.     |
-| `security-auditor`   | Sol   | read-only       | Security specialist for Python/web trust boundaries, ML supply chains, secrets, and CI/CD permissions.  |
-| `sw-engineer`        | Terra | workspace-write | Implementation specialist for production code, bug fixes, refactors, and typed public API changes.      |
-| `qa-specialist`      | Terra | workspace-write | Testing specialist for regression proof, risk-proportional edge coverage, and independent verification. |
-| `challenger`         | Terra | read-only       | Adversarial reviewer for plans, architecture, migrations, releases, and non-trivial diffs.              |
-| `curator`            | Terra | workspace-write | Configuration-quality specialist for instruction hygiene, routing clarity, duplication, and drift.      |
-| `data-steward`       | Terra | workspace-write | ML data-pipeline integrity specialist for datasets, splits, labels, transforms, and leakage prevention. |
-| `scientist`          | Terra | workspace-write | ML research specialist for paper analysis, hypotheses, ablations, and evaluation protocols.             |
-| `squeezer`           | Terra | read-only       | Performance specialist for throughput, latency, memory, GPU utilization, and profiling evidence.        |
-| `doc-scribe`         | Luna  | workspace-write | Documentation specialist for public API docs, docstrings, README content, and changelogs.               |
-| `cicd-steward`       | Luna  | workspace-write | CI/CD reliability specialist for GitHub Actions, release automation, and flaky-CI diagnosis.            |
-| `delegation-lead`    | Luna  | workspace-write | Cost-aware orchestration specialist for decomposing work and consolidating specialist evidence.         |
-| `linting-expert`     | Luna  | workspace-write | Static-analysis specialist for Ruff, mypy, pre-commit, and suppression hygiene.                         |
-| `oss-shepherd`       | Luna  | read-only       | Open-source lifecycle specialist for issue triage, semantic versioning, and release readiness.          |
-| `web-explorer`       | Luna  | read-only       | External-evidence specialist for official documentation, release notes, and version verification.       |
+| Role                 | Tier | Sandbox mode    | Purpose                                                                                                 |
+| -------------------- | ---- | --------------- | ------------------------------------------------------------------------------------------------------- |
+| `solution-architect` | Sol  | read-only       | System-design specialist for architecture, public API contracts, migrations, and module boundaries.     |
+| `security-auditor`   | Sol  | read-only       | Security specialist for Python/web trust boundaries, ML supply chains, secrets, and CI/CD permissions.  |
+| `sw-engineer`        | Sol  | workspace-write | Implementation specialist for production code, bug fixes, refactors, and typed public API changes.      |
+| `qa-specialist`      | Sol  | workspace-write | Testing specialist for regression proof, risk-proportional edge coverage, and independent verification. |
+| `challenger`         | Sol  | read-only       | Adversarial reviewer for plans, architecture, migrations, releases, and non-trivial diffs.              |
+| `curator`            | Luna | workspace-write | Configuration-quality specialist for instruction hygiene, routing clarity, duplication, and drift.      |
+| `data-steward`       | Sol  | workspace-write | ML data-pipeline integrity specialist for datasets, splits, labels, transforms, and leakage prevention. |
+| `scientist`          | Sol  | workspace-write | ML research specialist for paper analysis, hypotheses, ablations, and evaluation protocols.             |
+| `squeezer`           | Sol  | read-only       | Performance specialist for throughput, latency, memory, GPU utilization, and profiling evidence.        |
+| `doc-scribe`         | Luna | workspace-write | Documentation specialist for public API docs, docstrings, README content, and changelogs.               |
+| `cicd-steward`       | Luna | workspace-write | CI/CD reliability specialist for GitHub Actions, release automation, and flaky-CI diagnosis.            |
+| `delegation-lead`    | Luna | workspace-write | Cost-aware orchestration specialist for decomposing work and consolidating specialist evidence.         |
+| `linting-expert`     | Luna | workspace-write | Static-analysis specialist for Ruff, mypy, pre-commit, and suppression hygiene.                         |
+| `oss-shepherd`       | Luna | read-only       | Open-source lifecycle specialist for issue triage, semantic versioning, and release readiness.          |
+| `web-explorer`       | Luna | read-only       | External-evidence specialist for official documentation, release notes, and version verification.       |
 
 ## 🤖 Role-card contract
 
@@ -77,15 +78,15 @@ Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibrati
 
 **Frontmatter (7 required fields):**
 
-| Field                    | Constraint                                                                    |
-| ------------------------ | ----------------------------------------------------------------------------- |
-| `role_id`                | Must match containing directory name.                                         |
-| `name`                   | Must be `codex-rig-<role_id>`.                                                |
-| `model`                  | One of `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna` — see tier table above. |
-| `model_reasoning_effort` | `high` for every role.                                                        |
-| `approval_policy`        | `on-request` for every role.                                                  |
-| `sandbox_mode`           | `read-only` or `workspace-write`.                                             |
-| `fallback_modes`         | `[shim, built-in-injected, inline]` for every role — see below.               |
+| Field                    | Constraint                                                      |
+| ------------------------ | --------------------------------------------------------------- |
+| `role_id`                | Must match containing directory name.                           |
+| `name`                   | Must be `codex-rig-<role_id>`.                                  |
+| `model`                  | `gpt-6-sol` or `gpt-6-luna` — see routing table above.          |
+| `model_reasoning_effort` | `medium` or `high` per role.                                    |
+| `approval_policy`        | `on-request` for every role.                                    |
+| `sandbox_mode`           | `read-only` or `workspace-write`.                               |
+| `fallback_modes`         | `[shim, built-in-injected, inline]` for every role — see below. |
 
 **Body (5 required `##` sections for most roles, or 6 for Sol roles because selection boundary is explicit):**
 

@@ -90,7 +90,7 @@ For `prepare`/`audit`, read and apply `../../shared/specialist-orchestration.md`
 - `cicd-steward`: release workflow, publishing, CI status, artifact gates.
 - `doc-scribe`: changelog, migration guide, README/examples.
 - `qa-specialist`: verification matrix and test evidence.
-- `security-auditor`: only when user expressly requests Sol or selects that role for security/dependency-sensitive changes; it returns bounded read-only evidence artifact to Terra parent/session for release acceptance.
+- `security-auditor`: only when user expressly requests that advisory pass or selects the role for security/dependency-sensitive changes; it returns a bounded read-only evidence artifact to the Sol parent/session for release acceptance.
 - `challenger`: release-blocker downgrade or no-blocker conclusion.
 
 Single-agent for `notes` on narrow low-risk range unless SemVer/migration impact ambiguous.

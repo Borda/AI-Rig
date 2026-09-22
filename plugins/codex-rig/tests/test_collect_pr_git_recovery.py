@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import subprocess
+import tempfile
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -14,6 +16,18 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 COLLECTOR = PLUGIN_ROOT / "shared" / "collect_pr.py"
+
+
+def _directory_symlinks_available() -> bool:
+    """Probe whether this host can create a directory symlink."""
+    with tempfile.TemporaryDirectory() as temporary:
+        destination = Path(temporary) / "destination"
+        destination.mkdir()
+        try:
+            (Path(temporary) / "link").symlink_to(destination, target_is_directory=True)
+        except OSError:
+            return False
+    return True
 
 
 def _git(repository: Path, *arguments: str, expected: int = 0) -> str:
@@ -139,8 +153,11 @@ def _collect(
             return checkout
         if arguments[:3] == ["git", "checkout", "--detach"]:
             result = subprocess.run(arguments, cwd=worktree, **kwargs)
-            if mutate_after_checkout:
-                (worktree / "module.py").write_text("value = 'raced'\n", encoding="utf-8")
+            return result
+        if arguments[:3] == ["git", "worktree", "add"]:
+            result = subprocess.run(arguments, cwd=worktree, **kwargs)
+            if result.returncode == 0 and mutate_after_checkout:
+                (Path(arguments[-2]) / "module.py").write_text("value = 'raced'\n", encoding="utf-8")
             return result
         assert arguments[0] != "gh", arguments
         if arguments[:2] == ["git", "fetch"]:
@@ -167,6 +184,181 @@ def _collect(
     finally:
         module.shutil.which = previous_which
     return code, calls
+
+
+def test_review_isolates_exact_pr_head_from_dirty_main_checkout(tmp_path: Path) -> None:
+    """Inspect the fetched PR commit in a detached worktree without moving local work."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    _git(main, "checkout", "-b", "ongoing", base)
+    (main / "module.py").write_text("value = 'local work'\n", encoding="utf-8")
+    main_status = _git(main, "status", "--short")
+    output = tmp_path / "collected"
+
+    code, calls = _collect(module, source, main, output, base, head)
+
+    assert code == 0
+    checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    review = Path(checkout["worktree"])
+    assert review == tmp_path / "collected-review-worktree"
+    assert review != main
+    assert _git(review, "rev-parse", "HEAD") == head
+    assert _git(review, "branch", "--show-current") == ""
+    assert (review / "module.py").read_text(encoding="utf-8") == "value = 'new'\n"
+    assert _git(main, "rev-parse", "HEAD") == base
+    assert _git(main, "branch", "--show-current") == "ongoing"
+    assert _git(main, "status", "--short") == main_status
+    assert (main / "module.py").read_text(encoding="utf-8") == "value = 'local work'\n"
+    assert not any(arguments[:3] == ["gh", "pr", "checkout"] for arguments in calls)
+    assert (output / "diff.patch").read_text(encoding="utf-8").strip() == _git(
+        review, "diff", "--binary", f"{base}...{head}", "--"
+    )
+
+
+def test_review_reuses_only_clean_exact_registered_worktree(tmp_path: Path) -> None:
+    """Allow a repeated collection without replacing or deleting the verified worktree."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    output = tmp_path / "collected"
+    first_code, _ = _collect(module, source, main, output, base, head)
+    assert first_code == 0
+    review = tmp_path / "collected-review-worktree"
+
+    second_code, second_calls = _collect(module, source, main, output, base, head)
+
+    assert second_code == 0
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in second_calls)
+    assert _git(review, "rev-parse", "HEAD") == head
+    receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    assert receipt["command"] == "not-run: existing exact clean review worktree"
+
+
+def test_review_preserves_dirty_registered_worktree_on_retry(tmp_path: Path) -> None:
+    """Do not reset or replace local review notes during another collection attempt."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    output = tmp_path / "collected"
+    first_code, _ = _collect(module, source, main, output, base, head)
+    assert first_code == 0
+    review = tmp_path / "collected-review-worktree"
+    (review / "module.py").write_text("value = 'review note'\n", encoding="utf-8")
+
+    second_code, second_calls = _collect(module, source, main, output, base, head)
+
+    assert second_code == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-dirty\n"
+    assert (review / "module.py").read_text(encoding="utf-8") == "value = 'review note'\n"
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in second_calls)
+    assert not (output / "local-checkout.json").exists()
+
+
+def test_review_receipt_survives_report_promotion(tmp_path: Path) -> None:
+    """Keep the isolated source address valid after the report directory moves."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    output = tmp_path / "timestamped"
+    code, _ = _collect(module, source, main, output, base, head)
+    assert code == 0
+    promoted = tmp_path / "pr-17" / "run-001"
+    promoted.parent.mkdir()
+
+    output.rename(promoted)
+
+    receipt = json.loads((promoted / "local-checkout.json").read_text(encoding="utf-8"))
+    review = Path(receipt["worktree"])
+    assert review == tmp_path / "timestamped-review-worktree"
+    assert _git(review, "rev-parse", "HEAD") == head
+    assert (promoted / "diff.patch").is_file()
+
+
+def test_review_worktree_can_live_beside_ignored_report_inside_source(tmp_path: Path) -> None:
+    """Keep report-adjacent review source invisible to the main repository status."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    _git(main, "config", "core.excludesFile", str(tmp_path / "global-ignore"))
+    (tmp_path / "global-ignore").write_text(".reports/\n", encoding="utf-8")
+    output = main / ".reports" / "code-review" / "run-001"
+
+    code, _ = _collect(module, source, main, output, base, head)
+
+    assert code == 0
+    review = main / ".reports" / "code-review" / "run-001-review-worktree"
+    assert _git(review, "rev-parse", "HEAD") == head
+    assert _git(main, "status", "--short") == ""
+
+
+def test_review_uses_temporary_worktree_when_report_path_is_visible_to_main_git(tmp_path: Path) -> None:
+    """Move isolated review source out of the main tree when reports are not ignored."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    output = main / "reports" / "run-001"
+
+    code, calls = _collect(module, source, main, output, base, head)
+
+    assert code == 0
+    receipt = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256(output.resolve().as_posix().encode("utf-8")).hexdigest()[:16]
+    review = Path(receipt["worktree"])
+    assert receipt["worktree_location"] == "temporary-fallback"
+    assert review == Path(tempfile.gettempdir()).resolve() / f"codex-pr-review-{digest}-review-worktree"
+    assert _git(review, "rev-parse", "HEAD") == head
+    assert ["git", "worktree", "add", "--detach", str(review), head] in calls
+    assert not (main / "reports" / "run-001-review-worktree").exists()
+
+
+def test_review_preserves_occupied_temporary_fallback_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never replace an unregistered path at the deterministic temporary address."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    external = tmp_path / "external"
+    external.mkdir()
+    monkeypatch.setattr(module.tempfile, "gettempdir", lambda: str(external))
+    output = main / "reports" / "run-001"
+    digest = hashlib.sha256(output.resolve().as_posix().encode("utf-8")).hexdigest()[:16]
+    occupied = external / f"codex-pr-review-{digest}-review-worktree"
+    occupied.mkdir()
+    (occupied / "keep.txt").write_text("not collector-owned\n", encoding="utf-8")
+
+    code, calls = _collect(module, source, main, output, base, head)
+
+    assert code == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-path-not-registered\n"
+    assert (occupied / "keep.txt").read_text(encoding="utf-8") == "not collector-owned\n"
+    assert not any(call[:3] == ["git", "worktree", "add"] for call in calls)
+
+
+def test_review_preserves_occupied_or_dirty_worktree_path(tmp_path: Path) -> None:
+    """Fail closed without replacing files at a report-adjacent path."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    review = tmp_path / "collected-review-worktree"
+    review.mkdir()
+    (review / "keep.txt").write_text("user data\n", encoding="utf-8")
+    output = tmp_path / "collected"
+
+    occupied_code, _ = _collect(module, source, main, output, base, head)
+
+    assert occupied_code == 2
+    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-path-not-registered\n"
+    assert (review / "keep.txt").read_text(encoding="utf-8") == "user data\n"
+
+
+@pytest.mark.skipif(not _directory_symlinks_available(), reason="directory symlinks unavailable")
+def test_review_rejects_symlink_worktree_path(tmp_path: Path) -> None:
+    """Do not follow a user-owned symlink when selecting the detached worktree path."""
+    module = _load_collector()
+    source, main, base, _old, head = _setup_repositories(tmp_path)
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    review = tmp_path / "collected-review-worktree"
+    review.symlink_to(destination, target_is_directory=True)
+
+    code, _ = _collect(module, source, main, tmp_path / "collected", base, head)
+
+    assert code == 2
+    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-path-is-symlink\n"
+    assert review.is_symlink()
+    assert list(destination.iterdir()) == []
 
 
 @pytest.mark.parametrize(
@@ -223,8 +415,8 @@ def test_collect_pr_uses_destination_free_target_fetch_without_rewriting_stale_c
 
 
 @pytest.mark.parametrize("state", ["unstaged", "staged", "unmerged"])
-def test_collect_pr_rejects_pr_file_changes_or_unmerged_index_at_matching_head(tmp_path: Path, state: str) -> None:
-    """Reject working-tree states that make matching commit identity insufficient for source review."""
+def test_collect_pr_isolates_pr_file_changes_or_unmerged_index_at_matching_head(tmp_path: Path, state: str) -> None:
+    """Preserve conflicted or changed main files while reviewing an isolated exact commit."""
     module = _load_collector()
     source, worktree, base, _old, head = _setup_repositories(tmp_path)
     if state in {"unstaged", "staged"}:
@@ -236,17 +428,20 @@ def test_collect_pr_rejects_pr_file_changes_or_unmerged_index_at_matching_head(t
 
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
 
-    assert code == 2
-    preflight = json.loads((tmp_path / "collected" / "worktree-preflight.json").read_text(encoding="utf-8"))
-    assert preflight["pr_paths"] == ["module.py"]
+    assert code == 0
+    source_context = json.loads((tmp_path / "collected" / "source-worktree-context.json").read_text(encoding="utf-8"))
+    assert source_context["pr_paths"] == ["module.py"]
     if state == "unmerged":
-        assert preflight["unmerged_paths"] == ["module.py"]
+        assert source_context["unmerged_paths"] == ["module.py"]
     else:
-        assert preflight["overlapping_pr_paths"] == ["module.py"]
+        assert source_context["overlapping_pr_paths"] == ["module.py"]
+    isolated = Path(json.loads((tmp_path / "collected" / "local-checkout.json").read_text())["worktree"])
+    assert _git(isolated, "rev-parse", "HEAD") == head
+    assert _git(isolated, "status", "--short") == ""
 
 
-def test_collect_pr_rejects_staged_pr_change_hidden_by_restored_worktree(tmp_path: Path) -> None:
-    """Reject an index-only PR change when the worktree bytes have been restored to HEAD."""
+def test_collect_pr_isolates_staged_pr_change_hidden_by_restored_worktree(tmp_path: Path) -> None:
+    """Keep a staged local change while reviewing clean PR source elsewhere."""
     module = _load_collector()
     source, worktree, base, _old, head = _setup_repositories(tmp_path)
     staged_contents = "value = 'local-staged'\n"
@@ -256,12 +451,13 @@ def test_collect_pr_rejects_staged_pr_change_hidden_by_restored_worktree(tmp_pat
 
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
 
-    assert code == 2
+    assert code == 0
     assert _git(worktree, "show", ":module.py") == staged_contents.strip()
-    preflight = json.loads((tmp_path / "collected" / "worktree-preflight.json").read_text(encoding="utf-8"))
+    preflight = json.loads((tmp_path / "collected" / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["dirty_paths"] == ["module.py"]
     assert preflight["overlapping_pr_paths"] == ["module.py"]
-    assert not (tmp_path / "collected" / "local-checkout.json").exists()
+    isolated = Path(json.loads((tmp_path / "collected" / "local-checkout.json").read_text())["worktree"])
+    assert _git(isolated, "status", "--short") == ""
 
 
 def test_collect_pr_preserves_unrelated_edits_at_matching_head(tmp_path: Path) -> None:
@@ -285,15 +481,15 @@ def test_collect_pr_preserves_unrelated_untracked_files_at_matching_head(tmp_pat
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
 
     assert code == 0
-    preflight = json.loads((tmp_path / "collected" / "worktree-preflight.json").read_text(encoding="utf-8"))
+    preflight = json.loads((tmp_path / "collected" / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["dirty_paths"] == ["scratch.txt"]
     assert preflight["overlapping_pr_paths"] == []
     assert (worktree / "scratch.txt").read_text(encoding="utf-8") == "keep local scratch\n"
 
 
 @pytest.mark.parametrize("path", ["notes.txt", "removed/nested.py"])
-def test_collect_pr_rejects_untracked_recreation_of_a_deleted_pr_path(tmp_path: Path, path: str) -> None:
-    """Reject a user recreation of a file deleted by the PR before claiming verified local source."""
+def test_collect_pr_isolates_untracked_recreation_of_a_deleted_pr_path(tmp_path: Path, path: str) -> None:
+    """Preserve a recreated local path while reviewing the exact deletion in isolation."""
     module = _load_collector()
     source, worktree, base, _old, _head = _setup_repositories(tmp_path)
     _git(source, "rm", path)
@@ -308,15 +504,14 @@ def test_collect_pr_rejects_untracked_recreation_of_a_deleted_pr_path(tmp_path: 
 
     code, _calls = _collect(module, source, worktree, tmp_path / "collected", base, head)
 
-    assert code == 2
-    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == (
-        "dirty-pr-worktree-before-pr-checkout\n"
-    )
-    preflight = json.loads((tmp_path / "collected" / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert code == 0
+    preflight = json.loads((tmp_path / "collected" / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["dirty_paths"] == [path]
     assert path in preflight["pr_paths"]
     assert preflight["overlapping_pr_paths"] == [path]
-    assert not (tmp_path / "collected" / "local-checkout.json").exists()
+    isolated = Path(json.loads((tmp_path / "collected" / "local-checkout.json").read_text())["worktree"])
+    assert not (isolated / path).exists()
+    assert recreated.read_text(encoding="utf-8") == "local unreviewed recreation\n"
 
 
 def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_config(tmp_path: Path) -> None:
@@ -338,9 +533,9 @@ def test_collect_pr_detaches_at_verified_head_without_changing_local_refs_or_con
     )
 
     assert code == 0
-    assert ["git", "checkout", "--detach", head] in calls
-    assert _git(worktree, "rev-parse", "HEAD") == head
-    assert _git(worktree, "branch", "--show-current") == ""
+    assert ["git", "worktree", "add", "--detach", str(tmp_path / "collected-review-worktree"), head] in calls
+    assert _git(worktree, "rev-parse", "HEAD") == old
+    assert _git(worktree, "branch", "--show-current") == "local-diverged"
     assert _git(worktree, "rev-parse", "refs/heads/local-diverged") == old
     assert _git(worktree, "rev-parse", "refs/remotes/origin/topic") == old
     assert _git(worktree, "config", "--get", "remote.origin.url") == remote_url
@@ -603,7 +798,7 @@ def test_collect_pr_remediation_rechecks_dirty_partial_gh_failure_before_git_rec
 
 
 def test_collect_pr_rechecks_pr_source_after_checkout(tmp_path: Path) -> None:
-    """Reject a PR file changed between checkout and the verified-source claim."""
+    """Reject an isolated PR file changed between creation and source verification."""
     module = _load_collector()
     source, worktree, base, _old, head = _setup_repositories(tmp_path)
     _git(worktree, "checkout", "-b", "base-checkout", base)
@@ -620,11 +815,7 @@ def test_collect_pr_rechecks_pr_source_after_checkout(tmp_path: Path) -> None:
     )
 
     assert code == 2
-    assert (
-        (tmp_path / "collected" / "pr-error.txt")
-        .read_text(encoding="utf-8")
-        .startswith("dirty-pr-worktree-after-pr-checkout")
-    )
+    assert (tmp_path / "collected" / "pr-error.txt").read_text(encoding="utf-8") == "review-worktree-dirty\n"
 
 
 def test_collect_pr_clears_prior_target_before_an_invalid_retry(tmp_path: Path) -> None:

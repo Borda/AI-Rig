@@ -1,7 +1,7 @@
 ---
 role_id: doc-scribe
 name: codex-rig-doc-scribe
-model: gpt-5.6-luna
+model: gpt-6-luna
 model_reasoning_effort: high
 approval_policy: on-request
 sandbox_mode: workspace-write

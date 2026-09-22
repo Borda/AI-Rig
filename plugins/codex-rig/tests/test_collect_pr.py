@@ -19,6 +19,11 @@ BASE_OID = "a" * 40
 HEAD_OID = "b" * 40
 
 
+def _review_worktree_add(output: Path) -> list[str]:
+    """Return the exact detached-worktree command for a collector report."""
+    return ["git", "worktree", "add", "--detach", str(output.with_name(f"{output.name}-review-worktree")), HEAD_OID]
+
+
 def _load_collector() -> ModuleType:
     """Load the standalone collector without requiring package installation."""
     assert COLLECTOR.is_file(), COLLECTOR
@@ -216,7 +221,37 @@ class FakeRunner:
         assert kwargs.get("shell", False) is False
         self.calls.append((argv, kwargs))
         stdout = b""
-        if argv == ["git", "diff", "--name-only", "-z", "HEAD", "--"]:
+        if argv[:2] == ["git", "-C"]:
+            review = Path(argv[2])
+            operation = argv[3:]
+            if operation == ["rev-parse", "--git-common-dir"]:
+                stdout = f"{Path.cwd() / '.git'}\n".encode()
+            elif operation == ["rev-parse", "--show-toplevel"]:
+                stdout = f"{review}\n".encode()
+            elif operation == ["rev-parse", "HEAD"]:
+                stdout = f"{HEAD_OID}\n".encode()
+            elif operation == ["branch", "--show-current"]:
+                stdout = b""
+            elif operation == ["status", "--porcelain", "-z"]:
+                stdout = b""
+            elif operation[:4] == ["diff", "--name-only", "-z", f"{BASE_OID}...{HEAD_OID}"]:
+                stdout = b"".join(f"{path}\0".encode() for path in self.pr_paths)
+            elif operation[:2] == ["diff", "--binary"]:
+                stdout = b"diff --git a/a.py b/a.py\n"
+            elif operation[:2] == ["diff", "--stat"]:
+                if self.statistics_unavailable:
+                    return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"binary patch has no stat\n")
+                stdout = b" a.py | 1 +\n"
+            elif operation[:2] == ["diff", "--numstat"]:
+                if self.statistics_unavailable:
+                    return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"binary patch has no numstat\n")
+                stdout = b"1\t0\ta.py\n"
+            else:  # pragma: no cover - makes unsupported review commands diagnostic
+                raise AssertionError(f"unexpected review command: {argv}")
+        elif argv[:3] == ["git", "worktree", "add"]:
+            Path(argv[-2]).mkdir(parents=True)
+            stdout = b""
+        elif argv == ["git", "diff", "--name-only", "-z", "HEAD", "--"]:
             stdout = b"".join(f"{path}\0".encode() for path in self.dirty_paths)
         elif argv == ["git", "diff", "--cached", "--name-only", "-z", "HEAD", "--"]:
             stdout = b"".join(f"{path}\0".encode() for path in self.staged_paths)
@@ -290,6 +325,8 @@ class FakeRunner:
                 stdout = f"{self.local_head_oid}\n".encode()
             elif reference == "--show-toplevel":
                 stdout = f"{Path.cwd()}\n".encode()
+            elif reference == "--git-common-dir":
+                stdout = f"{Path.cwd() / '.git'}\n".encode()
             elif reference == "FETCH_HEAD":
                 fetch = next(call for call, _ in reversed(self.calls[:-1]) if call[:2] == ["git", "fetch"])
                 stdout = (self.current_base_oid if fetch[-1] == "main" else HEAD_OID).encode() + b"\n"
@@ -363,7 +400,7 @@ def test_collect_pr_writes_complete_noncheckout_artifact_schema(
     routing = json.loads((output / "pr-routing.json").read_text())
     assert routing["base_repo"] == "Borda/AI-Rig"
     assert routing["same_repo"] is True
-    assert routing["local_checkout_command"] == f"git checkout --detach {HEAD_OID}"
+    assert routing["local_checkout_command"] == " ".join(_review_worktree_add(output))
     collected_pr = json.loads((output / "pr.json").read_text())
     assert collected_pr["body"].startswith("Fix checkpoint")
     assert collected_pr["statusCheckRollup"] == [
@@ -482,7 +519,7 @@ def test_collect_pr_uses_public_metadata_fallback_with_trusted_pr_identity(
     assert any(
         argv == ["git", "fetch", "--no-tags", "--refmap=", "origin", "refs/pull/17/head"] for argv, _ in _runner.calls
     )
-    assert any(argv == ["git", "checkout", "--detach", HEAD_OID] for argv, _ in _runner.calls)
+    assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
     assert json.loads((output / "pr.json").read_text(encoding="utf-8"))["number"] == 17
     summary = json.loads((output / "online-review-summary.json").read_text(encoding="utf-8"))
     assert summary["pr_metadata_transport"] == "public-https-fallback"
@@ -722,8 +759,20 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
     assert json.loads((output / "pr.json").read_text())["body"].startswith("Fix checkpoint")
     assert (output / "review-threads-error.txt").read_text() == "github-network:gh-review-threads\n"
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
-    assert any(argv == ["git", "checkout", "--detach", HEAD_OID] for argv, _ in _runner.calls)
-    assert any(argv == ["git", "diff", "--binary", f"{BASE_OID}...{HEAD_OID}", "--"] for argv, _ in _runner.calls)
+    assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
+    assert any(
+        argv
+        == [
+            "git",
+            "-C",
+            str(output.with_name(f"{output.name}-review-worktree")),
+            "diff",
+            "--binary",
+            f"{BASE_OID}...{HEAD_OID}",
+            "--",
+        ]
+        for argv, _ in _runner.calls
+    )
     assert not any(argv[:3] == ["gh", "pr", "diff"] for argv, _ in _runner.calls)
     checkout = json.loads((output / "local-checkout.json").read_text())
     assert checkout["diff_source"] == "verified-local-checkout"
@@ -731,18 +780,18 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
     assert checkout["diff_head_oid"] == HEAD_OID
 
 
-def test_collect_pr_fetches_fork_head_before_comparing_checkout_paths(
+def test_collect_pr_fetches_fork_head_before_creating_review_worktree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Make a fresh fork commit available before the non-mutating checkout-overlap check."""
+    """Make a fresh fork commit available before isolated worktree creation."""
     module = _load_collector()
     runner = FakeRunner(cross_repository=True)
     fork_fetch = ["git", "fetch", "--no-tags", "--refmap=", "origin", "refs/pull/17/head"]
-    checkout_diff = ["git", "diff", "--name-only", "-z", "d" * 40, HEAD_OID, "--"]
+    review_add = _review_worktree_add(tmp_path / "pr")
 
     def run_with_unfetched_fork(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Model Git rejecting a commit that has not yet been fetched from a fork."""
-        if argv == checkout_diff and not any(call == fork_fetch for call, _ in runner.calls):
+        """Model Git rejecting a worktree commit that has not yet been fetched."""
+        if argv == review_add and not any(call == fork_fetch for call, _ in runner.calls):
             return subprocess.CompletedProcess(argv, 128, stdout=b"", stderr=b"unknown revision")
         return runner(argv, **kwargs)
 
@@ -755,8 +804,7 @@ def test_collect_pr_fetches_fork_head_before_comparing_checkout_paths(
     assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
     calls = [argv for argv, _ in runner.calls]
     target_fetch = ["git", "fetch", "--no-tags", "--refmap=", "origin", "main"]
-    assert calls.index(target_fetch) < calls.index(fork_fetch) < calls.index(checkout_diff)
-    assert calls.index(checkout_diff) < calls.index(["git", "checkout", "--detach", HEAD_OID])
+    assert calls.index(target_fetch) < calls.index(fork_fetch) < calls.index(review_add)
     head = json.loads((output / "pr-head-fetch.json").read_text(encoding="utf-8"))
     assert head["status"] == "fetched"
     assert head["local_head"] == head["expected_head_oid"] == HEAD_OID
@@ -764,10 +812,10 @@ def test_collect_pr_fetches_fork_head_before_comparing_checkout_paths(
     assert not any("--force" in argv or argv[:2] == ["git", "pull"] for argv in calls)
 
 
-def test_collect_pr_reuses_already_exact_pr_head_for_local_diff(
+def test_collect_pr_isolates_review_even_when_main_is_already_at_pr_head(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Avoid a fragile checkout call when the current fork branch already matches PR metadata."""
+    """Give review a dedicated worktree even when the invoking branch matches PR metadata."""
     module = _load_collector()
     _runner = FakeRunner(current_head_oid=HEAD_OID, cross_repository=True)
     _configure_collector(monkeypatch, module, _runner)
@@ -778,7 +826,8 @@ def test_collect_pr_reuses_already_exact_pr_head_for_local_diff(
     assert result == 0
     assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in _runner.calls)
     checkout = json.loads((output / "local-checkout.json").read_text())
-    assert checkout["command"] == "not-run: already at expected PR head"
+    assert checkout["command"] == " ".join(_review_worktree_add(output))
+    assert checkout["worktree"] == str(output.with_name(f"{output.name}-review-worktree"))
     assert checkout["head_matches_pr"] is True
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
 
@@ -925,10 +974,10 @@ def test_collect_pr_remediation_rejects_closed_pr_before_gh_checkout(
     assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in runner.calls)
 
 
-def test_collect_pr_review_uses_detached_fallback_after_gh_checkout_failure(
+def test_collect_pr_review_uses_detached_worktree_without_gh_checkout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep exact-commit review available when GitHub's local branch checkout is unavailable."""
+    """Keep exact-commit review independent of GitHub branch checkout."""
     module = _load_collector()
     runner = FakeRunner(gh_checkout_fails=True)
     _configure_collector(monkeypatch, module, runner)
@@ -938,19 +987,18 @@ def test_collect_pr_review_uses_detached_fallback_after_gh_checkout_failure(
 
     assert result == 0
     calls = [argv for argv, _ in runner.calls]
-    assert calls.index(["gh", "pr", "checkout", "https://github.com/Borda/AI-Rig/pull/17"]) < calls.index(
-        ["git", "checkout", "--detach", HEAD_OID]
-    )
+    assert _review_worktree_add(output) in calls
+    assert not any(call[:3] == ["gh", "pr", "checkout"] for call in calls)
     checkout = json.loads((output / "local-checkout.json").read_text(encoding="utf-8"))
     assert checkout["checkout_mode"] == "review"
-    assert checkout["command"] == f"git checkout --detach {HEAD_OID}"
-    assert checkout["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+    assert checkout["command"] == " ".join(_review_worktree_add(output))
+    assert checkout["gh_checkout_failure"] is None
 
 
-def test_collect_pr_review_records_successful_gh_checkout_in_routing(
+def test_collect_pr_review_records_detached_worktree_in_routing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Keep routing metadata aligned with review's primary successful branch checkout."""
+    """Keep routing metadata aligned with the isolated review worktree."""
     module = _load_collector()
     runner = FakeRunner(gh_checkout_fails=False)
     _configure_collector(monkeypatch, module, runner)
@@ -960,11 +1008,14 @@ def test_collect_pr_review_records_successful_gh_checkout_in_routing(
 
     assert result == 0
     routing = json.loads((output / "pr-routing.json").read_text(encoding="utf-8"))
-    assert routing["local_checkout_command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+    assert routing["local_checkout_command"] == " ".join(_review_worktree_add(output))
+    assert routing["checkout_method"] == "git-detached-review-worktree"
 
 
-def test_collect_pr_allows_dirty_paths_untouched_by_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep unrelated tracked environment churn from blocking a verified PR checkout."""
+def test_collect_pr_records_unrelated_main_dirtiness_without_blocking_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep unrelated tracked environment churn from blocking isolated review."""
     module = _load_collector()
     _runner = FakeRunner(dirty_paths=["uv.lock"], checkout_paths=["a.py"])
     _configure_collector(monkeypatch, module, _runner)
@@ -973,19 +1024,19 @@ def test_collect_pr_allows_dirty_paths_untouched_by_checkout(tmp_path: Path, mon
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
     assert result == 0
-    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    preflight = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["status"] == "safe-unrelated-dirty-paths"
     assert preflight["dirty_paths"] == ["uv.lock"]
-    assert preflight["phase"] == "after-checkout"
+    assert preflight["phase"] == "source-worktree-context"
     assert preflight["checkout_paths"] == []
     assert preflight["overlapping_paths"] == []
-    assert any(argv == ["git", "checkout", "--detach", HEAD_OID] for argv, _ in _runner.calls)
+    assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
 
 
-def test_collect_pr_names_dirty_paths_that_checkout_would_overwrite(
+def test_collect_pr_records_main_dirty_paths_overlapping_pr_diff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Block only tracked edits the requested checkout would overwrite."""
+    """Record overlapping main edits without blocking isolated review."""
     module = _load_collector()
     _runner = FakeRunner(dirty_paths=["uv.lock", "a.py"], checkout_paths=["a.py", "src/app.py"])
     _configure_collector(monkeypatch, module, _runner)
@@ -993,16 +1044,18 @@ def test_collect_pr_names_dirty_paths_that_checkout_would_overwrite(
 
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
-    assert result == 2
-    assert (output / "pr-error.txt").read_text(encoding="utf-8") == "dirty-pr-worktree-before-pr-checkout\n"
-    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    assert result == 0
+    preflight = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["status"] == "blocked-pr-dirty-paths"
-    assert preflight["overlapping_paths"] == ["a.py"]
+    assert preflight["overlapping_pr_paths"] == ["a.py"]
     assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in _runner.calls)
+    assert any(argv == _review_worktree_add(output) for argv, _ in _runner.calls)
 
 
-def test_collect_pr_allows_dirty_paths_when_already_at_pr_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Do not block a source review when no checkout is necessary."""
+def test_collect_pr_preserves_main_dirty_paths_when_already_at_pr_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Create isolated source without blocking on current-head main edits."""
     module = _load_collector()
     _runner = FakeRunner(current_head_oid=HEAD_OID, cross_repository=True, dirty_paths=["uv.lock"])
     _configure_collector(monkeypatch, module, _runner)
@@ -1011,7 +1064,7 @@ def test_collect_pr_allows_dirty_paths_when_already_at_pr_head(tmp_path: Path, m
     result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
 
     assert result == 0
-    preflight = json.loads((output / "worktree-preflight.json").read_text(encoding="utf-8"))
+    preflight = json.loads((output / "source-worktree-context.json").read_text(encoding="utf-8"))
     assert preflight["status"] == "safe-unrelated-dirty-paths"
     assert preflight["dirty_paths"] == ["uv.lock"]
     assert preflight["checkout_paths"] == []
@@ -1041,7 +1094,7 @@ def test_collect_pr_checkout_writes_verified_fetch_and_checkout_artifacts(
     checkout = json.loads((output / "local-checkout.json").read_text())
     assert checkout["local_head"] == HEAD_OID
     assert checkout["head_matches_pr"] is True
-    assert checkout["command"] == f"git checkout --detach {HEAD_OID}"
+    assert checkout["command"] == " ".join(_review_worktree_add(output))
     assert checkout["diff_source"] == "verified-local-checkout"
     assert "no --force was used" in checkout["force_policy"]
     assert all("--force" not in argument for argv, _ in _runner.calls for argument in argv)
@@ -1135,14 +1188,14 @@ def test_collect_pr_rejects_unknown_pr_state(tmp_path: Path, monkeypatch: pytest
 def test_collect_pr_preserves_checkout_started_state_after_checkout_command_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Retain conservative local-state evidence if checkout may already have changed files."""
+    """Retain conservative isolated-path evidence if worktree creation fails."""
     module = _load_collector()
     success_runner = FakeRunner()
 
     def _runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         """Fail checkout while delegating all metadata commands to the successful runner."""
-        if argv[:3] == ["git", "checkout", "--detach"]:
-            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"checkout failed")
+        if argv[:3] == ["git", "worktree", "add"]:
+            return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"worktree add failed")
         return success_runner(argv, **kwargs)
 
     _configure_collector(monkeypatch, module, success_runner)
@@ -1152,10 +1205,9 @@ def test_collect_pr_preserves_checkout_started_state_after_checkout_command_fail
 
     assert result == 2
     checkout_state = json.loads((output / "checkout-state.json").read_text())
-    assert checkout_state["status"] == "gh-checkout-failed-recovery-assessment-started"
-    assert checkout_state["local_state"] == "changed-or-unknown"
-    assert checkout_state["gh_checkout_failure"]["code"] == "github-network:local-pr-checkout"
-    assert checkout_state["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+    assert checkout_state["status"] == "worktree-create-started"
+    assert checkout_state["local_state"] == "main-worktree-unchanged; new-worktree-unknown"
+    assert checkout_state["worktree"] == str(output.with_name(f"{output.name}-review-worktree"))
     assert (output / "pr.json").is_file()
     assert (output / "comments.json").is_file()
     assert (output / "review-threads.json").is_file()
@@ -1169,9 +1221,9 @@ def test_collect_pr_omits_verified_source_artifact_when_checkout_head_mismatches
     runner = FakeRunner()
 
     def _runner(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
-        """Report checkout success while leaving the fake local HEAD unchanged."""
-        if argv[:3] == ["git", "checkout", "--detach"]:
-            return subprocess.CompletedProcess(argv, 0, stdout=b"", stderr=b"")
+        """Report a different isolated HEAD despite successful worktree creation."""
+        if argv[:2] == ["git", "-C"] and argv[3:] == ["rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(argv, 0, stdout=("d" * 40).encode(), stderr=b"")
         return runner(argv, **kwargs)
 
     _configure_collector(monkeypatch, module, runner)
@@ -1180,14 +1232,12 @@ def test_collect_pr_omits_verified_source_artifact_when_checkout_head_mismatches
     assert module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5, run=_runner) == 2
     assert (output / "pr-error.txt").read_text(encoding="utf-8") == "local-checkout-head-mismatch\n"
     checkout_state = json.loads((output / "checkout-state.json").read_text(encoding="utf-8"))
-    assert checkout_state["status"] == "checkout-command-succeeded-unverified"
-    assert checkout_state["local_state"] == "changed-or-unknown"
-    assert checkout_state["gh_checkout_failure"]["code"] == "github-network:local-pr-checkout"
-    assert checkout_state["gh_checkout_failure"]["command"] == "gh pr checkout https://github.com/Borda/AI-Rig/pull/17"
+    assert checkout_state["status"] == "worktree-create-succeeded-unverified"
+    assert checkout_state["local_state"] == "main-worktree-unchanged; new-worktree-unverified"
     assert not (output / "local-checkout.json").exists()
     assert (output / "pr-routing.json").is_file()
     assert (output / "pr-head-fetch.json").is_file()
-    assert (output / "worktree-preflight.json").is_file()
+    assert (output / "source-worktree-context.json").is_file()
 
 
 def test_collect_pr_checks_out_merged_pr_when_its_named_head_branch_is_deleted(
@@ -1208,7 +1258,7 @@ def test_collect_pr_checks_out_merged_pr_when_its_named_head_branch_is_deleted(
     assert head_fetch["status"] == "fetched"
     checkout = json.loads((output / "local-checkout.json").read_text())
     assert checkout["head_matches_pr"] is True
-    assert checkout["command"] == f"git checkout --detach {HEAD_OID}"
+    assert checkout["command"] == " ".join(_review_worktree_add(output))
     assert not any(argv[:3] == ["git", "fetch", "--no-tags"] and "portable-pr" in argv[-1] for argv, _ in _runner.calls)
 
 

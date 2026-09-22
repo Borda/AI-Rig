@@ -547,7 +547,7 @@
       "target-branch.json",
       "local-checkout.json",
       "force_policy",
-      "git checkout --detach",
+      "git worktree add --detach",
       "remote GitHub state",
       "REST GET",
       "GraphQL query",

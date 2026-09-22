@@ -1,12 +1,12 @@
 # 🔬 research — Claude Code Plugin
 
-Independent challenge loops show the convergence table in status updates, approval/recovery questions and pauses, even before a validated round (`not-run` / `N/A`); final handoffs retain the canonical Results table.
+Independent challenge loops show the cumulative old/new table once after each newly validated challenge, before fixes or another review. Pending reviews and unrelated status updates do not repeat it; final handoffs retain their canonical Results table. Each open finding needs a recorded fix, escalation, or justified deferral; chat table timing has no machine-readable delivery receipt.
 
 `research` turns a vague ML improvement idea into a reviewable path: gather literature, write a measurable experiment contract, check the methodology, run bounded iterations, and inspect what changed. Experiment state and reports stay in the project so the next maintainer can see what was tried.
 
 Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.
 
-Each completed challenge-resolve round emits a full cumulative progress table before any next fix, review, or stop. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; every numeric cell is literal `old + new`, partitioning currently open and fixed-pending-verification signatures into those seen in any prior round, including closed-then-reopened signatures, and those first seen in the current round. Verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. The final result table stays unchanged, and empty rounds emit `not-run` with `N/A` cells without an unreviewed zero row.
+Each round challenges and collects findings, reports the cumulative old/new table, resolves feasible authorized findings, escalates unfixable `security`/`critical`/`high` findings, then repeats until clean, three reviews or plateau. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; open and fixed-pending-verification signatures split into old and new, while verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. Empty rounds print no progress table. A 1,500-output-token reviewer target is hard only when the runtime supports it; findings are never dropped to meet it.
 
 Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 

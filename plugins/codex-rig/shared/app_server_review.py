@@ -10,8 +10,8 @@ adapter, scheduler, or provenance replacement.
 ## Scope
 
 This module reads schema-version-one historical plans for direct evidence inspection and requires schema-version-two
-plans for new dispatch to one to four canonical Terra or Luna roles. It validates all local inputs before process
-launch, including complete source/diff inclusion and bounded operator capacity evidence, discovers configured MCP server
+plans for new dispatch to one to four canonical Sol or Luna roles. It validates all local inputs before process launch,
+including complete source/diff inclusion and bounded operator capacity evidence, discovers configured MCP server
 identifiers without retaining configuration content, restarts with every simple identifier disabled, and rejects any
 control, event, output, path, hash, or cleanup deviation. It never changes global configuration, home directories,
 credentials, plugin state, or a parent result artifact.
@@ -482,7 +482,7 @@ def _validated_plan(
         role_path = roles_dir / role_id / "ROLE.md"
         role_bytes = _read_bytes(role_path, "role-card")
         model, effort = _role_settings(role_bytes)
-        if model not in {"gpt-5.6-terra", "gpt-5.6-luna"}:
+        if model not in {"gpt-6-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
             raise ReviewRouteError("plan-role-model-unsupported")
         if node.get("model") != model or node.get("reasoning_effort") != effort:
             raise ReviewRouteError("plan-role-settings-mismatch")

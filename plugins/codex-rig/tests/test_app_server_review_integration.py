@@ -203,6 +203,13 @@ def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(is
     for item in manifest["passes"]:
         if item["role"] == "qa-specialist":
             item["mode"] = "substituted"
+            substitute_path = isolated_review / "qa-specialist-parent.md"
+            substitute_path.write_text(
+                "role_id: qa-specialist\nParent inspected the QA axis; independent QA evidence remains unavailable.\n",
+                encoding="utf-8",
+                newline="\n",
+            )
+            item["output_path"] = str(substitute_path)
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
     result_path = isolated_review / "result.json"
     result = json.loads(result_path.read_text())

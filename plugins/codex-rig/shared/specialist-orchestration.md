@@ -46,25 +46,25 @@ Use `delegation-lead` for 2+ separable workstreams when delegation beats context
 
 Classify each workstream from current task evidence before selecting role; task label, file count, or cheaper available model is not evidence of capability:
 
-- Bounded support with no behavior, API, runtime, release-blocking, architecture, or security authority: Luna.
-- Implementation, runtime behavior, tests, data/ML, performance, research method, curation, adversarial challenge, or executable verification: Terra.
-- Architecture or security judgment: Sol only after user expressly requests Sol or selects `solution-architect` or `security-auditor`; otherwise Terra parent/session retains work.
+- Bounded support with no behavior, API, runtime, release-blocking, architecture, or security authority: Luna. Curation also uses Luna/high, with decisions returned to the parent.
+- Implementation, runtime behavior, tests, data/ML, performance, research method, adversarial challenge, or executable verification: Sol. Use medium for routine implementation, testing, and performance; high for data/research method and challenge.
+- Architecture or security advisory: select `solution-architect` or `security-auditor` only after the user expressly requests that advisory pass or selects the role; otherwise the Sol parent/session retains work.
 
-Choose smallest tier satisfying that classification while preserving each role card's trigger and NOT-for boundary. Escalate only for specific mandatory boundary or observed lower-tier insufficiency; record boundary or failed/insufficient evidence. De-escalate only after evidenced scope split leaves bounded support with no retained Terra/Sol authority; record that reduced scope. Cost alone never escalates or de-escalates tier.
+Choose the least costly model and effort satisfying that classification while preserving each role card's trigger and NOT-for boundary. Escalate effort or model only for a specific mandatory boundary or observed insufficiency; record evidence. De-escalate after evidenced scope split leaves bounded support with no retained Sol authority. Cost alone never overrides a quality gate.
 
 Current canonical assignments:
 
-- Luna: delegation coordination, documentation, CI/CD stewardship, web evidence, OSS triage, and static analysis.
-- Terra: implementation, tests, runtime behavior, data/ML, performance, research method, curation, adversarial challenge, and final executable verification.
-- Sol: explicitly requested architecture or security advice only. The pass is read-only and bounded: it returns evidence and artifact, then Terra parent/session continues and accepts any behavior-changing or executable result.
+- Luna: delegation coordination, documentation, CI/CD stewardship, web evidence, OSS triage, static analysis, and curation.
+- Sol: normal parent, implementation, tests, runtime behavior, data/ML, performance, research method, adversarial challenge, and final executable verification.
+- Sol advisory roles: explicitly requested architecture or security advice only. The pass is read-only and bounded; it returns evidence and artifact, then the parent/session accepts any behavior-changing or executable result.
 
-Never downgrade architecture, security, runtime/API, release-blocking judgment, executable acceptance; never auto-escalate matching architecture/security workstream to Sol or escalate bounded support to Sol. Sol selection requires user's explicit request or agent selection, not task labels or risk classification. Record that request/selection, bounded advisory question, and any escalation/de-escalation evidence in routing decision. Avoid delegation when all need same context or parent can finish before handoff packaging/validation.
+Never downgrade architecture, security, runtime/API, release-blocking judgment, or executable acceptance to bounded Luna support. Never auto-select architecture/security advisory roles or escalate bounded support to Sol without a supported task boundary. Advisory-role selection requires user's explicit request or agent selection, not task labels or risk classification. Record that request/selection, bounded advisory question, and any escalation/de-escalation evidence in routing decision. Astra has no standing route. Avoid delegation when all need same context or parent can finish before handoff packaging/validation.
 
 ### Reasoning-Progress Escalation
 
 The [reasoning-progress escalation policy](native-skill-contract.md#reasoning-progress-escalation) is authoritative for detecting stalled workstream and its required ledger. Two consecutive work cycles without material progress or three evidence-backed attempts without closing same condition are observed lower-tier insufficiency, not permission to bypass role boundaries.
 
-For single advisory pass, first request one supported higher reasoning-effort level for same permitted model; only then use next permitted tier. Luna may consult Terra. Sol remains limited to architecture or security and still requires user's explicit request or agent selection; no advisory pass transfers executable acceptance or state-changing authority. A route is advisory-eligible only when actual observed sandbox is `read-only`; requested or claimed sandbox is insufficient. If no permitted read-only route is observable or available, route directly to human handoff. Record trigger ledger, closure condition, requested and observed model/effort, observed sandbox, route result, advisory recommendation, and its stop condition. Parent may authorize one bounded recovery action; result without material progress or unchanged unmet closure condition then requires human handoff, not another advisor or retry.
+For a single advisory pass, first request one supported higher reasoning-effort level for the same permitted model; only then consider a separately permitted model. Luna may consult Sol when the task boundary permits it; architecture/security specialist selection still requires the user's explicit request or agent selection. No advisory pass transfers executable acceptance or state-changing authority. A route is advisory-eligible only when actual observed sandbox is `read-only`; requested or claimed sandbox is insufficient. If no permitted read-only route is observable or available, route directly to human handoff. Record trigger ledger, closure condition, requested and observed model/effort, observed sandbox, route result, advisory recommendation, and its stop condition. Parent may authorize one bounded recovery action; result without material progress or unchanged unmet closure condition then requires human handoff, not another advisor or retry.
 
 ## Context Packs
 
@@ -143,7 +143,7 @@ Every real/substitute pass returns:
 
 Parent consolidates one decision, explicitly reconciles conflicts. Outputs are evidence, not votes.
 
-An explicit Sol advisor is never implementation or acceptance owner: preserve its evidence artifact, return to Terra parent/session, and require that parent to decide next action and final acceptance.
+An explicitly selected architecture/security advisor is never implementation or acceptance owner: preserve its evidence artifact, return to the Sol parent/session, and require that parent to decide next action and final acceptance.
 
 ## Handover Gate
 
@@ -154,7 +154,7 @@ Before accepting delegated work, lead then parent verify:
 - checks passed or each unavailable check has reason
 - shared confidence contract and visible unresolved limits
 - explicit scope widening/conflicts
-- executable/behavior-changing acceptance returns parent or Terra/Sol owner
+- executable/behavior-changing acceptance returns to the parent or Sol owner
 
 Reject/re-scope handovers lacking evidence, crossing ownership, hiding failures, transferring acceptance to support. Keep accepted changes unstaged. Use Caveman Ultra handover text: each fact once, no filler or repeated context; retain exact ownership, evidence, checks, failures, conflicts, limits, and next owner/action. Use clear concise prose where Ultra would make security, irreversible, or ordered instructions ambiguous. `.codex/handover/` patch only when materially useful and remains lossless.
 

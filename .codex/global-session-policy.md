@@ -1,8 +1,8 @@
 ## Personal Model Selection
 
-Normal parent sessions use `gpt-5.6-terra` at `high`. Do not select or spawn `gpt-5.6-sol` automatically for an architecture, public-API, security, migration, or review label.
+Normal parent sessions use `gpt-6-sol` at `medium`. Set `gpt-6-sol` at `high` for deliberate deep review, challenge, research, and data-integrity work. Codex does not expose a separate `review_model_reasoning_effort` setting: the `/review` model is `gpt-6-sol`, but it inherits the session effort unless launched with an explicit `model_reasoning_effort="high"` override. Do not claim `/review` is high by default.
 
-Use the Sol-pinned `solution-architect` or `security-auditor` only when the user explicitly requests a Sol advisory pass or explicitly selects that agent. Keep the main parent session on Terra. A Sol child is a bounded advisory: return its evidence in the workflow artifact and handover, then continue scope, implementation, verification, and the final response in the Terra parent.
+Use `solution-architect` or `security-auditor` only when the user explicitly requests that advisory pass or selects that agent. These roles remain bounded and read-only; return evidence in the workflow artifact and handover, then keep scope, implementation, verification, and the final response with the parent. Routine Sol use for implementation does not authorize automatic architecture or security specialist selection.
 
 ## Local Test Execution
 

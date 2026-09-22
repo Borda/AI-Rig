@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import replace
 import hashlib
 import importlib.util
 import json
@@ -38,21 +39,21 @@ EXPECTED_SKILLS = (
     "sync",
 )
 EXPECTED_ROLES = {
-    "challenger": ("gpt-5.6-terra", "read-only"),
-    "cicd-steward": ("gpt-5.6-luna", "workspace-write"),
-    "curator": ("gpt-5.6-terra", "workspace-write"),
-    "data-steward": ("gpt-5.6-terra", "workspace-write"),
-    "delegation-lead": ("gpt-5.6-luna", "workspace-write"),
-    "doc-scribe": ("gpt-5.6-luna", "workspace-write"),
-    "linting-expert": ("gpt-5.6-luna", "workspace-write"),
-    "oss-shepherd": ("gpt-5.6-luna", "read-only"),
-    "qa-specialist": ("gpt-5.6-terra", "workspace-write"),
-    "scientist": ("gpt-5.6-terra", "workspace-write"),
-    "security-auditor": ("gpt-5.6-sol", "read-only"),
-    "solution-architect": ("gpt-5.6-sol", "read-only"),
-    "squeezer": ("gpt-5.6-terra", "read-only"),
-    "sw-engineer": ("gpt-5.6-terra", "workspace-write"),
-    "web-explorer": ("gpt-5.6-luna", "read-only"),
+    "challenger": ("gpt-6-sol", "high", "read-only"),
+    "cicd-steward": ("gpt-6-luna", "high", "workspace-write"),
+    "curator": ("gpt-6-luna", "high", "workspace-write"),
+    "data-steward": ("gpt-6-sol", "high", "workspace-write"),
+    "delegation-lead": ("gpt-6-luna", "high", "workspace-write"),
+    "doc-scribe": ("gpt-6-luna", "high", "workspace-write"),
+    "linting-expert": ("gpt-6-luna", "medium", "workspace-write"),
+    "oss-shepherd": ("gpt-6-luna", "high", "read-only"),
+    "qa-specialist": ("gpt-6-sol", "medium", "workspace-write"),
+    "scientist": ("gpt-6-sol", "high", "workspace-write"),
+    "security-auditor": ("gpt-6-sol", "high", "read-only"),
+    "solution-architect": ("gpt-6-sol", "high", "read-only"),
+    "squeezer": ("gpt-6-sol", "medium", "read-only"),
+    "sw-engineer": ("gpt-6-sol", "medium", "workspace-write"),
+    "web-explorer": ("gpt-6-luna", "medium", "read-only"),
 }
 EXPECTED_KAGGLE_REFERENCES = {
     "composition.md",
@@ -253,7 +254,8 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
         "adversarial-loop-stop-conditions",
         "adversarial-loop-owner-and-response-binding",
         "adversarial-loop-progress-transcript",
-        "adversarial-loop-unvalidated-progress-table",
+        "adversarial-loop-premature-progress-table",
+        "adversarial-loop-five-step-convergence",
     }
     # One unreproduced -n4 failure here showed only a truncated set diff, leaving it impossible to tell an edited
     # case list from a stale read of the same file. On mismatch, read the file a second time and report both: two
@@ -269,7 +271,8 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
             f"unexpected={sorted(set(cases) - expected)} "
             f"re-read={sorted(recheck)} sha256[:12]={first_digest}->{second_digest}"
         )
-    assert cases["adversarial-loop-unvalidated-progress-table"]["expected_findings"] == ["convergence-table-omitted"]
+    assert cases["adversarial-loop-premature-progress-table"]["expected_findings"] == ["premature-convergence-table"]
+    assert cases["adversarial-loop-five-step-convergence"]["expected_findings"] == []
     assert cases["adversarial-loop-progress-transcript"]["expected_findings"] == [
         "cumulative-progress-history-missing",
         "old-new-split-missing",
@@ -286,8 +289,9 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
         "current-diff-coverage-missing",
     ]
     assert cases["adversarial-loop-stop-conditions"]["expected_findings"] == [
-        "structural-finding-loop-continued",
-        "repeated-signature-loop-continued",
+        "unauthorized-structural-fix",
+        "unresolved-severe-finding-not-escalated",
+        "repeated-finding-root-cause-missing",
         "plateau-or-nonconvergence-not-stopped",
         "iteration-cap-exceeded",
     ]
@@ -374,7 +378,7 @@ def test_role_roster_runtime_records_are_exact() -> None:
     assert discovered == set(EXPECTED_ROLES)
 
     expected_records = []
-    for role_id, (model, sandbox_mode) in EXPECTED_ROLES.items():
+    for role_id, (model, effort, sandbox_mode) in EXPECTED_ROLES.items():
         role_path = role_root / role_id / "ROLE.md"
         expected_records.append(
             {
@@ -383,7 +387,7 @@ def test_role_roster_runtime_records_are_exact() -> None:
                 "sha256": hashlib.sha256(role_path.read_bytes()).hexdigest(),
                 "runtime": {
                     "model": model,
-                    "model_reasoning_effort": "high",
+                    "model_reasoning_effort": effort,
                     "approval_policy": "on-request",
                     "sandbox_mode": sandbox_mode,
                 },
@@ -395,13 +399,15 @@ def test_role_roster_runtime_records_are_exact() -> None:
 
 
 @pytest.mark.parametrize(
-    ("role_id", "model", "sandbox_mode"),
+    ("role_id", "model", "effort", "sandbox_mode"),
     [
-        pytest.param(role_id, model, sandbox_mode, id=role_id)
-        for role_id, (model, sandbox_mode) in EXPECTED_ROLES.items()
+        pytest.param(role_id, model, effort, sandbox_mode, id=role_id)
+        for role_id, (model, effort, sandbox_mode) in EXPECTED_ROLES.items()
     ],
 )
-def test_role_frontmatter_matches_its_declared_runtime(role_id: str, model: str, sandbox_mode: str) -> None:
+def test_role_frontmatter_matches_its_declared_runtime(
+    role_id: str, model: str, effort: str, sandbox_mode: str
+) -> None:
     """Require each role document's frontmatter to match its declared runtime."""
     fields = _parse_frontmatter(PLUGIN_ROOT / "roles" / role_id / "ROLE.md")
 
@@ -409,7 +415,7 @@ def test_role_frontmatter_matches_its_declared_runtime(role_id: str, model: str,
         "role_id": role_id,
         "name": f"codex-rig-{role_id}",
         "model": model,
-        "model_reasoning_effort": "high",
+        "model_reasoning_effort": effort,
         "approval_policy": "on-request",
         "sandbox_mode": sandbox_mode,
         "fallback_modes": "[shim, built-in-injected, inline]",
@@ -818,7 +824,7 @@ def test_archived_route_evidence_is_not_promoted_after_skill_rename(
     runner.check_accepted_route_evidence(run)
 
     checks = run.paths.checks.read_text(encoding="utf-8")
-    assert "accepted-route-evidence=archived-stale:skill-roster-mismatch" in checks
+    assert "accepted-route-evidence=archived-stale:gpt-5.6-baseline" in checks
     assert run.accepted_route_evidence_current is False
     assert run.checks_failed == []
     recommendations, follow_up = runner.build_recommendations(
@@ -837,6 +843,30 @@ def test_archived_route_evidence_is_not_promoted_after_skill_rename(
         "No blocking calibration fixes found; maintain the current gates and collect live observations next."
     ]
     assert len(follow_up) == 2
+
+
+def test_calibration_rejects_active_assignment_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject a recorded active role effort that differs from the calibrated role policy."""
+    calibration_dir = PLUGIN_ROOT / "runtime" / "calibration"
+    monkeypatch.syspath_prepend(str(calibration_dir))
+    spec = importlib.util.spec_from_file_location("codex_rig_calibration_active_drift", calibration_dir / "run.py")
+    assert spec is not None and spec.loader is not None
+    runner = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, runner)
+    spec.loader.exec_module(runner)
+
+    evidence = json.loads((calibration_dir / "accepted-route-evidence.json").read_text(encoding="utf-8"))
+    evidence["active_assignments"]["roles"]["gpt-6-sol"]["medium"].remove("qa-specialist")
+    evidence["active_assignments"]["roles"]["gpt-6-sol"]["high"].append("qa-specialist")
+    tampered = tmp_path / "tampered-active-assignments.json"
+    tampered.write_text(json.dumps(evidence), encoding="utf-8")
+    paths = replace(runner.Paths.create("plugin", tmp_path), accepted_route_evidence=tampered)
+    run = runner.CalibrationRun(paths=paths)
+
+    runner.check_accepted_route_evidence(run)
+
+    assert "accepted-route-evidence" in run.checks_failed
+    assert "active GPT-6 assignments do not match role policy" in run.paths.leaks.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(
