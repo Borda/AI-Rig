@@ -50,19 +50,19 @@ Read every CLI, skill, tool shard recursively; one file is incomplete. Each line
 
 ### 4. Analyse
 
-Exclude `source: "bench"` and CLI records with empty `cmd` from organic stats; report count as "scripted/polluted records excluded: N". When present, group headline statistics by distinct `v`, overall, runtime, unattributed legacy records.
+Exclude `source: "bench"` and CLI records with empty `cmd` from organic stats; report count as "scripted/polluted records excluded: N". Select the newest observed version with recent records as the primary cohort; show dates, counts, and sample limits. Keep adjacent versions as separate comparisons and older/unknown versions historical; never pool them into current failure rates. Preserve project and runtime boundaries, separating plugin-development traffic when identifiable. No explicit diagnostic marker does not prove organic use.
 
-- CLI: invocations; success/error (`exit_code: 0` success; non-zero error; absent success unless `result.error`); completeness reasons; subcommands; median/p95/max `timing_ms`; non-empty `not_covered` fraction; top five error prefixes; stale fraction.
+- CLI: invocations; terminal success/error (`exit_code: 0` success; non-zero or `result.error` error; absent exit code means legacy outcome unverified); completeness reasons; subcommands; median/p95/max `timing_ms`; non-empty `not_covered` fraction; top five error prefixes; stale fraction. Unrecorded attempts, abrupt termination, and telemetry-write failures prevent a complete failure-rate claim.
 - Skill: starts by name, sessions, first/last timestamp.
 - Cross-layer: linked skill→N CLI chains, average calls per skill session, refresh triggers, changed-count distribution, index-only sessions, incomplete/degraded fractions; legacy provenance unknown.
 
-Join tool searches/reads to a complete (`query_complete: true`) CLI answer for the same module within the window: a match is an avoidance event, not an incorrect answer.
+Join tool searches/reads to a complete, successful, non-stale answer for the same project/version/runtime/session/module within the window. A match is a module-overlap proxy, not confirmed misuse. Source-body/test/diff inspection can be legitimate; intent stays unknown unless the actual commands prove an equivalent structural repetition. Count identical command repetitions separately, never infer saved tokens or workflow time from engine durations.
 
 ```bash
 python PLUGIN_ROOT/bin/join_avoidance.py --logs .cache/codemap/logs --window-min 10 --json
 ```
 
-High avoidance means guard/context/model dead-chain risk. Preserve `per_runtime` and `unattributed`; report count/rate in Overview and flagged modules when non-zero. Never claim measured token savings or live fresh-session activation.
+The helper scans its entire supplied log tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately; absent skill starts do not prove non-use. Preserve `per_runtime` and `unattributed`. High overlap alone proves neither a broken guard nor redundant work. Never claim measured token savings or live fresh-session activation.
 
 ### 5. Write report
 

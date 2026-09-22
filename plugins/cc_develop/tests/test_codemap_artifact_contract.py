@@ -49,6 +49,7 @@ def test_artifact_shape_documents_index_stamp(doc_text: str) -> None:
     """The prefix block must show the stamp; an artifact written without one is rejected."""
     shape = doc_text.split('{"module": "pkg.mod"', 1)[1].split("```", 1)[0]
     assert "index_stamp" in shape
+    assert "<canonical-path>:<size>:<mtime_ns>" in shape
 
 
 def test_freshness_rule_is_fail_closed(doc_text: str) -> None:

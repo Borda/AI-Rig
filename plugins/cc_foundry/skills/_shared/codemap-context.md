@@ -22,9 +22,11 @@ Extends contract core map. Each entry is the dimension that agent's own pre-flig
 - `foundry:perf-optimizer` — `central --top 5`, `subprocess-deps`, `fn-blast`, `fixture-rdeps`, `fixture-graph`
 - `foundry:challenger` — `central --top 5`, `rdeps`, `fn-blast`
 
-**Bounded call budget + hard stop** — symbol not covered by pre-flight above → up to 3 additional `codemap-py query` calls this task. Any result carrying `query_complete: true` (or legacy `exhaustive: true`) is final for that direction: no follow-up Grep/Read/query to re-confirm.
+> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
 
-**Fallback when codemap plugin absent**: run only `codemap-py query --timeout 5 central --top 5 2>/dev/null`; treat non-empty output as usable, skip evidence-line/completeness logic, proceed with file reads. Never break the load.
+**Bounded call budget + hard stop** — symbol not covered by pre-flight above → up to 3 additional `codemap-py query` calls this task. A result passing the reuse gate and carrying `query_complete: true` (legacy `exhaustive: true` only when `query_complete` is absent) is final for that direction: no follow-up Grep/Read/query to re-confirm.
+
+**Fallback when codemap plugin absent**: run only `codemap-py query --timeout 5 central --top 5 2>/dev/null`; treat output as advisory only, never as complete without metadata; proceed with targeted file reads. Never break the load.
 
 ## Managed-block host
 

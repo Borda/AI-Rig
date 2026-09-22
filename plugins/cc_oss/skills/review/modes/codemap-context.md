@@ -116,11 +116,13 @@ done < "${TMPDIR:-/tmp}/oss-review-changed-mods-${CLEAN_ARGS}-${CSID}" >> "$CODE
 <content of $RUN_DIR/codemap-context.md>
 
 **Codemap-first protocol** (`codemap_substitution_contract` — availability without enforcement measured a 13.4:1 logged-reads-to-queries ratio; this is the fix, verbatim from codemap-py README's three-part contract):
+> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
+
 1. **Skill-first**: consult structural context above BEFORE any Grep/Glob/Read aimed at imports, callers, test coverage, or doc coverage for a symbol already listed there — never re-derive what's already answered.
 2. **Bounded call budget**: context above insufficient for a symbol not listed → may run codemap-py queries directly, max 3 additional queries this task.
-3. **Hard stop on `query_complete: true`**: any codemap-py result carrying `query_complete: true` (or legacy `exhaustive: true`) is final for that query direction — write the answer immediately, no follow-up Grep/Read/query to re-confirm it.
+3. **Hard stop on `query_complete: true`**: a result passing the reuse gate and carrying `query_complete: true` (legacy `exhaustive: true` only when `query_complete` is absent) is final for that query direction — write the answer immediately, no follow-up Grep/Read/query to re-confirm it.
 
-For symbols listed in `uncovered`/`mock-rdeps`/`undocumented`/`xrefs --broken`/`fn-rdeps`/`fn-blast` above: trust codemap-py output as-is. Fall back to file reads only when codemap-py output empty for a symbol needed, or a result shows `query_complete: false`/`degraded` and you must confirm by hand.
+Reuse listed answers only under the reuse gate. `uncovered` reports missing static test callers and mocks, not measured line coverage; mock relationships do not prove implementation execution. Missing measurements are unknown, not zero. Module scope is exact; enumerate children for package-wide questions. Source and test reads remain necessary for behavioral review.
 ```
 
 `codemap_available=false`: omit the block; agents proceed with current file-read behaviour.

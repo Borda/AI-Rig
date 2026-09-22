@@ -6,6 +6,8 @@ Workflow audits and adversarial reviews trace producer guarantees through downst
 
 Optional Codemap guidance is shipped locally with foundry; loading it does not read another plugin's private shared directory. Codemap queries still require the `codemap-py` plugin, with file-read fallback when the CLI or local contract is unavailable.
 
+Specialist Codemap prompts reuse only matching, successful, fresh answers, inspecting each batch child's metadata and preserving valid empty results. Supplied answers avoid duplicate pre-flight calls; source and independent-review reads remain allowed. QA distinguishes static test/mock relationships from measured line coverage and treats missing measurements as unknown.
+
 > Optional integrations: `/oss:review` and `/oss:release` add release/review workflows (requires the `oss` plugin); `/develop:feature` and `/develop:fix` add implementation workflows (requires the `develop` plugin); `/research:run` and `/research:topic` add ML research workflows (requires the `research` plugin).
 
 ______________________________________________________________________

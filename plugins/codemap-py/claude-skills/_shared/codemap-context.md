@@ -1,10 +1,10 @@
 <!-- file: codemap-context.md — consumers: plugin-local codemap-context.md wrappers (foundry, develop) read this file from the active codemap-py install via `resolve_shared_path.py codemap-py claude-skills/_shared`; provider→consumer wiring uses the codemap-py.integration.v2 managed-block body with a v1 sentinel schema -->
 
-# Codemap context contract — v3
+# Codemap context contract — v4
 
 Plugin-agnostic structural-context contract. Consumers read this file live from the active `codemap-py` install (no local copies — the text always matches the CLI actually installed). Wrappers add only per-agent query maps + flag surfaces + plugin-local batch/cache paths; query mechanics, evidence-line contract, completeness/staleness semantics, batch pre-flight, effort tiers stay maintained here.
 
-> `v3` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
+> `v4` = context-contract doc version — bump on query-set or evidence-contract change. Provider→consumer wiring uses `codemap-py.integration.v2` managed-block body with `v1` sentinel schema (see `shared/integration-contract.md`), independent of this doc version.
 
 ## Target derivation — pluggable (consumer supplies)
 
@@ -46,13 +46,14 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
     _CM_TSV=0
     case "$(scan-query --help 2>&1)" in *--format*) _CM_TSV=1 ;; esac
     _cq() {
-        local out err envelope fmt=json; _CM_N=$((_CM_N+1))
+        local out err envelope fmt=json rc=0; _CM_N=$((_CM_N+1))
         err=$(mktemp "${TMPDIR:-/tmp}/codemap-envelope-XXXXXX")
         case "${_CM_TSV}:$1" in
-            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(scan-query --timeout 5 --format tsv "$@" 2>"$err") ;;
-            *)                                        out=$(scan-query --timeout 5 "$@" 2>"$err") ;;
+            1:central|1:coupled|1:fn-rdeps|1:fn-blast) fmt=tsv; out=$(scan-query --timeout 5 --format tsv "$@" 2>"$err") || rc=$? ;;
+            *)                                        out=$(scan-query --timeout 5 "$@" 2>"$err") || rc=$? ;;
         esac
         envelope=$(cat "$err" 2>/dev/null); rm -f "$err"
+        if [ "$rc" -ne 0 ]; then printf 'codemap query unavailable: %s\n' "$1" >&2; return 0; fi
         # Errors stay JSON on stdout under any --format, so this test is format-independent.
         case "$out" in *'"error"'*) return 0 ;; esac
         # Empty tsv writes no rows but still an envelope — judge emptiness on the envelope's stream.
@@ -64,8 +65,11 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
         [ -n "$out" ] && printf '%s\n' "$out"
         # tsv envelope on stderr, JSON envelope in $out — scan both or a stale index reads exhaustive.
         case "$out$envelope" in *'"stale":true'*|*'"stale": true'*) _CM_STALE=1 ;; esac
-        # query_complete = forward field (direction-scoped); exhaustive = legacy alias, one cycle.
-        case "$out$envelope" in *'"query_complete":false'*|*'"query_complete": false'*|*'"exhaustive":false'*|*'"exhaustive": false'*) _CM_NONEXH=1 ;; esac
+        # Missing metadata never proves completeness; the forward field takes precedence.
+        case "$out$envelope" in
+            *'"query_complete"'*) case "$out$envelope" in *'"query_complete":true'*|*'"query_complete": true'*) ;; *) _CM_NONEXH=1 ;; esac ;;
+            *) case "$out$envelope" in *'"exhaustive":true'*|*'"exhaustive": true'*) ;; *) _CM_NONEXH=1 ;; esac ;;
+        esac
     }
     case "$_CM_ROUTE" in
         central) _cq central --top 5 ;;
@@ -84,8 +88,8 @@ if [ "$_CM_ROUTE" != "skip" ] && command -v scan-query >/dev/null 2>&1 && [ -f "
     esac
     _IDX_MTIME=$(date -r "${_IDX}/${PROJ}.json" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "?")
     if [ "$_CM_STALE" -eq 1 ]; then _CM_COMPL="stale"
-    elif [ "$_CM_NONEXH" -eq 1 ]; then _CM_COMPL="partial"
     elif [ "$_CM_H" -eq 0 ]; then _CM_COMPL="unknown"
+    elif [ "$_CM_NONEXH" -eq 1 ] || [ "$_CM_H" -lt "$_CM_N" ]; then _CM_COMPL="partial"
     else _CM_COMPL="exhaustive"
     fi
     echo "codemap_evidence: queries_run=${_CM_N} hits=${_CM_H} completeness=${_CM_COMPL} index_mtime=${_IDX_MTIME}"
@@ -105,20 +109,24 @@ codemap_evidence: queries_run=<n> hits=<h> completeness=<exhaustive|partial|stal
 Completeness semantics:
 
 - `exhaustive` — all queries hit, none stale, none direction-incomplete → consumers may **skip** re-querying (grep/read) for what codemap returned.
-- `partial` — at least one result `query_complete:false` (direction-incomplete) → fill gaps via consumer's fallback (grep, targeted file reads), not by re-running codemap.
+- `partial` — at least one query failed, missed, lacked completeness metadata or returned `query_complete:false` → fill gaps via consumer's fallback (grep, targeted file reads), not by re-running identical codemap queries.
 - `stale` — index older than source (`stale:true`) → rebuild or accept reduced currency; see gates contract.
 - `unknown` — no query hit → index empty or target absent; fall back to file reads.
 
 Consumers may skip re-querying **only** when `completeness=exhaustive`.
+
+> Reuse only successful answers for the same project, current index, target, query and flags. Inspect each batch child's `ok` and `result.index`; outer success never clears a failed child. Missing, stale, root-mismatched or degraded evidence cannot settle the question. A valid empty list is an answer, not a miss. Completeness is direction-scoped, not an untruncated enumeration. Necessary source-body, test-quality, dynamic-behavior and independent-review reads remain allowed.
+
+`uncovered` reports absent static test callers and mocks, not measured line coverage; mock relationships do not prove implementation execution. Missing measurements are unknown, not zero. Module scope is exact: enumerate child modules explicitly for package-wide questions.
 
 ## Coverage metadata in output
 
 Each `scan-query` result carries `index` block with per-command coverage fields:
 
 - `index.method` — analysis technique used (`static-ast`, `import-graph`, `index-lookup`, `ast-flags`).
-- `index.not_covered` — what method structurally misses (list); non-empty → surface as scope caveat in response; do NOT grep to fill gap — gaps structurally unresolvable by static analysis.
+- `index.not_covered` — what method structurally misses (list); non-empty → surface as scope caveat in response. Targeted source/runtime evidence may answer a different dynamic-behavior question; do not claim it makes the static graph complete.
 - `index.hint` — actionable alternative if deeper coverage needed (e.g. grep pattern for hook-registered callers).
-- `index.confidence: "exact"` — result authoritative; omit verification caveats.
+- `index.confidence: "exact"` — exact within the reported method and scope; does not override freshness, completeness or truncation limits.
 
 **Codemap = primary codebase navigation tool.** Do NOT grep/bash to re-verify what codemap already returned. When `not_covered` non-empty: (1) include one-line caveat — "Note: callers via [not_covered items] not included — structurally invisible to static AST"; (2) log gap:
 
@@ -131,7 +139,7 @@ printf '{"ts":"%s","cmd":"%s","target":"%s","not_covered":%s,"hint":"%s"}\n' \
 
 (3) Continue achieving goal — do NOT abandon task because of structural gap.
 
-When `method=index-lookup` + `confidence=exact`: result authoritative, skip verification caveats.
+When `method=index-lookup` + `confidence=exact`: reuse the lookup subject to the same freshness and scope limits; avoid redundant verification of that fact.
 
 ## Effort-tier guidance
 

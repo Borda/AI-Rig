@@ -426,6 +426,7 @@ _ADDITIVE_QUERY_KEYS = frozenset({"unique_total", "unique_qualified_names", "cou
 _QUERY_KEY_ADDITIONS = {
     "fn-rdeps": frozenset({"resolved_qname"}),
     "rdeps": frozenset({"importer_count"}),
+    "coverage-gap": frozenset({"measurement", "selection"}),
 }
 _V13_REMOVED_NOT_COVERED = frozenset({"relative-import", "from-import-submodule"})
 _COUNT_SEMANTIC_KEYS = {
@@ -494,6 +495,13 @@ def _assert_golden_query_parity(
             assert current["resolved_qname"] == legacy["qname"]
         if command == "rdeps":
             assert current["importer_count"] == len(current["imported_by"])
+        if command == "coverage-gap":
+            assert current["measurement"] == {"status": "unavailable", "symbols": 1, "measured_symbols": 0}
+            assert current["selection"] == {
+                "scope": "exact-module",
+                "matched_modules": 1,
+                "includes_descendants": False,
+            }
         return
     if command not in _COUNT_SEMANTIC_KEYS:
         legacy = json.loads(old.stdout)
@@ -507,7 +515,10 @@ def _assert_golden_query_parity(
     assert isinstance(legacy, dict)
     assert isinstance(current, dict)
     _restore_v13_not_covered(legacy, current)
-    assert set(current) == set(legacy) | _ADDITIVE_QUERY_KEYS
+    additions = _ADDITIVE_QUERY_KEYS | ({"selection"} if command == "uncovered" else set())
+    assert set(current) == set(legacy) | additions
+    if command == "uncovered":
+        assert current["selection"] == {"scope": "exact-module", "matched_modules": 1, "includes_descendants": False}
     assert {key: current[key] for key in legacy} == legacy
 
     unique_names = current["unique_qualified_names"]

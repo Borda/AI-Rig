@@ -156,6 +156,32 @@ class TestRead:
         assert out["reason"] == "fresh"
         assert out["answers"]["rdeps"]["importers"] == ["a"]
 
+    @pytest.mark.parametrize("field", ["git_sha", "scanned_at"])
+    @pytest.mark.parametrize("value", [None, "", "not-a-timestamp"])
+    def test_invalid_freshness_coordinate_requeries(self, tmp_path: Path, capsys, field: str, value) -> None:
+        """Matching file stamps cannot make absent or malformed provenance reusable."""
+        cache = self._seed(tmp_path, capsys)
+        path = cache / "pkg.mod.json"
+        artifact = json.loads(path.read_text())
+        if value is None:
+            artifact["prefix"].pop(field)
+        else:
+            artifact["prefix"][field] = value
+        path.write_text(json.dumps(artifact))
+        codemap_cache.main(
+            ["read", "--module", "pkg.mod", "--index", str(_write_index(tmp_path)), "--cache-dir", str(cache)]
+        )
+        assert json.loads(capsys.readouterr().out)["reuse"] is False
+
+    def test_same_stamp_in_another_project_is_not_reusable(self, tmp_path: Path, capsys) -> None:
+        """Equal bytes and timestamps never substitute for index identity."""
+        cache = self._seed(tmp_path, capsys)
+        other = tmp_path / "other-project"
+        other.mkdir()
+        index = _write_index(other)
+        codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(index), "--cache-dir", str(cache)])
+        assert json.loads(capsys.readouterr().out)["reuse"] is False
+
     def test_cold_miss(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         cache = self._seed(tmp_path, capsys)
         rc = codemap_cache.main(

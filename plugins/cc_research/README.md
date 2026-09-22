@@ -6,6 +6,8 @@ Adversarial workflow reviews include unchanged downstream consumers and the next
 
 Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 
+Codemap context distinguishes static test links from measured line coverage: missing measurements are unknown, not zero, and package queries select exact modules. Failed queries report unavailable context rather than successful empty results. Run, verify and scientist prompts reuse only matching fresh answers while preserving source, formula and test-quality verification.
+
 > Value at a glance: research connects literature, code, metrics, guards, commits, ablations, and retrospective evidence in one namespaced plugin while leaving datasets, compute, credentials, and scientific judgment with the project owner.
 
 > Current limits at a glance: the plugin does not provide data, GPUs, credentials, or companion plugins; `/research:run --codex` requires the installed and enabled `bridge@borda-ai-rig` plugin; unavailable explicit integrations stop the requested path rather than silently degrading; metric proxies still require human validation.

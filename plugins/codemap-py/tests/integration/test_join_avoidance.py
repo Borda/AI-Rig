@@ -28,6 +28,65 @@ _EXIT_USAGE = 2  # join_avoidance.main's own bare literal (bin/join_avoidance.py
 _BASE = datetime(2026, 7, 10, 1, 0, 0, tzinfo=timezone.utc)
 
 
+@pytest.mark.parametrize("field", ["v", "project"])
+def test_join_keeps_evidence_cohorts_separate(field: str) -> None:
+    """A shared session and module cannot bridge versions or project roots."""
+    answer = _cli("pkg.mod", 0) | {field: "/work/first" if field == "project" else "0.39.3"}
+    tool = _tool("pkg.mod", 1) | {field: "/work/second" if field == "project" else "0.39.4"}
+    assert len(ja.parse_cli_records([answer])) == 1
+    assert len(ja.parse_tool_records([tool])) == 1
+    assert ja.find_avoidance_events(ja.parse_cli_records([answer]), ja.parse_tool_records([tool])) == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param({"session": ""}, id="empty-session"),
+        pytest.param({"exit_code": 2}, id="failed-command"),
+        pytest.param({"source": "bench"}, id="diagnostic-source"),
+        pytest.param({"result": {"module": "pkg.mod", "index": {"query_complete": True, "stale": True}}}, id="stale"),
+        pytest.param(
+            {"result": {"module": "pkg.mod", "index": {"query_complete": False, "exhaustive": True}}},
+            id="conflicting-legacy",
+        ),
+    ],
+)
+def test_invalid_answer_cannot_support_overlap(change: dict) -> None:
+    """Rejected, stale, diagnostic, and unjoinable answers stay outside the numerator."""
+    assert ja.parse_cli_records([_cli("pkg.mod", 0) | change]) == []
+
+
+def test_module_identity_never_comes_from_option_value() -> None:
+    """An index path is not evidence for a queried module."""
+    assert ja._module_from_cli_result({"argv": ["central", "--index", "pkg/mod.json"]}) == ""
+    assert ja._module_from_cli_result({"argv": ["rdeps", "pkg", "--index", "other.json"]}) == "pkg"
+    assert ja._module_from_cli_result({"result": {"qname": "pkg.mod::Thing"}}) == "pkg.mod"
+
+
+def test_batch_counts_successful_logical_answers_only() -> None:
+    """One batch invocation can expose several answers without counting failed children."""
+    record = _cli("pkg.mod", 0)
+    result = record["result"]
+    record.update(
+        cmd="batch",
+        argv=["batch"],
+        result={
+            "batch": [
+                {"cmd": "rdeps", "ok": True, "result": result},
+                {"cmd": "rdeps", "ok": False, "result": result},
+            ]
+        },
+    )
+    answers = ja.parse_cli_records([record])
+    assert [answer.module for answer in answers] == ["pkg.mod"]
+    summary = ja.summarize(answers, ja.parse_tool_records([_tool("pkg/mod.py", 1, tool="Read")]))
+    payload = json.loads(ja.render_json(summary))
+    assert payload["avoidance_count"] == 1
+    assert payload["metric"] == "module_overlap_proxy_v3"
+    assert payload["confirmed_misuse"] is None
+    assert "not confirmed misuse" in ja.render_text(summary)
+
+
 def _ts(offset_min: float) -> str:
     """Return an ISO-Z timestamp *offset_min* minutes after the fixture base time.
 
@@ -46,6 +105,9 @@ def _cli(module: str, offset_min: float, *, complete: bool = True, session: str 
     return {
         "ts": _ts(offset_min),
         "layer": "cli",
+        "project": "/work/project",
+        "v": "0.39.4",
+        "exit_code": 0,
         "cmd": "rdeps",
         "session": session,
         "argv": ["rdeps", module],
@@ -60,7 +122,15 @@ def _tool(target: str, offset_min: float, *, tool: str = "Grep", session: str = 
     >>> _tool("pkg.mod", 5)["tool"]
     'Grep'
     """
-    return {"ts": _ts(offset_min), "layer": "tool", "tool": tool, "session": session, "target": target}
+    return {
+        "ts": _ts(offset_min),
+        "layer": "tool",
+        "tool": tool,
+        "session": session,
+        "target": target,
+        "project": "/work/project",
+        "v": "0.39.4",
+    }
 
 
 class TestModuleMatches:

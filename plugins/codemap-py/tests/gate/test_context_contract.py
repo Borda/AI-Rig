@@ -75,7 +75,7 @@ class TestContextContract:
     def test_has_version_header(self):
         """Contract header carries an explicit version string feeding the injection version check."""
         text = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
-        assert "# Codemap context contract — v3" in text
+        assert "# Codemap context contract — v4" in text
 
     def test_declares_cross_plugin_consumers(self):
         """Consumer header names the managed-block contract and wrapper consumers."""
@@ -357,7 +357,12 @@ class TestContextContract:
                 "completeness=partial",
                 id="incomplete-on-stderr",
             ),
-            pytest.param('{"index": {"stale": false}}', "completeness=exhaustive", id="clean-on-stderr"),
+            pytest.param('{"index": {"stale": false}}', "completeness=partial", id="missing-completeness"),
+            pytest.param(
+                '{"index": {"stale": false, "query_complete": true}}',
+                "completeness=exhaustive",
+                id="clean-on-stderr",
+            ),
         ),
     )
     def test_the_tsv_envelope_is_read_from_stderr(self, tmp_path: Path, envelope: str, expected: str) -> None:
@@ -414,7 +419,7 @@ class TestContextContract:
                 'git() { printf "%s\\n" "$FAKE_REPO"; }',
                 "scan-index() { return 0; }",
                 'scan-query() { case "$1" in --help) printf "%s\\n" "usage: scan-query [--format {json,tsv}]"; return 0;; esac; '
-                'printf "%s\\n" \'{"index": {"stale": false}}\' >&2; }',
+                'printf "%s\\n" \'{"index": {"stale": false, "query_complete": true}}\' >&2; }',
                 "",
             )
         )
@@ -435,6 +440,40 @@ class TestContextContract:
 
         assert "queries_run=1 hits=1" in result.stdout
         assert "completeness=exhaustive" in result.stdout
+
+    @pytest.mark.skipif(_POSIX_BASH is None, reason="no working POSIX bash on this host")
+    @pytest.mark.parametrize("failure", ["nonzero", "error", "empty"])
+    def test_partial_preflight_never_claims_exhaustive(self, tmp_path: Path, failure: str) -> None:
+        """One successful query cannot hide another failed or missing direction."""
+        contract = _CONTEXT_CONTRACT.read_text(encoding="utf-8")
+        batch = contract.split("## Batch pre-flight pattern", 1)[1].split("```bash", 1)[1].split("```", 1)[0]
+        stubs = (
+            'git() { printf "%s\\n" "$FAKE_REPO"; }\n'
+            "scan-index() { return 0; }\n"
+            'scan-query() { case "$*" in --help) return 0;; *rdeps*) '
+            "case \"$FAILURE\" in nonzero) printf '%s\\n' '{\"query_complete\":true}'; return 1;; "
+            "error) printf '%s\\n' '{\"error\":\"unavailable\"}'; return 0;; empty) return 0;; esac;; esac; "
+            "printf '%s\\n' '{\"query_complete\":true}'; }\n"
+        )
+        index_dir = tmp_path / ".cache" / "codemap"
+        index_dir.mkdir(parents=True)
+        (index_dir / f"{tmp_path.name}.json").write_text("{}\n", encoding="utf-8")
+        result = subprocess.run(
+            [_POSIX_BASH, "-c", stubs + batch],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=os.environ
+            | {
+                "CODEMAP_QUERY_KIND": "standard",
+                "TARGET_MODULE": "pkg.mod",
+                "TARGET_FN": "",
+                "FAKE_REPO": tmp_path.as_posix(),
+                "FAILURE": failure,
+            },
+        )
+        assert "queries_run=2 hits=1 completeness=partial" in result.stdout
 
     def test_block_reference_target_matches_contract(self):
         """The managed block identifies the shipped integration contract."""

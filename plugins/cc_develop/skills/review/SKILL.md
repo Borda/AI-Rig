@@ -247,9 +247,11 @@ Codemap context propagation in Step 3:
   ## Structural Context (codemap-py, codemap_available=true)
   <this agent's slice of $RUN_DIR/codemap-context.md>
 
-  Read this section first. The results are a single `batch` JSON array: each entry has `cmd` (the query) and `result` (its payload), keyed by `index`; one shared `index` coverage block covers the whole batch. For symbols listed in `uncovered`/`mock-rdeps`/`undocumented`/`xrefs --broken` entries, trust the codemap output; skip redundant Grep/Read on the same data. Fall back to file reads only when a query's `result` is empty for a symbol you need or when verifying a specific finding.
+  Read this section first. The payload contains a `batch` array: each entry has `cmd`, `ok`, an ordinal `index`, and `result`. Each child's `result.index` describes its own scope and completeness; the outer `index` is only a conservative summary. Retain child metadata when slicing results for agents. For successful entries passing the reuse gate, skip only equivalent structural retrieval. A valid empty list is not a failed query; failed or unjoinable children remain explicit gaps. Source and test reads for specific findings remain required.
 
-  **Bounded call budget**: symbol not covered by the batch above → up to 3 additional `codemap-py query` calls this review pass. **Hard stop on `query_complete: true`** (or legacy `exhaustive: true`): that result is final for its direction — no follow-up Grep/Read/query to re-confirm it.
+  > Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
+
+  **Bounded call budget**: symbol not covered by the batch above → up to 3 additional `codemap-py query` calls this review pass. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent): a result passing the reuse gate is final for its direction — no follow-up Grep/Read/query to re-confirm it.
 
   Per-agent priority (skip redundant reads for symbols the listed query already covers):
   - qa-specialist (Agent 2): `uncovered` + `mock-rdeps` first
@@ -471,7 +473,7 @@ Flag rules:
 
 Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIGH patterns as severity anchors. Respect suppressions list.
 
-**Agent 2 — foundry:qa-specialist**: Audit test coverage. Identify untested paths, missing edge cases, test quality issues. Check ML-specific issues (non-deterministic tests, missing seed pinning). List top 5 missing tests. `codemap_available=true`: read `uncovered` + `mock-rdeps` sections from codemap context block first — symbols in `uncovered` lack any test rdep; symbols in `mock-rdeps` are tested via mock (not falsely "untested"). Skip manual grep/Read of `tests/` for symbols codemap already classifies; fall back to file reads only when codemap output empty for a needed symbol or verifying a specific finding. Explicitly check for missing tests in these patterns (GT-level findings, not afterthoughts):
+**Agent 2 — foundry:qa-specialist**: Audit test coverage. Identify untested paths, missing edge cases, test quality issues. Check ML-specific issues (non-deterministic tests, missing seed pinning). List top 5 missing tests. `codemap_available=true`: read `uncovered` + `mock-rdeps` sections from codemap context block first — `uncovered` lists symbols without static test callers or mocks; `mock-rdeps` lists mock relationships, not proof that the implementation ran. Neither measures line coverage. Missing measurements are unknown, not zero. Module selection is exact; enumerate children explicitly for package-wide checks. Skip duplicate structural lookup only under the reuse gate; read tests to assess assertions, behavior and specific findings. Explicitly check for missing tests in these patterns (GT-level findings, not afterthoughts):
 
 - Concurrent access to shared state (locks or shared variables present)
 - Error paths: calling methods in wrong order (e.g., `log()` before `start()`)

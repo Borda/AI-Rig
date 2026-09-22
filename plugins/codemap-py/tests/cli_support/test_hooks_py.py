@@ -716,6 +716,36 @@ class TestInjectPreambleSessionMarker:
     open (never throws).
     """
 
+    @pytest.mark.integration
+    @pytest.mark.parametrize("runtime", ["claude", "codex"])
+    def test_payload_session_reaches_refresh_child(self, tmp_path: Path, runtime: str) -> None:
+        """The detached process receives the event identity, not a per-process fallback."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        _write_index(idx_dir, repo.name, git_sha="0" * 40)
+        marker = tmp_path / "child.json"
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
+        scan_bin = plugin_root / "bin" / "scan-index"
+        key = "CODEX_THREAD_ID" if runtime == "codex" else "CLAUDE_CODE_SESSION_ID"
+        scan_bin.write_text(
+            "#!/usr/bin/env python3\nimport json, os\nfrom pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text(json.dumps({{'session': os.environ.get({key!r}), "
+            "'runtime': os.environ.get('CODEMAP_RUNTIME'), 'trigger': os.environ.get('CODEMAP_REFRESH_TRIGGER')}))\n"
+        )
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        result = _run_inject_with_event(
+            repo, idx_dir, plugin_root, tmpdir, {"prompt": "inspect", "session_id": "payload-thread"}, runtime=runtime
+        )
+        assert result.returncode == 0, result.stderr
+        assert _await_marker(marker), result.stdout
+        assert json.loads(marker.read_text()) == {
+            "session": "payload-thread",
+            "runtime": runtime,
+            "trigger": f"{runtime}_prompt_background",
+        }
+
     def test_marker_written_with_session_id_and_ts(self, tmp_path: Path) -> None:
         """A current-index turn writes the marker with the stdin session_id and an ms ts."""
         repo = tmp_path / "proj"
@@ -1421,6 +1451,48 @@ class TestSessionKeyAgreement:
         assert record["runtime"] == "claude"
         assert record["v"] not in ("", "?")
 
+    @pytest.mark.parametrize("tool", ["Grep", "Skill"])
+    def test_event_session_overrides_other_session_marker(self, tmp_path: Path, tool: str) -> None:
+        """Concurrent Claude sessions cannot inherit another event's project marker."""
+        tmpdir, repo, nested = self._repo_with_subdir(tmp_path)
+        marker = tmpdir / f"codemap-{repo.name}-session"
+        marker.write_text("other-session")
+        payload = {
+            "tool_name": tool,
+            "session_id": "event-session",
+            "tool_input": {"pattern": "x", "skill": "codemap-py:query-code"},
+        }
+        hook = _SKILL if tool == "Skill" else self._TOOL_HOOK
+        result = self._run(hook, payload, nested, tmpdir)
+        assert result.returncode == 0, result.stderr
+        layer = "skills" if tool == "Skill" else "tools"
+        shard = repo / ".cache/codemap/logs/claude" / f"{layer}_event-session.jsonl"
+        assert shard.exists()
+        assert json.loads(shard.read_text())["session"] == "event-session"
+        assert marker.read_text() == "other-session"
+
+    @pytest.mark.parametrize("tool", ["Grep", "Skill"])
+    @pytest.mark.parametrize("variable", ["CLAUDE_CODE_SESSION_ID", "CSID"])
+    def test_claude_environment_identity_precedes_marker(
+        self, tmp_path: Path, monkeypatch, tool: str, variable: str
+    ) -> None:
+        """A payload without identity still joins the CLI's provided Claude session."""
+        tmpdir, repo, nested = self._repo_with_subdir(tmp_path)
+        (tmpdir / f"codemap-{repo.name}-session").write_text("stale-marker")
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        monkeypatch.delenv("CSID", raising=False)
+        monkeypatch.setenv(variable, "environment-session")
+        payload = {"tool_name": tool, "tool_input": {"pattern": "x", "skill": "codemap-py:query-code"}}
+        hook = _SKILL if tool == "Skill" else self._TOOL_HOOK
+        result = self._run(hook, payload, nested, tmpdir)
+        assert result.returncode == 0, result.stderr
+        layer = "skills" if tool == "Skill" else "tools"
+        shard = repo / ".cache/codemap/logs/claude" / f"{layer}_environment-session.jsonl"
+        assert shard.exists()
+        record = json.loads(shard.read_text())
+        assert record["session"] == "environment-session"
+        assert record["project"] == repo.resolve().as_posix()
+
     def test_skill_hook_from_subdir_joins_the_seeded_session(self, tmp_path: Path) -> None:
         """A skill record written from a subdirectory carries the same seeded session id."""
         tmpdir, repo, nested = self._repo_with_subdir(tmp_path)
@@ -1497,6 +1569,47 @@ class TestPromptRuntimeOutput:
 
 class TestCodexRuntimeTelemetry:
     """Codex hook calls must not inherit Claude's marker or runtime directory."""
+
+    @pytest.mark.parametrize("hook", ["log-tool-use.py", "log-skill-start.py"])
+    def test_missing_identity_never_borrows_any_project_marker(self, tmp_path: Path, hook: str) -> None:
+        """A current project marker cannot prove which concurrent thread invoked a hook."""
+        repo = tmp_path / "project"
+        _init_repo(repo)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+        (tmpdir / f"codemap-{repo.name}-session").write_text("claude-session")
+        cache = repo / ".cache" / "codemap"
+        cache.mkdir(parents=True)
+        (cache / "current-session-codex.json").write_text(json.dumps({"session_id": "another-codex-thread"}))
+        env = {
+            **os.environ,
+            "TMPDIR": str(tmpdir),
+            "TEMP": str(tmpdir),
+            "TMP": str(tmpdir),
+            "CODEMAP_RUNTIME": "codex",
+            "CODEMAP_LOGGING": "true",
+        }
+        env.pop("CODEX_THREAD_ID", None)
+        env.pop("CODEMAP_LOG_DIR", None)
+        skill = hook == "log-skill-start.py"
+        payload = {
+            "tool_name": "Skill" if skill else "Read",
+            "tool_input": {"skill": "codemap-py:query-code"} if skill else {"file_path": "pkg/mod.py"},
+        }
+        result = subprocess.run(
+            [sys.executable, str(TestSessionKeyAgreement._TOOL_HOOK.with_name(hook))],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            cwd=repo,
+            env=env,
+        )
+        assert result.returncode == 0, result.stderr
+        shard = cache / "logs" / "codex" / ("skills.jsonl" if skill else "tools.jsonl")
+        record = json.loads(shard.read_text())
+        assert record["session"] == ""
+        assert record["project"] == repo.resolve().as_posix()
+        assert (tmpdir / f"codemap-{repo.name}-session").read_text() == "claude-session"
 
     def test_codex_tool_record_uses_thread_id_and_codex_shard(self, tmp_path: Path) -> None:
         """A Codex Read uses CODEX_THREAD_ID even when a Claude marker is present."""

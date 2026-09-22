@@ -69,7 +69,9 @@ fi
 
 > `central`: highest blast-radius modules — challenge severity scales with caller count. `rdeps`: what breaks if challenged module changes — ground truth for feasibility challenges. `fn-blast`: transitive caller count before challenging a function signature.
 
-**Bounded call budget**: module/symbol not covered above → ≤3 more `codemap-py query` calls this task, blast-radius/caller-count context only. Budget covers supplementary queries, not source reads — challenger always reads source directly whatever codemap covers; adversarial re-verification is this role's point. **Hard stop on `query_complete: true`** (legacy `exhaustive: true`) — that direction is settled; no follow-up query to re-confirm it (source reads continue as normal).
+> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
+
+**Bounded call budget**: module/symbol not covered above → ≤3 more `codemap-py query` calls this task, blast-radius/caller-count context only. Budget covers supplementary queries, not source reads — challenger always reads source directly whatever codemap covers; adversarial re-verification is this role's point. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate settles that direction; no follow-up query to re-confirm it (source reads continue as normal).
 
 </codemap-context>
 

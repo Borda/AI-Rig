@@ -27,8 +27,11 @@ import re
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
+from types import TracebackType
 
+from codemap_py.index_paths import canonical_root
 from codemap_py.runtime_log import invocation_id, log_dir_for, plugin_version as runtime_plugin_version, resolve_runtime
 
 LOG_MAX_BYTES = 10 * 1024 * 1024
@@ -97,7 +100,7 @@ def runtime_session(runtime: str) -> str:
     if runtime == "codex":
         return os.environ.get("CODEX_THREAD_ID") or invocation_id()
     if runtime == "claude":
-        return session_id() or invocation_id()
+        return os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CSID") or session_id() or invocation_id()
     explicit = os.environ.get("CODEMAP_TELEMETRY_SESSION", "")
     return explicit if _SAFE_SESSION.fullmatch(explicit) else invocation_id()
 
@@ -117,7 +120,9 @@ def _rotate(path: Path) -> None:
         path.rename(path.parent / f"{path.name}.1")
 
 
-def log_cli(cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Path | None = None) -> None:
+def log_cli(
+    cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Path | None = None, exit_code: int = 0
+) -> None:
     """Append one CLI telemetry record; ``log_dir`` is a test-only final-dir seam.
 
     Production callers must omit ``log_dir`` so :func:`log_dir_for` applies the runtime component beneath the
@@ -144,9 +149,11 @@ def log_cli(cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Pa
             "v": plugin_version(),
             "cmd": cmd,
             "session": sid,
+            "project": canonical_root().as_posix(),
             "argv": argv,
             "timing_ms": max(0, int((time.time() - t0) * 1000)),
             "result": result if isinstance(result, dict) else {},
+            "exit_code": exit_code,
         }
         # Benchmark / demo runs tag themselves (export CODEMAP_TELEMETRY_SOURCE=bench)
         # so debrief can separate scripted load from organic usage — untagged demo
@@ -158,3 +165,39 @@ def log_cli(cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Pa
             fh.write(json.dumps(record, separators=(",", ":")) + "\n")
     except Exception:  # noqa: BLE001 — telemetry must never break the CLI
         pass
+
+
+@dataclass
+class CliInvocation:
+    """Record one handled terminal outcome without changing command output or exceptions.
+
+    Engines retain their structured result here until command completion so an error after output cannot masquerade as
+    success. Parsing and gate failures are recorded even when no result reached stdout. Abrupt process termination
+    cannot guarantee a final record.
+    """
+
+    command: str
+    argv: list[str]
+    result: dict = field(default_factory=dict)
+    started: float = field(default_factory=time.time)
+
+    def __enter__(self) -> CliInvocation:
+        """Start the command's bounded terminal logging scope."""
+        return self
+
+    def __exit__(
+        self, exc_type: type[BaseException] | None, exc: BaseException | None, traceback: TracebackType | None
+    ) -> None:
+        """Persist the exit status once, then let the original exception propagate."""
+        if isinstance(exc, SystemExit):
+            code = exc.code if isinstance(exc.code, int) else 0 if exc.code is None else 1
+        elif isinstance(exc, KeyboardInterrupt):
+            code = 130
+        else:
+            code = 1 if exc is not None else 0
+        if code and not self.result.get("error"):
+            self.result = {**self.result, "error": type(exc).__name__, "exit_code": code}
+        # Help exits before a command is selected; it is not a structural query.
+        if isinstance(exc, SystemExit) and code == 0 and not self.result:
+            return
+        log_cli(self.command, self.argv, self.result, self.started, exit_code=code)

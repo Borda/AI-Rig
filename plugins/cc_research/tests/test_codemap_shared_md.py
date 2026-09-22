@@ -37,6 +37,28 @@ _SCIENTIST = _RESEARCH / "agents" / "scientist.md"
 _BASH_BLOCK_FILES = [_CONTEXT, _SCIENTIST]
 
 
+def test_context_distinguishes_static_links_from_measured_coverage() -> None:
+    """Research cannot infer runtime coverage from absent static callers or an empty package."""
+    text = _CONTEXT.read_text(encoding="utf-8")
+    assert "no test coverage" not in text
+    for phrase in ("static test callers", "measured line coverage", "exact module", "unknown, not zero"):
+        assert phrase in text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param(p, id=p.relative_to(_RESEARCH).as_posix())
+        for p in [*_BASH_BLOCK_FILES, _RESEARCH / "skills/run/SKILL.md", _RESEARCH / "skills/verify/SKILL.md"]
+    ],
+)
+def test_context_allows_source_verification_and_gates_answer_reuse(path: Path) -> None:
+    """Neither stale answers nor an old legacy flag may prohibit required source reads."""
+    text = path.read_text(encoding="utf-8")
+    for phrase in ("only when `query_complete` is absent", "`stale`", "source-body", "valid empty"):
+        assert phrase in text
+
+
 def _find_posix_bash() -> str | None:
     """Return a bash that runs POSIX script syntax, if the host provides one."""
     if sys.platform != "win32":
@@ -58,6 +80,42 @@ def _find_posix_bash() -> str | None:
 
 
 _POSIX_BASH = _find_posix_bash()
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "payload", "accepted"),
+    [
+        pytest.param(0, '{"callers": [], "index": {"query_complete": true}}', True, id="valid-empty"),
+        pytest.param(1, '{"callers": []}', False, id="failed-process-with-output"),
+        pytest.param(0, '{"error": "not indexed"}', False, id="structured-error"),
+        pytest.param(0, "", False, id="missing-output"),
+    ],
+)
+@pytest.mark.skipif(_POSIX_BASH is None, reason="requires a working POSIX bash")
+def test_query_wrapper_preserves_failure_vs_empty_answer(
+    exit_code: int, payload: str, accepted: bool, tmp_path: Path
+) -> None:
+    """Run the shipped query wrapper against a CLI boundary, retaining valid empty answers."""
+    block = next(b for b in _bash_blocks(_CONTEXT) if "_cq()" in b)
+    function = re.search(r"    _cq\(\) \{.*?\n    \}", block, re.DOTALL)
+    assert function is not None
+    script = (
+        'codemap-py() { printf "%s" "$PROBE_PAYLOAD"; return "$PROBE_EXIT"; }\n'
+        "_CM_N=0 _CM_H=0\n" + function.group() + "\n_cq rdeps pkg.mod\n"
+        'printf "hits=%s" "$_CM_H" >&2\n'
+    )
+    result = subprocess.run(
+        [_POSIX_BASH, "-c", script],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env=os.environ | {"PROBE_PAYLOAD": payload, "PROBE_EXIT": str(exit_code)},
+        check=True,
+    )
+    assert result.stdout.strip() == (payload if accepted else "")
+    assert f"hits={int(accepted)}" in result.stderr
+    if not accepted:
+        assert "unavailable" in result.stderr
 
 
 def _bash_blocks(path: Path) -> list[str]:

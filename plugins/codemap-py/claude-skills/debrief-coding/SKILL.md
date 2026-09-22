@@ -1,6 +1,6 @@
 ---
 name: debrief-coding
-description: Read local codemap telemetry logs and produce a diagnostic/usage report. Supports date filtering, session filtering, and optional anonymization before sharing. TRIGGER when: analyse recent codemap usage, debug query patterns, investigate errors, or prepare a shareable anonymized report of how codemap skills and CLI are being used.
+description: 'Read local codemap telemetry logs and produce a diagnostic/usage report. Supports date filtering, session filtering, and optional anonymization before sharing. TRIGGER when: analyse recent codemap usage, debug query patterns, investigate errors, or prepare a shareable anonymized report of how codemap skills and CLI are being used.'
 allowed-tools: Read, Write, Bash, Glob
 model: haiku
 effort: low
@@ -77,11 +77,11 @@ Compute from filtered records:
 **Pre-filter (both layers):**
 
 - Exclude records with `source: "bench"` (benchmark/demo load) and CLI records with empty `cmd` (pre-0.23 test pollution) from organic stats; separately report "scripted/polluted records excluded: N".
-- For records with `v` (plugin version, 0.23+), compute headline error rate, stale rate, completeness per distinct `v` + overall: release before/after signal.
+- Select the newest observed version with recent records as the primary cohort; report dates, counts, and sample limits. Keep adjacent versions as separate comparisons, older/unknown versions historical. Never pool old failures into current rates. Preserve project/runtime boundaries; separate plugin-development traffic when identifiable. No explicit diagnostic marker does not prove organic use.
 
 **CLI layer:**
 
-- Total invocations, success/error: `exit_code: 0` = success; present nonzero = error; absent = unlogged, treat success unless `result.error` non-empty.
+- Total invocations, terminal success/error: `exit_code: 0` = success; present nonzero or non-empty `result.error` = error; absent exit code = legacy outcome unverified. Unrecorded attempts, abrupt termination, and telemetry-write failures prevent a complete failure-rate claim.
 - Aggregate `result.index.completeness_reason` (0.23+ veto slug: `stale` / `untracked` / `degraded` / `collision` / `root_mismatch` / `module_degraded`; `ok` = complete): explains false query_complete.
 - Subcommand distribution: count per `cmd` value
 - Timing median/p95/max `timing_ms`; p95: `sorted_ms = sorted(r["timing_ms"] for r in cli_records if r.get("timing_ms") is not None); p95 = sorted_ms[int(len(sorted_ms) * 0.95)] if sorted_ms else 0`
@@ -103,15 +103,15 @@ Compute from filtered records:
 - Report refresh triggers, changed-file counts, index-only sessions, incomplete-query reasons, stale/degraded fractions. Missing legacy provenance = `unknown`.
 - Do not present debrief as measured token savings or live fresh-session activation evidence.
 
-**Avoidance join (guard-chain leak rate):**
+**Module-overlap proxy:**
 
-Join tools to CLI. Grep/Read/Glob targeting a module Codemap answered completely (`query_complete: true`) within window = **avoidance event**: agent re-derived exhaustive index result; guard chain leaked. `join_avoidance.py` joins with word-boundary-safe module match (ported from `guard-redundant-scan.py`), reporting per-session/per-skill rate:
+Join tool searches/reads to a complete, successful, non-stale answer in the same project/version/runtime/session/module and time window. A match is an overlap proxy, not confirmed misuse. Source-body/test/diff inspection can legitimately follow a structural query. Intent stays unknown unless actual commands prove equivalent structural repetition; count identical-command repetition separately, without inferring saved tokens or workflow time from engine durations.
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/join_avoidance.py" --logs .cache/codemap/logs --window-min 10 --json  # timeout: 15000
 ```
 
-Interpret `rate` + `per_runtime`: **high rate = dead-chain signal** (guard not firing, context unread, or model ignoring both). Preserve runtime/session grouping; keep `unattributed` separate; never infer legacy runtime. Feed count to product telemetry/self-diagnosis. If nonzero, list `events` modules.
+The helper scans the entire supplied tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately. Preserve `per_runtime` and `unattributed`; absent skill starts do not prove non-use. High overlap alone proves neither a broken guard nor redundant work. If nonzero, list overlapping modules with these limits.
 
 ## Step 4: Write report
 

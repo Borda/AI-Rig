@@ -16,7 +16,7 @@ Artifact shape — one file per module at
       "prefix": {                     # index-derived; content-hashed + index-stamped
         "git_sha": "<index git_sha>",
         "scanned_at": "<index ISO timestamp>",
-        "index_stamp": "<size>:<mtime_ns> of the index file",
+        "index_stamp": "<canonical-path>:<size>:<mtime_ns> of the index file",
         "content_hash": "<sha256 of answers>",
         "answers": {"rdeps": {...}, "fn-rdeps": {...}, ...}
       },
@@ -30,7 +30,7 @@ Artifact shape — one file per module at
 Freshness rule: an artifact is reusable when its ``prefix.scanned_at`` is not
 older than the current index ``scanned_at`` (the index has not been rebuilt
 since the artifact was written), its ``git_sha`` matches, and its
-``index_stamp`` still equals the index file's ``<size>:<mtime_ns>``. A rebuilt
+``index_stamp`` still equals the index file's ``<canonical-path>:<size>:<mtime_ns>``. A rebuilt
 index (newer ``scanned_at``) invalidates every artifact — the consumer must
 re-query.
 
@@ -67,6 +67,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # The per-module queries oss:review's pre-flight issues, and therefore the only
@@ -134,7 +135,7 @@ def _content_hash(answers: dict[str, object]) -> str:
 
 
 def _file_stamp(index_path: Path) -> str:
-    """Return an opaque change stamp for the index **file**, using stat data only.
+    """Bind an index's canonical local path and file-stat freshness into one opaque stamp.
 
     Deliberately schema-free: no key of the provider's index is read here, so this
     signal survives any rename or restructuring on the provider side and still
@@ -144,10 +145,10 @@ def _file_stamp(index_path: Path) -> str:
         index_path: Path to the codemap index JSON.
 
     Returns:
-        ``"<size>:<mtime_ns>"``.
+        ``"<canonical-path>:<size>:<mtime_ns>"``; old path-free stamps fail closed.
     """
     stat = index_path.stat()
-    return f"{stat.st_size}:{stat.st_mtime_ns}"
+    return f"{index_path.resolve().as_posix()}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
 def _index_stamp(index_path: Path) -> tuple[str, str, str]:
@@ -302,13 +303,21 @@ def _reuse_verdict(artifact: dict, git_sha: str, scanned_at: str, index_stamp: s
         (False, 'index_stamp_mismatch')
     """
     prefix = artifact.get("prefix", {})
-    art_sha = str(prefix.get("git_sha", ""))
-    art_scanned = str(prefix.get("scanned_at", ""))
-    if art_sha and git_sha and art_sha != git_sha:
+    art_sha = prefix.get("git_sha")
+    art_scanned = prefix.get("scanned_at")
+    if not isinstance(art_sha, str) or not isinstance(art_scanned, str):
+        return False, "missing_freshness_metadata"
+    if art_sha != git_sha:
         return False, "git_sha_mismatch"
-    # ISO-8601 timestamps sort lexicographically. Artifact older than the
-    # current index scan → index was rebuilt since; answers may be stale.
-    if art_scanned and scanned_at and art_scanned < scanned_at:
+    # Compare actual instants, not strings: valid ISO timestamps can use different offsets.
+    try:
+        artifact_time = datetime.fromisoformat(art_scanned.replace("Z", "+00:00"))
+        index_time = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+        if artifact_time.tzinfo is None or index_time.tzinfo is None:
+            return False, "invalid_freshness_metadata"
+    except ValueError:
+        return False, "invalid_freshness_metadata"
+    if artifact_time < index_time:
         return False, "index_rebuilt"
     # Fail closed: an artifact written before this field existed has no stamp and
     # is re-queried rather than trusted. Catches an in-place rewrite that left

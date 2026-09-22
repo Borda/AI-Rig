@@ -13,6 +13,9 @@ from codemap_py import graph
     ("trigger", "changed", "stale", "expected"),
     [
         pytest.param("query_self_heal", "4", "true", ("query_self_heal", 4, True), id="query_self_heal"),
+        pytest.param(
+            "codex_prompt_background", "", "true", ("codex_prompt_background", None, True), id="codex-background"
+        ),
         pytest.param("unknown", "-1", "maybe", ("direct_cli", None, None), id="unknown"),
         pytest.param(None, "", "", ("direct_cli", None, None), id="none"),
     ],

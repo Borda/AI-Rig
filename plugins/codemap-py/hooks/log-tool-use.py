@@ -67,9 +67,10 @@ project_name = _hookutil.project_name
 
 
 def session_id(payload: dict | None = None) -> str:
-    """Return the host session, avoiding Claude's marker for Codex events."""
-    if _hookutil.runtime() == "codex":
-        return _hookutil.runtime_session(payload)
+    """Prefer the current host event; use Claude's marker only for legacy events."""
+    session = _hookutil.runtime_session(payload, telemetry=True)
+    if session or _hookutil.runtime() == "codex":
+        return session
     marker = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"codemap-{project_name()}-session"
     try:
         return marker.read_text(encoding="utf-8").strip()
@@ -163,6 +164,7 @@ def main() -> int:
             "v": _hookutil.plugin_version(),
             "tool": tool_name,
             "session": session,
+            "project": _hookutil.project_root().as_posix(),
             "target": target_for(tool_name, tool_input),
         }
         log_dir = _hookutil.log_dir()

@@ -52,13 +52,14 @@ from codemap_py.scanner import (
     scan_mkdocs_xrefs,
     scan_rst_xrefs,
 )
-from codemap_py.telemetry import log_cli
+from codemap_py.telemetry import CliInvocation
 
 _WINDOWS_REPLACE_RETRIES = 8
 _WINDOWS_REPLACE_DELAY_SECONDS = 0.025
 _REFRESH_TRIGGERS = {
     "missing_index_explicit",
     "claude_prompt_background",
+    "codex_prompt_background",
     "query_self_heal",
     "explicit_scan",
     "direct_cli",
@@ -1496,6 +1497,24 @@ def _resolve_out_path(root: Path) -> Path:
 
 
 def main() -> None:
+    """Run one scan attempt with terminal telemetry, including handled failures."""
+    previous_alarm = signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+    previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
+    timer_started = time.monotonic()
+    with CliInvocation("index", sys.argv[1:]) as invocation:
+        try:
+            _run_scan(invocation)
+        finally:
+            if hasattr(signal, "SIGALRM") and signal.getsignal(signal.SIGALRM) != previous_alarm:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous_alarm)
+                if previous_timer[0] > 0:
+                    # Preserve the enclosing caller's elapsed deadline and repeat interval.
+                    remaining = max(1e-6, previous_timer[0] - (time.monotonic() - timer_started))
+                    signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
+
+
+def _run_scan(invocation: CliInvocation) -> None:
     """Parse CLI arguments and run the scan."""
     parser = argparse.ArgumentParser(description="Build the codemap structural index.")
     parser.add_argument("--root", type=Path, default=None, help="Project root (default: git root or cwd)")
@@ -1526,13 +1545,14 @@ def main() -> None:
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
 
         def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+            """Retain the handled timeout outcome before unwinding the scan."""
+            invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
             print(f"scan-index: timed out after {args.timeout}s", file=sys.stderr)
             sys.exit(2)
 
         signal.signal(signal.SIGALRM, _timeout_handler)
         signal.alarm(args.timeout)
 
-    t0 = time.time()
     try:
         root = args.root or find_root()
         out_path = _resolve_out_path(root)
@@ -1560,15 +1580,19 @@ def main() -> None:
             for m in index["modules"]:
                 if m.get("status") == "degraded":
                     print(f"[codemap]   \u26a0 {m['path']}: {m['reason']}", file=sys.stderr)
-        log_cli("index", sys.argv[1:], {**_refresh_result(args), "modules_indexed": ok, "degraded": degraded}, t0)
+        invocation.result = {**_refresh_result(args), "modules_indexed": ok, "degraded": degraded}
     except rwgate.IndexBusy as exc:
+        invocation.result = {"error": "index_busy"}
         _die_gate("index_busy", str(exc))
     except rwgate.VersionSkewRefused as exc:
+        invocation.result = {"error": "index_version_skew"}
         _die_gate("index_version_skew", str(exc))
     except rwgate.IndexUnreadable as exc:
+        invocation.result = {"error": "index_unreadable"}
         # Subclass of CoordinationUnavailable, so it must be caught ahead of it.
         _die_gate("index_unreadable", str(exc))
     except rwgate.CoordinationUnavailable as exc:
+        invocation.result = {"error": "index_coordination_unavailable"}
         _die_gate("index_coordination_unavailable", str(exc))
     except PermissionError as exc:
         print(f"[codemap] ERROR: {exc}", file=sys.stderr)

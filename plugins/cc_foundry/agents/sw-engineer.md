@@ -225,15 +225,17 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
 fi
 ```
 
-> `central` = blast-radius baseline every run. `fn-rdeps` + `fn-blast` replace Grep for call-site discovery (catch aliased imports, star re-exports). Diff auto-derive fires in review/worktree when `TARGET_MODULE` unset — module enumeration, zero Grep. `symbol` avoids a full-file read per single-function lookup (~70–94% fewer tokens).
+> `central` = blast-radius baseline; reuse a supplied matching fresh answer. `fn-rdeps` + `fn-blast` replace Grep for call-site discovery (catch aliased imports, star re-exports). Diff auto-derive fires in review/worktree when `TARGET_MODULE` unset — module enumeration, zero Grep. `symbol` avoids a full-file read per single-function lookup (~70–94% fewer tokens).
 
-**Bounded call budget**: symbol/module not covered above → ≤3 more `codemap-py query` calls this task. **Hard stop on `query_complete: true`** (legacy `exhaustive: true`) — that direction is settled; no follow-up Grep/Read/query to re-confirm it.
+> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
+
+**Bounded call budget**: symbol/module not covered above → ≤3 more `codemap-py query` calls this task. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate settles that direction; no follow-up Grep/Read/query to re-confirm it.
 
 </codemap-context>
 
 <workflow>
 
-00. **Codemap pre-flight** (if index present — see `<codemap-context>`): always runs — `central` baseline unconditional; when `TARGET_MODULE` set: `rdeps`/`fn-rdeps`/`fn-blast`/`symbol`; when unset (review/worktree): auto-derives changed modules from diff and runs `rdeps` per module. Skip Grep/Read for any symbols codemap returns; fall back to Grep only when index absent.
+00. **Codemap pre-flight** (if index present — see `<codemap-context>`): reuse supplied answers passing the reuse gate; run remaining baseline/directions only; when `TARGET_MODULE` set: `rdeps`/`fn-rdeps`/`fn-blast`/`symbol`; when unset (review/worktree): auto-derives changed modules from diff and runs `rdeps` per module. Skip only equivalent structural retrieval passing the reuse gate; keep source reads for implementation and runtime details.
 01. Read `pyproject.toml` (or `setup.cfg`/`setup.py`) — understand project structure, dependencies, build config before writing any code. Before writing any utility/algorithm, check whether an **already-declared dependency** provides it (`help(pkg)`, its docs, its source) — use the dep, don't reinvent. Adding a new dependency for what an existing one covers is the same error.
 02. Read and understand existing code structure before writing anything
 03. Identify what exists vs what needs creation

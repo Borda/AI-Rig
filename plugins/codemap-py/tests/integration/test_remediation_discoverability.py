@@ -51,7 +51,9 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 # repository-wide ranking intersected against a candidate set — so the routing row and the
 # prohibition are the correction, not commentary. The prose was compressed first; the
 # addition is 475 bytes and the bound moves by the smallest round step that holds it.
-_CODEX_QUERY_SKILL_MAX_BYTES = 4600
+# 4600 -> 5000: required exact-module and measurement-availability disclosure. Retain
+# the established routing contract; compressing its mandatory literals broke parity.
+_CODEX_QUERY_SKILL_MAX_BYTES = 5000
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:

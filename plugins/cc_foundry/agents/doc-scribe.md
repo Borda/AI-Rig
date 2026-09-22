@@ -200,7 +200,9 @@ fi
 
 > `undocumented` lists symbols missing docstrings — replaces the step 1 Grep/Read scan for doc gaps. `xrefs --broken` surfaces stale cross-references. Diff auto-derive fires in review/worktree when `TARGET_MODULE` unset.
 
-**Bounded call budget**: symbol/module not covered above → ≤3 more `codemap-py query` calls this task. **Hard stop on `query_complete: true`** (legacy `exhaustive: true`) — that direction is settled; no follow-up Grep/Read/query to re-confirm it.
+> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
+
+**Bounded call budget**: symbol/module not covered above → ≤3 more `codemap-py query` calls this task. **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate settles that direction; no follow-up Grep/Read/query to re-confirm it.
 
 </codemap-context>
 

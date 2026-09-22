@@ -8,8 +8,7 @@ Usage:
 Sources:
     find — enumerate ``.py`` files under ``<path>``, derive module names (strip ``./``,
         ``src/``, ``.py``; replace ``/`` → ``.``).
-    diff — derive modules from ``git diff HEAD --name-only``; flat-layout fallback when
-        ``src/`` strip yields nothing.
+    diff — derive modules from ``git diff HEAD --name-only``, including package initializers.
 
 Output:
     Concatenated ``codemap-py query`` JSON blocks per module on stdout; ``coupled --top N`` appended
@@ -53,7 +52,9 @@ class ScanSource(str, Enum):
 def derive_module_from_path(path: str) -> str:
     """Convert a Python file path to its module dotted name.
 
-    Strips leading ``./`` and ``src/`` prefixes and the ``.py`` suffix, then replaces ``/`` with ``.``.
+    Normalize separators, strip leading ``./`` and ``src/`` and the ``.py`` suffix,
+    then map package initializers to their package. Nonstandard layouts still require
+    the provider's indexed module name instead of this conventional-layout derivation.
 
     Args:
         path: Filesystem path to a ``.py`` file (relative or absolute-ish).
@@ -69,17 +70,19 @@ def derive_module_from_path(path: str) -> str:
         >>> derive_module_from_path("./pkg/mod.py")
         'pkg.mod'
         >>> derive_module_from_path("pkg/__init__.py")
-        'pkg.__init__'
+        'pkg'
         >>> derive_module_from_path("mod.py")
         'mod'
     """
-    s = path
+    s = path.replace("\\", "/")
     if s.startswith("./"):
         s = s[2:]
     if s.startswith("src/"):
         s = s[4:]
     if s.endswith(".py"):
         s = s[:-3]
+    if s.endswith("/__init__"):
+        s = s.removesuffix("/__init__")
     return s.replace("/", ".")
 
 
@@ -113,20 +116,19 @@ def derive_modules_from_find(files: Iterable[str]) -> list[str]:
 def derive_modules_from_diff(diff_files: Iterable[str], limit: int) -> list[str]:
     """Derive module dotted names from git diff output (diff-mode rules).
 
-    Drops non-``.py`` paths and ``__init__`` modules. If the ``src/``-stripped derivation yields
-    no modules, falls back to flat layout: directory containing the file, sorted and unique,
-    capped at ``limit`` entries.
+    Drop non-Python paths, retain package initializers as package modules, deduplicate
+    in input order, and cap at ``limit`` entries. Find and diff share the same naming rules.
 
     Args:
         diff_files: Iterable of file path strings from ``git diff HEAD --name-only``.
-        limit: Cap applied to the flat-layout fallback list.
+        limit: Maximum number of distinct modules returned.
 
     Returns:
-        Primary list of module dotted names; flat-layout dir fallback when primary is empty.
+        Distinct module dotted names in input order.
 
     Examples:
         >>> derive_modules_from_diff(["src/pkg/a.py", "src/pkg/__init__.py", "README.md"], 10)
-        ['pkg.a']
+        ['pkg.a', 'pkg']
         >>> derive_modules_from_diff(["pkg/__init__.py"], 10)
         ['pkg']
         >>> derive_modules_from_diff(["lib/x.py", "lib/y.py", "other/z.py"], 10)
@@ -136,27 +138,8 @@ def derive_modules_from_diff(diff_files: Iterable[str], limit: int) -> list[str]
         >>> derive_modules_from_diff([], 10)
         []
     """
-    py_files = [f for f in diff_files if f.endswith(".py")]
-    primary: list[str] = []
-    for f in py_files:
-        s = f
-        if s.startswith("src/"):
-            s = s[4:]
-        s = s[:-3]  # strip .py
-        mod = s.replace("/", ".")
-        if mod and not mod.endswith("__init__"):
-            primary.append(mod)
-
-    if primary:
-        return list(dict.fromkeys(primary))[:limit]
-
-    # Flat-layout fallback: containing directory (sort -u | head -N).
-    dirs: set[str] = set()
-    for f in py_files:
-        parent = str(Path(f).parent)
-        if parent and parent != ".":
-            dirs.add(parent)
-    return sorted(dirs)[:limit]
+    modules = derive_modules_from_find(f for f in diff_files if f.endswith(".py"))
+    return list(dict.fromkeys(modules))[:limit]
 
 
 def _git_diff_files(timeout: int = 15) -> list[str]:

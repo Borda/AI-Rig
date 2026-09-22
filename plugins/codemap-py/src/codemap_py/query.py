@@ -124,7 +124,7 @@ from codemap_py.schema import (  # noqa: E402
     Symbol,
     validate_index,
 )
-from codemap_py.telemetry import log_cli, runtime_id  # noqa: E402
+from codemap_py.telemetry import CliInvocation, runtime_id  # noqa: E402
 
 # v5.1: MODULE_ALIASES_MIN_VER is imported for downstream feature gating; no
 # command consumes it directly today — module_aliases is applied internally by
@@ -153,8 +153,8 @@ _CALL_GRAPH_NOT_COVERED = [
 # Telemetry — cli.jsonl logging
 # ---------------------------------------------------------------------------
 
-_T0: float = time.time()
 _CMD: str = ""
+_invocation: CliInvocation | None = None
 # No module-level _LOG_DIR: it was a CWD-relative constant frozen at IMPORT time, so a
 # query launched from a subdirectory logged to <subdir>/.cache/codemap/logs while the
 # hooks logged to <repo-root>/.cache/codemap/logs — one session split across two
@@ -170,7 +170,7 @@ _capture: list[str] | None = None
 
 
 def _print(*args: object, **kwargs: object) -> None:
-    """Forward to built-in print; for stdout output also append a cli.jsonl record.
+    """Render output and retain the result for the invocation's terminal telemetry.
 
     In batch mode (:data:`_capture` set) a stdout write is diverted into the capture buffer and neither printed nor
     logged — the batch driver owns the single real stdout write and one telemetry record for the whole batch. stderr
@@ -193,12 +193,10 @@ def _print(*args: object, **kwargs: object) -> None:
         result = json.loads(raw)
     except Exception:  # noqa: BLE001 — non-JSON stdout still logs an empty result
         result = {}
-    # _CMD empty ⇒ main() never parsed a command: this process imported scan-query
-    # (pytest, tooling) and called a cmd_* directly. Logging here stamps the host
-    # process argv + import-age timing into cli.jsonl — 4.5K polluted records in
-    # the 2026-07 usage audit. Real CLI runs always pass through main() first.
-    if _CMD:
-        log_cli(_CMD, sys.argv[1:], result, _T0)
+    # Direct imported cmd_* calls are not CLI invocations and must not pollute telemetry
+    # with the host process's argv or import-age timing.
+    if _invocation is not None:
+        _invocation.result = result
 
 
 #: Output encoding for result payloads; set from ``--format`` in main().
@@ -293,29 +291,25 @@ def _emit_tsv(raw: str) -> None:
         envelope = {k: v for k, v in payload.items() if k != empty}
         if envelope:
             sys.stderr.write(json.dumps(envelope) + "\n")
-        if _CMD:
-            log_cli(_CMD, sys.argv[1:], payload, _T0)
+        if _invocation is not None:
+            _invocation.result = payload
         return
     key = _tabular_key(payload) if isinstance(payload, dict) else None
     if key is None:
-        # Bypasses _die_json: that routes through _print, which would land back here and
-        # recurse. Errors stay JSON whatever format was requested.
-        _builtin_print(
-            json.dumps(
-                {
-                    "error": "format_not_tabular",
-                    "detail": "--format tsv needs exactly one list of flat, uniform records; this result has none",
-                }
-            )
+        # The error emitter bypasses format conversion; errors remain JSON.
+        _die_json(
+            {
+                "error": "format_not_tabular",
+                "detail": "--format tsv needs exactly one list of flat, uniform records; this result has none",
+            }
         )
-        sys.exit(_EXIT_GENERIC)
     envelope = {k: v for k, v in payload.items() if k != key}
     if envelope:
         sys.stderr.write(json.dumps(envelope) + "\n")
     sys.stdout.buffer.write(_to_tsv(payload[key]).encode("utf-8") + b"\n")
     sys.stdout.flush()
-    if _CMD:
-        log_cli(_CMD, sys.argv[1:], payload, _T0)
+    if _invocation is not None:
+        _invocation.result = payload
 
 
 def _has_call_graph(index: dict) -> bool:
@@ -640,6 +634,8 @@ def _emit_gate_error(code: str, detail: str) -> None:
         code: stable machine-readable slug (e.g. ``index_busy``).
         detail: human-readable one-line cause.
     """
+    if _invocation is not None:
+        _invocation.result = {"error": code, "detail": detail}
     sys.stderr.write(json.dumps({"error": code, "detail": detail}) + "\n")
     sys.exit(1)
 
@@ -1248,8 +1244,8 @@ def _die_json(payload: dict, exit_code: int = _EXIT_GENERIC) -> None:
         _capture.append(json.dumps(payload))
     else:
         _builtin_print(json.dumps(payload))
-        if _CMD:
-            log_cli(_CMD, sys.argv[1:], payload, _T0)
+        if _invocation is not None:
+            _invocation.result = payload
     sys.exit(exit_code)
 
 
@@ -3755,6 +3751,11 @@ def cmd_uncovered(index: dict, args: argparse.Namespace) -> None:
 
     payload: dict = {
         "uncovered": findings,
+        "selection": {
+            "scope": "exact-module" if module is not None else "all-non-test-modules",
+            "matched_modules": len(modules),
+            "includes_descendants": module is None,
+        },
         "total": total,
         "showing": showing,
         "unique_total": len(unique_qualified_names),
@@ -3825,7 +3826,7 @@ def cmd_coverage(index: dict, qname: str) -> None:
     if symbol_name is None:
         rows: list[dict] = []
         for sym in module.get("symbols", []):
-            if "coverage_pct" not in sym:
+            if sym.get("coverage_pct") is None:
                 continue
             rows.append(
                 {
@@ -3843,6 +3844,8 @@ def cmd_coverage(index: dict, qname: str) -> None:
                     "module": module_name,
                     "symbols": rows,
                     "total": len(rows),
+                    "measurement": _coverage_measurement(module.get("symbols", [])),
+                    "selection": {"scope": "exact-module", "matched_modules": 1, "includes_descendants": False},
                     "index": _cmd_coverage(index, method="ast-flags", scope="line-coverage"),
                 }
             )
@@ -3873,6 +3876,18 @@ def cmd_coverage(index: dict, qname: str) -> None:
         )
         return
     _exit_error(f"Symbol '{module_name}::{symbol_name}' not found in module.")
+
+
+def _coverage_measurement(symbols: list[dict]) -> dict:
+    """Describe measurement availability without treating missing data as zero coverage."""
+    measured = sum(sym.get("coverage_pct") is not None for sym in symbols)
+    if not symbols:
+        status = "empty"
+    elif not measured:
+        status = "unavailable"
+    else:
+        status = "available" if measured == len(symbols) else "partial"
+    return {"status": status, "symbols": len(symbols), "measured_symbols": measured}
 
 
 def _module_coverage_gap_candidates(m: dict, threshold: float) -> list[dict]:
@@ -3922,8 +3937,9 @@ def cmd_coverage_gap(
     Findings are sorted by ``gap = threshold - coverage_pct`` descending so the
     largest-coverage holes appear first. Only ``status == "ok"`` modules are
     scanned; test modules are skipped (matching ``cmd_uncovered``). Symbols
-    without ``coverage_pct`` (module not covered, or index built without
-    ``--with-coverage``) are silently ignored — they belong to ``cmd_uncovered``.
+    without ``coverage_pct`` do not contribute findings; measurement metadata keeps
+    unavailable data distinct from measured coverage. Static test relationships
+    reported by ``uncovered`` are a different metric, not replacement measurements.
 
     Args:
         index: parsed codemap index dict (must be v5.4+).
@@ -3943,12 +3959,25 @@ def cmd_coverage_gap(
         modules = [m for m in modules if not m.get("is_test")]
 
     findings = [f for m in modules for f in _module_coverage_gap_candidates(m, threshold)]
+    eligible_symbols = [
+        sym
+        for m in modules
+        if m.get("status") != "degraded" and not m.get("is_test", False)
+        for sym in m.get("symbols", [])
+        if _is_public_symbol(sym.get("qualified_name", ""))
+    ]
 
     findings.sort(key=lambda f: (-f["gap"], f["module"], f["qualified_name"]))
     payload: dict = {
         "coverage_gap": findings,
         "total": len(findings),
         "threshold": threshold,
+        "measurement": _coverage_measurement(eligible_symbols),
+        "selection": {
+            "scope": "exact-module" if module is not None else "all-non-test-modules",
+            "matched_modules": len(modules),
+            "includes_descendants": module is None,
+        },
         "index": _cmd_coverage(index, method="ast-flags", scope="line-coverage-gap"),
     }
     if module is not None:
@@ -5255,6 +5284,8 @@ class _ScanQueryArgumentParser(argparse.ArgumentParser):
                 suggestion = "use '--help' to list commands."
         if suggestion:
             message = f"{message}\n\nHint: {suggestion}"
+        if _invocation is not None and _capture is None:
+            _invocation.result = {"error": "invalid_arguments", "detail": message}
         super().error(message)
 
 
@@ -5321,14 +5352,34 @@ def _resolve_index_path(args: argparse.Namespace) -> Path:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
+    """Run one query attempt with terminal telemetry and restore invocation-local state."""
+    global _invocation, _CMD  # noqa: PLW0603
+    previous, previous_command = _invocation, _CMD
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    previous_alarm = signal.getsignal(signal.SIGALRM) if hasattr(signal, "SIGALRM") else None
+    previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
+    timer_started = time.monotonic()
+    with CliInvocation("query", arguments) as invocation:
+        _invocation, _CMD = invocation, ""
+        try:
+            _run_query(arguments)
+        finally:
+            if hasattr(signal, "SIGALRM") and signal.getsignal(signal.SIGALRM) != previous_alarm:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, previous_alarm)
+                if previous_timer[0] > 0:
+                    # Restore the caller's deadline, not a fresh full-duration timer.
+                    remaining = max(1e-6, previous_timer[0] - (time.monotonic() - timer_started))
+                    signal.setitimer(signal.ITIMER_REAL, remaining, previous_timer[1])
+            _invocation, _CMD = previous, previous_command
+
+
+def _run_query(argv: Sequence[str]) -> None:
     """Parse CLI arguments, load the index, and dispatch to the appropriate command.
 
     Args:
-        argv: argument vector excluding the program name. ``None`` (the
-            default) falls through to argparse's own convention of reading
-            ``sys.argv[1:]`` — the standalone-script path (``bin/scan-query``,
-            or running this module directly). :mod:`codemap_py.cli` passes an
-            explicit list when calling this in-process under its read lease.
+        argv: Explicit argument vector excluding the program name, from the script
+            or in-process dispatcher. The engine owns its read lease.
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -5336,6 +5387,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         parser.error("rdeps --limit must be 0 or a positive integer")
     global _CMD, _FORMAT, _force_compact_coverage, _verbose_coverage  # noqa: PLW0603
     _CMD = args.command
+    if _invocation is not None:
+        _invocation.command = args.command
     _verbose_coverage = args.verbose_coverage
     _force_compact_coverage = args.compact
     _FORMAT = args.output_format
@@ -5344,6 +5397,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.timeout > 0 and hasattr(signal, "SIGALRM"):
 
         def _timeout_handler(signum: int, frame: object) -> None:  # noqa: ARG001
+            """Retain timeout evidence while preserving the CLI's existing exit contract."""
+            if _invocation is not None:
+                _invocation.result = {"error": "timeout", "timeout_seconds": args.timeout}
             _print(f"scan-query: timed out after {args.timeout}s", file=sys.stderr)
             sys.exit(2)
 

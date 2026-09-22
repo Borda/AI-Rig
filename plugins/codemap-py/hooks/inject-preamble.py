@@ -305,8 +305,8 @@ def acquire_refresh_lock(path: Path) -> int | None:
         return None
 
 
-def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path) -> bool:
-    """Spawn a detached incremental scan with platform-specific process isolation."""
+def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path, session: str = "") -> bool:
+    """Spawn a detached scan with the event's runtime/session and platform isolation."""
     # The exclusive write lease is the child's, not this hook's: `bin/scan-index` is a thin
     # launcher over `codemap_py.graph.main`, which wraps build and publish in
     # `rwgate.write_index` — so this detached scan is gated even though nothing here leases.
@@ -330,6 +330,10 @@ def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path) -> bool:
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
     }
+    if session:
+        # A payload-only identity otherwise disappears at the subprocess boundary.
+        session_key = "CODEX_THREAD_ID" if runtime == "codex" else "CLAUDE_CODE_SESSION_ID"
+        kwargs["env"][session_key] = session
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
         command = [os.environ.get("CODEMAP_PYTHON", sys.executable), str(scan_bin), *scan_args]
@@ -343,7 +347,7 @@ def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path) -> bool:
     return True
 
 
-def start_refresh(project: str, scan_root: Path, cwd: Path) -> str:
+def start_refresh(project: str, scan_root: Path, cwd: Path, session: str = "") -> str:
     """Take the refresh lock and spawn one background scan; return the preamble's note."""
     lock = tmp_dir() / f"codemap-refresh-{project}"
     descriptor = acquire_refresh_lock(lock)
@@ -355,7 +359,7 @@ def start_refresh(project: str, scan_root: Path, cwd: Path) -> str:
         os.close(descriptor)
     plugin_root = os.environ.get("PLUGIN_ROOT") or os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).parents[1]
     scan_bin = Path(plugin_root) / "bin" / "scan-index"
-    if scan_bin.is_file() and spawn_refresh(scan_bin, scan_root, cwd):
+    if scan_bin.is_file() and spawn_refresh(scan_bin, scan_root, cwd, session):
         return " - refresh started"
     try:
         lock.unlink()
@@ -390,7 +394,8 @@ def main() -> int:
         root = Path(git_output(["rev-parse", "--show-toplevel"], cwd) or cwd)
         project = root.name
         payload = stdin_payload()
-        write_session_marker(root, _hookutil.runtime_session(payload))
+        session = _hookutil.runtime_session(payload)
+        write_session_marker(root, session)
         if not has_python_source(root):
             return 0
         index_dir = Path(os.environ.get("CODEMAP_INDEX_DIR", root / ".cache" / "codemap"))
@@ -408,7 +413,7 @@ def main() -> int:
             git_output(["status", "--porcelain", "--", *_INDEXED_PATHSPEC], root) if head and git_sha == head else ""
         )
         currency = resolve_currency(head, git_sha, dirty)
-        refresh_note = start_refresh(project, scan_root, cwd) if currency == "stale" else ""
+        refresh_note = start_refresh(project, scan_root, cwd, session) if currency == "stale" else ""
         session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}"
         if currency == "current" and within_ttl(session_flag):
             return 0

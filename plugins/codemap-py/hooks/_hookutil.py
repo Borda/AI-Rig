@@ -48,12 +48,13 @@ def runtime() -> str:
     return value if value in RUNTIME_ALLOWLIST else DEFAULT_RUNTIME
 
 
-def runtime_session(payload: dict | None = None) -> str:
+def runtime_session(payload: dict | None = None, *, telemetry: bool = False) -> str:
     """Return the host session identity without crossing runtime marker boundaries.
 
     Codex events must never inherit Claude's persisted marker: a Codex thread is supplied by ``CODEX_THREAD_ID`` or the
-    hook payload. Claude retains its native event ``session_id`` so its marker writer and readers keep their established
-    key.
+    hook payload. Claude telemetry prefers event ``session_id``, then ``CLAUDE_CODE_SESSION_ID`` and ``CSID``. Other
+    Claude consumers retain event-only identity so their project-scoped fallback keys remain unchanged. Absent identity
+    stays empty for consumers to handle without borrowing another runtime's marker.
     """
     event = payload or {}
     if runtime() == "codex":
@@ -66,7 +67,14 @@ def runtime_session(payload: dict | None = None) -> str:
             if session:
                 return session
         return ""
-    return str(event.get("session_id", "")).strip()
+    values = (event.get("session_id"),)
+    if telemetry:
+        values += (os.environ.get("CLAUDE_CODE_SESSION_ID"), os.environ.get("CSID"))
+    for value in values:
+        session = str(value or "").strip()
+        if session:
+            return session
+    return ""
 
 
 def project_root(cwd: Path | None = None) -> Path:

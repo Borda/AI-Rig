@@ -91,7 +91,9 @@ def main() -> int:
         if not skill.startswith("codemap-py:"):
             return 0
         tmp_dir = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
-        session = resolve_session(tmp_dir / f"codemap-{project_name()}-session")
+        session = _hookutil.runtime_session(payload, telemetry=True)
+        if not session and _hookutil.runtime() != "codex":
+            session = resolve_session(tmp_dir / f"codemap-{project_name()}-session")
         safe_session = _UNSAFE_KEY.sub("-", session)
         # Resolved through the shared helper so this shard lands in the same directory
         # log-tool-use.py and the cli layer write to — CODEMAP_LOG_DIR honoured, and the
@@ -104,6 +106,7 @@ def main() -> int:
             "runtime": _hookutil.runtime(),
             "v": _hookutil.plugin_version(),
             "session": session,
+            "project": _hookutil.project_root().as_posix(),
             "skill": skill,
             "event": "start",
             "intent": str(tool_input.get("args", ""))[:300],

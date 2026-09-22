@@ -85,6 +85,12 @@ Without a structural index, a refactor often starts with repeated file searches 
 
 The index is not a replacement for reading source or running tests. It is a narrow, fast source of structural evidence that helps choose the next inspection or verification step.
 
+Coverage queries distinguish missing measurements from measured zero with `measurement.status` (`empty`, `unavailable`, `partial`, `available`). `selection` makes exact-module scope explicit: querying a package module does not include descendants. Enumerate and batch selected modules for package-wide work, or intentionally use `--all`. Static `uncovered` relationships are not measured line coverage.
+
+CLI telemetry records handled terminal success/failure once with `exit_code`, including parse, gate, and supported timeout failures. Logging remains best-effort and optional; abrupt process termination or an unwritable destination can leave gaps. Timeout alarms are cleaned up after embedded calls; the existing SIGALRM timeout capability is Unix-only. Refresh children retain an available host session from hook payloads, and Codex background refresh keeps its own trigger.
+
+Debriefs isolate recent version/project/runtime cohorts. `join_avoidance.py` labels `avoidance_count` and `rate` as `module_overlap_proxy_v3`: verified successful complete answers followed by matching tool targets, including legitimate source reads. This is not confirmed misuse, a guard-failure rate, or measured token savings. New CLI/tool/skill records carry their originating project root; shared log destinations never replace it. Legacy records missing project identity or terminal outcome remain untouched and counted, but cannot support joins. Batch children are logical answers, not extra CLI invocations; failed and unjoinable children are counted separately in JSON and text. Changed eligibility makes earlier metric rates non-comparable.
+
 <a id="-adaptive-use"></a>
 
 ## 🔗 Adaptive use
@@ -145,6 +151,8 @@ Most query results include an `index` block. Read it before treating a list as f
 - `not_covered` names static-analysis blind spots and should remain in the final reasoning.
 
 Queries check freshness and may perform a bounded incremental self-heal unless `SCAN_NO_AUTOBUILD=1` disables query-time writes. A self-heal also stands down when a writer takes the index while the query is reading it — most often another query's own heal — and answers from the index it already loaded. A refresh that was already running when the query started is waited out by the read lease instead, after which the index is fresh and no heal is needed. An explicit scan is the predictable choice after a clone, a large change, a branch switch, or when a query reports stale/degraded coverage.
+
+The shared Claude context contract v4 reports partial pre-flight retrieval when any requested query fails, misses or lacks completeness metadata. Consumers retain per-child batch outcomes and reuse matching fresh answers without suppressing necessary source or test-quality inspection.
 
 <a id="-honest-limits"></a>
 

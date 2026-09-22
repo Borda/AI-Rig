@@ -68,6 +68,8 @@ For method changes possibly affecting overrides, use `find-symbol '<ClassSuffix>
 
 Source request naming imports: use `symbol <name> --with-imports`. `query_complete: true` confirms index coverage, not requested optional fields.
 
+Coverage scope is exact-module: `uncovered pkg` and `coverage-gap pkg` do not include `pkg.child`. For a package-wide request, enumerate indexed module names (including the package module itself) and batch selected modules once; `--all` explicitly selects every non-test module. Preserve `selection` and `measurement`: `empty`, `unavailable`, `partial`, and `available` are distinct; no findings does not prove measured coverage. `uncovered` describes static test-call/mock relationships, not line coverage. Retain untracked/degraded warnings; zero static callers do not prove callbacks or framework methods unused.
+
 Table is a routing shortlist, not the parser's full surface. If the operation is known but an argument is unknown, read `codemap-py query <subcommand> --help`; if the operation is unknown, read `codemap-py query --help`; never guess a subcommand. Known syntax needs no preliminary help, doctor, scan, or freshness call. For exploratory module importer questions, `rdeps <module> --limit N` returns an explicit bounded preview of static `imported_by`; `dynamic_imported_by` and `config_refs` remain exhaustive. Default `rdeps <module>` and `rdeps <module> --limit 0` return every static importer. A truncated preview never settles exhaustive callers.
 
 ## Index and completeness contract

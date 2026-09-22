@@ -104,7 +104,7 @@ Use `.full_comment_text` for `IMPL_PROMPT`, `.file`/`.line` for commit scope and
 
 **Pre-loop blast-radius scan** — run once in main orchestrator before loop starts; collect caller context per item so each impl subagent knows which contracts to preserve. Soft: missing `codemap-py query` is a no-op.
 
-Each module's `rdeps` answer served from **review pre-flight cache** first (materialized in SKILL.md Step 8; contract in `$_DEV_SHARED/codemap-context.md` §Review→resolve pre-flight cache). `codemap_cache.py read` returns `{"reuse":true,...}` only when cached answer fresh against current index (matching `git_sha`, `scanned_at` not older); cache hit skips `codemap-py query` process entirely, so resolve after `/review` issues 0 duplicate pre-flight queries. Cache miss (`reuse:false`, no artifact, or oss helper absent) → query live, unchanged. Reused hits marked in artifact `delta.notes` so `codemap_cache.py report` can compute `reuse_ratio` as health metric.
+Group selected items by canonical module before querying: one `rdeps` answer per module per pre-loop, shared with every matching item. Read the **review pre-flight cache** first (materialized in SKILL.md Step 8; contract in `$_DEV_SHARED/codemap-context.md` §Review→resolve pre-flight cache). `codemap_cache.py read` validates index freshness; reuse requires an actual `rdeps` answer, including a valid empty caller list. Cache miss → one live query. Never use empty rendered text as a cache-miss signal. Reused hits retain their `delta.notes` marker for the existing health report.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -120,30 +120,46 @@ _CACHE_BIN="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/codemap_cache.py"
 if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
     echo "→ Codemap pre-scan — caller context for selected action items:"
     # file→module from the index's own `name` field (same source as §Structural prep, and as the cache keys). A sed transform names pkg/__init__.py `pkg.__init__` while codemap calls it `pkg` — every package-init item then missed its cache entry AND errored on the live query.
-    _MODMAP="${TMPDIR:-/tmp}/resolve-file-module-${CSID}.json"
+    _MODMAP="$IMPL_DIR/codemap-maps.json"
+    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); print(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
     _ALL_PY=$(jq -r '.file // empty' "$IMPL_DIR/action-items.jsonl" | grep '\.py$' | paste -sd, -)  # timeout: 5000
     codemap-py query --timeout 15 central --top 100000 2>/dev/null \
         | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_ALL_PY" > "$_MODMAP" 2>/dev/null || : > "$_MODMAP"  # timeout: 20000
-    for _id in $(printf '%s\n' "$SELECTED_ITEMS"); do  # cmd-substitution splits in both shells — bare `$VAR` is a silent 1-iteration no-op under zsh (no SH_WORD_SPLIT)
-        _f=$(jq -r "select(.id == $_id) | .file // empty" "$IMPL_DIR/action-items.jsonl")  # timeout: 5000
-        [[ "$_f" == *.py ]] || continue
-        _m=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['file_module'].get(sys.argv[2],''))" "$_MODMAP" "$_f" 2>/dev/null)  # timeout: 5000
-        [ -n "$_m" ] || continue  # not indexed — querying a guessed name is a guaranteed error
+    printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
+    _MODULE_ITEMS=$(jq -s --arg ids "$SELECTED_ITEMS" --slurpfile maps "$_MODMAP" '
+        ($ids | split(" ")) as $selected |
+        map(select((.id | tostring) as $id | $selected | index($id))) |
+        map(. + {module: ($maps[0].file_module[.file] // "")}) |
+        map(select(.module != "")) | group_by(.module) |
+        map({key: .[0].module, value: map(.id)}) | from_entries
+    ' "$IMPL_DIR/action-items.jsonl" 2>/dev/null)
+    for _m in $(printf '%s' "$_MODULE_ITEMS" | jq -r 'keys[]'); do
         _c=""
+        _CACHE_HIT=false
         # cache-first: reuse review's rdeps answer when fresh; only query on miss
         if [ -n "$CODEMAP_CACHE_DIR" ] && [ -f "$_CACHE_BIN" ] && [ -f "$_IDX_FILE" ]; then
             _V=$(python "$_CACHE_BIN" read --module "$_m" --index "$_IDX_FILE" --cache-dir "$CODEMAP_CACHE_DIR" 2>/dev/null)  # timeout: 5000
-            if echo "$_V" | grep -q '"reuse": *true'; then
-                _c=$(echo "$_V" | python -c "import json,sys; a=json.load(sys.stdin)['answers'].get('rdeps',{}); print('\n'.join((a.get('imported_by') or a.get('importers') or [])[:20]))" 2>/dev/null)
+            if printf '%s' "$_V" | jq -e --arg module "$_m" '
+                .reuse == true and (.answers.rdeps | type == "object") and
+                (.answers.rdeps.module == $module) and (.answers.rdeps.imported_by | type == "array") and
+                (.answers.rdeps.error == null) and
+                ([.answers.rdeps, .answers.rdeps.index // {}] | all(
+                    .query_complete != false and .exhaustive != false and
+                    .stale != true and .root_mismatch != true and .truncated != true
+                ))
+            ' >/dev/null 2>&1; then
+                _CACHE_HIT=true
+                _c=$(printf '%s' "$_V" | python -c "import json,sys; print(json.dumps(json.load(sys.stdin)['answers']['rdeps']))")
                 _ART="$CODEMAP_CACHE_DIR/${_m}.json"
-                [ -f "$_ART" ] && python -c "import json,sys; p='$_ART'; d=json.load(open(p)); d['delta']['notes'].append('reused@'+__import__('datetime').datetime.utcnow().isoformat()); json.dump(d,open(p,'w'))" 2>/dev/null || true
-                echo "  #${_id} ${_m} ← callers (cached, reused): $(echo "$_c" | tr '\n' ' ')"
+                [ -f "$_ART" ] && python -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['delta']['notes'].append('reused'); json.dump(d,open(p,'w'))" "$_ART" 2>/dev/null || true
             fi
         fi
-        [ -z "$_c" ] && _c=$(codemap-py query rdeps "$_m" 2>/dev/null | head -20)  # timeout: 10000
+        [ "$_CACHE_HIT" = true ] || _c=$(codemap-py query rdeps "$_m" 2>/dev/null)  # timeout: 10000
         if [ -n "$_c" ]; then
-            printf "  #%s %s ← callers: %s\n" "$_id" "$_m" "$(echo "$_c" | tr '\n' ' ')"
-            BLAST_RADIUS_CONTEXT+="item #${_id} (${_m}) callers:"$'\n'"${_c}"$'\n\n'
+            for _id in $(printf '%s' "$_MODULE_ITEMS" | jq -r --arg module "$_m" '.[$module][]'); do
+                printf "  #%s %s ← callers: %s\n" "$_id" "$_m" "$(echo "$_c" | tr '\n' ' ')"
+                BLAST_RADIUS_CONTEXT+="item #${_id} (${_m}) callers:"$'\n'"${_c}"$'\n\n'
+            done
         fi
     done
     [ -z "$BLAST_RADIUS_CONTEXT" ] && echo "  (no Python callers found for selected items)"
@@ -250,15 +266,23 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -f "$IMPL_DIR/selected-items.txt" ] && IFS= read -r SELECTED_ITEMS < "$IMPL_DIR/selected-items.txt" || SELECTED_ITEMS=""
-CODEMAP_MAPS="$IMPL_DIR/codemap-maps.json"; : > "$CODEMAP_MAPS"
+CODEMAP_MAPS="$IMPL_DIR/codemap-maps.json"
 DEPS_MAP="$IMPL_DIR/codemap-deps.jsonl"; : > "$DEPS_MAP"
 if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
     _FILES=$(for _id in $(printf '%s\n' "$SELECTED_ITEMS"); do  # cmd-substitution splits in both shells — bare `$VAR` is a silent 1-iteration no-op under zsh
         jq -r "select(.id == $_id) | .file // empty" "$IMPL_DIR/action-items.jsonl"
     done | paste -sd, -)  # timeout: 5000
-    codemap-py query central --top 100000 2>/dev/null \
-        | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_FILES" > "$CODEMAP_MAPS" 2>/dev/null \
-        || : > "$CODEMAP_MAPS"
+    _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
+    _IDX_FILE="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}/$(basename "$_ROOT").json"
+    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); print(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
+    _SAVED_STAMP=""
+    [ -f "$IMPL_DIR/codemap-maps.stamp" ] && IFS= read -r _SAVED_STAMP < "$IMPL_DIR/codemap-maps.stamp"
+    if [ -z "$_MAP_STAMP" ] || [ "$_MAP_STAMP" != "$_SAVED_STAMP" ] || ! python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not set(filter(None,sys.argv[2].split(","))).issubset(d["file_module"]))' "$CODEMAP_MAPS" "$_FILES" 2>/dev/null; then
+        codemap-py query central --top 100000 2>/dev/null \
+            | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_FILES" > "$CODEMAP_MAPS" 2>/dev/null \
+            || : > "$CODEMAP_MAPS"
+        printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
+    fi
     if [ -s "$CODEMAP_MAPS" ]; then
         for _m in $(python -c 'import json,sys; print(" ".join(sorted({v for v in json.load(open(sys.argv[1]))["file_module"].values() if v})))' "$CODEMAP_MAPS"); do
             codemap-py query deps "$_m" 2>/dev/null \

@@ -65,6 +65,15 @@ class TestBuildBatchRequest:
 class TestMain:
     """Write a query request and report its derived modules."""
 
+    def test_mixed_diff_keeps_package_query(self, tmp_path, monkeypatch, capsys):
+        """Package exports changed beside a child require their own reverse-dependency query."""
+        monkeypatch.setattr(bcb, "_git_diff_files", lambda: ["src/pkg/__init__.py", "src/pkg/mod.py"])
+        out = tmp_path / "batch.json"
+        assert bcb.main([str(out)]) == 0
+        assert capsys.readouterr().out.strip() == "pkg pkg.mod"
+        request = json.loads(out.read_text(encoding="utf-8"))
+        assert [item["args"] for item in request if item["cmd"] == "rdeps"] == [["pkg"], ["pkg.mod"]]
+
     def test_writes_json_and_prints_modules(self, tmp_path, monkeypatch, capsys):
         """Monkeypatched diff yields modules → JSON on disk + stdout list, exit 0."""
         monkeypatch.setattr(bcb, "_git_diff_files", lambda: ["src/pkg/mod.py"])

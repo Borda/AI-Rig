@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.39.4
+
+- Shared Claude context contract v4 keeps failed/missing pre-flight queries partial, requires explicit completeness metadata, and preserves per-child batch limits, source verification and static-versus-measured coverage distinctions.
+
+- Record handled query/index terminal outcomes once, including argument, gate, and timeout failures; retain exit codes and best-effort opt-out logging. Clear engine-owned timeout alarms and restore caller timers on return.
+
+- Preserve payload-only Codex/Claude session identity in refresh children, honor Claude environment-session fallback in hooks, and retain the Codex background-refresh trigger. Missing Codex identity never borrows a project-global session marker.
+
+- Distinguish unavailable, partial, empty, and measured line coverage; report exact-module versus all-module selection without changing recursive scope.
+
+- Record project identity on new telemetry; require explicit project coordinates and successful CLI outcomes for joins. Count failed/unjoinable batch children separately. Label changed eligibility as `module_overlap_proxy_v3`, never confirmed misuse or token savings; synchronize both hosts' query/debrief guidance. Old logs remain untouched and ineligible legacy records stay visible in raw counts.
+
 ## 0.39.3
 
 - Restore the caller's temporary-directory environment and Python temp cache after the resolver doctest, preventing order-dependent failures in downstream plugin tests.

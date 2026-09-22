@@ -8,6 +8,8 @@ Adversarial workflow reviews include unchanged downstream consumers and the next
 
 Optional Codemap context and index-gate guidance ship with develop, so loading them does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 
+Codemap review batches retain each child's success, freshness and scope metadata; failures are not empty answers. Package initializer changes stay in the affected-module scan. Reuse requires the same project/index/query, including flags; review-to-resolve cache stamps include the canonical index path. Static test links and mocks are not measured coverage, and source/test-quality reads remain available.
+
 > Works standalone — `foundry` is not required. Without it, agent dispatches fall back to `general-purpose` with role descriptions; with it, the same workflows can route to named specialists such as `foundry:sw-engineer` and `foundry:qa-specialist`.
 
 ______________________________________________________________________

@@ -1,7 +1,7 @@
 """Tests for ``codemap_scan.py``.
 
 Covers:
-    - Pure module-derivation helpers (find/diff rules, flat-layout fallback).
+    - Pure module-derivation helpers (find/diff rules, package initializers).
     - ``main()`` entry point: missing ``codemap-py query`` silent skip, missing index silent skip,
       ``--source=find`` end-to-end with subprocess monkeypatching, ``--source=diff`` modes,
       bad-arg exit codes.
@@ -28,7 +28,8 @@ import codemap_scan as cs
         pytest.param("./pkg/mod.py", "pkg.mod", id=".-pkg-mod.py"),
         pytest.param("pkg/mod.py", "pkg.mod", id="pkg-mod.py"),
         pytest.param("mod.py", "mod", id="mod.py"),
-        pytest.param("pkg/__init__.py", "pkg.__init__", id="pkg-__init__.py"),
+        pytest.param("pkg/__init__.py", "pkg", id="package-initializer"),
+        pytest.param(r".\src\pkg\__init__.py", "pkg", id="windows-package-initializer"),
         pytest.param("./src/a/b/c.py", "a.b.c", id=".-src-a-b-c.py"),
     ],
 )
@@ -45,9 +46,15 @@ def test_derive_modules_from_find_empty_input() -> None:
     assert cs.derive_modules_from_find([]) == []
 
 
-def test_derive_modules_from_diff_strips_src_and_init() -> None:
+def test_derive_modules_from_diff_preserves_package_initializers() -> None:
+    """A mixed diff must query the changed package as well as its child modules."""
     files = ["src/pkg/a.py", "src/pkg/__init__.py", "README.md", "src/other/b.py"]
-    assert cs.derive_modules_from_diff(files, limit=10) == ["pkg.a", "other.b"]
+    assert cs.derive_modules_from_diff(files, limit=10) == ["pkg.a", "pkg", "other.b"]
+
+
+def test_derive_modules_from_diff_src_package_only() -> None:
+    """Initializer-only changes use the provider's package name, never src/pkg."""
+    assert cs.derive_modules_from_diff(["src/pkg/__init__.py"], limit=10) == ["pkg"]
 
 
 def test_derive_modules_from_diff_dedupes_and_limits_primary_modules() -> None:
@@ -61,14 +68,15 @@ def test_derive_modules_from_diff_filters_non_py() -> None:
     assert cs.derive_modules_from_diff(files, limit=10) == ["a"]
 
 
-def test_derive_modules_from_diff_flat_layout_fallback() -> None:
-    # All inputs would map to __init__ → primary list empty → fallback to dirs.
+def test_derive_modules_from_diff_package_modules_deduplicated() -> None:
+    """Repeated package paths produce one package query."""
     files = ["lib/__init__.py", "other/__init__.py", "lib/__init__.py"]
     out = cs.derive_modules_from_diff(files, limit=10)
     assert out == ["lib", "other"]
 
 
-def test_derive_modules_from_diff_flat_layout_respects_limit() -> None:
+def test_derive_modules_from_diff_package_modules_respect_limit() -> None:
+    """Package-only changes retain input order and honor the query budget."""
     files = [f"d{i}/__init__.py" for i in range(20)]
     out = cs.derive_modules_from_diff(files, limit=3)
     assert len(out) == 3

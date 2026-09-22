@@ -32,6 +32,33 @@ _GATES = _DEVELOP / "skills" / "_shared" / "codemap-gates.md"
 _CWD_RELATIVE_DEFAULT = "${CODEMAP_INDEX_DIR:-.cache/codemap}"
 
 
+def test_review_interprets_each_batch_child_independently() -> None:
+    """A successful batch process cannot turn a failed child into an empty answer."""
+    text = (_DEVELOP / "skills/review/SKILL.md").read_text(encoding="utf-8")
+    for field in ("`ok: true`", "`result.index`", "`ok: false`", "valid empty"):
+        assert field in text
+    assert "one shared `index` coverage block covers the whole batch" not in text
+    assert "are tested via mock" not in text
+
+
+@pytest.mark.parametrize("relative", ["skills/_shared/codemap-context.md", "skills/review/SKILL.md"])
+def test_consumer_reuses_only_qualified_answers(relative: str) -> None:
+    """Copied prompt contracts must not accept failed/stale children or forbid source checks."""
+    text = (_DEVELOP / relative).read_text(encoding="utf-8")
+    for clause in (
+        "only when `query_complete` is absent",
+        "`result.index`",
+        "`ok: false`",
+        "valid empty",
+        "source-body",
+        "same project",
+        "current index",
+        "query and flags",
+        "`stale`",
+    ):
+        assert clause in text
+
+
 def _load(path: Path, name: str) -> ModuleType:
     """Load *path* under a unique module name — both plugins ship a ``codemap_resolve``."""
     spec = importlib.util.spec_from_file_location(name, path)

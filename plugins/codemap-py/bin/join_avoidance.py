@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
-"""join_avoidance.py — join tools.jsonl against cli.jsonl to count guard-chain leaks.
+"""Join tool targets to earlier complete module answers as an overlap proxy.
 
-An *avoidance event* is a Grep/Read/Glob tool call (from ``tools_<session>.jsonl``,
-written by ``log-tool-use.py``) whose target names a module that codemap had
-*already* answered completely (``query_complete: true`` in the matching
-``cli_<session>.jsonl`` record) within the preceding window. It means the agent
-re-derived by hand what the structural index had already returned exhaustively —
-the guard chain (``guard-redundant-scan.py`` + context injection) leaked, so the
-grep it was meant to prevent still happened.
-
-A high avoidance rate is a dead-chain signal: either the guard is not firing, the
-injected context is not being read, or the model is ignoring both.
+The legacy ``avoidance_count`` and ``rate`` keys count module/time overlaps,
+not confirmed misuse, guard failures, or token savings. Source-body, test, and
+diff inspection can legitimately overlap an earlier structural answer.
+Version, project, runtime, and session must agree. Records without explicit
+absolute project coordinates or a verified successful CLI outcome are counted
+but excluded from joins. Log destinations never establish project identity.
 
 The module-match rule is ported from ``guard-redundant-scan.py``: split the module
 on ``.`` / ``/`` into segments, escape regex metacharacters, rejoin with the ``[./]``
 separator class, and require the match not to be flanked by an identifier character.
-This mirrors the guard's word-boundary logic so this offline join counts exactly the
-greps the online guard was meant to deny.
+This matches names, not intent. Batch children count as logical answers rather
+than additional CLI invocations. Failed, stale, incomplete, and marked benchmark
+answers do not support overlaps.
 
 Usage:
     python join_avoidance.py --logs .cache/codemap/logs
@@ -36,7 +33,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 DEFAULT_WINDOW_MIN = 10
 # 50 MB per shard, matching MAX_INDEX_SIZE in scan-stats.py / smoke_test_index.py (CWE-400: DoS guard).
@@ -50,7 +47,7 @@ _UNATTRIBUTED_RUNTIME = "unattributed"
 
 @dataclass(frozen=True)
 class CliAnswer:
-    """One complete codemap answer that could later be re-derived by a grep.
+    """One eligible complete module answer, with its evidence coordinates.
 
     Attributes:
         session: session id joining the cli and tool layers.
@@ -62,6 +59,8 @@ class CliAnswer:
     ts: datetime
     module: str
     runtime: str | None = None
+    version: str | None = None
+    project: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,19 +79,21 @@ class ToolEvent:
     tool: str
     target: str
     runtime: str | None = None
+    version: str | None = None
+    project: str | None = None
 
 
 @dataclass(frozen=True)
 class AvoidanceEvent:
-    """A tool call that re-derived an already-complete codemap answer.
+    """A tool target overlapping an earlier complete module answer, intent unknown.
 
     Attributes:
-        session: session the leak happened in.
+        session: session containing the overlap.
         module: the module codemap had answered completely.
-        tool: the Grep/Read/Glob tool that re-derived it.
+        tool: the tool with an overlapping target; intent is unknown.
         target: the tool call's target string.
         answer_ts: when codemap answered ``module`` completely.
-        tool_ts: when the redundant tool call happened.
+        tool_ts: when the overlapping tool call happened.
         gap_seconds: seconds between the answer and the tool call.
     """
 
@@ -104,6 +105,8 @@ class AvoidanceEvent:
     tool_ts: datetime
     gap_seconds: float
     runtime: str | None = None
+    version: str | None = None
+    project: str | None = None
 
 
 @dataclass
@@ -114,7 +117,7 @@ class Summary:
         window_min: the join window in minutes used to produce these counts.
         total_tool_events: every Grep/Read/Glob event considered.
         total_complete_answers: every ``query_complete: true`` cli answer considered.
-        avoidance_events: the flagged tool calls (guard-chain leaks).
+        avoidance_events: matching tool targets, including legitimate inspection.
         per_session: session id → avoidance count.
         per_skill: skill name → avoidance count (only sessions attributable to a skill).
     """
@@ -126,10 +129,11 @@ class Summary:
     per_session: dict[str, int] = field(default_factory=dict)
     per_skill: dict[str, int] = field(default_factory=dict)
     per_runtime: dict[str, dict[str, int | float | dict[str, int]]] = field(default_factory=dict)
+    record_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def rate(self) -> float:
-        """Fraction of tool events that were avoidable (0.0 when no tool events).
+        """Fraction of eligible tool events overlapping answers, not confirmed avoidable work.
 
         Examples:
             >>> Summary(window_min=10, total_tool_events=0, total_complete_answers=0).rate
@@ -173,8 +177,8 @@ def _parse_ts(value: object) -> datetime | None:
 def _module_from_cli_result(record: dict) -> str:
     """Extract the queried module name from a cli record.
 
-    Prefers the emitted ``result.module`` field; falls back to the last non-flag
-    token of ``argv`` (the module positional for rdeps/fn-rdeps/etc.).
+    Prefer emitted module/qname identity. For legacy records, accept only the
+    immediate positional after a known module command; never guess from options.
 
     Args:
         record: a parsed ``cli.jsonl`` record.
@@ -192,17 +196,32 @@ def _module_from_cli_result(record: dict) -> str:
     """
     result = record.get("result")
     if isinstance(result, dict):
-        module = result.get("module")
+        module = result.get("module") or result.get("qname")
         if isinstance(module, str) and module:
-            return module
+            return module.split("::", 1)[0]
     argv = record.get("argv")
     if isinstance(argv, list):
-        positionals = [a for a in argv[1:] if isinstance(a, str) and not a.startswith("-")]
-        # A flag value (e.g. "5" after ``--top``) is a false positional; a module name
-        # carries a "." or "/" separator, so require one rather than trust position.
-        for token in reversed(positionals):
-            if "." in token or "/" in token:
-                return token
+        module_commands = {
+            "deps",
+            "rdeps",
+            "fn-rdeps",
+            "fn-blast",
+            "mock-rdeps",
+            "uncovered",
+            "coverage",
+            "coverage-gap",
+            "xrefs",
+            "undocumented",
+        }
+        # Only a leading command is unambiguous without reproducing the engine parser.
+        for command, token in zip(argv[:1], argv[1:2]):
+            if (
+                isinstance(command, str)
+                and command in module_commands
+                and isinstance(token, str)
+                and not token.startswith("-")
+            ):
+                return token.split("::", 1)[0]
     return ""
 
 
@@ -218,7 +237,7 @@ def _query_complete(record: dict) -> bool:
         record: a parsed ``cli.jsonl`` record.
 
     Returns:
-        ``True`` only when a truthy completeness flag is present.
+        ``True`` only for an explicit completeness flag without failure/staleness/truncation.
 
     Examples:
         >>> _query_complete({"result": {"index": {"query_complete": True}}})
@@ -231,11 +250,18 @@ def _query_complete(record: dict) -> bool:
         False
     """
     result = record.get("result")
-    if not isinstance(result, dict):
+    if not isinstance(result, dict) or result.get("error") or record.get("exit_code", 0) != 0:
+        return False
+    if any(
+        isinstance(block, dict) and (block.get("stale") or block.get("root_mismatch") or block.get("truncated"))
+        for block in (result.get("index"), result)
+    ):
         return False
     for block in (result.get("index"), result):
-        if isinstance(block, dict) and (block.get("query_complete") or block.get("exhaustive")):
-            return True
+        if isinstance(block, dict):
+            for key in ("query_complete", "exhaustive"):
+                if key in block:
+                    return block[key] is True
     return False
 
 
@@ -277,6 +303,14 @@ def module_matches(module: str, text: str) -> bool:
     return pattern.search(text) is not None
 
 
+def _project_coordinate(record: dict) -> str | None:
+    """Validate a serialized project coordinate without resolving it on the analysis host."""
+    value = record.get("project")
+    if isinstance(value, str) and (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+        return value
+    return None
+
+
 def parse_cli_records(records: list[dict]) -> list[CliAnswer]:
     """Turn raw cli records into the complete-answer subset used by the join.
 
@@ -292,15 +326,40 @@ def parse_cli_records(records: list[dict]) -> list[CliAnswer]:
     """
     answers: list[CliAnswer] = []
     for record in records:
+        if (
+            record.get("source") == "bench"
+            or not record.get("cmd")
+            or type(record.get("exit_code")) is not int
+            or record["exit_code"] != 0
+            or _project_coordinate(record) is None
+        ):
+            continue
+        result = record.get("result")
+        if record.get("cmd") == "batch" and isinstance(result, dict) and isinstance(result.get("batch"), list):
+            # Children retain the parent's evidence coordinates, never child-supplied identity.
+            children = [
+                record | {"cmd": item.get("cmd"), "argv": [], "result": item.get("result")}
+                for item in result["batch"]
+                if isinstance(item, dict) and item.get("ok") is True and item.get("cmd") != "batch"
+            ]
+            answers.extend(parse_cli_records(children))
+            continue
         if not _query_complete(record):
             continue
         module = _module_from_cli_result(record)
         ts = _parse_ts(record.get("ts"))
         session = record.get("session")
-        if module and ts is not None and isinstance(session, str):
+        if module and ts is not None and isinstance(session, str) and session.strip():
             runtime = record.get(_RUNTIME_KEY)
             answers.append(
-                CliAnswer(session=session, ts=ts, module=module, runtime=runtime if runtime in _RUNTIMES else None)
+                CliAnswer(
+                    session=session,
+                    ts=ts,
+                    module=module,
+                    runtime=runtime if runtime in _RUNTIMES else None,
+                    version=record.get("v"),
+                    project=record.get("project"),
+                )
             )
     return answers
 
@@ -316,24 +375,39 @@ def parse_tool_records(records: list[dict]) -> list[ToolEvent]:
     """
     events: list[ToolEvent] = []
     for record in records:
+        if record.get("source") == "bench" or _project_coordinate(record) is None:
+            continue
         target = record.get("target")
         ts = _parse_ts(record.get("ts"))
         session = record.get("session")
         tool = record.get("tool")
-        if isinstance(target, str) and target and ts is not None and isinstance(session, str) and isinstance(tool, str):
+        if (
+            isinstance(target, str)
+            and target
+            and ts is not None
+            and isinstance(session, str)
+            and session.strip()
+            and isinstance(tool, str)
+        ):
             runtime = record.get(_RUNTIME_KEY)
             events.append(
                 ToolEvent(
-                    session=session, ts=ts, tool=tool, target=target, runtime=runtime if runtime in _RUNTIMES else None
+                    session=session,
+                    ts=ts,
+                    tool=tool,
+                    target=target,
+                    runtime=runtime if runtime in _RUNTIMES else None,
+                    version=record.get("v"),
+                    project=record.get("project"),
                 )
             )
     return events
 
 
 def _find_leaked_answer(event: ToolEvent, answers: list[CliAnswer], window_seconds: float) -> CliAnswer | None:
-    """Return the most recent complete answer this tool event re-derived, if any.
+    """Return the most recent eligible answer whose module overlaps the tool target.
 
-    An answer leaks when it is in the same session, its module matches the tool
+    An answer overlaps when it is in the same evidence cohort, its module matches the tool
     target on identifier boundaries, and it landed within ``window_seconds``
     *before* the tool call. The most recent qualifying answer is returned so the
     reported gap is the tightest (and the guard's own last-answer semantics match).
@@ -344,11 +418,16 @@ def _find_leaked_answer(event: ToolEvent, answers: list[CliAnswer], window_secon
         window_seconds: max seconds an answer may precede the tool call.
 
     Returns:
-        The leaked :class:`CliAnswer`, or ``None`` when the event was legitimate.
+        The overlapping :class:`CliAnswer`, or ``None`` when no name/time match exists.
     """
     best: CliAnswer | None = None
     for answer in answers:
-        if answer.session != event.session or answer.runtime != event.runtime:
+        if (answer.session, answer.runtime, answer.version, answer.project) != (
+            event.session,
+            event.runtime,
+            event.version,
+            event.project,
+        ):
             continue
         gap = (event.ts - answer.ts).total_seconds()
         if gap < 0 or gap > window_seconds:
@@ -365,17 +444,16 @@ def find_avoidance_events(
     events: list[ToolEvent],
     window_min: int = DEFAULT_WINDOW_MIN,
 ) -> list[AvoidanceEvent]:
-    """Join complete answers with tool events, flagging each guard-chain leak.
+    """Join eligible answers with tool targets, without inferring redundant work.
 
     Args:
         answers: complete cli answers (from :func:`parse_cli_records`).
         events: tool events (from :func:`parse_tool_records`).
         window_min: how many minutes an answer may precede a tool call and still
-            count as re-derived. Defaults to :data:`DEFAULT_WINDOW_MIN`.
+            count as overlapping. Defaults to :data:`DEFAULT_WINDOW_MIN`.
 
     Returns:
-        One :class:`AvoidanceEvent` per tool call that re-derived a complete
-        answer, in ``events`` order.
+        One :class:`AvoidanceEvent` per matching target, in ``events`` order.
     """
     window_seconds = window_min * 60
     flagged: list[AvoidanceEvent] = []
@@ -393,6 +471,8 @@ def find_avoidance_events(
                 tool_ts=event.ts,
                 gap_seconds=(event.ts - answer.ts).total_seconds(),
                 runtime=event.runtime,
+                version=event.version,
+                project=event.project,
             )
         )
     return flagged
@@ -453,7 +533,7 @@ def summarize(
     answers: list[CliAnswer],
     events: list[ToolEvent],
     window_min: int = DEFAULT_WINDOW_MIN,
-    session_skill: dict[tuple[str | None, str] | str, str] | None = None,
+    session_skill: dict[tuple[str | None, ...] | str, str] | None = None,
 ) -> Summary:
     """Compute the full avoidance summary for a debrief report.
 
@@ -475,7 +555,9 @@ def summarize(
     for event in flagged:
         session = _session_label(event.runtime, event.session)
         per_session[session] = per_session.get(session, 0) + 1
-        skill = skill_map.get((event.runtime, event.session)) or skill_map.get(event.session)
+        skill = skill_map.get((event.project, event.version, event.runtime, event.session)) or skill_map.get(
+            event.session
+        )
         if skill:
             per_skill[skill] = per_skill.get(skill, 0) + 1
     return Summary(
@@ -569,8 +651,8 @@ def _shard_paths(log_dir: Path, layer: str) -> list[Path]:
     return sorted(set(shards))
 
 
-def _session_skill_map(skill_records: list[dict]) -> dict[tuple[str | None, str], str]:
-    """Map each session id to the first skill that started in it.
+def _session_skill_map(skill_records: list[dict]) -> dict[tuple[str | None, ...], str]:
+    """Map each explicitly attributed cohort to its first recorded skill start.
 
     Args:
         skill_records: parsed ``skills.jsonl`` records (``session`` + ``skill``).
@@ -578,18 +660,20 @@ def _session_skill_map(skill_records: list[dict]) -> dict[tuple[str | None, str]
     Returns:
         session id → skill name; sessions with no skill record are absent.
     """
-    mapping: dict[tuple[str | None, str], str] = {}
+    mapping: dict[tuple[str | None, ...], str] = {}
     for record in skill_records:
         session = record.get("session")
         skill = record.get("skill")
         runtime = record.get(_RUNTIME_KEY)
-        scoped_session = (runtime if runtime in _RUNTIMES else None, session)
-        if isinstance(session, str) and isinstance(skill, str) and scoped_session not in mapping:
+        project = _project_coordinate(record)
+        version = record.get("v") if isinstance(record.get("v"), str) else None
+        scoped_session = (project, version, runtime if runtime in _RUNTIMES else None, session)
+        if project and isinstance(session, str) and isinstance(skill, str) and scoped_session not in mapping:
             mapping[scoped_session] = skill
     return mapping
 
 
-def _resolve_inputs(args: argparse.Namespace) -> tuple[list[dict], list[dict], dict[tuple[str | None, str] | str, str]]:
+def _resolve_inputs(args: argparse.Namespace) -> tuple[list[dict], list[dict], dict[tuple[str | None, ...] | str, str]]:
     """Resolve CLI arguments into (cli_records, tool_records, session_skill_map).
 
     Args:
@@ -623,15 +707,19 @@ def render_text(summary: Summary) -> str:
         >>> "no tool events" in render_text(s)
         True
     """
-    if not summary.total_tool_events:
-        return "avoidance join: no tool events found — nothing to score."
     n = len(summary.avoidance_events)
     lines = [
         f"avoidance join (window {summary.window_min} min)",
+        "  metric: module overlap proxy v3; not confirmed misuse or measured savings",
         f"  complete answers: {summary.total_complete_answers}",
         f"  tool events:      {summary.total_tool_events}",
         f"  avoidance events: {n}  (rate {summary.rate:.1%})",
     ]
+    if not summary.total_tool_events:
+        lines.append("  no tool events eligible — nothing to score.")
+    if summary.record_counts:
+        lines.append("  record counts:")
+        lines.extend(f"    {name}: {count}" for name, count in sorted(summary.record_counts.items()))
     if summary.per_session:
         lines.append("  per session:")
         for session, count in sorted(summary.per_session.items(), key=lambda kv: (-kv[1], kv[0])):
@@ -660,6 +748,9 @@ def render_json(summary: Summary) -> str:
         A JSON string with totals, rate, per-session/per-skill counts, and events.
     """
     payload = {
+        "metric": "module_overlap_proxy_v3",
+        "confirmed_misuse": None,
+        "interpretation": "Module/time overlaps, including legitimate source inspection; not guard failures or token savings.",
         "window_min": summary.window_min,
         "total_tool_events": summary.total_tool_events,
         "total_complete_answers": summary.total_complete_answers,
@@ -668,6 +759,7 @@ def render_json(summary: Summary) -> str:
         "per_session": summary.per_session,
         "per_skill": summary.per_skill,
         "per_runtime": summary.per_runtime,
+        "record_counts": summary.record_counts,
         "events": [
             {
                 "session": e.session,
@@ -678,6 +770,8 @@ def render_json(summary: Summary) -> str:
                 "tool_ts": e.tool_ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 "gap_seconds": round(e.gap_seconds, 1),
                 "runtime": e.runtime,
+                "version": e.version,
+                "project": e.project,
             }
             for e in summary.avoidance_events
         ],
@@ -721,9 +815,39 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     cli_records, tool_records, session_skill = _resolve_inputs(args)
-    answers = parse_cli_records(cli_records)
+    answer_groups = [parse_cli_records([record]) for record in cli_records]
+    answers = [answer for group in answer_groups for answer in group]
     events = parse_tool_records(tool_records)
     summary = summarize(answers, events, window_min=args.window_min, session_skill=session_skill)
+    summary.record_counts = {
+        "cli_records": len(cli_records),
+        "eligible_cli_invocations": sum(bool(group) for group in answer_groups),
+        "logical_answers": len(answers),
+        "excluded_or_unjoinable_cli_records": sum(not group for group in answer_groups),
+        "tool_records": len(tool_records),
+        "eligible_tool_events": len(events),
+        "excluded_or_unjoinable_tool_records": len(tool_records) - len(events),
+        "unverified_cli_outcomes": sum(type(record.get("exit_code")) is not int for record in cli_records),
+        "missing_project_cli_records": sum(_project_coordinate(record) is None for record in cli_records),
+        "missing_project_tool_records": sum(_project_coordinate(record) is None for record in tool_records),
+    }
+    # Parent invocations and logical children are different denominators. Retain every
+    # failed or malformed child even when a successful sibling makes its parent eligible.
+    batch_children = failed_children = eligible_children = 0
+    for record, group in zip(cli_records, answer_groups):
+        result = record.get("result")
+        if record.get("cmd") != "batch" or not isinstance(result, dict) or not isinstance(result.get("batch"), list):
+            continue
+        children = result["batch"]
+        batch_children += len(children)
+        failed_children += sum(isinstance(child, dict) and child.get("ok") is False for child in children)
+        eligible_children += len(group)
+    summary.record_counts.update(
+        batch_children=batch_children,
+        eligible_batch_children=eligible_children,
+        failed_batch_children=failed_children,
+        unjoinable_batch_children=batch_children - eligible_children - failed_children,
+    )
     print(render_json(summary) if args.json else render_text(summary))
     return 0
 

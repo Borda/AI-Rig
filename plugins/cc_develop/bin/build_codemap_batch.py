@@ -2,8 +2,8 @@
 """Build the review pre-flight ``codemap-py query batch`` request for changed modules.
 
 Derives changed modules from ``git diff HEAD --name-only`` (reusing the
-``codemap_scan.py`` mapping: strip ``./``/``src/``/``.py``, ``/`` → ``.``, drop
-``__init__``; directory fallback when the strip yields nothing) and writes one
+``codemap_scan.py`` mapping: strip ``./``/``src/``/``.py``, ``/`` → ``.``, map
+``__init__`` to its package) and writes one
 JSON array with ``central --top 5`` plus the five per-module pre-flight queries.
 One ``codemap-py query batch`` process then shares a single coverage block instead of
 paying the per-call spawn + coverage cost 5×N times.
