@@ -80,7 +80,7 @@ INTERFACE_KEYS = {
 REQUIRED_FILES = {
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
-    ".mcp.json",
+    ".codex-mcp.json",
     "assets/bridge.svg",
     "CHANGELOG.md",
     "LICENSE",
@@ -187,25 +187,31 @@ def _validate_manifests(root: Path) -> str:
     return version
 
 
-def _validate_mcp(root: Path) -> None:
-    """Validate a host-portable MCP command rooted at the installed plugin."""
-    config = _load_object(root / ".mcp.json")
+def _validate_mcp(root: Path, relative_path: str, expected_var: str) -> None:
+    """Validate one host's MCP declaration resolves its script through that host's own plugin-root variable.
+
+    Codex expands only ``PLUGIN_ROOT``, never ``CLAUDE_PLUGIN_ROOT`` -- the Claude variable in this file would break the
+    only host that reads it.
+    """
+    config = _load_object(root / relative_path)
     servers = config.get("mcpServers")
     if not isinstance(servers, dict) or set(servers) != {"bridge"}:
-        raise ValueError("MCP config must declare only the bridge server")
+        raise ValueError(f"{relative_path} must declare only the bridge server")
     server = servers["bridge"]
     if not isinstance(server, dict) or server.get("command") not in {"python", "python3"}:
-        raise ValueError("MCP server must use a portable Python command")
+        raise ValueError(f"{relative_path} MCP server must use a portable Python command")
     args = server.get("args")
     if not isinstance(args, list) or not args or not all(isinstance(item, str) for item in args):
-        raise ValueError("MCP server args must be a string list")
+        raise ValueError(f"{relative_path} MCP server args must be a string list")
     matches = [PLUGIN_PATH_PATTERN.fullmatch(item) for item in args]
     script_match = next((match for match in matches if match is not None), None)
     if script_match is None:
-        raise ValueError("MCP server must resolve its script through PLUGIN_ROOT")
-    _relative_file(root, f"bin/{script_match.group(1)}", field="MCP args")
+        raise ValueError(f"{relative_path} MCP server must resolve its script through a plugin-root variable")
+    if f"${{{expected_var}}}" not in args[matches.index(script_match)]:
+        raise ValueError(f"{relative_path} MCP server must use ${{{expected_var}}}, not the other host's variable")
+    _relative_file(root, f"bin/{script_match.group(1)}", field=f"{relative_path} args")
     if server.get("cwd") is not None:
-        raise ValueError("MCP server must not depend on a source-tree cwd")
+        raise ValueError(f"{relative_path} MCP server must not depend on a source-tree cwd")
 
 
 def _validate_files(root: Path) -> None:
@@ -231,11 +237,25 @@ def _validate_files(root: Path) -> None:
 
 
 def _validate_skill_script_references(root: Path) -> None:
-    """Ensure installed skill commands resolve inside this package."""
-    for path in sorted(root.glob("claude-skills/**/*.md")) + sorted(root.glob("skills/**/*.md")):
-        text = path.read_text(encoding="utf-8")
-        for match in PLUGIN_PATH_PATTERN.finditer(text):
-            _relative_file(root, f"bin/{match.group(1)}", field=f"skill reference in {path.name}")
+    """Ensure installed skill commands resolve inside this package through their own host's plugin-root variable.
+
+    Each skill tree must use only its own host's variable -- Claude Code expands ``CLAUDE_PLUGIN_ROOT``, Codex expands
+    ``PLUGIN_ROOT`` -- mirroring the check ``_validate_mcp`` runs for the Codex MCP declaration.
+    """
+    trees = (
+        ("claude-skills/**/*.md", "CLAUDE_PLUGIN_ROOT"),
+        ("codex-skills/**/*.md", "PLUGIN_ROOT"),
+    )
+    for pattern, expected_var in trees:
+        for path in sorted(root.glob(pattern)):
+            display = path.relative_to(root).as_posix()
+            text = path.read_text(encoding="utf-8")
+            for match in PLUGIN_PATH_PATTERN.finditer(text):
+                if f"${{{expected_var}}}" not in match.group(0):
+                    raise ValueError(
+                        f"skill reference in {display} must use ${{{expected_var}}}, not the other host's variable"
+                    )
+                _relative_file(root, f"bin/{match.group(1)}", field=f"skill reference in {display}")
 
 
 def validate_package(root: Path) -> str:
@@ -244,7 +264,12 @@ def validate_package(root: Path) -> str:
     if not root.is_dir():
         raise ValueError(f"package root is not a directory: {root}")
     version = _validate_manifests(root)
-    _validate_mcp(root)
+    codex = _load_object(root / ".codex-plugin" / "plugin.json")
+    if (root / ".mcp.json").exists():
+        raise ValueError(
+            "Claude Code has no MCP surface for bridge -- a shipped .mcp.json would be auto-discovered unintentionally"
+        )
+    _validate_mcp(root, Path(codex["mcpServers"]).as_posix(), "PLUGIN_ROOT")
     _validate_files(root)
     _validate_skill_script_references(root)
     return version

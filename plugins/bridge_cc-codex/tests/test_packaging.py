@@ -66,13 +66,75 @@ def test_build_and_validate_use_only_the_disposable_package_copy(tmp_path: Path)
 
 
 @pytest.mark.packaging
-def test_mcp_server_resolves_from_installed_plugin_root() -> None:
-    """Reject source-tree-relative MCP commands that break cache installs."""
-    config = json.loads((PLUGIN_ROOT / ".mcp.json").read_text(encoding="utf-8"))
+def test_claude_code_has_no_mcp_surface() -> None:
+    """Claude Code must never auto-discover an MCP server for bridge.
+
+    Claude-side skills never call ``bridge_implement``/``bridge_advise``/``bridge_review`` -- the Claude-to-Codex
+    direction is CLI-only (`bin/bridge_call.py` -> `codex exec`). Claude Code auto-discovers any file literally named
+    ``.mcp.json`` at a plugin's root regardless of manifest intent, so shipping one here would register a server Claude
+    never uses and that previously broke (the ``${PLUGIN_ROOT}``/``${CLAUDE_PLUGIN_ROOT}`` mismatch). The absence of
+    the file, not a correctly-configured one, is what shields Claude Code from it.
+    """
+    assert not (PLUGIN_ROOT / ".mcp.json").exists()
+    claude_manifest = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert "mcpServers" not in claude_manifest
+
+
+@pytest.mark.packaging
+def test_validate_package_rejects_a_stray_claude_mcp_file(tmp_path: Path) -> None:
+    """Guard the no-MCP-surface contract against regression, not just document it.
+
+    A future edit re-adding ``.mcp.json`` at the plugin root would silently reintroduce Claude Code's auto-discovery
+    exposure; the package gate must refuse it rather than accept it as a harmless extra file.
+    """
+    output = tmp_path / "bridge"
+    built = subprocess.run(
+        [sys.executable, str(BUILD_SCRIPT), "--output", str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert built.returncode == 0, built.stderr
+    (output / ".mcp.json").write_text((output / ".codex-mcp.json").read_text(encoding="utf-8"), encoding="utf-8")
+
+    validated = subprocess.run(
+        [sys.executable, str(VALIDATE_SCRIPT), str(output)],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert validated.returncode != 0
+    assert "no MCP surface" in validated.stderr
+
+
+@pytest.mark.packaging
+def test_codex_mcp_server_resolves_from_installed_plugin_root() -> None:
+    """Reject source-tree-relative or Claude-facing variables in the Codex MCP declaration.
+
+    Codex expands only ``PLUGIN_ROOT``, not ``CLAUDE_PLUGIN_ROOT`` -- confirmed against a live ``codex mcp add --help``
+    and the upstream Codex issue tracker.
+    """
+    codex_manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert codex_manifest["mcpServers"] == "./.codex-mcp.json"
+    config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
     server = config["mcpServers"]["bridge"]
     assert server["command"] in {"python", "python3"}
     assert server["args"][0] == "${PLUGIN_ROOT}/bin/bridge_mcp.py"
     assert "cwd" not in server
+
+
+@pytest.mark.packaging
+def test_codex_mcp_env_vars_carry_the_recursion_guard_variable() -> None:
+    """Pin ``env_vars`` absolutely, not just as a byproduct of the plugin-root variable check.
+
+    `rules/recursion-guard.md` depends on ``CC_CODEX_BRIDGE_DEPTH`` reaching the peer MCP process through this list;
+    `_validate_mcp` checks the plugin-root variable and script path but not `env_vars` content, so a silent edit
+    dropping this variable would pass every existing gate while disabling the guard.
+    """
+    config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
+    env_vars = config["mcpServers"]["bridge"]["env_vars"]
+    assert set(env_vars) >= {"HOME", "PATH", "CODEX_HOME", "CC_CODEX_BRIDGE_DEPTH"}
 
 
 @pytest.mark.packaging
@@ -166,9 +228,10 @@ def test_diagnose_payload_fingerprint_stays_inside_the_validated_package_manifes
     """Keep the doctor's completeness fingerprint aligned with the validated package manifest.
 
     The two file lists are maintained by hand in parallel; a runtime file added to the package gate but not the payload
-    list silently escapes the completeness fingerprint that sync trusts, as ``.mcp.json`` and the CLI baseline once did.
+    list silently escapes the completeness fingerprint that sync trusts, as the CLI baseline once did. ``.mcp.json`` is
+    deliberately absent from both lists -- see `test_claude_code_has_no_mcp_surface`.
     """
     payload = set(bridge_diagnose.PAYLOAD_FILES)
 
     assert payload <= set(validate_package.REQUIRED_FILES)
-    assert {".mcp.json", "rules/cli-baseline.json"} <= payload
+    assert {".codex-mcp.json", "rules/cli-baseline.json"} <= payload

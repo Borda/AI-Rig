@@ -35,9 +35,9 @@
     "review"
   ],
   "license": "Apache-2.0",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": "./.codex-mcp.json",
   "name": "bridge",
   "repository": "https://github.com/Borda/AI-Rig",
   "skills": "./codex-skills/",
-  "version": "0.5.4"
+  "version": "0.5.5"
 }

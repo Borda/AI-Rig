@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.5
+
+- Stop Claude Code from registering a bridge MCP server it never uses: the auto-discovered `.mcp.json` used `${PLUGIN_ROOT}`, which Claude Code does not expand, so the server spawned against a literal path and exited ENOENT. Claude Code has no functional need for an MCP client connection to this server -- the Claude-to-Codex direction is CLI-only, via `bin/bridge_call.py` -- so the fix removes the Claude-facing `.mcp.json` entirely rather than repairing it: shipping any file by that literal name only exposed it to Claude Code's unconditional filename-based auto-discovery for no benefit. `.codex-mcp.json` (Codex's own file, `${PLUGIN_ROOT}`, content unchanged from the old `.mcp.json`) is now the plugin's only MCP file, repointed via `.codex-plugin/plugin.json`. `scripts/validate_package.py` rejects a stray `.mcp.json` if one reappears.
+
 ## 0.5.4
 
 - Share concise root-owned Codex question guidance with conditional approval and recovery details; retain plugin-local payloads and native presets plus custom input.

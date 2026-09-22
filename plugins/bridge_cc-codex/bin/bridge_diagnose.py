@@ -71,7 +71,7 @@ def diagnose(direction: str, workspace: Path, live: bool) -> dict[str, Any]:
 PAYLOAD_FILES = (
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
-    ".mcp.json",
+    ".codex-mcp.json",
     "bin/bridge_call.py",
     "bin/bridge_diagnose.py",
     "bin/bridge_mcp.py",

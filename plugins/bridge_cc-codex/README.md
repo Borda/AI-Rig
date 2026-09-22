@@ -131,7 +131,7 @@ The setup result is defined by `schemas/setup-result.schema.json`, separate from
 
 MCP is complementary to the bridge as a whole but mandatory for the Codex → Claude Code direction. Claude Code → Codex calls launch `codex exec` directly and do not need MCP. Codex → Claude Code calls must use the packaged MCP server because a `claude --print` process started from a sandboxed Codex model turn cannot rely on the normal Claude authentication context, while the Codex host launches the MCP server outside that model sandbox.
 
-If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus the read-only status tool and prevents model-controlled workspace, background, or session selection.
+If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus the read-only status tool and prevents model-controlled workspace, background, or session selection.
 
 <a id="-install-for-claude-code"></a>
 
@@ -222,7 +222,7 @@ codex plugin marketplace add Borda/AI-Rig
 codex plugin add bridge@borda-ai-rig
 ```
 
-The Codex manifest declares the bridge MCP server, and the installed `.mcp.json` starts `bin/bridge_mcp.py` from the plugin root.
+The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py` from the plugin root using Codex's own `${PLUGIN_ROOT}` variable. Claude Code ships no `.mcp.json` at all: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and Claude Code auto-discovers any file literally named `.mcp.json` at a plugin's root regardless of manifest intent, so the plugin deliberately never ships one to avoid registering a server Claude Code has no use for.
 
 > The server treats the current directory selected by the Codex host as its trusted workspace; open the Codex session in the intended project and do not use write-capable calls if the installed host launches the MCP server from a different directory. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
 

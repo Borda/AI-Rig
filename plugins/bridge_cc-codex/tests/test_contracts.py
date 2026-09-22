@@ -16,7 +16,7 @@ CORE_SCHEMA_PATH = SCHEMAS_ROOT / "envelope.schema.json"
 HARNESS_SCHEMA_PATH = SCHEMAS_ROOT / "harness-envelope.schema.json"
 MCP_SCHEMA_PATH = SCHEMAS_ROOT / "mcp-tools.schema.json"
 SETUP_SCHEMA_PATH = SCHEMAS_ROOT / "setup-result.schema.json"
-MCP_CONFIG_PATH = PLUGIN_ROOT / ".mcp.json"
+MCP_CONFIG_PATH = PLUGIN_ROOT / ".codex-mcp.json"
 
 CORE_FIELDS = {"status", "verdict", "findings", "files_touched", "remaining", "blockers"}
 PEER_FIELDS = CORE_FIELDS | {"details"}
