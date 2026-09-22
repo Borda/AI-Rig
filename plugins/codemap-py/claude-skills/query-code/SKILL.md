@@ -55,6 +55,7 @@ Enabled plugin adds version-matched `bin/` to Bash `PATH`. If unavailable intera
 | pytest fixtures | `fixture-rdeps <name>` · `fixture-graph <test-file>` |
 | subprocess relationships | `subprocess-deps <module>` · `subprocess-rdeps <module>` |
 | coverage / documentation gaps | `coverage <target>` · `coverage-gap [module]` · `undocumented [module]` |
+| repository shape / package inventory | `packages` (per-package module/test/docs counts) · `list --limit 0` |
 
 Direct/every/all/production/blast-radius callers → `fn-rdeps <module::symbol> --exclude-tests`; `fn-blast <module::symbol>` only for explicit transitive, closure, hops, or all-levels requests.
 

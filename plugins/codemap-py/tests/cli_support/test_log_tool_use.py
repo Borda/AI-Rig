@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import join_avoidance as ja
 
 _HOOK = Path(__file__).parent.parent.parent / "hooks" / "log-tool-use.py"
 
@@ -62,15 +63,24 @@ def _read_records(cwd: Path) -> list[dict]:
 
 
 @pytest.mark.parametrize(
-    ("tool", "tool_input", "expected_target"),
+    ("tool", "tool_input", "expected_target", "expected_search_path"),
     [
-        pytest.param("Grep", {"pattern": "def login", "path": "src/"}, "def login", id="grep-pattern"),
-        pytest.param("Glob", {"pattern": "**/*.py"}, "**/*.py", id="glob-pattern"),
-        pytest.param("Read", {"file_path": "/repo/src/auth.py"}, "/repo/src/auth.py", id="read-file-path"),
+        pytest.param("Grep", {"pattern": "def login", "path": "src/"}, "def login", "src/", id="grep-pattern-scoped"),
+        pytest.param("Grep", {"pattern": "def login"}, "def login", ".", id="grep-pattern-unscoped"),
+        pytest.param("Glob", {"pattern": "**/*.py"}, "**/*.py", ".", id="glob-pattern"),
+        pytest.param("Glob", {"pattern": "*.py", "path": "src/pkg"}, "*.py", "src/pkg", id="glob-pattern-scoped"),
+        pytest.param("Read", {"file_path": "/repo/src/auth.py"}, "/repo/src/auth.py", None, id="read-file-path"),
     ],
 )
-def test_appends_record_per_tool(tool: str, tool_input: dict, expected_target: str, tmp_path: Path) -> None:
-    """Each Grep/Read/Glob call writes one line carrying its tool name and target field."""
+def test_appends_record_per_tool(
+    tool: str, tool_input: dict, expected_target: str, expected_search_path: str | None, tmp_path: Path
+) -> None:
+    """Each Grep/Read/Glob call writes one line carrying its tool name, target, and any search scope.
+
+    ``target`` is the pattern when one is set, so a scoped Grep/Glob also records ``search_path``; the overlap join
+    reads it to tell a search of one file from a tree walk. Omitted search paths use the current directory; Reads carry
+    no ``search_path`` key.
+    """
     result = _run({"tool_name": tool, "tool_input": tool_input}, tmp_path)
 
     assert result.returncode == 0, result.stderr
@@ -78,6 +88,7 @@ def test_appends_record_per_tool(tool: str, tool_input: dict, expected_target: s
     assert len(records) == 1
     assert records[0]["tool"] == tool
     assert records[0]["target"] == expected_target
+    assert records[0].get("search_path") == (str(tmp_path) if expected_search_path == "." else expected_search_path)
     assert records[0]["layer"] == "tool"
 
 
@@ -102,6 +113,42 @@ def test_session_shard_uses_seeded_session_id(tmp_path: Path) -> None:
     shard = tmp_path / ".cache" / "codemap" / "logs" / "claude" / f"tools_{session}.jsonl"
     assert shard.exists(), "record not routed to the seeded per-session shard"
     assert json.loads(shard.read_text().strip())["session"] == session
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("scope", ["file", "directory", "legacy"])
+def test_search_scope_survives_hook_to_join(tmp_path: Path, scope: str) -> None:
+    """A real hook record distinguishes file inspection, directory search and unknowable old scope."""
+    source = tmp_path / "pkg" / "mod.py"
+    source.parent.mkdir()
+    source.write_text("import pkg.mod\n")
+    path = source if scope != "directory" else source.parent
+    result = _run(
+        {"tool_name": "Grep", "session_id": "scope-session", "tool_input": {"pattern": "pkg.mod", "path": str(path)}},
+        tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    (record,) = _read_records(tmp_path)
+    if scope == "legacy":
+        record.pop("search_path", None)
+        record.pop("search_scope", None)
+    else:
+        assert record["search_path"] == str(path)
+        assert record["search_scope"] == scope
+    answer = record | {
+        "layer": "cli",
+        "cmd": "rdeps",
+        "exit_code": 0,
+        "result": {"module": "pkg.mod", "index": {"query_complete": True}},
+    }
+    summary = ja.summarize(ja.parse_cli_records([answer]), ja.parse_tool_records([record]))
+    payload = json.loads(ja.render_json(summary))
+    assert payload["avoidance_count"] == 1
+    assert (
+        payload["events"][0]["kind"]
+        == {"file": "source_read", "directory": "structural_search", "legacy": "unknown"}[scope]
+    )
+    assert payload["structural_search_count"] == int(scope == "directory")
 
 
 def test_non_search_tool_ignored(tmp_path: Path) -> None:

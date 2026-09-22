@@ -1502,6 +1502,15 @@ def main() -> None:
     previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
     timer_started = time.monotonic()
     with CliInvocation("index", sys.argv[1:]) as invocation:
+        # Preserve the last complete root even if a later root option is malformed.
+        root_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+        root_parser.add_argument("--root", type=Path)
+        root_args = argparse.Namespace(root=None)
+        try:
+            root_parser.parse_known_args(invocation.argv, namespace=root_args)
+        except argparse.ArgumentError:
+            pass  # The full parser owns malformed-root diagnostics and exit status.
+        invocation.root = root_args.root
         try:
             _run_scan(invocation)
         finally:
@@ -1555,6 +1564,7 @@ def _run_scan(invocation: CliInvocation) -> None:
 
     try:
         root = args.root or find_root()
+        invocation.root = root
         out_path = _resolve_out_path(root)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 

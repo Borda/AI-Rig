@@ -18,7 +18,24 @@ import codemap_cache
 
 @pytest.mark.integration
 @pytest.mark.parametrize("refresh", [False, True])
-@pytest.mark.parametrize("cached", [False, True, "missing-callers", "error", "wrong-module", "incomplete", "stale"])
+@pytest.mark.parametrize(
+    "cached",
+    [
+        False,
+        True,
+        "missing-callers",
+        "error",
+        "wrong-module",
+        "incomplete",
+        "stale",
+        "missing-index",
+        "missing-completeness",
+        "null-completeness",
+        "legacy-complete",
+        "forward-wins",
+        "forward-incomplete",
+    ],
+)
 @pytest.mark.parametrize(
     "shell",
     [
@@ -58,7 +75,17 @@ def test_one_query_per_module_in_shipped_preloop(
     if cached:
         batch = tmp_path / "batch.json"
         batch.write_text(
-            json.dumps({"batch": [{"cmd": "rdeps", "ok": True, "result": {"module": "pkg.mod", "imported_by": []}}]})
+            json.dumps(
+                {
+                    "batch": [
+                        {
+                            "cmd": "rdeps",
+                            "ok": True,
+                            "result": {"module": "pkg.mod", "imported_by": [], "index": {"query_complete": True}},
+                        }
+                    ]
+                }
+            )
         )
         assert (
             codemap_cache.main(["write", "--batch", str(batch), "--index", str(index), "--cache-dir", str(cache)]) == 0
@@ -75,6 +102,18 @@ def test_one_query_per_module_in_shipped_preloop(
                 answer["error"] = "failed"
             elif cached == "wrong-module":
                 answer["module"] = "pkg.other"
+            elif cached == "missing-index":
+                answer.pop("index")
+            elif cached == "missing-completeness":
+                answer["index"] = {}
+            elif cached == "null-completeness":
+                answer["index"] = {"query_complete": None, "exhaustive": True}
+            elif cached == "legacy-complete":
+                answer["index"] = {"exhaustive": True}
+            elif cached == "forward-wins":
+                answer["index"] = {"query_complete": True, "exhaustive": False}
+            elif cached == "forward-incomplete":
+                answer["index"] = {"query_complete": False, "exhaustive": True}
             else:
                 answer["index"] = {"query_complete": cached != "incomplete", "stale": cached == "stale"}
             artifact["prefix"]["content_hash"] = codemap_cache._content_hash(artifact["prefix"]["answers"])
@@ -118,7 +157,8 @@ codemap-py() {{
     )
     assert result.returncode == 0, result.stderr
     calls = (tmp_path / "calls.txt").read_text().splitlines()
-    assert sum("rdeps" in call for call in calls) == (0 if cached is True else 1), calls
+    reusable = cached is True or cached in ("legacy-complete", "forward-wins")
+    assert sum("rdeps" in call for call in calls) == (0 if reusable else 1), calls
     assert sum("central" in call for call in calls) == (2 if refresh else 1), calls
     assert sum("query deps " in call for call in calls) == 1, calls
     for item in range(1, 6):

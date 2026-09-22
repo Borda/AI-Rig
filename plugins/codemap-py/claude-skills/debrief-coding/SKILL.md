@@ -64,11 +64,11 @@ Each line = one JSON record. Filter `--since` against `ts`; filter `--session` w
 
 **`--session` guard**: session UUID may be absent from one or both log files (e.g. skills.jsonl records only skill events, not all CLI events). Filtering absent session ID returns empty set for that file — expected, not error. Report "session not found in <file>" rather than treating empty result as data loss.
 
-CLI record fields: `ts`, `layer`, `runtime`, `v`, `session`, `cmd`, `argv`, `result` (nested: `count`, `query_complete`, `completeness_reason`, `stale`, `method`, `not_covered`, `error`; index records also carry `trigger`, `changed_count`, `incremental`, `stale_before`, and `result_currency`), `timing_ms`, `stderr` (optional), `exit_code` (optional).
+CLI record fields: `ts`, `layer`, `runtime`, `v`, `session`, `project` (0.39.4+), `cmd`, `argv`, `result`, `timing_ms`, `stderr` (optional), `exit_code` (optional). Query results nest their honesty block under `result.index`: `query_complete`, `stale`, `root_mismatch`, `compact`, `method`, `not_covered`, `index_path`; `completeness_reason` and `degraded` appear only in full-coverage mode or when `query_complete` is false — a compact complete answer omits them by design, so their absence is not a gap. Top-level `result` carries the command payload (`count`, `imported_by`, `called_by`, …) and `error`. Index records carry `trigger`, `changed_count`, `incremental`, `stale_before`, `result_currency` at top level; `changed_count` is `null` when the caller did not supply it (raw CLI, and every hook-triggered refresh before 0.39.5).
 
 Skill record fields: `ts`, `layer`, `runtime`, `v`, `session`, `skill`, `event`, `intent`, `hook_session`.
 
-Tool fields (`layer: "tool"`, `log-tool-use.py`): `ts`, `layer`, `runtime`, `v`, `session`, `skill`, `event`, `tool` (`Grep`|`Read`|`Glob`|`Bash`), `target` (Grep/Glob pattern/search path, Read file_path, Bash search command truncated to 200 chars). Count raw grep/read volume per runtime/session. Never infer flat legacy records as Claude from tool names.
+Tool fields (`layer: "tool"`, `log-tool-use.py`): `ts`, `layer`, `runtime`, `v`, `session`, `skill`, `event`, `tool` (`Grep`|`Read`|`Glob`|`Bash`), `target` (Grep/Glob pattern, or path when no pattern; Read file_path; Bash search command truncated to 200 chars), `search_path` (Grep/Glob path; omitted input defaults to the hook's current directory), `search_scope` (producer-observed file/directory/unknown). Count raw grep/read volume per runtime/session. Never infer flat legacy records as Claude from tool names.
 
 ## Step 3: Analyse
 
@@ -78,22 +78,24 @@ Compute from filtered records:
 
 - Exclude records with `source: "bench"` (benchmark/demo load) and CLI records with empty `cmd` (pre-0.23 test pollution) from organic stats; separately report "scripted/polluted records excluded: N".
 - Select the newest observed version with recent records as the primary cohort; report dates, counts, and sample limits. Keep adjacent versions as separate comparisons, older/unknown versions historical. Never pool old failures into current rates. Preserve project/runtime boundaries; separate plugin-development traffic when identifiable. No explicit diagnostic marker does not prove organic use.
+- Records without a `v` field belong to no version cohort: exclude them from every "recent" cut by default and report their count separately. A filter written as `if v and older(v)` lets them through — the plugin is installed once per machine, so a project whose newest record is old was simply not used recently; version lag is inactivity, not a per-project upgrade gap.
 
 **CLI layer:**
 
 - Total invocations, terminal success/error: `exit_code: 0` = success; present nonzero or non-empty `result.error` = error; absent exit code = legacy outcome unverified. Unrecorded attempts, abrupt termination, and telemetry-write failures prevent a complete failure-rate claim.
 - Aggregate `result.index.completeness_reason` (0.23+ veto slug: `stale` / `untracked` / `degraded` / `collision` / `root_mismatch` / `module_degraded`; `ok` = complete): explains false query_complete.
 - Subcommand distribution: count per `cmd` value
-- Timing median/p95/max `timing_ms`; p95: `sorted_ms = sorted(r["timing_ms"] for r in cli_records if r.get("timing_ms") is not None); p95 = sorted_ms[int(len(sorted_ms) * 0.95)] if sorted_ms else 0`
-- Coverage: fraction of results with `"not_covered": true` or non-empty `not_covered`
+- Timing median/p95/max `timing_ms`, computed **separately for `cmd == "index"` and for query commands**; p95: `sorted_ms = sorted(r["timing_ms"] for r in cli_records if r.get("timing_ms") is not None); p95 = sorted_ms[int(len(sorted_ms) * 0.95)] if sorted_ms else 0`. Background refreshes are a third of CLI records on active repos and occupy the whole latency tail; a pooled p95 describes refresh cost, not query cost.
+- Static blind spots: `result.index.not_covered` is a fixed list of analysis limits per method (`importlib.import_module`, `__import__`, `lazy-loading` for the import graph; `dynamic-dispatch`, `hook-callbacks`, `string-dispatch` for the call graph; `dynamic-dispatch`, `runtime-injection` for `static-ast` symbol answers). It is present on nearly every complete query and is **not** a per-query coverage gap — report the distinct slug lists and how many queries carry each, never "fraction with non-empty `not_covered`".
 - Error patterns: group `result.error` strings by prefix (first 60 chars); list top-5 by count
-- Stale-index warnings: fraction of results with `"stale": true`
+- Stale-index warnings: fraction of query results with `result.index.stale: true`
 
 **Skill layer:**
 
 - Total skill starts by `skill` name
 - Session count (distinct `session` values)
 - Timeline: first and last `ts` in dataset
+- Zero skill starts beside hundreds of CLI records is the expected shape, not a broken hook: the prompt preamble steers agents to `codemap-py query` directly, and Codex has no skill-start hook at all. State it as "direct-CLI usage; per-skill joins have no denominator" and move on — do not open a telemetry investigation on that signal alone.
 
 **Cross-layer:**
 
@@ -112,6 +114,8 @@ python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/join_avoidance.py" --logs
 ```
 
 The helper scans the entire supplied tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately. Preserve `per_runtime` and `unattributed`; absent skill starts do not prove non-use. High overlap alone proves neither a broken guard nor redundant work. If nonzero, list overlapping modules with these limits.
+
+Each event carries `kind`: `source_read`, `structural_search`, or `unknown`. Grep/Glob classification uses producer-observed `search_scope`: `file` is `source_read` whichever file it names, `directory` is `structural_search`, missing legacy scope stays `unknown`, never inferred from a pattern or the analysis host filesystem. Report `unknown_count` beside `structural_search_count` (overall and per runtime): a legacy cohort and a classified cohort both show zero structural searches, only `unknown_count` separates them. Report `structural_search_count` beside total overlaps, not as confirmed misuse. Bash targets cut at 200 characters hide later flags and paths; recursive-looking Bash searches outside own-file inspection stay `unknown`, not `structural_search`.
 
 ## Step 4: Write report
 
@@ -140,15 +144,15 @@ Create report via Write with sections:
 
 ## Performance
 
-| metric | value |
-|--------|-------|
-| median timing_ms | ... |
-| p95 timing_ms | ... |
-| max timing_ms | ... |
+| metric | queries | index refreshes |
+|--------|---------|-----------------|
+| median timing_ms | ... | ... |
+| p95 timing_ms | ... | ... |
+| max timing_ms | ... | ... |
 
-## Coverage gaps
+## Static blind spots
 
-<fraction with not_covered; list top modules if available>
+<distinct `result.index.not_covered` slug lists with the number of queries carrying each; incomplete queries by `completeness_reason`>
 
 ## Error patterns
 

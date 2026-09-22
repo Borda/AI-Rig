@@ -141,7 +141,7 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 ## Skill: `debrief-coding`
 
-**Purpose**: read-only diagnostic/usage report over local codemap telemetry (`.cache/codemap/logs/` JSONL) — subcommand distribution, timing, coverage gaps, error patterns, skill-invocation counts, session timelines, and avoidance-event (guard-chain leak) rate across legacy flat and recursive runtime shards.
+**Purpose**: read-only diagnostic/usage report over local codemap telemetry (`.cache/codemap/logs/` JSONL) — subcommand distribution, timing (queries and index refreshes separately), static blind-spot slugs, error patterns, skill-invocation counts, session timelines, and the module-overlap proxy with its `structural_search` subset (a shape match, not a guard-chain leak rate) across legacy flat and recursive runtime shards. Missing Grep/Glob scope remains `unknown`, never presumed recursive; new records retain search path and producer-observed file/directory scope. Recursive-looking Bash searches outside own-file inspection also stay `unknown`: truncated command spelling cannot establish directory scope.
 
 **Inputs**: `[--since <YYYY-MM-DD>] [--session <id>] [--anonymize] [--output <path>]`.
 

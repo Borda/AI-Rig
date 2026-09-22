@@ -27,6 +27,7 @@ Exact file+symbol local edit: skip Codemap only with no unresolved caller/depend
 | callers plus test-module importers | `fn-rdeps <module::symbol> --exclude-tests`, then `rdeps <module>` |
 | transitive callers / function blast | `fn-blast <module::symbol>` |
 | broken Sphinx cross-references | `xrefs --broken <module>` |
+| test/doc gaps; package inventory | `coverage-gap [module]` · `undocumented [module]` · `packages` · `list --limit 0` |
 
 Routing shortlist, not the parser's full surface. Known syntax: no preliminary help/doctor/scan/freshness. Unknown argument: `query <subcommand> --help`; unknown operation: `query --help`. Never guess. Direct/every/all/production/blast-radius callers → `fn-rdeps <module::symbol> --exclude-tests`; `fn-blast <module::symbol>` only for explicit transitive, closure, hops, or all-levels requests. `test-impact <target>` selects transitive tests; direct test-module imports: `rdeps <module>`, then filter/report tests.
 

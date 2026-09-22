@@ -52,18 +52,19 @@ def plugin_version() -> str:
     return runtime_plugin_version()
 
 
-def session_id() -> str:
-    """Return the seeded session id for this project, or ``""`` if none."""
+def session_id(root: Path | None = None) -> str:
+    """Return the seeded session id for the target project, or ``""`` if none."""
     try:
-        root = subprocess.check_output(
+        resolved = subprocess.check_output(
             ["git", "rev-parse", "--show-toplevel"],
             text=True,
             stderr=subprocess.DEVNULL,
             timeout=2,
+            cwd=root,
         ).strip()
-        proj = Path(root).name
+        proj = Path(resolved).name
     except Exception:  # noqa: BLE001 — git absent / not a repo → fall back to cwd
-        proj = Path.cwd().name
+        proj = (root or Path.cwd()).name
     sid_file = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()) / f"codemap-{proj}-session"
     try:
         return sid_file.read_text().strip()
@@ -89,10 +90,10 @@ def runtime_id() -> str:
     return "direct"
 
 
-def runtime_session(runtime: str) -> str:
+def runtime_session(runtime: str, *, root: Path | None = None) -> str:
     """Return the safe correlation token for one resolved runtime.
 
-    Only Claude reads the seed marker. Codex exposes its own thread identifier,
+    Only Claude reads the target project's seed marker. Codex exposes its own thread identifier,
     while direct invocations may opt into a stable token with
     ``CODEMAP_TELEMETRY_SESSION``; all other cases use a process-local invocation
     token so concurrent direct calls never merge into one bare ``cli.jsonl``.
@@ -100,7 +101,7 @@ def runtime_session(runtime: str) -> str:
     if runtime == "codex":
         return os.environ.get("CODEX_THREAD_ID") or invocation_id()
     if runtime == "claude":
-        return os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CSID") or session_id() or invocation_id()
+        return os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("CSID") or session_id(root) or invocation_id()
     explicit = os.environ.get("CODEMAP_TELEMETRY_SESSION", "")
     return explicit if _SAFE_SESSION.fullmatch(explicit) else invocation_id()
 
@@ -121,23 +122,32 @@ def _rotate(path: Path) -> None:
 
 
 def log_cli(
-    cmd: str, argv: list[str], result: object, t0: float, *, log_dir: Path | None = None, exit_code: int = 0
+    cmd: str,
+    argv: list[str],
+    result: object,
+    t0: float,
+    *,
+    log_dir: Path | None = None,
+    exit_code: int = 0,
+    root: Path | None = None,
 ) -> None:
     """Append one CLI telemetry record; ``log_dir`` is a test-only final-dir seam.
 
     Production callers must omit ``log_dir`` so :func:`log_dir_for` applies the runtime component beneath the
     ``CODEMAP_LOG_DIR`` root. The only in-repository callers that inject it are telemetry tests, where it intentionally
-    denotes the already-resolved final directory.
+    denotes the already-resolved final directory. Engines supply their resolved target ``root`` so log placement,
+    project identity and legacy Claude session lookup cannot fall back to an unrelated caller directory.
     """
     if os.environ.get("CODEMAP_LOGGING", "true").lower() == "false":
         return
     try:
         runtime = runtime_id()
+        project_root = canonical_root(root)
         # ``log_dir`` remains a final-directory test seam. Production callers omit it,
         # then every invocation receives its required runtime component under the shared
         # log root instead of writing flat records that bypass isolation.
-        scoped_log_dir = log_dir if log_dir is not None else log_dir_for(runtime)
-        sid = session_id() if log_dir is not None else runtime_session(runtime)
+        scoped_log_dir = log_dir if log_dir is not None else log_dir_for(runtime, root=project_root)
+        sid = session_id(project_root) if log_dir is not None else runtime_session(runtime, root=project_root)
         log_file = log_path_for(sid, scoped_log_dir)
         log_file.parent.mkdir(parents=True, exist_ok=True)
         if log_file.exists() and log_file.stat().st_size > LOG_MAX_BYTES:
@@ -149,7 +159,7 @@ def log_cli(
             "v": plugin_version(),
             "cmd": cmd,
             "session": sid,
-            "project": canonical_root().as_posix(),
+            "project": project_root.as_posix(),
             "argv": argv,
             "timing_ms": max(0, int((time.time() - t0) * 1000)),
             "result": result if isinstance(result, dict) else {},
@@ -180,6 +190,7 @@ class CliInvocation:
     argv: list[str]
     result: dict = field(default_factory=dict)
     started: float = field(default_factory=time.time)
+    root: Path | None = None
 
     def __enter__(self) -> CliInvocation:
         """Start the command's bounded terminal logging scope."""
@@ -200,4 +211,4 @@ class CliInvocation:
         # Help exits before a command is selected; it is not a structural query.
         if isinstance(exc, SystemExit) and code == 0 and not self.result:
             return
-        log_cli(self.command, self.argv, self.result, self.started, exit_code=code)
+        log_cli(self.command, self.argv, self.result, self.started, exit_code=code, root=self.root)

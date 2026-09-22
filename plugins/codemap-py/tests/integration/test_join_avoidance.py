@@ -1,9 +1,7 @@
 """Tests for join_avoidance.py — the avoidance-side telemetry join.
 
-The join flags a Grep/Read/Glob tool call as an *avoidance event* when it re-derives a
-module that codemap already answered completely (``query_complete: true``) within the
-window. That means the guard chain leaked — the agent hand-derived what the index had
-already returned exhaustively. These tests pin the accept criteria:
+The join flags a Grep/Read/Glob tool call as an overlap after a complete module answer within the window. This is a
+name/time proxy, not evidence that the guard leaked or the source read was redundant. These tests pin the criteria:
 
 - a grep on module X within the window AFTER a complete answer on X → exactly 1 event;
 - a grep BEFORE the answer, or on an unrelated module, or after an INCOMPLETE answer → 0;
@@ -85,6 +83,100 @@ def test_batch_counts_successful_logical_answers_only() -> None:
     assert payload["metric"] == "module_overlap_proxy_v3"
     assert payload["confirmed_misuse"] is None
     assert "not confirmed misuse" in ja.render_text(summary)
+
+
+@pytest.mark.parametrize(
+    ("tool", "target", "search_path", "kind"),
+    [
+        pytest.param("Read", "src/pkg/mod.py", "", "source_read", id="read-own-file"),
+        pytest.param("Read", "src\\pkg\\mod.py", "", "source_read", id="read-own-file-windows"),
+        pytest.param("Read", "src/pkg/mod.py.bak", "", "source_read", id="read-backup-copy"),
+        pytest.param(
+            "Bash", "grep -n 'os.replace\\|tempfile' src/pkg/mod.py | head", "", "source_read", id="grep-own-file"
+        ),
+        pytest.param("Bash", "grep -n 'x' src/pkg/mod.py", "", "source_read", id="grep-single-file"),
+        pytest.param("Bash", "rg -n 'x' src/pkg/mod/__init__.py", "", "source_read", id="rg-own-package-init"),
+        pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", "", "unknown", id="rg-other-single-file"),
+        pytest.param("Bash", "grep -rn 'pkg.mod' src/pkg/other.py", "", "unknown", id="grep-r-other-single-file"),
+        pytest.param("Bash", "grep -rn 'pkg.mod' src tests", "", "unknown", id="grep-r-tree"),
+        pytest.param("Bash", "egrep -rn 'pkg.mod' src", "", "unknown", id="egrep-r-tree"),
+        pytest.param("Bash", "fgrep -r 'pkg.mod' src", "", "unknown", id="fgrep-r-tree"),
+        pytest.param("Bash", "grep -n --include=*.py -r 'import pkg.mod' .", "", "unknown", id="grep-include-tree"),
+        pytest.param("Bash", "rg -n 'from pkg.mod import' src", "", "unknown", id="rg-tree"),
+        pytest.param("Grep", "pkg.mod", "", "unknown", id="grep-tool-unscoped"),
+        pytest.param("Grep", "pkg.mod", "src", "structural_search", id="grep-tool-tree-scope"),
+        pytest.param("Grep", "pkg.mod", "src/pkg/mod.py", "source_read", id="grep-tool-own-file-scope"),
+        pytest.param("Grep", "pkg.mod", "src/pkg/other.py", "source_read", id="grep-tool-other-file-scope"),
+        pytest.param("Glob", "**/pkg/mod*", "", "unknown", id="glob-tool"),
+        pytest.param("Glob", "*.py", "src/pkg/mod/__init__.py", "source_read", id="glob-tool-own-file-scope"),
+    ],
+)
+def test_overlap_kind_separates_source_reads_from_structural_searches(
+    tool: str, target: str, search_path: str, kind: str
+) -> None:
+    """Directory scope is structural; recursive-looking shell spelling alone leaves scope unknown."""
+    scope = {
+        "src": "directory",
+        "src/pkg/mod.py": "file",
+        "src/pkg/other.py": "file",
+        "src/pkg/mod/__init__.py": "file",
+    }
+    assert ja.classify_overlap("pkg.mod", tool, target, search_path, scope.get(search_path, "")) == kind
+
+
+@pytest.mark.parametrize(
+    ("tool", "target"),
+    [
+        pytest.param("Grep", "pkg.mod", id="legacy-grep"),
+        pytest.param("Bash", "rg -n 'pkg.mod' src/pkg/other.py", id="unverified-shell-scope"),
+    ],
+)
+def test_unknown_count_separates_unclassifiable_from_zero_structural(tool: str, target: str) -> None:
+    """Unverified search scope is counted as unknown, overall and per runtime, never as zero structural.
+
+    A cohort of pre-scope records and a cohort of classified records both report ``structural_search_count: 0``; only
+    ``unknown_count`` tells "no tree searches" from "nothing classifiable".
+    """
+    answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
+    events = ja.parse_tool_records([_tool("src/pkg/mod.py", 1, tool="Read"), _tool(target, 2, tool=tool)])
+    summary = ja.summarize(answers, events)
+    payload = json.loads(ja.render_json(summary))
+    assert payload["avoidance_count"] == 2
+    assert payload["structural_search_count"] == 0
+    assert payload["unknown_count"] == 1
+    assert payload["per_runtime"]["unattributed"]["unknown_count"] == 1
+    assert "unknown scope among them:       1" in ja.render_text(summary)
+    assert "unknown 1" in ja.render_text(summary)
+
+
+def test_structural_search_count_is_subset_of_avoidance_count() -> None:
+    """A source read and a tree grep both overlap, but only the grep counts as structural.
+
+    The legacy ``avoidance_count`` stays a plain overlap proxy; the new counter narrows it without changing it, per
+    runtime and overall. A Grep-tool record scoped to the own file joins through ``search_path`` as a source read.
+    """
+    answers = ja.parse_cli_records([_cli("pkg.mod", 0)])
+    events = ja.parse_tool_records(
+        [
+            _tool("src/pkg/mod.py", 1, tool="Read"),
+            _tool("grep -rn 'pkg.mod' src tests", 2, tool="Bash"),
+            _tool("pkg.mod", 3) | {"search_path": "src/pkg/mod.py", "search_scope": "file"},
+            _tool("pkg.mod", 4) | {"search_path": "src", "search_scope": "directory"},
+        ]
+    )
+    summary = ja.summarize(answers, events)
+    payload = json.loads(ja.render_json(summary))
+    assert payload["avoidance_count"] == 4
+    assert payload["structural_search_count"] == 1
+    assert payload["unknown_count"] == 1
+    assert [event["kind"] for event in payload["events"]] == [
+        "source_read",
+        "unknown",
+        "source_read",
+        "structural_search",
+    ]
+    assert payload["per_runtime"]["unattributed"]["structural_search_count"] == 1
+    assert "structural searches among them: 1" in ja.render_text(summary)
 
 
 def _ts(offset_min: float) -> str:

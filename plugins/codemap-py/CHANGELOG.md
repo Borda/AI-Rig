@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.39.5
+
+- Security: the prompt hook validates the index header's `git_sha` as a hex object name before passing it to `git diff`. A planted `.cache/codemap/<project>.json` with an option-shaped `git_sha` (for example `--output=<path>`) could otherwise make the hook write a file at that path on every prompt that starts a refresh; such a value now yields an unknown `changed_count` without any git call. A count that fails for any other reason leaves the count unknown and the refresh still starts, so the refresh lock can no longer leak.
+
+- `changed_count` on hook-triggered refreshes records the eligible staged-path delta against the index commit (`git diff --cached --name-only -z`), applying built-in and configured scanner exclusions while retaining indexed documentation paths. Unstaged and untracked files are outside this count; it is not a measured count of reparsed files. NUL-delimited paths avoid quoting and space-related miscounts; unavailable or invalid revisions remain unknown.
+
+- Tool telemetry retains Grep/Glob `search_path` and producer-observed `search_scope` beside the pattern `target`. The join classifies single-file searches as `source_read`, directory searches as `structural_search`, and missing or indeterminate legacy scope as `unknown`; `unknown_count` is reported overall and per runtime beside `structural_search_count`. `anonymize.py` scrubs search paths. The classifier also recognizes `egrep -r`/`fgrep -r`, rejects backup-file names as own-file evidence, and serializes `OverlapKind` values. The legacy overlap count remains a proxy, not confirmed misuse or measured savings.
+
+- Recursive-looking Bash searches outside own-file inspection are classified as `unknown`: command spelling alone cannot establish directory scope, even when `rg` or a recursive grep flag appears. Debrief guidance on both hosts explains this conservative classification, unknown legacy search scope, static-analysis blind spots and the 200-character Bash logging limit; it does not use a release-time overlap tally as product behavior.
+
+- Query and index invocations retain their target project — the explicit `--root`, or the index's recorded scan root when none is given — for telemetry placement, project identity and Claude marker lookup, including when launched from another repository. Runtime identity and terminal outcomes remain unchanged.
+
+- Debrief guidance (both hosts): completeness fields live under `result.index`; `completeness_reason` is absent by design on compact complete answers; `not_covered` is a fixed per-method blind-spot list, never a coverage-gap fraction; timing is reported for queries and index refreshes separately; records without `v` are excluded from recent cohorts by default; zero skill starts beside CLI volume is the expected direct-CLI shape.
+
+- Query routing tables (both hosts) list `packages` and `list --limit 0` for repository-shape questions; the Codex table gains the coverage/documentation-gap row it lacked.
+
+- Test isolation clears `CLAUDE_CODE_SESSION_ID`, `CSID` and `CODEX_THREAD_ID` so seeded-session join tests do not inherit the outer host session.
+
 ## 0.39.4
 
 - Shared Claude context contract v4 keeps failed/missing pre-flight queries partial, requires explicit completeness metadata, and preserves per-child batch limits, source verification and static-versus-measured coverage distinctions.

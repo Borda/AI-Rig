@@ -47,6 +47,20 @@ def _telemetry_off(monkeypatch):
     monkeypatch.setenv("CODEMAP_LOGGING", "false")
 
 
+@pytest.fixture(autouse=True)
+def _host_session_off(monkeypatch):
+    """Keep the host's own session identity out of the suite.
+
+    ``_hookutil.runtime_session`` and ``codemap_py.telemetry`` prefer ``CLAUDE_CODE_SESSION_ID``/``CSID`` (Claude) and
+    ``CODEX_THREAD_ID`` (Codex) over the seeded marker, so a suite run from inside either host's session made every
+    seeded-shard join test fail on the host's real session id. Subprocess-spawning tests copy ``os.environ`` and inherit
+    the cleared state. Tests that exercise an env fallback set the variable explicitly.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CSID", raising=False)
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
+
+
 @pytest.fixture(name="scan_index", scope="session")
 def _scan_index() -> Path:
     """Path to the scan-index bin script."""

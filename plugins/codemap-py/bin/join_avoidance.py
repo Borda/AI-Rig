@@ -15,6 +15,15 @@ This matches names, not intent. Batch children count as logical answers rather
 than additional CLI invocations. Failed, stale, incomplete, and marked benchmark
 answers do not support overlaps.
 
+Each overlap also carries a ``kind``: ``source_read`` (a Read or single-file search
+of the answered module's own body) or ``structural_search`` (a recursive search that
+names the module over other paths). ``structural_search_count`` is the subset shaped
+like re-deriving importers or callers the index already returned; it is still a shape
+match, not confirmed misuse. A Grep/Glob record carries ``search_path`` and producer-observed
+``search_scope``; missing or unrecognized scope produces ``unknown``, never an inferred
+structural search. A Bash target is truncated to 200 characters at log time, so a
+recursive flag or an own-file path past the cut is invisible to the classifier.
+
 Usage:
     python join_avoidance.py --logs .cache/codemap/logs
     python join_avoidance.py --cli cli.jsonl --tools tools.jsonl --window-min 10
@@ -33,6 +42,7 @@ import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 DEFAULT_WINDOW_MIN = 10
@@ -43,6 +53,29 @@ _IDENT = "A-Za-z0-9_"
 _RUNTIMES = ("claude", "codex", "direct")
 _RUNTIME_KEY = "_join_avoidance_runtime"
 _UNATTRIBUTED_RUNTIME = "unattributed"
+
+
+class OverlapKind(str, Enum):
+    """Shape of one flagged overlap; serialized by value in JSON output.
+
+    ``SOURCE_READ`` is source inspection; ``STRUCTURAL_SEARCH`` requires producer-observed directory scope. ``UNKNOWN``
+    retains overlaps whose scope the record cannot establish, including recursive-looking Bash commands.
+    """
+
+    SOURCE_READ = "source_read"
+    STRUCTURAL_SEARCH = "structural_search"
+    UNKNOWN = "unknown"
+
+
+_RECURSIVE_TOOLS = frozenset({"Grep", "Glob"})
+#: Shell-search shapes that may walk a tree; command spelling cannot establish operand scope.
+#: ``grep``/``egrep``/``fgrep`` need an explicit
+#: recursive flag; ``rg`` recurses by default. Flags are matched as whole tokens so
+#: ``-rn``/``-rin`` combinations count and ``--recursive`` spelled out counts too.
+_RECURSIVE_SHELL_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:rg|ripgrep)\s"
+    r"|(?:^|[\s;&|(])[ef]?grep\s+(?:[^\n;&|]*?\s+)?(?:-[A-Za-z]*[rR][A-Za-z]*|--(?:recursive|dereference-recursive|include(?:=\S*)?))(?=\s|$)"
+)
 
 
 @dataclass(frozen=True)
@@ -72,6 +105,8 @@ class ToolEvent:
         ts: event time (UTC) parsed from the record's ``ts`` field.
         tool: ``"Grep"`` | ``"Read"`` | ``"Glob"``.
         target: the tool's target string (pattern, path, or file_path).
+        search_path: the Grep/Glob path when the record carries one, else ``""``.
+        search_scope: producer-observed file/directory scope; absent or unknown cannot prove a tree search.
     """
 
     session: str
@@ -81,6 +116,8 @@ class ToolEvent:
     runtime: str | None = None
     version: str | None = None
     project: str | None = None
+    search_path: str = ""
+    search_scope: str = ""
 
 
 @dataclass(frozen=True)
@@ -95,6 +132,7 @@ class AvoidanceEvent:
         answer_ts: when codemap answered ``module`` completely.
         tool_ts: when the overlapping tool call happened.
         gap_seconds: seconds between the answer and the tool call.
+        kind: the :class:`OverlapKind` of the overlap.
     """
 
     session: str
@@ -107,6 +145,7 @@ class AvoidanceEvent:
     runtime: str | None = None
     version: str | None = None
     project: str | None = None
+    kind: OverlapKind = OverlapKind.SOURCE_READ
 
 
 @dataclass
@@ -130,6 +169,26 @@ class Summary:
     per_skill: dict[str, int] = field(default_factory=dict)
     per_runtime: dict[str, dict[str, int | float | dict[str, int]]] = field(default_factory=dict)
     record_counts: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def structural_search_count(self) -> int:
+        """Number of overlaps shaped like re-derivation, not source inspection.
+
+        Examples:
+            >>> Summary(window_min=10, total_tool_events=0, total_complete_answers=0).structural_search_count
+            0
+        """
+        return sum(1 for event in self.avoidance_events if event.kind == OverlapKind.STRUCTURAL_SEARCH)
+
+    @property
+    def unknown_count(self) -> int:
+        """Number of overlaps whose search scope the record cannot establish (legacy or indeterminate).
+
+        Examples:
+            >>> Summary(window_min=10, total_tool_events=0, total_complete_answers=0).unknown_count
+            0
+        """
+        return sum(1 for event in self.avoidance_events if event.kind == OverlapKind.UNKNOWN)
 
     @property
     def rate(self) -> float:
@@ -303,6 +362,85 @@ def module_matches(module: str, text: str) -> bool:
     return pattern.search(text) is not None
 
 
+def targets_own_file(module: str, text: str) -> bool:
+    """Return True if *text* names the source file that defines *module*.
+
+    A module ``pkg.mod`` lives at ``pkg/mod.py`` or ``pkg/mod/__init__.py``; either
+    spelling, with ``/`` or ``\\`` separators, marks the target as the module's own body.
+    The file name must end there: ``mod.py.bak`` or ``mod.pyx`` is another file.
+
+    Examples:
+        >>> targets_own_file("pkg.mod", "src/pkg/mod.py")
+        True
+        >>> targets_own_file("pkg.mod", "grep -n 'tempfile' src/pkg/mod.py | head")
+        True
+        >>> targets_own_file("pkg", "src\\\\pkg\\\\__init__.py")
+        True
+        >>> targets_own_file("pkg.mod", "grep -rn 'pkg.mod' src tests")
+        False
+        >>> targets_own_file("pkg.mod", "src/pkg/mod2.py")
+        False
+        >>> targets_own_file("pkg.mod", "src/pkg/mod.py.bak")
+        False
+    """
+    if not module or not text:
+        return False
+    escaped = r"[/\\]".join(re.escape(seg) for seg in re.split(r"[./]", module))
+    try:
+        pattern = re.compile(rf"(^|[^{_IDENT}]){escaped}(?:\.pyi?|[/\\]__init__\.pyi?)(?![{_IDENT}.])")
+    except re.error:
+        return False
+    return pattern.search(text) is not None
+
+
+def classify_overlap(module: str, tool: str, target: str, search_path: str = "", search_scope: str = "") -> OverlapKind:
+    """Return the overlap kind for one flagged tool call.
+
+    ``structural_search`` requires producer-observed directory scope. Read and
+    searches aimed at the module's own body are ``source_read``: the index answers
+    who depends on the module, never what is in it. Other recursive-looking Bash
+    searches are ``unknown`` because their bounded command string cannot establish operand scope.
+    For Grep/Glob the scope lives in ``search_path`` (the ``target`` is the pattern);
+    the producer's ``search_scope`` distinguishes files and directories: a file scope is
+    ``source_read`` whichever file it names, a directory scope is ``structural_search``. Missing
+    or unrecognized scope is ``unknown``, never inferred from a pattern or by inspecting the
+    analysis host's filesystem.
+
+    Examples:
+        >>> classify_overlap("pkg.mod", "Read", "src/pkg/mod.py").value
+        'source_read'
+        >>> classify_overlap("pkg.mod", "Bash", "grep -n 'os.replace' src/pkg/mod.py").value
+        'source_read'
+        >>> classify_overlap("pkg.mod", "Bash", "grep -rn 'pkg.mod' src tests").value
+        'unknown'
+        >>> classify_overlap("pkg.mod", "Bash", "rg -n 'import pkg.mod' src").value
+        'unknown'
+        >>> classify_overlap("pkg.mod", "Grep", "pkg.mod").value
+        'unknown'
+        >>> classify_overlap("pkg.mod", "Grep", "pkg.mod", "src/pkg/mod.py", "file").value
+        'source_read'
+        >>> classify_overlap("pkg.mod", "Grep", "pkg.mod", "src/pkg/other.py", "file").value
+        'source_read'
+        >>> classify_overlap("pkg.mod", "Grep", "pkg.mod", "src/pkg", "directory").value
+        'structural_search'
+        >>> classify_overlap("pkg.mod", "Bash", "rg -n 'x' src/pkg/mod.py").value
+        'source_read'
+    """
+    if tool in _RECURSIVE_TOOLS:
+        # A single-file search is inspection whichever file it reads, the same rule the shell branch applies to
+        # `grep -n … one/file.py`; only a directory scope is a tree walk. Anything else is unknown.
+        if search_scope == "file":
+            return OverlapKind.SOURCE_READ
+        if search_scope == "directory":
+            return OverlapKind.STRUCTURAL_SEARCH
+        return OverlapKind.UNKNOWN
+    if targets_own_file(module, target):
+        return OverlapKind.SOURCE_READ
+    if tool == "Bash" and _RECURSIVE_SHELL_RE.search(target):
+        return OverlapKind.UNKNOWN
+    return OverlapKind.SOURCE_READ
+
+
 def _project_coordinate(record: dict) -> str | None:
     """Validate a serialized project coordinate without resolving it on the analysis host."""
     value = record.get("project")
@@ -378,6 +516,8 @@ def parse_tool_records(records: list[dict]) -> list[ToolEvent]:
         if record.get("source") == "bench" or _project_coordinate(record) is None:
             continue
         target = record.get("target")
+        search_path = record.get("search_path")
+        search_scope = record.get("search_scope")
         ts = _parse_ts(record.get("ts"))
         session = record.get("session")
         tool = record.get("tool")
@@ -399,6 +539,8 @@ def parse_tool_records(records: list[dict]) -> list[ToolEvent]:
                     runtime=runtime if runtime in _RUNTIMES else None,
                     version=record.get("v"),
                     project=record.get("project"),
+                    search_path=search_path if isinstance(search_path, str) else "",
+                    search_scope=search_scope if isinstance(search_scope, str) else "",
                 )
             )
     return events
@@ -473,6 +615,7 @@ def find_avoidance_events(
                 runtime=event.runtime,
                 version=event.version,
                 project=event.project,
+                kind=classify_overlap(answer.module, event.tool, event.target, event.search_path, event.search_scope),
             )
         )
     return flagged
@@ -507,18 +650,32 @@ def _runtime_metrics(
 ) -> dict[str, dict[str, int | float | dict[str, int]]]:
     """Return totals, rates, and flagged modules grouped by source runtime."""
     metrics: dict[str, dict[str, int | float | dict[str, int]]] = {}
+
+    def bucket(runtime: str | None) -> dict[str, int | float | dict[str, int]]:
+        return metrics.setdefault(
+            _runtime_label(runtime),
+            {
+                "total_complete_answers": 0,
+                "total_tool_events": 0,
+                "avoidance_count": 0,
+                "structural_search_count": 0,
+                "unknown_count": 0,
+            },
+        )
+
     for answer in answers:
-        label = _runtime_label(answer.runtime)
-        metric = metrics.setdefault(label, {"total_complete_answers": 0, "total_tool_events": 0, "avoidance_count": 0})
+        metric = bucket(answer.runtime)
         metric["total_complete_answers"] = int(metric["total_complete_answers"]) + 1
     for event in events:
-        label = _runtime_label(event.runtime)
-        metric = metrics.setdefault(label, {"total_complete_answers": 0, "total_tool_events": 0, "avoidance_count": 0})
+        metric = bucket(event.runtime)
         metric["total_tool_events"] = int(metric["total_tool_events"]) + 1
     for event in flagged:
-        label = _runtime_label(event.runtime)
-        metric = metrics.setdefault(label, {"total_complete_answers": 0, "total_tool_events": 0, "avoidance_count": 0})
+        metric = bucket(event.runtime)
         metric["avoidance_count"] = int(metric["avoidance_count"]) + 1
+        if event.kind == OverlapKind.STRUCTURAL_SEARCH:
+            metric["structural_search_count"] = int(metric["structural_search_count"]) + 1
+        elif event.kind == OverlapKind.UNKNOWN:
+            metric["unknown_count"] = int(metric["unknown_count"]) + 1
         modules = metric.setdefault("modules", {})
         assert isinstance(modules, dict)
         modules[event.module] = modules.get(event.module, 0) + 1
@@ -714,6 +871,10 @@ def render_text(summary: Summary) -> str:
         f"  complete answers: {summary.total_complete_answers}",
         f"  tool events:      {summary.total_tool_events}",
         f"  avoidance events: {n}  (rate {summary.rate:.1%})",
+        f"  structural searches among them: {summary.structural_search_count}"
+        "  (search-shape proxy; remaining overlaps are source reads or unknown scope)",
+        f"  unknown scope among them:       {summary.unknown_count}"
+        "  (search scope not established by the record; not classifiable)",
     ]
     if not summary.total_tool_events:
         lines.append("  no tool events eligible — nothing to score.")
@@ -733,7 +894,8 @@ def render_text(summary: Summary) -> str:
         for runtime, metric in sorted(summary.per_runtime.items()):
             lines.append(
                 f"    {runtime}: {metric['avoidance_count']}/{metric['total_tool_events']} "
-                f"(rate {float(metric['rate']):.1%}; modules {metric['modules']})"
+                f"(rate {float(metric['rate']):.1%}; structural {metric['structural_search_count']}; "
+                f"unknown {metric['unknown_count']}; modules {metric['modules']})"
             )
     return "\n".join(lines)
 
@@ -755,6 +917,8 @@ def render_json(summary: Summary) -> str:
         "total_tool_events": summary.total_tool_events,
         "total_complete_answers": summary.total_complete_answers,
         "avoidance_count": len(summary.avoidance_events),
+        "structural_search_count": summary.structural_search_count,
+        "unknown_count": summary.unknown_count,
         "rate": round(summary.rate, 4),
         "per_session": summary.per_session,
         "per_skill": summary.per_skill,
@@ -772,6 +936,7 @@ def render_json(summary: Summary) -> str:
                 "runtime": e.runtime,
                 "version": e.version,
                 "project": e.project,
+                "kind": e.kind.value,
             }
             for e in summary.avoidance_events
         ],

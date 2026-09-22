@@ -143,8 +143,9 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
                 .reuse == true and (.answers.rdeps | type == "object") and
                 (.answers.rdeps.module == $module) and (.answers.rdeps.imported_by | type == "array") and
                 (.answers.rdeps.error == null) and
+                (.answers.rdeps.index | type == "object") and
+                (.answers.rdeps.index | if has("query_complete") then .query_complete == true else .exhaustive == true end) and
                 ([.answers.rdeps, .answers.rdeps.index // {}] | all(
-                    .query_complete != false and .exhaustive != false and
                     .stale != true and .root_mismatch != true and .truncated != true
                 ))
             ' >/dev/null 2>&1; then

@@ -5360,6 +5360,15 @@ def main(argv: Sequence[str] | None = None) -> None:
     previous_timer = signal.getitimer(signal.ITIMER_REAL) if hasattr(signal, "getitimer") else (0.0, 0.0)
     timer_started = time.monotonic()
     with CliInvocation("query", arguments) as invocation:
+        # Preserve the last complete root even if a later root option is malformed.
+        root_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False, exit_on_error=False)
+        root_parser.add_argument("--root", type=Path)
+        root_args = argparse.Namespace(root=None)
+        try:
+            root_parser.parse_known_args(arguments, namespace=root_args)
+        except argparse.ArgumentError:
+            pass  # The full parser owns malformed-root diagnostics and exit status.
+        invocation.root = root_args.root
         _invocation, _CMD = invocation, ""
         try:
             _run_query(arguments)
@@ -5389,6 +5398,7 @@ def _run_query(argv: Sequence[str]) -> None:
     _CMD = args.command
     if _invocation is not None:
         _invocation.command = args.command
+        _invocation.root = args.root
     _verbose_coverage = args.verbose_coverage
     _force_compact_coverage = args.compact
     _FORMAT = args.output_format
@@ -5408,6 +5418,8 @@ def _run_query(argv: Sequence[str]) -> None:
 
     index_path = _resolve_index_path(args)
     index = _load_index_leased(index_path)
+    if _invocation is not None:
+        _invocation.root = _resolve_project_root(args.root, index)
     if not _autobuild_disabled() and not args.no_heal:
         # refresh a stale index inline (bounded) so the answer reflects the
         # current tree — e.g. an edge added by a just-committed change is visible.

@@ -173,6 +173,30 @@ class TestRead:
         )
         assert json.loads(capsys.readouterr().out)["reuse"] is False
 
+    @pytest.mark.parametrize("value", [None, "", "   ", 123, False, "missing"])
+    def test_missing_current_sha_rejects_roundtrip(self, tmp_path: Path, capsys, value) -> None:
+        """Writing malformed index identity must not manufacture reusable provenance."""
+        index = _write_index(tmp_path)
+        metadata = json.loads(index.read_text())
+        if value == "missing":
+            metadata.pop("git_sha")
+        else:
+            metadata["git_sha"] = value
+        index.write_text(json.dumps(metadata))
+        cache = tmp_path / "cache"
+        assert (
+            codemap_cache.main(
+                ["write", "--batch", str(_write_batch(tmp_path)), "--index", str(index), "--cache-dir", str(cache)]
+            )
+            == 0
+        )
+        capsys.readouterr()
+        assert (
+            codemap_cache.main(["read", "--module", "pkg.mod", "--index", str(index), "--cache-dir", str(cache)]) == 0
+        )
+        verdict = json.loads(capsys.readouterr().out)
+        assert verdict == {"reuse": False, "reason": "missing_freshness_metadata", "answers": {}}
+
     def test_same_stamp_in_another_project_is_not_reusable(self, tmp_path: Path, capsys) -> None:
         """Equal bytes and timestamps never substitute for index identity."""
         cache = self._seed(tmp_path, capsys)

@@ -167,7 +167,14 @@ def _index_stamp(index_path: Path) -> tuple[str, str, str]:
         when the field is absent.
     """
     meta = json.loads(index_path.read_text(encoding="utf-8"))
-    return str(meta.get("git_sha", "")), str(meta.get("scanned_at", "")), _file_stamp(index_path)
+    git_sha = meta.get("git_sha")
+    scanned_at = meta.get("scanned_at")
+    # Do not turn absent or malformed coordinates into plausible identity strings.
+    return (
+        git_sha if isinstance(git_sha, str) else "",
+        scanned_at if isinstance(scanned_at, str) else "",
+        _file_stamp(index_path),
+    )
 
 
 def _result_module(result: dict) -> str:
@@ -305,7 +312,13 @@ def _reuse_verdict(artifact: dict, git_sha: str, scanned_at: str, index_stamp: s
     prefix = artifact.get("prefix", {})
     art_sha = prefix.get("git_sha")
     art_scanned = prefix.get("scanned_at")
-    if not isinstance(art_sha, str) or not isinstance(art_scanned, str):
+    if (
+        not isinstance(art_sha, str)
+        or not art_sha.strip()
+        or not isinstance(git_sha, str)
+        or not git_sha.strip()
+        or not isinstance(art_scanned, str)
+    ):
         return False, "missing_freshness_metadata"
     if art_sha != git_sha:
         return False, "git_sha_mismatch"

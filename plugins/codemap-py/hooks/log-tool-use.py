@@ -167,6 +167,19 @@ def main() -> int:
             "project": _hookutil.project_root().as_posix(),
             "target": target_for(tool_name, tool_input),
         }
+        if tool_name in {"Grep", "Glob"}:
+            # Capture scope while the producer can inspect it; the analysis host must not stat old paths.
+            search_path = str(tool_input.get("path") or Path.cwd())
+            record["search_path"] = search_path
+            record["search_scope"] = "unknown"
+            try:
+                path = Path(search_path)
+                if path.is_file():
+                    record["search_scope"] = "file"
+                elif path.is_dir():
+                    record["search_scope"] = "directory"
+            except OSError:
+                pass
         log_dir = _hookutil.log_dir()
         log_file = log_dir / (f"tools_{safe_session}.jsonl" if safe_session else "tools.jsonl")
         log_dir.mkdir(parents=True, exist_ok=True)

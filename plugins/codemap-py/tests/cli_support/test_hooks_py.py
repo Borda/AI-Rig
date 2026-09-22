@@ -706,6 +706,197 @@ class TestInjectPreambleRefreshLock:
 # ── inject-preamble: session marker (cross-agent scan-query contract) ─────────────
 
 
+class TestInjectPreambleChangedCount:
+    """Refresh provenance: the hook reports how many staged indexed files the background scan will re-parse.
+
+    ``graph._refresh_result`` maps an absent ``CODEMAP_REFRESH_CHANGED_COUNT`` to ``null``; before this, every
+    ``*_prompt_background`` index record carried ``changed_count: null``. The count is the staged-blob delta against the
+    index commit — the scanner's own file set — so it agrees with the self-heal producer instead of counting worktree
+    edits the scan never re-parses. It stays absent when the index commit is unreachable or not a hex object name.
+    """
+
+    @staticmethod
+    def _child_records_count(plugin_root: Path, marker: Path) -> None:
+        (plugin_root / "bin" / "scan-index").write_text(
+            "#!/usr/bin/env python3\nimport json, os\nfrom pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text(json.dumps({{'changed': os.environ.get('CODEMAP_REFRESH_CHANGED_COUNT')}}))\n"
+        )
+
+    @pytest.mark.parametrize("behind_head", [False, True])
+    def test_refresh_count_filters_scanner_exclusions(self, tmp_path: Path, behind_head: bool) -> None:
+        """Staged source and docs count, but built-in and configured exclusions never do."""
+        repo = tmp_path / "proj"
+        index_sha = _init_repo(repo)
+        (repo / ".codemapignore").write_text("vendor\ngenerated/*.py\n")
+        for relative in ("vendor/a.py", "generated/a.py", ".sandbox/a.py", "__pycache__/a.py", "docs/guide.rst"):
+            path = repo / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("content\n")
+        (repo / "a.py").write_text("changed = True\n")
+        _git(repo, "add", "-A")
+        if behind_head:
+            _git(repo, "commit", "-q", "-m", "changed")
+        assert _INJECT_MODULE.changed_file_count(repo, index_sha) == 2
+
+    @pytest.mark.parametrize(
+        "git_sha",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("--output=planted.txt", id="option-shaped"),
+            pytest.param("HEAD~1", id="symbolic-revision"),
+            pytest.param("abc12", id="too-short"),
+            pytest.param("g" * 40, id="non-hex"),
+        ],
+    )
+    def test_non_hex_index_sha_is_unknown_without_git_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_sha: str
+    ) -> None:
+        """An index-header sha that is not a hex object name never reaches git; the count is unknown.
+
+        The header is unauthenticated on-disk input. An option-shaped value would otherwise be parsed by git as a flag
+        (``--output`` writes a file at an attacker-chosen path), so the guard is the whole defense.
+        """
+        monkeypatch.setattr(_INJECT_MODULE.subprocess, "run", lambda *a, **k: pytest.fail("no git call expected"))
+        assert _INJECT_MODULE.changed_file_count(tmp_path, git_sha) is None
+
+    @pytest.mark.parametrize(
+        ("stage", "expected"),
+        [
+            pytest.param(False, 0, id="unstaged-edit-not-reparsed"),
+            pytest.param(True, 1, id="staged-edit-reparsed"),
+        ],
+    )
+    def test_same_commit_counts_only_staged_edits(self, tmp_path: Path, stage: bool, expected: int) -> None:
+        """With index and HEAD on one commit, only a staged edit counts — the scanner re-parses staged blobs.
+
+        ``resolve_currency`` still calls an unstaged edit ``stale``; the refresh it triggers re-parses nothing, and the
+        count says so rather than echoing the porcelain line count.
+        """
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        (repo / "a.py").write_text("def f():\n    return 2\n")
+        if stage:
+            _git(repo, "add", "a.py")
+
+        assert _INJECT_MODULE.changed_file_count(repo, head) == expected
+
+    def test_untracked_indexed_file_does_not_count(self, tmp_path: Path) -> None:
+        """An untracked ``.pyi`` beside a current index counts zero: it has no staged blob for the scan to pick up."""
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        (repo / "c.pyi").write_text("def c() -> int: ...\n")
+
+        assert _INJECT_MODULE.changed_file_count(repo, head) == 0
+
+    def test_held_lock_never_evaluates_count(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """While a refresh is in progress the count thunk stays unevaluated, so no git call runs on that prompt.
+
+        The lock is held for up to ten minutes during a scan; every prompt in that window returns "in progress" and must
+        not pay for a diff against a possibly distant index commit.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        lock = tmp_path / "codemap-refresh-proj"
+        lock.write_text(str(int(time.time() * 1000)))
+
+        note = _INJECT_MODULE.start_refresh(
+            "proj", tmp_path, tmp_path, "", lambda: pytest.fail("count evaluated while lock held")
+        )
+
+        assert note == " - refresh in progress"
+
+    def test_raising_count_thunk_still_starts_refresh_and_releases_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A count that raises (for example a decode error on a raw git path) leaves the count unknown, not the lock
+        held.
+
+        The thunk runs after the lock is taken; an exception escaping here would carry the lock out of the hook and turn
+        every prompt for the next ten minutes into "refresh in progress" with no scan running.
+        """
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        marker = tmp_path / "child.json"
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
+        self._child_records_count(plugin_root, marker)
+        monkeypatch.setenv("PLUGIN_ROOT", str(plugin_root))
+
+        def _boom() -> int:
+            raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid start byte")
+
+        note = _INJECT_MODULE.start_refresh("proj", tmp_path, tmp_path, "", _boom)
+
+        assert note == " - refresh started"
+        assert _await_marker(marker)
+        assert json.loads(marker.read_text()) == {"changed": None}
+
+    def test_unreachable_index_commit_is_unknown(self, tmp_path: Path) -> None:
+        """An index built from a commit git cannot resolve reports no count rather than a partial one."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        assert _INJECT_MODULE.changed_file_count(repo, "0" * 40) is None
+
+    def test_index_behind_head_counts_staged_indexed_files_once(self, tmp_path: Path) -> None:
+        """Committed and staged indexed files count once each, a path with a space included; the rest never do.
+
+        A file changed in a later commit and again in the staging area is one path. A staged file whose name carries a
+        space must not double-count through quoting differences. Unstaged and untracked files, and non-indexed paths,
+        stay outside the count because the scan does not re-parse them.
+        """
+        repo = tmp_path / "proj"
+        old = _init_repo(repo)
+        (repo / "b.py").write_text("x = 1\n")
+        (repo / "notes.txt").write_text("not indexed\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "second")
+        (repo / "b.py").write_text("x = 2\n")  # committed and staged again: one path
+        (repo / "with space.py").write_text("y = 1\n")  # staged, indexed, quoted by porcelain-style output
+        _git(repo, "add", "b.py", "with space.py")
+        (repo / "a.py").write_text("def f():\n    return 3\n")  # unstaged edit: not re-parsed
+        (repo / "c.pyi").write_text("def c() -> int: ...\n")  # untracked: not re-parsed
+        (repo / "README").write_text("ignored\n")  # untracked, not indexed
+
+        assert _INJECT_MODULE.changed_file_count(repo, old) == 2
+
+    @pytest.mark.integration
+    def test_staged_edit_same_commit_child_receives_count(self, tmp_path: Path) -> None:
+        """A stale-by-staged-edit prompt hands the spawned scan the number of staged indexed files."""
+        repo = tmp_path / "proj"
+        head = _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        _write_index(idx_dir, repo.name, git_sha=head)
+        (repo / "a.py").write_text("def f():\n    return 2\n")
+        _git(repo, "add", "a.py")
+        marker = tmp_path / "child.json"
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
+        self._child_records_count(plugin_root, marker)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+
+        assert result.returncode == 0, result.stderr
+        assert _await_marker(marker), result.stdout
+        assert json.loads(marker.read_text()) == {"changed": "1"}
+
+    @pytest.mark.integration
+    def test_unreachable_index_commit_child_receives_no_count(self, tmp_path: Path) -> None:
+        """An unresolvable index commit leaves the env key unset so the record says unknown."""
+        repo = tmp_path / "proj"
+        _init_repo(repo)
+        idx_dir = tmp_path / "idx"
+        _write_index(idx_dir, repo.name, git_sha="0" * 40)
+        marker = tmp_path / "child.json"
+        plugin_root = _fake_plugin_root(tmp_path, with_scan_bin=True, marker=marker)
+        self._child_records_count(plugin_root, marker)
+        tmpdir = tmp_path / "tmp"
+        tmpdir.mkdir()
+
+        result = _run_inject(repo, idx_dir, plugin_root, tmpdir)
+
+        assert result.returncode == 0, result.stderr
+        assert _await_marker(marker), result.stdout
+        assert json.loads(marker.read_text()) == {"changed": None}
+
+
 class TestInjectPreambleSessionMarker:
     """The runtime-sharded repository session marker written every invocation.
 

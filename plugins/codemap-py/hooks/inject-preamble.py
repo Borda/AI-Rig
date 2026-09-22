@@ -37,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 _HOOKS_DIR = Path(__file__).resolve().parent
@@ -59,6 +60,9 @@ SESSION_TTL_MS = 30 * 60 * 1000
 # Git freshness includes documentation as well as Python sources; the source-eligibility
 # check below deliberately uses only the scanner's Python discovery rules.
 _INDEXED_PATHSPEC: tuple[str, ...] = ("*.py", "*.pyi", "*.rst", "docs/**/*.md")
+#: The only shape of index-header ``git_sha`` handed to git as a revision argument. The header is
+#: on-disk, unauthenticated input; a value that is not a hex object name never reaches a subprocess.
+_HEX_OBJECT_RE = re.compile(r"[0-9a-fA-F]{7,64}")
 
 #: Identity fields read out of the index header, compiled once at import. They used to be
 #: matched by a pattern built — and an ``import re`` executed — inside a nested closure,
@@ -288,6 +292,39 @@ def resolve_currency(head: str, git_sha: str, dirty: str) -> str:
     return "stale" if head != git_sha or dirty else "current"
 
 
+def changed_file_count(root: Path, git_sha: str) -> int | None:
+    """Count staged indexed files whose blob differs from the index's commit.
+
+    The scanner keys its file set on staged blobs (``git ls-files -s`` in ``scanner._git_file_hashes``), and the self-
+    heal path compares staged hashes, so this count uses ``git diff --cached`` against the index commit, filtered
+    through scanner exclusions. It retains the indexed documentation pathspec. This is an eligible staged-path delta,
+    not a measured count of files actually reparsed. Unstaged edits and untracked files can mark currency stale but are
+    outside this count.
+
+    ``git_sha`` comes from the index header on disk, so it is validated as a hex object name before it reaches git;
+    anything else — including an option-shaped value — yields ``None`` without a subprocess. An unreachable commit
+    yields ``None`` too, so the refresh record reports the count as unknown rather than a guess.
+    """
+    if not _HEX_OBJECT_RE.fullmatch(git_sha or ""):
+        return None
+    try:
+        diff = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", "-z", git_sha, "--", *_INDEXED_PATHSPEC],
+            cwd=root,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",  # `-z` emits raw bytes; a non-UTF-8 name must not raise past the refresh lock
+            timeout=3,
+            check=True,
+        ).stdout
+        exclusions = scanner._load_exclusions(root)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return sum(1 for entry in diff.split("\0") if entry and not scanner.is_excluded(entry, exclusions))
+
+
 def acquire_refresh_lock(path: Path) -> int | None:
     """Atomically acquire a fresh or stale-taken-over refresh lock, else return ``None``."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
@@ -305,8 +342,10 @@ def acquire_refresh_lock(path: Path) -> int | None:
         return None
 
 
-def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path, session: str = "") -> bool:
-    """Spawn a detached scan with the event's runtime/session and platform isolation."""
+def spawn_refresh(
+    scan_bin: Path, scan_root: Path, cwd: Path, session: str = "", changed_count: int | None = None
+) -> bool:
+    """Spawn a detached scan with the event's runtime/session, refresh provenance, and platform isolation."""
     # The exclusive write lease is the child's, not this hook's: `bin/scan-index` is a thin
     # launcher over `codemap_py.graph.main`, which wraps build and publish in
     # `rwgate.write_index` — so this detached scan is gated even though nothing here leases.
@@ -334,6 +373,9 @@ def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path, session: str = "")
         # A payload-only identity otherwise disappears at the subprocess boundary.
         session_key = "CODEX_THREAD_ID" if runtime == "codex" else "CLAUDE_CODE_SESSION_ID"
         kwargs["env"][session_key] = session
+    if changed_count is not None:
+        # The child never re-derives this; an absent key records the count as unknown.
+        kwargs["env"]["CODEMAP_REFRESH_CHANGED_COUNT"] = str(changed_count)
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
         command = [os.environ.get("CODEMAP_PYTHON", sys.executable), str(scan_bin), *scan_args]
@@ -347,8 +389,20 @@ def spawn_refresh(scan_bin: Path, scan_root: Path, cwd: Path, session: str = "")
     return True
 
 
-def start_refresh(project: str, scan_root: Path, cwd: Path, session: str = "") -> str:
-    """Take the refresh lock and spawn one background scan; return the preamble's note."""
+def start_refresh(
+    project: str,
+    scan_root: Path,
+    cwd: Path,
+    session: str = "",
+    changed_count: Callable[[], int | None] | None = None,
+) -> str:
+    """Take the refresh lock and spawn one background scan; return the preamble's note.
+
+    ``changed_count`` is a thunk, evaluated only after the lock is held: while a scan is running every prompt in the
+    lock's 10-minute TTL returns "in progress" here, and the git calls behind the count must not run on those turns.
+    The count is provenance only: a thunk that raises leaves the count unknown and the refresh still starts, so no
+    exception can carry the held lock out of this function and silence refreshes for the lock's whole TTL.
+    """
     lock = tmp_dir() / f"codemap-refresh-{project}"
     descriptor = acquire_refresh_lock(lock)
     if descriptor is None:
@@ -359,8 +413,15 @@ def start_refresh(project: str, scan_root: Path, cwd: Path, session: str = "") -
         os.close(descriptor)
     plugin_root = os.environ.get("PLUGIN_ROOT") or os.environ.get("CLAUDE_PLUGIN_ROOT") or Path(__file__).parents[1]
     scan_bin = Path(plugin_root) / "bin" / "scan-index"
-    if scan_bin.is_file() and spawn_refresh(scan_bin, scan_root, cwd, session):
-        return " - refresh started"
+    if scan_bin.is_file():
+        count = None
+        if changed_count is not None:
+            try:
+                count = changed_count()
+            except Exception:  # noqa: BLE001 — provenance must never block the refresh or leak the lock
+                count = None
+        if spawn_refresh(scan_bin, scan_root, cwd, session, count):
+            return " - refresh started"
     try:
         lock.unlink()
     except OSError:
@@ -413,7 +474,9 @@ def main() -> int:
             git_output(["status", "--porcelain", "--", *_INDEXED_PATHSPEC], root) if head and git_sha == head else ""
         )
         currency = resolve_currency(head, git_sha, dirty)
-        refresh_note = start_refresh(project, scan_root, cwd, session) if currency == "stale" else ""
+        refresh_note = ""
+        if currency == "stale":
+            refresh_note = start_refresh(project, scan_root, cwd, session, lambda: changed_file_count(root, git_sha))
         session_flag = tmp_dir() / f"codemap-preamble-{project}-{_hookutil.runtime()}"
         if currency == "current" and within_ttl(session_flag):
             return 0

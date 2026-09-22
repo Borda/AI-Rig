@@ -19,5 +19,5 @@
   "name": "codemap-py",
   "repository": "https://github.com/Borda/AI-Rig",
   "skills": "./claude-skills/",
-  "version": "0.39.4"
+  "version": "0.39.5"
 }

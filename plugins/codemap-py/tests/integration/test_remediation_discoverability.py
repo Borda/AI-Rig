@@ -53,7 +53,11 @@ def test_top_level_no_arguments_remain_a_syntax_error(capsys: pytest.CaptureFixt
 # addition is 475 bytes and the bound moves by the smallest round step that holds it.
 # 4600 -> 5000: required exact-module and measurement-availability disclosure. Retain
 # the established routing contract; compressing its mandatory literals broke parity.
-_CODEX_QUERY_SKILL_MAX_BYTES = 5000
+# 5000 -> 5200: one routing row for gap-finding and inventory queries (`coverage-gap`,
+# `undocumented`, `packages`, `list`). Five days of telemetry on two active repositories
+# showed these four at 1-8 calls against 379 total while agents answered the same
+# questions by hand; the Claude table already carried the row, the Codex one did not.
+_CODEX_QUERY_SKILL_MAX_BYTES = 5200
 
 
 def test_codex_query_skill_is_compact_required_and_oriented_to_the_smallest_complete_query_set() -> None:

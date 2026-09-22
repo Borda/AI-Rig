@@ -201,6 +201,18 @@ class TestCommandFieldLeak:
 
         assert out["target"] == anonymize._pseudo("validate_token", _SALT)
 
+    def test_grep_search_path_is_scrubbed_like_a_target(self) -> None:
+        """The Grep/Glob scope path is project data on the same footing as the pattern.
+
+        ``search_path`` was added beside ``target`` so the overlap join can see a search's scope; an export that
+        pseudonymized the pattern but left the scope verbatim would leak the module path it was meant to hide.
+        """
+        record = {"tool": "Grep", "target": "validate_token", "search_path": "src/auth_service/tokens.py"}
+        out = anonymize.anonymize_record(record, _SALT)
+
+        assert "auth_service" not in out["search_path"] and "tokens" not in out["search_path"]
+        assert out["search_path"].endswith(".py")
+
     def test_intent_prose_is_scrubbed(self) -> None:
         """Skill arguments are the user's own words — every identifying token is hashed."""
         out = anonymize.anonymize_record({"layer": "skill", "intent": "who calls validate_token"}, _SALT)

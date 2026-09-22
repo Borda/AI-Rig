@@ -71,11 +71,11 @@ _QUALIFIED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A
 _FREE_TEXT_FIELDS = ("error", "stderr")
 
 #: Fields holding a command line, a file path, or the user's own words: ``target``
-#: (Read path / Grep pattern / search command) and ``intent`` (skill arguments). Every
-#: identifier in them is project data, not only the dotted ones — for example,
-#: ``grep -rn internal_secret_name src/`` carries no dot at all — so they are scrubbed with
-#: :func:`_anonymize_command`, which pseudonymizes bare identifiers too.
-_COMMAND_FIELDS = ("intent", "target")
+#: (Read path / Grep pattern / search command), ``search_path`` (Grep/Glob scope), and
+#: ``intent`` (skill arguments). Every identifier in them is project data, not only the
+#: dotted ones — for example, ``grep -rn internal_secret_name src/`` carries no dot at all —
+#: so they are scrubbed with :func:`_anonymize_command`, which pseudonymizes bare identifiers too.
+_COMMAND_FIELDS = ("intent", "target", "search_path")
 
 #: Join keys that identify one local Claude Code session. Replaced by a stable
 #: pseudonym: cross-layer joins survive (same salt → same pseudonym) while the raw
