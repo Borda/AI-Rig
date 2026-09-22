@@ -18,13 +18,15 @@ for an external owner to inspect.
 Run ``python shared/adversarial_loop.py --ledger path/to/ledger.json``. Import ``validate_ledger`` for a list of stable
 validation errors, or ``summarize_ledger`` for the inferred status, reason, and open-finding scores.
 
-Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome.
+Use ``--require-clean`` when an acceptance gate must reject every valid non-clean outcome. Add ``--progress`` after each
+completed round to repeat its cumulative severity table on stderr, leaving machine-readable stdout unchanged.
 
 ## Outputs
 
 The read-only CLI prints one JSON object. A valid ledger yields its deterministic summary and exit status zero; an
 invalid ledger yields ``status=invalid``, error names, and exit status one. ``--require-clean`` preserves the valid JSON
-summary but exits one unless its reason is ``clean``. No input files are modified.
+summary but exits one unless its reason is ``clean``. Optional progress cells split old and new open findings, grouping
+security with critical for display while retaining their distinct weights. No input files are modified.
 
 ## Failure
 
@@ -286,11 +288,44 @@ def summarize_ledger(payload: object) -> dict[str, object]:
     return _summary_from_valid(payload)
 
 
+def _render_progress(payload: dict[str, Any], completed_rounds: int) -> str:
+    """Render validated completed history with separate old and new open totals."""
+    lines = [
+        "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    seen: set[str] = set()
+    for round_record in payload["rounds"][:completed_rounds]:
+        counts = {tier: [0, 0] for tier in ("critical", "high", "medium", "low", "nit")}
+        weighted = [0, 0]
+        for finding in round_record["findings"]:
+            if finding["disposition"] not in _OPEN_DISPOSITIONS:
+                continue
+            bucket = 0 if finding["signature"] in seen else 1
+            tier = finding["tier"]
+            counts["critical" if tier == "security" else tier][bucket] += 1
+            weighted[bucket] += _TIERS[tier]
+        cells = [str(round_record["index"]), *(f"{old} + {new}" for old, new in [*counts.values(), weighted])]
+        lines.append("| " + " | ".join(cells) + " |")
+        # Closed signatures remain history so a later reopened finding is old, not newly discovered.
+        seen.update(finding["signature"] for finding in round_record["findings"])
+    if not completed_rounds:
+        lines.append("| not-run | N/A | N/A | N/A | N/A | N/A | N/A |")
+    lines.append("")
+    lines.append(
+        "Cells: old + new open findings (including pending verification); old = seen in any prior completed round. "
+        "Critical includes security; weights: security 20, critical 10, high 6, medium 4, low 2, nit 1. "
+        "Weighted score: old weighted + new weighted."
+    )
+    return "\n".join(lines)
+
+
 def main() -> int:
-    """Read one ledger and emit a read-only JSON validation result."""
+    """Emit JSON validation and optionally a cumulative human-readable progress table."""
     parser = argparse.ArgumentParser(description="Validate an adversarial-review convergence ledger.")
     parser.add_argument("--ledger", required=True, type=Path, help="Ledger JSON path.")
     parser.add_argument("--require-clean", action="store_true", help="Exit nonzero unless the valid summary is clean.")
+    parser.add_argument("--progress", action="store_true", help="Repeat the cumulative progress table on stderr.")
     args = parser.parse_args()
     try:
         with args.ledger.open(encoding="utf-8") as handle:
@@ -309,6 +344,8 @@ def main() -> int:
         )
         return 1
     summary = summarize_ledger(payload)
+    if args.progress:
+        print(_render_progress(payload, len(summary["rounds"])), file=sys.stderr)
     print(json.dumps(summary, sort_keys=True))
     return 0 if not args.require_clean or summary["reason"] == "clean" else 1
 

@@ -72,8 +72,8 @@ def test_stable_branch_last_tag_value(monkeypatch: pytest.MonkeyPatch, tmp_path:
     )
     rs.main([])
     out_dir = tmp_path / "release-setup-shared"
-    assert (out_dir / "LAST_TAG").read_text() == "v2.3.1"
-    assert (out_dir / "SOURCE_TAG_REF").read_text() == ""
+    assert (out_dir / "LAST_TAG").read_text() == "v2.3.1\n"
+    assert (out_dir / "SOURCE_TAG_REF").read_text() == "\n"
 
 
 def test_branch_slash_replaced_with_hyphen(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
@@ -86,7 +86,7 @@ def test_branch_slash_replaced_with_hyphen(monkeypatch: pytest.MonkeyPatch, tmp_
         (0, "v1.0.0"),
     )
     rs.main([])
-    assert (tmp_path / "release-setup-shared" / "BRANCH").read_text() == "feature-my-thing"
+    assert (tmp_path / "release-setup-shared" / "BRANCH").read_text() == "feature-my-thing\n"
 
 
 def test_fallback_path_emits_source_and_cherry(
@@ -109,8 +109,8 @@ def test_fallback_path_emits_source_and_cherry(
     rc = rs.main([])
     assert rc == 0
     out_dir = tmp_path / "release-setup-shared"
-    assert (out_dir / "LAST_TAG").read_text() == "v0.8.0"
-    assert (out_dir / "SOURCE_TAG_REF").read_text() == "v0.9.0"
+    assert (out_dir / "LAST_TAG").read_text() == "v0.8.0\n"
+    assert (out_dir / "SOURCE_TAG_REF").read_text() == "v0.9.0\n"
 
 
 def test_fallback_path_stderr_banner(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -165,7 +165,7 @@ def test_all_output_files_written(monkeypatch: pytest.MonkeyPatch, tmp_path: pyt
     for key in ("SKILL_DIR", "REPO_ROOT", "BRANCH", "DATE", "LAST_TAG", "CHERRY_PICK_SUBJECTS", "SOURCE_TAG_REF"):
         assert (out_dir / key).exists(), f"output file missing: {key}"
     assert (out_dir / "REPO_ROOT").read_text() != ""
-    assert (out_dir / "LAST_TAG").read_text() == "v1.0.0"
+    assert (out_dir / "LAST_TAG").read_text() == "v1.0.0\n"
 
 
 def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -182,3 +182,54 @@ def test_help_exits_0_no_git(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Cap
         rs.main(["--help"])
     assert exc.value.code == 0
     assert "usage: release_setup.py" in capsys.readouterr().out
+
+
+def test_output_values_end_with_newline(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
+    """Every written key file ends with a trailing newline.
+
+    Consumers read these files with ``IFS= read -r VAR < file || VAR=""``; a file with no trailing newline makes
+    ``read`` return non-zero on EOF, which fires the ``||`` fallback and silently clobbers the just-read value back to
+    empty.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    _patch_git_sequence(
+        monkeypatch,
+        (0, "/repo"),
+        (0, "main"),
+        (0, "v1.0.0"),
+    )
+    rs.main([])
+    out_dir = tmp_path / "release-setup-shared"
+    for key in ("SKILL_DIR", "REPO_ROOT", "BRANCH", "DATE", "LAST_TAG", "CHERRY_PICK_SUBJECTS", "SOURCE_TAG_REF"):
+        assert (out_dir / key).read_text().endswith("\n"), f"{key} missing trailing newline"
+
+
+def test_resolve_skill_dir_matches_versioned_plugin_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """Installed cache layout inserts a version dir between plugin id and ``skills``.
+
+    Real layout is ``~/.claude/plugins/cache/<marketplace>/oss/<version>/skills/release``
+    — one segment deeper than the un-versioned layout the old 3-segment check assumed,
+    so it never matched and always fell through to the source-tree fallback.
+    """
+    skill_dir = tmp_path / ".claude" / "plugins" / "cache" / "borda-ai-rig" / "oss" / "0.38.4" / "skills" / "release"
+    skill_dir.mkdir(parents=True)
+    monkeypatch.setattr(rs.Path, "home", classmethod(lambda _cls: tmp_path))
+
+    resolved = rs._resolve_skill_dir()
+
+    assert resolved == str(skill_dir)
+
+
+def test_resolve_skill_dir_falls_back_when_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """No installed ``oss/<version>/skills/release`` anywhere → source-tree fallback."""
+    monkeypatch.setattr(rs.Path, "home", classmethod(lambda _cls: tmp_path))
+
+    resolved = rs._resolve_skill_dir()
+
+    assert resolved == "plugins/cc_oss/skills/release"

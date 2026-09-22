@@ -17,6 +17,58 @@ CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
 @pytest.mark.installed_plugin
 @pytest.mark.parametrize("skill", ["code-review", "code-remediate", "assess", "release"])
+def test_optional_flag_is_not_a_conversation_reply_protocol(skill: str) -> None:
+    """Keep unflagged consent usable in every GitHub evidence workflow."""
+    content = (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")
+    assert "#github-workflow-consent" in content
+    assert "For required GitHub operations covered by `--approve-gh` or recorded same-scope workflow consent" in content
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    consent = contract.split("## GitHub Workflow Consent\n", 1)[1].split("\n## ", 1)[0]
+    assert "Never ask the user to reply with `--approve-gh`" in consent
+    assert "Existing unambiguous authorization for the same scope is sufficient without the flag" in consent
+    assert "Do not set `approve_gh=true`" in consent
+    assert "Approve" in consent and "Deny" in consent
+    assert "runtime permission" in consent
+    assert "After either form of scoped consent" in consent
+    assert "#pr-collection-preapproval" in consent
+    assert "#github-reader-preapproval" in consent
+    assert "Do not wrap either helper in `rtk`" in consent
+    assert "Local-only work does not enter this approval path" in consent
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate", "assess", "release"])
+def test_calibration_rejects_flag_reply_and_accepts_unflagged_consent(skill: str) -> None:
+    """Cover the failing conversation and the valid consent path for each consumer."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+    bad = cases[f"{skill}-approval-flag-reply"]
+    assert bad["target"] == skill
+    assert "approval-flag-required-as-reply" in bad["expected_findings"]
+    assert "Reply --approve-gh" in bad["prompt"]
+    good = cases[f"{skill}-unflagged-existing-consent"]
+    assert good["target"] == skill
+    assert good["expected_findings"] == []
+    assert "runtime permission" in good["prompt"]
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate", "assess", "release"])
+def test_approval_scenarios_do_not_supply_the_verdict(skill: str) -> None:
+    """Keep the new scenarios usable for classification without copying an answer hint."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+    for suffix in ("approval-flag-reply", "unflagged-existing-consent"):
+        case = cases[f"{skill}-{suffix}"]
+        prompt = case["prompt"]
+        assert "Identify the failure" not in prompt
+        assert "correct continuation" not in prompt
+        assert "Ask about the action" not in prompt
+        assert "optional invocation syntax became mandatory reply syntax" not in prompt
+        assert "eligible native consent control was skipped" not in prompt
+        assert not any(finding in prompt for finding in case["expected_findings"])
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize("skill", ["code-review", "code-remediate", "assess", "release"])
 def test_all_preapproval_consumers_require_managed_host_matching(skill: str) -> None:
     """Keep every flag consumer connected to executable host grants and prompt diagnosis."""
     content = (PLUGIN_ROOT / "skills" / skill / "SKILL.md").read_text(encoding="utf-8")

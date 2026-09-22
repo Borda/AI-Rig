@@ -255,7 +255,13 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
         "adversarial-loop-independent-closure",
         "adversarial-loop-stop-conditions",
         "adversarial-loop-owner-and-response-binding",
+        "adversarial-loop-progress-transcript",
     }
+    assert cases["adversarial-loop-progress-transcript"]["expected_findings"] == [
+        "cumulative-progress-history-missing",
+        "old-new-split-missing",
+        "progress-weighted-score-missing",
+    ]
     assert cases["adversarial-loop-owner-and-response-binding"]["expected_findings"] == [
         "active-loop-owner-not-bound",
         "authentic-finding-prose-ignored",

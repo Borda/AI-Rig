@@ -313,7 +313,10 @@ def test_real_cli_emits_valid_summary_and_keeps_invalid_output_off_stdout(tmp_pa
         [sys.executable, str(LEDGER_PATH), "--ledger", str(valid_path)], capture_output=True, check=False, text=True
     )
     invalid = subprocess.run(
-        [sys.executable, str(LEDGER_PATH), "--ledger", str(invalid_path)], capture_output=True, check=False, text=True
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(invalid_path), "--progress"],
+        capture_output=True,
+        check=False,
+        text=True,
     )
 
     assert valid.returncode == 0
@@ -355,3 +358,121 @@ def test_cli_require_clean_fails_closed_but_preserves_valid_summary(tmp_path: Pa
     assert required_blocked.returncode == 1
     assert json.loads(required_blocked.stdout)["reason"] == "independence-unavailable"
     assert required_blocked.stderr == ""
+
+
+def test_cli_progress_reprints_history_and_splits_old_new_weights(tmp_path: Path) -> None:
+    """Append a reviewed row without changing earlier rows, JSON, or stop decisions."""
+    ledger_path = tmp_path / "ledger.json"
+    first = [_finding(tier, tier) for tier in ("security", "critical", "high", "medium", "low", "nit")]
+    ledger = _ledger(_round(1, first))
+    command = [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress", "--require-clean"]
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    baseline = subprocess.run(command, capture_output=True, text=True, check=False)
+    ledger["rounds"].append(
+        _round(
+            2,
+            [
+                _finding(
+                    item["signature"],
+                    item["tier"],
+                    "fixed-pending-verification" if item["tier"] == "high" else "verified-fixed",
+                )
+                for item in first
+            ]
+            + [_finding(f"new-{index}") for index in range(3)],
+        )
+    )
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    updated = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    header = "| Iteration | Critical | High | Medium | Low | Nits | Weighted score |"
+    first_row = "| 1 | 0 + 2 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 1 | 0 + 43 |"
+    assert baseline.returncode == updated.returncode == 1
+    assert header in baseline.stderr and header in updated.stderr
+    assert first_row in baseline.stderr and first_row in updated.stderr
+    assert "| 2 | 0 + 0 | 1 + 3 | 0 + 0 | 0 + 0 | 0 + 0 | 6 + 18 |" in updated.stderr
+    assert json.loads(baseline.stdout) == _load_module().summarize_ledger(_ledger(_round(1, first)))
+    assert json.loads(updated.stdout) == _load_module().summarize_ledger(ledger)
+    assert json.loads(updated.stdout)["reason"] == "consecutive-open-finding"
+
+
+def test_cli_progress_counts_reopened_signatures_as_old(tmp_path: Path) -> None:
+    """Use signature history rather than just the previous round's open findings."""
+    ledger = _ledger(
+        _round(1, [_finding("prior", disposition="rejected"), _finding("initial", "security")]),
+        _round(2, [_finding("prior"), _finding("initial", "security", "verified-fixed"), _finding("fresh", "nit")]),
+    )
+    ledger_path = tmp_path / "ledger.json"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "| 1 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 20 |" in result.stderr
+    assert "| 2 | 0 + 0 | 1 + 0 | 0 + 0 | 0 + 0 | 0 + 1 | 6 + 1 |" in result.stderr
+
+
+@pytest.mark.parametrize("independent", [True, False])
+def test_cli_progress_does_not_invent_unreviewed_rows(tmp_path: Path, independent: bool) -> None:
+    """Distinguish unavailable review from a clean reviewed zero score."""
+    ledger = _ledger() if independent else _ledger(_round(1, [], independent=False))
+    ledger_path = tmp_path / "ledger.json"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "| not-run | N/A | N/A | N/A | N/A | N/A | N/A |" in result.stderr
+    assert "0 + 0" not in result.stderr
+
+
+@pytest.mark.parametrize("independent", [True, False])
+def test_cli_progress_only_appends_completed_reviews(tmp_path: Path, independent: bool) -> None:
+    """Show a clean zero row only for independent coverage, retaining prior history either way."""
+    ledger = _ledger(
+        _round(1, [_finding("prior")]),
+        _round(2, [_finding("prior", disposition="verified-fixed")], independent=independent),
+    )
+    ledger_path = tmp_path / "ledger.json"
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress", "--require-clean"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == (0 if independent else 1)
+    assert "| 1 | 0 + 0 | 0 + 1 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 6 |" in result.stderr
+    assert ("| 2 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 | 0 + 0 |" in result.stderr) is independent
+    assert json.loads(result.stdout)["reason"] == ("clean" if independent else "independence-unavailable")
+
+
+@pytest.mark.parametrize("completed_reviews", [0, 1, 2])
+def test_cli_progress_separates_legend_from_markdown_table(tmp_path: Path, completed_reviews: int) -> None:
+    """Keep the legend out of the rendered table for empty and cumulative histories."""
+    rounds = [
+        _round(1, [_finding("prior")]),
+        _round(2, [_finding("prior", disposition="verified-fixed")]),
+    ]
+    ledger_path = tmp_path / "ledger.json"
+    ledger_path.write_text(json.dumps(_ledger(*rounds[:completed_reviews])), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(LEDGER_PATH), "--ledger", str(ledger_path), "--progress"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    table, separator, legend = result.stderr.partition("\n\n")
+    assert separator == "\n\n"
+    assert len(table.splitlines()) == 2 + max(1, completed_reviews)
+    assert all(line.startswith("| ") and line.endswith(" |") for line in table.splitlines())
+    assert legend.startswith("Cells: old + new open findings")
+    assert "Cells:" not in table

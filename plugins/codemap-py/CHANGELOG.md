@@ -3,37 +3,25 @@
 ## 0.39.5
 
 - Security: the prompt hook validates the index header's `git_sha` as a hex object name before passing it to `git diff`. A planted `.cache/codemap/<project>.json` with an option-shaped `git_sha` (for example `--output=<path>`) could otherwise make the hook write a file at that path on every prompt that starts a refresh; such a value now yields an unknown `changed_count` without any git call. A count that fails for any other reason leaves the count unknown and the refresh still starts, so the refresh lock can no longer leak.
-
 - `changed_count` on hook-triggered refreshes records the eligible staged-path delta against the index commit (`git diff --cached --name-only -z`), applying built-in and configured scanner exclusions while retaining indexed documentation paths. Unstaged and untracked files are outside this count; it is not a measured count of reparsed files. NUL-delimited paths avoid quoting and space-related miscounts; unavailable or invalid revisions remain unknown.
-
 - Tool telemetry retains Grep/Glob `search_path` and producer-observed `search_scope` beside the pattern `target`. The join classifies single-file searches as `source_read`, directory searches as `structural_search`, and missing or indeterminate legacy scope as `unknown`; `unknown_count` is reported overall and per runtime beside `structural_search_count`. `anonymize.py` scrubs search paths. The classifier also recognizes `egrep -r`/`fgrep -r`, rejects backup-file names as own-file evidence, and serializes `OverlapKind` values. The legacy overlap count remains a proxy, not confirmed misuse or measured savings.
-
 - Recursive-looking Bash searches outside own-file inspection are classified as `unknown`: command spelling alone cannot establish directory scope, even when `rg` or a recursive grep flag appears. Debrief guidance on both hosts explains this conservative classification, unknown legacy search scope, static-analysis blind spots and the 200-character Bash logging limit; it does not use a release-time overlap tally as product behavior.
-
 - Query and index invocations retain their target project — the explicit `--root`, or the index's recorded scan root when none is given — for telemetry placement, project identity and Claude marker lookup, including when launched from another repository. Runtime identity and terminal outcomes remain unchanged.
-
 - Debrief guidance (both hosts): completeness fields live under `result.index`; `completeness_reason` is absent by design on compact complete answers; `not_covered` is a fixed per-method blind-spot list, never a coverage-gap fraction; timing is reported for queries and index refreshes separately; records without `v` are excluded from recent cohorts by default; zero skill starts beside CLI volume is the expected direct-CLI shape.
-
 - Query routing tables (both hosts) list `packages` and `list --limit 0` for repository-shape questions; the Codex table gains the coverage/documentation-gap row it lacked.
-
 - Test isolation clears `CLAUDE_CODE_SESSION_ID`, `CSID` and `CODEX_THREAD_ID` so seeded-session join tests do not inherit the outer host session.
 
 ## 0.39.4
 
 - Shared Claude context contract v4 keeps failed/missing pre-flight queries partial, requires explicit completeness metadata, and preserves per-child batch limits, source verification and static-versus-measured coverage distinctions.
-
 - Record handled query/index terminal outcomes once, including argument, gate, and timeout failures; retain exit codes and best-effort opt-out logging. Clear engine-owned timeout alarms and restore caller timers on return.
-
 - Preserve payload-only Codex/Claude session identity in refresh children, honor Claude environment-session fallback in hooks, and retain the Codex background-refresh trigger. Missing Codex identity never borrows a project-global session marker.
-
 - Distinguish unavailable, partial, empty, and measured line coverage; report exact-module versus all-module selection without changing recursive scope.
-
 - Record project identity on new telemetry; require explicit project coordinates and successful CLI outcomes for joins. Count failed/unjoinable batch children separately. Label changed eligibility as `module_overlap_proxy_v3`, never confirmed misuse or token savings; synchronize both hosts' query/debrief guidance. Old logs remain untouched and ineligible legacy records stay visible in raw counts.
 
 ## 0.39.3
 
 - Restore the caller's temporary-directory environment and Python temp cache after the resolver doctest, preventing order-dependent failures in downstream plugin tests.
-
 - Share concise root-owned Codex question guidance with conditional approval and recovery details; retain plugin-local payloads and native presets plus custom input.
 
 ## 0.39.2
@@ -43,9 +31,7 @@
 ## 0.39.1
 
 - Fall back to permitted synchronous input for optional questions when async is unavailable or unsuitable.
-
 - Require permitted native Codex question controls for user choices, including generated scope expansions, repair approvals, finding selection, and commit modes. Use async when sync is unavailable or unsuitable, even without independent work; keep required answers pending and use plain chat only when neither control is suitable.
-
 - Present complete actionable options or native free text, preserving existing authorization, exact-digest syntax, and separate runtime permissions.
 
 ## 0.39.0
@@ -73,31 +59,20 @@
 ## 0.37.0
 
 - Add `--format {json,tsv}` to `scan-query`. JSON stays the default and is unchanged, so nothing parsing stdout today is affected. `tsv` names the columns once in a header line instead of repeating every key on every row: measured on a 100-row `central` result, 3588 tokens of JSON against 2130 of TSV, a 40.6% reduction on the payload an agent reads into context. Formatting is applied in the single stdout seam rather than at each emitter, so every command that returns a table honours the flag; converting emitters individually left most commands silently answering in JSON while the caller had asked for TSV.
-
 - Refuse `--format tsv` for any result that is not a single table of flat, uniform records — several candidate lists, ragged rows, a nested value in a cell, a bare list of strings, or an empty list. Stringifying a nested value would produce a cell no consumer can parse back, which fails silently; the refusal exits non-zero with a JSON error instead. Flat name lists such as `rdeps` are excluded deliberately: JSON already encodes them within 9% of a newline-separated list, so there is nothing to win.
-
 - Write the metadata envelope to stderr under `--format tsv`, keeping staleness and completeness flags reachable. Dropping it would make a stale or incomplete answer indistinguishable from a good one.
-
 - Keep every error object as JSON on stdout regardless of `--format`, since `{"error": ...}` is the shape callers already parse, and leave batch and `diff-impact` subqueries on JSON: the batch driver owns the one real stdout write and re-parses each captured subquery.
-
 - Write TSV bytes as UTF-8 with explicit `\n` through `sys.stdout.buffer`. Windows text-mode stdout rewrites a newline embedded in a quoted cell to CRLF, and a legacy console encoding raises on a non-ASCII path; JSON escapes both cases and TSV does not.
-
 - Request `--format tsv` from the batch pre-flight in `claude-skills/_shared/codemap-context.md`, for `central`, `coupled`, `fn-rdeps` and `fn-blast` only. The flag was inert before this: every skill call site funnels through the pre-flight's `_cq`, and nothing passed `--format`. The four are the commands whose result is one table wide enough for a header to pay for itself. `rdeps` and `test-impact` exit 1 `format_not_tabular`, which `_cq` reads as a miss and downgrades the run's completeness for. `symbol` does render as a table, but a one-row one whose header roughly equals its payload and whose `source` field — a whole function body — would become a single quoted multi-line cell.
-
 - Read the metadata envelope from stderr in `_cq`, which previously discarded it with `2>/dev/null`. Staleness and completeness are detected by substring-matching the envelope, and the contract grants consumers permission to skip re-querying when the run reports `completeness=exhaustive`; a stale index whose envelope went unread would have earned exactly that verdict. Emptiness is now judged on whichever stream carries the envelope for the format in use, so a TSV query that matched nothing counts as an empty table rather than a failed retrieval.
-
 - Probe `scan-query --help` once per pre-flight for `--format` before using it. The flag is new in this release, and an older `scan-query` on PATH answers an unknown option with argparse exit 2 and an empty stdout — a miss on the four commands worth the most.
 
 ## 0.36.0
 
 - Prune excluded directories while detecting the source root, instead of sweeping the whole tree and filtering afterwards. `_detect_src_root_from_init` paired two unbounded `rglob` calls with a post-hoc `SKIP_DIRS` filter, so `.venv`, `.git`, and every other directory the filter would later discard was walked in full — on one repository, 124996 directories where pruning visits 9847 — and the sweep ran twice, once per init-file pattern. Detection there measured 15.3s, falling to 0.26s with no configuration at all; the cost was unpruned traversal and the double sweep, not any one large subtree. A full scan went from 21.4s to 5.9s, and an incremental scan that finds nothing to do from 15.9s to 0.35s. The second figure is the one that mattered — a no-op refresh that took longer than the query engine's own 10s self-heal timeout could never complete, so every self-heal was killed at the cap having healed nothing.
-
 - Detect the source root deterministically. Candidates were collected into a `set` and read back by iteration order, so an unchanged tree resolved to a different root between runs of the same command under a different `PYTHONHASHSEED`. Candidates are now ordered, the shallowest `src` wins, and both the `src` search and the depth fallback break ties on the path. Depth decides before the alphabet does: selecting the first `src` in sorted order is reproducible but arbitrary, letting a vendored `a/src` beat a top-level `src`.
-
 - Consult `[tool.codemap] exclude` and `.codemapignore` when detecting the source root. Detection previously ignored both, so an excluded subtree could be elected the root of the very index it is excluded from — on this repository a snapshot under `benchmarks/results/` won it. This governs which root is selected, not scan speed; the pruning above delivers the speed on its own.
-
 - Add `rwgate.writer_active`, an advisory probe reporting whether a live writer holds intent for an index. It is not a lease and never acquires one: a caller asking it is deciding whether to *start* work, not whether a read is safe.
-
 - Stand down from a self-heal while another writer is already running, rather than spawning a second `scan-index` that can only queue behind the first and then be killed at the heal timeout, having healed nothing. This covers the writer that appears after a query has taken its read lease — including a second query's own heal, which is how parallel queries used to stack scans — and not the writer already running when the query starts: that one the read lease waits out, after which the index is fresh and no heal is attempted. The query answers from the current index, flagged as before.
 
 ## 0.35.1
@@ -107,25 +82,17 @@
 ## 0.35.0
 
 - Add `query central --among <modules>`, which ranks only the named modules by their own in-degree instead of the whole repository. It answers the question left over after an importer query — order or threshold *these* modules — which previously had no query behind it: callers either issued one `rdeps` call per candidate and counted the returned lists, or filtered a repository-wide `central` ranking against their candidate set by hand. Requested modules the ranking does not cover are returned as `unmatched`, and `candidate_count` states the scoped set's size, so neither a typo nor an explicit `--top` can drop a candidate silently. Without `--top`, a scoped ranking returns every candidate rather than the repository-wide default of ten.
-
 - Report `importer_count` from `query rdeps`, and `excluded_test_importer_count` when `--exclude-tests` is set, so the production and test importer totals both come from one call. Deriving the test count by subtracting a filtered call from an unfiltered one put an arithmetic step outside the tool, where an off-by-one is indistinguishable from a wrong graph. `importer_count` is the total before any `--limit` truncation.
-
 - Break ties in the repository-wide `central` ranking by module name, matching the `--exclude-tests` path. Equal-count modules previously came back in index order.
-
 - Add `CODEMAP_COORDINATION_DIR`, which moves the read/write gate's `.index-rw` skeleton to a named directory while leaving the index where it resolved. It serves a deployment whose index directory cannot hold lock state — a read-only or shared mount, or a sandbox that grants write access to the gate alone — where the existing `CODEMAP_INDEX_DIR` was the only lever and moved the index along with the locks. The path resolver and the gate now derive the directory through one shared rule, so the directory a caller leases is always the directory the gate initialises. One index per override directory: two projects pointed at the same one share a registry mutex and serialise against each other.
 
 ## 0.34.0
 
 - Preserve standalone coverage, completeness, truncation, and totals in each batch item's `result.index`; summarize only common fields and conservative completion at the batch level. A complete first item no longer masks partial or failed siblings.
-
 - Add read-only source/native consumer query-guidance evidence and missing, unreferenced, or drift findings to integration audit. Static references do not prove fresh-session activation; managed metadata remains separate from operational guidance.
-
 - Align both query and integration skills around once-only launcher resolution, direct known syntax, stable read-only concurrency, bounded recovery, and reuse of settled graph facts without suppressing distinct follow-up questions. Keep self-heal and writes serial.
-
 - Describe integration demo accurately as an audit plus structural smoke query, with explicit unavailable token measurement and no paired-comparison claim.
-
 - Accept the request array itself as the `query batch` argument, alongside the existing file path and `-` for stdin, and name every accepted form in the unreadable-input error instead of reporting only the filesystem failure.
-
 - Return usage and exit 0 from `index --help` when the `scan-index` launcher is absent, instead of a `missing_executable` error and exit 1 that also aborted `index --help && query --help` chains before the second command ran.
 
 ## 0.33.1
@@ -165,35 +132,20 @@
 Staleness reporting and telemetry anchoring: the currency probe joins the read gate, and every staleness question — and every log shard — is now resolved from the repository root rather than from the process working directory.
 
 - Anchor the telemetry log root at the project root through one resolver, `runtime_log.log_root()`, now used by the CLI layer, the query engine, and the runtime-scoped writer alike; `runtime_log.LOG_DIR_ENV` names the override key once instead of each layer repeating the literal. A session whose hooks fired at the repository root while a query ran from a subdirectory previously wrote the two halves of one session into `<root>/.cache/codemap/logs` and `<subdir>/.cache/codemap/logs`; neither half was an error, so the join simply returned nothing and `debrief-coding` reported the missing half as absent. The import-time `_LOG_DIR` constant in `query.py` is removed rather than repointed — a constant frozen at import could never see a `CODEMAP_LOG_DIR` exported afterwards.
-
 - Anchor a **relative** `CODEMAP_LOG_DIR` to the project root as well. An absolute override is unchanged and still honoured verbatim; a relative one used to resolve against whatever directory the process started in, which reintroduced the same split the default suffered from. Set an absolute path to keep the previous behaviour.
-
 - Report the index file a query actually loaded as `index.index_path`, captured at load time rather than recomputed from the resolver when the block is emitted. A consumer that compared its own probe path against a resolver-derived answer was comparing two runs of one function; this is the only value that can disagree with the resolver — a stale `CODEMAP_INDEX_DIR` in the querying process, a different git root, a self-heal that rewrote elsewhere — which is what makes it worth reporting. The field survives the coverage-block diet, since a consumer that only ever sees compacted blocks would otherwise never see it.
-
 - Raise the index-size ceiling in `bin/check-index-currency`, `bin/scan-stats.py` and `bin/smoke_test_index.py` from 50 MB to the query engine's own 512 MB. A helper ceiling below the engine's does not fail safe: `check-index-currency` answered `no_index` — the same answer a project with no index at all gives — for any index above 50 MB, so the staleness gate silently stopped firing on exactly the large repositories it exists for. Measured on a real index of 131 MB.
-
 - Ship `hooks/_hookutil.py`, holding the project anchor, the log-directory resolution, the project key and the session-key sanitizer the logging and sentinel hooks must agree on. All five hooks now import it instead of carrying their own copy: `project_name()` was duplicated three ways and `session_key()` twice, and a divergence between copies never raised — it wrote one file and read another, so the cross-layer join simply returned nothing. It is a deliberate copy of the rules in `runtime_log`, not an import: the hooks fire on every Grep/Read/Glob/Bash call and must stay free of package imports and subprocesses, so the two layers are held in agreement by test instead.
-
 - Read the index under a shared read lease in `check-index-currency` instead of a bare `json.load`, so the launcher obeys the same gate as every other consumer. A live writer holding the index now answers `stale` (the honest verdict while a rebuild is in flight) and an unusable coordination root answers `no_index`; the 2 s lease covers the index parse only, never the Tier 2 source-tree walk.
-
 - Anchor every staleness-related git subprocess at the git top-level rather than the process working directory. A query issued from a subdirectory previously compared subdirectory-relative paths against root-relative index entries, so it read every indexed file as deleted: the index reported permanently stale, self-healed on every call, and answered `query_complete: false` for the rest of the session. The same anchoring applies to the untracked-file scan and to the mtime check on indexed-but-untracked files, which silently found nothing from a subdirectory.
-
 - Watch the writer's own file set in the timestamp fallback used for a pre-`file_shas` index — `*.py`, `*.pyi`, `*.rst`, `docs/**/*.md`, spelled once and shared with the SHA path. The previous hand-written pathspec (`*.py` minus `docs/`, `*.md`, `*.rst`) covered none of a changed `.pyi`, `.rst`, doc file, or a `.py` under `docs/`, each of which left the check reporting a fresh index.
-
 - Report `stale_undetermined` when git fails inside a repository rather than presenting the resulting empty answer as proof of freshness. The coverage block gains the flag only in that case, `query_complete` returns false with a `stale_undetermined` reason, and stderr names the failure. Being outside a repository stays silent — staleness was never knowable there.
-
 - Query git once per invocation for tracked blob SHAs instead of twice; the self-heal decision and the coverage block now read one memoized, self-consistent answer.
-
 - Correct the README's `CODEMAP_INDEX_DIR` description, which still documented the root-keyed `<canonical-root-sha256>/<project>.json` layout that `0.29.4` retired in favour of the flat `<override>/<project>.json` convention.
-
 - Correct the README's managed-block claims: consumer plugins ship the host file the block lands in, not a pre-applied block, so `/codemap-py:integration check` reporting `missing` before the first `apply` is the expected state and not a packaging defect.
-
 - Port `bin/setup_scan_env.sh` to stdlib-only `bin/setup_scan_env.py`; the `.sh` remains as a deprecated `exec` shim (removal no earlier than `1.0.0`) so existing call sites keep working, and an integration test pins shim/port equivalence on every scenario. The port removes the `python3`-on-PATH dependency by loading `parse_scan_args` via `importlib`, and `format_scan_args()` is extracted so both consumers share one quoting rule.
-
 - Convert the claude-skills dispatcher invocations to bare PATH-literal `codemap-py` (the `0.29.1` pattern) in `scan-codebase`, `test-impact` and `rename-refs`, retiring the `CM=`/`"$CM"` re-resolution ritual; codex-skills keep explicit plugin-root paths deliberately, since the Codex runtime has no `bin/` `PATH` entry.
-
 - Correct four skill-prose sites that claimed the `scan-index`/`scan-query` aliases take no writer lease: every route leases inside the engine, so the prose now gives the real reasons to prefer the dispatcher — the interpreter probe (exit `127`) and the aliases' deprecated-shim status. The `inject-preamble` hook's stale comment claiming its detached scan was ungated is likewise corrected, and the hook's model-facing directive now names `codemap-py index`.
-
 - Gate new code on cyclomatic-complexity and size limits (C901, PLR0911/0912/0915), scoped to this plugin from the repository-root ruff config via a negated per-file-ignore, with the six current offenders enumerated per file as explicit accepted debt.
 
 ## 0.29.4

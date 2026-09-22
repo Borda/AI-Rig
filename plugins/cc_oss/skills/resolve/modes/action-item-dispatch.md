@@ -121,8 +121,9 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
     echo "→ Codemap pre-scan — caller context for selected action items:"
     # file→module from the index's own `name` field (same source as §Structural prep, and as the cache keys). A sed transform names pkg/__init__.py `pkg.__init__` while codemap calls it `pkg` — every package-init item then missed its cache entry AND errored on the live query.
     _MODMAP="$IMPL_DIR/codemap-maps.json"
-    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); print(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
-    _ALL_PY=$(jq -r '.file // empty' "$IMPL_DIR/action-items.jsonl" | grep '\.py$' | paste -sd, -)  # timeout: 5000
+    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); sys.stdout.write(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
+    # Native Windows jq must emit LF: CR would become part of shell IDs, paths, and module names.
+    _ALL_PY=$(jq -b -r '.file // empty' "$IMPL_DIR/action-items.jsonl" | grep '\.py$' | paste -sd, -)  # timeout: 5000
     codemap-py query --timeout 15 central --top 100000 2>/dev/null \
         | python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_centrality.py" --files "$_ALL_PY" > "$_MODMAP" 2>/dev/null || : > "$_MODMAP"  # timeout: 20000
     printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
@@ -133,7 +134,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
         map(select(.module != "")) | group_by(.module) |
         map({key: .[0].module, value: map(.id)}) | from_entries
     ' "$IMPL_DIR/action-items.jsonl" 2>/dev/null)
-    for _m in $(printf '%s' "$_MODULE_ITEMS" | jq -r 'keys[]'); do
+    for _m in $(printf '%s' "$_MODULE_ITEMS" | jq -b -r 'keys[]'); do
         _c=""
         _CACHE_HIT=false
         # cache-first: reuse review's rdeps answer when fresh; only query on miss
@@ -157,7 +158,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
         fi
         [ "$_CACHE_HIT" = true ] || _c=$(codemap-py query rdeps "$_m" 2>/dev/null)  # timeout: 10000
         if [ -n "$_c" ]; then
-            for _id in $(printf '%s' "$_MODULE_ITEMS" | jq -r --arg module "$_m" '.[$module][]'); do
+            for _id in $(printf '%s' "$_MODULE_ITEMS" | jq -b -r --arg module "$_m" '.[$module][]'); do
                 printf "  #%s %s ← callers: %s\n" "$_id" "$_m" "$(echo "$_c" | tr '\n' ' ')"
                 BLAST_RADIUS_CONTEXT+="item #${_id} (${_m}) callers:"$'\n'"${_c}"$'\n\n'
             done
@@ -271,11 +272,11 @@ CODEMAP_MAPS="$IMPL_DIR/codemap-maps.json"
 DEPS_MAP="$IMPL_DIR/codemap-deps.jsonl"; : > "$DEPS_MAP"
 if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" ]; then
     _FILES=$(for _id in $(printf '%s\n' "$SELECTED_ITEMS"); do  # cmd-substitution splits in both shells — bare `$VAR` is a silent 1-iteration no-op under zsh
-        jq -r "select(.id == $_id) | .file // empty" "$IMPL_DIR/action-items.jsonl"
+        jq -b -r "select(.id == $_id) | .file // empty" "$IMPL_DIR/action-items.jsonl"
     done | paste -sd, -)  # timeout: 5000
     _ROOT=$(git rev-parse --show-toplevel 2>/dev/null); [ -n "$_ROOT" ] || _ROOT="$PWD"
     _IDX_FILE="${CODEMAP_INDEX_DIR:-$_ROOT/.cache/codemap}/$(basename "$_ROOT").json"
-    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); print(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
+    _MAP_STAMP=$(python -c 'import pathlib,sys; p=pathlib.Path(sys.argv[1]); s=p.stat(); sys.stdout.write(f"{p.resolve().as_posix()}:{s.st_size}:{s.st_mtime_ns}")' "$_IDX_FILE" 2>/dev/null)
     _SAVED_STAMP=""
     [ -f "$IMPL_DIR/codemap-maps.stamp" ] && IFS= read -r _SAVED_STAMP < "$IMPL_DIR/codemap-maps.stamp"
     if [ -z "$_MAP_STAMP" ] || [ "$_MAP_STAMP" != "$_SAVED_STAMP" ] || ! python -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(not set(filter(None,sys.argv[2].split(","))).issubset(d["file_module"]))' "$CODEMAP_MAPS" "$_FILES" 2>/dev/null; then
@@ -285,7 +286,7 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "$IMPL_DIR/action-items.jsonl" 
         printf '%s\n' "$_MAP_STAMP" > "$IMPL_DIR/codemap-maps.stamp"
     fi
     if [ -s "$CODEMAP_MAPS" ]; then
-        for _m in $(python -c 'import json,sys; print(" ".join(sorted({v for v in json.load(open(sys.argv[1]))["file_module"].values() if v})))' "$CODEMAP_MAPS"); do
+        for _m in $(python -c 'import json,sys; sys.stdout.write(" ".join(sorted({v for v in json.load(open(sys.argv[1]))["file_module"].values() if v})))' "$CODEMAP_MAPS"); do
             codemap-py query deps "$_m" 2>/dev/null \
                 | python -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps({d["module"]: d.get("direct_imports", [])}))' >> "$DEPS_MAP"  # timeout: 5000
         done

@@ -93,11 +93,16 @@ def _git(git_path: str, *args: str) -> str:
 def _resolve_skill_dir() -> str:
     """Find installed release skill directory, falling back to source tree path.
 
-    Replicates: ``find ~/.claude/plugins -path "*/oss/skills/release" -type d | head -1``
+    Replicates: ``find ~/.claude/plugins -path "*/oss/*/skills/release" -type d | head -1``
+
+    Cache layout is ``<marketplace>/oss/<version>/skills/release`` — the version
+    segment sits between the plugin id and ``skills``, so the plugin-id check
+    lands 4 segments back from ``release``, not 3.
 
     Returns:
-        Absolute path to ``oss/skills/release`` directory, or the source-tree
-        fallback ``"plugins/cc_oss/skills/release"`` when not installed.
+        Absolute path to the installed ``oss/<version>/skills/release`` directory,
+        or the source-tree fallback ``"plugins/cc_oss/skills/release"`` when not
+        installed.
 
     Examples:
         >>> isinstance(_resolve_skill_dir(), str)
@@ -106,7 +111,8 @@ def _resolve_skill_dir() -> str:
     plugin_root = Path.home() / ".claude" / "plugins"
     if plugin_root.is_dir():
         for match in sorted(plugin_root.rglob("release")):
-            if match.is_dir() and match.parts[-3:] == ("oss", "skills", "release"):
+            parts = match.parts
+            if match.is_dir() and len(parts) >= 4 and parts[-4] == "oss" and parts[-2:] == ("skills", "release"):
                 return str(match)
     return "plugins/cc_oss/skills/release"
 
@@ -186,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         ("CHERRY_PICK_SUBJECTS", cherry_pick_subjects),
         ("SOURCE_TAG_REF", source_tag_ref),
     ):
-        (out_dir / key).write_text(val, encoding="utf-8")
+        (out_dir / key).write_text(f"{val}\n", encoding="utf-8")
 
     return 0
 

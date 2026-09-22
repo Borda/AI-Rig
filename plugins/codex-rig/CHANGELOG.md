@@ -1,13 +1,15 @@
 # Changelog
 
+## 0.21.4
+
+- Keep optional GitHub preapproval flags separate from conversational consent across Code Review, Code Remediate, Assess, and Release. Reuse scoped natural-language authorization and matching direct-helper host rules, prohibit flag-reply and reinvocation demands, and preserve native consent controls, runtime permission, and denial boundaries. Add neutral positive and negative calibration scenarios for every consumer without revealing expected verdicts.
+- Add an explicit cumulative adversarial-loop progress transcript after every completed challenge-resolve round. Keep JSON stdout and the final canonical results table unchanged; render the stderr table as `Iteration | Critical | High | Medium | Low | Nits | Weighted score` with literal `old + new` cells, reopened-signature history, fixed-pending-verification counting, preserved severity weights, and truthful empty-ledger `not-run` plus `N/A` cells.
+
 ## 0.21.3
 
 - Enforce required-work closure, a local commit plan, and valid declared evidence before accepting commit readiness; allow explicitly user-deferred work outside the plan without hiding required blockers. Cover collection prebrief native consent separately from runtime permission and existing preapproval.
-
 - Require an explicit remediation commit disposition before final output; preserve the native commit-mode choice after validation and explain blocked/no-change closeouts. Reject new reports that omit the checkpoint or claim commit readiness with failed verification while keeping historical reports readable.
-
 - Share concise root-owned question guidance across all Codex skills; load detailed approval and recovery rules conditionally and check identical plugin-local copies.
-
 - Specify native remediation selection with concrete all/severity presets and built-in custom index/range input; omit duplicate presets and preserve pending answer binding. Correct README prompt ownership and explain host-required plain-text fallback without promising a UI override.
 
 ## 0.21.2
@@ -54,25 +56,15 @@
 ## 0.19.0
 
 - Enforce raw JSON findings on every App Server review turn with a source-bound output schema and fail-closed response validation; preserve original bytes and historical fenced loop reports without automatic retries.
-
 - Reconcile corroborating independent findings without discarding their evidence; reject conflicting verdicts and incomplete ledger unions.
-
 - Require explicit-file review scopes to match every source record. Reconcile Git and PR bot identities in a separate evidence-bound inventory and one aggregate credit instead of silently dropping automation or treating it as human credit.
-
 - Require schema-2 App Server plans to bind complete source/diff bytes and per-reviewer capacity evidence with a recomputed conservative UTF-8 byte bound and instruction/output headroom. Reject unverified proxy counts, missing, insufficient or changed admission evidence before paid turns; preserve direct inspection of historical plans without allowing them to authorize new dispatch.
-
 - Bind release receipts to exact Git candidates, ancestor scope, surviving published tree entries, visible human credits, complete canonical changelog excerpts and final output destinations. Require summary/migration structure and retained exclusion evidence; reject placeholder secondary files and historical detail loss. Add explicit local demo recording with before/after script digests, output binding and failed/timeout evidence; validation stays read-only.
-
 - Admit complete App Server review contexts up to 2 MiB without relaxing metadata, role-card, or output limits. Preserve exact inline source validation and bounded JSON transport; support a plan-bound per-thread context-window request with explicit capacity checks and no global configuration changes.
-
 - Respect the separate CLI character ceiling by loading oversized complete contexts into the review thread's history before any paid turn, with validated delivery acknowledgements. Preserve direct input for smaller contexts and retain safe RPC rejection categories without raw error payloads.
-
 - Restore native inspection provenance on hosts emitting task-path spawn receipts instead of activity events. Bind call IDs, exact context, unique child lineage and creation timing; retain legacy validation and reject stale, ambiguous or mismatched evidence.
-
 - Restore complete release communication: structured drafts, full contributor accounting, executive summaries, migration guides, changelog excerpts, and preservation of canonical changelog history and material detail. Trace release-line ancestry, released patch equivalence and final tree state; reconcile incremental drafts without losing hand edits or retaining reverted claims.
-
 - Require a readiness table with check status, evidence and closure action in release reports and final handoffs. Validate selected deliverables and communication evidence before a passing result; retain readable historical reports and honest failed preparations.
-
 - Require both change and readiness tables in new release handoffs. Bind executable release gates to the exact clean release commit with before/after source receipts; reject wrong-checkout results and source drift while preserving opt-in compatibility for other gate-runner callers.
 
 ## 0.18.2
@@ -83,13 +75,9 @@
 ## 0.18.1
 
 - Restore commit continuation for legacy PR remediation runs already on the original PR branch. Verify retained source identity, recorded revision, ancestry and live destination; preserve historical receipts and Git state, write separate recovery evidence, and resume the authorized commit mode without repeating checkout or mode selection.
-
 - Remove stale review-comment triage, resolution, and skip routes: outdated anchors and conflict-resolution drift require reassessment against current code. Preserve every other disposition and historical artifact compatibility.
-
 - Require PR remediation to try `gh pr checkout <canonical PR URL>` through collector remediation mode, even when HEAD already matches. After failure, allow only a verified same-repository direct checkout of the actual PR branch; a guarded local update from the already fetched, verified head may populate an explicitly selected remote-tracking ref for native tracking creation while preserving divergent or concurrently changed refs. Forks use the shared bounded adversarial recovery route and return to successful attached `gh` checkout; exact-commit detached checkout remains review-only. Make `remediation_branch.py prepare` read-only schema-2 receipt verification, require local branch/head/merge/destination identity, and preserve legacy receipts and local commits through verified recovery. Show observed branch plus original PR destination while remote updates remain human-owned.
-
 - Make audits and adversarial reviews follow producer/consumer handoffs through the next ordinary user action, question green tests and approved assumptions, and retain counterexamples, positive cases, and untested coverage.
-
 - Preserve the user-authored Kaggle preference for single inline shell commands and dedicated multi-command Bash cells.
 
 ## 0.18.0

@@ -2618,19 +2618,43 @@ def test_child_receives_incremented_trusted_depth(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="requires POSIX process-group termination capability")
-def test_timeout_force_terminates_a_descendant_after_its_term_ignoring_leader_exits(tmp_path: Path) -> None:
+@pytest.mark.parametrize("startup_delay", [0.0, 0.15])
+def test_timeout_force_terminates_a_descendant_after_its_term_ignoring_leader_exits(
+    tmp_path: Path, startup_delay: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Prevent a timeout from returning while a TERM-ignoring descendant retains its inherited pipes."""
     child_pid_path = tmp_path / "timeout-child.pid"
-    # Path embedded in the source, not passed via the environment: _run_child filters the
-    # child environment to an allowlist, so a test-only variable would not reach this code.
-    parent = (
-        "import subprocess, sys, time\n"
+    # Only the descendant can acknowledge that its TERM-ignore handler is installed.
+    child = (
+        "import os, signal, time\n"
         "from pathlib import Path\n"
-        "child = subprocess.Popen([sys.executable, '-c', "
-        "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])\n"
-        f"Path({str(child_pid_path)!r}).write_text(str(child.pid), encoding='utf-8')\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"path = Path({str(child_pid_path)!r})\n"
+        "pending = path.with_suffix('.tmp')\n"
+        "pending.write_text(str(os.getpid()), encoding='utf-8')\n"
+        "pending.replace(path)\n"
         "time.sleep(60)\n"
     )
+    parent = (
+        "import subprocess, sys, time\n"
+        f"time.sleep({startup_delay})\n"
+        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        "time.sleep(60)\n"
+    )
+    real_popen = subprocess.Popen
+    process: subprocess.Popen[bytes] | None = None
+
+    def start_ready_process(*args: Any, **kwargs: Any) -> subprocess.Popen[bytes]:
+        """Launch a real process but keep fixture startup outside the timeout under test."""
+        nonlocal process
+        process = real_popen(*args, **kwargs)
+        deadline = time.monotonic() + 10.0
+        while not child_pid_path.is_file() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert child_pid_path.is_file(), "descendant did not install its TERM-ignore handler within 10 seconds"
+        return process
+
+    monkeypatch.setattr(bridge_call.subprocess, "Popen", start_ready_process)
     child_pid: int | None = None
     try:
         outcome = bridge_call._run_child([sys.executable, "-c", parent], tmp_path, timeout=0.05)
@@ -2640,10 +2664,18 @@ def test_timeout_force_terminates_a_descendant_after_its_term_ignoring_leader_ex
             time.sleep(0.02)
 
         assert outcome.timed_out is True
+        assert outcome.returncode == -bridge_call.signal.SIGTERM
+        assert outcome.error is None
         assert not _process_exists(child_pid)
     finally:
-        if child_pid is not None and _process_exists(child_pid):
-            os.kill(child_pid, bridge_call.signal.SIGKILL)
+        # Also reclaim a partially started fixture when readiness or an assertion fails.
+        if process is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, bridge_call.signal.SIGKILL)
+            process.wait(timeout=3.0)
+            for stream in (process.stdout, process.stderr):
+                if stream is not None:
+                    stream.close()
 
 
 def test_simulated_windows_child_launch_uses_a_new_process_group_without_posix_session(

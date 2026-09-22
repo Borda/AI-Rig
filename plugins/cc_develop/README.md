@@ -6,6 +6,8 @@ The gates narrow the failure surface — they do not replace developer judgment 
 
 Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success actually establishes the promised outcome and recording untested handoffs.
 
+Each completed challenge-resolve round emits a full cumulative progress table before any next fix, review, or stop. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; every numeric cell is literal `old + new`, partitioning currently open and fixed-pending-verification signatures into those seen in any prior round, including closed-then-reopened signatures, and those first seen in the current round. Verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. The final result table stays unchanged, and empty rounds emit `not-run` with `N/A` cells without an unreviewed zero row.
+
 Optional Codemap context and index-gate guidance ship with develop, so loading them does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 
 Codemap review batches retain each child's success, freshness and scope metadata; failures are not empty answers. Package initializer changes stay in the affected-module scan. Reuse requires the same project/index/query, including flags; review-to-resolve cache stamps include the canonical index path. Static test links and mocks are not measured coverage, and source/test-quality reads remain available.

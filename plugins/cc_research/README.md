@@ -4,6 +4,8 @@
 
 Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.
 
+Each completed challenge-resolve round emits a full cumulative progress table before any next fix, review, or stop. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; every numeric cell is literal `old + new`, partitioning currently open and fixed-pending-verification signatures into those seen in any prior round, including closed-then-reopened signatures, and those first seen in the current round. Verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. The final result table stays unchanged, and empty rounds emit `not-run` with `N/A` cells without an unreviewed zero row.
+
 Optional Codemap index-gate guidance ships with research, so loading it does not depend on another plugin's private shared directory. The host-provided active installation takes precedence over other cached versions. Structural queries still require the `codemap-py` plugin; an unavailable CLI or local contract retains the file-read fallback.
 
 Codemap context distinguishes static test links from measured line coverage: missing measurements are unknown, not zero, and package queries select exact modules. Failed queries report unavailable context rather than successful empty results. Run, verify and scientist prompts reuse only matching fresh answers while preserving source, formula and test-quality verification.

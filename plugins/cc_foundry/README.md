@@ -4,6 +4,8 @@ OSS Claude Code configuration for Python/ML projects: 10 specialist agents, 11 s
 
 Workflow audits and adversarial reviews trace producer guarantees through downstream consumers and the next ordinary user action. They challenge identity, ownership, destination, lifetime, and resume assumptions with concrete counterexamples and report untested handoffs.
 
+Each completed challenge-resolve round emits a full cumulative progress table before any next fix, review, or stop. The table is `Iteration | Critical | High | Medium | Low | Nits | Weighted score`; every numeric cell is literal `old + new`, partitioning currently open and fixed-pending-verification signatures into those seen in any prior round, including closed-then-reopened signatures, and those first seen in the current round. Verified-fixed and rejected findings stay excluded. Security and critical combine only for display; score weights remain `20/10/6/4/2/1`. The final result table stays unchanged, and empty rounds emit `not-run` with `N/A` cells without an unreviewed zero row.
+
 Optional Codemap guidance is shipped locally with foundry; loading it does not read another plugin's private shared directory. Codemap queries still require the `codemap-py` plugin, with file-read fallback when the CLI or local contract is unavailable.
 
 Specialist Codemap prompts reuse only matching, successful, fresh answers, inspecting each batch child's metadata and preserving valid empty results. Supplied answers avoid duplicate pre-flight calls; source and independent-review reads remain allowed. QA distinguishes static test/mock relationships from measured line coverage and treats missing measurements as unknown.

@@ -42,7 +42,9 @@ Never write to remote. PR scope may update local checkout to PR head; otherwise 
 
 ## Workflow (Exact Commands)
 
-For `--approve-gh`, apply [Managed Host Preapproval](../../shared/native-skill-contract.md#managed-host-preapproval) to the helper actually used. Reuse the loaded matching host allow rule and execute directly; do not introduce a workflow confirmation or a wrapper that breaks matching. Diagnose unexpected prompts with the exact command and applicable rules. Missing or stricter host permissions remain authoritative.
+Apply [GitHub Workflow Consent](../../shared/native-skill-contract.md#github-workflow-consent) whether or not `--approve-gh` is present: reuse existing scoped authorization; never require a flag reply or reinvocation. Ask only for genuinely missing consent through the permitted question control.
+
+For required GitHub operations covered by `--approve-gh` or recorded same-scope workflow consent, apply [Managed Host Preapproval](../../shared/native-skill-contract.md#managed-host-preapproval) to the helper actually used. Reuse the loaded matching host allow rule and execute directly; do not introduce a workflow confirmation or a wrapper that breaks matching. Diagnose unexpected prompts with the exact command and applicable rules. Missing or stricter host permissions remain authoritative.
 
 ### 01: Create run directory
 

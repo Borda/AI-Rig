@@ -25,6 +25,17 @@ Before retry or a different route, record the observed failure class and its evi
 5. Fix each valid finding where it sits, smallest change that closes it: one predicate, call site, or local implementation. A finding is never permission to restructure its surroundings. Run the relevant regression checks, freeze the changed snapshot, obtain the next independent review only if no stop condition applies and a round remains.
 6. Before acceptance, capture the current snapshot again. Must match the final independently reviewed snapshot. Later edits, formatter changes, target merges, or source updates invalidate a clean claim until reviewed. Complete the caller's ordinary gates, artifact validation, promotion, final output; a clean loop is not a merge decision or automatic commit authorization.
 
+After every completed challenge-resolve round, after triage and finding validation but before any next fix, review, or stop, Codex Rig runs `python shared/adversarial_loop.py --ledger <run-directory>/loop-ledger.json --progress`. This preserves the full cumulative progress transcript on stderr while leaving the JSON summary on stdout unchanged. Consumers without that helper still render the same table from the validated round. Show that full table to the user after each round; do not show a partial or unreviewed row.
+
+The progress table has exactly these columns:
+
+| Iteration | Critical | High | Medium | Low | Nits | Weighted score |
+| -- | -- | -- | -- | -- | -- | -- |
+
+Each numeric cell is the literal `old + new` split: `old` counts currently open signatures whose signature was seen in any prior completed round, including signatures that were closed and later reopened, and `new` counts currently open signatures first seen in the current round. The first row therefore uses `0 + current` in every numeric column. Count only `open` and `fixed-pending-verification`; exclude `verified-fixed` and `rejected`. The `Critical` display combines `security` and `critical`, while the score retains weights security 20, critical 10, high 6, medium 4, low 2, and nit 1; `Weighted score` is `old weighted + new weighted`, and its sum equals the existing `W_n`. An empty ledger emits `not-run` with `N/A` cells instead of an unreviewed zero row.
+
+The stderr transcript includes a legend explaining the old/new split and repeats the complete cumulative table on every invocation, preserving all prior rows. With no rounds, emit one `not-run` iteration whose cells are `N/A`; do not fabricate a zero row. This in-turn progress output is separate from the final result table.
+
 ## Scores and stop rules
 
 Sum weights of open findings once per stable signature:
