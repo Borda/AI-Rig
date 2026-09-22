@@ -513,8 +513,10 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
         raise SystemExit("code-remediate-final-handoff-source-coverage-mismatch")
 
 
-def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[str, Any]) -> None:
-    """Require the final review branch and tables to match its terminal or assessed result."""
+def _validate_code_review_final_handoff(
+    result: dict[str, Any], handoff: dict[str, Any], *, candidate: bool = False
+) -> None:
+    """Bind review presentation to its result, requiring attribution only for new assessed candidates."""
     if handoff.get("branch") == "caller-contract":
         return
     metadata = result.get("metadata")
@@ -542,14 +544,39 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
         if isinstance(table, dict) and isinstance(table.get("heading"), str)
     }
     headings = set(tables_by_heading)
+    reviewer_tables = [table for table in tables if isinstance(table, dict) and "reviewers" in table]
+    assessments = metadata.get("reviewer_assessments")
+    if candidate and expected_branch == "assessed":
+        snapshot_heading = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
+        if (
+            not isinstance(assessments, list)
+            or not assessments
+            or len(reviewer_tables) != 1
+            or reviewer_tables[0].get("heading") != snapshot_heading
+            or reviewer_tables[0]["reviewers"] != assessments
+        ):
+            raise SystemExit("code-review-final-handoff-candidate-attribution-missing")
+    if assessments is not None or reviewer_tables:
+        if expected_branch != "assessed" or len(reviewer_tables) != 1 or reviewer_tables[0]["reviewers"] != assessments:
+            raise SystemExit("code-review-final-handoff-reviewers-mismatch")
+        if reviewer_tables[0].get("summary") != metadata["review_decision"].get("summary"):
+            raise SystemExit("code-review-final-handoff-review-summary-mismatch")
     if expected_branch in {"unavailable", "closed"} and tables:
         raise SystemExit("code-review-terminal-final-handoff-table-forbidden")
     if expected_branch == "assessed" and metadata.get("scope") == "pr" and "PR Snapshot" not in headings:
         raise SystemExit("code-review-final-handoff-pr-snapshot-missing")
-    if expected_branch == "assessed" and metadata.get("scope") == "pr":
-        snapshot = tables_by_heading["PR Snapshot"]
+    # `Review Snapshot` is the non-PR counterpart and carries the reviewed target and revision where the PR
+    # snapshot names the pull request. The heading is new in this release, so no stored artifact predates it.
+    snapshot_fields = {
+        "PR Snapshot": ("PR", "Author", "CI", "Type", "Suggestion"),
+        "Review Snapshot": ("Scope", "Revision", "CI", "Type", "Suggestion"),
+    }
+    snapshot_heading = next((heading for heading in snapshot_fields if heading in headings), None)
+    if expected_branch == "assessed" and snapshot_heading:
+        label = "pr-snapshot" if snapshot_heading == "PR Snapshot" else "review-snapshot"
+        snapshot = tables_by_heading[snapshot_heading]
         rows = snapshot.get("rows")
-        expected_fields = ("PR", "Author", "CI", "Type", "Suggestion")
+        expected_fields = snapshot_fields[snapshot_heading]
         if (
             not isinstance(rows, list)
             or tuple(
@@ -560,7 +587,7 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
             )
             != expected_fields
         ):
-            raise SystemExit("code-review-final-handoff-pr-snapshot-fields-mismatch")
+            raise SystemExit(f"code-review-final-handoff-{label}-fields-mismatch")
         decision = metadata.get("review_decision")
         recommendation = decision.get("recommendation") if isinstance(decision, dict) else None
         suggestions = {
@@ -576,7 +603,7 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
             or len(suggestion_cells) != 2
             or suggestion_cells[1] != suggestions.get(recommendation)
         ):
-            raise SystemExit("code-review-final-handoff-pr-snapshot-suggestion-mismatch")
+            raise SystemExit(f"code-review-final-handoff-{label}-suggestion-mismatch")
     finding_total = sum(result["findings"].values())
     if expected_branch == "assessed" and finding_total and "Review Findings and Merge Blocks" not in headings:
         raise SystemExit("code-review-final-handoff-findings-table-missing")
@@ -609,6 +636,8 @@ def _validate_code_review_final_handoff(result: dict[str, Any], handoff: dict[st
                 for field in ("summary", "closure_evidence"):
                     if row.get(field) != record.get(field):
                         raise SystemExit(f"code-review-final-handoff-finding-{field}-mismatch")
+                if row.get("authors") != record.get("authors"):
+                    raise SystemExit("code-review-final-handoff-finding-authors-mismatch")
                 if "required_change" in record and row["cells"][1:3] != [
                     record["required_change"],
                     "; ".join(record["evidence"]),
@@ -731,7 +760,7 @@ def _validate_final_handoff(
                     raise SystemExit("remediation-commit-evidence-invalid")
         _validate_code_remediate_final_handoff(result, handoff)
     elif skill == "code-review":
-        _validate_code_review_final_handoff(result, handoff)
+        _validate_code_review_final_handoff(result, handoff, candidate=candidate)
 
 
 def _require_file_sections(path: Path, sections: list[str]) -> None:

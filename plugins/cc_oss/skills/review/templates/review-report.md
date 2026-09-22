@@ -6,6 +6,7 @@ PR Type:     [fix | feat | refactor | perf | docs | ci | chore | test | mixed �
 Scope:       [key changed files, comma-separated]
 Focus:       [SCOPE-LABEL — one-line description of what the change does]
 Agents:      [comma-separated agent names that ran]
+Reviewers:   [readable role (rating), readable role (rating).]
 CI:          [passing (N/N) / failing — check-name, check-name / pending]
 Gate:        [PASS | BLOCK | REJECT_<GROUND> @<sha> — GROUND one of GOAL/CONDUCT/SCOPE/LICENSE/DUPLICATE/REVERTED/SPAM/PHILOSOPHY, see review SKILL.md Stage 1; PASS/BLOCK reach full review, REJECT_* carries reviewed commit SHA so /oss:resolve can detect whether PR has since changed]
 Outcome:     [APPROVE | NEEDS_WORK | REQUEST_CHANGES | N/A — rejected at gate]
@@ -15,7 +16,19 @@ Next steps:  [comma-separated actionable items — blockers first]
 Path:        → .reports/review/pr-<N>/run-<NNN>/review-report.md
 ---
 
+Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+
 ## Code Review: [target]
+
+[Preserve the aggregate review summary here as prose, including overall verdict and material limits.]
+
+### Findings overview
+
+| ID | Author | Finding | Resolution proposal | Status |
+| -- | -- | -- | -- | -- |
+| [stable finding ID] | [all contributing reviewer roles] | [short problem] | [concrete proposal] | [required / minor / verify] |
+
+> Keep existing sections below. Reference the same finding IDs; this overview adds attribution without removing detail.
 
 ### [blocking] Critical (must fix before merge)
 

@@ -246,17 +246,30 @@ def test_skill_roster_names_and_manifest_records_are_exact() -> None:
 def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() -> None:
     """Keep loop calibration aligned with its executable convergence boundary."""
     calibration = PLUGIN_ROOT / "runtime" / "calibration"
-    cases = {
-        item["id"]: item
-        for item in _load_json(calibration / "behavioral-cases.json")["cases"]
-        if item.get("target") == "adversarial-loop"
-    }
-    assert set(cases) == {
+    case_file = calibration / "behavioral-cases.json"
+    cases = {item["id"]: item for item in _load_json(case_file)["cases"] if item.get("target") == "adversarial-loop"}
+    expected = {
         "adversarial-loop-independent-closure",
         "adversarial-loop-stop-conditions",
         "adversarial-loop-owner-and-response-binding",
         "adversarial-loop-progress-transcript",
+        "adversarial-loop-unvalidated-progress-table",
     }
+    # One unreproduced -n4 failure here showed only a truncated set diff, leaving it impossible to tell an edited
+    # case list from a stale read of the same file. On mismatch, read the file a second time and report both: two
+    # disagreeing reads of an unchanged digest mean the read was transient, one stable read means the list drifted.
+    # The re-read never rescues the assertion — both outcomes still fail, they just fail legibly.
+    if set(cases) != expected:
+        first_digest = hashlib.sha256(case_file.read_bytes()).hexdigest()[:12]
+        recheck = {item["id"] for item in _load_json(case_file)["cases"] if item.get("target") == "adversarial-loop"}
+        second_digest = hashlib.sha256(case_file.read_bytes()).hexdigest()[:12]
+        verdict = "transient read" if recheck == expected and first_digest == second_digest else "case list drifted"
+        raise AssertionError(
+            f"adversarial-loop {verdict}: missing={sorted(expected - set(cases))} "
+            f"unexpected={sorted(set(cases) - expected)} "
+            f"re-read={sorted(recheck)} sha256[:12]={first_digest}->{second_digest}"
+        )
+    assert cases["adversarial-loop-unvalidated-progress-table"]["expected_findings"] == ["convergence-table-omitted"]
     assert cases["adversarial-loop-progress-transcript"]["expected_findings"] == [
         "cumulative-progress-history-missing",
         "old-new-split-missing",

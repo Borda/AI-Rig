@@ -143,6 +143,80 @@ def test_standard_handoff_renders_complete_deterministic_markdown() -> None:
     assert finalizer.render_handoff(_handoff_payload()) == rendered
 
 
+@pytest.mark.parametrize("heading", ["PR Snapshot", "Review Snapshot"])
+def test_review_attribution_preserves_summary_and_renders_ratings_and_authors(heading: str) -> None:
+    """Show reviewer judgments separately from the aggregate decision and deduplicated finding authors."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload.update(skill="code-review", branch="assessed", presentation_version=2)
+    payload["outcome"] = {"title": "Review Decision", "summary": "Recommendation: needs-more-work."}
+    payload["remaining"] = []
+    payload["next_steps"] = []
+    payload["tables"] = [
+        {
+            "heading": heading,
+            "summary": "Configuration needs a boundary fix.",
+            "columns": ["Field", "Value"],
+            "rows": [{"id": "PR", "cells": ["PR", "#42"], "source_ids": ["report:CR-2"]}],
+            "reviewers": [
+                {"role": "Software engineer", "rating": 3, "evidence": "specialists/sw-engineer.md"},
+                {"role": "QA specialist", "rating": 2, "evidence": "specialists/qa-specialist.md"},
+            ],
+        },
+        {
+            "heading": "Review Findings and Merge Blocks",
+            "layout": "concise",
+            "columns": ["Finding / area", "Required change", "Evidence", "Status"],
+            "rows": [
+                {
+                    "id": "CR-1",
+                    "title": "Empty input fails",
+                    "authors": ["Software engineer", "QA specialist"],
+                    "cells": ["CR-1", "Handle empty input", "config.py:12", "Required"],
+                    "source_ids": ["report:CR-1"],
+                }
+            ],
+        },
+    ]
+
+    rendered = finalizer.render_handoff(payload)
+
+    assert "This review needs more work before it can be accepted." in rendered
+    assert "Configuration needs a boundary fix." in rendered
+    assert "| Reviewers | Software engineer (3), QA specialist (2). |\n\nLegend: 1 = Approve" in rendered
+    assert "4 = Insufficient evidence · 5 = Block / Reject." in rendered
+    assert "| ID | Author | Finding | Resolution proposal | Status |" in rendered
+    assert "| CR-1 | Software engineer, QA specialist | Empty input fails | Handle empty input | Required |" in rendered
+    assert "config.py:12" in rendered
+    payload["tables"][1]["rows"][0]["authors"] = ["Skipped reviewer"]
+    with pytest.raises(finalizer.HandoffError, match="finding-authors-unbound"):
+        finalizer.render_handoff(payload)
+    del payload["tables"][1]["rows"][0]["authors"]
+    with pytest.raises(finalizer.HandoffError, match="finding-authors"):
+        finalizer.render_handoff(payload)
+
+
+@pytest.mark.parametrize("rating", [0, 6, True, "3", None])
+def test_reviewer_rating_rejects_invalid_values(rating: object) -> None:
+    """Reject out-of-scale ratings and booleans rather than publishing misleading reviewer judgments."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload.update(skill="code-review", branch="assessed")
+    payload["outcome"] = {"title": "Review Decision", "summary": "Recommendation: needs-more-work."}
+    payload["remaining"] = []
+    payload["next_steps"] = []
+    payload["tables"] = [
+        {
+            "heading": "PR Snapshot",
+            "columns": ["Field", "Value"],
+            "rows": [{"id": "PR", "cells": ["PR", "#42"], "source_ids": ["report:CR-1", "report:CR-2"]}],
+            "reviewers": [{"role": "QA specialist", "rating": rating, "evidence": "qa.md"}],
+        }
+    ]
+    with pytest.raises(finalizer.HandoffError, match="reviewer-rating-invalid"):
+        finalizer.render_handoff(payload)
+
+
 def test_release_handoff_renders_changes_and_readiness_tables() -> None:
     """Show readiness independently from release changes without losing source coverage."""
     finalizer = _load_finalizer()

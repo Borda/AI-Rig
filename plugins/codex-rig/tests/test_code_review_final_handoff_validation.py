@@ -223,6 +223,55 @@ def _handoff(recommendation: str, suggestion: str) -> dict[str, object]:
     }
 
 
+SNAPSHOT_FIELDS = {
+    "PR Snapshot": ("PR", "Author", "CI", "Type", "Suggestion"),
+    "Review Snapshot": ("Scope", "Revision", "CI", "Type", "Suggestion"),
+}
+
+
+def _reshape_snapshot(snapshot: dict[str, object], heading: str, suggestion: str) -> None:
+    """Point one snapshot table at the field set its own heading requires.
+
+    Example:
+        >>> table = {"heading": "PR Snapshot", "columns": ["Field", "Value"], "rows": []}
+        >>> _reshape_snapshot(table, "Review Snapshot", "approve")
+        >>> [row["cells"][0] for row in table["rows"]]
+        ['Scope', 'Revision', 'CI', 'Type', 'Suggestion']
+    """
+    values = {
+        "PR": "[#1399 — Pack targets](https://github.com/example/project/pull/1399)",
+        "Author": "@contributor",
+        "Scope": "working tree",
+        "Revision": "0f1e2d3",
+        "CI": "unavailable",
+        "Type": "perf",
+        "Suggestion": suggestion,
+    }
+    snapshot["heading"] = heading
+    snapshot["rows"] = [
+        {"id": f"PR-{index}", "cells": [field, values[field]], "source_ids": [f"source-{index}"]}
+        for index, field in enumerate(SNAPSHOT_FIELDS[heading], start=1)
+    ]
+
+
+def test_review_snapshot_rows_are_bound_to_their_non_pr_heading() -> None:
+    """Reject a non-PR snapshot that reuses PR fields or contradicts the recommendation."""
+    result = _result("needs-more-work")
+    result["metadata"]["scope"] = "working-tree"
+    handoff = _handoff("needs-more-work", "needs work")
+    snapshot = handoff["tables"][0]
+    _reshape_snapshot(snapshot, "Review Snapshot", "needs work")
+    VALIDATOR._validate_code_review_final_handoff(result, handoff)
+
+    snapshot["rows"][0]["cells"][0] = "PR"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-fields-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
+    snapshot["rows"][0]["cells"][0] = "Scope"
+    snapshot["rows"][-1]["cells"][1] = "approve"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-suggestion-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
+
+
 @pytest.mark.parametrize(
     "malformed_fields",
     [
@@ -267,6 +316,101 @@ def test_review_outcome_is_bound_to_the_canonical_recommendation() -> None:
         VALIDATOR._validate_code_review_final_handoff(_result("needs-more-work"), handoff)
 
 
+def test_review_ratings_and_summary_are_bound_to_retained_assessments() -> None:
+    """Reject altered ratings or a removed aggregate summary while preserving the PR decision."""
+    result = _result("needs-more-work")
+    assessments = [{"role": "QA specialist", "rating": 4, "evidence": "specialists/qa.md"}]
+    result["metadata"]["reviewer_assessments"] = assessments
+    handoff = _handoff("needs-more-work", "needs work")
+    snapshot = handoff["tables"][0]
+    snapshot["reviewers"] = [dict(assessments[0])]
+    snapshot["summary"] = result["metadata"]["review_decision"]["summary"]
+    VALIDATOR._validate_code_review_final_handoff(result, handoff)
+
+    snapshot["reviewers"][0]["rating"] = 1
+    with pytest.raises(SystemExit, match="code-review-final-handoff-reviewers-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
+    snapshot["reviewers"][0]["rating"] = 4
+    del snapshot["summary"]
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-summary-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
+
+
+@pytest.mark.parametrize("scope", ["pr", "working-tree"])
+@pytest.mark.parametrize("missing", ["all", "assessments", "snapshot", "reviewers", "summary", "wrong-heading"])
+def test_new_assessed_candidate_requires_attribution(scope: str, missing: str) -> None:
+    """Reject missing candidate attribution without retroactively invalidating historical reports."""
+    result = _result("accept-as-is")
+    result["schema_version"] = 2
+    metadata = result["metadata"]
+    metadata.update(scope=scope, finding_records_version=1, review_findings=[], operational_blockers=[])
+    handoff = _handoff("accept-as-is", "approve")
+    snapshot = handoff["tables"][0]
+    if scope != "pr":
+        _reshape_snapshot(snapshot, "Review Snapshot", "approve")
+    # The same unattributed stored report stays readable, but cannot be promoted as a new candidate.
+    VALIDATOR._validate_code_review_final_handoff(result, handoff)
+    if missing != "all":
+        assessments = [{"role": "QA specialist", "rating": 1, "evidence": "specialists/qa.md"}]
+        metadata["reviewer_assessments"] = assessments
+        snapshot.update(reviewers=assessments, summary=metadata["review_decision"]["summary"])
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True)
+        if missing == "assessments":
+            del metadata["reviewer_assessments"]
+        elif missing == "snapshot":
+            handoff["tables"] = []
+        elif missing == "wrong-heading":
+            _reshape_snapshot(snapshot, "Review Snapshot" if scope == "pr" else "PR Snapshot", "approve")
+        else:
+            del snapshot[missing]
+    with pytest.raises(
+        SystemExit, match="code-review-final-handoff-(candidate-attribution-missing|review-summary-mismatch)"
+    ):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True)
+
+
+@pytest.mark.parametrize("branch", ["unavailable", "closed", "caller-contract"])
+def test_new_terminal_review_keeps_attribution_exception(branch: str) -> None:
+    """Do not invent participants for terminal or explicitly caller-defined output."""
+    result = _result("accept-as-is")
+    result["metadata"]["review_status"] = branch
+    handoff = {"branch": branch, "tables": []}
+    VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=True)
+
+
+def test_candidate_flag_reaches_review_attribution_gate(tmp_path: Path) -> None:
+    """A digest-valid historical handoff must fail the new-candidate path when attribution is absent."""
+    result_path = _write_complete_unavailable_v2_artifact(tmp_path, {"status": "not-attempted"})
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    metadata = result["metadata"]
+    metadata.pop("review_status")
+    metadata.update(
+        scope="working-tree",
+        finding_records_version=1,
+        review_findings=[],
+        operational_blockers=[],
+        review_decision={
+            "recommendation": "needs-more-work",
+            "summary": "Evidence is incomplete.",
+            "rationale": "Verify before accepting.",
+        },
+    )
+    handoff_path = tmp_path / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["branch"] = "assessed"
+    handoff["outcome"] = {"title": "Review Decision", "summary": "Recommendation: needs-more-work."}
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    finalizer = _load_validator(FINALIZER, "candidate_attribution_finalizer")
+    validation = finalizer.render_files(handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json")
+    metadata["final_handoff"].update(
+        branch="assessed", handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"]
+    )
+    gates = json.loads((tmp_path / "gates.json").read_text(encoding="utf-8"))
+    VALIDATOR._validate_final_handoff(result, "code-review", tmp_path, gates)
+    with pytest.raises(SystemExit, match="code-review-final-handoff-candidate-attribution-missing"):
+        VALIDATOR._validate_final_handoff(result, "code-review", tmp_path, gates, candidate=True)
+
+
 def test_review_handoff_rejects_replaced_finding_identity() -> None:
     """A digest-bound final table must not replace the finding reviewed in the source notes."""
     result = _result("needs-more-work")
@@ -287,6 +431,11 @@ def test_review_handoff_rejects_replaced_finding_identity() -> None:
         VALIDATOR._validate_code_review_final_handoff(result, handoff)
 
     handoff["tables"][-1]["rows"][0]["cells"][0] = "CR-1"
+    VALIDATOR._validate_code_review_final_handoff(result, handoff)
+    result["metadata"]["review_findings"][0]["authors"] = ["QA specialist"]
+    with pytest.raises(SystemExit, match="code-review-final-handoff-finding-authors-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff)
+    handoff["tables"][-1]["rows"][0]["authors"] = ["QA specialist"]
     VALIDATOR._validate_code_review_final_handoff(result, handoff)
 
 

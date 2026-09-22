@@ -205,6 +205,8 @@ Blocking defaults guide merge judgment; they are not automatic labels:
 
 ### 04: T2 risk-routed specialist fan-out
 
+Include in every reviewer context: return a scoped integer rating and evidence-backed rationale using 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. This adds to the existing findings/confidence output contract. The parent retains the rating and actual role for the header and preserves author attribution through consolidation.
+
 Always:
 
 - Write `<run-directory>/review-routing.json` with `schema_version=1`; declared risk tier; every exact boolean signal below; `signal_evidence` as object containing every signal with non-empty JSON `list[str]` value for each true/false decision; sorted `triggered_roles`; and `trigger_reasons` as object containing only triggered roles with non-empty JSON `list[str]` value. When and only when Sol-pinned role is explicitly selected, add `sol_selection` with that exact role as its only key and object containing only `source=explicit-user-selection`, non-empty `parent_event_id`, and lowercase 64-hex `selection_sha256`; manifest must mirror this record exactly.
@@ -327,6 +329,8 @@ Set `CODE_REVIEW_METADATA.finding_records_version=1` for every new assessed revi
 
 Define each finding once in `CODE_REVIEW_METADATA.review_findings` with stable `id`, `severity`, `title`, `summary`, `required_change`, nonempty ordered `evidence` strings, and `closure_evidence`. These enriched records are canonical; counts, notes and final actions are views, never separately ingested findings. In `Findings`, reference canonical IDs instead of repeating complete finding text. Decision summaries and confidence gaps sharing finding's closure cross-reference that ID; independent operational obligations remain distinct. Keep genuine code/test/online evidence in canonical record, not merely repeated report-line mentions.
 
+For every new assessed review, also record `CODE_REVIEW_METADATA.reviewer_assessments`: one ordered `{role, rating, evidence}` record per actual reviewer, using a readable role name, an integer from 1 through 5, and the retained assessment's evidence pointer. Ask each reviewer to state its scoped rating and rationale; never infer approval from silence or confidence. In-main coverage uses an explicit label such as `Software engineer (parent substitute)`; parent-only reviews name the main reviewer. Do not invent skipped participants. Ratings are scoped judgments, not severity or confidence scores and never averaged into the overall verdict. Preserve disagreements for parent reconciliation. Every canonical finding and operational blocker carries a nonempty `authors` list of matching reviewer labels; deduplication retains every contributing author.
+
 Required sections:
 
 - `Decision Summary`
@@ -386,20 +390,41 @@ For assessed `scope=pr` review, immediately before user-facing output, rebuild `
 | CI | `passing`, `failing — <check names>`, `pending — <check names>`, or `unavailable` |
 | Type | `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed` |
 | Suggestion | `approve`, `minor changes`, `needs work`, `reject`, or `not aligned` |
+| Reviewers | `<readable role> (<rating>), <readable role> (<rating>).` |
+
+Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+
+The Reviewers row and legend are additive. Preserve the aggregate text summary, all existing header fields, verdict, findings, evidence and confidence. In `final-handoff.json`, attach `reviewers` copied from `reviewer_assessments` and `summary` copied from `review_decision.summary` to the snapshot table; the renderer appends the Reviewers row and legend, so do not duplicate it in machine `rows`. Rating 5 requires evidence for blocking/rejection and does not itself close a PR. Terminal unassessed branches retain their current exceptions.
+
+Rating 4 means an actual reviewer examined its scope and could not reach a judgment on the available evidence. It is not a skipped role, and it is not a reviewer that never returned. Its `evidence` must name which case it is, so a genuine "insufficient evidence" verdict stays distinguishable from a runner or dispatch failure; report a reviewer that never produced an assessment as an operational blocker instead of assigning it a rating.
+
+Ratings record scoped judgments only. No validator derives, cross-checks or overrides `review_decision.recommendation` from them, so a header that disagrees with the verdict passes every automated gate: keeping the two coherent, and never averaging ratings into the verdict, is a workflow obligation of this skill.
+
+**Every new assessed review needs one snapshot table, whatever its scope.** `scope=pr` uses `PR Snapshot` with the fields above. Every other scope uses `Review Snapshot`, with `layout` omitted (legacy), columns `Field | Value`, and these rows:
+
+| Field | Value |
+| -- | -- |
+| Scope | the reviewed target — working tree, branch, commit range, or path set |
+| Revision | reviewed commit SHA, or the exact declared working-tree state |
+| CI | `passing`, `failing — <check names>`, `pending — <check names>`, or `unavailable` — never fabricate a run that did not happen |
+| Type | `fix`, `feat`, `refactor`, `perf`, `docs`, `ci`, `chore`, `test`, or `mixed` |
+| Suggestion | `approve`, `minor changes`, `needs work`, `reject`, or `not aligned` |
+
+Attach `reviewers` and `summary` to it exactly as for `PR Snapshot`. A new assessed candidate without this table fails promotion with `code-review-final-handoff-candidate-attribution-missing`. Validation binds the rows themselves: a different field set or order fails with `code-review-final-handoff-review-snapshot-fields-mismatch`, and a `Suggestion` disagreeing with `review_decision.recommendation` fails with `code-review-final-handoff-review-snapshot-suggestion-mismatch`.
 
 Read PR CI from `pr.json.statusCheckRollup`: failing completed check makes CI `failing`; otherwise incomplete check makes it `pending`; otherwise completed successful/neutral/skipped checks make it `passing`. An absent or empty rollup is `unavailable`, never `passing`; name known non-passing checks. Classify `Type` from verified change intent and diff, not title or file count. Map `Suggestion` directly from `accept-as-is`, `minor-changes`, `needs-more-work`, `reject`, and `not-aligned`, respectively. The snapshot applies only after successful source assessment: terminal unavailable and close outputs retain their existing no-table contracts.
 
 For every new assessed review with findings or operational blockers, regardless of scope or recommendation, add a `## Review Findings and Merge Blocks` section immediately after `Decision Summary` and include its grouped table in final handoff. The historical requirement for every assessed non-`accept-as-is` PR decision and any `needs-more-work` decision in another scope also remains. It is canonical pre-merge handoff and must use this exact Markdown header and column order:
 
-| Finding / area | Required change | Evidence | Status |
-| -- | -- | -- | -- |
-| Exact finding ID or declared operational-blocker ID | Canonical required_change | Canonical evidence joined with semicolon-space | Required, Minor change, Verify, Implemented; verify, Required verification, Reject, or Not aligned |
+| Finding / area | Author | Required change | Evidence | Status |
+| -- | -- | -- | -- | -- |
+| Exact finding ID or declared operational-blocker ID | Canonical authors joined with comma-space | Canonical required_change | Canonical evidence joined with semicolon-space | Required, Minor change, Verify, Implemented; verify, Required verification, Reject, or Not aligned |
 
 Include one non-empty row for every reported finding, unresolved blocker, failed or missing gate, and required verification. Schema-v2 first cells use exact declared finding or operational-blocker IDs; validator checks unique, complete identity coverage as specified below. Historical schema-v1 has only count-based coverage; parent must cross-check its source identities.
 
 For new final handoffs, set findings table `layout=concise`; keep its four machine columns unchanged. Each finding row additionally carries `title`, `summary`, and `closure_evidence` copied exactly from its canonical record. Its Required change/Evidence cells must equal that record's required_change and semicolon-space-joined evidence. Write required_change as one short, concrete resolution proposal; put rationale and failure mechanism in summary, and verification in closure_evidence. Use `Finding` for named problem; do not create synonymous `Issue` field. Operational blockers carry canonical `id`, descriptive `title`, short `required_change`, and nonempty `evidence`; omit summary/closure. Keep runner or host limitations distinct from source defects.
 
-The renderer shows `ID | Finding | Resolution proposal | Status`, then ID-only detail groups containing additional `Context`, `Evidence`, and `Done when` information. Do not repeat titles, proposals or status below table, and do not restate title as context. Human-readable titles never replace stable IDs in machine cells. Historical legacy and grouped handoffs retain exact rendering; ID-only historical blockers remain readable.
+Copy each canonical `authors` list to its final finding row without changing the four machine cells. The renderer shows `ID | Author | Finding | Resolution proposal | Status`, then ID-only detail groups containing additional `Context`, `Evidence`, and `Done when` information. Do not repeat titles, proposals or status below table, and do not restate title as context. Human-readable titles never replace stable IDs in machine cells. Historical handoffs without reviewer attribution retain exact rendering; ID-only historical blockers remain readable.
 
 `Status` must distinguish required, minor, verification-only, rejected, or not aligned; `Implemented` alone is not open action. Do not collapse distinct findings into generic row. This table is mandatory after assessment for every non-`accept-as-is` PR and any `needs-more-work` review; missing, malformed, empty, or non-actionable rows fail validation. Terminal review-unavailable output forbids tables and uses plain process diagnostic prose.
 

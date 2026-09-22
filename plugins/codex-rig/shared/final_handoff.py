@@ -74,8 +74,12 @@ SUPPORTED_SKILLS = frozenset((*STANDARD_COLUMNS, "code-review"))
 REVIEW_RECOMMENDATIONS = frozenset({"accept-as-is", "minor-changes", "needs-more-work", "reject", "not-aligned"})
 REVIEW_TABLE_COLUMNS = {
     "PR Snapshot": ("Field", "Value"),
+    "Review Snapshot": ("Field", "Value"),
     "Review Findings and Merge Blocks": ("Finding / area", "Required change", "Evidence", "Status"),
 }
+REVIEWER_LEGEND = (
+    "Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject."
+)
 HANDOFF_FIELDS = {
     "schema_version",
     "skill",
@@ -155,6 +159,42 @@ def _validate_branch(skill: str, branch: object) -> str:
     return branch_name
 
 
+def _validate_review_attribution(tables: list[dict[str, Any]], skill: str) -> None:
+    """Bind finding authors to a single evidence-backed reviewer list while accepting historical tables."""
+    roles: set[str] = set()
+    for table in tables:
+        if "reviewers" not in table:
+            continue
+        if skill != "code-review" or table["heading"] not in {"PR Snapshot", "Review Snapshot"} or roles:
+            raise HandoffError("reviewers-table-invalid")
+        reviewers = table["reviewers"]
+        if not isinstance(reviewers, list) or not reviewers:
+            raise HandoffError("reviewers-empty")
+        if "summary" in table:
+            _require_string(table["summary"], "review-summary")
+        for reviewer in reviewers:
+            if not isinstance(reviewer, dict) or set(reviewer) != {"role", "rating", "evidence"}:
+                raise HandoffError("reviewer-fields-invalid")
+            role = _require_string(reviewer["role"], "reviewer-role")
+            _require_string(reviewer["evidence"], "reviewer-evidence")
+            if role in roles:
+                raise HandoffError("reviewer-role-duplicate")
+            if type(reviewer["rating"]) is not int or reviewer["rating"] not in range(1, 6):
+                raise HandoffError("reviewer-rating-invalid")
+            roles.add(role)
+        if any(row["cells"][0] == "Reviewers" for row in table["rows"]):
+            raise HandoffError("reviewers-row-duplicate")
+    for table in tables:
+        for row in table["rows"]:
+            if "authors" not in row and not (roles and table["heading"] == "Review Findings and Merge Blocks"):
+                continue
+            if skill != "code-review" or table["heading"] != "Review Findings and Merge Blocks":
+                raise HandoffError("finding-authors-table-invalid")
+            authors = _require_string_list(row.get("authors"), "finding-authors", allow_empty=False)
+            if len(set(authors)) != len(authors) or not set(authors) <= roles:
+                raise HandoffError("finding-authors-unbound")
+
+
 def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[set[str], set[str]]:
     """Validate tables and return represented row and source identifiers."""
     tables = payload.get("tables")
@@ -184,7 +224,10 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
         if (
             not isinstance(layout, str)
             or layout not in {"legacy", "grouped", "concise"}
-            or (layout != "legacy" and (skill not in {"code-review", "code-remediate"} or heading == "PR Snapshot"))
+            or (
+                layout != "legacy"
+                and (skill not in {"code-review", "code-remediate"} or heading in {"PR Snapshot", "Review Snapshot"})
+            )
         ):
             raise HandoffError(f"table-layout-invalid:{heading}")
         expected = REVIEW_TABLE_COLUMNS.get(heading) if skill == "code-review" else STANDARD_COLUMNS[skill]
@@ -234,6 +277,7 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             if f"[{detail_id}]" not in rendered_cells:
                 raise HandoffError(f"table-detail-unreferenced:{detail_id}")
             detail_ids.add(detail_id)
+    _validate_review_attribution(tables, skill)
     return row_ids, source_ids
 
 
@@ -453,12 +497,23 @@ def _render_table(table: dict[str, Any], *, suppress_heading: bool = False) -> l
     """Render one validated table and its symbol details deterministically."""
     if table.get("layout") in {"grouped", "concise"}:
         return _render_grouped_table(table, suppress_heading=suppress_heading)
-    columns = table["columns"]
+    columns = list(table["columns"])
+    attributed = any("authors" in row for row in table["rows"])
+    if attributed:
+        columns.insert(1, "Author")
     lines = [] if suppress_heading else [f"**{table['heading']}**", ""]
+    if table.get("summary"):
+        lines.extend((table["summary"], ""))
     lines.append("| " + " | ".join(columns) + " |")
     lines.append("| " + " | ".join("---" for _ in columns) + " |")
     for row in table["rows"]:
-        lines.append("| " + " | ".join(_table_cell(cell) for cell in row["cells"]) + " |")
+        cells = list(row["cells"])
+        if attributed:
+            cells.insert(1, ", ".join(row["authors"]))
+        lines.append("| " + " | ".join(_table_cell(cell) for cell in cells) + " |")
+    if table.get("reviewers"):
+        reviewers = ", ".join(f"{item['role']} ({item['rating']})" for item in table["reviewers"])
+        lines.extend((f"| Reviewers | {_table_cell(reviewers)}. |", "", REVIEWER_LEGEND))
     if table.get("details"):
         lines.append("")
         lines.extend(
@@ -475,6 +530,9 @@ def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = Fal
     columns = ["ID", "Severity", "Finding", "Outcome"] if remediation else ["ID", "Finding", "Status"]
     if concise:
         columns.insert(-1, "Resolution" if remediation else "Resolution proposal")
+    attributed = not remediation and any("authors" in row for row in table["rows"])
+    if attributed:
+        columns.insert(1, "Author")
     lines = [] if suppress_heading else [f"**{table['heading']}**", ""]
     lines.extend(
         (
@@ -499,6 +557,8 @@ def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = Fal
                     resolution = reason
                     overview[-1] = disposition
             overview.insert(-1, resolution)
+        if attributed:
+            overview.insert(1, ", ".join(row["authors"]))
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
     for row in table["rows"]:
         cells = row["cells"]

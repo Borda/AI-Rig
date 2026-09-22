@@ -171,6 +171,27 @@ def _events(log: str) -> list[dict]:
     return [json.loads(ln) for ln in Path(log).read_text().splitlines() if ln.strip()]
 
 
+def _wait_for_event(log: str, name: str, timeout: float = 6.0) -> None:
+    """Block until *name* appears in the gate event log, or fail the test.
+
+    A fixed ``time.sleep`` cannot stand in for this. Spawning a child costs a fresh interpreter, and under a loaded
+    parallel run (``pytest -n 4``) that start-up routinely outlasts the tenth-of-a-second a caller would guess, so the
+    "later" worker races ahead of the writer it is supposed to follow. Waiting on the writer's own recorded transition
+    removes the guess: the event is appended once and never removed, so a slow observer still sees it.
+
+    Args:
+        log: Path to the gate event log.
+        name: Event name to wait for.
+        timeout: Seconds to wait before failing.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(event["event"] == name for event in _events(log)):
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"{name!r} never appeared in the gate event log within {timeout}s")
+
+
 def _pos(events: list[dict], name: str) -> int:
     """Return the append-order index of the first event named *name*.
 
@@ -224,9 +245,9 @@ def test_reader_before_writer_drains_first(index: Path, tmp_path: Path, eventlog
 
 def test_writer_blocks_later_readers(index: Path, tmp_path: Path, eventlog: str) -> None:
     """Once writer intent is live, a later reader waits until release."""
-    writer = _SPAWN.Process(target=_w_writer_slow, args=(str(index), 0.5, 5.0))
+    writer = _SPAWN.Process(target=_w_writer_slow, args=(str(index), 1.0, 5.0))
     writer.start()
-    time.sleep(0.15)  # let the writer take intent + enter exclusive
+    _wait_for_event(eventlog, "writer_exclusive_enter")
     out = str(tmp_path / "r.out")
     reader = _SPAWN.Process(target=_w_reader_once, args=(str(index), out, 5.0))
     reader.start()
@@ -243,7 +264,7 @@ def test_no_index_open_during_exclusive_phase(index: Path, tmp_path: Path, event
     """Event-order oracle: no reader parses the index inside any exclusive window."""
     writer = _SPAWN.Process(target=_w_writer_slow, args=(str(index), 0.4, 6.0))
     writer.start()
-    time.sleep(0.1)
+    _wait_for_event(eventlog, "writer_exclusive_enter")
     readers = [_SPAWN.Process(target=_w_reader_once, args=(str(index), str(tmp_path / f"r{i}"), 6.0)) for i in range(4)]
     for proc in readers:
         proc.start()

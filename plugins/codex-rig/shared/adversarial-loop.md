@@ -36,6 +36,16 @@ Each numeric cell is the literal `old + new` split: `old` counts currently open 
 
 The stderr transcript includes a legend explaining the old/new split and repeats the complete cumulative table on every invocation, preserving all prior rows. With no rounds, emit one `not-run` iteration whose cells are `N/A`; do not fabricate a zero row. This in-turn progress output is separate from the final result table.
 
+### Table delivery checkpoint
+
+Never omit the convergence table from a challenge status update, approval/recovery question, pause, or final handoff after the loop starts. Before sending an in-turn message, include the complete current progress table, not merely a score in prose or a link to the ledger. A stopped or resumed run retains this obligation. The canonical final Results table satisfies the final-handoff checkpoint; preserve its required columns rather than adding a second table or replacing it with the progress format.
+
+- Validated rounds exist: repeat all completed rows from the checker. A pending fix or reviewer is not a new completed row.
+- No validated round exists, including missing reviewer coverage, rejected provenance, or pending approval: show `not-run` with `N/A` in every numeric cell and explain the actual missing evidence. Do not suppress the table because the review is incomplete or report zero as if clean.
+- Reviewer returns and parent triage may be described separately as provisional findings; never silently substitute their counts for validated convergence scores. After validation, run the checker and show its full cumulative table before the next fix, dispatch, question, or stop.
+
+An instruction to keep the reply short does not waive this checkpoint. Only an explicit caller-required exact output format may supersede the displayed table; retain the table in the artifact and state the exception when that caller format permits.
+
 ## Scores and stop rules
 
 Sum weights of open findings once per stable signature:

@@ -2,6 +2,28 @@
   "cases": [
     {
       "expected_findings": [
+        "convergence-table-omitted"
+      ],
+      "id": "adversarial-loop-unvalidated-progress-table",
+      "prompt": "An independent challenge has reviewer outputs, but provenance validation and one required coverage axis are incomplete. The parent asks for a scoped recovery decision using prose only, omitting the convergence table because there is no validated round yet.",
+      "target": "adversarial-loop"
+    },
+    {
+      "expected_findings": [
+        "new-review-attribution-missing"
+      ],
+      "id": "code-review-new-candidate-attribution-missing",
+      "prompt": "A newly created assessed review candidate omits the reviewer list and aggregate prose summary snapshot. Its creator treats optional fields on historical stored reports as permission to promote this new candidate without attribution.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [],
+      "id": "code-review-additive-reviewer-attribution",
+      "prompt": "An assessed review preserves its aggregate prose summary and overall verdict. The header includes actual reviewer roles with scoped ratings, followed immediately by the legend: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Findings include every contributing reviewer in an Author column after deduplication. Parent substitutes are labeled. Ratings and authors match retained assessments; skipped roles are omitted and judgments are not averaged.",
+      "target": "code-review"
+    },
+    {
+      "expected_findings": [
         "approval-flag-required-as-reply",
         "eligible-native-consent-skipped"
       ],

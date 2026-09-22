@@ -1,10 +1,12 @@
 ---
 develop-review:  [target — file / dir / working-tree diff]
+Title:        develop-review — [target]
 Date:         [YYYY-MM-DD]
 Change Type:  [fix | feat | refactor | perf | docs | ci | chore | test | mixed — from change intent, not file count or commit message]
 Scope:        [key changed files, comma-separated]
 Focus:        [SCOPE-LABEL — one-line description of what the change does]
 Agents:       [comma-separated agent names that ran]
+Reviewers:    [readable role (rating), readable role (rating).]
 CI:           N/A (develop:review is read-only — runs no tests)
 Outcome:      [APPROVE | NEEDS_WORK | REQUEST_CHANGES]
 Summary:      [1–2 sentence overview of key findings]
@@ -13,7 +15,19 @@ Next steps:   [comma-separated actionable items — blockers first]
 Path:         → .reports/review/<YYYY-MM-DDTHH-MM-SSZ>/review-report.md
 ---
 
+Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.
+
 ## Code Review: [target]
+
+[Preserve the aggregate review summary here as prose, including overall verdict and material limits.]
+
+### Findings overview
+
+| ID | Author | Finding | Resolution proposal | Status |
+| -- | -- | -- | -- | -- |
+| [stable finding ID] | [all contributing reviewer roles] | [short problem] | [concrete proposal] | [required / minor / verify] |
+
+> Keep existing sections below. Reference the same finding IDs; this overview adds attribution without removing detail.
 
 ### [blocking] Critical (must fix before merge)
 

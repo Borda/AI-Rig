@@ -194,6 +194,22 @@ def _pre_bash(sid: str, tool_use_id: str) -> dict:
     }
 
 
+def _post_bash(sid: str, tool_use_id: str, *, failed: bool = False) -> dict:
+    """Build a ``PostToolUse`` (or ``PostToolUseFailure``) payload for a ``Bash`` call.
+
+    Examples:
+        >>> _post_bash("s", "u", failed=True)["hook_event_name"]
+        'PostToolUseFailure'
+    """
+    return {
+        "hook_event_name": "PostToolUseFailure" if failed else "PostToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo hi"},
+        "tool_use_id": tool_use_id,
+        "session_id": sid,
+    }
+
+
 def _pre_tool_with_cwd(sid: str, tool_use_id: str, cwd: str, tool_name: str = "Read") -> dict:
     """Build a PreToolUse payload carrying a ``cwd`` (a subagent's worktree working dir).
 
@@ -515,6 +531,49 @@ class TestToolCounting:
         assert result.returncode == 0, result.stderr
         data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
         assert data["count"] == 2
+
+    def test_counter_stamps_last_and_inflight(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """PreToolUse records ``last`` (this call's time) and opens one ``inflight`` slot.
+
+        ``since`` is a fixed window start and goes stale while calls keep landing inside the window, so the status line
+        needs a separate per-call stamp to decide freshness.
+        """
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-l1"), home=tmp_home)
+
+        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert data["last"] >= data["since"]
+        assert data["inflight"] == 1
+
+    def test_second_call_advances_last_but_not_since(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """A second call inside the 30s window keeps ``since`` fixed and moves ``last`` forward."""
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-l2a"), home=tmp_home)
+        first = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-l2b"), home=tmp_home)
+
+        second = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert second["since"] == first["since"]
+        assert second["last"] >= first["last"]
+        assert second["inflight"] == 2
+
+    @pytest.mark.parametrize("failed", [pytest.param(False, id="ok"), pytest.param(True, id="error")])
+    def test_post_tool_use_releases_inflight(self, sid: str, tmp_home: Path, run_hook, state_dir, failed: bool) -> None:
+        """PostToolUse and PostToolUseFailure both close the inflight slot opened at PreToolUse."""
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-r1"), home=tmp_home)
+        result = run_hook("task-log.js", _post_bash(sid, "tu-bash-r1", failed=failed), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert data["inflight"] == 0
+        assert data["count"] == 1  # release must not disturb the per-window call count
+
+    def test_inflight_never_goes_negative(self, sid: str, tmp_home: Path, run_hook, state_dir) -> None:
+        """A duplicate PostToolUse (both settings files register the hook) floors inflight at 0."""
+        run_hook("task-log.js", _pre_bash(sid, "tu-bash-r2"), home=tmp_home)
+        run_hook("task-log.js", _post_bash(sid, "tu-bash-r2"), home=tmp_home)
+        run_hook("task-log.js", _post_bash(sid, "tu-bash-r2"), home=tmp_home)
+
+        data = json.loads((state_dir(sid) / "tools" / "Bash.json").read_text(encoding="utf-8"))
+        assert data["inflight"] == 0
 
 
 class TestAgentLivenessRefresh:

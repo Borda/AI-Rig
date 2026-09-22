@@ -170,6 +170,38 @@ def test_report_written_with_table_in_reply_has_no_reminder(tmp_path: Path, revi
 
 
 @_skip_node_unavailable
+def test_reviewer_header_row_must_be_delivered(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
+    """Require the additive reviewer ratings row without breaking complete-header delivery."""
+    report_dir, _ = review_run
+    (report_dir / "review-report.md").write_text(
+        "---\nTitle: review\nDate: 2026-09-22\nReviewers: Software engineer (3), QA specialist (2).\n---\n",
+        encoding="utf-8",
+    )
+    table = "| Field | Value |\n| --- | --- |\n| Title | review |\n| Date | 2026-09-22 |\n"
+    transcript = _write_transcript(tmp_path, table)
+    denied = _run(tmp_path, _ask_payload(transcript_path=str(transcript)))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    _write_transcript(tmp_path, table + "| Reviewers | Software engineer (3), QA specialist (2). |\n")
+    assert _run(tmp_path, _ask_payload(transcript_path=str(transcript))) == {}
+
+
+@_skip_node_unavailable
+def test_shipped_review_header_is_accepted(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
+    """Ensure the shipped report producer supplies every field required by the delivery hook."""
+    report_dir, _ = review_run
+    template = HOOK.parent.parent / "skills" / "review" / "templates" / "review-report.md"
+    header = template.read_text(encoding="utf-8").split("---", 2)[1].strip()
+    (report_dir / "review-report.md").write_text(f"---\n{header}\n---\n", encoding="utf-8")
+    rows = [line.partition(":") for line in header.splitlines()]
+    table = "| Field | Value |\n| --- | --- |\n" + "".join(
+        "| {} | {} |\n".format(key.strip(), value.strip().replace("|", r"\|")) for key, _, value in rows
+    )
+    transcript = _write_transcript(tmp_path, table)
+
+    assert _run(tmp_path, _ask_payload(transcript_path=str(transcript))) == {}
+
+
+@_skip_node_unavailable
 def test_report_written_without_table_is_denied(tmp_path: Path, review_run: tuple[Path, Path]) -> None:
     """Unverified report delivery must block only the follow-up transition."""
     report_dir, _ = review_run

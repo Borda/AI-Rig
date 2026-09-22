@@ -100,6 +100,30 @@ def _write_agent(
     (d / f"{agent_id}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
+def _write_tool(
+    sid: str,
+    tool: str,
+    *,
+    since: str,
+    count: int = 1,
+    last: str | None = None,
+    inflight: int | None = None,
+) -> None:
+    """Write a tools/<tool>.json file under the per-session state dir.
+
+    ``last`` and ``inflight`` are written only when provided, so tests can exercise both records written by an older
+    hook version (``since`` only) and current ones.
+    """
+    d = _hook_tmp_base() / f"claude-state-{sid}" / "tools"
+    d.mkdir(parents=True, exist_ok=True)
+    record: dict = {"tool": tool, "since": since, "count": count}
+    if last is not None:
+        record["last"] = last
+    if inflight is not None:
+        record["inflight"] = inflight
+    (d / f"{tool}.json").write_text(json.dumps(record), encoding="utf-8")
+
+
 def _write_codex(sid: str, tool_use_id: str, *, since: str) -> None:
     """Write a codex/<id>.json file under the per-session state dir."""
     d = _hook_tmp_base() / f"claude-state-{sid}" / "codex"
@@ -269,3 +293,102 @@ class TestCodexDisplay:
         assert result.returncode == 0, result.stderr
         rendered = _strip_ansi(result.stdout)
         assert "🤖 none" in rendered
+
+
+class TestToolDisplay:
+    """statusline.js: 🛠️ segment freshness — ``last`` beats ``since``, inflight survives the 30s window."""
+
+    def test_no_tools_shows_none(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """Empty state directory renders ``🛠️ none`` — the correct display at an idle prompt.
+
+        task-log.js clears ``tools/`` at Stop and UserPromptSubmit, so the segment is per-turn by design.
+        """
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "🛠️ none" in _strip_ansi(result.stdout)
+
+    def test_recent_call_shows_type_and_count(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A tool called just now renders ``<tool>:<count>x``."""
+        now = datetime.now(timezone.utc).isoformat()
+        _write_tool(sid, "Bash", since=now, last=now, count=3, inflight=0)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash:3x" in _strip_ansi(result.stdout)
+
+    def test_fresh_last_survives_stale_window_start(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A call 5 s ago inside a window opened 40 s ago stays visible.
+
+        Regression guard: filtering on ``since`` (a FIXED window start) blanked the segment during active work.
+        """
+        old_window = (datetime.now(timezone.utc) - timedelta(seconds=40)).isoformat()
+        recent = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        _write_tool(sid, "Bash", since=old_window, last=recent, count=7, inflight=0)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash:7x" in _strip_ansi(result.stdout)
+
+    def test_inflight_call_stays_visible_past_window(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A single slow call (still in flight after 4 min) keeps its type displayed."""
+        started = (datetime.now(timezone.utc) - timedelta(minutes=4)).isoformat()
+        _write_tool(sid, "Bash", since=started, last=started, count=1, inflight=1)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash:1x" in _strip_ansi(result.stdout)
+
+    def test_finished_call_dropped_after_window(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A returned call (inflight 0) older than 30 s is dropped."""
+        old = (datetime.now(timezone.utc) - timedelta(seconds=90)).isoformat()
+        _write_tool(sid, "Bash", since=old, last=old, count=2, inflight=0)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash" not in _strip_ansi(result.stdout)
+
+    def test_leaked_inflight_dropped_past_cap(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """An inflight slot leaked by a missing PostToolUse is dropped past the 10-min cap."""
+        ancient = (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat()
+        _write_tool(sid, "Bash", since=ancient, last=ancient, count=1, inflight=1)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash" not in _strip_ansi(result.stdout)
+
+    def test_task_log_write_renders_end_to_end(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """State written by the real ``task-log.js`` renders in the real ``statusline.js``.
+
+        Closes the writer/reader seam: every other test in this class seeds ``tools/`` by hand, so a field renamed on
+        one side only would pass them all.
+        """
+        (tmp_home / ".claude" / "logs").mkdir(parents=True, exist_ok=True)
+        pre = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo hi"},
+            "tool_use_id": "tu-e2e",
+            "session_id": sid,
+        }
+        assert run_hook("task-log.js", pre, home=tmp_home).returncode == 0
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Bash:1x" in _strip_ansi(result.stdout)
+
+    def test_legacy_record_without_last_uses_since(self, sid: str, tmp_home: Path, run_hook) -> None:
+        """A record written by an older hook version (no ``last``) still renders off ``since``."""
+        now = datetime.now(timezone.utc).isoformat()
+        _write_tool(sid, "Read", since=now, count=4)
+
+        result = run_hook("statusline.js", _payload(sid), home=tmp_home)
+
+        assert result.returncode == 0, result.stderr
+        assert "Read:4x" in _strip_ansi(result.stdout)

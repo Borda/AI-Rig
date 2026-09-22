@@ -545,7 +545,11 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
     identities: set[str] = set()
     for index, record in enumerate(records, start=1):
         detail_fields = {"title", "summary", "required_change", "evidence", "closure_evidence"}
-        if not isinstance(record, dict) or set(record) not in ({"id", "severity"}, {"id", "severity"} | detail_fields):
+        if not isinstance(record, dict) or set(record) not in (
+            {"id", "severity"},
+            {"id", "severity"} | detail_fields,
+            {"id", "severity", "authors"} | detail_fields,
+        ):
             raise SystemExit(f"review-finding-record-invalid:{index}")
         if "title" in record:
             for field in detail_fields - {"evidence"}:
@@ -587,7 +591,11 @@ def _operational_blocker_identities(metadata: dict[str, Any], finding_ids: set[s
     for index, blocker in enumerate(blockers, start=1):
         if not isinstance(blocker, dict) or set(blocker) not in (
             {"id"},
+            # An attributed review requires `authors` on every blocker, including a historical
+            # ID-only one; without this shape such a blocker could satisfy neither rule.
+            {"id", "authors"},
             {"id", "title", "required_change", "evidence"},
+            {"id", "title", "required_change", "evidence", "authors"},
         ):
             raise SystemExit(f"review-operational-blocker-invalid:{index}")
         if "title" in blocker:
@@ -632,6 +640,33 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
     finding_ids = _review_finding_identities(metadata, result)
     if finding_ids is not None:
         _operational_blocker_identities(metadata, finding_ids)
+    assessments = metadata.get("reviewer_assessments")
+    if assessments is not None:
+        if not isinstance(assessments, list) or not assessments:
+            raise SystemExit("review-assessments-invalid")
+        roles: set[str] = set()
+        for assessment in assessments:
+            if (
+                not isinstance(assessment, dict)
+                or set(assessment) != {"role", "rating", "evidence"}
+                or any(
+                    not isinstance(assessment[key], str) or not assessment[key].strip() for key in ("role", "evidence")
+                )
+                or type(assessment["rating"]) is not int
+                or assessment["rating"] not in range(1, 6)
+                or assessment["role"] in roles
+            ):
+                raise SystemExit("review-assessment-invalid")
+            roles.add(assessment["role"])
+        for record in metadata.get("review_findings", []) + metadata.get("operational_blockers", []):
+            authors = record.get("authors")
+            if (
+                not isinstance(authors, list)
+                or not authors
+                or any(not isinstance(author, str) or author not in roles for author in authors)
+                or len(set(authors)) != len(authors)
+            ):
+                raise SystemExit("review-finding-authors-invalid")
     if recommendation == "accept-as-is" and sum(findings.values()) != 0:
         raise SystemExit("review-accept-with-findings")
     if recommendation == "minor-changes" and (findings["critical"] or findings["high"]):
@@ -660,7 +695,8 @@ def _action_table_rows(notes_text: str) -> list[list[str]]:
     if section is None:
         raise SystemExit("review-missing-findings-action-table")
     rows = [_table_cells(line) for line in section.group("body").splitlines() if line.strip().startswith("|")]
-    if len(rows) < 3 or any(row is None or len(row) != len(ACTION_TABLE_HEADERS) for row in rows):
+    width = len(rows[0]) if rows and rows[0] is not None else 0
+    if len(rows) < 3 or width not in {4, 5} or any(row is None or len(row) != width for row in rows):
         raise SystemExit("review-invalid-findings-action-table")
     return [row for row in rows if row is not None]
 
@@ -678,6 +714,25 @@ def _validate_action_table(notes_path: Path, result: dict[str, Any], metadata: d
         return
 
     rows = _action_table_rows(notes_path.read_text(encoding="utf-8"))
+    attributed = metadata.get("reviewer_assessments") is not None
+    if attributed and len(rows[0]) != 5:
+        raise SystemExit("review-findings-action-table-authors-missing")
+    # Without retained assessments no author cell can be bound to a record, so an Author column
+    # here would render attribution that nothing backs.
+    if not attributed and len(rows[0]) == 5:
+        raise SystemExit("review-findings-action-table-authors-unbound")
+    if attributed:
+        expected_headers = (ACTION_TABLE_HEADERS[0], "Author", *ACTION_TABLE_HEADERS[1:])
+        if tuple(rows[0]) != expected_headers or not re.fullmatch(r":?-{3,}:?", rows[1][1]):
+            raise SystemExit("review-findings-action-table-header-mismatch")
+        records = {
+            record["id"]: record
+            for record in metadata.get("review_findings", []) + metadata.get("operational_blockers", [])
+        }
+        for row in rows[2:]:
+            if row[1] != ", ".join(records.get(row[0], {}).get("authors", [])):
+                raise SystemExit("review-findings-action-table-authors-mismatch")
+        rows = [[row[0], *row[2:]] for row in rows]
     if tuple(rows[0]) != ACTION_TABLE_HEADERS:
         raise SystemExit("review-findings-action-table-header-mismatch")
     if not all(re.fullmatch(r":?-{3,}:?", cell) for cell in rows[1]):

@@ -20,8 +20,9 @@
 //   5. Build Line 2 agent segment (🤖): read state/agents/*.json; skip entries idle > 10 min
 //      (worktree agents, real last_active signal) or > 30 min (non-worktree agents, no per-agent
 //      liveness signal exists — see line ~228); group by type; color from frontmatter; codex:* here
-//   6. Build Line 2 tool segment (🛠️): read state/tools/*.json; skip entries older than 30 s;
-//      render per-type call counts with fixed TOOL_COLORS palette
+//   6. Build Line 2 tool segment (🛠️): read state/tools/*.json; skip entries whose last call is
+//      older than 30 s, unless a call is still in flight (10-min cap); render per-type call counts
+//      with fixed TOOL_COLORS palette
 //   7. Write both lines to stdout with \x1b[K (clear-to-end-of-line) on each line
 //
 // OUTPUT FORMAT
@@ -70,6 +71,15 @@
 //               PreToolUse. Shows tool types active within the last 30 s with per-type
 //               call counts. Each tool type has a fixed ANSI color for visual stability.
 //               Agent and Task tool calls are excluded (tracked under 🤖 instead).
+//               Freshness is measured from `last` (this type's most recent call) ?? `since`
+//               (window start, the only field older hook versions wrote). Filtering on `since`
+//               alone blanked the segment mid-work: `since` is a FIXED window start, so calls
+//               landing at +25 s and +29 s still carried a `since` that aged past 30 s.
+//               A call still in flight (inflight > 0, decremented at PostToolUse) stays shown
+//               past that window up to TOOL_INFLIGHT_MAX_AGE_MS, so one slow Bash/test run is
+//               visible while it runs; the cap bounds a leaked slot from a missing PostToolUse.
+//               "none" at an idle prompt is correct, not a defect — task-log.js clears tools/
+//               at Stop and UserPromptSubmit, so the segment is per-turn by design.
 //
 // SESSION ISOLATION
 //   All state dirs are scoped to /tmp/claude-state-<session_id>/ using the session_id from
@@ -322,11 +332,18 @@ process.stdin.on("end", () => {
       const toolsDir = path.join(tmpDir, "tools");
       const toolFiles = fs.readdirSync(toolsDir).filter((f) => f.endsWith(".json"));
       const TOOL_MAX_AGE_MS = 30 * 1000;
+      const TOOL_INFLIGHT_MAX_AGE_MS = 10 * 60 * 1000; // backstop for a slot leaked by a missing PostToolUse
       const activeTools = toolFiles
         .flatMap((f) => {
           try {
             const t = JSON.parse(fs.readFileSync(path.join(toolsDir, f), "utf8"));
-            if (!t.since || now - new Date(t.since).getTime() > TOOL_MAX_AGE_MS) return [];
+            // `last` = most recent call; `since` = fixed window start, stale while calls keep landing
+            const stamp = t.last || t.since;
+            if (!stamp) return [];
+            const age = now - new Date(stamp).getTime();
+            const inflight = Number(t.inflight) > 0;
+            const fresh = age <= TOOL_MAX_AGE_MS || (inflight && age <= TOOL_INFLIGHT_MAX_AGE_MS);
+            if (!fresh) return [];
             if (!t.tool || typeof t.tool !== "string") return [];
             const count = Number.isFinite(Number(t.count)) ? Math.max(1, Number(t.count)) : 1;
             return [{ tool: t.tool, count }];

@@ -1,5 +1,7 @@
 # 🛠️ develop — Claude Code Plugin
 
+Independent challenge loops show the convergence table in status updates, approval/recovery questions and pauses, even before a validated round (`not-run` / `N/A`); final handoffs retain the canonical Results table.
+
 Six development workflows — `plan`, `feature`, `fix`, `refactor`, `debug`, and `review` — help Claude Code understand a Python change before it edits production code. `/develop:setup` is the separate post-install command that delivers this plugin's rule symlinks.
 
 The gates narrow the failure surface — they do not replace developer judgment on whether a generated change is correct or production-safe.
@@ -426,6 +428,10 @@ ______________________________________________________________________
 ______________________________________________________________________
 
 ### `/develop:review`
+
+The saved header retains `develop-review` and includes `Title` so the report-delivery hook accepts the shipped template.
+
+Review output preserves its aggregate prose summary, verdict, confidence and detailed findings. The header table adds `Reviewers: Software engineer (3), QA specialist (2), Documentation reviewer (1).` Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Parent substitutes are labeled; skipped roles omitted. The findings overview adds an `Author` column retaining all contributors to deduplicated findings.
 
 **Purpose**: Review local Python files or the current git diff across architecture, tests, performance, docs, static analysis, security, and API design. The classifier selects relevant dimensions, which fold into spawn units (performance+architecture share one agent, docs+lint share another; each merged unit still writes one findings file per dimension); the default fan-out is capped at three units, and `--full` runs every selected unit. No GitHub PR is required.
 

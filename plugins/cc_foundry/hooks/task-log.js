@@ -19,11 +19,13 @@
 //   1. Parse stdin JSON for hook_event_name, tool_name, tool_input, agent_id, agent_type, session_id
 //   2. Resolve per-session temp dir at /tmp/claude-state-<session_id>/ for ephemeral state
 //   3. PreToolUse: log Task/Agent/Skill invocations to invocations.jsonl; open a codex session
-//      file in state/codex/ for codex:* skills; increment per-tool-type counter in state/tools/;
-//      write a timing start marker (tool name, args summary, timestamp) to state/timings/
-//   4. PostToolUse: close the codex session file when Skill(codex:*) completes; read the
-//      timing start marker, compute duration_ms, append to timings.jsonl, delete marker
-//   5. PostToolUseFailure: same as PostToolUse timing path but records status "error"
+//      file in state/codex/ for codex:* skills; increment per-tool-type counter in state/tools/
+//      (stamps last + inflight); write a timing start marker (tool name, args summary, timestamp)
+//      to state/timings/
+//   4. PostToolUse: close the codex session file when Skill(codex:*) completes; release the
+//      tool's inflight slot; read the timing start marker, compute duration_ms, append to
+//      timings.jsonl, delete marker
+//   5. PostToolUseFailure: same as PostToolUse timing + inflight path but records status "error"
 //   6. SubagentStart: write agent metadata (type, model, color, timestamp) to state/agents/<id>.json
 //   7. SubagentStop: delete the per-agent file; append completion entry (with last_assistant_message)
 //      to invocations.jsonl; also clean up codex tracking if the agent was a codex:* type
@@ -45,6 +47,10 @@
 //     • Writes/increments a per-tool-type file in state/tools/ for the 🔧 display.
 //       Uses a fixed 30s window (since = window start, not last call) so count resets
 //       after a >30s gap. Agent and Task calls excluded — tracked via SubagentStart/Stop.
+//       Also stamps `last` (this call's time) and increments `inflight`. statusline.js
+//       filters freshness on `last`, never on `since` — a fixed window start goes stale
+//       while calls keep landing inside it, which blanked the segment during active work.
+//       `inflight` keeps a single slow call (test suite, build) visible past the 30s window.
 //     • For Agent() calls: writes state/pending/<tool_use_id>.json with subagent_type so
 //       SubagentStart can resolve agent_type when its payload omits it (Agent() vs Task()).
 //     • Refreshes last_active on a worktree subagent's own tool events (join via cwd →
@@ -53,12 +59,14 @@
 //   PostToolUse
 //     • Closes the codex session file when Skill(codex:*) or Agent(codex:*) completes,
 //       so the 🤖 counter drops back to zero immediately after the run finishes.
+//     • Decrements the tool's `inflight` slot and re-stamps `last` in state/tools/, so a
+//       finished call stops holding the 🔧 segment open beyond its 30s freshness window.
 //     • Reads the timing start marker written by PreToolUse, computes wall-clock duration,
 //       appends a record to timings.jsonl (status "ok"), and deletes the marker.
 //
 //   PostToolUseFailure
-//     • Same timing path as PostToolUse but records status "error" so failed tool calls
-//       are distinguishable in timing analysis without blocking normal flow.
+//     • Same timing + inflight-release path as PostToolUse but records status "error" so
+//       failed tool calls are distinguishable in timing analysis without blocking normal flow.
 //
 //   SubagentStart
 //     • Resolves agent_type from the state/pending/<tool_use_id>.json cache written by
@@ -120,7 +128,7 @@
 //   /tmp/claude-state-<session_id>/agents/<id>.json     — one file per active subagent
 //   /tmp/claude-state-<session_id>/codex/<id>.json      — one file per active codex plugin session
 //   /tmp/claude-state-<session_id>/skills/<id>.json     — one file per in-flight Skill() call
-//   /tmp/claude-state-<session_id>/tools/<tool>.json    — one file per tool type, current turn only
+//   /tmp/claude-state-<session_id>/tools/<tool>.json    — one file per tool type, current turn only {tool, since, last, count, inflight}
 //   /tmp/claude-state-<session_id>/queue/<ts>.json      — one file per pending user input (cleared on Stop)
 //   /tmp/claude-state-<session_id>/pending/<id>.json    — one file per in-flight Agent() call (consumed by SubagentStart; cleaned at SessionEnd)
 //   /tmp/claude-state-<session_id>/timings/<id>.json    — in-flight timing start marker (written by PreToolUse, consumed by PostToolUse/Failure; orphans cleared at Stop)
@@ -270,6 +278,7 @@ process.stdin.on("end", () => {
           const toolFile = path.join(toolsDir, `${tool_name}.json`);
           let count = 1;
           let windowStart = ts; // fixed window: since = start of current 30s window, not last call
+          let inflight = 1;
           try {
             const existing = JSON.parse(fs.readFileSync(toolFile, "utf8"));
             const windowAge = Date.now() - new Date(existing.since || 0).getTime();
@@ -278,8 +287,14 @@ process.stdin.on("end", () => {
               windowStart = existing.since; // preserve original window start so window is fixed, not sliding
             }
             // windowAge > 30s: reset — count stays 1, windowStart = now (new window)
+            // inflight survives the count reset: a still-running call spans window boundaries
+            const prev = Number(existing.inflight);
+            inflight = (Number.isFinite(prev) ? Math.max(0, prev) : 0) + 1;
           } catch (_) {}
-          fs.writeFileSync(toolFile, JSON.stringify({ tool: tool_name, since: windowStart, count }));
+          fs.writeFileSync(
+            toolFile,
+            JSON.stringify({ tool: tool_name, since: windowStart, last: ts, count, inflight }),
+          );
         } catch (_) {}
       }
       // Refresh a running subagent's liveness on its own tool activity, so a still-working
@@ -354,6 +369,7 @@ process.stdin.on("end", () => {
         }
         // Complete timing: read start marker, compute duration, append to timings.jsonl, delete marker.
         // Natural dedup: first fire reads+deletes the marker; second fire finds it gone and exits silently.
+        releaseToolInflight(toolsDir, tool_name);
         recordTiming(data.tool_use_id, tool_name, session_id, "ok", timingsDir, timingsFile, globalLogsDir, data.model);
       }
     } else if (hook_event_name === "PostToolUseFailure") {
@@ -365,6 +381,7 @@ process.stdin.on("end", () => {
             fs.unlinkSync(path.join(skillsDir, `${data.tool_use_id}.json`));
           } catch (_) {}
         }
+        releaseToolInflight(toolsDir, tool_name);
         recordTiming(
           data.tool_use_id,
           tool_name,
@@ -813,6 +830,26 @@ function touchAgentLastActive(cwd, agentsDir) {
     rec.last_active = new Date().toISOString();
     fs.writeFileSync(agentFile, JSON.stringify(rec));
   } catch (_) {} // agent file gone (agent finished) or unreadable — nothing to refresh
+}
+
+// Release one inflight slot on state/tools/<tool>.json when a tool call returns, and re-stamp `last`
+// so the 🔧 segment keeps the finished call for its remaining freshness window and then drops it.
+// Inflight is what keeps a single long call (test suite, build) displayed past 30s — without the
+// decrement here a returned call would hold the segment open until end of turn. A missing PostToolUse
+// (interrupt, crash, a call denied before it runs) leaks a slot; Stop clears tools/ wholesale, so the leak
+// cannot outlive the turn, and statusline caps inflight display by absolute age as a second backstop.
+// Parallel calls of one tool read-modify-write this single file with no lock, so a lost update can drop a
+// count or a release. Same bound covers it, and a status segment does not justify a lock protocol.
+function releaseToolInflight(toolsDir, toolName) {
+  if (!toolName || toolName === "Agent" || toolName === "Task") return;
+  const toolFile = path.join(toolsDir, `${toolName}.json`);
+  try {
+    const rec = JSON.parse(fs.readFileSync(toolFile, "utf8"));
+    const prev = Number(rec.inflight);
+    rec.inflight = Math.max(0, (Number.isFinite(prev) ? prev : 1) - 1);
+    rec.last = new Date().toISOString();
+    fs.writeFileSync(toolFile, JSON.stringify(rec));
+  } catch (_) {} // counter cleared at turn boundary or unreadable — nothing to release
 }
 
 function readAgentInfo(root, agentType) {

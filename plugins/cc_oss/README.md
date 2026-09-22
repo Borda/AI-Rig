@@ -1,5 +1,7 @@
 # 🌱 oss — Claude Code Plugin
 
+Independent challenge loops show the convergence table in status updates, approval/recovery questions and pauses, even before a validated round (`not-run` / `N/A`); final handoffs retain the canonical Results table.
+
 OSS workflow plugin for Python/ML open-source projects. Four agents (two user-facing, two internal pipeline) and five slash-command skills: issue analysis, parallel code review, PR resolution, release artifacts/readiness, and post-install rule setup.
 
 Public actions stay maintainer-owned: replies, merges, pushes, tags, and releases are drafted or prepared here, never posted or published automatically.
@@ -234,6 +236,8 @@ GitHub API responses cached in `.cache/gh/` by number and date (30-day TTL) — 
 ______________________________________________________________________
 
 ### /oss:review
+
+Review output preserves its aggregate prose summary, verdict, confidence and detailed findings. The header table adds `Reviewers: Software engineer (3), QA specialist (2), Documentation reviewer (1).` Its legend appears immediately below: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject. Ratings describe actual reviewers' scoped judgments, never an averaged verdict. Parent substitutes are labeled; skipped roles omitted. The findings overview adds an `Author` column retaining all contributors to deduplicated findings. Terminal rejection keeps its existing gate behavior and reports `Not assessed` when no source review ran.
 
 Scope-aware parallel review of a GitHub PR. Input is a PR number or a saved review report for reply drafting.
 

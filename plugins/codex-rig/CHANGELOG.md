@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.22.0
+
+- Require reviewer attribution and the aggregate summary when promoting new assessed review candidates without retroactively rejecting historical reports. Non-PR assessed candidates must now carry a `Review Snapshot` table, which earlier releases did not require — a breaking change for that promotion path only; stored artifacts still read unchanged. Require convergence tables in challenge updates, approval/recovery questions and pauses, including unvalidated runs.
+- Add scoped reviewer ratings in review header tables, a five-value legend below, and finding authors retaining all deduplicated contributors. Preserve aggregate prose summaries, existing verdicts and evidence; bind rendered attribution to canonical records and retain historical report rendering.
+
 ## 0.21.4
 
 - Keep optional GitHub preapproval flags separate from conversational consent across Code Review, Code Remediate, Assess, and Release. Reuse scoped natural-language authorization and matching direct-helper host rules, prohibit flag-reply and reinvocation demands, and preserve native consent controls, runtime permission, and denial boundaries. Add neutral positive and negative calibration scenarios for every consumer without revealing expected verdicts.

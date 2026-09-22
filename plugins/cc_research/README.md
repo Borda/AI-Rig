@@ -1,5 +1,7 @@
 # 🔬 research — Claude Code Plugin
 
+Independent challenge loops show the convergence table in status updates, approval/recovery questions and pauses, even before a validated round (`not-run` / `N/A`); final handoffs retain the canonical Results table.
+
 `research` turns a vague ML improvement idea into a reviewable path: gather literature, write a measurable experiment contract, check the methodology, run bounded iterations, and inspect what changed. Experiment state and reports stay in the project so the next maintainer can see what was tried.
 
 Adversarial workflow reviews include unchanged downstream consumers and the next ordinary user action, checking whether local success establishes the promised outcome and recording untested handoffs.

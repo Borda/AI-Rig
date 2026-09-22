@@ -92,6 +92,13 @@
     "review_input_sha256": "sha256 of diff.patch",
     "review_run_id": "stable ID for this review execution",
     "review_status": "omit for assessed review; unavailable|closed for a terminal result",
+    "reviewer_assessments": [
+      {
+        "evidence": "retained assessment pointer with scoped rating and rationale",
+        "rating": 4,
+        "role": "Readable actual reviewer role; label parent substitutes"
+      }
+    ],
     "risk_tier": "TRIVIAL|LOCAL|BROAD|HIGH_RISK",
     "scope": "working-tree|path|commit|pr",
     "specialist_manifest": "<run-directory>/specialist-manifest.json",
