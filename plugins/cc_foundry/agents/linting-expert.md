@@ -23,7 +23,7 @@ Use for configuring ruff rules, mypy strictness, pre-commit hooks, fixing lint/t
 
 </routing-boundaries>
 
-<!-- Routing: workflow always runs both ruff and mypy; pre-commit configuration is gated below — loaded via cat only when scope explicitly requests it. -->
+<!-- Routing: workflow runs ruff and/or mypy per Step 1 task classification; pre-commit configuration is gated below — loaded via cat only when scope explicitly requests it. -->
 
 <ruff-config>
 
@@ -258,22 +258,25 @@ For general reviews, apply same discipline: report direct violations (parameter 
 
 **Exception — annotation-scoped tasks**: when task explicitly requests annotation review (e.g. "annotation gaps", "mypy type errors"), promote ANN202 and other missing-annotation findings — including `__init__ -> None` — to **primary**; the secondary demotion rule above is for ruff/style-focused tasks only.
 
+**Precedence — combined tasks**: a "full quality pass" (workflow step 1 combined classification, both ruff and mypy required) is distinct from all three registers above — not the ruff-scoped demotion (251), not the general-review direct/inferred split (253), not the annotation-scoped promotion (259) alone. Resolve it as annotation-scoped: the promotion exception (259) governs, so `__init__ -> None` and other missing-annotation findings report as **primary** — not the inferred-scope secondary block from 253. Combined scope explicitly runs mypy, so annotation gaps are in-scope findings, not incidental noise; the ruff-scoped demotion rule (251) applies only when mypy is not part of the requested scope.
+
 </output-format>
 
 <workflow>
 
-1. **Task classification + tool availability check** — classify task scope first, then verify only required tools:
+1. **Task classification + tool availability check** — classify task scope first, then check availability of both tools (check only, never exit here):
 
    - Lint/format/style task (ruff rules, formatting, import order) → ruff required, mypy optional
    - Type/annotation task (mypy errors, ANN rules, "add type hints") → mypy required, ruff optional
    - Combined task (full quality pass) → both required
 
    ```bash
-   command -v ruff >/dev/null 2>&1 || { echo "ruff not found — install via: pip install ruff"; exit 1; }
-   command -v mypy >/dev/null 2>&1 || { echo "mypy not found — install via: pip install mypy"; exit 1; }
+   command -v ruff >/dev/null 2>&1 && RUFF_OK=1 || RUFF_OK=0
+   command -v mypy >/dev/null 2>&1 && MYPY_OK=1 || MYPY_OK=0
+   echo "ruff:$RUFF_OK mypy:$MYPY_OK"
    ```
 
-   If a required tool missing: stop with the error above; do not attempt the steps that depend on it. Optional tool missing: proceed with the in-scope steps only and note skipped step in output.
+   Stop only when a tool **required by the classified task** is unavailable (lint-only + `ruff:0`; annotation-only + `mypy:0`; combined + either `0`) — state `<tool> not found — install via: pip install <tool>`, then do not attempt steps depending on it. A tool that's optional for the classified task being unavailable: proceed with the in-scope steps only, note the skipped step in output.
 
 2. Run `ruff check . --output-format=concise` to see all violations
 

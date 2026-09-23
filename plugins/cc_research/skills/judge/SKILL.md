@@ -3,7 +3,7 @@ name: judge
 description: Research-supervisor review of program.md — validates experimental methodology (hypothesis clarity, measurement validity, control adequacy, scope, strategy fit), emits APPROVED / NEEDS-REVISION / BLOCKED verdict before expensive run loop.
 argument-hint: '[<program.md>] [--skip-validation] [--keep "<items>"]'
 effort: medium
-allowed-tools: Read, Write, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
+allowed-tools: Read, Write, Bash, Grep, Glob, Agent, Skill, TaskCreate, TaskUpdate, AskUserQuestion
 disable-model-invocation: true
 ---
 
@@ -27,7 +27,7 @@ NOT for: running experiments (use `/research:run`); designing hypotheses (use `r
 
 ## Agent Resolution
 
-**Agent resolution**: load and follow the protocol below. Contains foundry check + fallback table. If foundry not installed: use table to substitute each `foundry:X` with `general-purpose`. Agents: `foundry:solution-architect`, `research:scientist`.
+**Agent resolution**: load and follow the protocol below. Contains foundry check + fallback table. If foundry not installed: use table to substitute each `foundry:X` with `general-purpose`. Agents: `research:scientist`.
 
 ```bash
 # loads: compaction-contract.md
@@ -40,7 +40,6 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 | Agent | Fallback if absent |
 | -- | -- |
-| `foundry:solution-architect` | `general-purpose` (methodology review quality reduced — **⚠ general-purpose agent may not emit `methodology_rating` in required format; verdict defaults to NEEDS-REVISION**) |
 | `research:scientist` | `general-purpose` (scientific rigor review quality reduced — **⚠ general-purpose agent may not emit `scientific_rating`; verdict defaults to NEEDS-REVISION**) |
 
 ## Judge Mode (Steps J1–J6)
@@ -84,6 +83,8 @@ cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
    ```
 
 **Schema gate** — before parsing, count matching `## <Section>` headings against the known schema set (`Goal`, `Metric`, `Guard`, `Config`, `Notes`). Zero matches = located file doesn't parse as program.md (e.g. input resolution located an unrelated document) — stop immediately with the same "nothing found" error shown in step 4 above; do NOT proceed to J2's C1–C12 checklist. Distinct from step 4 (file not locatable at all): this fires when a file IS located but content doesn't match expected schema.
+
+> 1-2 matching headings is a partial match, not a gap here — deferred to J2's C1-C4 criticals (missing Goal / Metric.command / Metric.direction / Guard.command → BLOCKED). A non-program file is reported as a flawed program, by design, not treated as unparsable input.
 
 **Parsing** — find `## <Section>` headings in program.md, extract first fenced code block per section, parse as `key: value` lines, warn on unrecognized keys. `--skip-validation` and `colab_hw` judge-specific, extracted independently.
 
@@ -144,7 +145,9 @@ echo "$RUN_DIR" > "${TMPDIR:-/tmp}/judge-run-dir-${CSID}"  # persist for J3 bloc
 
 **Spawn note**: J3 agents run in the background — issue the batch, then end the turn; no filler call, no "waiting" line, no sleep (CLAUDE.md §6). Timeout handled post-hoc — on each completion notification, check that agent's output file; if missing/empty mark it timed out (⏱). See J3 post-call checks below.
 
-Dispatch — scientist dimension always; architect dimension only when the complexity gate fires. When BOTH dimensions are active, J3 is ONE merged spawn covering both (two opus spawns for a single-file review pay 2× ~120,851 tok fixed overhead for a workload far under the breakeven above); when only the scientist dimension is active, it's a single scientist spawn as before. Per-dimension output files and Confidence blocks are unchanged either way.
+Dispatch — scientist dimension always; architect dimension only when the complexity gate fires. When BOTH dimensions are active, J3 is ONE merged spawn covering both (two opus spawns for a single-file review pay 2× ~120,851 tok fixed overhead for a workload far under the §Agent budget breakeven below); when only the scientist dimension is active, it's a single scientist spawn as before. Per-dimension output files and Confidence blocks are unchanged either way.
+
+> Merge is competence-safe: J3_ARCH_PROMPT is a self-contained research-supervisor checklist (7 dimensions, explicit pass/fail criteria) — not a request for a second agent's own domain judgment. Independent Goodhart coverage still comes from J2 C2b, not from a second spawn.
 
 Before constructing J3 prompts, expand all bash variables into concrete paths — never pass literal `<path_to_program.md>` or `<RUN_DIR>` placeholders to agents:
 
@@ -348,13 +351,18 @@ OUT="$BASE"; COUNT=2
 while [ -f "$OUT" ]; do OUT="${BASE%.md}-${COUNT}.md"; ((COUNT++)); done
 ```
 
+**Resolve `Agents:` field** before filling the template below, per `SPAWN_ARCHITECT` (J3 §Complexity gate):
+
+- `SPAWN_ARCHITECT=true` → use `research:scientist (J3, architect+scientist merged dimensions)`
+- `SPAWN_ARCHITECT=false` → use `research:scientist (J3); architect: skipped (narrow scope)`
+
 ```markdown
 ---
 Title:         Judge — [program_title]
 Date:          [YYYY-MM-DD]
 Scope:         [path to program.md]
 Focus:         experimental protocol validation
-Agents:        foundry:solution-architect (J3), research:scientist (J3)  ← include "foundry:solution-architect (J3), " only when SPAWN_ARCHITECT=true (J3 §Complexity gate); when false, use "research:scientist (J3); architect: skipped (narrow scope)" instead
+Agents:        [resolved per J3 gate — see prose above]
 Outcome:       APPROVED | NEEDS-REVISION | BLOCKED
 Methodology:   sound | needs-refinement | fundamentally-flawed
 Findings:      [N] critical · [N] high · [N] medium · [N] low
@@ -456,7 +464,7 @@ rm -f .temp/state/skill-contract.md  # clear contract — judge verdict complete
 - Validation executes on current machine — use `--skip-validation` for cross-machine workflows
 - Verdict deterministic (finding counts + methodology_rating); not inferred from prose
 - Re-run judge after editing `program.md` to confirm fixes
-- Judge run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md` TTL policy — no `result.jsonl` = cleanup skipped); remove manually (`rm -rf .experiments/judge-*/`)
+- Judge run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md` TTL policy — no `result.jsonl` = cleanup skipped); remove manually (`rm -rf .experiments/judge-*/`) <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - **Calibration scope**: J1–J2 sub-steps only — synthetic result file with known verdict (APPROVED/NEEDS-REVISION/BLOCKED) and injected finding counts; score whether judge correctly identifies verdict and extracts counts. Full J3 validation execution loop excluded — needs live git state and executable metric commands. See `/foundry:calibrate` skills mode domain table for path resolution.
 
 </notes>

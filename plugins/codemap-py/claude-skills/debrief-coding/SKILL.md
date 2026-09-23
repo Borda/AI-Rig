@@ -39,28 +39,30 @@ If `--anonymize` flag given:
 
 **Guard**: anonymize every present CLI, skill, tool shard by passing log directory as `--input`; recursion covers flat + runtime shards. Copies land in `.cache/codemap/export/` with same topology. anonymize.py refuses writes beside `.salt`; never target logs dir. Step 2 must not mix anonymized/original data or exempt a layer.
 
+**`--session` + `--anonymize` together**: filter raw shards to that session's lines *before* anonymizing, not after. anonymize.py pseudonymizes `session`/`hook_session` to stable `sym_...` values, so a `--session <raw-uuid>` filter applied to already-anonymized records matches nothing. Copy each raw shard's matching lines into a scratchpad tree preserving runtime topology (`claude/`, `codex/`, `direct/`), then run anonymize.py below with `--input` pointed at that scratchpad copy instead of `.cache/codemap/logs`. `--salt` still defaults to `.cache/codemap/logs/.salt` regardless of `--input`, so pseudonyms stay stable across exports. Delete the scratchpad copy once Step 2 has read it; never write it into `.cache/codemap/export/` or beside `.salt`. `--session` absent → anonymize the full logs tree as below.
+
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/anonymize.py" \
     --input .cache/codemap/logs --out-dir .cache/codemap/export  # timeout: 15000
 ```
 
-If neither set contains files: print `⚠ --anonymize: no CLI or skill logs found — cannot produce anonymized report.`; stop. If only one layer exists, anonymize it; note gap.
+If no CLI, skill, or tool shards found: print `⚠ --anonymize: no CLI, skill, or tool logs found — cannot produce anonymized report.`; stop. If only one or two layers exist, anonymize what's present; note the gap.
 
-Step 2 uses `-anon` variants under `.cache/codemap/export/`. anonymize.py absent → warn; use originals.
+**Anonymized mode is active iff `.cache/codemap/export/` exists and is non-empty after this step** (also check the command above exited 0) — never just whether `--anonymize` was passed. anonymize.py absent, or exiting nonzero (missing/oversized input, salt-adjacent out-dir), leaves no mirror: fall back to originals for Step 2 and Step 3, and warn. Evaluate this condition once here; Step 2's globs and Step 3's `--logs` target both reuse it.
 
 ## Step 2: Read log files
 
-Resolve shard tree via `Glob`; Read every returned path. Never rely on variables from prior Bash block: each tool call gets fresh shell; Read never expands shell variables. After `--anonymize`, glob mirrored `.cache/codemap/export/`, not originals:
+Resolve shard tree via `Glob`; Read every returned path. Never rely on variables from prior Bash block: each tool call gets fresh shell; Read never expands shell variables. When anonymized mode is active (Step 1's condition), glob mirrored `.cache/codemap/export/`, not originals; anonymized mode inactive — including anonymize.py absent or failed — fall back to originals even if `--anonymize` was requested:
 
-- CLI shards: recursive `Glob(".cache/codemap/logs/**/cli*.jsonl")` (or `.cache/codemap/export/**/cli*-anon.jsonl` when anonymized)
-- Skill shards: recursive `Glob(".cache/codemap/logs/**/skills*.jsonl")` (or `.cache/codemap/export/**/skills*-anon.jsonl`)
-- Tool shards: recursive `Glob(".cache/codemap/logs/**/tools*.jsonl")` (or `.cache/codemap/export/**/tools*-anon.jsonl` when anonymized)
+- CLI shards: recursive `Glob(".cache/codemap/logs/**/cli*.jsonl")` (or `.cache/codemap/export/**/cli*-anon.jsonl` when anonymized mode is active)
+- Skill shards: recursive `Glob(".cache/codemap/logs/**/skills*.jsonl")` (or `.cache/codemap/export/**/skills*-anon.jsonl` when anonymized mode is active)
+- Tool shards: recursive `Glob(".cache/codemap/logs/**/tools*.jsonl")` (or `.cache/codemap/export/**/tools*-anon.jsonl` when anonymized mode is active)
 
 All layers anonymized: `anonymize.py --input` is layer-agnostic; Step 1 includes tool shards. In anonymize mode read tools from `.cache/codemap/export/` too. Raw `tools_*.jsonl` would leak verbatim Grep/Glob patterns and Read paths (`target`) into shareable export.
 
-Read **every** returned path; concatenate before analysis. Single-file reads miss sessions and forge near-empty dataset.
+Read **every** returned path; concatenate before analysis. Single-file reads miss sessions and forge near-empty dataset. Skip any line that fails JSON parsing; count and report skipped/malformed lines rather than aborting or silently including garbage.
 
-Each line = one JSON record. Filter `--since` against `ts`; filter `--session` when given.
+Each line = one JSON record. Filter `--since` against `ts`; filter `--session` when given — except in anonymized mode, where Step 1 already scoped the export to that one session before pseudonymizing it: don't re-filter the export by the raw `--session` UUID, it cannot match a `sym_...` value and would zero out data Step 1 already selected correctly.
 
 **`--session` guard**: session UUID may be absent from one or both log files (e.g. skills.jsonl records only skill events, not all CLI events). Filtering absent session ID returns empty set for that file — expected, not error. Report "session not found in <file>" rather than treating empty result as data loss.
 
@@ -113,7 +115,9 @@ Join tool searches/reads to a complete, successful, non-stale answer in the same
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/join_avoidance.py" --logs .cache/codemap/logs --window-min 10 --json  # timeout: 15000
 ```
 
-The helper scans the entire supplied tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately. Preserve `per_runtime` and `unattributed`; absent skill starts do not prove non-use. High overlap alone proves neither a broken guard nor redundant work. If nonzero, list overlapping modules with these limits.
+`--logs .cache/codemap/logs` (or `.cache/codemap/export` when anonymized mode is active, per Step 1) — the raw tree still carries verbatim session ids, targets, and module names Step 1 exists to scrub; joining against it under `--anonymize` would leak them straight into this step's overlap listing below.
+
+The helper scans the entire supplied tree: run on a filtered copy preserving runtime topology for each requested project/version/date/session cohort, never silently substitute all-history results. Legacy `avoidance_count`/`rate` keys mean `module_overlap_proxy_v3`; version-separated joins and batch logical-answer denominators differ from older metrics. Explicit project identity and successful terminal outcomes are required; missing legacy fields stay unjoinable, never inferred from the log destination or backfilled. Report raw CLI/tool counts, eligible logical answers, failed/unjoinable batch children, unverified outcomes, and join coverage separately — anonymized runs additionally show every legacy (pre-`result.module`) record as unjoinable, because `argv` is fully scrubbed and this helper's command-name fallback can no longer match a `sym_...` pseudonym; expected under anonymization, not a bug, and already counted in `excluded_or_unjoinable_cli_records`. Preserve `per_runtime` and `unattributed`; absent skill starts do not prove non-use. High overlap alone proves neither a broken guard nor redundant work. If nonzero, list overlapping modules with these limits — in anonymized mode these render as `sym_<digest>` pseudonyms, which is expected, not data loss.
 
 Each event carries `kind`: `source_read`, `structural_search`, or `unknown`. Grep/Glob classification uses producer-observed `search_scope`: `file` is `source_read` whichever file it names, `directory` is `structural_search`, missing legacy scope stays `unknown`, never inferred from a pattern or the analysis host filesystem. Report `unknown_count` beside `structural_search_count` (overall and per runtime): a legacy cohort and a classified cohort both show zero structural searches, only `unknown_count` separates them. Report `structural_search_count` beside total overlaps, not as confirmed misuse. Bash targets cut at 200 characters hide later flags and paths; recursive-looking Bash searches outside own-file inspection stay `unknown`, not `structural_search`.
 
@@ -189,5 +193,7 @@ Print report path on completion.
 ## Security note
 
 Logs stay local in `.cache/codemap/logs/`. `.cache/codemap/logs/.salt` must stay local; never share with anonymized output. Anonymized logs are shareable; pseudonyms irreversible without salt.
+
+Anonymization scrubs a documented, bounded field set: `session`/`hook_session` (stable pseudonyms); qualified names embedded in `error`/`stderr` free text; `intent`, `target`, `search_path`, `project`, and the identity-bearing `result` fields `module`/`qname`/`qualified_name`/`index_path`/`path`/`caller`/`callee` (every identifier token, not only dotted ones); each element of `imported_by`/`changed_modules`; and every `argv` token. This is a field denylist, not a schema-complete guarantee — anonymize.py's own docstring notes a future query-result shape introducing an identifying field name not on this list passes through unscrubbed until added. Never describe anonymized output as fully de-identified or a complete privacy guarantee — describe it as scrubbed for the fields above.
 
 </workflow>

@@ -119,12 +119,12 @@ Track for every artifact: **Source** (origin), **Transforms** (processing pipeli
 - **Pre-split normalization severity matrix**: `scaler.fit_transform(full_dataset)` before split — severity `high` for simple train/test (bounded leakage); `critical` in cross-validation (every fold's test rows contaminate scaler, no valid CV estimate). Wrap ALL stateful transformers (`PCA`, `PolynomialFeatures`, etc.) in `sklearn.pipeline.Pipeline` before `cross_val_score`.
 - **Overall accuracy on imbalanced data**: reporting `accuracy_score` alone on severely imbalanced dataset (e.g., 19:1 ratio) — model always predicting majority class scores 95%, clinically useless; always report per-class precision, recall, F1, AUROC.
 - **Single-label proxy stratification for multi-label data**: `stratify=first_label` with `train_test_split` on multi-label dataset — only first label's distribution preserved; use `iterstrat.ml_stratifiers.MultilabelStratifiedShuffleSplit` or `skmultilearn.model_selection.iterative_train_test_split`.
-- **Stratify-missing FP suppression**: when `train_test_split` missing `stratify=y` but (a) no class distribution data and (b) primary findings include `critical` or `high` severity issues, **do not place stratify observation in Findings list at any severity**. Write as single prose note in `Class Balance` row: "unknown distribution — add `stratify=y` as best practice". Prevents low-severity FPs diluting precision.
+- **Stratify-missing severity demotion**: when `train_test_split` missing `stratify=y` but (a) no class distribution data and (b) primary findings include `critical` or `high` severity issues, demote to `[Info]` severity in the Findings list — always recorded, never omitted. Also add prose note in `Class Balance` row: "unknown distribution — add `stratify=y` as best practice".
 - For pagination completeness antipatterns, see `.claude/rules/foundry-external-data.md` (requires `foundry` plugin)
 - **Missing provenance for externally acquired data**: storing downloaded dataset without recording origin URL, acquisition timestamp, license, expected record count — makes dataset non-reproducible; always create `dataset_card.yaml` at acquisition time.
 - **Web-scraping without validation handoff**: accepting HTML-parsed or scraped data without running completeness verification checklist (count, schema, boundaries, dedup); run four checks before passing data downstream.
 - **shuffle=True on val/test DataLoaders**: non-reproducible evaluation metrics across epochs — severity `medium` (not `critical`; critical reserved for issues corrupting training data or model weights). Fix: set `shuffle=False` on val and test DataLoaders.
-- **FP discipline for engineering hygiene**: DataLoader seeding (`worker_init_fn`), HTTP error handling, and similar engineering best practices are not data-integrity findings. Report in `[Info]` tier only when no higher-severity issues remain; do not include in `### Findings` unless primary data-integrity audit is clean. Prevents precision dilution on domain-specific audit tasks.
+- **Engineering-hygiene severity tier**: DataLoader seeding (`worker_init_fn`), HTTP error handling, and similar engineering best practices are not data-integrity findings — report at `[Info]` severity in `### Findings`, always recorded regardless of what other findings exist in the same run; never omitted because higher-severity findings are present.
 
 </antipatterns-to-flag>
 
@@ -186,7 +186,7 @@ num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 ### Findings
 [Critical] <issues that corrupt model training — fix before running>
 [Warning]  <issues degrading reproducibility or metric reliability>
-[Info]     <low-severity observations — include ONLY when no Critical/Warning issues remain (per FP-discipline rule in antipatterns-to-flag); omit when higher-severity findings already present to preserve precision>
+[Info]     <low-severity observations — always listed when present; never omitted because higher-severity findings exist (see antipatterns-to-flag: Stratify-missing severity demotion, Engineering-hygiene severity tier)>
 ```
 
 </output-format>
@@ -195,19 +195,27 @@ num_workers: [N] | pin_memory: [T/F] | worker_init_fn: [seeded / unseeded]
 
 ## Mode Dispatcher
 
-Inspect `$ARGUMENTS` for mode token (first word). Supported modes:
+`$ARGUMENTS` is never populated for `Agent()`-spawned subagents (manual-invocation-only agent — see frontmatter). Dispatch on the caller's prompt text instead, by precedence, highest first:
 
-| Token | Mode | Trigger |
-| -- | -- | -- |
-| `acquisition` | Data acquisition from external sources | `$ARGUMENTS` starts with `acquisition` |
-| `pipeline-audit` | ML pipeline leakage and integrity audit | `$ARGUMENTS` starts with `pipeline-audit` |
+1. Prompt text starts with the literal token `acquisition` or `pipeline-audit` → that mode (explicit override, zero ambiguity).
+2. Otherwise, examine actual intent: caller asks the agent to OBTAIN/COLLECT data it does not yet have from an external source (e.g. "download the dataset from this URL", "acquire images from this API") → `acquisition`. Caller asks the agent to AUDIT/REVIEW/CHECK/VALIDATE an existing local pipeline or codebase — even when that description mentions fetching/downloading as something the EXISTING code does (e.g. "audit the pipeline that fetches images from S3, then splits") → `pipeline-audit`. Audit/review intent outranks any acquisition keyword appearing as description of code under review.
+3. Ambiguous or no clear signal → default `pipeline-audit` (safe default — a leakage audit run on an acquisition request wastes effort; the reverse silently skips contamination checks).
 
-Default mode (no token or unrecognised token): `pipeline-audit` — assume caller is auditing an existing pipeline.
+| Mode | Trigger |
+| -- | -- |
+| Data acquisition from external sources | literal `acquisition` token, or intent case 2 above |
+| ML pipeline leakage and integrity audit | literal `pipeline-audit` token, intent case 2 above, or default (case 3) |
 
-If mode is unrecognised, print:
+If an actual unrecognised literal token appears at prompt-start (case 1 near-miss, e.g. `foo-mode ...`), print:
 
 ```text
 ! Unknown mode: '<token>'. Supported: acquisition, pipeline-audit. Defaulting to pipeline-audit.
+```
+
+For the no-clear-signal case (case 3 — ordinary free-form prompt, no token at all), print instead (no `!` prefix — reserved for critical alert blocks per `rules/quality-gates.md` §Reporting Findings):
+
+```text
+Mode: pipeline-audit (inferred — no acquisition intent detected)
 ```
 
 ## Agent Resolution
@@ -285,7 +293,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/load-agent-reference.py" 
 
 **Scope boundary**: `research:data-steward` covers full data lifecycle — acquisition from external sources, provenance tracking, completeness enforcement, split integrity, leakage detection, augmentation correctness, DataLoader config. For ML hypothesis generation, experiment design, paper-backed methodology decisions, use `research:scientist`. For URL discovery/web scraping, delegate to `foundry:web-explorer` (requires `foundry` plugin) — data-steward validates what it returns.
 
-**Confidence calibration**: for deterministic static-analysis bugs (e.g., `fit_transform` before split, `Random*` transform on val/test, SMOTE before split, `shuffle=True` on val DataLoader), report confidence ≥0.95. When finding depends on runtime behavior (library version, execution order, global random state), label "likely [severity] — confirm at runtime" — don't bury version-dependent critical issues in Gaps silently. If Gaps field acknowledges a potentially missed or ambiguous finding, Score must not exceed 0.88 — Gaps acknowledgment and 0.93+ score contradict; one must yield. For adversarial/cross-function leakage bugs statically determinable (no runtime branching, no version-conditional behavior), confidence applies the same ≥0.95 floor as trivial/low bugs — difficulty doesn't lower the floor when evidence chain is complete.
+**Confidence calibration**: for deterministic static-analysis bugs (e.g., `fit_transform` before split, `Random*` transform on val/test, SMOTE before split, `shuffle=True` on val DataLoader), report confidence ≥0.95. When finding depends on runtime behavior (library version, execution order, global random state), label "likely [severity] — confirm at runtime" — don't bury version-dependent critical issues in Gaps silently. If Gaps field acknowledges a potentially missed or ambiguous finding, Score must not exceed 0.88 — Gaps acknowledgment and 0.93+ score contradict; one must yield. When both conditions apply in the same report — a deterministic ≥0.95-eligible finding AND a Gap of the kind above (a potentially missed or ambiguous finding, not merely the presence of the mandatory Gaps header) — the Gap ceiling wins: report overall confidence ≤0.88, and note the deterministic finding's own certainty separately in prose within that finding's description. For adversarial/cross-function leakage bugs statically determinable (no runtime branching, no version-conditional behavior), confidence applies the same ≥0.95 floor as trivial/low bugs — difficulty doesn't lower the floor when evidence chain is complete.
 
 **Handoff triggers**:
 

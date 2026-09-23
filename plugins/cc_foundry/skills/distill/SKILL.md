@@ -1,6 +1,6 @@
 ---
 name: distill
-description: One-time snapshot extracting patterns from work history and accumulated lessons, distills into concrete improvements — new agent/skill suggestions, memory pruning, consolidating lessons into rules/agent updates, or performing bin/ extraction from /audit --efficiency candidates. Roster boundary analysis → /foundry:audit agents (Check 34).
+description: One-time snapshot extracting patterns from work history and accumulated lessons, distills into concrete improvements — new agent/skill suggestions, memory pruning, consolidating lessons into rules/agent updates, or performing bin/ extraction from /audit --efficiency candidates. Roster boundary analysis → /foundry:audit agents (Check 46).
 argument-hint: '[prune | memory | executables [<run-dir-or-report-path>] | "external <url-or-path>" | "<recurring task description>"] [--project] [--eager] [--keep "<items>"]'
 disable-model-invocation: true
 allowed-tools: Read, Edit, Bash, Glob, Grep, Write, AskUserQuestion, Agent, WebFetch, TaskCreate, TaskUpdate, TaskList
@@ -80,13 +80,15 @@ For each agent/skill found, extract: name, description, tools, purpose. Tag each
 
 > **Mode-token normalization** — all mode dispatches below compare against the **first whitespace-delimited token** of stripped `ARGUMENTS` (after `--eager` removal). Use this single rule consistently; don't rely on exact equality of the full `$ARGUMENTS` string — trailing flags/spaces from prior parsing may differ.
 
+**`--project` scope check** (run before the mode checks below): if `PROJECT_FLAG` (read from stdout above) is `true` and the first token is not `prune` or `memory`, print `` ⚠ `--project` ignored — it applies only to `prune` and `memory` modes. `` once, then continue with normal dispatch below.
+
 **If first token equals `executables`** (i.e. `executables` alone or `executables <path>`, NOT a path or word that merely starts with the string `executables`): skip Steps 2–5 entirely and go to "Mode: Executables Extraction" below.
 
 **If first token equals `prune`**: skip Steps 2–5 entirely and go to "Mode: Memory Pruning" below.
 
 **If first token equals `memory`**: skip Steps 2–5 entirely and go to "Mode: Memory Distillation" below.
 
-**If first token equals `external`** (i.e. `external <source>`, NOT a word that merely starts with the string `external`): skip Steps 2–5 entirely and go to "Mode: External Distillation" below.
+**If first token equals `external`** (i.e. `external <source>`, NOT a word that merely starts with the string `external`): a second token is **required** — it is the source to analyse. No second token: print `` ! MISSING — `external` needs a source: `/foundry:distill external <url-or-path>`. `` and stop; do not enter the mode, do not guess a source, do not fall back to default-mode analysis. Second token present: skip Steps 2–5 entirely and go to "Mode: External Distillation" below.
 
 Otherwise, look for signals of repetitive or specialist work. First three git commands independent — run in parallel:
 

@@ -25,6 +25,8 @@ Set up foundry on new machine:
 
 **Why symlink rules and TEAM_PROTOCOL.md (not copy)?** Both load at session startup. Symlinks = every session gets plugin's current version — no stale copies, no re-run after upgrades. Broken symlink after upgrade = obvious error; stale copy silently serves old content.
 
+**Why copy `CLAUDE.md` instead (the one exception)?** `~/.claude/CLAUDE.md` is user-owned and routinely hand-edited. A symlink would point it at a read-only, version-pinned cache dir — user edits would fail or leak into the cache, and Step 11's purge would dangle it. So Step 12 copies, and pays for the copy with what the symlinks get for free: it detects divergence, gates the overwrite, and keeps a timestamped backup rather than assuming the destination is plugin-owned.
+
 **Why NOT symlink skills?** A directory carrying a `SKILL.md` under `~/.claude/skills/` registers as a **user-level** skill, and user-level skills silently shadow Claude Code's bundled skill of the same name. That already cost bare `/review` (hit CC's bundled reviewer instead of `oss:review`). Foundry skills dispatch as `/foundry:<name>` — no `~/.claude/skills/` entry needed, ever. `skills/_shared` excluded too: no plugin may depend on a global `_shared` path — each resolves its own via `bin/resolve_shared_path.py`. Phase 1 purges any such symlink unconditionally, including ones pointing at the current version.
 
 **Why not symlink agents?** Agents must use full plugin prefix (`foundry:sw-engineer`, not `sw-engineer`) for unambiguous dispatch. Plugin system exposes agents at `foundry:` namespace — no `~/.claude/agents/` symlinks needed. (Stale agent symlinks from prior installs removed by setup's Phase 1 cleanup.)
@@ -442,12 +444,56 @@ Substitute `<N>` with count from report line before running. Versions newer than
 
 ## Step 12: Write CLAUDE.src.md → ~/.claude/CLAUDE.md
 
+`~/.claude/CLAUDE.md` is a user-owned file that may be hand-authored — unlike every other destination in this skill, its prior contents cannot be reconstructed from the plugin. Detect divergence first, back up with a timestamp, and gate the overwrite.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""  # reload: fresh shell (Check 41)
-[ -f "$HOME/.claude/CLAUDE.md" ] && cp "$HOME/.claude/CLAUDE.md" "$HOME/.claude/CLAUDE.md.bak"  # timeout: 5000
+CLAUDE_MD_STATE=absent
+if [ -f "$HOME/.claude/CLAUDE.md" ]; then
+    cmp -s "$HOME/.claude/CLAUDE.md" "$PLUGIN_ROOT/CLAUDE.src.md" && CLAUDE_MD_STATE=identical || CLAUDE_MD_STATE=diverged
+fi
+printf "  CLAUDE.md: %s\n" "$CLAUDE_MD_STATE"  # timeout: 5000
+```
+
+`identical`: report `  CLAUDE.md already current — skipping.`, skip to Step 13 (no backup, no prompt, no write).
+
+`absent`: write it directly — nothing can be lost:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
 cp "$PLUGIN_ROOT/CLAUDE.src.md" "$HOME/.claude/CLAUDE.md"  # timeout: 5000
-printf "  wrote: CLAUDE.src.md → ~/.claude/CLAUDE.md\n"
+printf "  wrote: CLAUDE.src.md → ~/.claude/CLAUDE.md (created)\n"
+```
+
+`diverged`: the existing file carries content this plugin did not write. `APPROVE_ALL=true`: print `[--approve] auto-accepting: replace ~/.claude/CLAUDE.md (timestamped backup kept)`, apply option (b). Otherwise invoke `AskUserQuestion`:
+
+- (a) **Keep mine — skip the write** — leave `~/.claude/CLAUDE.md` untouched; foundry rules still load via the Step 10 symlinks
+- (b) **Replace with the shipped version** ★ recommended — timestamped backup written first, nothing overwritten in place
+- (c) **Write side by side** — ship to `~/.claude/CLAUDE.src.md` for manual merge; leave the live file untouched
+
+On (a): report `  CLAUDE.md: kept existing (user choice) — shipped version not applied.`, continue to Step 13.
+
+On (b):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+CLAUDE_BAK_TS=$(date -u +%Y%m%dT%H%M%SZ)
+CLAUDE_MD_BAK="$HOME/.claude/CLAUDE.md.bak-${CLAUDE_BAK_TS}"
+cp "$HOME/.claude/CLAUDE.md" "$CLAUDE_MD_BAK"  # timeout: 5000
+cp "$PLUGIN_ROOT/CLAUDE.src.md" "$HOME/.claude/CLAUDE.md"  # timeout: 5000
+printf "  wrote: CLAUDE.src.md → ~/.claude/CLAUDE.md (backup: %s)\n" "$CLAUDE_MD_BAK"
+```
+
+On (c):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PLUGIN_ROOT < "${TMPDIR:-/tmp}/setup-plugin-root-${CSID}" 2>/dev/null || PLUGIN_ROOT=""
+cp "$PLUGIN_ROOT/CLAUDE.src.md" "$HOME/.claude/CLAUDE.src.md"  # timeout: 5000
+printf "  wrote: ~/.claude/CLAUDE.src.md — merge by hand into CLAUDE.md\n"
 ```
 
 ## Step 13: Final report
@@ -466,7 +512,8 @@ Print summary:
 - Rules linked: N → ~/.claude/rules/foundry-\*.md
 - TEAM_PROTOCOL.md linked → ~/.claude/TEAM_PROTOCOL.md
 - Cache purged: N orphaned version(s), M MB (or `skipped` / `nothing to purge`)
-- CLAUDE.md written → ~/.claude/CLAUDE.md
+- CLAUDE.md: written / skipped (already current) / kept existing (user choice) / side-by-side → ~/.claude/CLAUDE.src.md
+- CLAUDE.md backup: ~/.claude/CLAUDE.md.bak-<timestamp> (when replaced)
 - Backup at: ~/.claude/settings.json.bak
 
 </workflow>

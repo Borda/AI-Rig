@@ -130,6 +130,11 @@ STRUCTURAL_TAGS = (
     "core-knowledge",
 )
 
+#: Guard against pathological inputs that would exhaust heap memory when read in one shot.
+#: 10 MB is well above any realistic Markdown / agent file. Matches the constant used by
+#: check_mode_dispatch.py, check_orphaned_bin.py, check_routing_links.py and extract_code_blocks.py.
+_MAX_FILE_SIZE = 10 * 1024 * 1024
+
 
 def strip_fenced_blocks(text: str) -> str:
     """Drop every fenced code block, honouring fences longer than three backticks.
@@ -219,6 +224,8 @@ def check_file(path: Path) -> list[Finding]:
         >>> import os; os.unlink(p)
     """
     try:
+        if path.stat().st_size > _MAX_FILE_SIZE:
+            return [Finding(FindingKind.READ_ERROR, f"{path}: skipped — exceeds {_MAX_FILE_SIZE} byte read guard")]
         content = path.read_text(encoding="utf-8")
     except OSError as exc:
         return [Finding(FindingKind.READ_ERROR, f"{path}: cannot read — {exc}")]

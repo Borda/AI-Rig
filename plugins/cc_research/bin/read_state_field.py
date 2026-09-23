@@ -29,9 +29,50 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
+
+
+def _validate_state_path(raw: str) -> tuple[Path | None, str]:
+    """Resolve ``raw`` and confirm it is a regular file inside an allowed root.
+
+    Permitted roots mirror the sibling scripts in this directory (retro_analyze.py,
+    verify_patient_split.py): the current working directory, its ``.experiments``
+    subdirectory, ``~/.claude/projects``, and the OS temp directory.
+
+    Args:
+        raw: Raw value from the ``state_file`` positional argument.
+
+    Returns:
+        ``(path, "")`` on success, or ``(None, reason)`` on failure. The missing/non-regular
+        case keeps its historical "not a regular file" wording so existing callers keep
+        matching on it; a real file outside every allowed root gets a distinct reason.
+
+    Examples:
+        >>> _validate_state_path("")[1]
+        'not a regular file: .'
+    """
+    candidate = Path(raw)
+    if not candidate.is_file():
+        return None, f"not a regular file: {candidate}"
+    resolved = candidate.resolve()
+    project_root = Path.cwd().resolve()
+    allowed_roots = [
+        project_root,
+        (project_root / ".experiments").resolve(),
+        (Path(os.path.expanduser("~")) / ".claude" / "projects").resolve(),
+        Path(tempfile.gettempdir()).resolve(),
+    ]
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return candidate, ""
+    return None, f"outside allowed roots (project root, .experiments/, ~/.claude/projects, tempdir): {resolved}"
 
 
 def read_field(data: dict[str, Any], dotted_path: str, default: str = "") -> str:
@@ -121,9 +162,9 @@ def main(argv: list[str] | None = None) -> int:
         print("read_state_field: dotted-path must be non-empty", file=sys.stderr)
         return 2
 
-    state_file = Path(args.state_file)
-    if not state_file.is_file():
-        print(f"read_state_field: not a regular file: {state_file}", file=sys.stderr)
+    state_file, reason = _validate_state_path(args.state_file)
+    if state_file is None:
+        print(f"read_state_field: {reason}", file=sys.stderr)
         return 1
 
     try:

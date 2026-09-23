@@ -144,6 +144,29 @@ def test_main_skips_without_pr_number(pr: str, capsys: pytest.CaptureFixture) ->
     assert "skipped" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "pr",
+    [
+        pytest.param("1/../../etc", id="path-traversal"),
+        pytest.param("abc", id="non-numeric"),
+        pytest.param("-x", id="flag-like"),
+    ],
+)
+def test_main_rejects_non_numeric_pr(pr: str, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """A ``--pr`` value that is not bare digits is rejected before any report lookup or ``gh`` call.
+
+    Regression guard: an unvalidated ``--pr`` reaches ``newest_report_for_pr`` (path-traversal into
+    ``.reports/review/pr-<N>``) and ``current_head_sha`` (raw ``gh pr view <pr_number>`` argv). The
+    ``--path-out`` sentinel must also come back empty, not stale, so a caller reading it never mistakes
+    a rejected value for a previously resolved PR's report.
+    """
+    sentinel = tmp_path / "sentinel"
+    sentinel.write_text("/stale/path\n", encoding="utf-8")
+    assert frr.main([f"--pr={pr}", "--path-out", str(sentinel)]) == 1
+    assert "must be digits only" in capsys.readouterr().err
+    assert sentinel.read_text(encoding="utf-8") == ""
+
+
 def test_main_allows_when_no_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A PR with no review report imposes no restriction."""
     monkeypatch.chdir(tmp_path)
@@ -181,6 +204,24 @@ def test_main_blocks_when_head_unchanged(
     monkeypatch.chdir(tmp_path)
     _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
     _fake_head_sha(monkeypatch, "a1b2c3d")
+    assert frr.main(["--pr", "42"]) == 1
+    assert "⛔ BLOCKED" in capsys.readouterr().out
+
+
+def test_main_blocks_when_short_recorded_sha_matches_full_current_sha(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """An abbreviated recorded SHA that prefixes the full current SHA is treated as unchanged, not moved.
+
+    ``_SHA_RE`` accepts 7-40 char SHAs, so a ``Gate:`` line commonly records a short SHA while
+    ``current_head_sha`` always returns the full one from ``gh pr view --json headRefOid``. A
+    string-equality comparison (``recorded != current``) would always see these as different, failing
+    the reject gate open on the exact case that matters most: the head genuinely has not moved.
+    Regression guard for the fix to ``main()``'s SHA comparison — the correct check is a prefix match.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_report(tmp_path, "run-001", "42", gate="REJECT_SCOPE @a1b2c3d")
+    _fake_head_sha(monkeypatch, "a1b2c3d4e5f6789012345678901234567890abcd")
     assert frr.main(["--pr", "42"]) == 1
     assert "⛔ BLOCKED" in capsys.readouterr().out
 

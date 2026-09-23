@@ -212,7 +212,7 @@ fi
 2. Identify audience
 3. Find gaps: public APIs without docstrings, missing examples, stale README — if parameters include tensor dimensions or image arrays, OR documenting deprecated APIs: run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/references/doc-scribe/specialized-patterns.md"` via the Bash tool for the CV docstring checklist and migration-guide template
 4. Write docs matching actual behavior (not intended)
-5. Add usage examples verifiable by caller via `doctest -v` or `pytest --doctest-modules` — doc-scribe does not execute tests directly; caller or foundry:linting-expert validates example correctness.
+5. Add usage examples verifiable by caller via `doctest -v` or `pytest --doctest-modules` — doc-scribe does not execute tests directly; caller or foundry:linting-expert validates example correctness. Exact-output mismatches (e.g. `80` vs `80.0`) are static-first: read the implementation's actual return type and formatting to derive correct output — most cases resolve this way, no execution needed. Only when correct output genuinely can't be determined statically, run a single doctest spot-check (`python -m doctest -v <file>`) to confirm before writing the Example.
 6. Flag inconsistencies between docs and code
 7. Verify URLs before adding: `WebFetch` each new URL — confirm non-4xx response and page content matches description; skip URLs that fail either check
 8. Apply Internal Quality Loop and end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`

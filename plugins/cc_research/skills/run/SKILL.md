@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Sustained metric-improvement loop — reads `program.md`, iterates specialist ideation agents, commits atomically, auto-rolls back on regression. For long-running automated improvement campaigns.
 
-NOT for: methodology validation before run (use `/research:judge`); hypothesis generation (use `research:scientist` agent); one-off feature work (use `/develop:feature`).
+NOT for: methodology validation before run (use `/research:judge`); hypothesis generation (use `research:scientist` agent); one-off feature work (use `/develop:feature`); no `program.md` yet / starting from a bare goal (use `/research:sweep`).
 
 </objective>
 
@@ -58,7 +58,7 @@ SENTINEL_SLUG_FORMULA: |
 - contains `accuracy`, `loss` (paired with `train_loss`/`val_loss`/`eval_loss`), `f1_score`, `auc_roc`, `auroc`, `train_step`, `val_acc`, `eval_loss`, `epoch`, `gradient`, `tensor`, `overfit`, `generaliz`, `regulariz`, `validation`, `dropout`, `weight_decay`, `lr_schedule`, `cross_val`, `precision`, `recall`, OR explicit `--scientist` flag → `ml` → `research:scientist`
 - contains `time`, `latency`, `bench`, `throughput`, `memory` → `perf` → `foundry:perf-optimizer`
 - contains `pytest`, `coverage`, `complexity` → `code` → `foundry:sw-engineer`
-- no keyword match → `perf` (default fallback) — **WARN**: print `⚠ No keyword match — defaulting to 'perf' strategy. If this is an ML task, set agent_strategy: ml in program.md.` Log resolved agent + reason in state.json `strategy_resolution`.
+- no keyword match → `perf` (default fallback) — rationale: perf-optimizer profiles before changing and is the least assumption-laden generic improver; code/ml metrics are reliably keyword-detectable, so an unmatched goal is most often timing-shaped. **WARN**: print `⚠ No keyword match — defaulting to 'perf' strategy. If this is an ML task, set agent_strategy: ml in program.md.` Log resolved agent + reason in state.json `strategy_resolution`.
 
 Bare tokens `eval`, `train`, `val` (without compound suffix) do NOT trigger `ml` routing — too common in non-ML contexts (test eval scripts, training-environment configs, validator command names).
 
@@ -71,7 +71,7 @@ Bare tokens `eval`, `train`, `val` (without compound suffix) do NOT trigger `ml`
    | `code` | `ml` | `research:scientist` |
    | `ml` | `perf` | `foundry:perf-optimizer` |
    | `perf` | `code` | `foundry:sw-engineer` |
-   | `arch` | `code` | `foundry:sw-engineer` (fallback `foundry:solution-architect` if sw-engineer unavailable) |
+   | `arch` | `code` | `foundry:sw-engineer` (fallback `general-purpose` if sw-engineer unavailable) |
    | `auto` | infer from resolved strategy | follow rotation row for whichever concrete strategy `auto` heuristics resolved to at Step R3 (e.g. `auto` → resolved `ml` → next `perf` → `foundry:perf-optimizer`) |
 
 2. Spawn 2 agents parallel, competing strategies; each writes full analysis to `.experiments/state/<run-id>/stuck-escalation-<i>-<agent-type>.md`, returns ONLY compact JSON envelope. Use this spawn prompt verbatim (substitute `<run-id>`, `<i>`, and strategy):
@@ -453,9 +453,7 @@ cat "$_RESEARCH_SHARED/codemap-context.md"
 
 Execute its block. Leave `TARGET_MODULE`/`TARGET_FN` empty for the global `central` blast-radius baseline, or set `TARGET_MODULE` to the module the experiment edits (from `## Config`) for importer/coverage queries. Append output to `context-${I}.md` under a `## Structural Context (codemap-py)` heading so the Phase 2 ideation agent sees blast-radius before proposing edits.
 
-> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
-
-Codemap output non-empty: also append the reuse gate above verbatim and this **codemap-first protocol** directly below it in `context-${I}.md` (own copy — self-contained, no cross-plugin reference), so the Phase 2 spawn prompt's "read `context-<i>.md`" instruction carries it to the ideation agent: (1) **Skill-first** — use the Structural Context above before any Grep/Glob/Read aimed at imports, callers, or test coverage for a symbol already listed there. (2) **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this iteration. (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it. Codemap output empty: omit this paragraph — Phase 2 agent proceeds with normal file-read behaviour.
+Codemap output non-empty: also append the reuse gate from `codemap-context.md` above verbatim and this **codemap-first protocol** directly below it in `context-${I}.md` (own copy — self-contained, no cross-plugin reference), so the Phase 2 spawn prompt's "read `context-<i>.md`" instruction carries it to the ideation agent: (1) **Skill-first** — use the Structural Context above before any Grep/Glob/Read aimed at imports, callers, or test coverage for a symbol already listed there. (2) **Bounded call budget** — symbol not listed → up to 3 additional `codemap-py query` calls this iteration. (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/Read/query to re-confirm it. Codemap output empty: omit this paragraph — Phase 2 agent proceeds with normal file-read behaviour.
 
 Prepend header block to `context-<i>.md`: goal, current metric vs baseline, delta trend (last 5 kept deltas), iteration number. Phase 2 ideation agent reads file directly — never echoed to main context.
 
@@ -563,11 +561,13 @@ Record pass (exit 0) or fail (non-zero).
 
 #### Phase 7 — Evaluate outcome
 
+Top-to-bottom; **first match wins**.
+
 | Condition | Action |
 | -- | -- |
-| metric improved AND guard pass | Keep commit. Update `state.json`: `best_metric`, `best_commit`. "Improved" = `new_metric > best_metric` when `direction: higher`; `new_metric < best_metric` when `direction: lower`. |
 | metric improved AND guard fail | Rework: re-spawn agent with guard failure output. Max `GUARD_REWORK_MAX` (2) attempts. If still failing after all rework attempts: revert (`git revert HEAD --no-edit`); diary status = `"reverted"`, decision = `"Guard failed after GUARD_REWORK_MAX rework attempts — reverted"`. |
 | metric improved AND gain < 0.1% AND change > 50 lines | Refresh sentinel; discard: `git revert HEAD --no-edit`. (Line count computed via `CHANGE_LINES` — see note below table.) |
+| metric improved AND guard pass | Keep commit. Update `state.json`: `best_metric`, `best_commit`. "Improved" = `new_metric > best_metric` when `direction: higher`; `new_metric < best_metric` when `direction: lower`. |
 | no improvement | Refresh sentinel; revert: `git revert HEAD --no-edit`. |
 
 **Line count computation** (for "gain < 0.1% AND change > 50 lines" row): run before evaluating the condition:
@@ -581,18 +581,19 @@ CHANGE_LINES=$(( INSERTIONS + DELETIONS ))
 
 `git revert HEAD --no-edit` — never `git reset --hard` (preserves history, not in deny list).
 
-**Double-revert guard** (ADV-H19) — Phase 7 rework→revert can collide with a partial Phase 5 timeout revert or Phase 6 guard-fail revert performed in the same iteration. Always check before issuing the revert:
+**Double-revert guard** (ADV-H19) — Phase 7 rework→revert can collide with a partial Phase 5 timeout revert performed in the same iteration. Always check before issuing the revert. <!-- policy-sibling: plugins/cc_research/skills/run/modes/phase5-metric.md -->
 
 ```bash
-ALREADY_REVERTED=$(git log --oneline -5 2>/dev/null | grep -c "^[0-9a-f]\+ Revert ") || ALREADY_REVERTED=0  # `|| echo 0` appends a second 0: grep -c prints 0 *and* exits 1 on zero matches
-if [ "$ALREADY_REVERTED" -gt 0 ]; then
-    echo "Phase 7: prior revert detected (Phase 5/6 already reverted this iteration) — skipping double-revert."
-else
+# revert subject embeds the original ("Revert \"experiment(...)\"") — anchor at subject start, never substring
+[ -n "$I" ] || { echo "! BLOCKED — Phase 7: iteration number unset, cannot scope revert guard"; exit 1; }
+if git log -1 --format=%s 2>/dev/null | grep -qE "^experiment\(optimize/i${I}\):"; then
     git revert HEAD --no-edit  # timeout: 15000
+else
+    echo "Phase 7: HEAD is not iteration ${I}'s experiment commit — Phase 5 already reverted; skipping double-revert."
 fi
 ```
 
-The guard fires on `metric improved AND guard fail` (after `GUARD_REWORK_MAX` attempts exhausted), `no improvement`, and `gain < 0.1% AND change > 50 lines` paths — any path that issues a revert after Phase 5 or Phase 6 may have already reverted.
+The guard fires on `metric improved AND guard fail` (after `GUARD_REWORK_MAX` attempts exhausted), `no improvement`, and `gain < 0.1% AND change > 50 lines` paths — any path that issues a revert after Phase 5 may have already reverted. (Known gap, not solved here: whether a rework attempt re-commits or amends is undefined elsewhere in this file — if rework re-commits, a single revert on exhaustion only reverts the last of up to `GUARD_REWORK_MAX` + 1 commits.)
 
 #### Phase 7a — Write diary
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from typing import Any
 
 import pytest
 
@@ -38,6 +39,13 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         session: Active pytest session, whose config records the build outcome.
     """
     manifest_session.start_session(session)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_configure_node(node: Any) -> None:
+    """Share the controller's single manifest build result with each xdist worker."""
+    artifacts = node.config._generated_manifest_artifacts
+    node.workerinput["generated_manifest_result"] = (artifacts.generation_count, artifacts.build_error)
 
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:

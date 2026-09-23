@@ -17,7 +17,8 @@ Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``:
 
 Exit codes:
     0 — metadata resolved and persisted
-    1 — the default branch is undeterminable, or the PR head ref is the default branch
+    1 — the default branch is undeterminable, the PR head ref is the default branch, or ``--pr``
+        starts with ``-`` (argv-injection guard)
 """
 
 from __future__ import annotations
@@ -201,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     _set_dry_run(args.dry_run)
+
+    if args.pr.startswith("-"):
+        print(f"resolve_pr_refs: --pr must not start with '-': {args.pr!r}")
+        return 1
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]

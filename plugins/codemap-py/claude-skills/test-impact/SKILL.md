@@ -39,12 +39,15 @@ NOT for: finding all callers of a function (use `/codemap-py:query-code fn-rdeps
 # timeout: 10000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
-_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"
-INDEX="${_IDX}/${_CM_PROJ}.json"
 
 # dispatcher, not scan-query/scan-index aliases — aliases lease in-engine too but skip dispatcher's interpreter probe (exit 127), deprecated shims removed no earlier than 1.0.0
 # PATH-literal invocation everywhere below — expansion-bearing form matches no bare-name allow prefix; plugin's absolute bin/codemap-py stays interactive fallback
 command -v codemap-py >/dev/null 2>&1 || { echo "codemap-py not on PATH — install the codemap-py plugin, or invoke its bin/codemap-py launcher as one standalone command"; exit 1; }
+
+# git-root-anchored, not CWD-relative — resolve_proj_index.py resolves the same pair the engine uses (index_paths.py); a hand-rolled path here disagreed from a subdirectory
+python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
+IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
+[ -n "$INDEX" ] || { echo "! resolve_index_env.py failed — check Python availability and CLAUDE_PLUGIN_ROOT"; exit 1; }
 
 [ ! -f "$INDEX" ] && echo "No index found — will build via codemap-py index"
 ```
@@ -56,18 +59,30 @@ If `$INDEX` missing:
 - With `SCAN_NO_AUTOBUILD=1`: print `! codemap index missing and SCAN_NO_AUTOBUILD=1 — refusing to auto-build. Build it manually first: /codemap-py:scan-codebase`; exit 1.
 - Otherwise run foreground `codemap-py index`; wait, then continue. Never invoke `codemap-py:scan-codebase`: `disable-model-invocation:true`, user-slash-only. Build through gated `codemap-py index` dispatcher.
 
+```bash
+# timeout: 400000
+_CM_BUILD_T0=$(date +%s)
+# forward only when user already overrode CODEMAP_INDEX_DIR — an unconditional export turns the
+# engine's own git-root default into a flat-convention override (index_paths.py), same trap fixed
+# below for the incremental-refresh branch
+[ -n "${CODEMAP_INDEX_DIR:-}" ] && export CODEMAP_INDEX_DIR
+codemap-py index \
+    && echo "[codemap] index built in $(( $(date +%s) - _CM_BUILD_T0 ))s" \
+    || { printf "! codemap-py index failed — cannot proceed without an index\n"; exit 1; }
+```
+
 If index already exists:
 
 ```bash
 # timeout: 30000
-_CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
-_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"
 if [ "${SCAN_NO_AUTOBUILD:-0}" = "1" ]; then
     echo "[codemap] SCAN_NO_AUTOBUILD=1 — using existing index as-is (no refresh)"
 else
     _CM_BUILD_T0=$(date +%s)
-    # export not inline env prefix — prefix puts expansion ahead of binary, command no longer matches bare-name allow prefix
-    export CODEMAP_INDEX_DIR="${_IDX}"   # forward to the build; ensures it writes to same path as INDEX
+    # forward only when user already overrode CODEMAP_INDEX_DIR — an unconditional export turns the
+    # engine's own git-root default into a flat-convention override (index_paths.py), materializing
+    # a second index when this ran from a subdirectory
+    [ -n "${CODEMAP_INDEX_DIR:-}" ] && export CODEMAP_INDEX_DIR
     codemap-py index --incremental \
         && echo "[codemap] index built in $(( $(date +%s) - _CM_BUILD_T0 ))s" \
         || printf "⚠ codemap-py index --incremental failed — index may be stale; continuing\n"
@@ -78,10 +93,11 @@ After build/refresh, re-verify index:
 
 ```bash
 # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || basename "$PWD")
-_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"
-INDEX="${_IDX}/${_CM_PROJ}.json"
-[ -f "$INDEX" ] || { printf "! Index not found after refresh at %s — check CODEMAP_INDEX_DIR or re-run /codemap-py:scan-codebase\n" "$INDEX"; exit 1; }
+python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/resolve_index_env.py" --output-prefix "codemap-${_CM_PROJ}" 2>/dev/null
+IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || INDEX=""
+[ -n "$INDEX" ] && [ -f "$INDEX" ] || { printf "! Index not found after refresh at %s — check CODEMAP_INDEX_DIR or re-run /codemap-py:scan-codebase\n" "${INDEX:-<unresolved>}"; exit 1; }
 ```
 
 ## Step 1 — Parse arguments
@@ -144,6 +160,12 @@ fields = {
     'hint': index.get('hint') or '',
     'total': str(len(payload.get('test_files') or [])),
     'pytest-cmd': payload.get('pytest_cmd') or '',
+    # engine emits query_complete/stale in every mode (query.py _cmd_coverage) — a soft-failed
+    # --incremental refresh above can leave these false/true with zero query failure to catch it
+    'query-complete': json.dumps(index.get('query_complete')),
+    'stale': json.dumps(index.get('stale')),
+    # absent-by-design on a compact+complete answer — not a gap, never defaulted to a fake reason
+    'completeness-reason': index.get('completeness_reason') or '',
 }
 for name, value in fields.items():
     with open(base + name + suf, 'w') as handle:
@@ -158,14 +180,18 @@ Parse `$RESULT` JSON:
 - `via_call` / `via_mock` — breakdown of how tests were found
 - `index.not_covered` — surface as caveat if non-empty
 - `index.hint` — include as suggestion
+- `index.query_complete` / `index.stale` — completeness signals, always emitted; `query_complete: false` or `stale: true` means the query ran against an incomplete/stale index (e.g. after a soft-failed `--incremental` refresh, Step 0) — surface as caveat on **both** Step 3 branches, independent of `total` or `not_covered`
+- `index.completeness_reason` — human-readable reason when present; absent on a compact+complete answer by design, never treated as a gap or defaulted
 
-**Loud-failure contract**: query failure ≠ empty result. Shell enforces it: nonzero exits skill `1` before field reads; unparsable payload exits parser `1`. Neither may become "no affected tests". False empty set from broken index is worst possible output.
+**Loud-failure contract**: query failure ≠ empty result. Shell enforces it three ways: nonzero exits skill `1` before field reads; unparsable payload exits parser `1`; `query_complete`/`stale` carry through the same parse so a soft-failed refresh with a clean exit can still be caveated. None of the three may become an uncaveated "no affected tests". False empty set from broken index is worst possible output.
 
-**haiku JSON guard**: output may include log/warning prefix/suffix. Always pipe stdin into `python3 -c "import json, sys; ..."`; never assume raw valid JSON. Never add per-field `|| echo "0"` / `|| echo "[]"`: failed parse must not manufacture benign defaults.
+**haiku JSON guard**: output may include log/warning prefix/suffix. Always pipe stdin into `python3 -c "import json, sys; ..."`; never assume raw valid JSON. Never add per-field `|| echo "0"` / `|| echo "[]"`: failed parse must not manufacture benign defaults — `query-complete`/`stale` may legitimately read `null` when the engine omits them; treat `null` as "signal absent", never as false/true.
 
 ## Step 3 — Output
 
-**When `total == 0`**: reachable only after Step 2 exit `0` + parsed payload: genuine empty. Report "No tests found via static analysis. Try full suite or check with `grep -rn <symbol_name> tests/`."
+**Completeness caveat (both branches below)**: read `query-complete` and `stale` tmpfiles first. `query-complete` reads `false` or `stale` reads `true` → prepend `⚠ Index completeness: <completeness-reason, or "index incomplete/stale — see Step 0 refresh output above" when reason is empty>` before the branch's own message. This fires independently of `not_covered` — a soft-failed `--incremental` refresh (Step 0) produces exactly this with a clean query exit.
+
+**When `total == 0`**: reachable only after Step 2 exit `0` + parsed payload. Genuine empty only when the completeness caveat above is also absent — with the caveat present, "no affected tests" means "the index couldn't prove it", not "there are none". Report "No tests found via static analysis. Try full suite or check with `grep -rn <symbol_name> tests/`." — prefixed with the completeness caveat when present.
 
 **When `total > 0`**:
 
@@ -182,6 +208,9 @@ Parse `$RESULT` JSON:
 
 <if not_covered non-empty>
 **Caveat:** dynamic-dispatch / hook-callback callers are not in the static graph — <hint>.
+</if>
+<if completeness caveat present>
+**Caveat:** index completeness — <completeness-reason, or generic incomplete/stale message above>.
 </if>
 ````
 

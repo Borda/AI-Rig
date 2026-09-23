@@ -39,7 +39,7 @@ Shared-engine safety invariants:
 - First-target success + second-target failure stops immediately. Rollback performs only approved-plan actions. Claim completion/rollback only after post-state hash verification.
 - "Push" means only (1) updating allowlisted version-controlled consumer source integration from `codemap-py.integration.v2`, and (2) installing/reinstalling those built plugin versions locally via native runtime CLI. Never `git push`, remote marketplace mutation, release publication, or direct installed-cache edits.
 
-Active consumer guidance is separate from provider metadata. For Codex, `codex-rig`'s shipped `shared/codemap-contract.md` (requires `codex-rig` plugin) is the active consumer contract: its adapter validates `CODEMAP_BIN` first or PATH fallback once, runs provider-owned probe/query surface, persists one context artifact, lets specialists reuse it. Provider-managed `codemap-py-integration.md` block is metadata-only; identity/protocol/timestamp fields don't wire a launcher or prove active guidance. Audit checks provider identity and reachable active consumer guidance separately, reports missing/unreachable/outdated guidance as bounded source maintenance (or an existing approved `plan_sync` target). Never borrow another plugin's shared script or edit installed caches. Installed-byte/hash evidence is separate from current-session activation; native listing without session provenance is not proof, and matching source hashes alone don't prove semantic currency.
+Active consumer guidance is separate from provider metadata. For Codex, `codex-rig`'s shipped `shared/codemap-contract.md` (requires `codex-rig` plugin) is the active consumer contract: its adapter validates `CODEMAP_BIN` first or PATH fallback once, runs provider-owned probe/query surface, persists one context artifact, lets specialists reuse it. Provider-managed `codemap-py-integration.md` block is metadata-only; identity/protocol/timestamp fields don't wire a launcher or prove active guidance. Audit checks provider identity and reachable active consumer guidance separately, reports missing/unreachable/outdated guidance as bounded source maintenance (or `remediation_kind: plan_sync`, when the existing approved target map permits it). Never borrow another plugin's shared script or edit installed caches. Installed-byte/hash evidence is separate from current-session activation; native listing without session provenance is not proof, and matching source hashes alone don't prove semantic currency.
 
 NOT for: structural queries (use `/codemap-py:query-code`); standalone index rebuilds (use `/codemap-py:scan-codebase`).
 
@@ -63,6 +63,8 @@ NOT for: structural queries (use `/codemap-py:query-code`); standalone index reb
 Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan` → plan; `apply` → apply; `sync` → sync; `demo` → demo. Otherwise ask `AskUserQuestion`: "Unrecognized command `$ARGUMENTS`. Which of the five modes did you mean?" Options: (a) `audit`, (b) `plan`, (c) `apply`, (d) `sync`, (e) `demo`. Wait for reply.
 
 ## Step 2: Run the mode
+
+> Launcher pinned to `$CLAUDE_PLUGIN_ROOT` — provider binary identity is the audited subject here, and the Codex counterpart has no PATH entry; a bare-name PATH shadow would audit the wrong binary.
 
 ```bash
 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/codemap-py" integrate audit [--runtime <r>] [--json] [--since YYYY-MM-DD]  # timeout: 15000
@@ -96,6 +98,6 @@ Parse `$ARGUMENTS` case-insensitively: empty or starts `audit` → audit; `plan`
 
 ## Step 3: Report
 
-Report exit meaning: `0` success; `1` runtime/filesystem failure or partial-sync journal (see table); `2` bad syntax or approval. For `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
+Report exit meaning: `0` success; `1` runtime/filesystem failure or partial-sync journal (see table); `2` bad syntax or approval. For `apply` or `sync` exit `1`, report journal state (`planned → approved → applying:<t> → verified:<t> → complete`, or `rollback-started → rollback-succeeded|rollback-failed → recovery-required`). For `recovery-required`, relay only engine-reported bounded manual recovery commands; invent none.
 
 </workflow>

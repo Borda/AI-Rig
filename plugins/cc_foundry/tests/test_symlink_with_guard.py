@@ -594,6 +594,82 @@ class TestMain:
         assert link.is_symlink()
         assert "removed obsolete" not in capsys.readouterr().out
 
+    def test_main_create_mode_rejects_dotdot_traversal(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """CLI ``create`` rejects ``--dest "$HOME/.claude/.."`` instead of silently accepting it.
+
+        Reproduces the CRITICAL PoC: this invocation previously returned exit 0 and
+        would have copied plugin content directly into ``$HOME``.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        plugin_root = tmp_path / "plugin_root"
+        plugin_root.mkdir()
+        src = plugin_root / "src.md"
+        src.write_text("body\n")
+
+        rc = main(
+            [
+                "create",
+                "--src",
+                str(src),
+                "--dest",
+                str(home / ".claude" / ".."),
+                "--home",
+                str(home),
+                "--plugin-root",
+                str(plugin_root),
+            ]
+        )
+
+        assert rc == 2
+        assert "dest must be under" in capsys.readouterr().err
+
+
+class TestAssertDestUnderHomeClaude:
+    """_assert_dest_under_home_claude: containment must survive a `..` traversal leaf."""
+
+    def test_rejects_dotdot_leaf_above_home_claude(self, tmp_path: Path) -> None:
+        """``home/.claude/..`` resolves to ``home`` itself — one level outside the boundary.
+
+        Reproduces the CRITICAL PoC: the un-normalised join ``resolved_parent / dest.name``
+        keeps the literal ``..`` component, so ``resolved.parents`` reported ``home/.claude``
+        as containing it even though the true location is ``home``.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        dest = Path(str(home) + "/.claude/..")
+
+        with pytest.raises(ValueError, match="dest must be under"):
+            symlink_with_guard._assert_dest_under_home_claude(dest, home)
+
+    def test_accepts_normal_dest_under_rules(self, tmp_path: Path) -> None:
+        """A normal, non-traversal dest under ``home/.claude/rules/`` still resolves and passes."""
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        dest = home / ".claude" / "rules" / "foundry-x.md"
+
+        resolved = symlink_with_guard._assert_dest_under_home_claude(dest, home)
+
+        assert resolved == dest.resolve()
+
+    def test_rejects_dest_equal_to_home_claude_itself(self, tmp_path: Path) -> None:
+        """``dest == home/.claude`` itself is rejected — no caller wants to replace the whole dir.
+
+        Accepting exact equality (fixed by dropping the ``resolved == home_claude`` disjunct) let a fresh, not-yet-
+        existing ``~/.claude`` be materialised as a symlink into the plugin tree via ``--dest "$HOME/.claude"``, wiping
+        the directory boundary this function exists to enforce.
+        """
+        home = tmp_path / "home"
+        home.mkdir()  # note: .claude does NOT exist yet — the vulnerable fresh-home case
+        dest = home / ".claude"
+
+        with pytest.raises(ValueError, match="dest must be under"):
+            symlink_with_guard._assert_dest_under_home_claude(dest, home)
+
 
 class TestCreateLink:
     """create_link: 3-tier cascade (symlink → junction → copy + sidecar)."""
@@ -716,6 +792,141 @@ class TestCreateLink:
         content = sidecar.read_text()
         assert content == src.as_posix() + "\n"
         assert Path(content.strip()).is_absolute()  # absolute fallback
+
+    def test_rejects_pre_existing_real_file_dest(self, tmp_path: Path) -> None:
+        """A real file already at dest is never silently destroyed by the copy fallback.
+
+        Reproduces the CRITICAL PoC: Tier 1 fails with ``FileExistsError`` against an
+        occupied dest, and without the up-front guard Tier 3's ``shutil.copy2`` would
+        overwrite it unconditionally.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        src = tmp_path / "src.md"
+        src.write_text("new content\n")
+        dest = home / ".claude" / "rules" / "foundry-b.md"
+        dest.parent.mkdir(parents=True)
+        dest.write_text("original user content\n")
+
+        with pytest.raises(OSError, match="refusing to overwrite existing dest"):
+            create_link(src, dest, home)
+
+        assert dest.read_text() == "original user content\n"
+
+    def test_rejects_pre_existing_live_symlink_outside_tree(self, tmp_path: Path) -> None:
+        """A live symlink at dest pointing outside ``~/.claude`` is never followed and written through.
+
+        Reproduces the CRITICAL PoC: dest is a legal ``--dest`` location whose existing
+        entry is a symlink to ``outside/important.txt``. Without the guard, Tier 3's
+        ``shutil.copy2`` follows the symlink and overwrites the external file, nullifying
+        the ``--dest`` containment boundary this script otherwise enforces everywhere else.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        outside = tmp_path / "outside" / "important.txt"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("do not touch\n")
+        src = tmp_path / "src.md"
+        src.write_text("new content\n")
+        dest = home / ".claude" / "rules" / "foundry-c.md"
+        dest.parent.mkdir(parents=True)
+        dest.symlink_to(outside)
+
+        with pytest.raises(OSError, match="refusing to overwrite existing dest"):
+            create_link(src, dest, home)
+
+        assert outside.read_text() == "do not touch\n"
+        assert dest.is_symlink()
+
+    def test_rejects_pre_existing_dangling_symlink(self, tmp_path: Path) -> None:
+        """A dangling symlink at dest is rejected too — ``Path.exists()`` alone misses it.
+
+        ``dest.exists()`` follows symlinks and is False for a dangling target, so the guard also checks
+        ``dest.is_symlink()`` to catch this case before Tier 1 runs.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        src = tmp_path / "src.md"
+        src.write_text("new content\n")
+        dest = home / ".claude" / "rules" / "foundry-d.md"
+        dest.parent.mkdir(parents=True)
+        dest.symlink_to(tmp_path / "outside" / "gone.md")  # target never created
+
+        with pytest.raises(OSError, match="refusing to overwrite existing dest"):
+            create_link(src, dest, home)
+
+        assert dest.is_symlink()
+        assert not dest.exists()  # still dangling — untouched
+
+    def test_race_created_dest_is_not_overwritten_by_copy_fallback(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A dest appearing between the guard check and Tier 1 still fails closed (TOCTOU).
+
+        Simulates the race window: the up-front guard passes because dest is absent, but
+        `symlink_to` itself raises ``FileExistsError`` (as it does when an entry appears in
+        that window) — the exception must propagate, never fall through to Tier 3's overwrite.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        src = tmp_path / "src.md"
+        src.write_text("new content\n")
+        dest = home / ".claude" / "rules" / "foundry-e.md"
+        dest.parent.mkdir(parents=True)
+
+        monkeypatch.setattr(
+            symlink_with_guard.Path,
+            "symlink_to",
+            lambda self, target: (_ for _ in ()).throw(FileExistsError("simulated race")),
+        )
+
+        with pytest.raises(FileExistsError):
+            create_link(src, dest, home)
+
+        assert not dest.exists()
+        assert not dest.is_symlink()
+
+    def test_rejects_pre_planted_symlink_at_sidecar_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A symlink planted at the deterministic sidecar path is refused, not followed.
+
+        ``sidecar_path`` (``.{dest.name}.sourced_from``) is derived from ``dest`` before ``create_link`` is called, so
+        an attacker (or a stale artifact) can plant a symlink there ahead of time pointing anywhere on disk. Without a
+        guard, ``write_text`` follows it and truncates the target — the same escape class the ``dest`` guard above
+        closes, just for the sidecar name instead of ``dest`` itself.
+        """
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        src = tmp_path / "src_dir"
+        src.mkdir()
+        (src / "inner.txt").write_text("payload\n")
+        dest = home / ".claude" / "rules" / "foundry-f.md"
+        dest.parent.mkdir(parents=True)
+
+        outside = tmp_path / "outside" / "do_not_touch.txt"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("precious\n")
+
+        sidecar_path = dest.parent / f".{dest.name}.sourced_from"
+        sidecar_path.symlink_to(outside)
+
+        # Force Tier 1 to fail and pin platform to non-Windows so Tier 2 (copy) runs.
+        monkeypatch.setattr(
+            symlink_with_guard.Path,
+            "symlink_to",
+            lambda self, target: (_ for _ in ()).throw(OSError("simulated symlink failure")),
+        )
+        monkeypatch.setattr(symlink_with_guard.sys, "platform", "linux")
+
+        with pytest.raises(OSError, match="refusing to overwrite existing sidecar"):
+            create_link(src, dest, home)
+
+        assert outside.read_text() == "precious\n"  # untouched — not followed
 
     def test_main_create_mode_missing_src(
         self,

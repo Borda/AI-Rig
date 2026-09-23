@@ -23,12 +23,48 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
 from collections.abc import Iterable
 from enum import Enum
 from pathlib import Path
+
+# Matches a plain dotted Python identifier only — rejects anything a downstream CLI parser could
+# mistake for an option flag (e.g. a leading "--") or that contains whitespace/other shell-unsafe
+# characters. Every derived or caller-supplied module name is checked against this before it
+# reaches a subprocess argv position.
+_MODULE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+
+def is_valid_module(name: str) -> bool:
+    """Check whether a string is a syntactically valid dotted Python module name.
+
+    Guards subprocess argv positions from argument injection: a bare positional
+    argument like ``--evil`` cannot be reliably distinguished from an option flag
+    by a downstream CLI parser, so any derived or caller-supplied module name is
+    validated as a plain dotted identifier before it is passed to ``codemap-py``.
+
+    Args:
+        name: Candidate module name, e.g. one produced by :func:`derive_module_from_path`
+            or supplied directly by a caller.
+
+    Returns:
+        True if ``name`` is composed of dot-separated valid Python identifiers,
+        False otherwise.
+
+    Examples:
+        >>> is_valid_module("pkg.sub.mod")
+        True
+        >>> is_valid_module("--evil")
+        False
+        >>> is_valid_module("--top")
+        False
+        >>> is_valid_module("bad name")
+        False
+    """
+    return bool(_MODULE_RE.match(name))
 
 
 class ScanSource(str, Enum):
@@ -304,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     for mod in modules:
-        if mod:
+        if mod and is_valid_module(mod):
             _scan_query(["rdeps", mod], timeout=args.timeout)
 
     if source == ScanSource.FIND:

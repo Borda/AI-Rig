@@ -21,7 +21,9 @@ Flags:
                       shell tests, where an embedded quote breaks the block at parse time.
     --force-off       CODEMAP_FORCE_OFF=true — always write false.
     --strict          CODEMAP_STRICT=true — exit 1 when codemap absent/index missing.
-    --proj <name>     Project name override (default: basename of git toplevel).
+    --proj <name>     Project name override (default: basename of git toplevel). Must be a bare
+                      name, not a path — a value containing "/", "\\", or equal to "." or ".."
+                      is rejected.
     --idx-dir <path>  Codemap index directory override (default: <git toplevel>/.cache/codemap).
 
 Temp files written:
@@ -31,7 +33,7 @@ Temp files written:
 Exit codes:
     0   success (CODEMAP_ENABLED written)
     1   ``--strict`` mode: codemap not installed or index missing (error printed)
-    2   missing required ``--prefix`` argument
+    2   bad argv: missing ``--prefix``, or ``--proj`` containing a path separator
 """
 
 from __future__ import annotations
@@ -115,7 +117,12 @@ def _resolve_proj(proj_override: str | None, root: Path) -> str:
     (``codemap_py.index_paths.resolve_index`` → ``base_root.name``) with no
     sanitization. A consumer that strips characters would seek a filename the
     scanner never wrote — a permanent false ``no_index`` for any repository whose
-    directory name contains a space, ``+``, or a non-ASCII character.
+    directory name contains a space, ``+``, or a non-ASCII character. This function
+    itself never sanitizes ``proj_override`` either, for the same reason; ``main()``
+    instead rejects unsafe ``--proj`` values (containing ``/``, ``\\``, or equal to
+    ``.``/``..``) before this function is ever reached, so the two contracts —
+    reject-don't-sanitize at the CLI boundary, pass-through-unsanitized here — both
+    hold at once.
 
     Args:
         proj_override: Explicit ``--proj`` value; wins when non-empty.
@@ -188,6 +195,10 @@ def main(argv: list[str] | None = None) -> int:
             i += 2
         else:
             i += 1
+
+    if proj_override and ("/" in proj_override or "\\" in proj_override or proj_override in {".", ".."}):
+        print(f"detect_codemap: --proj must be a bare project name, not a path: {proj_override!r}", file=sys.stderr)
+        return 2
 
     if not prefix:
         print(

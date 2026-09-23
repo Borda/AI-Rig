@@ -1,6 +1,6 @@
 ---
 name: create
-description: Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, or lightning talk.
+description: 'Interactive outline co-creation for developer advocacy content — collects format, audience profile, story arc (Problem→Journey→Insight→Action), and voice/tone; detects out-of-scope requests (FAQs, comparison tables); surfaces conflicts between user brief and audience needs. Writes approved outline to .plans/content/<slug>-outline.md for foundry:creator to execute. Use when starting a blog post, Marp slide deck, social thread, talk abstract, or lightning talk. SKIP: idea generation before an outline exists (use foundry:brainstorm — brainstorm explores directions into a tree; create turns an already-approved outline into finished content).'
 argument-hint: '[topic]'
 disable-model-invocation: true
 allowed-tools: Write, Bash, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Agent
@@ -23,7 +23,12 @@ NOT for: implementation, code gen, README writing (use `foundry:doc-scribe`), st
 
 <workflow>
 
-**Task hygiene**: Call `TaskList`; mark clearly-done tasks `completed`, orphaned tasks `deleted`, genuinely-continuing tasks `in_progress`.
+**Task hygiene**: load and follow the protocol below.
+
+```bash
+# audit-skip: resilience-replication
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
+```
 
 **Task tracking**: TaskCreate all steps before any tool calls.
 
@@ -50,6 +55,8 @@ Propose four-beat arc from topic + audience:
 - **Journey**: 3–5 key points (what tried, what failed, what arc covers)
 - **Insight**: core "aha" framed for stated audience level — name directly
 - **Action**: specific next step for audience
+
+**Out-of-scope re-check (re-apply the Step 1 test to the constructed arc)**: the Step 1 gate tests the brief; this one tests what the arc turned out to be. If the Journey beat resolves mainly to a feature-by-feature comparison, an options matrix, a question-and-answer list, or reference material with no narrative through-line — i.e. the beats only hold together as a table or list — stop here, before writing any outline. Respond: "The arc for this topic resolves to structured reference content rather than a narrative — use `foundry:doc-scribe` instead." Do not write the outline file and do not offer the Step 4 generation gate. A topic that merely *mentions* alternatives still passes: the test is whether the Insight beat names a single transferable idea, or just summarises the comparison.
 
 **Editorial conflict check**: brief implies expert audience but topic introductory, or vice versa: surface before continuing:
 
@@ -140,7 +147,7 @@ created: YYYY-MM-DD
 
 - **Execution model**: `disable-model-invocation: true` — Claude itself follows this SKILL.md as workflow template directly in main context (no autonomous sub-agent dispatch during outline phase). Step 4 gate selects (a): exactly one sub-agent spawned, `foundry:creator` (executes outline, writes full artifact). No other sub-agent invocations by this skill.
 
-- 5 questions in baseline flow; up to 7 with arc-conflict resolution (steps 2–4 use exactly 4; step 1 adds one only when $ARGUMENTS absent; arc conflicts in step 3 may add 1–2 more).
+- Question budget: **3 `AskUserQuestion` calls / 4 questions** when a topic is supplied (step 2 = 1 call carrying 2 questions; steps 3 and 4 = 1 question each). Topic absent adds step 1's opener → 4 calls / 5 questions. Each arc-conflict round in step 3 re-invokes that call → up to 6 calls / 7 questions worst case.
 
 - Each AskUserQuestion uses lettered options with one ★ recommended default.
 

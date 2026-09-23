@@ -285,7 +285,11 @@ cat "$_DEV_SHARED/plan-inline.md"
 
 §Inline Plan Generation Protocol. Apply using **feature** context from Skill contexts table. On proceed: set `PLAN_FILE=<path>`; continue to Step 2. On small complexity or `ACCEPT_NO_PLAN=true`: skip and continue to Step 2.
 
+Plan-inline skipped because `--plan` was supplied or `ACCEPT_NO_PLAN=true`, **and** complexity classified `large` → still surface the smell once: invoke `AskUserQuestion` — "Scope is large (8+ files or 2+ new modules) and the plan gate was bypassed. How to proceed?" · (a) **Narrow scope** (recommended) · (b) **Proceed** — scope accepted as-is.
+
 Present analysis summary before proceeding.
+
+**Goal classification gate**: after sw-engineer analysis completes, scan the goal text for mixed signals — goal contains both feature keywords (add, implement, new, support) AND refactor keywords (rename, extract, restructure, decouple, consolidate) → invoke `AskUserQuestion`: "Goal mixes feature work and refactoring — split into two runs." · (a) **Abort** — run `/develop:refactor` first, then `/develop:feature` · (b) **Continue as feature-only** — treat refactoring as out of scope.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -351,7 +355,7 @@ Spawn `foundry:challenger` with scope analysis from Step 1 (purpose, scope, risk
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings. Never proceed to Step 2 until user resolves each blocker or explicitly accepts risk.
+- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory section before demo test; continue.
 - **No findings / all refuted** → proceed.
 
@@ -399,18 +403,27 @@ Both forms must:
 ```bash
 # Resolve MODULE_PATH before this block — e.g.:
 # MODULE_PATH=$(find src/ -name '*.py' | head -1)
+# DEMO_SCRIPT: examples/demo_<feature>.py for the Complex-feature form above; empty = doctest form
 # timeout: 30000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-$PYTEST_CMD --collect-only --doctest-modules $MODULE_PATH -q 2>&1 | tail -5; COLLECT_EXIT=${PIPESTATUS[0]}
-if [ "$COLLECT_EXIT" -eq 5 ]; then
-    echo "⚠ GATE FAIL: no demo tests collected — demo file missing or doctest malformed"
-    GATE_EXIT=1
-elif [ "$COLLECT_EXIT" -ne 0 ]; then
-    echo "⚠ Cannot collect doctests — check module for import errors (collect exit $COLLECT_EXIT)"
-    GATE_EXIT=1
+DEMO_SCRIPT=""
+if [ -n "$DEMO_SCRIPT" ]; then
+    echo "5" > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
+    echo "0" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
+    echo "$DEMO_SCRIPT" > ${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}
+else
+    $PYTEST_CMD --collect-only --doctest-modules $MODULE_PATH -q 2>&1 | tail -5; COLLECT_EXIT=${PIPESTATUS[0]}
+    if [ "$COLLECT_EXIT" -eq 5 ]; then
+        echo "⚠ GATE FAIL: no demo tests collected — demo file missing or doctest malformed"
+        GATE_EXIT=1
+    elif [ "$COLLECT_EXIT" -ne 0 ]; then
+        echo "⚠ Cannot collect doctests — check module for import errors (collect exit $COLLECT_EXIT)"
+        GATE_EXIT=1
+    fi
+    echo "${GATE_EXIT:-0}" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
+    echo "$COLLECT_EXIT"   > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
+    : > ${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}
 fi
-echo "${GATE_EXIT:-0}" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
-echo "$COLLECT_EXIT"   > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
 ```
 
 ```bash
@@ -418,7 +431,8 @@ echo "$COLLECT_EXIT"   > ${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r COLLECT_EXIT < "${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}" 2>/dev/null || COLLECT_EXIT="1"
 IFS= read -r GATE_EXIT < "${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}" 2>/dev/null || GATE_EXIT="1"
-# doctest form — MODULE_PATH resolved above
+IFS= read -r DEMO_SCRIPT < "${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}" 2>/dev/null || DEMO_SCRIPT=""
+# doctest form — MODULE_PATH resolved above; example-script form — DEMO_SCRIPT set, COLLECT_EXIT=5 by design
 if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
     $PYTEST_CMD --doctest-modules $MODULE_PATH -v 2>&1 | tail -10; GATE_EXIT=${PIPESTATUS[0]}
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
@@ -427,13 +441,28 @@ if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
         echo "✓ GATE OK: demo failed as expected (exit $GATE_EXIT)"
     fi
     echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
+elif [ -n "$DEMO_SCRIPT" ]; then
+    python "$DEMO_SCRIPT" 2>&1 | tail -5; GATE_EXIT=${PIPESTATUS[0]}
+    if [ "${GATE_EXIT:-0}" -eq 0 ]; then
+        echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
+    else
+        echo "✓ GATE OK: demo failed as expected (exit $GATE_EXIT)"
+    fi
+    echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
 fi
-
-# python examples/demo_<feature>.py 2>&1 | tail -5; GATE_EXIT=$?
-# echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
 ```
 
-If `COLLECT_EXIT -ne 0`: stop — collection failed, gate skipped (GATE_EXIT=1). If `GATE_EXIT -eq 0`: invoke `AskUserQuestion` — never silently proceed past a gate failure with prose alone: "Demo passed against current code — feature may already exist. How to proceed?" · (a) **Stop** — revisit Step 1 scope (recommended; feature likely already implemented) · (b) **Continue anyway** — proceed with TDD loop (gate explicitly overridden). On Stop: exit; never advance to Step 3.
+If `COLLECT_EXIT -ne 0` and `DEMO_SCRIPT` is empty (doctest form): stop — collection failed, gate skipped (GATE_EXIT=1). Example-script form (`DEMO_SCRIPT` set) skips collection by design — `COLLECT_EXIT=5` there is expected, not a failure. If `GATE_EXIT -eq 0`: invoke `AskUserQuestion` — never silently proceed past a gate failure with prose alone: "Demo passed against current code — feature may already exist. How to proceed?" · (a) **Stop** — revisit Step 1 scope (recommended; feature likely already implemented) · (b) **Continue anyway** — proceed with TDD loop (gate explicitly overridden). On Stop: exit; never advance to Step 3.
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r COLLECT_EXIT < "${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}" 2>/dev/null || COLLECT_EXIT="1"
+if [ "$COLLECT_EXIT" -ne 0 ] && [ "$COLLECT_EXIT" -ne 5 ]; then
+    echo "! GATE FAIL: demo collection failed (exit $COLLECT_EXIT) — fix the import error or malformed doctest before Step 3"
+    exit 1
+fi
+```
 
 ### Review: Validate the demo
 
@@ -474,15 +503,18 @@ echo "$(date +%s)" > ${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}
 
 Start from Step 2 demo — already failing, becomes first target. For each piece of functionality:
 
-1. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
-
-2. **Run existing suite — confirm all pass**:
+1. **Run existing suite — confirm all pass** (baseline before adding anything):
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <target_test_dir> -v 2>&1 | tail -20
+   # --ignore assumes new test is a discrete file; appended-to-existing-file case needs pytest node-ID deselection instead
+   $PYTEST_CMD --tb=short <target_test_dir> -v --ignore=<new_test_file> 2>&1 | tail -20
    GATE_EXIT=${PIPESTATUS[0]}
    ```
+
+   `<new_test_file>` is the test this cycle is about to add (first iteration: the Step 2 demo — no `--ignore` needed). Excluding it is the point: this run establishes the pre-change baseline, and the new red test must not count against it.
+
+2. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
 
 3. **Run new demo/test — confirm it fails**:
 

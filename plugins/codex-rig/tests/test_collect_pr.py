@@ -765,7 +765,7 @@ def test_collect_pr_uses_verified_local_diff_when_review_thread_fetch_fails(
         == [
             "git",
             "-C",
-            str(output.with_name(f"{output.name}-review-worktree")),
+            output.with_name(f"{output.name}-review-worktree").as_posix(),
             "diff",
             "--binary",
             f"{BASE_OID}...{HEAD_OID}",
@@ -827,7 +827,7 @@ def test_collect_pr_isolates_review_even_when_main_is_already_at_pr_head(
     assert not any(argv[:3] == ["gh", "pr", "checkout"] for argv, _ in _runner.calls)
     checkout = json.loads((output / "local-checkout.json").read_text())
     assert checkout["command"] == " ".join(_review_worktree_add(output))
-    assert checkout["worktree"] == str(output.with_name(f"{output.name}-review-worktree"))
+    assert checkout["worktree"] == output.with_name(f"{output.name}-review-worktree").as_posix()
     assert checkout["head_matches_pr"] is True
     assert (output / "diff.patch").read_bytes() == b"diff --git a/a.py b/a.py\n"
 
@@ -1207,7 +1207,7 @@ def test_collect_pr_preserves_checkout_started_state_after_checkout_command_fail
     checkout_state = json.loads((output / "checkout-state.json").read_text())
     assert checkout_state["status"] == "worktree-create-started"
     assert checkout_state["local_state"] == "main-worktree-unchanged; new-worktree-unknown"
-    assert checkout_state["worktree"] == str(output.with_name(f"{output.name}-review-worktree"))
+    assert checkout_state["worktree"] == output.with_name(f"{output.name}-review-worktree").as_posix()
     assert (output / "pr.json").is_file()
     assert (output / "comments.json").is_file()
     assert (output / "review-threads.json").is_file()

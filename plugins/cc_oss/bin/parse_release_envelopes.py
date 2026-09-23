@@ -2,18 +2,22 @@
 """parse_release_envelopes.py — validate the changelog-audit and contributors agent envelopes for oss:release.
 
 Both delegated agents return a compact JSON envelope. This script fails the run when either reports a non-``done``
-status or names a file that was never written, then re-persists the returned paths — a subagent may canonicalize them,
-so the sentinels must carry the agent's own spelling, not the orchestrator's guess.
+status, names a file that was never written, or names a file outside the working root, then re-persists the returned
+paths — a subagent may canonicalize them, so the sentinels must carry the agent's own spelling, not the orchestrator's
+guess.
 
 Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/parse_release_envelopes.py" --envelope-a "$ENVELOPE_A" --envelope-b "$ENVELOPE_B"
 
 Sentinels written to ``${TMPDIR:-/tmp}/<name>-${CSID}``:
-    release-changelog-audit, release-contributors, release-changelog-file (only when envelope A carries one)
+    release-changelog-audit, release-contributors, release-changelog-file (only when envelope A carries one that
+    resolves inside the working root and names a CHANGELOG file; otherwise dropped with a warning and the stale
+    sentinel removed)
 
 Exit codes:
-    0 — both envelopes valid; summary printed
-    1 — either delegation failed or named a missing file
+    0 — both envelopes valid; summary printed. A rejected ``changelog_file`` degrades here, not to 1: it is optional
+        and ``modes/prepare.md`` re-derives it, so the run continues with a warning on stdout.
+    1 — either delegation failed, named a missing file, or named a file that resolves outside the working root
 """
 
 from __future__ import annotations
@@ -24,6 +28,48 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+
+
+def _within_root(path: Path, root: Path) -> bool:
+    """Return ``True`` when ``path`` resolves at or under ``root``.
+
+    ``root`` is resolved here rather than at the call site so a symlinked cwd cannot cause a
+    spurious rejection.
+
+    The allowed root is deliberately narrower than ``setup_release_dir.py``'s three-root allowlist
+    (cwd, ``~/.claude``, the temp dir): that validator gates orchestrator-authored argv, this one
+    gates delegate-authored envelope fields from an agent that parses untrusted commit subjects by
+    contract. Admitting ``~/.claude`` here would let a compromised delegate name a config file that
+    is later symlinked into a public release directory. The sibling's temp-dir root is a pytest
+    ``tmp_path`` affordance and has no production caller here.
+
+    Args:
+        path: Candidate path.
+        root: Directory the path must lie within.
+
+    Returns:
+        ``True`` when *path* is *root* or a descendant of it, or when either cannot be resolved
+        (OSError) it returns ``False`` — fail closed.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     root = Path(tmp)
+        ...     _within_root(root / "a" / "b.md", root)
+        True
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     root = Path(tmp) / "work"
+        ...     _within_root(Path(tmp) / "other" / "b.md", root)
+        False
+    """
+    if ".." in path.parts:
+        return False
+    try:
+        resolved_path = path.resolve()
+        resolved_root = root.resolve()
+    except OSError:
+        return False
+    return resolved_path == resolved_root or resolved_root in resolved_path.parents
 
 
 def _sentinel_path(name: str) -> Path:
@@ -129,22 +175,25 @@ def field(data: dict | None, key: str, absent: str = "null") -> str:
     return absent if value is None else str(value)
 
 
-def validate(data: dict | None, label: str) -> str:
-    """Check one envelope's status and the existence of the file it names.
+def validate(data: dict | None, label: str, root: Path) -> str:
+    """Check one envelope's status, file existence, and containment within *root*.
 
     Args:
         data: Decoded envelope, or ``None``.
         label: Delegation name used in the failure message.
+        root: Directory the named file must resolve inside — the delegate must not name a file
+            elsewhere on disk (see :func:`_within_root`).
 
     Returns:
         The validated file path.
 
     Raises:
-        SystemExit: exit code 1 when the status is not ``done`` or the file is absent.
+        SystemExit: exit code 1 when the status is not ``done``, the file is absent, or the file
+            resolves outside *root*.
     """
     status = field(data, "status")
     path = field(data, "file")
-    if status != "done" or not path or not Path(path).is_file():
+    if status != "done" or not path or not Path(path).is_file() or not _within_root(Path(path), root):
         print(f"Error: {label} delegation failed — status={status}, file={path}", file=sys.stderr)
         raise SystemExit(1)
     return path
@@ -178,14 +227,30 @@ def main(argv: list[str] | None = None) -> int:
 
     envelope_a = load_envelope(args.envelope_a)
     envelope_b = load_envelope(args.envelope_b)
-    changelog_audit_file = validate(envelope_a, "changelog-audit")
-    contributors_file = validate(envelope_b, "contributors")
+    root = Path.cwd()
+    changelog_audit_file = validate(envelope_a, "changelog-audit", root)
+    contributors_file = validate(envelope_b, "contributors", root)
 
     _write_sentinel("release-changelog-audit", changelog_audit_file)
     _write_sentinel("release-contributors", contributors_file)
     changelog_file = field(envelope_a, "changelog_file", "")
-    if changelog_file:
+    changelog_file_ok = (
+        bool(changelog_file)
+        and _within_root(Path(changelog_file), root)
+        and Path(changelog_file).name.upper().startswith("CHANGELOG")
+    )
+    if changelog_file_ok:
         _write_sentinel("release-changelog-file", changelog_file)
+    else:
+        if _DRY_RUN:
+            print("[dry-run] would remove release-changelog-file")
+        else:
+            _sentinel_path("release-changelog-file").unlink(missing_ok=True)
+        if changelog_file:
+            print(
+                f"[release] ⚠ changelog_file rejected (outside {root} or not a CHANGELOG file): "
+                f"{changelog_file} — sentinel not written, falling back to CHANGELOG search"
+            )
 
     added = field(envelope_a, "added", "0")
     flagged = field(envelope_a, "flagged", "0")

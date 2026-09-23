@@ -268,7 +268,7 @@ echo "REPORT_FILE=$REPORT_FILE"
 
 Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 
-- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, incomplete report, or failed path publication). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
+- `blocked` → stop the fix pipeline; retain the printed reason (rejected PR, incomplete report, failed path publication, or an invalid `--pr` value). Diagnostic/recovery questions remain available. Repair or rerun the producer before consuming findings; never treat this as `missing` or start remediation from its notes.
 - `ok` → print `→ Reusing review report: <REPORT_FILE>`; `report` mode continues at Step 3a, `pr + report` at Step 3c. **Never start a review when a report is already resolved.**
 - `codex-lineage` → this parser reads `oss:review`'s section schema only, not codex's flat H1/H2/M1-bullet schema. Treat as `missing` for the gate below, stating the lineage as the reason.
 - `missing` with **no `PR_NUMBER`** (bare `report` on the current branch) → nothing to offer: there is no second source and no PR to review. Stop with `No review report found in .reports/review/ or .reports/codex/review/ — run /oss:review <PR#> first, or provide a PR number`.

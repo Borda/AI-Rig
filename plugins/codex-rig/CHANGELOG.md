@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.1
+
+- Fixed ACR2: shepherd's breaking-change `AskUserQuestion` gate was structurally unreachable (agent has no foreground mode) — now unconditionally emits a report block instead, with `semver-rules.md` and README updated to match.
+- Added a per-model concurrency ceiling table (Luna 20, Sol 5, Terra 10 — deprecated pending GPT-6 rollout, Astra 2) to `shared/specialist-orchestration.md`, bounding how many nodes of a given model may run at once across a session, separate from the existing four-node per-wave schema-v2 ceiling.
+- Fixed 21 audit findings, re-verified against disk state after 2 external commits landed mid-audit (32/32 re-checked findings still valid). See `.reports/audit/2026-09-22T22-18-03Z/fix-summary-codexrig.md` for full detail.
+
 ## 0.24.0
 
 - Rename the `adversarial-loop` skill invocation to `challenge-resolve` while retaining the shared procedure and reviewer wire format; remove the unprovable archive-validation opt-out so final results require the same bound action record as candidates.

@@ -113,6 +113,23 @@ def test_fetch_pr_meta_returns_empty_on_failure(monkeypatch: pytest.MonkeyPatch)
 
 
 # ---------------------------------------------------------------------------
+# argv-injection guard
+# ---------------------------------------------------------------------------
+
+
+def test_main_rejects_leading_dash_pr(capsys: pytest.CaptureFixture) -> None:
+    """A ``--pr`` value starting with '-' is refused before any subprocess runs.
+
+    ``--pr`` flows raw into ``gh pr view <pr>`` argv; a leading-dash value would be consumed as a flag rather than an
+    operand. Uses the ``--pr=<value>`` single-token form: argparse's own tokenizer treats a bare ``--pr --evil-flag``
+    two-token pair as a *missing* value (unknown-option lookahead), which would exit 2 through argparse itself rather
+    than exercising this guard.
+    """
+    assert rpr.main(["--pr=--evil-flag"]) == 1
+    assert "must not start with" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # branch-safety pre-check
 # ---------------------------------------------------------------------------
 

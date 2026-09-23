@@ -87,8 +87,8 @@ printf '%s\n' "$REMOVE_IF_ZERO" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-RE
 printf '%s\n' "$SINCE_VER"      > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-SINCE_VER-${CSID}"
 printf '%s\n' "$REMOVED_IN_VER" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVED_IN_VER-${CSID}"
 
-OLD_NAME="${OLD_REF##*::}"; [ "$SUBCOMMAND" = "module" ] && OLD_NAME="${OLD_REF##*.}"
-NEW_NAME="${NEW_REF##*::}"; [ "$SUBCOMMAND" = "module" ] && NEW_NAME="${NEW_REF##*.}"
+OLD_NAME="${OLD_REF##*::}"; OLD_NAME="${OLD_NAME##*.}"
+NEW_NAME="${NEW_REF##*::}"; NEW_NAME="${NEW_NAME##*.}"
 printf '%s\n' "$OLD_NAME" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}"
 printf '%s\n' "$NEW_NAME" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-NEW_NAME-${CSID}"
 ```
@@ -125,11 +125,13 @@ IFS= read -r INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}"
 [ -n "$INDEX" ] || { echo "! index not found — run /codemap-py:scan-codebase first"; exit 1; }
 SMOKE_JSON=$(python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/check_index_smoke.py" --index-path "$INDEX")  # timeout: 10000
 # python3 not jq — jq absent on stock Windows/CI; already required by every bin/ helper here
-STALE=$(printf '%s' "$SMOKE_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('stale','unknown'))" 2>/dev/null || echo "unknown")
+# stale is bool or null (check_index_smoke.py) — normalize case + null, then emit so the branch below reads a printed value, not an invisible var
+STALE=$(printf '%s' "$SMOKE_JSON" | python3 -c "import sys,json; v=json.load(sys.stdin).get('stale'); print('unknown' if v is None else str(v).lower())" 2>/dev/null || echo "unknown")
+printf 'STALE=%s\n' "$STALE"
 ```
 
 - `STALE=true` → `AskUserQuestion`: (a) Proceed anyway (callers may be incomplete); (b) Abort (first re-run /codemap-py:scan-codebase). Abort → print "Run `/codemap-py:scan-codebase` then re-invoke"; stop.
-- `STALE=unknown` (JSON parse failed) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete`; continue cautiously, never treat fresh.
+- `STALE=unknown` (JSON parse failed, or `stale` absent/null) → print `⚠ Could not determine index freshness — proceeding but callers may be incomplete`; continue cautiously, never treat fresh.
 
 ## Step 2: Resolve targets
 
@@ -271,13 +273,17 @@ Print path + count, then `⚠ >50 callers — capping edit pass at first 50. Cal
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 IFS= read -r REMOVE_IF_ZERO < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-REMOVE_IF_ZERO-${CSID}" 2>/dev/null || REMOVE_IF_ZERO="false"
+IFS= read -r DRY_RUN < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-DRY_RUN-${CSID}" 2>/dev/null || DRY_RUN="false"
 IFS= read -r RDEP_COUNT < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rdep-count-${CSID}" 2>/dev/null || RDEP_COUNT="0"
 IFS= read -r EXHAUSTIVE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-EXHAUSTIVE-${CSID}" 2>/dev/null || EXHAUSTIVE="false"
+# emit — the gate below decides on a printed value, not an invisible sentinel read
+printf 'REMOVE_IF_ZERO=%s DRY_RUN=%s RDEP_COUNT=%s EXHAUSTIVE=%s\n' "$REMOVE_IF_ZERO" "$DRY_RUN" "$RDEP_COUNT" "$EXHAUSTIVE"
 ```
 
 - `REMOVE_IF_ZERO=true` AND `RDEP_COUNT > 0` → print `! --remove-if-no-callers: N callers found. Remove all callers first or omit flag.`; stop **entire rename operation**.
 - `REMOVE_IF_ZERO=true` AND `EXHAUSTIVE=false` → print `! --remove-if-no-callers requires exhaustive=true. Run /codemap-py:scan-codebase to ensure full coverage.`; stop **entire rename operation**.
-- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
+- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `DRY_RUN=false` → `AskUserQuestion`: (a) Delete `$OLD_REF` — confirmed no callers; (b) Abort — keep file. Abort: stop. Delete: find-symbol line range, then `Read` block bounds. Verify `start_line` contains expected bare `OLD_NAME` or qualified `OLD_REF`; mismatch → print `! Symbol name mismatch at line <start_line>: expected <OLD_NAME>, index may be stale — run /codemap-py:scan-codebase first`; abort without delete. Only then `Edit`: remove definition from `def`/`class` through final body, including immediately preceding `@decorator` lines. Skip Steps 4a–4d. Print `ℹ Symbol had no callers — removed $OLD_REF without rename`; go Step 6.
+- `REMOVE_IF_ZERO=true` AND `RDEP_COUNT == 0` AND `EXHAUSTIVE=true` AND `DRY_RUN=true` → record "would delete `$OLD_REF` — no callers, exhaustive" as a line in the dry-run report below; fall through to the `--dry-run` block. No `AskUserQuestion`, no `Edit` — dry-run means no edits, including the delete.
 - Otherwise (`REMOVE_IF_ZERO=false`): proceed with normal rename flow.
 
 **`--dry-run`**: derive branch and a free output path first, then write the report:
@@ -306,6 +312,8 @@ Path:       → <the resolved $DRY_OUT path>
 ---
 ```
 
+[if reached via the zero-callers delete path above] `Title` → `rename-refs dry-run — would delete <OLD_REF>`; `Outcome` → `DRY_RUN — no edits applied; would delete <OLD_REF> — zero callers, exhaustive`; body records only that one line, no caller/import/docstring counts.
+
 Print path; `AskUserQuestion`: (a) Apply for real (re-invoke without --dry-run); (b) Done. Stop.
 
 Otherwise `AskUserQuestion`: (a) Apply edits; (b) Abort. Abort → stop.
@@ -319,19 +327,48 @@ Skip to Step 5 if `SUBCOMMAND=module`.
 - `def old_name(` → `def new_name(`
 - `class OldName(` / `class OldName:` → `class NewName(` / `class NewName:`
 - Method: match `def old_method(self` within class body
-- **`@property` descriptors**: `find-symbol` returns only getter. After getter rename, grep same class body for `@old_name.setter` / `@old_name.deleter`; rename to `@new_name.setter` / `@new_name.deleter`. Otherwise descriptor breaks: renamed getter + `@old_name.setter` raises `AttributeError` during class definition.
+- **Class-body bound** (methods only — `OLD_REF` dotted): resolve the enclosing class's line range before the descriptor/overload greps below, so they scope to this class, not the whole file:
   ```bash
+  # timeout: 25000
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
-  IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
-  grep -n "@${OLD_NAME}\.setter\|@${OLD_NAME}\.deleter" "<path>"  # timeout: 3000
+  IFS= read -r OLD_REF < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_REF-${CSID}" 2>/dev/null || OLD_REF=""
+  CLS="${OLD_REF%.*}"
+  CLS_RANGE=""
+  if [ "$CLS" != "$OLD_REF" ]; then
+      CLS_JSON=$(codemap-py query --timeout 20 find-symbol "$CLS" --limit 0)
+      # find-symbol is unanchored re.IGNORECASE (query.py) — matches[0] may be a method or sibling class; filter exact
+      CLS_RANGE=$(printf '%s' "$CLS_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); cls=sys.argv[1]; m=next((x for x in d.get('matches',[]) if x.get('type')=='class' and x.get('qualified_name')==cls), None); print(str(m['start_line'])+' '+str(m['end_line']) if m else '')" "$CLS" 2>/dev/null)
+  fi
+  printf '%s\n' "$CLS_RANGE" > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}"
+  [ -n "$CLS_RANGE" ] || printf "⚠ could not bound to class body — verify each hit\n"
   ```
-- **`@typing.overload` stubs**: after implementation rename, grep same file + sibling `.pyi` for `@overload`-decorated `def old_name(`. `find-symbol` returns only implementation, not stubs/files. Rename all overload stubs to `new_name`:
+- **`@property` descriptors**: a getter/setter/deleter triple shares one `qualified_name` — `find-symbol` (Step 2) and its multi-match narrowing return only the one match picked there (the getter, by convention). After getter rename, grep the class body (bound above; whole-file if unresolved) for `@old_name.setter` / `@old_name.deleter`; rename to `@new_name.setter` / `@new_name.deleter`. Otherwise descriptor breaks: renamed getter + `@old_name.setter` raises `AttributeError` during class definition.
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
   IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
-  grep -n "@overload" "<path>" "<path%.py>.pyi" 2>/dev/null | grep -A1 "def $OLD_NAME("  # timeout: 3000
+  IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
+  set -- $CLS_RANGE; CLS_START="${1:-}"; CLS_END="${2:-}"
+  if [ -n "$CLS_START" ]; then
+      grep -n "@${OLD_NAME}\.setter\|@${OLD_NAME}\.deleter" "<path>" | awk -F: -v s="$CLS_START" -v e="$CLS_END" '$1>=s && $1<=e'  # timeout: 3000
+  else
+      grep -n "@${OLD_NAME}\.setter\|@${OLD_NAME}\.deleter" "<path>"  # timeout: 3000
+  fi
+  ```
+- **`@typing.overload` stubs**: after implementation rename, grep same file (bound to class body above, when resolved) + sibling `.pyi` (whole-file — independent line numbering, class bound doesn't apply) for `@overload`-decorated `def old_name(`. `find-symbol` returns only the implementation, not stubs/files. Rename all overload stubs to `new_name`:
+  ```bash
+  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+  _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
+  IFS= read -r OLD_NAME < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_NAME-${CSID}" 2>/dev/null || OLD_NAME=""
+  IFS= read -r CLS_RANGE < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-cls-range-${CSID}" 2>/dev/null || CLS_RANGE=""
+  set -- $CLS_RANGE; CLS_START="${1:-}"; CLS_END="${2:-}"
+  if [ -n "$CLS_START" ]; then
+      grep -n "@overload" "<path>" | awk -F: -v s="$CLS_START" -v e="$CLS_END" '$1>=s && $1<=e' | grep -A1 "def $OLD_NAME("  # timeout: 3000
+  else
+      grep -n "@overload" "<path>" | grep -A1 "def $OLD_NAME("  # timeout: 3000
+  fi
+  grep -n "@overload" "<path%.py>.pyi" 2>/dev/null | grep -A1 "def $OLD_NAME("  # timeout: 3000
   ```
 
 **4b — `__all__` re-exports**:
@@ -354,13 +391,14 @@ For each `__all__` hit, Edit `"old_name"` → `"new_name"`.
 
 **4c — Import call sites** (per caller from `called_by`):
 
-Track import-edited files in `PROCESSED_IMPORT_FILES` tmpfile; three callers in one file still need one import edit. Initialize before loop:
+Track import-edited files in `PROCESSED_IMPORT_FILES` tmpfile, and skipped callers (query miss) in a sibling tmpfile — Step 7 reads it for the completion summary; three callers in one file still need one import edit. Initialize both before loop:
 
 ```bash
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
 printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-processed-import-files-${CSID}"
+printf '' > "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}"
 ```
 
 Before each caller-file import edit, check + mark:
@@ -379,7 +417,7 @@ Edit imports only when `SKIP_IMPORT=false`.
 Per caller (`called_by[i].caller` already `module::function`; pass directly to `codemap-py query`):
 
 1. Run `codemap-py query symbol "<caller_qname>"` — timeout: 10000; result `{symbols:[{path, start_line, end_line, qualified_name, ...}]}`
-   - 0 matches → log `⚠ symbol not found for caller <caller_qname> — skipping caller` and continue
+   - 0 matches → log `⚠ symbol not found for caller <caller_qname> — skipping caller`, append `<caller_qname>` to the skipped-callers tmpfile (`echo "<caller_qname>" >> "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}"`), and continue
    - Filter `symbols[]` by `qualified_name`: exact preferred, else first
    - Use matched entry's `path`, `start_line`, `end_line` for step 2
 2. Within caller's line range in `path`:
@@ -419,9 +457,11 @@ grep -rn ":func:\`[^']*$OLD_NAME[^']*\`\|:class:\`[^']*$OLD_NAME[^']*\`\|:meth:\
 
 For each match, replace `old_name`/`OldName` inside backtick-delimited role only after verifying expected module path (`${OLD_MODULE_PATH}` or qualified form); avoid same-name unrelated package refs.
 
-**4e — Deprecation wrapper** (after 4a):
+**4e — Deprecation wrapper** (runs last, after 4d):
 
-Run after 4a unconditionally. Block reads `$DEPRECATE` sentinel; when not `true`, exits 0 immediately. Shell enforces gate. Insert `$DEPRECATION_CODE` only when block exits 0.
+Run last, after 4d, unconditionally. Block reads `$DEPRECATE` sentinel; when not `true`, exits 0 immediately. Shell enforces gate. Insert `$DEPRECATION_CODE` only when block exits 0.
+
+4a–4d are 1:1 substitutions — line counts preserved, so the Step-2 `end_line` stays valid throughout. 4e is the only step that inserts lines, hence it runs last; any future line-count-changing step must re-derive `end_line`.
 
 Use `gen_deprecation_wrapper.py` to produce Python string; insert immediately after new definition in same file.
 
@@ -510,7 +550,7 @@ _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/nul
 IFS= read -r old_file_path < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-old-file-path-${CSID}" 2>/dev/null || old_file_path=""
 IFS= read -r NEW_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-NEW_REF-${CSID}" 2>/dev/null || NEW_MODULE_PATH=""
 IFS= read -r OLD_MODULE_PATH < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-rename-OLD_MODULE_PATH-${CSID}" 2>/dev/null || OLD_MODULE_PATH=""
-# same as old_file_path — index path preferred, avoids src/ tr mismatch
+# index lookup catches collision + stale-index cases only — src/ prefix comes from old_file_path in the fallback below, not from this lookup
 IFS= read -r SMOKE_INDEX < "${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-resolve-index-${CSID}" 2>/dev/null || SMOKE_INDEX=""
 new_file_path=""
 if [ -n "$SMOKE_INDEX" ]; then
@@ -532,6 +572,8 @@ case "$new_file_path" in
     *.py) ;;
     *) printf "! Invalid rename target: '%s' does not end in .py\n" "$new_file_path" >&2; exit 1 ;;
 esac
+# explicit guard, not an accident of git mv's refusal — also catches a stale-index phantom new_file_path
+[ -e "$new_file_path" ] && { printf "! Rename target already exists: %s\n" "$new_file_path" >&2; exit 1; }
 git mv "$old_file_path" "$new_file_path" || { printf "! git mv failed: %s -> %s\n" "$old_file_path" "$new_file_path" >&2; exit 1; }
 ```
 
@@ -612,7 +654,7 @@ Edit each `:mod:` ref to new module path. Basename-only matches require surround
 # timeout: 400000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _CM_PROJ=$(git rev-parse --show-toplevel 2>/dev/null | xargs basename 2>/dev/null || echo "cm")
-# `codemap-py index` not scan-index alias — alias leases in-engine too but skips dispatcher's interpreter probe (exit 127) and is a deprecated shim. --incremental re-parses changed files only.
+# dispatcher not scan-index alias (rationale: Step 2). --incremental re-parses changed files only.
 codemap-py index --incremental --timeout 360
 _scan_rc=$?
 if [ "$_scan_rc" -ne 0 ]; then
@@ -639,9 +681,14 @@ Old name outside deprecated alias → list residual files in Step 7 advisory. Ha
 
 ## Step 7: Summary
 
+Read the skipped-callers tmpfile (`${TMPDIR:-/tmp}/codemap-${_CM_PROJ}-skipped-callers-${CSID}`, from 4c) before printing — its content plus the Step 3 cap decide the header below.
+
 Print:
 
 ```
+[if cap hit at Step 3, OR skipped-callers tmpfile non-empty]
+⚠ Renamed (PARTIAL) — M of N callers updated; <cap residual + skipped-caller count> require manual edit
+[else]
 ✓ Renamed: <OLD_REF> → <NEW_REF>
   Files changed: N
   Call sites updated: M
@@ -654,6 +701,8 @@ Advisory — check manually (outside static analysis coverage):
   - External consumers: update CHANGELOG; use --deprecate alias until next major release
   [if caller count was capped at 50]
   - Skipped callers (51–N): edit these manually — listed in .temp/output-rename-refs-blast-* file (see blast-radius report from Step 3)
+  [if skipped-callers tmpfile non-empty]
+  - Skipped callers (symbol not found at rename time): <caller_qname list from tmpfile> — edit these manually
   [if residual hits from Step 6 re-scan]
   - Residual index hits (likely dynamic/string refs):
       <file>:<line>

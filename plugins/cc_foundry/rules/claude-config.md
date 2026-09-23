@@ -100,6 +100,18 @@ Spawning `Agent()` costs fixed overhead — measured ~120,851 tok (~73 tool-call
 - `Skill()` cost **not** covered by the measured figure above — regression measured `Agent()`-backed subagent transcripts only, no `Skill()` invocation. Treat `Skill()` overhead as unverified until measured separately; don't assume it shares `Agent()`'s constant, especially across model tiers.
 - Worked rationale + threshold derivation: `_full/claude-config.md`.
 
+## Parallel Spawn Ceilings — by Model Tier
+
+Separate from the per-spawn threshold above: a ceiling on how many `Agent()` calls of a given model tier may be **in flight at once**, summed across every step/phase due in the same response. Independent pools per tier (cheaper/faster tiers tolerate wider fan-out; expensive reasoning tiers stay narrow) — not one shared total. Grow toward a tier's ceiling in waves of ≤5, never a sudden jump straight to it.
+
+| Tier | Ceiling | Covers |
+| -- | -- | -- |
+| `haiku` | 20 | Cheap/fast prose passes (e.g. `foundry:humanizer`) |
+| `sonnet` | 8 | Most execution-tier agents (`foundry:qa-specialist`, `doc-scribe`, `linting-expert`, `web-explorer`, `creator`, `oss:cicd-steward`, `oss:gh-scraper`, `oss:repo-warden`, `research:data-steward`) |
+| `opus` (incl. `opusplan`) | 5 | Reasoning-tier agents (`foundry:challenger`, `curator`, `sw-engineer`, `perf-optimizer`, `solution-architect`, `research:scientist`, `oss:shepherd`) |
+
+A skill firing several phases in the same response (e.g. `/foundry:audit --adversarial`) checks each phase's agent against this table and caps that phase's own batch width accordingly — a phase spawning `foundry:curator` (opus) is capped at 5 regardless of how wide a `--fast`-style flag would otherwise push it; a phase spawning `foundry:qa-specialist` (sonnet) has room to 8. Different tiers combining in one wave draw from separate pools, so an opus-tier phase and a sonnet-tier phase may run together without summing against a single shared number.
+
 ## Ask Before Acting on Unknown Cause
 
 When user asks "why" about something (deleted content, unexpected state, missing items) and cause unknown:

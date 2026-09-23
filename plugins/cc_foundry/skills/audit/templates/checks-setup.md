@@ -109,7 +109,7 @@ Verify repo's `foundry` plugin structure at `plugins/cc_foundry/`. Skip if not f
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_plugin_layout.py" --plugin-dir plugins/cc_foundry --expect-name foundry  # timeout: 60000
 ```
 
-**Severity**: manifest missing/invalid JSON → **critical**; broken symlink, hooks.json invalid, hooks.json references missing file, or `claude plugin validate` fails → **high**; .js plugin file is symlink (not real file) → **medium**; 8f permissions-allow.json entries missing from settings.json → **medium**; settings.json entries missing from permissions-allow.json → **low**; setup-foundry SKILL.md missing → **high**; missing required keyword coverage → **medium**. **Report only** — never auto-fix.
+**Severity**: manifest missing/invalid JSON → **critical**; broken symlink, hooks.json invalid, hooks.json references missing file, or `claude plugin validate` fails → **high**; .js plugin file is symlink (not real file) → **medium**; 8f settings.json entries missing from permissions-allow.json → **medium** (plugin users won't get them; sole direction that sets exit 1); permissions-allow.json entries missing from settings.json → **low**; setup-foundry SKILL.md missing → **high**; missing required keyword coverage → **medium**. **Report only** — never auto-fix.
 
 ## Check 9 — Agent color drift (statusline COLOR_MAP vs frontmatter)
 

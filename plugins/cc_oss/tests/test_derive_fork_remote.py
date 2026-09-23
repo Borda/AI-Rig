@@ -129,6 +129,28 @@ def test_main_blocks_on_unresolved_refs(fork_remote: str, head_ref: str, capsys:
     assert "FORK_REMOTE/HEAD_REF unresolved" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "flag",
+    [
+        pytest.param("--fork-remote", id="fork-remote"),
+        pytest.param("--head-ref", id="head-ref"),
+        pytest.param("--base-ref", id="base-ref"),
+    ],
+)
+def test_main_rejects_leading_dash_argv(flag: str, capsys: pytest.CaptureFixture) -> None:
+    """A leading-dash value on any of the three git-argv fields is refused before any git call.
+
+    Each field reaches git argv unquoted (remote get-url/add, branch --set-upstream-to); a value starting with '-' would
+    be parsed as an option instead of an operand. The targeted flag uses the ``--flag=<value>`` single-token form:
+    argparse's own tokenizer treats a bare two-token ``--flag -evil`` pair as a *missing* value (unknown-option
+    lookahead) and exits 2 through argparse itself, never reaching this guard.
+    """
+    defaults = {"--fork-remote": "contrib", "--head-ref": "feature", "--base-ref": "main"}
+    args = [f"{name}=-evil" if name == flag else f"{name}={value}" for name, value in defaults.items()]
+    assert dfr.main(args) == 1
+    assert "must not start with" in capsys.readouterr().err
+
+
 def test_main_blocks_when_scope_uncomputable(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     """With no commit count, the run stops instead of prompting for a push it cannot describe."""
     monkeypatch.setattr(dfr.subprocess, "run", lambda *_a, **_k: _FakeCompleted(returncode=1))

@@ -1,10 +1,22 @@
 #!/usr/bin/env python
 """anonymize.py — replace project-identifying names in codemap JSONL logs with salted pseudonyms.
 
-Scrubbed: qualified names in the ``args``/``argv`` payloads and in ``error``/``stderr``
-prose, every identifying token in the ``intent``/``target`` command fields, the
-``session``/``hook_session`` join keys, and the session id embedded in the output
-filename. Kept: timestamps, counts, flags, tool names, and the command shape itself.
+Scrubbed: qualified names in the ``args`` payload and every element of ``argv``; every
+identifying token in the ``intent``/``target``/``search_path``/``project`` command fields
+and in the identity-bearing keys ``module``, ``qname``, ``qualified_name``,
+``index_path``, ``path``, ``caller``, ``callee``, and the ``imported_by``/
+``changed_modules`` lists wherever they appear, including nested inside ``result``; once
+inside the ``result`` subtree, also ``source``, ``imports``, ``name``, ``resolved_qname``,
+``file``, ``pattern``, ``hint``, and the ``unique_qualified_names``/``untracked_py``/
+``suggestions`` lists (result-scoped because these bare key names collide with unrelated
+top-level record fields, e.g. ``record["source"] == "bench"``); qualified names embedded
+in ``error``/``stderr`` prose; the ``session``/``hook_session`` join keys; and the session
+id embedded in the output filename. Kept: timestamps, counts, flags, tool names, and the
+command shape itself.
+
+This is a field denylist, not a schema-complete scrub: a new query-result shape that
+introduces an identifying field name not listed above passes through unscrubbed until
+that key is added here (see :data:`_COMMAND_FIELDS` and :data:`_RESULT_FIELDS`).
 
 Pseudonyms are stable within a project (same salt + same name → same pseudonym)
 but opaque to anyone without the salt file. Never share the salt alongside the
@@ -70,12 +82,57 @@ _QUALIFIED_TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A
 #: preserving surrounding prose, rather than replaced wholesale.
 _FREE_TEXT_FIELDS = ("error", "stderr")
 
-#: Fields holding a command line, a file path, or the user's own words: ``target``
-#: (Read path / Grep pattern / search command), ``search_path`` (Grep/Glob scope), and
-#: ``intent`` (skill arguments). Every identifier in them is project data, not only the
+#: Fields holding a command line, a file path, a project root, or a qualified name:
+#: ``target`` (Read path / Grep pattern / search command), ``search_path`` (Grep/Glob
+#: scope), ``intent`` (skill arguments), ``project`` (the CLI's own working-tree root,
+#: 0.39.4+), and the identity-bearing ``result``-payload keys ``module``, ``qname``,
+#: ``qualified_name``, ``index_path``, ``path``, ``caller``, ``callee`` — wherever any of
+#: these keys appear, including nested inside ``result``, since :func:`_scrub_special_fields`
+#: already walks every nesting depth. Every identifier in them is project data, not only the
 #: dotted ones — for example, ``grep -rn internal_secret_name src/`` carries no dot at all —
 #: so they are scrubbed with :func:`_anonymize_command`, which pseudonymizes bare identifiers too.
-_COMMAND_FIELDS = ("intent", "target", "search_path")
+#:
+#: This is a field denylist: a new query-result shape that introduces a differently-named
+#: identifying field passes through unscrubbed until its key is added to this tuple (or to
+#: :data:`_COMMAND_LIST_FIELDS` for a list of such names) — an honest, bounded fix, not a
+#: claim of exhaustive coverage.
+_COMMAND_FIELDS = (
+    "intent", "target", "search_path", "project",
+    "module", "qname", "qualified_name", "index_path", "path", "caller", "callee",
+)  # fmt: skip
+
+#: List-valued identifying fields: each element is a qualified module name (e.g.
+#: ``imported_by``/``changed_modules`` hold lists of dotted module paths). Scrubbed
+#: element-by-element via :func:`_anonymize_command` in :func:`_scrub_field`, mirroring
+#: the existing ``not_covered`` per-element rule.
+_COMMAND_LIST_FIELDS = ("imported_by", "changed_modules")
+
+#: String-valued keys that only carry identity when nested inside the ``result``
+#: payload — gated on ``in_result`` rather than added to :data:`_COMMAND_FIELDS`
+#: because the bare key name collides with an unrelated top-level record field:
+#: ``record["source"] == "bench"`` (``join_avoidance.py``) marks a synthetic
+#: benchmark record, so scrubbing ``source`` unconditionally would silently break
+#: that filter. Found leaking verbatim in a scan of real telemetry
+#: (``.cache/codemap/logs``, 847 shards, 16566 records): function source bodies
+#: and import blocks in ``symbols[]`` (``source``/``imports``), bare identifier
+#: names in ``central``/``coupled``/``matches``/``symbols``/``undocumented``/
+#: ``uncovered`` entries (``name``), a resolved qualified name missed by
+#: :data:`_COMMAND_FIELDS`'s ``qname``/``qualified_name`` (``resolved_qname``), a
+#: broken-file path (``file``), and a raw search pattern (``pattern``); a
+#: command-shaped hint string with an embedded bare symbol, e.g.
+#: ``grep -rn "atomic_publish"`` (``hint``).
+#:
+#: Key-based matching means the same key can carry two different meanings under
+#: ``result`` and both get this treatment: ``symbols[].source`` is a function body
+#: (the leak this set exists to close) but ``xrefs``' ``broken[].source`` is a fixed
+#: diagnostic label (e.g. ``"sphinx"``) that gets pseudonymized too even though it
+#: was never identifying. Per the module's own design (see :data:`_GENERIC_TOKENS`):
+#: a safe field losing readability is the accepted failure mode, never a leak.
+_RESULT_FIELDS = ("source", "imports", "name", "resolved_qname", "file", "pattern", "hint")
+
+#: List-valued counterpart to :data:`_RESULT_FIELDS`, same result-only gating and
+#: same telemetry scan: lists of untracked-file paths and qualified/suggested names.
+_RESULT_LIST_FIELDS = ("unique_qualified_names", "untracked_py", "suggestions")
 
 #: Join keys that identify one local Claude Code session. Replaced by a stable
 #: pseudonym: cross-layer joins survive (same salt → same pseudonym) while the raw
@@ -330,7 +387,7 @@ def _anonymize_value(v: object, salt: bytes) -> object:
     return v
 
 
-def _scrub_field(key: str, val: object, salt: bytes) -> object:
+def _scrub_field(key: str, val: object, salt: bytes, *, in_result: bool = False) -> object:
     """Return *val* scrubbed by the rule its *key* selects, or ``None`` when no rule applies.
 
     Splitting the per-key decision out of :func:`_scrub_special_fields` keeps that
@@ -342,6 +399,10 @@ def _scrub_field(key: str, val: object, salt: bytes) -> object:
         key: The dict key being inspected.
         val: Its value.
         salt: Per-project salt bytes.
+        in_result: True while the caller is recursing inside the ``result`` payload.
+            Gates :data:`_RESULT_FIELDS`/:data:`_RESULT_LIST_FIELDS`, whose key names
+            (e.g. ``source``) collide with unrelated top-level record fields — see
+            their module-level docstring.
 
     Returns:
         The scrubbed value, or ``None`` to let the caller recurse instead.
@@ -352,13 +413,28 @@ def _scrub_field(key: str, val: object, salt: bytes) -> object:
         True
         >>> _scrub_field("session", "abc-123", s).startswith("sym_")
         True
+        >>> _scrub_field("project", "/Users/jsmith/proj", s).count("/")
+        3
+        >>> out = _scrub_field("imported_by", ["pkg.auth", "pkg.other"], s)
+        >>> all(v.startswith("sym_") for v in out)
+        True
+        >>> "atomic_publish" in _scrub_field("name", "atomic_publish", s, in_result=True)
+        False
+        >>> _scrub_field("name", "atomic_publish", s, in_result=False) is None
+        True
         >>> _scrub_field("timing_ms", 12, s) is None
         True
     """
+    # Merged conditions keep return points <= the PLR0911 cap: two field families share
+    # one transform each (_anonymize_command for scalars, the same list comprehension
+    # for lists), so the in_result-gated result-only rule folds into its sibling instead
+    # of adding its own return.
     if key in _FREE_TEXT_FIELDS and isinstance(val, str):
         return _anonymize_text(val, salt)
-    if key in _COMMAND_FIELDS and isinstance(val, str):
+    if isinstance(val, str) and (key in _COMMAND_FIELDS or (in_result and key in _RESULT_FIELDS)):
         return _anonymize_command(val, salt)
+    if isinstance(val, list) and (key in _COMMAND_LIST_FIELDS or (in_result and key in _RESULT_LIST_FIELDS)):
+        return [_anonymize_command(e, salt) if isinstance(e, str) else e for e in val]
     if key in _SESSION_FIELDS and isinstance(val, str) and val:
         return _pseudo(val, salt)
     if key == "not_covered" and isinstance(val, list):
@@ -366,15 +442,20 @@ def _scrub_field(key: str, val: object, salt: bytes) -> object:
     return None
 
 
-def _scrub_special_fields(v: object, salt: bytes) -> object:
-    """Recursively scrub the free-text, command, session, and ``not_covered`` fields.
+def _scrub_special_fields(v: object, salt: bytes, *, in_result: bool = False) -> object:
+    """Recursively scrub the free-text, command, session, result, and ``not_covered`` fields.
 
     Walks any nested dict/list structure and applies :func:`_scrub_field` to every key.
     Qualified names embedded in ``error``/``stderr`` prose are pseudonymized while the
-    surrounding words survive; ``intent``/``target`` additionally lose their bare
-    identifiers; ``session``/``hook_session`` become stable pseudonyms; and each
-    ``not_covered`` element is scrubbed individually, so qualified-name elements become
-    pseudonyms while plain diagnostic labels (e.g. ``lazy-loading``) pass through.
+    surrounding words survive; ``intent``/``target``/``search_path``/``project`` and the
+    identity-bearing keys in :data:`_COMMAND_FIELDS` additionally lose their bare
+    identifiers, at any nesting depth; once recursion enters the ``result`` subtree the
+    :data:`_RESULT_FIELDS`/:data:`_RESULT_LIST_FIELDS` rules also apply, at any depth
+    below that point; ``session``/``hook_session`` become stable pseudonyms; each element
+    of a :data:`_COMMAND_LIST_FIELDS`/:data:`_RESULT_LIST_FIELDS` list (e.g.
+    ``imported_by``) is pseudonymized; and each ``not_covered`` element is scrubbed
+    individually, so qualified-name elements become pseudonyms while plain diagnostic
+    labels (e.g. ``lazy-loading``) pass through.
 
     This complements — and is applied alongside — :func:`_anonymize_value`, which
     handles whole-value qualified names in the ``args`` payload.
@@ -382,6 +463,9 @@ def _scrub_special_fields(v: object, salt: bytes) -> object:
     Args:
         v: Any JSON-compatible value (record, nested dict, list, or scalar).
         salt: Per-project salt bytes.
+        in_result: True once recursion has entered the ``result`` subtree. Set
+            automatically the moment a ``"result"`` key is visited; callers pass the
+            default and never set it explicitly.
 
     Returns:
         A new value with the special fields scrubbed; non-special data unchanged.
@@ -394,27 +478,43 @@ def _scrub_special_fields(v: object, salt: bytes) -> object:
         >>> nc = _scrub_special_fields({"not_covered": ["a.b", "lazy-loading"]}, s)
         >>> nc["not_covered"][0].startswith("sym_"), nc["not_covered"][1]
         (True, 'lazy-loading')
+        >>> r = _scrub_special_fields({"result": {"symbols": [{"name": "atomic_publish"}]}}, s)
+        >>> "atomic_publish" in r["result"]["symbols"][0]["name"]
+        False
+        >>> u = _scrub_special_fields({"source": "bench"}, s)
+        >>> u["source"]
+        'bench'
     """
     if isinstance(v, dict):
         scrubbed: dict = {}
         for key, val in v.items():
-            replacement = _scrub_field(key, val, salt)
-            scrubbed[key] = _scrub_special_fields(val, salt) if replacement is None else replacement
+            nested = in_result or key == "result"
+            replacement = _scrub_field(key, val, salt, in_result=nested)
+            scrubbed[key] = _scrub_special_fields(val, salt, in_result=nested) if replacement is None else replacement
         return scrubbed
     if isinstance(v, list):
-        return [_scrub_special_fields(item, salt) for item in v]
+        return [_scrub_special_fields(item, salt, in_result=in_result) for item in v]
     return v
 
 
 def anonymize_record(record: dict, salt: bytes) -> dict:
     """Anonymize one JSONL log record in-place (returns new dict).
 
-    Replaces qualified names in the ``args`` and ``argv`` payloads. In addition, and
-    wherever those fields appear (including nested inside ``result``), scrubs qualified
-    names out of the free-text ``error`` / ``stderr`` fields, every identifying token out
-    of the ``intent`` / ``target`` command fields, the ``session`` / ``hook_session`` join
-    keys, and each element of any ``not_covered`` list. Leaves all other fields
-    (timestamps, counts, flags) unchanged.
+    Replaces qualified names in the ``args`` payload and pseudonymizes every string
+    element of ``argv`` (path or not — a dot-free absolute path such as
+    ``/Users/x/Workspace/myproject`` carries no ``.``/``::`` and would survive a
+    whole-value "is this qualified?" gate). In addition, and wherever those fields
+    appear (including nested inside ``result``), scrubs qualified names out of the
+    free-text ``error`` / ``stderr`` fields, every identifying token out of the
+    ``intent`` / ``target`` / ``search_path`` / ``project`` command fields and the
+    identity-bearing keys in :data:`_COMMAND_FIELDS` / :data:`_COMMAND_LIST_FIELDS`,
+    every identifying token found *anywhere inside* ``result`` under the
+    :data:`_RESULT_FIELDS` / :data:`_RESULT_LIST_FIELDS` keys (e.g. verbatim source
+    bodies in ``symbols[].source``, bare names in ``central[].name``), the
+    ``session`` / ``hook_session`` join keys, and each element of any ``not_covered``
+    list. Leaves all other fields (timestamps, counts, flags, and top-level fields
+    that share a name with a result-only key, such as the ``source`` marking a
+    synthetic benchmark record) unchanged.
 
     Args:
         record: Parsed log record.
@@ -436,13 +536,30 @@ def anonymize_record(record: dict, salt: bytes) -> dict:
         >>> t = anonymize_record({"tool": "Bash", "target": "grep -rn secret_name src/"}, s)
         >>> "secret_name" in t["target"], t["tool"]
         (False, 'Bash')
+        >>> p = anonymize_record({"project": "/Users/jsmith/Workspace/myproject"}, s)
+        >>> "jsmith" in p["project"], p["project"].count("/")
+        (False, 4)
+        >>> av = anonymize_record({"argv": ["--root", "/Users/jsmith/Workspace/myproject"]}, s)
+        >>> "jsmith" in av["argv"][1], av["argv"][1].startswith("/")
+        (False, True)
+        >>> m = anonymize_record({"result": {"module": "pkg.auth.core"}}, s)
+        >>> "pkg.auth.core" in m["result"]["module"]
+        False
+        >>> one_sym = {"name": "atomic_publish", "source": "def atomic_publish(): ..."}
+        >>> src = anonymize_record({"result": {"symbols": [one_sym]}}, s)
+        >>> sym = src["result"]["symbols"][0]
+        >>> "atomic_publish" in sym["name"], "atomic_publish" in sym["source"]
+        (False, False)
+        >>> bench = anonymize_record({"source": "bench", "cmd": "rdeps"}, s)
+        >>> bench["source"]
+        'bench'
     """
     out = _scrub_special_fields(record, salt)
     assert isinstance(out, dict)  # a dict in always yields a dict out
     if "args" in out and isinstance(out["args"], dict):
         out["args"] = _anonymize_value(out["args"], salt)
     if "argv" in out and isinstance(out["argv"], list):
-        out["argv"] = [_pseudo(a, salt) if isinstance(a, str) and _is_qualified(a) else a for a in out["argv"]]
+        out["argv"] = [_anonymize_command(a, salt) if isinstance(a, str) else a for a in out["argv"]]
     return out
 
 

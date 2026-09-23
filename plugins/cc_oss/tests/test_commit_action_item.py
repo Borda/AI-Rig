@@ -401,6 +401,38 @@ def test_build_each_message_codex_trailer_opt_in() -> None:
     assert "Co-authored-by: OpenAI Codex <codex@openai.com>" in msg
 
 
+def test_build_each_message_strips_newlines_from_comment() -> None:
+    """A newline embedded in the review comment cannot forge an extra commit trailer line.
+
+    Untrusted GitHub PR-review-comment text flows into ``comment`` unmodified before this fix. An embedded ``\\n``
+    splits the quoted excerpt across two physical lines, and the second half here begins with ``Co-authored-by:`` — a
+    line-based commit-message parser (git's own, and GitHub's separate one) would read it as a genuine trailer. Counting
+    lines that *start with* the trailer text, not raw substring occurrences, is the correct check: the sanitized comment
+    still legitimately contains that phrase as inert quoted prose on the excerpt line, so a substring count would be 2
+    even for a correctly sanitized message.
+    """
+    injected = "legit text\nCo-authored-by: evil <e@e.com>"
+    fields = cai.EachMessageFields("s", "1", "a", "9", injected, "evidence=VALID")
+    msg = cai.build_each_message(fields)
+    trailer_lines = [line for line in msg.splitlines() if line.startswith("Co-authored-by:")]
+    assert trailer_lines == ["Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"]
+
+
+def test_build_each_message_strips_control_chars_from_header_fields() -> None:
+    """A newline in item_id cannot split the structured [resolve No.<id>] header onto two lines.
+
+    Same attack as the comment field, aimed at ``item_id`` instead: the header line is the structured block this
+    template exists to emit, and an embedded newline there splits it in two, corrupting the ``[resolve No.<id>]`` marker
+    and again exposing a line that starts with ``Co-authored-by:``.
+    """
+    fields = cai.EachMessageFields("s", "3\nCo-authored-by: Evil <e@e.test>", "octocat", "9", "c", "evidence=VALID")
+    msg = cai.build_each_message(fields)
+    lines = msg.splitlines()
+    assert lines[2] == "[resolve No.3 Co-authored-by: Evil <e@e.test>] Review by octocat (PR 9):"
+    trailer_lines = [line for line in lines if line.startswith("Co-authored-by:")]
+    assert trailer_lines == ["Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"]
+
+
 def test_build_mode_and_message_file_conflict_exits_1(capsys: pytest.CaptureFixture[str]) -> None:
     """Reject conflicting build and message-file options."""
     rc = cai.main(["--build", "--message-file", "m.txt", "--files", "a.py"])

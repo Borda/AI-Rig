@@ -29,7 +29,7 @@ Follows user's ML research style distilled from past notebooks:
 - **Inference included** — model save pattern + separate load-and-infer cells
 - **CSVLogger + seaborn** — metrics plotted from `metrics.csv` after every training run
 
-NOT for writing Python packages, modules, production code — notebook scripts only. NOT research literature survey — use `/research:topic` for SOTA literature search.
+NOT for writing Python packages, modules, production code — notebook scripts only, unless the user opts into the Step 4 package-distillation gate. NOT research literature survey — use `/research:topic` for SOTA literature search.
 
 </objective>
 
@@ -45,7 +45,7 @@ NOT for writing Python packages, modules, production code — notebook scripts o
   - `--offline-setup` — include offline package setup (frozen_packages pattern) in setup cell; auto-applied when `--inference-only`; ignored when `--eda-only` (EDA always online)
   - `--resume <path>` — read existing `.py` script, extend/improve it
 
-Output: `.experiments/kaggle/<competition-name>.py`
+Output: `.experiments/kaggle/<competition-name>.py`. Step 4's opt-in package-distillation gate additionally writes `src/<package>/<module>.py`, `tests/test_<module>.py`, and `notebooks/01_<competition-name>_pkg.py`.
 
 </inputs>
 
@@ -251,6 +251,8 @@ cat "$COMPOSITION_FILE"  # timeout: 5000
 Select the exact `$MODE` row from `composition.md` (loaded above), cat each named contract once, left to right, plus `style-rules.md` once:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r MODE < "${TMPDIR:-/tmp}/kaggle-mode-${CSID}" 2>/dev/null || MODE="full"
 _KAGGLE_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/kaggle/modes"
 case "$MODE" in
   full) _CONTRACTS="foundation.md eda.md training.md inference.md submission.md" ;;
@@ -260,7 +262,7 @@ esac
 for _c in $_CONTRACTS style-rules.md; do
     echo "=== $_c ==="
     cat "$_KAGGLE_MODES/$_c"
-done
+done  # timeout: 5000
 ```
 
 Load `modality-dispatch.md` only when a selected section requests a modality branch:

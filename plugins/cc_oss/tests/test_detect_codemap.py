@@ -24,6 +24,38 @@ class TestMain:
         assert rc == 2
         assert "Usage" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        "proj",
+        [
+            pytest.param("../../etc", id="parent-traversal"),
+            pytest.param("a/b", id="forward-slash"),
+            pytest.param("a\\b", id="backslash"),
+            pytest.param(".", id="dot"),
+            pytest.param("..", id="dotdot"),
+        ],
+    )
+    def test_proj_with_path_separator_exits_2(self, proj: str, capsys: pytest.CaptureFixture[str]) -> None:
+        """An unsafe ``--proj`` value is rejected outright — never sanitized.
+
+        Regression guard for the reject-not-sanitize choice: ``_resolve_proj`` must keep passing the raw
+        basename through untouched (stripping characters would seek a filename the scanner never wrote), so
+        the CLI boundary rejects a path-shaped ``--proj`` before it ever reaches that function.
+        """
+        rc = detect_codemap.main(["--prefix", "test", "--proj", proj])
+        assert rc == 2
+        assert "--proj" in capsys.readouterr().err
+
+    def test_proj_bare_name_still_works(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A normal bare project name is unaffected by the path-separator guard."""
+        idx_dir = tmp_path / "idx"
+        idx_dir.mkdir()
+        (idx_dir / "myproj.json").write_text("{}")
+        monkeypatch.setenv("TMPDIR", str(tmp_path))
+        with mock.patch("detect_codemap.shutil.which", return_value="/usr/bin/codemap-py"):
+            rc = detect_codemap.main(["--prefix", "test", "--proj", "myproj", "--idx-dir", str(idx_dir)])
+        assert rc == 0
+        assert (tmp_path / "test-codemap-enabled-shared").read_text() == "true\n"
+
     def test_force_off_writes_false_and_exits_0(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Verify command-line option behavior.
 

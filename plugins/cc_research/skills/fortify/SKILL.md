@@ -126,6 +126,13 @@ FORTIFY_DIR_BASE="${FORTIFY_DIR_BASE:-.experiments}"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 STATE_DIR_BASE="${STATE_DIR_BASE:-.experiments/state}"  # default (Check 41)
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags skip-run --value-flags venue,max-ablations "$ARGUMENTS")"  # timeout: 5000
+# degenerate --max-ablations: non-numeric treated same as <=1 (avoids bash arithmetic error on e.g. "abc")
+if [ -n "$VALUE_MAX_ABLATIONS" ]; then
+  case "$VALUE_MAX_ABLATIONS" in
+    *[!0-9]*) echo "⚠ --max-ablations $VALUE_MAX_ABLATIONS leaves no components to ablate beyond the full baseline — importance-ranking table (F7) will be empty. Did you mean a higher value?" ;;
+    *) [ "$VALUE_MAX_ABLATIONS" -le 1 ] && echo "⚠ --max-ablations $VALUE_MAX_ABLATIONS leaves no components to ablate beyond the full baseline — importance-ranking table (F7) will be empty. Did you mean a higher value?" ;;
+  esac
+fi
 _ARG1=$(echo "$CLEAN_ARGS" | awk '{print $1}')
 if [ -n "$_ARG1" ] && [ "${_ARG1#-}" = "$_ARG1" ] && [ ! -f "$_ARG1" ] && [ -d "$STATE_DIR_BASE/$_ARG1" ]; then
   RUN_ID="$_ARG1"
@@ -389,7 +396,7 @@ If revert produces merge conflicts: append `{"variant":"<name>","status":"revert
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r METRIC_CMD < "${TMPDIR:-/tmp}/fortify-metric-cmd-${CSID}" 2>/dev/null || METRIC_CMD=""  # reload (Check 41)
 [ -z "$METRIC_CMD" ] && { echo "fortify: BLOCKED — metric_cmd not initialized in F1"; exit 1; }
-$METRIC_CMD  # timeout: 360000 (state.json .config.metric_cmd)
+bash -c "$METRIC_CMD"  # timeout: 360000 (state.json .config.metric_cmd) — bash -c parses operators/pipes; bare expansion only word-splits, so `true && false` would exit 0
 METRIC_EXIT=$?
 ```
 
@@ -401,9 +408,11 @@ Parse stdout for numeric metric value. If command fails or no numeric output: re
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r GUARD_CMD < "${TMPDIR:-/tmp}/fortify-guard-cmd-${CSID}" 2>/dev/null || GUARD_CMD=""  # reload (Check 41)
 [ -z "$GUARD_CMD" ] && { echo "fortify: BLOCKED — guard_cmd not initialized in F1"; exit 1; }
-$GUARD_CMD  # timeout: 360000 (state.json .config.guard_cmd)
+bash -c "$GUARD_CMD"  # timeout: 360000 (state.json .config.guard_cmd) — bash -c parses operators/pipes; bare expansion would falsely pass e.g. `true && false`
 GUARD_EXIT=$?
 ```
+
+> **`bash -c`, not `eval "$CMD"`** — 4d/4e run inside the per-variant worktree that 4b `cd`'d into (cwd persists across Bash calls here); `bash -c` forks a child that inherits that cwd, keeping the 4b-assert guard intact, whereas a `metric_cmd`/`guard_cmd` containing `cd` under `eval` could silently relocate work outside the worktree. Assumes a POSIX `bash` binary is available wherever these blocks run — consistent with this file's existing POSIX-shell idioms (`IFS= read -r`).
 
 Record guard result: `"pass"` (exit 0) or `"fail"` (non-zero).
 
@@ -478,7 +487,17 @@ _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "post-ablation (after F4 worktrees complete)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl${_KEEP_APPEND}" "F5 rank importance → F6 reviewer Q&A → F7 report"  # timeout: 5000
 ```
 
-**Post-loop delta computation**: read `results.jsonl`, find `full` variant metric. For each completed `no-<component>` variant:
+**Post-loop delta computation**:
+
+**Guard — full variant must exist and be completed** (run FIRST, before the `results.jsonl` read below — a guard at F5 fires too late, values are already persisted by then). Check `results.jsonl` for a row with `variant == "full"`. If that row is absent (jq returns empty) OR present with `status != "completed"` (this covers `revert-missing` too — 4c's block runs for `full` same as any variant since `REVERT_COMMITS_RAW` is always empty for it):
+
+```text
+! fortify: full variant ended '<status>' (or: full variant row missing) — cannot compute ablation deltas without a baseline metric. Re-run the source campaign or investigate the full-variant failure before fortifying.
+```
+
+Mark F5, F6, F7 `skipped` via TaskUpdate (mirrors the `--skip-run` precedent at F2/F8); jump directly to the `full-variant-failed` terminal block in F8, carrying the error text and `$FORTIFY_DIR` path. Do NOT write an F7 report in this case — mirrors `--skip-run`'s behavior exactly, the per-variant record still lives in `$FORTIFY_DIR`.
+
+If the guard passes: read `results.jsonl`, find `full` variant metric. For each completed `no-<component>` variant:
 
 - `delta_from_full = ablated_metric - full_metric`
 - `delta_pct = (delta_from_full / abs(full_metric)) * 100` (signed — negative means removing component hurt). If `full_metric == 0`: set `delta_pct = 0` (avoid division by zero).
@@ -688,6 +707,18 @@ Components:   <N> candidates identified — ablations not executed
 Next: run /research:fortify without --skip-run to execute ablations
 ```
 
+If `full` variant failed post-loop (outcome `full-variant-failed`, F5/F6/F7 skipped): replace ablation lines with:
+
+```text
+---
+Fortify — <goal> (full-variant-failed)
+Source run:   <run-id>
+Error:        <full-variant error text — missing row or non-completed status>
+-> ablation artifacts: <FORTIFY_DIR>/
+---
+Next: investigate the full-variant failure (check <FORTIFY_DIR>/results.jsonl), then re-run /research:fortify
+```
+
 </workflow>
 
 <calibration>
@@ -712,7 +743,7 @@ _FOUNDRY_CALIBRATE=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/foundry/*/skill
 - **Judge prerequisite** — fortify refuses without APPROVED judge verdict. Prevents ablation on unapproved methodologies.
 - **`--skip-run` for planning** — generates candidate list without running ablations. Useful for reviewing what would be ablated before committing compute.
 - **`--skip-run` scope**: flag skips ablation *execution* only — source run (`research:run`) must already be complete. Does not affect source run.
-- **Fortify run directories** don't write `result.jsonl` — exempt from 30-day TTL cleanup (no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/fortify-*/`)
+- **Fortify run directories** don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/fortify-*/`) <!-- policy-sibling: plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - **Compute mode**: local execution only. `--compute` and `--colab` passthrough not implemented — contributions welcome. Until then, fortify runs `metric_cmd`/`guard_cmd` directly in each worktree on local machine.
 - **Revert conflicts expected** — when commits interleave (component A's commit touches same lines as B's), revert may conflict. Recorded as `revert-conflict`, not treated as error.
 

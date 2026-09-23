@@ -264,6 +264,32 @@ def test_grep_version_files_returns_list(tmp_path: Path, monkeypatch: pytest.Mon
     assert isinstance(results, list)
 
 
+def test_grep_version_files_truncation_signal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Hitting the file-count cap prints SCAN_TRUNCATED_SIGNAL and still returns a bounded list.
+
+    The cap is lowered via monkeypatch so the test only needs a handful of fixture files, not thousands, to exercise the
+    truncation path.
+    """
+    monkeypatch.setattr(rac, "_MAX_SCAN_FILES", 2)
+    for i in range(4):
+        (tmp_path / f"m{i}.py").write_text(f'__version__ = "{i}"\n')
+    monkeypatch.chdir(tmp_path)
+    results = rac._grep_version_files()
+    assert len(results) <= 2
+    assert rac.SCAN_TRUNCATED_SIGNAL in capsys.readouterr().err
+
+
+def test_grep_version_files_skips_oversized_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A file above ``_MAX_SCAN_FILE_SIZE`` is never read, even if it would otherwise match."""
+    monkeypatch.setattr(rac, "_MAX_SCAN_FILE_SIZE", 10)
+    (tmp_path / "huge.py").write_text('__version__ = "0.0.0"  # padding beyond the size cap\n')
+    monkeypatch.chdir(tmp_path)
+    results = rac._grep_version_files()
+    assert results == []
+
+
 # ---------------------------------------------------------------------------
 # _grep_code_signals
 # ---------------------------------------------------------------------------
@@ -302,6 +328,28 @@ def test_grep_code_signals_cap(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     monkeypatch.chdir(tmp_path)
     results = rac._grep_code_signals()
     assert len(results) <= rac._MAX_SIGNAL_LINES
+
+
+def test_grep_code_signals_truncation_signal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Hitting the file-count cap prints SCAN_TRUNCATED_SIGNAL and still returns a bounded list."""
+    monkeypatch.setattr(rac, "_MAX_SCAN_FILES", 2)
+    for i in range(4):
+        (tmp_path / f"s{i}.py").write_text(f"# FIXME item {i}\n")
+    monkeypatch.chdir(tmp_path)
+    results = rac._grep_code_signals()
+    assert len(results) <= 2
+    assert rac.SCAN_TRUNCATED_SIGNAL in capsys.readouterr().err
+
+
+def test_grep_code_signals_skips_oversized_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A file above ``_MAX_SCAN_FILE_SIZE`` is never read, even if it would otherwise match."""
+    monkeypatch.setattr(rac, "_MAX_SCAN_FILE_SIZE", 10)
+    (tmp_path / "huge.py").write_text("# FIXME padding beyond the size cap\n")
+    monkeypatch.chdir(tmp_path)
+    results = rac._grep_code_signals()
+    assert results == []
 
 
 def test_grep_code_signals_returns_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

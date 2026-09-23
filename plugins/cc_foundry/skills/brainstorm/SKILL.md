@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Iterative brainstorming skill for turning fuzzy ideas into approved tree documents. Diverges into branches, deepens and prunes them over many rounds, saves a tree doc. Run breakdown on the tree to distill it into a spec via guided questions.
+description: 'Iterative brainstorming skill for turning fuzzy ideas into approved tree documents. Diverges into branches, deepens and prunes them over many rounds, saves a tree doc. Run breakdown on the tree to distill it into a spec via guided questions. SKIP: an outline already approved and awaiting finished content (use foundry:create — create turns an approved outline into the finished artifact; brainstorm is for idea generation before an outline exists); a code-level implementation plan derived from an existing spec (use develop:plan (requires `develop` plugin)).'
 argument-hint: <fuzzy idea or feature goal> [--tight|--deep] [--type <type>] [--keep "<items>"] | breakdown <tree-or-spec-file>
 disable-model-invocation: true
 allowed-tools: Read, Write, Bash, Grep, Agent, TaskCreate, TaskUpdate, TaskList, AskUserQuestion, Skill
@@ -136,7 +136,7 @@ Print launch note:
 > echo "Viewer HTML: $_BRAINSTORM_SCRIPTS/tree-viewer.html"
 > ```
 >
-> Because the viewer lives under the plugin cache (read-only) while `$SIDECAR` lives under the project's `.plans/blueprint/`, the static server's document root must cover both paths. Easiest reliable option: serve from `$HOME` with `python -m http.server 8080 --directory "$HOME"` (or `npx serve "$HOME"`), then open `http://localhost:8080/<relative-path-from-HOME-to-tree-viewer.html>?state=<absolute-or-HOME-relative-sidecar-path>`. Prefer serving from the project root? Copy or symlink the viewer HTML into a project-local directory first so the URL path resolves under the same document root as `$SIDECAR`.
+> Because the viewer lives under the plugin cache (read-only) while `$SIDECAR` lives under the project's `.plans/blueprint/`, the static server's document root must cover both paths. Easiest reliable option: serve from `$HOME` with `python -m http.server 8080 --bind 127.0.0.1 --directory "$HOME"` (or `npx serve -l tcp://127.0.0.1:8080 "$HOME"`) — loopback-only bind; the default `0.0.0.0` bind would expose `$HOME` to the entire local network for as long as the server runs — then open `http://localhost:8080/<relative-path-from-HOME-to-tree-viewer.html>?state=<absolute-or-HOME-relative-sidecar-path>`. Prefer serving from the project root? Copy or symlink the viewer HTML into a project-local directory first so the URL path resolves under the same document root as `$SIDECAR`.
 
 ## Step 2: Clarifying questions
 
@@ -174,7 +174,7 @@ Before presenting formal branches, run brief free-form idea exchange — 2–3 r
 2. Immediately present **3–5 initial branches** (see Seeding the tree below) in the same message — no separate round-trip. Each branch is numbered (1, 2, 3, …) and ★ on the most promising one.
 3. Call a single `AskUserQuestion` for the **reaction choice** (≤4 options per call per AQQ cap): "How does this look?" with exactly four options: (a) ★ recommended — pick branches to focus on (reply naming 1–3 branch numbers in free text) · (b) Not quite — let me redirect (reply describing the redirect) · (c) add more branches first · (d) skip focus selection — start tree ops with all branches open. The branch list is in the message body for reference; users name branches by number rather than by sub-option letter so the AQQ stays at 4 options regardless of branch count.
 4. Proceed to **Tree operations loop**:
-   - (a) picked: user's free-text reply names 1–3 branches → set those as `▶️` focus; others remain `💭` open
+   - (a) picked: user's free-text reply names 1–3 branches → set those as `▶️` focus; others remain `💭` open. If the reply doesn't parse into 1–3 valid branch numbers from the branches just shown (non-numeric, out of range, or none named), re-ask the same reaction question once, restating the valid branch number range; a second unparsable reply falls back to (d) — all branches `💭` open, no initial focus.
    - (b) picked: regenerate 2–3 fresh branches reflecting the redirect and re-enter step 3 (one re-entry allowed; second redirect proceeds with whatever branches exist)
    - (c) picked: generate 2–3 additional branches with different framing and re-enter step 3
    - (d) picked: enter tree ops with all branches `💭` open and no initial focus
@@ -319,11 +319,21 @@ Assemble tree state and write to `.plans/blueprint/YYYY-MM-DD-<slug>.md` using W
 [Unanswered questions, untested combinations, and constraints that surfaced during Step 3. Each thread is a one-line bullet.]
 ```
 
+Record the path just written so later steps identify this session's tree by identity, not by recency. Substitute the real path into `TREE_FILE` before running — the guard aborts if the placeholder survives:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+TREE_FILE="<tree-file-path>"
+case "$TREE_FILE" in *'<'*'>'*|"") printf "! BLOCKED — tree file path not substituted\n"; exit 1;; esac
+[ -f "$TREE_FILE" ] || { printf "! BLOCKED — %s does not exist; Step 4 Write did not land\n" "$TREE_FILE"; exit 1; }
+echo "$TREE_FILE" > "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}"
+```
+
 **Gate**: do not proceed to Step 5 until file written and path confirmed.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-_TREE_FILE=$(find .plans/blueprint -name "*.md" -maxdepth 1 -not -name "*-spec.md" 2>/dev/null | sort -r | head -1)
+IFS= read -r _TREE_FILE < "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}" 2>/dev/null || _TREE_FILE=""
 IFS= read -r _SIDECAR < "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}" 2>/dev/null || _SIDECAR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/brainstorm-state-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="tree-file=$_TREE_FILE"
@@ -387,7 +397,7 @@ Show tree file path and compact tree summary (same format as Step 3). Then call 
 
 **Gate**: do not exit until user approves.
 
-On (b): return to Step 3 with existing tree state — add requested branches or close specified ones, then loop back to Step 5. Use reduced cap of **3 additional operations** for this re-entry (not fresh full budget reset); cap resets only at start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles as guideline — track in context; if 3 cycles pass without convergence, surface unresolved concerns to user.)
+On (b): return to Step 3 with existing tree state — add requested branches or close specified ones, then loop back to Step 5. Use a re-entry cap scaled to the active mode's base operation budget (~30%, rounded to nearest whole operation, minimum 1): **2** additional operations in `--tight` (5-op base), **3** in default (10-op base), **5** in `--deep` (15-op base) — not a fresh full budget reset; cap resets only at start of Step 3, not on re-entry. On (c): loop back to Step 2. (Max 3 approval cycles as guideline — track in context; if 3 cycles pass without convergence, surface unresolved concerns to user.)
 
 On approval, suggest: `/brainstorm breakdown .plans/blueprint/<file>` to distill tree into spec.
 

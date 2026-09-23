@@ -44,7 +44,8 @@ Usage:
         [--home <path>] [--marker <str>]
     python "${CLAUDE_PLUGIN_ROOT}/bin/symlink_with_guard.py" scan --plugin-root <path> \
         [--home <path>] [--marker <str>]
-    python "${CLAUDE_PLUGIN_ROOT}/bin/symlink_with_guard.py" create  --src <path> --dest <path> [--home <path>]
+    python "${CLAUDE_PLUGIN_ROOT}/bin/symlink_with_guard.py" create --plugin-root <path> \
+        --src <path> --dest <path> [--home <path>]
 
 Exit codes (same 0/1/2 contract for all modes — including ``create``):
     0   success (no failures)
@@ -58,7 +59,6 @@ import argparse
 import os
 import re
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -141,12 +141,22 @@ def _assert_dest_under_home_claude(dest: Path, home: Path) -> Path:
     """
     home_claude = (home / ".claude").resolve()
     # Resolve the parent because ``dest`` itself may not yet exist (we are
-    # about to create it). Path.resolve() on a non-existent path still
-    # normalises the path string but cannot follow symlinks for the leaf;
-    # resolving the parent first gives a robust containment check.
+    # about to create it) and, if it does exist as a symlink, this check must
+    # judge the dest LOCATION rather than follow the symlink to its target.
     resolved_parent = dest.parent.resolve()
-    resolved = resolved_parent / dest.name
-    if not (resolved == home_claude or home_claude in resolved.parents):
+    # normpath collapses a literal `..`/`.` leaf before the containment test:
+    # without it, a dest like `home/.claude/..` joins to a path whose OWN
+    # lexical parent is `home/.claude`, so `resolved.parents` reports it as
+    # "contained" even though the true location — one level up, `home` itself
+    # — sits outside the boundary. `os.path.normpath` is already this
+    # module's pattern for the same class of problem (see `_resolve_target`).
+    resolved = Path(os.path.normpath(str(resolved_parent / dest.name)))
+    # No caller legitimately wants dest to BE ~/.claude itself — every real
+    # target is a path under it (e.g. rules/x.md). Accepting equality let
+    # `--dest "$HOME/.claude"` on a not-yet-existing .claude replace the whole
+    # directory with a symlink into the plugin tree; `home_claude in
+    # resolved.parents` alone requires strictly-under, closing that case.
+    if home_claude not in resolved.parents:
         raise ValueError(
             f"dest must be under ~/.claude/, got: {resolved}",
         )
@@ -669,19 +679,27 @@ def scan(plugin_root: Path, home: Path, marker: str) -> list[str]:
 
 
 def create_link(src: Path, dest: Path, home: Path) -> str:
-    """Create symlink, NTFS junction, or copy at *dest* pointing to *src*.
+    """Create a symlink at *dest* pointing to *src*, falling back to a copy.
 
-    Three-tier cascade — stops at first success:
+    Two-tier cascade — stops at first success:
 
     * **Tier 1 — real symlink**: always attempted; works on macOS/Linux
       unconditionally; requires Developer Mode on Windows.
-    * **Tier 2 — NTFS junction** (Windows + directory targets only): via
-      ``cmd /c mklink /J`` (cmd.exe built-in, no elevated privilege).
-    * **Tier 3 — copy + sidecar**: ``shutil.copytree`` / ``shutil.copy2``.
+    * **Tier 2 — copy + sidecar**: ``shutil.copytree`` / ``shutil.copy2``.
       Writes ``.{dest.name}.sourced_from`` alongside dest containing the
       source path relative to ``home / ".claude"`` (absolute fallback when
-      src is not under that directory). File targets always reach Tier 3 on
-      Windows without Developer Mode.
+      src is not under that directory). Always reached on Windows without
+      Developer Mode, for both file and directory targets.
+
+    A prior revision inserted a Windows NTFS-junction tier here via
+    ``cmd /c mklink /J`` before falling through to the copy tier. It was
+    removed as dead code carrying a live cmd.exe metacharacter-injection
+    shape (``subprocess.list2cmdline`` does not escape ``&|<>^%``): no
+    caller in this repository ever requested a directory link through
+    `create` mode. A future reinstatement should use ``_winapi.CreateJunction``
+    (stdlib, no cmd.exe, no shell re-parsing) — exercised by CPython's own
+    ``test_shutil.py`` and ``test_ntpath.py`` — never the ``cmd /c mklink``
+    form.
 
     Args:
         src: Absolute source path (plugin tree file or directory).
@@ -689,32 +707,47 @@ def create_link(src: Path, dest: Path, home: Path) -> str:
         home: User home directory (for computing relative sidecar path).
 
     Returns:
-        ``"symlink"``, ``"junction"``, or ``"copy"`` — whichever tier succeeded.
+        ``"symlink"`` or ``"copy"`` — whichever tier succeeded.
 
     Raises:
-        OSError: When all applicable tiers fail.
+        OSError: When ``dest`` already exists in any form (real file, real
+            directory, or symlink — including a dangling one), or when all
+            applicable tiers fail.
     """
+    # Tier 1 fails on POSIX with FileExistsError (an OSError subclass, caught
+    # below) whenever dest already exists in ANY form, including a symlink —
+    # that alone cannot tell "safe to fall through" apart from "dest is a
+    # pre-existing entry Tier 2 would silently overwrite, or a symlink Tier 2
+    # would write through to wherever it points, possibly outside the
+    # ~/.claude containment boundary". `dest.exists()` follows symlinks and is
+    # False for a dangling one, so both checks together are required to
+    # refuse every pre-existing case up front, shared by both tiers.
+    if dest.exists() or dest.is_symlink():
+        raise OSError(f"refusing to overwrite existing dest: {dest}")
+    # sidecar_path is deterministic from dest alone, so checked up front too —
+    # checking it only right before Tier 2's write_text (below) would let
+    # copytree/copy2 materialise dest first, and a refusal on the sidecar
+    # would then leave dest half-written with no sidecar and no recovery path
+    # (a re-run trips the dest-exists guard above with nothing to clean up).
+    sidecar_path = dest.parent / f".{dest.name}.sourced_from"
+    if sidecar_path.exists() or sidecar_path.is_symlink():
+        raise OSError(f"refusing to overwrite existing sidecar: {sidecar_path}")
+
     # --- Tier 1: real symlink ---
     try:
         dest.symlink_to(src)
         return "symlink"
+    except FileExistsError:
+        # A dest created by a concurrent actor in the window between the guard
+        # check above and this call must still fail closed, never fall through
+        # to Tier 2's overwrite. Windows without Developer Mode raises a plain
+        # OSError here (WinError 1314), not FileExistsError, so that path is
+        # unaffected and still falls through below.
+        raise
     except (OSError, NotImplementedError):
         pass
 
-    # --- Tier 2: NTFS junction (Windows + directory only) ---
-    if src.is_dir() and sys.platform == "win32":
-        try:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(dest), str(src)],
-                check=True,
-                shell=False,
-                capture_output=True,
-            )
-            return "junction"
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
-            pass
-
-    # --- Tier 3: copy + sidecar ---
+    # --- Tier 2: copy + sidecar ---
     dest.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
         shutil.copytree(src, dest, dirs_exist_ok=True)
@@ -726,7 +759,6 @@ def create_link(src: Path, dest: Path, home: Path) -> str:
         sidecar_value = src.relative_to(claude_dir).as_posix()
     except ValueError:
         sidecar_value = src.as_posix()
-    sidecar_path = dest.parent / f".{dest.name}.sourced_from"
     sidecar_path.write_text(sidecar_value + "\n", encoding="utf-8")
     return "copy"
 
@@ -744,7 +776,7 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "`cleanup` removes obsolete foundry-managed symlinks; "
             "`scan` prints conflicts; "
-            "`create` materialises a symlink/junction/copy at --dest pointing at --src."
+            "`create` materialises a symlink/copy at --dest pointing at --src."
         ),
     )
     parser.add_argument(
@@ -752,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
         required=False,
         default=None,
         metavar="PATH",
-        help="Absolute path of the currently-installed foundry plugin version (required for cleanup/scan).",
+        help="Absolute path of the currently-installed foundry plugin version (required for cleanup/scan/create).",
     )
     parser.add_argument(
         "--home",
@@ -792,14 +824,25 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
-        src = Path(args.src)
+        if not args.plugin_root:
+            print("symlink_with_guard: `create` mode requires --plugin-root", file=sys.stderr)
+            return 2
+        src = Path(os.path.abspath(args.src))
+        plugin_root_bases = _base_paths(Path(args.plugin_root))
+        if not any(src.is_relative_to(base) for base in plugin_root_bases):
+            print(f"symlink_with_guard: --src must be under --plugin-root, got: {src}", file=sys.stderr)
+            return 2
         dest = Path(args.dest)
         try:
             dest = _assert_dest_under_home_claude(dest, home)
         except ValueError as exc:
             print(f"symlink_with_guard: {exc}", file=sys.stderr)
             return 2
-        tier = create_link(src, dest, home)
+        try:
+            tier = create_link(src, dest, home)
+        except OSError as exc:
+            print(f"symlink_with_guard: {exc}", file=sys.stderr)
+            return 1
         print(tier)
         return 0
 

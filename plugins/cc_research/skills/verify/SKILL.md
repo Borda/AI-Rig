@@ -57,11 +57,13 @@ From paper content, extract:
 
 ```bash
 # loads: unsupported-flag-protocol.md
+# loads: compaction-contract.md
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _RESEARCH_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/resolve_shared.py" 2>/dev/null)  # timeout: 5000
 [ -z "$_RESEARCH_SHARED" ] && { echo "! Plugin path resolution failed"; exit 1; }
 echo "$_RESEARCH_SHARED" > "${TMPDIR:-/tmp}/research-shared-${CSID}"  # cold resolve — every later site reads this sentinel instead of re-running python
 cat "$_RESEARCH_SHARED/unsupported-flag-protocol.md"
+cat "$_RESEARCH_SHARED/compaction-contract.md"
 ```
 
 **Codemap auto-detection** — structural context (blast-radius, importers, coverage) for the audited codebase; on by default when codemap installed + index found. `--no-codemap` opts out; `--codemap` is strict (fail if unavailable). Note: `--codemap` is independent of `--strict` (audit strictness).
@@ -133,8 +135,9 @@ Apply `--dim` filter: if `--dim F,H` specified, only audit those dimensions. Def
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-DIM=$(printf '%s\n' "$ARGUMENTS" | grep -oE -- '--dim [^ ]+' | head -1 | cut -d' ' -f2)
-DIM="${DIM:-F,H,E,N,C}"
+# --strict included only to satisfy parse-skill-flags.py's non-empty --flags requirement
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags strict --value-flags dim "$ARGUMENTS")"  # timeout: 5000
+DIM="${VALUE_DIM:-F,H,E,N,C}"
 V2_STATUS="ok"
 for _DIM_VAL in $(echo "$DIM" | tr ',' ' '); do
   case "$_DIM_VAL" in
@@ -173,9 +176,7 @@ cat "$_RESEARCH_SHARED/codemap-context.md"
 
 Execute its block (leave `TARGET_MODULE`/`TARGET_FN` empty for `central` baseline, or set `TARGET_MODULE` to key module from `scope_files`). Prepend output to scientist prompt under `## Structural Context (codemap-py)` heading so architecture (N) and eval (E) dimensions reference real import/coverage structure instead of re-reading every file.
 
-> Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
-
-Codemap output non-empty: prepend the reuse gate above verbatim and this **codemap-first protocol** to the same heading (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use Structural Context above for import/caller/coverage questions before any supplementary Grep on same target; does NOT relax mandatory "Read each file listed in Codebase scope files" instruction below — formula (F) and hyperparameter (H) fidelity require actual file contents; codemap cannot substitute for line-level comparison. (2) **Bounded call budget** — up to 5 additional `codemap-py query` calls this audit (raised from plugin default 3: verify pass spans up to 100 scope files across 5 dimensions — wider surface than single-file edit). (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/query to re-confirm it. Codemap output empty: omit this paragraph — scientist proceeds with full-file-read protocol below unchanged.
+Codemap output non-empty: prepend the reuse gate from `codemap-context.md` above verbatim and this **codemap-first protocol** to the same heading (own copy — self-contained, no cross-plugin reference): (1) **Skill-first** — use Structural Context above for import/caller/coverage questions before any supplementary Grep on same target; does NOT relax mandatory "Read each file listed in Codebase scope files" instruction below — formula (F) and hyperparameter (H) fidelity require actual file contents; codemap cannot substitute for line-level comparison. (2) **Bounded call budget** — up to 5 additional `codemap-py query` calls this audit (raised from plugin default 3: verify pass spans up to 100 scope files across 5 dimensions — wider surface than single-file edit). (3) **Hard stop on `query_complete: true`** (legacy `exhaustive: true` only when `query_complete` is absent) — a result passing the reuse gate is final for its direction, no follow-up Grep/query to re-confirm it. Codemap output empty: omit this paragraph — scientist proceeds with full-file-read protocol below unchanged.
 
 <!-- Agent call runs in the background: spawn, end the turn, resume on the completion notification — never a filler call, a "waiting" line, or a sleep. HARD_CUTOFF (900s) is declared as a reference constant but is NOT enforceable within the skill — Agent() has no timeout parameter. On the notification, apply the single timeout policy declared in `<constants>`: check `$RUN_DIR/audit-raw.md`; if absent or empty, set `fidelity = null`, `status = TIMED_OUT`, mark ⏱ in report; if present, parse normally. Same limitation as research:topic. -->
 
@@ -247,27 +248,60 @@ Post-process envelope from scientist:
 ! BREAKING — HIGH severity mismatch in critical dimension (F or E). Fix before running experiments.
 ```
 
-**Do NOT write the partial report yet** — hold partial-report markdown content in memory only. Premature writes to `$OUT` get overwritten by V5 if user picks (b); (a) "keep partial report" description below only honest if write happens AFTER user opts in.
-
-Invoke `AskUserQuestion` — do NOT write options as plain text:
-
-- question: "Strict mode hit HIGH severity mismatch — how to proceed?"
-- (a) label: `Stop here` — description: write partial report (passing claims only) to `$OUT`; fix mismatches and re-run `/research:verify`
-- (b) label: `Continue to full report` — description: proceed to V5/V6 and include failed claims in the full verification report
-
-**On (a)**: (a) branch runs after an `AskUserQuestion` turn boundary, i.e. fresh Bash call — rehydrate `$OUT` self-containedly rather than assuming V1's state-rehydration block ran in this shell. `_VTAG` must come from pointer file, never recomputed (V1 stamps it with `$(date +%s)`; a recompute yields different, non-existent filename):
+**Stage the partial report to `$RUN_DIR/partial-report.md`, never to `$OUT`** — a premature `$OUT` write is clobbered by V5 on option (b) and makes option (a)'s description dishonest. Rehydrate state first (fresh shell — an earlier block's state may not carry over), write the staged file, then persist a compaction contract so the idle `AskUserQuestion` gate below survives a mid-wait `/compact`:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
-IFS= read -r OUT   < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null || OUT=""
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/verify-${_VTAG}-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r OUT     < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null || OUT=""
+[ -z "$RUN_DIR" ] && { echo "verify V4: run dir unresolved — V1 state missing; partial report has no destination" >&2; exit 1; }
+echo "$RUN_DIR"
+```
+
+Trailing `echo "$RUN_DIR"` is load-bearing: Write tool takes literal path, performs no shell expansion — resolved value must reach transcript. Write partial-report markdown (verification table built so far plus a `! STRICT STOP — partial report; failed claims not yet written` banner at top) to `$RUN_DIR/partial-report.md` via Write tool, then (fresh shell — the Write tool call above is a turn boundary, so rehydrate before referencing `$RUN_DIR`/`$OUT` again):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/verify-${_VTAG}-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r OUT     < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null || OUT=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:verify" "strict-mode-gate (before AskUserQuestion idle wait)" "${RUN_DIR}" "run-dir=${RUN_DIR}, out=${OUT}, partial-report=${RUN_DIR}/partial-report.md" "on (a): cp partial-report.md to \$OUT and stop; on (b): discard it, proceed to V5/V6 full report"  # timeout: 5000
+```
+
+In the same reply that calls `AskUserQuestion` below, print (reply prose, not inside a bash `echo`): `` Long wait? `/compact` now — partial report staged at `$RUN_DIR/partial-report.md`, resume lossless. ``
+
+Invoke `AskUserQuestion` — do NOT write options as plain text:
+
+- question: "Strict mode hit HIGH severity mismatch — how to proceed?"
+- (a) label: `Stop here` — description: copy staged partial report (passing claims only) to `$OUT`; fix mismatches and re-run `/research:verify`
+- (b) label: `Continue to full report` — description: discard staged partial report, proceed to V5/V6 and include failed claims in the full verification report
+
+**On (a)**: (a) branch runs after an `AskUserQuestion` turn boundary, i.e. fresh Bash call — rehydrate self-containedly rather than assuming any earlier block ran in this shell. `_VTAG` must come from pointer file, never recomputed (V1 stamps it with `$(date +%s)`; a recompute yields different, non-existent filename):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/verify-${_VTAG}-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+IFS= read -r OUT     < "${TMPDIR:-/tmp}/verify-${_VTAG}-out-${CSID}" 2>/dev/null || OUT=""
 [ -z "$OUT" ] && { echo "verify V4: report path unresolved — V1 state missing; partial report has no destination" >&2; exit 1; }
+cp "$RUN_DIR/partial-report.md" "$OUT"
+rm -f .temp/state/skill-contract.md
 echo "$OUT"
 ```
 
-Trailing `echo "$OUT"` is load-bearing: Write tool takes literal path, performs no shell expansion — resolved value must reach transcript. Then write held partial-report markdown to that path (verification table built so far plus a `! STRICT STOP — partial report; failed claims not yet written` banner at top), surface file path, exit. Full audit remains at `$RUN_DIR/audit-raw.md`. Do NOT also dump mismatch table to terminal — already inside partial report.
+Surface file path, exit. Full audit remains at `$RUN_DIR/audit-raw.md`. Do NOT also dump mismatch table to terminal — already inside partial report.
 
-**On (b)**: discard held partial-report markdown, proceed directly to V5/V6 — V5 writes full report to `$OUT` (failed claims included).
+**On (b)**: staged partial report is deleted — superseded by the full report at `$OUT`. Fresh shell, same rehydration as (a):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _VTAG < "${TMPDIR:-/tmp}/verify-latest-tag-${CSID}" 2>/dev/null || _VTAG=""
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/verify-${_VTAG}-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+rm -f "$RUN_DIR/partial-report.md"
+```
+
+Proceed directly to V5/V6 — V5 writes full report to `$OUT` (failed claims included).
 
 ### Step V5: Write verification report
 
@@ -357,6 +391,7 @@ Call `AskUserQuestion` tool after V6 output — do NOT write options as plain te
 ```bash
 ls ~/.claude/plugins/cache/borda-ai-rig/develop/*/skills/fix/SKILL.md >/dev/null 2>&1 && DEVELOP_FIX_AVAILABLE=true || DEVELOP_FIX_AVAILABLE=false  # timeout: 5000
 echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # `|| ...=false` fallback makes block exit 0 either way — stdout only surviving channel
+rm -f .temp/state/skill-contract.md  # clear before V6's idle gate — after it may never run (compaction-contract.md §Lifecycle)
 ```
 
 **Only when the block above printed `DEVELOP_FIX_AVAILABLE=true`**, print as plain text before the question: "Tip: `/develop:fix` (requires `develop` plugin) can also implement these fixes — run it manually." Printed `false` → omit the tip entirely; never emit it on the assumption the plugin is present.
@@ -372,7 +407,7 @@ echo "DEVELOP_FIX_AVAILABLE=$DEVELOP_FIX_AVAILABLE"  # `|| ...=false` fallback m
 - **Timeout advisory**: 900s HARD_CUTOFF is advisory only — a background `Agent()` cannot be interrupted mid-flight; on its completion notification check `$RUN_DIR/audit-raw.md`; if absent/empty → TIMED_OUT, mark ⏱.
 - Verify read-only — never modifies code, commits, or writes to `.experiments/state/`
 - `.experiments/verify-<timestamp>/` stores scientist agent's full audit output for reference
-- Verify run dirs don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/verify-*/`)
+- Verify run dirs don't write `result.jsonl` — exempt from 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when no longer needed (`rm -rf .experiments/verify-*/`) <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/retro/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - Re-run verify after fixing mismatches to confirm fixes resolved flagged items
 - For papers with appendices beyond 20 pages, iterate Read with `pages: "21-40"` etc. to capture full hyperparameter tables
 - Fidelity score = ratio, not probability — 0.9 means 90% of verified claims match, not 90% confidence

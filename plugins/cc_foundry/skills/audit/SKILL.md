@@ -24,7 +24,7 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
   - `--adversarial` (alias: `--challenge`) — adversarial review of all agents + skills in scope using `foundry:challenger` (Phase A) + Codex adversarial pass (Phase B); surfaces issues beyond standard per-file audit; see **Mode: adversarial**. Mutually exclusive with `--upgrade` only; combinable with `--efficiency`.
   - `--efficiency` — cost and efficiency sweep: model tier validation, token bloat detection, unbounded spawn patterns, cross-file boilerplate duplication, missing model declarations, bin/ extraction candidates (Check 33). Generates prioritized cost-reduction plan with estimated savings. Detection only — run `/distill executables` to act on extraction candidates. Skip to **Mode: efficiency**. Mutually exclusive with `--upgrade` only; combinable with `--adversarial`.
   - `--skip-gate` — suppress follow-up gate (for automation pipelines)
-  - `--fast` — widen fan-out from `MAX_BATCHES` to `MAX_BATCHES_FAST`, trading tokens for wall-clock. **Not free**: each extra agent costs ~120,851 tok of fixed overhead regardless of how little work it does (see `<constants>`). Use when latency matters more than cost; omit by default. Combinable with every other flag.
+  - `--fast` — widen fan-out from `MAX_BATCHES` toward that phase's model-tier ceiling (`CAP_OPUS`/`CAP_SONNET`, see `<constants>` and claude-config.md §Parallel Spawn Ceilings), trading tokens for wall-clock. **Not free**: each extra agent costs ~120,851 tok of fixed overhead regardless of how little work it does. Curator-spawning phases (opus tier) have little headroom above `MAX_BATCHES=4` toward `CAP_OPUS=5`; Phase D's qa-specialist (sonnet tier) has more, toward `CAP_SONNET=8`. Use when latency matters more than cost; omit by default. Combinable with every other flag.
 
   **Legacy positional tokens** (`fix`, `upgrade`, `adversarial`, `challenge`, `ab`, `apply`, `fast`, `full`) — **hard error**: print migration hint and stop. Example: "`fix medium` removed — run `/audit` and pick fix level from gate, or pass `--upgrade` / `--adversarial` as flags."
 
@@ -55,15 +55,21 @@ Full-sweep audit of `.claude/` config + all `plugins/*/` files: agents, skills, 
 ```text
 BATCH_SIZE_MIN=5       # minimum files per batch; ensures curator gets sufficient context per spawn
 MAX_BATCHES=4          # total batch cap; EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total / MAX_BATCHES))
-MAX_BATCHES_FAST=10    # only when --fast: trades ~120K tok/agent for wall-clock (see Fan-out cost model)
 ADVERSARIAL_BATCH_SIZE=2  # adversarial phases (A, A-prime) use smaller batches for deeper per-file attention
 AGENT_CALL_BUDGET=55   # target tool-calls per spawned agent; above ~60 agents stall mid-task without returning an envelope
+CAP_OPUS=5             # per claude-config.md §Parallel Spawn Ceilings — foundry:curator, foundry:challenger (opus/opusplan tier)
+CAP_SONNET=8           # per claude-config.md §Parallel Spawn Ceilings — foundry:qa-specialist (Phase D) (sonnet tier)
+WAVE_STEP=5            # growth toward a tier's ceiling happens this much at a time, never a sudden jump to the cap
 ```
 
 <!-- Fan-out buys WALL-CLOCK, not tokens: ~120K tok fixed cost per agent spawned;
      agents past ~60 calls stall without returning an envelope. Default to the
      fewest batches keeping each agent near AGENT_CALL_BUDGET; --fast only when
-     latency outweighs cost. -->
+     latency outweighs cost, and only up to that phase's own model-tier ceiling
+     (CAP_OPUS/CAP_SONNET) — --fast has no headroom on opus-tier phases already
+     at or near CAP_OPUS. When adversarial/efficiency phases stack onto Steps
+     3-4, each tier's spawns wave toward its own ceiling WAVE_STEP at a time;
+     different tiers draw from separate pools and may run concurrently. -->
 
 </constants>
 
@@ -82,7 +88,8 @@ AGENT_CALL_BUDGET=55   # target tool-calls per spawned agent; above ~60 agents s
 
 ```bash
 # loads: compaction-contract.md
-cat "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")/task-hygiene.md"
+# audit-skip: resilience-replication
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
 ```
 
 **Orchestration contract**: orchestrator is thin coordinator — issues Glob/Grep for inventory, spawns agents, reads JSON envelopes, aggregates findings. Must NOT read agent/skill/rule file bodies directly. Inline read of non-template file = protocol violation; causes context overflow at scale.
@@ -177,7 +184,7 @@ Enumerate everything in scope with built-in tools. Run all Glob calls in paralle
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 if [ "$LOCAL_MODE" = "true" ]; then
-  for pj in plugins/*/.claude-plugin/plugin.json; do
+  for pj in plugins/*/.claude-plugin/plugin.json plugins/*/.codex-plugin/plugin.json; do
     [ -f "$pj" ] || continue
     plugin_name=$(basename "$(dirname "$(dirname "$pj")")")
     python3 -c "
@@ -217,7 +224,7 @@ For every `PLUGIN_LAYOUT:` line, use its `skills=`/`agents=` value (not hardcode
 
 Merge into single flat inventory. When `LOCAL_MODE=true` and same logical name in both `plugins/` and `.claude/`, prefer plugin source — skip `.claude/` duplicate. Record full paths — Step 3 cross-reference checks depend on current inventory. If MEMORY.md not updated since last agent/skill added/removed, run live disk scan, not cached roster. Stale inventory = primary cause of false-negative cross-reference findings.
 
-**Coverage reconciliation** (`--local`/`plugins` scope only — mandatory, not optional): a plugin contributing zero files to the inventory is invisible to every downstream check and must never pass as a silent clean sweep — same failure shape as a check that always no-ops: absence of findings misread as absence of problems. Base set for this comparison is **every directory under `plugins/`**, not just ones that produced a `PLUGIN_LAYOUT:` line above — a plugin with a missing or malformed `plugin.json` contributes no `PLUGIN_LAYOUT:` line either, so comparing against that subset would make it invisible again:
+**Coverage reconciliation** (bare `plugins` scope, or default full sweep with `--local` — mandatory, not optional; **NOT** `plugins <name>` / tier-2 single-plugin scope, see narrowed check below): a plugin contributing zero files to the inventory is invisible to every downstream check and must never pass as a silent clean sweep — same failure shape as a check that always no-ops: absence of findings misread as absence of problems. Base set for this comparison is **every directory under `plugins/`**, not just ones that produced a `PLUGIN_LAYOUT:` line above — a plugin with a missing or malformed `plugin.json` contributes no `PLUGIN_LAYOUT:` line either, so comparing against that subset would make it invisible again:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -235,6 +242,8 @@ printf "⚠ UNSCANNED: %s — no files matched scope globs\n" "<plugin>" | tee -
 ```
 
 Step 11 reads this sentinel and surfaces it as a top-level report section — a zero-coverage plugin must never produce a green summary.
+
+**Narrowed check for `plugins <name>` / tier-2 single-plugin scope**: the all-plugins comparison above does NOT apply — every other plugin under `plugins/` is out of scope by design, and reporting it `UNSCANNED` would be a false positive on every such run. Instead, verify only that the one requested plugin contributed at least one file to the inventory; if it contributed zero, print/persist the same `⚠ UNSCANNED: <name> — no files matched scope globs` line for that single plugin only.
 
 **Scope filtering for Step 2** (applies on top of `LOCAL_MODE`):
 
@@ -258,7 +267,7 @@ Step 11 reads this sentinel and surfaces it as a top-level report section — a 
 
 **Hard rule — no pre-reading**: Never call Read on agent/skill file before spawning foundry:curator. Spawned agent does the reading. Orchestrator reads only returned JSON envelope. Pre-reading 41 KB files into main context = defeats delegation + causes context overflow at scale.
 
-**Batching rule**: Always apply the grouping algorithm. Compute `EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total_files / MAX_BATCHES))` before grouping — caps total batches at `MAX_BATCHES` while guaranteeing `BATCH_SIZE_MIN` files per batch for adequate curator context. Group files into batches up to `EFFECTIVE_BATCH`. Never spawn one agent per file. Total files ≤ `EFFECTIVE_BATCH` → one batch, all files. Use `MAX_BATCHES_FAST` in place of `MAX_BATCHES` **only** when `--fast` passed.
+**Batching rule**: Always apply the grouping algorithm. Compute `EFFECTIVE_BATCH = max(BATCH_SIZE_MIN, ceil(total_files / MAX_BATCHES))` before grouping — caps total batches at `MAX_BATCHES` while guaranteeing `BATCH_SIZE_MIN` files per batch for adequate curator context. Group files into batches up to `EFFECTIVE_BATCH`. Never spawn one agent per file. Total files ≤ `EFFECTIVE_BATCH` → one batch, all files. `--fast` passed: recompute with `min(CAP_OPUS, <desired wider batch count>)` in place of `MAX_BATCHES` — Step 3 spawns `foundry:curator` (opus tier), so this phase can never exceed `CAP_OPUS`.
 
 **Spawn-count gate — apply before spawning anything**: every agent costs ~120,851 tok just to exist, ~73 tool-calls' worth of work (see `<constants>`). **Spawn fewest agents keeping each near `AGENT_CALL_BUDGET`**, not the most the cap allows. Two mandatory consequences:
 
@@ -269,7 +278,7 @@ Step 11 reads this sentinel and surfaces it as a top-level report section — a 
 
 **Grouping algorithm**: (1) sort by plugin origin (`plugins/<name>/` prefix); (2) assign each plugin's files to batches, fill to `EFFECTIVE_BATCH` before next — keeps same-plugin files together; (3) remaining files (`.claude/` and mixed) fill open slots. Plugin-first, not strictly ordered — unconnected files assigned randomly to reach `EFFECTIVE_BATCH`.
 
-**Layer-2 — judgment by domain, not by file (plugin scope)**: scope `plugins`, `plugins <name>`, or tier-2 plugin name → override batch cap, group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even past `EFFECTIVE_BATCH`. Whole-plugin context lets the curator catch cross-file breaks per-file batching misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, version/description drift. Curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, shared constants/contracts agree across files, no skill references a removed mode/file." Mechanical checks already done in Step 1b — spend this holistic pass on cross-file judgment only. (Very large plugins may still split, but keep agents + their dispatching skills in the same batch.)
+**Layer-2 — judgment by domain, not by file (plugin scope)**: scope `plugins`, `plugins <name>`, or tier-2 plugin name → override batch cap, group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even past `EFFECTIVE_BATCH`. Whole-plugin context lets the curator catch cross-file breaks per-file batching misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, version/description drift. Curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, shared constants/contracts agree across files, no skill references a removed mode/file." Mechanical checks already done in Step 1b — spend this holistic pass on cross-file judgment only. (Very large plugins may still split, but keep agents + their dispatching skills in the same batch. This override deliberately accepts stall risk above the `AGENT_CALL_BUDGET` guidance in the Spawn-count gate below — the mitigation is the per-spawn budget line already required there ("stop cleanly, return `partial: true`"), not a hard file-count cap. A holistic batch that returns `partial: true` gets a second, narrower spawn covering only the files it didn't finish — never a full retry of the whole plugin.)
 
 For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, next ordinary user action. Record each producer's guaranteed postcondition against the next consumer's required precondition. Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, lifetime. Question accepted design choices and tests that merely assert the chosen operation. Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case. Keep unexecuted probes and missing consumer context explicit — zero findings on inspected files doesn't establish end-to-end safety. Stay within the audit's existing scope and permissions.
 
@@ -297,7 +306,7 @@ Spawn **foundry:curator** agents in batches of up to `EFFECTIVE_BATCH` (grouping
 
 > "Write your FULL findings (all severity levels) to `<RUN_DIR>/<file-slug>.md` using the Write tool — where `<file-slug>` is a unique identifier combining plugin prefix and filename (e.g. `foundry-shepherd.md`, `oss-analyse-SKILL.md`, `develop-fix-SKILL.md`) to avoid collisions between cross-plugin files sharing the same basename. End your full findings file with a `## Confidence` block per quality-gates.md format (Score, Gaps, Refinements). Then return to the caller ONLY a compact JSON envelope on your final line — nothing else after it: `{\"status\":\"done\",\"file\":\"<RUN_DIR>/<file-slug>.md\",\"findings\":N,\"severity\":{\"security\":N,\"critical\":N,\"high\":N,\"medium\":N,\"low\":N},\"confidence\":0.N,\"summary\":\"<filename>: N critical, N high, N medium, N low\"}`"
 
-Replace `<RUN_DIR>` with actual path, `<file-slug>` with plugin-prefixed unique slug (e.g. `foundry-shepherd`, `oss-analyse-SKILL`, `develop-fix-SKILL`). Slug chars: `[a-zA-Z0-9-]` only — no slashes, spaces, or dots.
+Replace `<RUN_DIR>` with actual path, `<file-slug>` with plugin-prefixed unique slug (e.g. `foundry-shepherd`, `oss-analyse-SKILL`, `develop-fix-SKILL`). Slug chars: `[a-zA-Z0-9-]` only — no slashes, spaces, or dots. Plugin dir names carry a `cc_` prefix on disk (`plugins/cc_foundry/`, `plugins/cc_oss/`) — strip it for the slug's plugin segment, matching the examples above (`foundry-shepherd`, never `cc_foundry-shepherd`).
 
 **Critical context discipline**: response body = JSON envelope, final line only. No other text, summaries, findings. All content to file.
 
@@ -464,7 +473,9 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 
 - **Bash error logging**: if bash block in Pre-flight or Step 4 fails unexpectedly, append JSONL line to `.notes/logs/audit-errors.jsonl` (`{"ts":"<ISO>","check":"<N>","error":"<message>"}`) for post-mortem — never swallow errors silently.
 
-- **Parallel execution rule**: after Step 2, launch Steps 3 and 4 in same response — all foundry:curator spawns AND system-wide bash checks issued together. Do NOT run Step 3 then Step 4. Aggregation (Step 5) waits for both. Docs-freshness web-explorer (within Step 4) launches in same parallel batch.
+- **Parallel execution rule**: after Step 2, launch Steps 3 and 4 in same response — all foundry:curator spawns AND system-wide bash checks issued together. Do NOT run Step 3 then Step 4. Aggregation (Step 5) waits for both. Docs-freshness web-explorer (within Step 4, sonnet tier) launches in same parallel batch. Bash checks in Step 4 aren't Agent() spawns, so they never count against any tier ceiling — only Step 3's curator batches (opus tier, `CAP_OPUS`) and the web-explorer spawn (sonnet tier, `CAP_SONNET`) do.
+
+- **Global spawn wave cap**: `CAP_OPUS`/`CAP_SONNET` (constants block; canonical table in claude-config.md §Parallel Spawn Ceilings) bound Agent() calls of that model tier in flight at once, summed across every step/phase due in the same response — not just within one step's own batch count. Applies whenever `--adversarial` and/or `--efficiency` stack extra fan-out onto Steps 3-4 (see `modes/adversarial.md` §Spawn wave cap for the ordering). Growing toward a tier's ceiling happens in `WAVE_STEP`-sized waves, never one sudden burst — different tiers are separate pools, so an opus-tier wave and a sonnet-tier wave may run concurrently without summing against one shared number.
 
 - **Token cost**: Step 3 (foundry:curator spawns) most expensive. For quick structural scan needing only cross-reference + inventory validation, Step 4 system-wide checks often sufficient. Run `/audit agents` or `/audit skills` to scope, or skip Step 3 for fast pass when per-file quality trusted.
 

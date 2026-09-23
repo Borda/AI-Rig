@@ -315,7 +315,7 @@ Agent lineup — `PR_TYPE != CODE` overrides scope-based rules in Step 1:
 
 | `PR_TYPE` | Agents | Challenger | Consolidator |
 | -- | -- | -- | -- |
-| `DOCS_TYPING` | `foundry:linting-expert` only | skip | `foundry:linting-expert` |
+| `DOCS_TYPING` | `foundry:doc-scribe` only | skip | `foundry:doc-scribe` |
 | `TESTS_CI` | `foundry:qa-specialist` + `foundry:linting-expert` | skip | `foundry:qa-specialist` |
 | `CODE` | full scope-based lineup | per `--no-challenge` | `foundry:sw-engineer` |
 
@@ -414,7 +414,7 @@ Follow above and execute its bash blocks inside the `DIRECT_PATH_MODE = "false"`
 
 ### Scope pre-check
 
-**DOCS_TYPING mode** (`DOCS_TYPING_MODE=true`): annotation-only .py changes (no logic). Spawn: `foundry:linting-expert` only; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
+**DOCS_TYPING mode** (`DOCS_TYPING_MODE=true`): annotation-only .py changes (no logic). Spawn: `foundry:doc-scribe` only; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
 
 **TESTS_CI mode** (`TESTS_CI_MODE=true`): test files and CI config only. Spawn: `foundry:qa-specialist` + `foundry:linting-expert`; challenger disabled by Step 0; skip all other agents. Proceed directly to agent launch.
 
@@ -853,7 +853,7 @@ IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/nul
 _REVIEW_MODE_FILE="${TMPDIR:-/tmp}/oss-review-mode-flags-${CLEAN_ARGS}-${CSID}"
 [ -f "$_REVIEW_MODE_FILE" ] && . "$_REVIEW_MODE_FILE"
 case "${PR_TYPE:-CODE}" in
-    DOCS_TYPING) CONSOLIDATOR_AGENT="foundry:linting-expert" ;;
+    DOCS_TYPING) CONSOLIDATOR_AGENT="foundry:doc-scribe" ;;
     TESTS_CI)    CONSOLIDATOR_AGENT="foundry:qa-specialist" ;;
     *)           CONSOLIDATOR_AGENT="foundry:sw-engineer" ;;  # domain-match rule: file-handoff-protocol.md §Consolidator
 esac
@@ -1008,7 +1008,7 @@ Scenarios:
 1. FIX scope: single bug-fix PR with 1 changed file → scope=FIX drops the perf+arch unit entirely (both members out of scope). Surviving units: sw-engineer, docs+lint (merged), challenger (unless `--no-challenge`) = 3 units ≤ FANOUT_MAX, all spawn; + pinned qa-specialist = 4 spawns (+ Codex bridge if installed).
 2. FEATURE scope: new feature PR with API changes → units sw-engineer, perf+arch, docs+lint, challenger = 4 survive preselection; default cap spawns top 3 ranked (dropped unit listed in report) + pinned qa-specialist = 4 spawns; `--full` spawns all 4 units + qa-specialist = 5 spawns.
 3. --reply mode: existing review report + --reply flag → skip to Step 8, no agents spawned
-4. DOCS_TYPING scope: PR with only annotation-type .py changes (no logic) → Step 0 sets PR_TYPE=DOCS_TYPING, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:linting-expert; only linting-expert spawned; Step 5 uses linting-expert consolidator.
+4. DOCS_TYPING scope: PR with only annotation-type .py changes (no logic) → Step 0 sets PR_TYPE=DOCS_TYPING, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:doc-scribe; only doc-scribe spawned; Step 5 uses doc-scribe consolidator.
 5. TESTS_CI scope: PR with only test files + CI config → Step 0 sets PR_TYPE=TESTS_CI, CHALLENGE_ENABLED=false, CONSOLIDATOR_AGENT=foundry:qa-specialist; qa-specialist + linting-expert spawned; Step 5 uses qa-specialist consolidator.
 6. REJECT_GOAL: PR body states "make recall exceed 1.0" as the goal → gate finds the metric bounded [0,1] by spec, contradicts stated goal regardless of diff quality → skip Step 2–4, orchestrator writes report with Gate=REJECT_GOAL, no agents spawned.
 7. REJECT_CONDUCT: PR diff silently exfiltrates env vars to an external URL, body claims unrelated bugfix → gate spawns foundry:challenger, confirms `conduct.verdict=BY_DESIGN` at confidence ≥0.7 → skip Step 2–4, Gate=REJECT_CONDUCT. Contrast: same diff pattern but challenger returns `ACCIDENTAL` (e.g. leftover debug logging) → treat as normal `[critical]` finding, proceed to full fanout.

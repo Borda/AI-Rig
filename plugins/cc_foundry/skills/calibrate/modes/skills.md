@@ -18,7 +18,7 @@ Skill domains:
 - `/codemap-py:integration` → synthetic project with known skill integration opportunities; measure whether integration correctly scores and ranks candidate skills *(codemap plugin required — skip if `$CODEMAP_AVAILABLE` empty)*
 - `/research:verify` → paper-vs-code fidelity check; inject N known deviations (hyperparams, architecture, loss function, preprocessing); score recall per dimension (F, H, E, N, C) *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
 - `/research:run` → synthetic `program.md` with known metric/guard/config; measure whether run mode correctly sets up iteration loop and applies rollback guard on guard failure; calibrates R0–R3 steps only (full multi-iteration loop excluded — too long-horizon) *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
-- `/research:sweep` → synthetic goal string; measure whether sweep correctly auto-plans, passes through judge gate, and hands off to run with correct flags; ground truth = presence of plan output file and judge approval/rejection signal *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
+- `/research:sweep` → synthetic goal string; measure whether sweep correctly auto-plans, passes through judge gate, and hands off to run with correct flags — bounded handoff phase only, sweep's sustained multi-run execution excluded (see Excluded list below); ground truth = presence of plan output file and judge approval/rejection signal *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
 - `/research:retro` → synthetic `.experiments/state/*/state.json` + run logs; measure whether retro correctly identifies dead iterations, classifies them, produces structured retrospective report; ground truth = injected iteration outcomes *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
 - `/research:fortify` → synthetic ablation plan with known component importance order; measure whether fortify correctly ranks components and identifies reviewer questions; calibrates F1–F3 only (full execution loop excluded) *(research plugin required — skip if `$RESEARCH_AVAILABLE` empty)*
 - `/oss:analyse` → synthetic GitHub issue number (fixture: known type, known thread length, known duplicate link); measure whether thread analysis correctly classifies item type (issue/PR/discussion), surfaces duplicate, produces actionable summary; ground truth = injected issue metadata *(oss plugin required — skip if `$OSS_AVAILABLE` empty)*
@@ -28,6 +28,7 @@ Skill domains:
 - `/manage:create` → synthetic create-agent and create-skill directives; measure whether output file has valid frontmatter, correct structure, NOT-for clause, non-empty domain content; ground truth = structural completeness checklist
 - `/manage:update` → synthetic rename and content-edit directives against fixture agent/skill file; measure whether cross-reference propagation complete and description-changed flag correctly set; ground truth = known cross-ref targets in fixture
 - `/brainstorm` → synthetic creative brief or feature goal; measure whether brainstorm correctly generates spec file with required sections (goal, constraints, options) and blueprint tree with coherent structure; ground truth = required sections checklist
+- `/humanizer` → synthetic human-facing prose seeded with N AI-writing tells of known class (LLM-vocabulary cliché, banned construction, formatting tell — taxonomy from `humanizer`'s own SKILL.md); run the target in `check <file>` read-only mode so scoring reads a findings list, not a rewritten file; recall = injected tells reported; `scope_fp` = flagged spans that were never injected (punishes over-flagging of ordinary human prose); ground truth = the injected tell list with class per span
 
 ### Step 2: Spawn skill pipeline subagents
 
@@ -103,10 +104,10 @@ Modes evaluated for calibration but deferred — significant barriers. `/audit` 
 - `/research:topic` — SOTA literature search; depends on live web results; no deterministic ground truth
 - `/investigate` — open-ended diagnosis; output varies completely by symptom
 - `/foundry:session` — session lifecycle management — no quality signal; output fully context-dependent
+- `/foundry:profile` — thin wrapper over `bin/timing_analyzer.py` and `bin/cost_analyzer.py`; output is deterministic analyzer text already pinned by `tests/test_timing_analyzer.py` and `tests/test_cost_analyzer.py`, so a run would score the scripts rather than the instructions
 - `/calibrate` itself — meta-calibration circular
 - `/research:run` — sustained iteration loop with live metric commands and git state
 - `/research:run --resume` — continuation of run; same barriers as run
-- `/research:sweep` — same barriers as `/research:run` — sustained iteration loop requiring live metrics and git state; not calibratable synthetically
-- `/research:fortify` — requires completed `/research:run` ablation output; ground truth not constructable synthetically
-- `/research:retro` — requires live `experiments.jsonl`; same barrier as `/research:run`
+- `/research:sweep` (sustained multi-run execution only — auto-plan/judge-gate/handoff phase calibrated in domain table above) — same barrier as `/research:run`'s excluded full loop: live metrics and git state
+- `/research:fortify` (live ablation-execution phase only — F1–F3 ranking/reviewer-questions calibrated in domain table above) — requires completed `/research:run` ablation output; ground truth not constructable synthetically for this remaining phase
 - `/foundry:setup` — system-state-dependent — installs symlinks and merges settings; ground truth not constructable

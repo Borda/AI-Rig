@@ -85,6 +85,50 @@ def test_build_cache_path_disabled_without_slug() -> None:
     assert bap.build_cache_path("", "42", "2026-09-11") == ""
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("42", "42", id="plain-number"),
+        pytest.param("../../etc", "etc", id="strips-traversal"),
+        pytest.param("a/b", "ab", id="strips-slash"),
+        pytest.param("vitality", "vitality", id="keyword-unchanged"),
+    ],
+)
+def test_sanitize_clean_args(raw: str, expected: str) -> None:
+    """Only alphanumerics and dashes survive sanitisation, mirroring ``report_slug``'s allowlist."""
+    assert bap.sanitize_clean_args(raw) == expected
+
+
+def test_build_report_path_sanitizes_clean_args() -> None:
+    """A traversal-shaped ``clean_args`` cannot escape the report subdirectory."""
+    got = bap.build_report_path("thread", "owner-repo", "../../etc", "2026-09-11")
+    assert got == ".reports/analyse/thread/output-analyse-thread-owner-repo-etc-2026-09-11.md"
+
+
+def test_build_cache_path_sanitizes_clean_args() -> None:
+    """A traversal-shaped ``clean_args`` cannot escape the cache subdirectory."""
+    got = bap.build_cache_path("owner-repo", "../../etc", "2026-09-11")
+    assert got == ".cache/gh/owner-repo-etc-2026-09-11.json"
+
+
+@pytest.mark.parametrize("clean_args", [pytest.param("42", id="numeric"), pytest.param("vitality", id="keyword")])
+def test_main_pass_through_unchanged_for_real_inputs(
+    clean_args: str, tmp_sentinels: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real ``CLEAN_ARGS`` values produce byte-identical output to before the sanitizer landed.
+
+    Proves the sanitizer added in build_report_path/build_cache_path removes no load-bearing behavior for the argument
+    shapes ``oss:analyse`` actually passes — a numeric PR/issue id or the bare ``vitality``/``ecosystem`` keyword, both
+    already pure ``[A-Za-z0-9-]``.
+    """
+    monkeypatch.chdir(tmp_sentinels)
+    monkeypatch.setenv("TMPDIR", str(tmp_sentinels))
+    _fake_gh(monkeypatch, "owner/repo")
+    assert bap.main(["--clean-args", clean_args, "--today", "2026-09-11"]) == 0
+    expected_report = f".reports/analyse/thread/output-analyse-thread-owner-repo-{clean_args}-2026-09-11.md"
+    assert bap.build_report_path("thread", "owner-repo", clean_args, "2026-09-11") == expected_report
+
+
 # ---------------------------------------------------------------------------
 # report mode
 # ---------------------------------------------------------------------------

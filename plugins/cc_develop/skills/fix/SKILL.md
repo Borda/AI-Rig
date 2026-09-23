@@ -89,7 +89,7 @@ echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}"
 
 ## Fix Mode
 
-**Optional `--diagnosis <path>`**: provided (from preceding `/develop:debug` session) → read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, evidence pre-populated from diagnosis file. Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery.
+**Optional `--diagnosis <path>`**: provided (from preceding `/develop:debug` session) → read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, evidence pre-populated from diagnosis file. Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery. Skip only Step 1's **codebase analysis** (the sw-engineer spawn and its codemap queries) — every gate nested in Step 1 still runs against the pre-populated root cause: premise grounding, scope gate, inline plan generation, and the `## Challenger gate`. The cannot-reproduce gate is satisfied by the diagnosis file's Root Cause and Evidence sections; empty or absent → the gate fires as normal.
 
 ```bash
 DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>&1) || { echo "$DIAG_FILE"; exit 1; }  # timeout: 5000
@@ -183,7 +183,7 @@ IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev-team-mode-${CSID}" 2>/dev/null || 
 [ "$TEAM_MODE" = "true" ] && cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/fix/modes/team-mode.md"
 ```
 
-`TEAM_MODE=true` → execute the loaded protocol now, then continue at Step 2 (regression test). `TEAM_MODE=false` → nothing was loaded; skip to Step 1.
+`TEAM_MODE=true` → execute the loaded protocol now, then re-enter the main workflow at §Premise Grounding Gate (the `premise-grounding.md` block above Step 2): run premise-grounding, inline plan generation, and the `## Challenger gate` against the **consensus root cause**, then continue at Step 2 (regression test). Do not re-enter at Step 1 — its sw-engineer analysis is what team mode replaced. `TEAM_MODE=false` → nothing was loaded; skip to Step 1.
 
 ## Step 1: Understand the problem
 
@@ -298,6 +298,10 @@ cat "$_DEV_SHARED/premise-grounding.md"
 
 **Scope gate**: root cause spans 3+ modules → flag complexity smell — options: "Narrow scope (Recommended)" / "Proceed anyway". Plan-inline gate below will also fire (medium/large classification) → do NOT open a separate window: defer this question, ask it in the SAME `AskUserQuestion` call as plan-inline's Proceed/Stop/Abort menu (both menus verbatim, two questions, one call — the two gates test overlapping "this is big" conditions back-to-back). Plan-inline not firing → single-question call here as usual.
 
+**Non-Python surface check**: sw-engineer's "minimal code surface" names no `.py` file (CSS/JS/template only) → invoke `AskUserQuestion` — "No Python source in the identified change surface; this skill's regression-test gate assumes pytest. How to proceed?" · (a) **Abort** — edit directly, or use `/develop:feature` for new frontend work · (b) **Continue** — a Python-side test can still capture this. On Abort: stop.
+
+**Complexity classification**: classify the fix as `small` (≤3 files, single concern), `medium` (4–7 files, or a cross-module change), or `large` (8+ files, or a public-API/behaviour change). The plan-inline gate below reads this classification.
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
@@ -323,7 +327,7 @@ Spawn `foundry:challenger` with root cause analysis from Step 1 (root cause, bla
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings. Do not proceed to Step 2 until user resolves each blocker or explicitly accepts risk.
+- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the fix approach. How to proceed?" · (a) **Revise approach** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Step 2 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Step 2 on prose alone.
 - **Concerns only** → surface as advisory; continue.
 - **No findings / all refuted** → proceed.
 
@@ -404,13 +408,19 @@ GATE_P1=$?
 $PYTEST_CMD --tb=short <unit_test_file>::test_<bug>_unit -v
 GATE_P2=$?
 [ $GATE_P2 -eq 0 ] && echo "GATE FAIL (Path 2): test passed — bug not captured" || echo "GATE OK (Path 2): failed as expected (exit $GATE_P2)"
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "${GATE_P1:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}  # 1 = failed as expected; a skipped Path 1 must not read as a pass
+echo "${GATE_P2:-1}" > ${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}
 ```
 
 Either gate exit is 0 → stop. Bug not reproduced on that path. Do not apply fix. DMI skill — stop enforced via bash gate check:
 
 ```bash
 # timeout: 3000
-if [ "${GATE_P1:-0}" -eq 0 ] || [ "${GATE_P2:-0}" -eq 0 ]; then
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r GATE_P1 < "${TMPDIR:-/tmp}/dev-fix-gate-p1-${CSID}" 2>/dev/null || GATE_P1=1
+IFS= read -r GATE_P2 < "${TMPDIR:-/tmp}/dev-fix-gate-p2-${CSID}" 2>/dev/null || GATE_P2=1
+if [ "$GATE_P1" -eq 0 ] || [ "$GATE_P2" -eq 0 ]; then
     echo "! GATE FAIL: one or more reproduction tests passed — bug not captured; cannot apply fix against unverified bug"
     exit 1
 fi
@@ -622,7 +632,7 @@ Execute Branch Safety Guard, Quality Stack, Codex Pre-pass, Progressive Review L
 rm -f .temp/state/skill-contract.md  # clear contract — skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
-<!-- Team branching logic is inline above at ## Team Mode Branch — executed immediately when TEAM_MODE=true, before Step 1. When to use: root cause unclear after initial triage, OR bug spans 3+ modules AND user accepted "Proceed anyway" at scope gate. Set via --team flag. -->
+<!-- Team branching logic is inline above at ## Team Mode Branch — executed immediately when TEAM_MODE=true, before Step 1. When to pass --team: the user already expects an unclear root cause or a bug spanning 3+ modules. The branch runs before triage, so these are the user's expectations at invocation time, not conditions this skill evaluates. -->
 
 </workflow>
 

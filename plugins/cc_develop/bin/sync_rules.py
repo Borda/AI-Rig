@@ -38,6 +38,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -376,19 +377,30 @@ def _describe(dest: Path, target: str | None) -> str:
 
 
 def _replace_link(link: RuleLink) -> None:
-    """Point ``link.dest`` at ``link.source``, replacing whatever is there.
+    """Point ``link.dest`` at ``link.source`` via an atomic rename.
+
+    A fresh symlink is created at a sibling temp path and swapped into place with
+    ``os.replace``, atomic on POSIX and Windows. This closes the TOCTOU window between the
+    ownership check in :func:`_install_one` and the write: the old
+    ``unlink()``-then-``symlink_to()`` sequence left ``link.dest`` briefly absent between the
+    two calls; the temp-and-rename swap never leaves it in that state.
 
     Args:
         link: Pairing to materialise.
 
     Raises:
-        OSError: When the destination cannot be removed or the symlink cannot
-            be created. Copies are never attempted — a copied rule silently
-            serves stale content after a plugin upgrade.
+        OSError: When the temporary symlink cannot be created or the atomic replace fails.
+            Copies are never attempted — a copied rule silently serves stale content after a
+            plugin upgrade.
     """
-    if link.dest.is_symlink() or link.dest.exists():
-        link.dest.unlink()
-    link.dest.symlink_to(link.source)
+    tmp = link.dest.with_name(f".{link.dest.name}.{os.getpid()}.tmp")
+    try:
+        tmp.symlink_to(link.source)
+        os.replace(tmp, link.dest)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
 
 
 def _install_one(

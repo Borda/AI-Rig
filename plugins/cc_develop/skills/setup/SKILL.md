@@ -56,6 +56,8 @@ if [ -z "$PYTHON_CMD" ] && command -v py >/dev/null 2>&1 && py -3 --version 2>/d
 fi
 [ -z "$PYTHON_CMD" ] && { printf "! Python 3.10+ not found — install it and re-run /develop:setup\n"; exit 1; }
 printf "  Python: %s\n" "$PYTHON_CMD"
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "$PYTHON_CMD" > "${TMPDIR:-/tmp}/develop-setup-python-${CSID}"
 ```
 
 ## Step 2: Dry run — see what would change
@@ -63,8 +65,10 @@ printf "  Python: %s\n" "$PYTHON_CMD"
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `develop`; `rules/` is a real directory holding ≥1 non-empty regular `*.md`) and aborts before touching anything on any check failure.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/develop-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
+$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
 Non-zero exit → print stderr verbatim and stop; nothing was modified.
@@ -74,8 +78,10 @@ Non-zero exit → print stderr verbatim and stop; nothing was modified.
 Run without `--dry-run`. Add `--approve` only when `APPROVE_ALL=true`:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/develop-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
-python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
+$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name develop --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
 ```
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
@@ -109,7 +115,7 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 SETUP_BAK_TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 echo "$SETUP_BAK_TS" > "${TMPDIR:-/tmp}/develop-setup-bak-ts-${CSID}"
 [ -f ~/.claude/settings.json ] || printf '{}\n' > ~/.claude/settings.json  # created in-bash — no Write-tool prompt, headless-safe
-cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}"  # timeout: 5000
+cp ~/.claude/settings.json "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_TS}"  # timeout: 5000
 ```
 
 Report: "Backed up ~/.claude/settings.json → ~/.claude/settings.json.bak-<timestamp>"
@@ -135,7 +141,14 @@ PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}"
 _jq_result=$(jq --slurpfile deny "$PLUGIN_ROOT/.claude-plugin/permissions-deny.json" \
     '.permissions.deny = ((.permissions.deny // []) + $deny[0] | unique)' \
     ~/.claude/settings.json)  # timeout: 5000
-[ $? -eq 0 ] && [ -n "$_jq_result" ] && printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" ~/.claude/settings.json || { printf "! jq failed merging permissions.deny — settings.json unchanged\n"; exit 1; }
+if [ $? -eq 0 ] && [ -n "$_jq_result" ]; then
+    printf '%s\n' "$_jq_result" > "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" && mv "${TMPDIR:-/tmp}/develop_setup_tmp.json-${CSID}" ~/.claude/settings.json
+else
+    IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/develop-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-develop-"* 2>/dev/null | head -1 | sed 's/.*\.bak-develop-//')
+    cp "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
+    printf "! jq failed merging permissions.deny — restored settings.json to pre-merge state (allow half also rolled back)\n"
+    exit 1
+fi
 ```
 
 Report: "Added N new permissions.deny entries (M already present)."
@@ -152,8 +165,8 @@ Zero exit → continue to Step 6. Non-zero exit → restore, report the failure,
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/develop-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-"* 2>/dev/null | head -1 | sed 's/.*\.bak-//')
-cp "$HOME/.claude/settings.json.bak-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
+IFS= read -r SETUP_BAK_TS < "${TMPDIR:-/tmp}/develop-setup-bak-ts-${CSID}" 2>/dev/null || SETUP_BAK_TS=$(ls -t "$HOME/.claude/settings.json.bak-develop-"* 2>/dev/null | head -1 | sed 's/.*\.bak-develop-//')
+cp "$HOME/.claude/settings.json.bak-develop-${SETUP_BAK_TS}" ~/.claude/settings.json  # timeout: 5000
 ```
 
 ## Step 6: Report

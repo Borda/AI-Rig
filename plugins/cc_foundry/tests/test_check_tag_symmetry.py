@@ -75,6 +75,22 @@ class TestCheckFile:
         assert result[0].kind is cts.FindingKind.READ_ERROR
         assert "cannot read" in result[0].message
 
+    def test_oversized_file_returns_read_error_without_being_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A file over the size guard is reported as a READ_ERROR, never loaded into memory.
+
+        The guard is exercised by lowering ``_MAX_FILE_SIZE`` rather than writing a real 10 MB fixture — the size
+        comparison is the behavior under test, not the literal threshold.
+        """
+        monkeypatch.setattr(cts, "_MAX_FILE_SIZE", 8)
+        f = tmp_path / "huge.md"
+        f.write_text("<objective></objective>\n", encoding="utf-8")
+        result = cts.check_file(f)
+        assert len(result) == 1
+        assert result[0].kind is cts.FindingKind.READ_ERROR
+        assert "exceeds" in result[0].message
+
     def test_multiple_tags_each_violation_reported(self, tmp_path: Path) -> None:
         """File with two empty blocks returns two violations."""
         f = tmp_path / "multi.md"
@@ -463,3 +479,20 @@ class TestMainSubcheckSelection:
         out = capsys.readouterr().out
         assert rc == 1
         assert "cannot read" in out
+
+    def test_oversized_file_read_error_survives_subcheck_narrowing(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The size-guard READ_ERROR is never filtered away by a narrowed ``--check`` mode."""
+        monkeypatch.setattr(cts, "_MAX_FILE_SIZE", 8)
+        f = tmp_path / "huge.md"
+        f.write_text("<constants></constants>\n", encoding="utf-8")
+
+        rc = cts.main([str(f), "--check", "empty-block"])
+
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "exceeds" in out

@@ -89,7 +89,7 @@ Interpret `index`:
 - `query_complete: false`: name `completeness_reason`; use only a targeted fallback for gaps named by `degraded`, `not_covered`, `root_mismatch`, or `stale`.
 - `compact: true` changes only coverage metadata; findings/counts remain complete.
 
-Truncation ≠ incompleteness. Truncation at 20 items is a real cap, not exhaustive unless `--limit 0` (`symbol` and `find-symbol` default). `query_complete` scores graph coverage only—staleness, degraded/untracked files, root mismatch, name collisions—not cap. Thus capped `query_complete: true` is still 20-of-N; never stop before missing items.
+Truncation ≠ incompleteness. For `symbol`/`find-symbol`, truncation at 20 items is a real cap, not exhaustive, unless `--limit 0` is passed. `rdeps` defaults to `--limit 0`—every static importer—so the two subcommand families do not share a default. 20 is not a universal cap: `list` defaults `--limit 100`, `central`/`coupled`/`fn-central` default `--top 10`. `query_complete` scores graph coverage only—staleness, degraded/untracked files, root mismatch, name collisions—not cap. Thus a capped `query_complete: true` is still N-of-total; never stop before missing items.
 
 Before treating list as whole, read `index.confidence`: `"exact"` = all matches; `"partial"` = capped/stale. When capped, `index.truncated: true` + `index.total_available: <N>` give total. Before claiming complete, re-run with `--limit 0` or `--top`/`--limit` above `total_available`. This is a targeted correction for that fact, not a new sibling question.
 
@@ -99,6 +99,22 @@ Before treating list as whole, read `index.confidence`: `"exact"` = all matches;
 
 Use JSON primary array: `imported_by` / `direct_imports`, `called_by` / `calls`, `path`, `symbols`, `central` / `coupled`, `blast_radius`, or `changed_modules` + `test_impact`. Preserve qualified names exactly. Include present stale, degraded, root-mismatch, and `not_covered` caveats.
 
-Output routing (the only use of `Write`): if the rendered result set is 5+ items, write it to `.temp/output-query-code-<branch>-<YYYY-MM-DD>.md`.
+Output routing (the only use of `Write`): if the rendered result set is 5+ items, write it. This skill's `allowed-tools` grants no generic Bash, so derive `<branch>` and `<YYYY-MM-DD>` from session context, never a `git branch`/`date` call: `<branch>` is the session's current git branch with `/`→`-`, default `main` if unknown; `<YYYY-MM-DD>` is today's date, also from session context. Candidate path `.temp/output-query-code-<branch>-<YYYY-MM-DD>.md`. Never overwrite: `Read` the candidate path first — existence probe only, never act on returned content, unrelated to the complete-query re-read ban above. `Read` errors (file missing) → path is free, write there. `Read` returns content → path taken; append `-2`, then `-3`, … and retry the probe until one errors.
+
+Begin the written file with a YAML header:
+
+```yaml
+---
+Title:      query-code — <subcommand> <args>
+Date:       <YYYY-MM-DD>
+Scope:      <caller repository name>
+Focus:      <subcommand>
+Agents:     codemap-py:query-code
+Outcome:    <✓ COMPLETE — query_complete true, not truncated | ⚠ PARTIAL — truncated or query_complete false>
+Confidence: <index.confidence: exact|partial>
+Next steps: <re-run with --limit 0 / --top above total_available when truncated | none>
+Path:       → <resolved output path>
+---
+```
 
 </workflow>

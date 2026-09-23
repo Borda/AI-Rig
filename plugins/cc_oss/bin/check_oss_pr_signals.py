@@ -54,10 +54,18 @@ from shutil import which
 # argv injection into the gh diff path glob. Mirrors Step 1 PR-number validation.
 _PR_NUMBER_RE = re.compile(r"^[0-9]+$")
 
-# Secret-pattern grep — same as the original SKILL.md inline regex; case-insensitive,
-# matches `key=value` or `key: value` with a quoted/unquoted value of 8+ chars.
+_MAX_DIFF_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads — matches sibling scripts
+# (assemble_vitality_scores.py, extract_vitality_vars.py)
+
+# Secret-pattern grep — same as the original SKILL.md inline regex; case-insensitive, matches
+# `key=value`/`key: value` (8+ char value), plus shape-only patterns (AWS access key, PEM header,
+# JWT) that carry no key= prefix. Applied only to the .py-filtered diff slice (see collect_signals'
+# py_diff) — a secret in .env/YAML/.pem is out of this scan's scope; see _grep_secrets docstring.
 _SECRET_RE = re.compile(
-    r"(password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?",
+    r"(?:(?:password|secret|api_key|token|private_key|auth_token)\s*[=:]\s*['\"]?[A-Za-z0-9+/._\-]{8,}['\"]?"
+    r"|AKIA[0-9A-Z]{16}"
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)",
     re.IGNORECASE,
 )
 
@@ -211,6 +219,10 @@ def _resolve_latest_tag(git: str, timeout: int) -> str:
 
 def _grep_secrets(diff_text: str) -> list[str]:
     """Return lines from ``diff_text`` matching the secret regex.
+
+    Scope limit: the caller feeds this only the ``.py``-filtered diff slice, so a secret landing in
+    ``.env``, CI YAML, Terraform, or a ``.pem``/``.key`` file is never scanned — this check covers
+    Python source only, not the full PR diff.
 
     Args:
         diff_text: Concatenated ``gh pr diff`` output for ``.py`` files.
@@ -421,7 +433,15 @@ def main(argv: list[str] | None = None) -> int:
     diff_text = ""
     if args.diff_file:
         try:
-            diff_text = Path(args.diff_file).read_text(encoding="utf-8")
+            diff_path = Path(args.diff_file)
+            size = diff_path.stat().st_size
+            if size > _MAX_DIFF_FILE_SIZE:
+                print(
+                    f"check_oss_pr_signals: --diff-file too large ({size} bytes) — falling back to gh",
+                    file=sys.stderr,
+                )
+            else:
+                diff_text = diff_path.read_text(encoding="utf-8")
         except OSError as exc:
             # Unreadable snapshot is non-fatal — fall back to the gh subprocess path.
             print(f"check_oss_pr_signals: --diff-file unreadable ({exc}); falling back to gh", file=sys.stderr)

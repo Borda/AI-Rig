@@ -79,6 +79,7 @@ eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags
 RUN_ID_ARG=$(echo "$CLEAN_ARGS" | awk '{for (i=1; i<=NF; i++) if ($i !~ /^--/) { print $i; exit }}')
 RUN_ID_ARG="${RUN_ID_ARG:-}"
 echo "$RUN_ID_ARG" > "${TMPDIR:-/tmp}/retro-run-id-${CSID}"  # persist for T3 (vars lost between Bash calls)
+echo "${VALUE_ALPHA:-0.05}" > "${TMPDIR:-/tmp}/retro-alpha-${CSID}"
 ```
 
 **Pre-compute run directory** — also fix `$RUN_ID` (resolved from input resolution above), persist `$RUN_DIR` for T3 (ADV-H18 + ADV-L16):
@@ -106,13 +107,13 @@ Run the Wilcoxon signed-rank test via the bundled bin/ script — pure Python wi
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_ID < "${TMPDIR:-/tmp}/retro-run-id-resolved-${CSID}" 2>/dev/null || RUN_ID=""  # re-hydrate RUN_ID from T1 (Check 41: fresh shell)
-ALPHA="${ALPHA:-0.05}"
+IFS= read -r ALPHA < "${TMPDIR:-/tmp}/retro-alpha-${CSID}" 2>/dev/null || ALPHA="0.05"
 METRIC_DIRECTION=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/read_state_field.py" ".experiments/state/$RUN_ID/state.json" "config.metric.direction" --default "higher" 2>/dev/null || echo "higher")  # loads: read_state_field.py
 IFS= read -r RETRO_JSONL < "${TMPDIR:-/tmp}/retro-jsonl-path-${CSID}" 2>/dev/null || RETRO_JSONL=".experiments/state/$RUN_ID/experiments-clean.jsonl"  # re-hydrate sanitized path from T1 (Check 41: fresh shell)
 RETRO_RESULT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/retro_analyze.py" --jsonl "$RETRO_JSONL" --baseline "baseline" --alpha "$ALPHA" --direction "$METRIC_DIRECTION")  # timeout: 30000
 RETRO_EXIT=$?
 echo "$RETRO_RESULT" > "${TMPDIR:-/tmp}/retro-result-${CSID}"  # persist for effect-size block (Check 41: fresh shell)
-[ "$RETRO_EXIT" -eq 2 ] && { echo "retro: Input error (exit 2) — run-id '$RUN_ID' missing, malformed, or has no baseline record; re-run /research:run to create baseline"; exit 1; }
+[ "$RETRO_EXIT" -eq 2 ] && { echo "retro: Input error (exit 2) — run-id '$RUN_ID' missing, malformed, no baseline record, or invalid --alpha value; re-run /research:run to create baseline"; exit 1; }
 ```
 
 **Contract** — script reads JSONL, extracts metric values for ALL iterations with `status == "kept"`, runs one-sided **one-sample** Wilcoxon signed-rank test of "kept iterations vs single baseline metric" (`status == "baseline"`). Not a paired test — run records one baseline metric, no per-iteration matched baseline; baseline scalar compared against each kept value. Prints single line of JSON to stdout:
@@ -289,14 +290,16 @@ Path:          → .reports/research/retro-<branch>-<date>.md
 
 | Test | N | Statistic | p-value | Significant? | Effect size |
 | --- | --- | --- | --- | --- | --- |
-| Wilcoxon vs baseline | N | ... | ... | YES/NO (alpha=<alpha>) | r=... (<small/medium/large>) |
-| Wilcoxon run-1 vs run-2 | N | ... | ... | YES/NO | r=... |
+| Wilcoxon vs baseline (run-1) | N | ... | ... | YES/NO (alpha=<alpha>) | r=... (<small/medium/large>) |
+| Wilcoxon vs baseline (run-2) | N | ... | ... | YES/NO | r=... |
 
-(Second row only if `--compare` used. If N < 6: replace table with descriptive stats table — mean, median, min, max, std — and note "Insufficient data for significance testing (N=<N>)".)
+(Row labels drop the `(run-1)`/`(run-2)` suffix — plain "Wilcoxon vs baseline" — when `--compare` is not used, since there is only one run. Second row only if `--compare` used; when it is, add a note below the table: "Each row tests that run's kept iterations against its own baseline independently — not a direct statistical comparison between run-1 and run-2's improvement magnitudes." If N < 6: replace table with descriptive stats table — mean, median, min, max, std — and note "Insufficient data for significance testing (N=<N>)".)
 
 **Effect size interpretation**: |r| < 0.3 = small, 0.3–0.5 = medium, > 0.5 = large.
 
 > **Independence caveat** — Wilcoxon assumes independent samples. Sequential optimization iterations are typically autocorrelated; p-value is indicative only, not formally valid. If `dead_pct > 30%` from the Dead Iterations section, escalate caveat to HIGH: "p-value unreliable — high autocorrelation from dead-plateau windows."
+
+> **Selection-bias caveat** — this test compares only KEPT iterations against the baseline. `/research:run` keeps an iteration only when its metric beats the running best (which starts at the baseline), so every kept value is beyond the baseline in the improvement direction *by construction*: all signed ranks share one sign and the one-sided p-value is a function of N alone (N=6 → p≈0.016). A `YES` in this table therefore records that ≥6 iterations were kept, not that improvement was independently validated. Genuine validation needs held-out data or independent repeat measurements not used for the keep/revert decision.
 
 ### Dead Iterations
 
@@ -375,7 +378,7 @@ If `scientist_status == "timed_out"` or `<RUN_DIR>/hypotheses.jsonl` does not ex
 
 - Retro read-only — never modifies code, commits, or writes to `.experiments/state/<run-id>/`
 - `.experiments/retro-<timestamp>/` stores analysis scripts, intermediate JSON, scientist output, hypotheses.jsonl
-- Retro run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/retro-*/`)
+- Retro run dirs don't write `result.jsonl` — exempt from automated 30-day TTL cleanup (per `.claude/rules/foundry-artifact-lifecycle.md`: no `result.jsonl` = cleanup skipped); remove manually when done (`rm -rf .experiments/retro-*/`) <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/plan/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 - `hypotheses.jsonl` uses `source: "retro"` — compatible with `--hypothesis` flag of `/research:run`; `"retro"` extends oracle schema (see `protocol.md`); feasibility fields omitted, treated as feasible:true by run
 - `--compare` requires both runs use same metric; if metric names differ, stop: `"Cannot compare runs with different metrics: <metric-1> vs <metric-2>"`
 - Dead iteration threshold (`--threshold`) should match metric's noise floor — default 0.001 for normalized metrics; adjust for raw values (e.g. `--threshold 0.1` for loss in hundreds)

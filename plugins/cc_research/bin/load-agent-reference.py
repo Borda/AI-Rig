@@ -14,8 +14,41 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import sys
 from pathlib import Path
+
+_AGENT_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_FRAGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _is_safe_fragment(value: str) -> bool:
+    """Report whether ``value`` is a single, non-traversing filename component.
+
+    Uses an allowlist (not a denylist) so a Windows drive-relative form like
+    ``"C:foo.md"`` is rejected too — ``PurePath`` joins reset to a drive-qualified
+    right-hand operand, letting it escape the sidecar directory regardless of the left
+    operand. ``agent`` is validated separately against :data:`_AGENT_RE` (it also feeds
+    an ``fnmatch`` glob in :func:`_cached_sidecar`); this check covers ``fragment``,
+    which is joined onto the resolved sidecar directory and never globbed.
+
+    Examples:
+        >>> _is_safe_fragment("storage-patterns.md")
+        True
+        >>> _is_safe_fragment("../etc/passwd")
+        False
+        >>> _is_safe_fragment("/etc/passwd")
+        False
+        >>> _is_safe_fragment("C:foo.md")
+        False
+        >>> _is_safe_fragment("..")
+        False
+        >>> _is_safe_fragment(".")
+        False
+    """
+    if value in (".", ".."):
+        return False
+    return bool(_FRAGMENT_RE.fullmatch(value))
 
 
 def _cached_sidecar(agent: str) -> Path | None:
@@ -50,11 +83,14 @@ def main(argv: list[str]) -> int:
         return 2
 
     agent, fragment, degraded = args
-    if not agent:
-        print("load-agent-reference: <agent-dir-name> must not be empty", file=sys.stderr)
+    if not agent or not _AGENT_RE.fullmatch(agent):
+        print(f"load-agent-reference: <agent-dir-name> must match [A-Za-z0-9_-]+, got {agent!r}", file=sys.stderr)
         return 2
-    if not fragment:
-        print("load-agent-reference: <fragment.md> must not be empty", file=sys.stderr)
+    if not fragment or not _is_safe_fragment(fragment):
+        print(
+            f"load-agent-reference: <fragment.md> must be a single safe filename component, got {fragment!r}",
+            file=sys.stderr,
+        )
         return 2
 
     directory = _sidecar_dir(agent)

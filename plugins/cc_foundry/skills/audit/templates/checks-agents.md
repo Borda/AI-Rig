@@ -74,11 +74,11 @@ Every Check 20 finding must include: overlapping pair, shared surface, remaining
 
 Fix reference: run `/calibrate routing` to verify description overlap translates to actual routing confusion.
 
-## Check 34 — Roster boundary alignment
+## Check 46 — Roster boundary alignment
 
 Holistic roster-level analysis. Subsumes former `/distill review` mode. Run as part of `foundry:audit agents`.
 
-**34a — Per-pair overlap scan**: for every agent pair, compute scope overlap from descriptions + NOT-for clauses. Default threshold: **>50%** shared scope → flag. With `--eager`: threshold drops to **>30%**; any single shared named capability also flags as boundary issue.
+**46a — Per-pair overlap scan**: for every agent pair, compute scope overlap from descriptions + NOT-for clauses. Default threshold: **>50%** shared scope → flag. With `--eager`: threshold drops to **>30%**; any single shared named capability also flags as boundary issue.
 
 ```bash
 # Extract all agent descriptions for model reasoning
@@ -93,14 +93,14 @@ done
 
 Use model reasoning to score each pair: `overlap_pct` = fraction of one agent's scope covered by the other. Flag pairs exceeding threshold.
 
-**34b — Coverage gap detection**: scan agent descriptions for task domains with no clear owner. Coverage gap = realistic task type where no agent's TRIGGER applies and no NOT-for exclusion explains the gap.
+**46b — Coverage gap detection**: scan agent descriptions for task domains with no clear owner. Coverage gap = realistic task type where no agent's TRIGGER applies and no NOT-for exclusion explains the gap.
 
 Examples of coverage gap signals:
 
 - "Who handles X?" produces no confident agent → gap
 - Two agents exclude a domain ("NOT for Y") but no agent includes it → gap
 
-**34c — Sharpen Boundary section** (always include when ≥1 overlap pair found; required when `--eager`):
+**46c — Sharpen Boundary section** (always include when ≥1 overlap pair found; required when `--eager`):
 
 ```markdown
 ### Sharpen Boundary
@@ -113,7 +113,7 @@ Examples of coverage gap signals:
 **Report format** (report only — no auto-fix):
 
 ```markdown
-## Check 34 — Roster Boundary Alignment
+## Check 46 — Roster Boundary Alignment
 
 ### Overlap Findings (threshold: >50% [or >30% with --eager])
 - **agent-a / agent-b** — overlap: ~N% — <shared domain> — decision: keep|sharpen|merge-prune

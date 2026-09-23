@@ -612,12 +612,14 @@ use shepherd to write a migration guide for the v3.0 breaking changes
 
 **What shepherd does:**
 
+<!-- policy-sibling: plugins/cc_oss/agents/shepherd.md, plugins/cc_oss/skills/_shared/semver-rules.md, plugins/cc_oss/README.md -->
+
 - **Issue triage:** Classifies every issue into one of seven archetypes (bug confirmed, feature request, question/support, duplicate, stale, out of scope, breaking change), drafts response fitting each
 - **Close-scenario replies:** Seven close archetypes from shepherd playbook — fixed in release, fixed on `develop`, superseded by architecture change, external/wrong repo, self-resolved/stale, keep open + relabel, superseded PR
 - **PR review response:** Two-part format — leads with genuinely good, then specific actionable asks with line references; never adversarial
-- **SemVer validation:** Reads actual diff, enforces correct bump type before any release proceeds
+- **SemVer validation:** Reads actual diff, flags incorrect bump type and breaking changes in a report block — the invoking skill or human decides whether to act on it before release
 - **Release pipeline:** Writes release notes, changelog entries, migration guides in consistent project voice
-- **Deprecation lifecycle:** Works with `pyDeprecate`; tracks deprecated APIs, writes migration guides, enforces deprecation → warning → removal timeline
+- **Deprecation lifecycle:** Works with `pyDeprecate`; tracks deprecated APIs, writes migration guides, flags deprecation → warning → removal timeline violations
 
 **What shepherd does NOT do:**
 

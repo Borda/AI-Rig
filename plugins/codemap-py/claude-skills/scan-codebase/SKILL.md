@@ -15,7 +15,7 @@ Per module: import graph, blast-radius metrics, **symbol list** (classes/functio
 
 Agents/develop skills query via `scan-query` for deps, blast radius, coupling, symbol source before edits.
 
-NOT for: querying existing index (use `/codemap-py:query-code`); integration health checks or wiring consumer integration (use `/codemap-py:integration` — `check`/`plan`/`apply`); non-code input (contracts, prose, config-only review). On out-of-scope input: state scope mismatch and stop — never answer "for reference only" with partial findings.
+NOT for: querying existing index (use `/codemap-py:query-code`); integration health checks or wiring consumer integration (use `/codemap-py:integration` — `audit`/`plan`/`apply`); non-code input (contracts, prose, config-only review). On out-of-scope input: state scope mismatch and stop — never answer "for reference only" with partial findings.
 
 </objective>
 
@@ -25,7 +25,7 @@ NOT for: querying existing index (use `/codemap-py:query-code`); integration hea
 
 Build invocation from `$ARGUMENTS`. Pass supplied `--root <path>` and/or `--incremental`; never literal placeholders.
 
-**Unknown-flag check**: before `parse_scan_args.py`, find `$ARGUMENTS` `--` tokens except `--root`, `--incremental`. If any, print `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental`; exit 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. Rosters + shell must use exact `Unknown flag(s)` wording, no synonym. Preflight exit `1` is skill-local shortcut accepted in `shared/capability-contract.md`; CLI syntax errors remain §7.5 exit `2`.
+**Unknown-flag check**: before `parse_scan_args.py`, find `$ARGUMENTS` `--` tokens except `--root`, `--incremental`. If any, print `! Unknown flag(s): <tokens>` then `Supported: --root <path>, --incremental`; exit 1. Never AskUserQuestion: disable-model-invocation:true makes it unreachable. Rosters + shell must use exact `Unknown flag(s)` wording, no synonym. Preflight exit `1` is skill-local shortcut accepted in `shared/capability-contract.md`; CLI syntax errors remain §7.5 exit `2`. Trailing `--root` with no value (would silently fall back to default-root scan): print `! --root requires a value` + same `Supported:` line; exit 1 — distinct message, never the `Unknown flag(s)` wording.
 
 ```bash
 # timeout: 10000
@@ -35,6 +35,11 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 _ARGS_UNKNOWN=$(printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' \
   | awk '/^--root$/{skip=1;next} skip{skip=0;next} /^--incremental$/{next} /^--/{print}' | tr '\n' ' ')
 _ARGS_UNKNOWN="${_ARGS_UNKNOWN% }"
+# trailing --root with no value: parse_scan_args.py's _ROOT_RE needs \s+ plus a value, so a bare
+# trailing --root matches nothing and silently falls back to default-root scan — distinct error
+# class from unknown flags below, own message (not the pinned "Unknown flag(s)" wording)
+_ARGS_LAST_TOK=$(printf '%s\n' "$ARGUMENTS" | tr ' ' '\n' | awk 'NF{last=$0} END{print last}')
+[ "$_ARGS_LAST_TOK" = "--root" ] && { printf "! --root requires a value\nSupported: --root <path>, --incremental\n" >&2; exit 1; }
 [ -z "$_ARGS_UNKNOWN" ] || { printf "! Unknown flag(s): %s\nSupported: --root <path>, --incremental\n" "$_ARGS_UNKNOWN" >&2; exit 1; }
 SETUP_STDERR="${TMPDIR:-/tmp}/codemap-setup-err-$$-${CSID}"
 SCAN_STATE_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/setup_scan_env.py" --arguments "$ARGUMENTS" 2>"$SETUP_STDERR")
@@ -95,13 +100,15 @@ After scan, read index and report compact summary:
 # timeout: 15000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # skip if Step 1 failed — index may not exist
-_CM_PROJ_SLUG=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
+_GIT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+_CM_PROJ_SLUG=$(basename "$_GIT_ROOT")
 IFS= read -r SCAN_STATE_FILE < "${TMPDIR:-/tmp}/codemap-state-ref-${_CM_PROJ_SLUG}-${CSID}" 2>/dev/null || SCAN_STATE_FILE=""
 [ -n "$SCAN_STATE_FILE" ] && [ -f "$SCAN_STATE_FILE" ] || { printf "! codemap state missing — re-run /codemap-py:scan-codebase\n"; exit 1; }
 # shellcheck source=/dev/null
 . "$SCAN_STATE_FILE"
-PROJ_NAME="${PROJ_NAME:-$(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")")}"
-_IDX="${CODEMAP_INDEX_DIR:-.cache/codemap}"
+PROJ_NAME="${PROJ_NAME:-$(basename "$_GIT_ROOT")}"
+# git-root-anchored, not CWD — matches resolve_proj_index.py's <git-root-or-cwd>/.cache/codemap layout
+_IDX="${CODEMAP_INDEX_DIR:-${_GIT_ROOT}/.cache/codemap}"
 if [ -f "${_IDX}/${PROJ_NAME}.json" ]; then
     # scan-stats.py reads SCAN_ARGS env (e.g. --root src/mypackage) for project root
     SCAN_ARGS="$SCAN_ARGS_RAW" python3 "${CLAUDE_PLUGIN_ROOT:-plugins/codemap-py}/bin/scan-stats.py"

@@ -34,6 +34,18 @@ Worktree handling is deliberately asymmetric: a worktree holding uncommitted
 work is *reported*, never removed, no matter how old it is, and worktrees whose
 name does not match a managed prefix are left alone entirely.
 
+``--root`` must resolve strictly under the git toplevel of the invoking working
+directory (the "repository" for this purpose — inside a linked worktree, that
+is the worktree's own toplevel, not the main tree). This bounds the argument
+itself against an absolute path pointing entirely outside the repo; it does
+not, on its own, bound what ``--managed-prefix '*'`` can still reach *inside*
+that boundary — an in-repo ``--root`` paired with the wildcard still removes
+every sufficiently-aged, unregistered child directory it finds there, since an
+unregistered directory's dirty-file check is skipped by design (there is no
+git state to check `git status` against). Safe use of the wildcard therefore
+still depends on ``--root`` pointing at a directory this tool alone populates
+(e.g. a skill-private variant dir), not on the containment check alone.
+
 Usage:
     heal_git_artifacts.py locks --pattern '<glob>' [--max-age-min N] [--apply] [--quiet]
     heal_git_artifacts.py worktrees [--root DIR] [--min-age-days N] [--managed-prefix CSV] [--apply] [--quiet]
@@ -43,7 +55,8 @@ Both subcommands are **report-only by default**; ``--apply`` performs removal.
 Exit codes:
     0 — success (nothing reclaimable, or reclaimed when ``--apply`` given)
     1 — at least one artifact is reclaimable and ``--apply`` was not given
-    2 — usage or environment error (not a git repository, bad arguments)
+    2 — usage or environment error (not a git repository, bad arguments,
+        ``--root`` unresolvable or outside the repository)
 """
 
 from __future__ import annotations
@@ -621,6 +634,40 @@ def run_locks(args: argparse.Namespace, git_dir: Path, now: float) -> int:
     return 0 if args.apply else 1
 
 
+def _validate_worktree_root(root: Path, repo_root: Path) -> None:
+    """Reject a ``--root`` that escapes the invoking repository (CWE-22 guard).
+
+    ``--managed-prefix '*'`` treats every child of ``root`` as tool-managed; without
+    this check, a broad ``--root`` combined with that wildcard lets ``--apply``
+    recursively ``shutil.rmtree`` every sufficiently-aged, clean-looking subdirectory
+    under an arbitrary path. Bounds only the ``--root`` argument itself to the git
+    toplevel of the invoking working directory — it does not bound what the wildcard
+    can still reach *inside* that boundary (a separate, accepted residual risk; see
+    the module-level note above ``run_worktrees``).
+
+    Args:
+        root: Raw ``--root`` value, not yet resolved.
+        repo_root: Git toplevel of the invoking working directory — the only
+            trusted containment boundary this check has available. Not
+            necessarily the physical main repository: run from inside a linked
+            worktree, this is that worktree's own toplevel.
+
+    Raises:
+        ValueError: When ``root`` cannot be resolved, or does not resolve
+            strictly under ``repo_root``.
+
+    Examples:
+        No doctest — path-resolution dependent; covered by pytest.
+    """
+    try:
+        resolved = root.resolve()
+        boundary = repo_root.resolve()
+    except (OSError, RuntimeError) as exc:  # RuntimeError: symlink loop
+        raise ValueError(f"--root cannot be resolved: {root} ({exc})") from exc
+    if boundary not in resolved.parents:
+        raise ValueError(f"--root must be within the repository, got: {resolved}")
+
+
 def run_worktrees(args: argparse.Namespace, repo_root: Path, now: float) -> int:
     """Execute the ``worktrees`` subcommand.
 
@@ -643,6 +690,11 @@ def run_worktrees(args: argparse.Namespace, repo_root: Path, now: float) -> int:
     if "*" in prefixes:
         prefixes = ("",)
     root = Path(args.root) if args.root else repo_root / ".claude" / "worktrees"
+    try:
+        _validate_worktree_root(root, repo_root)
+    except ValueError as exc:
+        print(f"! SECURITY: {exc}", file=sys.stderr)
+        return 2
     states = sweep_worktrees(repo_root, root, args.min_age_days, prefixes, now)
     reclaimable = [s for s in states if s.tier in RECLAIMABLE_WORKTREES]
     lines: list[str] = []
@@ -693,7 +745,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     trees = sub.add_parser("worktrees", help="Sweep worktree directories, removing only clean aged managed ones.")
-    trees.add_argument("--root", default=None, help="Directory holding worktrees (default: <repo>/.claude/worktrees).")
+    trees.add_argument(
+        "--root",
+        default=None,
+        help="Directory holding worktrees; must resolve inside the invoking repository "
+        "(default: <repo>/.claude/worktrees).",
+    )
     trees.add_argument(
         "--min-age-days",
         type=float,

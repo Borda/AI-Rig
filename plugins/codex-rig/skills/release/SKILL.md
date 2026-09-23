@@ -13,7 +13,7 @@ Prepare substantial, source-grounded release communication and SemVer readiness 
 
 ```json
 {
-  "mode": "notes|prepare|audit|demo",
+  "mode": "optional notes|prepare|audit|demo; default notes",
   "range": "optional base..head or base->head; not a target version",
   "target_version": "optional SemVer version",
   "changelog": "optional boolean; --changelog updates the existing changelog without pruning history",
@@ -26,6 +26,8 @@ Prepare substantial, source-grounded release communication and SemVer readiness 
 ```
 
 ## Workflow
+
+<!-- policy-sibling: skills/assess/SKILL.md, skills/code-remediate/SKILL.md, skills/code-review/SKILL.md -->
 
 Apply [GitHub Workflow Consent](../../shared/native-skill-contract.md#github-workflow-consent) whether or not `--approve-gh` is present: reuse existing scoped authorization; never require a flag reply or reinvocation. Ask only for genuinely missing consent through the permitted question control.
 
@@ -116,7 +118,7 @@ The runner records each executable check's expected head and observed Git head/s
 
 ### 08: Decide gate result, write `result.candidate.json`, validate artifacts, and publish `.reports/codex/release/<timestamp>/result.json`
 
-Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `RELEASE_METADATA` with `release_contract_version=1`, `mode`, `target_version`, resolved range, `release_head` (full lowercase 40- or 64-character commit SHA), `requested_artifacts` (names among `DRAFT.md`, `CHANGELOG.md`, `SUMMARY.md`, `MIGRATION.md`, `demo.py`), and the `release_evidence` receipt defined in `release-evidence.md`. Passing results require every executable gate's clean before/after receipt to match `release_head`. Save exact final copies of selected deliverables in `<run-directory>/deliverables/`; bind their actual project destinations and SHA-256 hashes in the receipt. Notes always requires the draft; prepare requires all four Markdown files; demo requires the executed script and receipt. Audit has an empty artifact list but still binds scope, contributor, and changelog evidence. On fail/timeout retain the requested list and explain unfinished outputs; do not fabricate them or unavailable source receipts. Validate as `release`, promote only validated candidate. Old reports lacking the version remain readable; new runs must not omit it to bypass communication checks.
+Follow `../../shared/helper-cli-contract.md` and authoritative help. Write `RELEASE_METADATA` with `release_contract_version=1`, `mode`, `target_version`, resolved range, `release_head` (full lowercase 40- or 64-character commit SHA), `requested_artifacts` (names among `DRAFT.md`, `CHANGELOG.md`, `SUMMARY.md`, `MIGRATION.md`, `demo.py`), and the `release_evidence` receipt defined in `release-evidence.md`. Passing results require every executable gate's clean before/after receipt to match `release_head`. Save exact final copies of selected deliverables in `<run-directory>/deliverables/`; bind their actual project destinations and SHA-256 hashes in the receipt. Notes always requires the draft; prepare requires all four Markdown files (the zero-breaking-change carve-out for `MIGRATION.md` content, not the file itself, is in `release-writing.md`); demo requires the executed script and receipt. Audit has an empty artifact list but still binds scope, contributor, and changelog evidence. On fail/timeout retain the requested list and explain unfinished outputs; do not fabricate them or unavailable source receipts. Validate as `release`, promote only validated candidate. Old reports lacking the version remain readable; new runs must not omit it to bypass communication checks.
 
 ## Fail-Fast Rules
 

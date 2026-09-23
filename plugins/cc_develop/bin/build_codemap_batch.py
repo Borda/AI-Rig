@@ -42,7 +42,7 @@ from pathlib import Path
 
 # Sibling import: resolved by Python's script-dir sys.path entry on direct execution,
 # and by plugins/cc_develop/conftest.py during pytest --doctest-modules collection.
-from codemap_scan import _git_diff_files, derive_modules_from_diff
+from codemap_scan import _git_diff_files, derive_modules_from_diff, is_valid_module
 
 FALLBACK_LIMIT = 10
 
@@ -163,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
         modules = args.modules.split()
     else:
         modules = derive_modules_from_diff(_git_diff_files(), limit=FALLBACK_LIMIT)
+    # Argument-injection guard: reject anything that isn't a plain dotted Python
+    # identifier before it reaches a codemap-py query batch argv position.
+    modules = [m for m in modules if is_valid_module(m)]
     if args.queries is not None:
         try:
             request = build_filtered_request(modules, args.queries.split(","))

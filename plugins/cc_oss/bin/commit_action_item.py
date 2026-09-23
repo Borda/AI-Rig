@@ -45,6 +45,39 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_field(text: str) -> str:
+    """Replace control characters — including newlines — with a space, for text bound for a commit message.
+
+    ``build_each_message`` interpolates reviewer- and PR-comment-supplied text directly into a
+    permanent git commit authored under an automated bot identity. An embedded ``\\n`` could forge
+    an extra trailer line (e.g. a spoofed ``Co-authored-by:``) or corrupt the ``[resolve No.<id>]``
+    header this template relies on. Substituting a space (rather than deleting) keeps the quoted
+    excerpt legible and preserves character count, so downstream truncation to a fixed width is
+    unaffected either way — sanitizing before truncation here is a fidelity choice (keep the first
+    72 *visible* chars) not a security requirement, since truncate-then-sanitize is equally safe.
+
+    A control character does not become a line start on its own: only the template's own literal
+    ``\\n`` characters create line starts, so replacing rather than deleting is sufficient — no
+    structural token can be reconstructed by two now-adjacent words. Not covered: Unicode line
+    separators U+0085/U+2028/U+2029 — display-layer hygiene only, since git splits commit-object
+    lines on LF, not on these; a deliberate, recorded scope limit, not an oversight.
+
+    Args:
+        text: Raw field value.
+
+    Returns:
+        *text* with every ASCII control character (0x00-0x1F, 0x7F) replaced by a single space.
+
+    Examples:
+        >>> _sanitize_field("line1\\nline2")
+        'line1 line2'
+        >>> _sanitize_field("octocat")
+        'octocat'
+    """
+    return _CONTROL_CHARS_RE.sub(" ", text)
 
 
 @dataclass(frozen=True)
@@ -128,14 +161,19 @@ def build_each_message(fields: EachMessageFields) -> str:
         >>> "Co-authored-by: OpenAI Codex" in build_each_message(codex_fields)
         True
     """
-    quoted = fields.comment[:72]
+    summary = _sanitize_field(fields.summary)
+    item_id = _sanitize_field(fields.item_id)
+    author = _sanitize_field(fields.author)
+    pr = _sanitize_field(fields.pr)
+    challenge = _sanitize_field(fields.challenge)
+    quoted = _sanitize_field(fields.comment)[:72]
     codex_trailer = "\nCo-authored-by: OpenAI Codex <codex@openai.com>" if fields.include_codex else ""
     return (
-        f"{fields.summary}\n"
+        f"{summary}\n"
         f"\n"
-        f"[resolve No.{fields.item_id}] Review by {fields.author} (PR {fields.pr}):\n"
+        f"[resolve No.{item_id}] Review by {author} (PR {pr}):\n"
         f'"{quoted}..."\n'
-        f"Challenge: {fields.challenge}\n"
+        f"Challenge: {challenge}\n"
         f"\n---\n"
         f"Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
         f"{codex_trailer}"

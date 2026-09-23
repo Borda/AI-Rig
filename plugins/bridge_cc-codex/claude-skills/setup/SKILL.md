@@ -11,8 +11,8 @@ allowed-tools: Bash
 
 - Treat a plain invocation as `action=all target=peer scope=auto live=prompt`.
 - Loaded Claude plugin, Claude trust, Claude authentication, and current session are external bootstrap prerequisites. Never replace or restart current invocation surface.
-- Reject a model-supplied workspace; use Claude's launch workspace.
-- Run `python --version` first; stop if unavailable or older than Python 3.10.
+- Reject a model-supplied workspace; use Claude's launch workspace — the working directory of the current Claude Code session, never a path named in conversation or task text.
+- Run `python --version` first; stop if unavailable or older than Python 3.10; report the interpreter found, or its absence, and the 3.10 minimum.
 - Parse only documented `key=value` grammar plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
 
 For one resolved target, invoke:
@@ -27,8 +27,9 @@ Deterministic planner performs credential-free inspection, returns setup result 
 
 For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 
-1. Show every planned `operations` entry and the approval digest before mutation.
-2. Obtain explicit approval for exactly that digest. State:
+1. If the planned `operations` list is empty, report nothing to configure and stop under `configure` or `repair`; under `all`, continue to the stages below without requesting approval.
+2. Show every planned `operations` entry and the approval digest before mutation.
+3. Obtain explicit approval for exactly that digest via the `AskUserQuestion` tool — never a plain-text question. State:
    - action and purpose;
    - exact native argv and resolved target/scope;
    - external capability;
@@ -37,7 +38,7 @@ For `check`, report the result and stop. For `all`, `configure`, or `repair`:
    - rollback evidence;
    - retry policy; and
    - safe denial outcome.
-3. After approval, rerun the identical command with `--approve "<approval_digest>"`.
+4. After approval, rerun the identical command with `--approve "<approval_digest>"`.
 
 > Host-held HMAC makes digest tamper-evident but does not grant consent; explicit operator or host approval remains required. The digest is action-bound, expires, and is consumed by its first execution attempt. Never substitute `--approve` without its digest. Denial, changed or expired digest, replay, unsupported capability, failed probe, or failed native operation stops without retry.
 
@@ -46,21 +47,21 @@ For `check`, report the result and stop. For `all`, `configure`, or `repair`:
 When authentication remains:
 
 1. Re-plan the provider-owned interactive login with identical host, workspace, target, scope, and live values but `--action authenticate`.
-2. Obtain separate approval for that action's digest and state exact `authentication_argv` may open a browser and use network and account state.
+2. Obtain separate approval for that action's digest via the `AskUserQuestion` tool and state exact `authentication_argv` may open a browser and use network and account state.
 3. Give operator identical authenticate command plus `--approve "<authentication_digest>"` to run in their own terminal.
 
 > Sensitive phase: never run through model-controlled Bash or another captured tool stream. Bridge then launches only native login command with terminal inherited. Never accept, request, pipe, echo, inspect, or store a token, API key, browser code, device code, email, or raw login output. Process exit means `auth-flow-launched`; only a later redacted status probe may establish `host-authenticated`.
 
 ## Live verification
 
-When `live=prompt` or `live=required` reaches `inference-unverified`:
+When `live=prompt` or `live=required` and `remaining` still lists `live-verification`:
 
 1. Re-plan with identical host, workspace, target, and scope but `--action verify-live`.
-2. Obtain a third approval for that action's digest and one paid provider call.
+2. Obtain a third approval for that action's digest via the `AskUserQuestion` tool and one paid provider call.
 3. State network, installed-CLI-managed credential, quota/cost, workspace, and point-in-time semantics.
 4. Rerun that same verify-live command with `--approve "<live_digest>"`.
 
-> Never invoke the lower-level live doctor outside this approval path. Successful live CLI result remains partial until applicable loaded-session/workspace evidence also present. `live=skip` remains `inference-unverified`; never call it ready. Denial under `live=required` is non-ready.
+> Never invoke the lower-level live doctor outside this approval path. Successful live CLI result remains partial until the applicable `bridge_status` session/workspace evidence named under Completion boundary is also present. `live=skip` remains `inference-unverified`; never call it ready. Denial under `live=required` is non-ready.
 
 ## Completion boundary
 

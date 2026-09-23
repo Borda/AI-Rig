@@ -327,6 +327,9 @@ def read_rows(path: Path, max_lines: int, report: FileReport) -> list[tuple[int,
         except OSError as error:
             report.read_error = error.strerror or str(error)
             report.buckets["limit-exceeded"] += 1
+        except MemoryError:
+            report.read_error = "a single line exceeded available memory while reading"
+            report.buckets["limit-exceeded"] += 1
     return rows
 
 
@@ -498,9 +501,9 @@ def log_files(target: Path) -> list[Path]:
 
     One shape no type test can catch: a regular file this process may not open. It passes every test here and raises at
     the read instead, so ``run_verify`` guards the open, and ``read_rows`` guards the reading that follows. Both guards
-    catch ``OSError`` and nothing wider — a single pathological line large enough to exhaust memory raises
-    ``MemoryError``, which is not an ``OSError`` and is not caught. ``--max-lines`` bounds how many lines are read,
-    never how long one may be.
+    catch ``OSError``; ``read_rows`` also catches ``MemoryError`` from a single pathological line too long to read,
+    stopping that file's scan and reporting ``limit-exceeded`` instead of crashing the process. ``--max-lines`` bounds
+    how many lines are read; the ``MemoryError`` guard bounds one that is too long to read at all.
     """
     if target.is_file():
         return [target]

@@ -2,7 +2,7 @@
 name: profile
 description: "Session clock-time AND token/cost analyzer. Reads the foundry plugin's timings.jsonl and invocations.jsonl logs (written by task-log.js) for wall-time, plus Claude Code transcripts (~/.claude/projects/**, main-loop + subagent files) for token usage and USD cost, and merges both into one per-session and per-skill report — local-tool vs subagent-spawn vs Skill vs AskUserQuestion idle vs main-loop reasoning residual time, and main-loop vs subagent spend by model tier. Useful for answering \"why did /oss:resolve run 30 minutes?\", \"what did this session cost?\", or \"which skill burns the most tokens?\". Pure log/transcript read — no instrumentation, no skill edits, no LLM calls. TRIGGER when: user asks where wall-clock time OR tokens/cost go during a skill/session, why a skill is slow or expensive, what dominates total runtime or spend, or wants a per-skill rollup over a recent window; phrases: \"where does time go\", \"why so slow\", \"what did this cost\", \"token spend\", \"why so expensive\", \"profile last session\", \"clock breakdown\", \"session timing\", \"which skill burns tokens\". SKIP: per-line Python perf (use foundry:perf-optimizer); known failure or hang (use /foundry:investigate); a real billing statement (prices are public list rates, not effective plan rates)."
 argument-hint: '[--since 24h|7d|30d] [--session-id ID] [--top-n N]'
-allowed-tools: Read, Write, Bash, TaskCreate, TaskUpdate, AskUserQuestion
+allowed-tools: Read, Write, Bash, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
 model: sonnet
 effort: low
 ---
@@ -39,6 +39,13 @@ If $ARGUMENTS empty, default window is 24h.
 
 <workflow>
 
+**Task hygiene**: load and follow the protocol below.
+
+```bash
+# audit-skip: resilience-replication
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
+```
+
 **Task tracking**: TaskCreate two tasks up front — 1 "Run analyzers + render report" (Steps 1–3), 2 "Step 4b: Print report header" (Step 4). Mark each `in_progress` before its first tool call; 1 completed once `report.md` exists, 2 completed right after the header and path are printed, before the executive summary.
 
 ## Step 1: Parse args + create run dir
@@ -49,17 +56,27 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 SINCE="24h"
 SESSION_ID=""
 TOP_N="5"
+next_is=""
+set -f  # disable globbing — a token like --top-n=* must never expand against cwd files
 for tok in $ARGUMENTS; do
   case "$tok" in
     --since=*)      SINCE="${tok#--since=}" ;;
-    --since)        next_is_since=1 ;;
+    --since)        next_is="since" ;;
     --session-id=*) SESSION_ID="${tok#--session-id=}" ;;
+    --session-id)   next_is="session_id" ;;
     --top-n=*)      TOP_N="${tok#--top-n=}" ;;
+    --top-n)        next_is="top_n" ;;
     *)
-      if [ "${next_is_since:-0}" = "1" ]; then SINCE="$tok"; next_is_since=0; fi
+      case "$next_is" in
+        since)      SINCE="$tok" ;;
+        session_id) SESSION_ID="$tok" ;;
+        top_n)      TOP_N="$tok" ;;
+      esac
+      next_is=""
       ;;
   esac
 done
+set +f
 STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
 REPORT_DIR=".reports/profile/$STAMP"
 mkdir -p "$REPORT_DIR"

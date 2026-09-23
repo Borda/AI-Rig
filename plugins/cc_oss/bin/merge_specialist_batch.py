@@ -47,6 +47,14 @@ Exit codes:
     2 — bad/missing required argument (argparse default), or a plan entry's
         ``sha`` fails ``_SHA_RE`` (argument-injection guard: JSON error on
         stdout, nothing cherry-picked)
+
+Security:
+    ``--plan``/``--centrality-file`` are trusted to come from ``oss:resolve`` Step 8
+    (``skills/resolve/modes/action-item-dispatch.md``, the ``PLAN_FILE``/``CENTRALITY_FILE``
+    variables). Both are read-only JSON reads and are not validated here — a future caller passing
+    externally-influenced paths must validate upstream. Contrast with each plan entry's ``sha``,
+    which *is* validated: it reaches ``git cherry-pick`` argv and is checked against ``_SHA_RE``
+    before use, exiting 2 on a mismatch (see :func:`parse_plan`).
 """
 
 from __future__ import annotations

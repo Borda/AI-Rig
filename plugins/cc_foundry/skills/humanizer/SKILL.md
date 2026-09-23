@@ -26,11 +26,12 @@ Detect and remove statistical AI-writing fingerprints from human-facing prose be
 
 - Inline text: work on it directly, no file I/O.
 - File path: `Read` the file.
+- **Destination guard** (before any edit): target must be human-facing prose. JSON/YAML/config, code, a machine-parsed agent envelope (`Return ONLY:`), or an ultra-caveman handover file under `.temp/` → emit `**! BLOCKED — humanizer does not apply to <destination type>**` and make no edit. `check` mode reports without editing, so it is unaffected.
 - No argument: treat the draft already composed earlier this turn as the target.
 
 ## 2. Scan against the checklist
 
-Walk the text once per category below; flag every hit before editing anything (report-first, matches `check` mode output).
+Walk the text once per category below; enumerate every hit internally before editing anything (report-first, matches `check` mode output). The isolated-hit threshold in `<notes>` is the authority on which of those hits reach the report or an edit — an incidental lone match in an otherwise clean passage is scanned but not reported.
 
 **Vocabulary — cut or replace with plain equivalent:**
 

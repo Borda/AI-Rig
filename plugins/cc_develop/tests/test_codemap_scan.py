@@ -87,6 +87,20 @@ def test_derive_modules_from_diff_empty() -> None:
     assert cs.derive_modules_from_diff([], limit=10) == []
 
 
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        pytest.param("pkg.sub.mod", True, id="normal-dotted-module"),
+        pytest.param("--evil", False, id="leading-double-dash"),
+        pytest.param("--top", False, id="option-like-flag"),
+        pytest.param("bad name", False, id="embedded-space"),
+    ],
+)
+def test_is_valid_module(name: str, expected: bool) -> None:
+    """Reject anything a downstream CLI parser could mistake for an option flag."""
+    assert cs.is_valid_module(name) == expected
+
+
 # ---------- main() ----------
 
 

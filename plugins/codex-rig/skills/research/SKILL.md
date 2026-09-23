@@ -69,7 +69,7 @@ Never send full papers, repositories, or all search results to every specialist.
 
 Inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect `working-tree` scope into `<run-directory>/baseline`. Run topic scan separately; record unavailable paths/collection failures as evidence gaps.
 
-**Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack from step 03 includes `<run-directory>/codemap-context.json`, never fresh query.
+**Structural context (optional)**: for `sota`/`code-fidelity` questions naming Python module/symbol, also probe codemap-py once: `python PLUGIN_ROOT/shared/codemap_adapter.py context --category analysis [--target <qname>] --out <run-directory>/codemap-context.json`. Per `../../shared/codemap-contract.md`, absence/incompatibility is non-fatal — continue with codebase mapping above. Persist result once here; any specialist context pack referenced in step 03 includes `<run-directory>/codemap-context.json`, never a fresh query — this artifact must exist before the step-03 dispatch wave fires, so produce it here in step 04 before that wave launches, not before step 03's own pack-construction text runs.
 
 ### 05: Produce `<run-directory>/research.md` with:
 

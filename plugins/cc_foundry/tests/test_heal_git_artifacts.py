@@ -402,6 +402,36 @@ class TestCli:
         monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: "")
         assert _mod.main(["locks", "--pattern", "*.lock"]) == 2
 
+    def test_root_outside_repo_exits_2(self, tmp_path, tmp_path_factory, monkeypatch, capsys):
+        """--root outside the repo is rejected before any sweep runs, and nothing is deleted.
+
+        Reproduces ASEC10: --root pointed at an arbitrary directory, combined with
+        --managed-prefix '*' and --apply, would otherwise recursively rmtree every
+        sufficiently-aged child it finds there.
+        """
+        outside = tmp_path_factory.mktemp("outside")
+        (outside / "lr-1e-4").mkdir()
+        past = time.time() - 5 * 86400
+        os.utime(outside / "lr-1e-4", (past, past))
+        monkeypatch.setattr(_mod, "_git", lambda args, cwd=None: str(tmp_path) if args[0] == "rev-parse" else "")
+
+        rc = _mod.main(
+            [
+                "worktrees",
+                "--root",
+                str(outside),
+                "--managed-prefix",
+                "*",
+                "--min-age-days",
+                "1",
+                "--apply",
+            ]
+        )
+
+        assert rc == 2
+        assert "! SECURITY" in capsys.readouterr().err
+        assert (outside / "lr-1e-4").is_dir(), "must fail closed — nothing removed"
+
     def test_mode_is_required(self):
         with pytest.raises(SystemExit):
             _mod.main([])

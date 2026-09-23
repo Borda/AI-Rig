@@ -15,6 +15,11 @@ import sys
 from pathlib import Path
 
 
+# True when any `/`- or `\`-separated segment of `component` is `..` (path traversal).
+def _has_traversal(component: str) -> bool:
+    return any(part == ".." for part in component.replace("\\", "/").split("/"))
+
+
 def main(argv: list[str]) -> int:
     directory = argv[1] if len(argv) > 1 else ""
     stem = argv[2] if len(argv) > 2 else ""
@@ -23,6 +28,9 @@ def main(argv: list[str]) -> int:
         return 2
     if not stem:
         print("resolve-anti-overwrite-path: missing <stem> argument", file=sys.stderr)
+        return 2
+    if _has_traversal(directory) or _has_traversal(stem):
+        print("resolve-anti-overwrite-path: '..' path traversal not allowed in <dir> or <stem>", file=sys.stderr)
         return 2
 
     # The printed value is joined textually rather than through pathlib: callers capture this

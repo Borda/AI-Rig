@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6
+
+- Fixed 27 audit findings (agent/skill cross-references, doc drift, tool-grant gaps); full test suite 292/292 passing. See `.reports/audit/2026-09-22T22-18-03Z/fix-summary-bridge.md` for full detail.
+
 ## 0.5.5
 
 - Stop Claude Code from registering a bridge MCP server it never uses: the auto-discovered `.mcp.json` used `${PLUGIN_ROOT}`, which Claude Code does not expand, so the server spawned against a literal path and exited ENOENT. Claude Code has no functional need for an MCP client connection to this server -- the Claude-to-Codex direction is CLI-only, via `bin/bridge_call.py` -- so the fix removes the Claude-facing `.mcp.json` entirely rather than repairing it: shipping any file by that literal name only exposed it to Claude Code's unconditional filename-based auto-discovery for no benefit. `.codex-mcp.json` (Codex's own file, `${PLUGIN_ROOT}`, content unchanged from the old `.mcp.json`) is now the plugin's only MCP file, repointed via `.codex-plugin/plugin.json`. `scripts/validate_package.py` rejects a stray `.mcp.json` if one reappears.

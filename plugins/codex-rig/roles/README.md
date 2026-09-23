@@ -88,14 +88,15 @@ Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibrati
 | `sandbox_mode`           | `read-only` or `workspace-write`.                               |
 | `fallback_modes`         | `[shim, built-in-injected, inline]` for every role — see below. |
 
-**Body (5 required `##` sections for most roles, or 6 for Sol roles because selection boundary is explicit):**
+**Body (5 required `##` sections, mechanically enforced by `check_agents()`):**
 
 1. **Trigger and skip boundaries** — when role fires, when it skips, and what it explicitly is not for. Keeps routing between roles unambiguous.
-2. **Selection boundary (Sol roles only)** — explicit-user-selection rule and read-only advisory boundary for `solution-architect` and `security-auditor`.
-3. **Evidence ownership** — what role must read or establish before acting, and what it must record (rejected alternatives, tradeoffs, verified-vs-assumed state) as it works.
-4. **Execution constraints** — house style, conventions, and hard "do not" rules role must respect, plus which other role owns adjacent work it must hand off instead of doing itself.
-5. **Handover contract** — exact ordered content role must return to its parent or caller.
-6. **Confidence contract** — 0–1 confidence score role must report, ≥0.90 bar for completion claim, and instruction to name every material evidence gap rather than omit it.
+2. **Evidence ownership** — what role must read or establish before acting, and what it must record (rejected alternatives, tradeoffs, verified-vs-assumed state) as it works.
+3. **Execution constraints** — house style, conventions, and hard "do not" rules role must respect, plus which other role owns adjacent work it must hand off instead of doing itself.
+4. **Handover contract** — exact ordered content role must return to its parent or caller.
+5. **Confidence contract** — 0–1 confidence score role must report, ≥0.90 bar for completion claim, and instruction to name every material evidence gap rather than omit it.
+
+> **Selection boundary (advisory only — not part of the enforced 5)**: `solution-architect` and `security-auditor` additionally carry an explicit-user-selection rule and read-only advisory boundary in their own `ROLE.md` prose. `check_agents()`'s enforced-sections tuple has exactly 5 entries and does not check for this section; no other Sol role carries or needs it.
 
 A role card that satisfies this contract is portable: any consumer of calibration harness can parse its frontmatter for routing and its required sections for behavior, without reading role-specific prose.
 

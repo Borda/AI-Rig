@@ -53,8 +53,14 @@ def test_context_distinguishes_static_links_from_measured_coverage() -> None:
     ],
 )
 def test_context_allows_source_verification_and_gates_answer_reuse(path: Path) -> None:
-    """Neither stale answers nor an old legacy flag may prohibit required source reads."""
+    """Neither stale answers nor an old legacy flag may prohibit required source reads.
+
+    ``run``/``verify`` no longer duplicate the reuse-gate prose inline — they ``cat`` and reference ``codemap-
+    context.md`` at runtime instead, so their effective text includes its contract.
+    """
     text = path.read_text(encoding="utf-8")
+    if path not in _BASH_BLOCK_FILES and "codemap-context.md" in text:
+        text += _CONTEXT.read_text(encoding="utf-8")
     for phrase in ("only when `query_complete` is absent", "`stale`", "source-body", "valid empty"):
         assert phrase in text
 

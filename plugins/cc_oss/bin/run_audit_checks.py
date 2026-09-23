@@ -29,6 +29,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import itertools
 import os
 import re
 import subprocess
@@ -52,11 +53,16 @@ _EXCLUDE_TAG_FLAGS: tuple[str, ...] = (
 )
 _MAX_VERSION_LINES = 15
 _MAX_SIGNAL_LINES = 10
+_MAX_SCAN_FILE_SIZE = 10 * 1024 * 1024  # 10 MB guard against runaway reads — matches sibling scripts
+_MAX_SCAN_FILES = 20_000  # hard cap on rglob() traversal — matches sibling scripts' file-count discipline
 # Machine-readable line the caller greps for to detect the missing-tool gap and
 # offer an install-and-rerun path — this script stays non-interactive, so the
 # banner is the only signal available to the skill-level AskUserQuestion gate
 # (see templates/audit-checks.md "Check 6 interpretation").
 PIP_AUDIT_MISSING_SIGNAL = "pip-audit-status: not-installed"
+# Module-level, grep-able like PIP_AUDIT_MISSING_SIGNAL — this is a release-readiness audit, so a
+# scan that silently stops early must announce it rather than reporting a false "nothing found".
+SCAN_TRUNCATED_SIGNAL = "scan-truncated: file-count-cap-reached"
 
 
 def _resolve(cmd: str) -> str:
@@ -107,6 +113,11 @@ def _grep_version_files() -> list[str]:
 
     Replicates: ``grep -rn '__version__|^version\\s*=' *.py *.toml ... | grep -v .git | head -15``
 
+    The traversal itself is bounded by :data:`_MAX_SCAN_FILES` per glob — ``rglob`` walks and stats
+    every matching file before any line is read, so an unbounded tree (a large ``node_modules``/
+    ``.venv``/data directory) costs the same whether or not a match is ever found. Hitting the cap
+    prints :data:`SCAN_TRUNCATED_SIGNAL` on stderr rather than silently returning a partial result.
+
     Returns:
         List of ``path:lineno:content`` match strings, capped at 15.
 
@@ -116,10 +127,15 @@ def _grep_version_files() -> list[str]:
     """
     results: list[str] = []
     for glob in ("*.py", "*.toml", "*.cfg", "*.json"):
-        for path in sorted(Path(".").rglob(glob)):
+        paths = sorted(itertools.islice(Path(".").rglob(glob), _MAX_SCAN_FILES))
+        if len(paths) == _MAX_SCAN_FILES:
+            print(SCAN_TRUNCATED_SIGNAL, file=sys.stderr)
+        for path in paths:
             if ".git" in path.parts:
                 continue
             try:
+                if path.stat().st_size > _MAX_SCAN_FILE_SIZE:
+                    continue
                 content = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
@@ -136,6 +152,9 @@ def _grep_code_signals() -> list[str]:
 
     Replicates: ``grep -rn "TODO.*release|FIXME|HACK|XXX" *.py --exclude-dir=tests | head -10``
 
+    Same traversal cap as :func:`_grep_version_files` — see its docstring for why the bound is on
+    the iterator, not on the number of matches read.
+
     Returns:
         List of ``path:lineno:content`` match strings, capped at 10.
 
@@ -144,10 +163,15 @@ def _grep_code_signals() -> list[str]:
         True
     """
     results: list[str] = []
-    for path in sorted(Path(".").rglob("*.py")):
+    paths = sorted(itertools.islice(Path(".").rglob("*.py"), _MAX_SCAN_FILES))
+    if len(paths) == _MAX_SCAN_FILES:
+        print(SCAN_TRUNCATED_SIGNAL, file=sys.stderr)
+    for path in paths:
         if ".git" in path.parts or "tests" in path.parts:
             continue
         try:
+            if path.stat().st_size > _MAX_SCAN_FILE_SIZE:
+                continue
             content = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue

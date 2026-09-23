@@ -199,7 +199,9 @@ fi
 Read `$IMPL_DIR/pr-intelligence.md`, print its contents (Sources block + motivation + action item table) **inline to terminal** — only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
 
 ```bash
-jq -c ". | select(.id == <id>)" "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
+_ID="<id>"
+case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
+jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl"  # timeout: 5000
 ```
 
 ### `[question]` item handling

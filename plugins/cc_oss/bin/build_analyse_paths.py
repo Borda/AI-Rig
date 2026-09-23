@@ -165,6 +165,28 @@ def cache_slug(raw: str) -> str:
     return raw.replace("/", "-")
 
 
+def sanitize_clean_args(raw: str) -> str:
+    """Strip path-unsafe characters from ``CLEAN_ARGS`` before it enters a report/cache path.
+
+    Mirrors :func:`report_slug`'s allowlist — that function and :func:`cache_slug` already sanitize the repository
+    half of the path, but ``clean_args`` (a PR/issue number or thread keyword) went in unsanitized, so a value
+    smuggling ``/`` or ``..`` could escape the intended report/cache subdirectory.
+
+    Args:
+        raw: Raw ``CLEAN_ARGS`` value.
+
+    Returns:
+        *raw* with every character outside ``[A-Za-z0-9-]`` dropped.
+
+    Examples:
+        >>> sanitize_clean_args("42")
+        '42'
+        >>> sanitize_clean_args("../../etc")
+        'etc'
+    """
+    return _NON_SLUG_RE.sub("", raw)
+
+
 def build_report_path(subdir: str, slug: str, clean_args: str, today: str) -> str:
     """Build the analyse report path.
 
@@ -180,8 +202,11 @@ def build_report_path(subdir: str, slug: str, clean_args: str, today: str) -> st
     Examples:
         >>> build_report_path("thread", "owner-repo", "42", "2026-09-11")
         '.reports/analyse/thread/output-analyse-thread-owner-repo-42-2026-09-11.md'
+        >>> build_report_path("thread", "owner-repo", "../../etc", "2026-09-11")
+        '.reports/analyse/thread/output-analyse-thread-owner-repo-etc-2026-09-11.md'
     """
-    return f".reports/analyse/{subdir}/output-analyse-{subdir}-{slug}-{clean_args}-{today}.md"
+    safe_clean_args = sanitize_clean_args(clean_args)
+    return f".reports/analyse/{subdir}/output-analyse-{subdir}-{slug}-{safe_clean_args}-{today}.md"
 
 
 def build_cache_path(slug: str, clean_args: str, today: str) -> str:
@@ -203,10 +228,13 @@ def build_cache_path(slug: str, clean_args: str, today: str) -> str:
         '.cache/gh/owner-repo-42-2026-09-11.json'
         >>> build_cache_path("", "42", "2026-09-11")
         ''
+        >>> build_cache_path("owner-repo", "../../etc", "2026-09-11")
+        '.cache/gh/owner-repo-etc-2026-09-11.json'
     """
     if not slug:
         return ""
-    return f"{_CACHE_DIR}/{slug}-{clean_args}-{today}.json"
+    safe_clean_args = sanitize_clean_args(clean_args)
+    return f"{_CACHE_DIR}/{slug}-{safe_clean_args}-{today}.json"
 
 
 def _run_report(clean_args: str, today: str, subdir: str, timeout: int) -> int:

@@ -2,11 +2,11 @@
   "entries": {
     "0039aaf88da842348e9258a9964cdaeab9677973195917eb78915ea687099935": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:752"
+      "src": "skills/run/SKILL.md:753"
     },
     "00ebe0c1918776969ebf358ef98a4b7ae0f7471bdd4c3e23580245763070f858": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:434"
+      "src": "skills/fortify/SKILL.md:443"
     },
     "0171b684e8e13d02faea6a538df81ea5c66f2c716e35524fa40be82dd9b672ac": {
       "kind": "command",
@@ -14,7 +14,7 @@
     },
     "01fa1c6b5c46fd456152392a264846dfe395a578c0a8a21f7fcdb43f8fccf7b8": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:752"
+      "src": "skills/run/SKILL.md:753"
     },
     "023ced9ee34616fa791dbf1df635a0237af847088ea988644f3ed96ae73fb262": {
       "kind": "command",
@@ -22,15 +22,11 @@
     },
     "0369f1bc038432d54e105e7edf3af9c930891383478e09cbab78d9d064334443": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:153"
-    },
-    "044c3b4273e350ddf6c58bc021603200b82a23a46b64fa9e74828a8b9d3e24fc": {
-      "kind": "block",
-      "src": "skills/setup/SKILL.md:65"
+      "src": "skills/setup/SKILL.md:168"
     },
     "0487f227f932b792ba119aa58790cf852a11dd73965ac1aeb243f277175d5e0c": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "04fa38d31b0ea88beaf6f7fa46c78555ec244b2a76a45c169216fa353d665617": {
       "kind": "block",
@@ -42,15 +38,15 @@
     },
     "05f09d46ddd60edf26726adc953a904a4ef511d05a093b4ca1bf1706296ec9fa": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "06ac3df0f17dd0e9e2558325fa552c66a22f198d6e5856de75d043dd465683fd": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "072e5e04b748db3d78c47d9e5c77ca3e3c502af62d647299aeeeb5d8a3bd4b6b": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:550"
+      "src": "skills/run/SKILL.md:548"
     },
     "07e3a72cb48a9d23855496beb3dc2a6816169d24dcc5085a91b4af3e82236da0": {
       "kind": "command",
@@ -62,11 +58,11 @@
     },
     "08c6248278f199fe5623c839357e137c5a0a6a34697424860132d837667ec4fa": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:163"
+      "src": "skills/fortify/SKILL.md:170"
     },
     "08db20b73e738134e43fc44c90e5eca8efc202636d05c569edea36c486477f11": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "091b921b8886a0e3b6a6c84509e7a6bd911a135086fd80dda0e98909d21f141f": {
       "kind": "command",
@@ -74,19 +70,15 @@
     },
     "09c8e2e99abc51944c726ec044bd2a3b9c308b84563f6d8fc897f93fdc72be49": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:579"
-    },
-    "0a00e5420c80ef0c3310f1f6f3afe89ac5609554321d4d5d9616288a50bc9462": {
-      "kind": "block",
-      "src": "skills/kaggle/SKILL.md:253"
+      "src": "skills/fortify/SKILL.md:598"
     },
     "0a51b2a572231936d57d31836fabfdef51e5e2a3395939148dc014fc30548b5b": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:701"
+      "src": "skills/run/SKILL.md:702"
     },
     "0a5ea6656c669be7d16cbf76b3f21b52cb8189bde76b2d1b9a43b2fb92ef797a": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:171"
+      "src": "skills/judge/SKILL.md:174"
     },
     "0a97ea989b1d3fdccfe78e7d70318e1200bec774cf024713e4185ff0948bf85a": {
       "kind": "block",
@@ -98,7 +90,7 @@
     },
     "0afdf06e5101a5889215a5760a0d2951001b0f49bc689f2b204cae013f7c6106": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:161"
+      "src": "skills/judge/SKILL.md:164"
     },
     "0b047d8d373cfbfe1135edd98e57b19c0db6f96a0779f7a7bbab0789c317393b": {
       "kind": "command",
@@ -106,11 +98,11 @@
     },
     "0cad799103ed9d2554bfc0c24ed2dc4ff043cf64277fe8e1e55a05d4ba0f75d9": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:169"
+      "src": "skills/retro/SKILL.md:170"
     },
     "0d10386e073aec1ca399439c40ddcfe573ee219dc6bd459acbfa9bc27e04582b": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     },
     "0d6308af0e762024368b94158f8eeaa97cf0bdb75153145a0166186740db9901": {
       "kind": "command",
@@ -118,15 +110,15 @@
     },
     "0e38f9a9d832428516be54bd91d95ef8f85e2f34faacba74e06965ae6e35b3c2": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "0e3ff7e7e88e74f274924724a35489e469969e1ae6a021a9ba19426a9ba138de": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:161"
+      "src": "skills/judge/SKILL.md:164"
     },
     "0e41643e7cb00bc57a0a7e9b4b3ed78ec9b7a0397b4f477649d54c33789b3ff3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "0ec33f221f1c50fb906b9d49753c4a961a68226106373f4197716e6b11530f5d": {
       "kind": "command",
@@ -138,27 +130,23 @@
     },
     "0ef2bac7fabbc9723e577b30dc43a569bcc89cce97ccd44a191376db04f1e154": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:161"
+      "src": "skills/judge/SKILL.md:164"
     },
     "0f76f5b14d8d701e87baed206acfdfb6fcf3db7ef54e976be291b1f32c850c13": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "102c70bb008d84d9edb80d9359d80f25fdd870169bdb32c673aeb5dd58cbac00": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:256"
+      "src": "skills/judge/SKILL.md:259"
     },
     "1038a284ee9fa2aa71f013dd5c85ef04edf11f1a5f9fdaf62a3dcff35bb7b535": {
       "kind": "command",
       "src": "skills/plan/SKILL.md:65"
     },
-    "10a33d150f38595a3efe2274183e55ebb7b1d208d7dcfefb32be23d1102b90f4": {
-      "kind": "command",
-      "src": "skills/setup/SKILL.md:76"
-    },
     "10a343e37b3dc23412db1dfeb152aa30b4b14811e3cb43faf199ecb741b3a917": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:185"
+      "src": "skills/judge/SKILL.md:188"
     },
     "10cb4f96bee0a847842905654bbb5136a99ede51c42be65e77cea33d619b4756": {
       "kind": "command",
@@ -166,23 +154,23 @@
     },
     "11ef38dce1eb5dde6bfd9d7803a4eb17d3629f9051179ab356708b74bc2fcc28": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "136605a601b8226b2bf4068ad78b30beb46cb0a8efee607180433d7b2113ff87": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:119"
+      "src": "skills/setup/SKILL.md:134"
     },
     "13c8fde51de6328f8d12c9d978705e6887bd4b316294e4e96e448e003879022a": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:715"
+      "src": "skills/run/SKILL.md:716"
     },
     "14453ebd6418fd5a32e394dc46e21d9acdd93b7650ba209813c77f9f9a864c0f": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:95"
+      "src": "skills/retro/SKILL.md:96"
     },
     "1496093899698969c5db357bd301103113e701f094515e5f77409aa8cbda5c32": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "14a07158d4479f055015a365f145bfa5458ff6aba26d99c75c36f905d8a0a1f5": {
       "kind": "command",
@@ -190,11 +178,11 @@
     },
     "14a8842643a3d8560e6c52ede71e619765735c4517f9dfbeb96b3c1f31b919ab": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     },
     "14e052f1c086ed96b9953b177e837698e75b777e5ef274d93eead04db8a74f82": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "15b8ce34c004adb16b26ea84cb9d9b9e21003778e29b23be0145b6d58c16b12e": {
       "kind": "block",
@@ -214,15 +202,15 @@
     },
     "18174fdeb3e19d5705fec752c2e8c80b7413850b8c2b0b2aae425fba588f7e2f": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:546"
+      "src": "skills/fortify/SKILL.md:565"
     },
     "188cd2b03cc8efe11693b818498589b7c54d6b6f952724fb29269147210821ca": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:338"
+      "src": "skills/fortify/SKILL.md:345"
     },
-    "195502e78707f0242381365c08efd293f5aa07ed704552980ce30a99b58059f7": {
+    "19979226f1be0c335ab9b32a924350f8551befee1f8f534b0601b789b6e9497e": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:65"
+      "src": "skills/retro/SKILL.md:76"
     },
     "1a20b3352e068e6ccd700a948138fa835bd7ab458ccfada6155b379e9cc04b3e": {
       "kind": "block",
@@ -230,7 +218,7 @@
     },
     "1a60cc00ef1aab889c521b645bc1bf7051682301ab3d01ec5adacaef7a533993": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:400"
+      "src": "skills/fortify/SKILL.md:407"
     },
     "1a87b5b17de79bc83b50aa8b9cbcf89b2f9a80acd72a892fda49cef79a462400": {
       "kind": "command",
@@ -238,11 +226,11 @@
     },
     "1bde6cd38dc6e7ad1c50dc2d7cd5a0b143f84eb3b5be84848baf7406d16d9667": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "1bf9e86e6de6177ec64736792842e402fdede4165e254eb4613148b94f203c1d": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "1c536c98d14ac2a050542707fe61227a9aa49bebdf2f08adcc9f51c44e4f83c3": {
       "kind": "command",
@@ -250,23 +238,27 @@
     },
     "1d021eaedb6ec7b26a520adaaa077d5e7796a7ee3ab5824f15acf9da92cbc4f5": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "1d49f6f5f73c24dbd375aeb50032da2e38569f84a2bbe05478cf18abe5eeed03": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:317"
+      "src": "skills/fortify/SKILL.md:324"
     },
     "1d4eb52f102229cc742b72e413ddc1474723b59b143d7a7d18616c0c0132fc2e": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "1de38817cd2780df5d388da4aa37df31b765f8539b5a527190f541f60b10d06e": {
       "kind": "block",
       "src": "skills/sweep/SKILL.md:245"
     },
+    "1e7020242fdb18e9eedd6a19910f173153745d92178738232a7e3e6e09c1e206": {
+      "kind": "block",
+      "src": "skills/kaggle/SKILL.md:253"
+    },
     "1edae6d93a93412ccf6740e18cb2d152cdac324e366a16fdbac6ea5eef1ece22": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:95"
+      "src": "skills/retro/SKILL.md:96"
     },
     "1fa75550faa5f1ac12d88843de6aeb27aac1475c5e138208774dd8c90161035b": {
       "kind": "command",
@@ -274,7 +266,7 @@
     },
     "1fafbb0cd8762df26653877ebe3e69d46ebe90059fe331d441c02bdea5c86597": {
       "kind": "block",
-      "src": "skills/retro/SKILL.md:258"
+      "src": "skills/retro/SKILL.md:259"
     },
     "201ef73a2bef916cbc02a113eded612010bb80891b2216c7e09e6d52f4d7064d": {
       "kind": "command",
@@ -282,19 +274,19 @@
     },
     "20b98337fe6576148cb942e38bf75921a34ef9bfd55b259515f2d07f24ec077f": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "20eba876240ba41871cfe23bd1db6cdf0b77d8dd432561492a94801e078197bc": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "222fd929a066c7cf0b233c5ad3ed030ac1135588536568819609e25ad513b94e": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:701"
+      "src": "skills/run/SKILL.md:702"
     },
     "22b6f78e2892044d41cb09da048c2f019d2a83fab15a09c7b3653162d087961e": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:388"
+      "src": "skills/fortify/SKILL.md:395"
     },
     "23065953b5caf8064b11a4f2604251856d3571997adfb43768b8e1dde6fe25a7": {
       "kind": "command",
@@ -310,7 +302,7 @@
     },
     "23d55fa72bc25f7273e7aea99a63b7774f7b1b89566b5c16d2096e35a054cee2": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:107"
+      "src": "skills/verify/SKILL.md:109"
     },
     "242612864852603409e481db48111eca47f9f16b1941ba6432be43a18108efc1": {
       "kind": "command",
@@ -320,17 +312,21 @@
       "kind": "block",
       "src": "skills/run/SKILL.md:198"
     },
+    "267b65f8c45c4331236928de57487a0863b9bfc22a2a811ee405ef88737b2fc8": {
+      "kind": "command",
+      "src": "skills/topic/SKILL.md:85"
+    },
     "26c6afb6674bfefff69f837bfb862c156fe39497af51b2330960f3095e2a8e06": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:343"
+      "src": "skills/judge/SKILL.md:346"
     },
-    "272f0f196aff80210142d4024ba6b9426fe98713e364e4b51289844783e755f1": {
-      "kind": "block",
-      "src": "skills/verify/SKILL.md:58"
+    "26f6d739ea32a63fe4258e79949600091fd097258d7e1272e18228a04bb1546f": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:213"
     },
     "2800c64db6f03d43c4ca8661b67fda6020ca223de61a00b8df3f9539cd21abbe": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:345"
+      "src": "skills/fortify/SKILL.md:352"
     },
     "281ec076f52e9f3af209d051a36574a1b572bc2c51c7e73edfe3cf0fa2983fbc": {
       "kind": "command",
@@ -346,15 +342,15 @@
     },
     "28e6a4eef2659357bcd8d1ce802abad1ce7d64a3cb92b475127dd38fcf3eff44": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "2976870032b7d9e1ea11ab0a5cfed821d349721cd7499ce2f978f47c1b72ee99": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "2a4e5591bb69330e6aacff2bedc34d467a50aa1971f89d5f10277cacbe71e125": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:253"
     },
     "2a84b444036bb8c640a488675a7a48012168b1a1b0cf4548c9b896342b9faea9": {
       "kind": "command",
@@ -362,11 +358,11 @@
     },
     "2a996ec8bab64724f98751b11daad5d091167e7269e44aebc4c8e7feee22dc30": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:171"
+      "src": "skills/judge/SKILL.md:174"
     },
     "2b246ff2ccb491abf9eca5ed60553d56c3bd141312a348da3bfbb45a5922eedd": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:260"
+      "src": "skills/verify/SKILL.md:282"
     },
     "2bc1ed9c32d1864c25bb171e3413127bd681d76d9c27df808987c6377e675f87": {
       "kind": "block",
@@ -386,11 +382,11 @@
     },
     "2c9e197d5a5cd086fe7d8765a20b4e4081dfe151c6ff6386f095da807af4e943": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:69"
+      "src": "skills/verify/SKILL.md:71"
     },
     "2def23941d9876ff632624b1bd0545928f4167505c128d904f9a718083cc2dca": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:94"
+      "src": "skills/topic/SKILL.md:96"
     },
     "2e3f84c3dfdaa7df668be7d92881f9a72c6f85050933bd9e4dd926f99cb405b5": {
       "kind": "command",
@@ -402,19 +398,15 @@
     },
     "2e9f95443850bde472766ecfad0fc26c8e25fce065b540a08ef71bd8305b7550": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "2f047249ee4b6a550fa6db64aca949284e2d34ae0dd3faf274c8ad25fa168264": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
-    },
-    "2f62e05bd5a10fb3397fcbef531e937c900431b86bdc757d11f64fb3fffbf1c4": {
-      "kind": "block",
-      "src": "skills/topic/SKILL.md:94"
+      "src": "skills/verify/SKILL.md:93"
     },
     "2f738340c3c7f9fed3e3b99e89dbf1fb5eb7904fcc08be6ba93080896b7081c8": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:56"
+      "src": "skills/judge/SKILL.md:55"
     },
     "306103424598289896c4e2cefc7eabbd2b0a7364e28ade54bce54b8258e33a55": {
       "kind": "block",
@@ -422,19 +414,23 @@
     },
     "31f06a2de41c288e64ec9fce55eeeb79690a706e766ab20ec467b870fc31b351": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:400"
+      "src": "skills/fortify/SKILL.md:407"
     },
     "327b72644d48cdd980cf2d49398abed1a5546d82cee24fb3e15e637aee06e758": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:253"
     },
+    "333d23fe9a15bf0322264fa999eec264d38f1797ee116ed8464eeb866e868ac7": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:213"
+    },
     "33510c9ef465fa870373372383fc7f8cf90f66df03d25bd1613176e2c746cae9": {
       "kind": "command",
       "src": "skills/sweep/SKILL.md:92"
     },
-    "341e3e48f78c5cfbe026ecbab9a55021c0cf13e9527043fad47f145f105cbb9c": {
-      "kind": "block",
-      "src": "skills/verify/SKILL.md:134"
+    "33ddac28e91c8405b9abd7452d8689ac53d24127fc606477e9473c96e2a7022e": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:136"
     },
     "34b0b0d414c724996df52121fa8d720a2c00ffd79bf866705f572583b71edd7c": {
       "kind": "block",
@@ -442,11 +438,15 @@
     },
     "34b61ad5fbf1dfb22f3cea5babc8e21b85e037a4da06b4819a0fe2647c82bbc0": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:139"
+      "src": "skills/judge/SKILL.md:140"
+    },
+    "34baa6cee52b7985cc8e1b8808e6a669c771d32e686466f0fda2a7d1fa5a7f40": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:80"
     },
     "34d310bdde6b5e37e19d09fb22b33c00e4200252097c183482fadb380863345f": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:434"
+      "src": "skills/fortify/SKILL.md:443"
     },
     "34f57e4a16ad7278301958dda3204fcb596d5fbdf7296631e6b3698e1f744309": {
       "kind": "block",
@@ -454,11 +454,7 @@
     },
     "34f621b49091df6447f36668c0fe18b9cc647753e54bdf3bd05c66dceb4b1b77": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
-    },
-    "360559fec7676c99dc3006d60794f62b384990c285d8b216babac7067c3aacd9": {
-      "kind": "command",
-      "src": "skills/fortify/SKILL.md:400"
+      "src": "skills/verify/SKILL.md:136"
     },
     "368fff1ca8178e77918471ed592cb0bc87f7089e5588a5b7deaaead7e0c931ff": {
       "kind": "command",
@@ -466,11 +462,11 @@
     },
     "369cc87fd959650821b820c7f317add7195fb37986afcede385e69308a3cf4c2": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "3724b1dc5335810e9882a9148e1668870f7c859d7d75077a3996a6bfb70804d8": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "372e873301689b01b85c47560c40464baed8279203065327ea21424a9d30188c": {
       "kind": "command",
@@ -478,15 +474,15 @@
     },
     "375a2a64c969204700bd72b81ac1cef2f1b78d3f8dbe5aeb51fb1e5a153ee038": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "37e6c69e25d2ce5bb6dd251089d806cd2a14de8b5eaf4d5e3318cb10f0050854": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:171"
+      "src": "skills/fortify/SKILL.md:178"
     },
     "38fbaa72e0e95f7d5f1fa78a747114656b97be62e6455bb914aea92e02f5b38d": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:512"
+      "src": "skills/run/SKILL.md:510"
     },
     "390a720441d37442eafd0e66d9d8c8f71cc822eccf036412c4e411c73512e231": {
       "kind": "command",
@@ -494,11 +490,11 @@
     },
     "397781c0b0aeee3e360a71b280c6ae4f3bec072a35c7d698dfed3806569bf892": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "3af03f43c1c120c73724e266766ebc40d2791b6159499c052d4e5c37ccb2173a": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:752"
+      "src": "skills/run/SKILL.md:753"
     },
     "3b6655b58008bd1e79b5794c1fdf124330bef80277d425bb1904f45c0046d831": {
       "kind": "command",
@@ -506,15 +502,11 @@
     },
     "3be3a6029247fcca3afc8f9fb511537209e83f0481848b8cb75f033c4a200006": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:94"
+      "src": "skills/topic/SKILL.md:96"
     },
     "3cda7e97335475dc6e450baf6a6d12fa92de1a7e37c877afdd52e54cf9ce7d11": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
-    },
-    "3d3c119ff836080eb52cc5f68143deec93b32850ffbef90c45ddb37948b61073": {
-      "kind": "block",
-      "src": "skills/retro/SKILL.md:76"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "3d793d6d809b78000f8d6316bed9fe2f4f3802e8bb2b2e0e65c19bbde9dfc358": {
       "kind": "block",
@@ -526,7 +518,7 @@
     },
     "3dd128ed5fa6b4442cb647426ca8a16d58e70e39bd0c6b32653e242cd266e60f": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "3de2474b85afc5c15018a349aa909db6d2e522116c0afa249e8a20bc25da9b6c": {
       "kind": "command",
@@ -534,19 +526,19 @@
     },
     "3de75e4c62cdd23d7b18d1bf9eeff791fcdc8be6131785ad9fcfc38326c80288": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:434"
+      "src": "skills/fortify/SKILL.md:443"
     },
     "3dee2f1e22d53b264c0da0d22495534d948e6af766e1396f6a0922a564d03166": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "3e1d7ba550c740bf56312a7b427ed5eecd785d1ac24771fda464b58c7f943b9e": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:56"
+      "src": "skills/judge/SKILL.md:55"
     },
     "3f373dc809e5cbfabe372af93bd5984d2ae449a51bc93355ba75d15a59fcf878": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "3fffe489a9bcdebb18c4ce1a7d26754557fd010d935af51777bf647c9e4fc8ae": {
       "kind": "command",
@@ -554,11 +546,19 @@
     },
     "408cbea3c2a0b1cf01082ca400e9352a32fd00d259f3021a358354ccf3fe6ddd": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:498"
+      "src": "skills/run/SKILL.md:496"
     },
     "40b287ccb5d31cc51ccea9c64fed4b42899df7cf48950b6b7235be05577ed16a": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:103"
+    },
+    "42106ba356ba1c6f4f446b6faab16645023fabfc1bc0518f9173eccd99c6c30a": {
+      "kind": "command",
+      "src": "skills/run/modes/phase5-metric.md:33"
+    },
+    "424afb226509b3a0972fbd9518fdf5a4e7a34864ddcf159e60504c1190fb5405": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:67"
     },
     "4279be97a1fa780cd559785c2a89c0fca36b7cc22865baa4d412c86378cfd961": {
       "kind": "command",
@@ -566,7 +566,7 @@
     },
     "43323554bb93a7daf7ed9d240147040381d8a679752981ecbd6aaec255c28130": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:216"
+      "src": "skills/judge/SKILL.md:219"
     },
     "4335b17e2394d57830b0c3ccd574d07ef183517d8854693b6f44f74a5cd4a94d": {
       "kind": "command",
@@ -574,19 +574,23 @@
     },
     "43cd48d807a6a5a3259b79b91992fd772099f1dc3faff3c95e7f1c231d758ca7": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "45856e4a998410d5eadb698bdc57acb0f8ba2af0dab9e1903c0552b5e73cf386": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:534"
+      "src": "skills/run/SKILL.md:532"
+    },
+    "4601419ca648796faabf4a40ddb015e90c5dccb6219faf76de8cee4071294901": {
+      "kind": "block",
+      "src": "skills/plan/SKILL.md:213"
     },
     "461d96979ac9b360dada34d00cdf170292058940746e4a264d95d60596f2a68b": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:463"
+      "src": "skills/fortify/SKILL.md:472"
     },
     "46aa76a8f26528adf5a2e8518a856989fd4da53aa569cabbc03f4dcfa6f8700f": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "471ceab8abc3fc8ee8f11e86128171043846c1a8ae74b4a1d0913f49d5f72a24": {
       "kind": "block",
@@ -598,7 +602,7 @@
     },
     "4792a1a2b4bd71bc4a9304f9b27921ce0784f0be149e6f1ca409e5c3132056f5": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:107"
+      "src": "skills/setup/SKILL.md:122"
     },
     "4882811973ca19e5ff73293b39cfff3eb61b0b94ceef435f1a7d53e676e30545": {
       "kind": "command",
@@ -606,31 +610,31 @@
     },
     "4888ed542dc44c77570014029f5e808a50e5c2cc630f3e308f1351b6b0fb9458": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:263"
+      "src": "skills/topic/SKILL.md:271"
     },
     "4948993f1ee5b469347998e01762390265d56ebf3f615eece2fd9c4eda81101e": {
       "kind": "command",
       "src": "skills/sweep/SKILL.md:55"
     },
-    "49bf3f1a1e618fbfbdb4ca14214f07dfad082ff438f508d6429970000de39d19": {
-      "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
-    },
     "4a80d226540fea4ffbd4a3925afd768e23217f5b9bf8e84ed778b4b1cd46aaa1": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "4ac27c826563b4fa228154a6663d484fca85e9e2844436ac93b188f73b668d67": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "4ae4061f3af07a48f3ebcd511e4ae15dd8eb39b9a628dc686d8bbd287ec4fc0d": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "4b0ea12ad982007c0a41b14e9c0981ac12f3ed63394233877d8d01fde397c176": {
       "kind": "command",
       "src": "skills/fortify/SKILL.md:63"
+    },
+    "4b18c4930910f6da4483bdb50f3e582c88036b0111f387568b29e9f4b300865b": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:253"
     },
     "4b8e1b058b5ebfce24063930ad7a22c3b1cdff719b8bd5d44f638e77e1b0e0ed": {
       "kind": "command",
@@ -642,39 +646,39 @@
     },
     "4bbd8f62e2ca2c9913ebe375e75b710f5f9c889ab974134212ae8bbbe0e1341e": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:177"
     },
     "4c043701bdbe485f96002a1dc50841d347905b77b34451a9a7011a2a1247a9f3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "4c3629804c064ec700642ce5ee9674e1ad62760e38a906739f80aa6946b678e1": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:317"
+      "src": "skills/fortify/SKILL.md:324"
     },
     "4cbb5eb04526c3a4846a7d0241c60e3746ee331f360332adfcdb6a39dca3c1dd": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "4d0a07d55c3b161d8e5975048012fcbba3813d6998d87f6ea420f30b991edf0c": {
       "kind": "block",
-      "src": "skills/retro/SKILL.md:135"
+      "src": "skills/retro/SKILL.md:136"
     },
     "4d388624e88a10a363f6cff5526da74422b41b06ba4040f5da8a26c49173eaba": {
       "kind": "command",
       "src": "skills/run/modes/codex-copilot.md:16"
     },
+    "4d9f7dab7209f8ddda6d47eeb1704bb6d199de62197ef1e37402e6e5f58aabc3": {
+      "kind": "command",
+      "src": "skills/retro/SKILL.md:107"
+    },
     "4e53a3d158f70c90efcf0c74ba27b1836d143cb29155e31165904878cadb9980": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:139"
+      "src": "skills/judge/SKILL.md:140"
     },
     "4e713aafa7c09416a45d065769906db77b9733573fe5936909e8e5b8d7c740c2": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:526"
-    },
-    "4f75efa3a6b5b1e207d3180bd40aa26a5f3cbf760cc2cab3ee3261d7dd9d895c": {
-      "kind": "command",
-      "src": "skills/verify/SKILL.md:260"
+      "src": "skills/run/SKILL.md:524"
     },
     "5033e28753b80ed1f2ee21e24f8284e21d347e2863f1d943260fda9dfdfbe58b": {
       "kind": "command",
@@ -682,7 +686,7 @@
     },
     "50c00111fad3ef22774ca4cc31ed3f9fc3ab0f2c2c021af9b7184f5a8c8fca1b": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:699"
+      "src": "skills/fortify/SKILL.md:730"
     },
     "50fc9409cb7f3b4096c3528d7795dc282f33ca0325f86a20ca1ee1d9f8223a8b": {
       "kind": "command",
@@ -692,17 +696,17 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:103"
     },
+    "517f495d3af72586ea70ff7e849c315afc0f0d605c210d66bed0e67f28e17c9b": {
+      "kind": "command",
+      "src": "skills/topic/SKILL.md:96"
+    },
     "51dd6bbeaac506eb4756fcf9b350fb52c6ba2cf84754174e8829eb23720eb540": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:357"
+      "src": "skills/verify/SKILL.md:391"
     },
     "522087a766de9f246053fb0d3bfe51c49cb366fad4097311fc030b07e64635c9": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
-    },
-    "52235f6b58c9413ab7f044808be53a1d4698f1ca990692fad85096e46e96bca2": {
-      "kind": "block",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/topic/SKILL.md:229"
     },
     "53a5f035c930a339ea6c79ec075643824de595fe232d42e6d339ca36319fa7f1": {
       "kind": "block",
@@ -714,7 +718,7 @@
     },
     "547a79f71b5f20ebfc33f22afd81f5ded74be9ffcd0ca7da59d69c9c8786312f": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "54e0163005c18ae10d760badba8a41f03a75cf461f8122c1616da5f2d3def3c6": {
       "kind": "command",
@@ -726,7 +730,7 @@
     },
     "559dc8844bdf39face1bdf67218eca598945af9b647eced8490057e99d05b9c5": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "5620cb27ade9578076795392be6c96674c88bb8e7cd7e684b20dc25900ec6b72": {
       "kind": "command",
@@ -734,7 +738,7 @@
     },
     "5632115d86d2fce32caa2367078f44cf743046987b39bcb6002bd7c4ac8a1109": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:132"
+      "src": "skills/setup/SKILL.md:147"
     },
     "565cea2e1ad61fe9937acaf7dd76ef99f3593ec45b2c27d1ea0cd8a708952730": {
       "kind": "command",
@@ -742,15 +746,15 @@
     },
     "56862a40eda42afbee7ddbc6b2457b518cda824ece060f46e4b4cf941bee9163": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:119"
+      "src": "skills/setup/SKILL.md:134"
     },
     "57ed34a44db8d0544863ae77adde1d6e4999902d9d9867dbc5b7b33c354c5557": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "5803e8e89a2255dbedef7581ff90c7d70f8fe614b593b31514ac6a49888399cb": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "59a430e066a657cf305fc6278bd568efa0e691784a3d907e8f931d2139ef171a": {
       "kind": "command",
@@ -758,7 +762,7 @@
     },
     "5a0a2f9670d17afc45cd593ba50e7f7a27489ae3752b30eafc8cdb6f7c73afa3": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "5b99c7531cef32132e1cdd8602e2fd97b578d3ada15229e721b9f746e6de8fd0": {
       "kind": "block",
@@ -768,13 +772,21 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:133"
     },
+    "5c8f9fb956409023737e2fe267bb80db8cc482087f60bd70497a79d14f9c38b4": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:65"
+    },
     "5c951eecd7d55952380b919efd1533e2c47de9bb204c96ab9e5f60bab1b1dffc": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:230"
     },
+    "5caa9e5e146edbb55ceb915ccb88c3af5c1e6eea9db5e60d2f68b435373ab1f5": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:264"
+    },
     "5cd60e89160694a56f3a13ae507dedc99b917ce44df23c03722a72ee329edfcc": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "5cf165934208938c67015dc0b7ee7c2f9e722ad071fef0d513abd59a969ae4ac": {
       "kind": "command",
@@ -794,27 +806,35 @@
     },
     "5efb5abaf9bfb8087e6981b4b4b28821fa0b4235d043a9810ff8036f949ab267": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:132"
+      "src": "skills/setup/SKILL.md:147"
     },
     "5f4e2d03abec4e7afd02bfc4131529525f0d3b938a2ce100d8234cbe312c66f3": {
       "kind": "block",
-      "src": "skills/retro/SKILL.md:86"
+      "src": "skills/retro/SKILL.md:87"
     },
     "600375f6168a1fd0f7abd10b407f167bfb043a468916ca09d503ee3d4075b3b3": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "60d190c88c4204009e790f05557b182beb694cc4cae68bcfac53adc59c2aba6d": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "60efa8cabafdff636a8a062acc5cbd7944e700a5146cfea46090f08a2abc4ef6": {
       "kind": "block",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "61366367efd7b66dc5b99cc94c5939682137ca83a915d48f1dd88bc0b779d927": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:216"
+      "src": "skills/judge/SKILL.md:219"
+    },
+    "61e3fabadd5ad3894ea97e3e18b04d1f3a1e6f8fb541f8a55d5f850e027a9380": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:125"
+    },
+    "61e8ae924f21fc9941ae1167e3459592508cb679ca2d601cf1138926419be20b": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:125"
     },
     "62b7096654f4fc489c032483adc6a5304a223f390ec8ff65b229f01d68417f3a": {
       "kind": "command",
@@ -822,15 +842,19 @@
     },
     "62d058c365c2f648a79c47eb9a1aeeeab28bd11ead2ad5190bf9ffd90de598b4": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "62d5d7bd7ecdf4eeb24339822febefb701fb957056315d01286245bc3a415c8f": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "648f123c8b9d68b7bb9189d6b842fa68f55c39c0b25c03835401a525f7568df3": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:151"
+      "src": "skills/judge/SKILL.md:154"
+    },
+    "64b356279dcc6ec07de059c8909ea5400c0b22fb5417384216c46b5d0553c142": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:49"
     },
     "654d2ffdcc181b85d2eb18af109e1cdf84d5ce6fbad7cfbb8041fd4824e7f3a8": {
       "kind": "command",
@@ -838,31 +862,27 @@
     },
     "65b122b3628ae5a18401dcccb1e2fcc7a2f981e711520fbff734e866bc3c738e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "6627c26d167d748d273f1d3d801aad7270de284ce9992419d035c651f90751de": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:103"
     },
-    "668e1b72de33096fdbdf65905b80110b25147b0c222bab67225c30893f20995d": {
-      "kind": "block",
-      "src": "skills/verify/SKILL.md:357"
-    },
     "66be34bad12a70a4d81e0cbcb56250ab884abd238790d7e4dcbf39fd28c8bc8a": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "684848d5f53ccfd3ca531cbe97a6df17ddffaf2d995a3ccac5fba4112e583a16": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:85"
+      "src": "skills/plan/SKILL.md:89"
     },
     "6883b244c3b8e87d16edf04fb7c010d805c9b2c9b1d08ad9dadf716ce25256be": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:107"
+      "src": "skills/setup/SKILL.md:122"
     },
     "68e8e0c193ce7bc0148c391e49acf97e1991b26174da1da1087d3c9e5dc79866": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:62"
+      "src": "skills/judge/SKILL.md:61"
     },
     "68eefdc2e8b269d6b4c963c6e2de7c4cca8b854f0e5d8bc2fac473c09700f094": {
       "kind": "block",
@@ -876,25 +896,29 @@
       "kind": "command",
       "src": "skills/fortify/SKILL.md:125"
     },
+    "6a3d1f1825878925add0cf0922e7c8388c5cc0281fd228b4b27a9bcad8731f85": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:395"
+    },
     "6ae1738749e6d473fd6f92c93b1fa2d4d7c22fb0db58f949b6cfbd8df6d3d85f": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:107"
+      "src": "skills/verify/SKILL.md:109"
     },
     "6b07b85231030900f79fec2fe9850082c71ec6d30e737db0cd82858917341b2d": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "6b0feac1e35cc1343c67db1c074ee40efb57e1ba5150755a8392aa758b9eca30": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "6b23c7af4f3e39a5697023749388087bc85fcb18b80d5af21f583eb448735158": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:161"
+      "src": "skills/judge/SKILL.md:164"
     },
     "6b547875607896a3e69ccb159de0284dbf71e9ba67cadfa6d641f6726bb5654b": {
       "kind": "block",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "6cc58a10caebb07980bfe35227cab3e0e09a01a4b378133f6c94c904570d575f": {
       "kind": "command",
@@ -902,7 +926,7 @@
     },
     "6cd4ed7262471d773cf6f22203b9895b4984296b34036fb61b9e48a199231431": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:343"
+      "src": "skills/judge/SKILL.md:346"
     },
     "6ce3159eb9a8e80c6a8f5fc4efe1fc2613434934603ee12b113088706ab15430": {
       "kind": "command",
@@ -910,7 +934,7 @@
     },
     "6cee2f72dfbcde5b814e648c59017c2fffdca02b9152970b15c3fb5780b7d4a1": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:278"
+      "src": "skills/topic/SKILL.md:288"
     },
     "6d436870eb57dec863aab6668839a616d530c848fba0341aea62347cddd49a8d": {
       "kind": "command",
@@ -918,11 +942,11 @@
     },
     "6e5166ec6dab195ba95a5ab2f2a6b251458b850cf9b193bacb2ed1fa07fa09b9": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     },
     "6ed5a42ad4172f1a920c8c1da541e83c4ecd84831709068476da156a536407d1": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "6f0a44dae878085fb6ec89df5442b5e0a7ed197acfeaeb726f48775d38a71c65": {
       "kind": "command",
@@ -938,35 +962,43 @@
     },
     "70869bb41b6397dce90e61dd1c119dbbef7f3f17890574d2b1408ad492d2af66": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:107"
+      "src": "skills/setup/SKILL.md:122"
     },
     "7120c771493562552a2e94418f0858e8f27cba986955bd23101ae45b5bfb2104": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "72544b603cea3639ab08ee2db68e8226e146f6221be010686361a81dda3b410b": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:550"
+      "src": "skills/run/SKILL.md:548"
     },
     "731c9dfd83d067f986d49fd72f0e4bdf43c8f4462bac3666e408a1e9ee304a2c": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:234"
+      "src": "skills/judge/SKILL.md:237"
     },
     "73c42f6a1d8244a9a1ec406403b8f839230978af222397083d4addd0fd50c7fc": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
-    "73e822472e235fedaac1ed8bd111a99cbc3f4f42f89667156bdec14e22d61f32": {
+    "7463e176da890dab6ddfc235cdece691a0d938b45a747c6fd8223f0bc201c350": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:253"
+    },
+    "7493857b759e3d774789f5b52b087755ccb1391cd447bd8ccf6006efa81e742d": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:85"
+      "src": "skills/setup/SKILL.md:80"
     },
     "74e121cf2407e4871985b9fc5a8475c0dac163b5086b0a73983cd2e7a1331dce": {
       "kind": "command",
       "src": "skills/topic/SKILL.md:85"
     },
+    "750bb7d021c118c238b507bb1e0c8e5618ee17037bf3e4dddbecf4db45de3d95": {
+      "kind": "block",
+      "src": "skills/fortify/SKILL.md:407"
+    },
     "753a407ce878386e86a0e4f535b53cb37de5c3be5c76eeea54dff6e8c3949842": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "757d0a36ac6819f78a37f0b5f0245ee1e9d9d3b990dc276c4ae94af247e88e9b": {
       "kind": "block",
@@ -974,11 +1006,11 @@
     },
     "7582270f5b6c453cb60d07b292ece4189de0faea8f930832cfda94c05552784a": {
       "kind": "block",
-      "src": "skills/kaggle/SKILL.md:268"
+      "src": "skills/kaggle/SKILL.md:270"
     },
     "768d6672b05814b59af9a8bce84e233fc67d6e8528e6b2861b317abb50a86eeb": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:444"
+      "src": "skills/fortify/SKILL.md:453"
     },
     "7728d289b6a7c54ea795d58cedea67a4d0caf6f7edbc9054ca6a252ce8eba570": {
       "kind": "block",
@@ -986,7 +1018,7 @@
     },
     "7786f41da27e7ff2ec44d747997debf16b16048f166e36a1cf979d4acbbf75a1": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "7a58d40414be9a383ac4df28e11833a101bed6ef7e4c972b2a35c9b06db19d04": {
       "kind": "command",
@@ -994,27 +1026,31 @@
     },
     "7a7a9837905027b87e875f37c0cb92b5eddf3d2ff0ccd7e02a03090feeebb269": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:56"
+      "src": "skills/judge/SKILL.md:55"
+    },
+    "7a93da61098bbc50ca8b80aa1837a730f91d33b0a13b42b5cba7e8d34e3deaad": {
+      "kind": "block",
+      "src": "skills/retro/SKILL.md:107"
     },
     "7ac64bcff3a6a78e743377ce1206de413412299c2eb036f0e36771e21e231c3f": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:400"
+      "src": "skills/fortify/SKILL.md:407"
     },
     "7b20bca515802715985f2e97ca10305e77f17c1c145f1d540a6e02b2949b97df": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:86"
+      "src": "skills/retro/SKILL.md:87"
     },
-    "7b9fe5e33c0a4ed323568664a0c1ec50e8d7b8e0b208e736776ca39290a85447": {
+    "7c2214b5fa217614454d4046210547915254ad6b4e3c68dd04e27a25689cee2b": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:76"
+      "src": "skills/verify/SKILL.md:58"
     },
     "7c780eebae16f31c6d032207b5b694cbf10b91de025aabe4a1d7a344e36ee914": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:86"
+      "src": "skills/retro/SKILL.md:87"
     },
     "7d98c0f8014ddd543e060b00bdfe136dd42befd6c141b085c61ce0d484c86924": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "7dd530c4d36da47cd33396718ef1fa1e8c0f7d91ee551d7fdc1c73aa65edb454": {
       "kind": "command",
@@ -1022,15 +1058,15 @@
     },
     "7e27d24d2af329995a448cd9c51f161ebc79de6906ed4f9f8ec990d4c869226e": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "7e61c450982c68afe61e657df859e72fb95fc6b92cfd46a9a91e085b5725b7c0": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:132"
+      "src": "skills/setup/SKILL.md:147"
     },
     "7ebece7d3a09915c3b5e9bdfd5cd3614656ec32e5fbd9fa8f019f7f3949720ef": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "7ecb397277c44e471b2bde8bd6a10d17d9fe37e7c82781c7fc575896cddb0673": {
       "kind": "command",
@@ -1038,7 +1074,7 @@
     },
     "7ef1807c952ce700a72d1f88221109f96734fd441bae6fc5b549a3d110dd9d12": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "7ef36c7a6e323a88b67534d6c953abe03effaab1723b4635aa914931477e795d": {
       "kind": "command",
@@ -1050,19 +1086,23 @@
     },
     "7fca53e1972cac971539384fe5a70aef106fe62cdb2a6b3fa13a00f0105f2b7e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:715"
+      "src": "skills/run/SKILL.md:716"
     },
     "7ff968b921bc84bb8c7e0a76f435e132af29688d40cc80a72f2f9c65e0b8444c": {
       "kind": "command",
       "src": "skills/setup/SKILL.md:49"
     },
+    "8027b3aed70802d30fbea572e2ff42b1c7ceac1831045932c0118971eb5608dd": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:49"
+    },
     "808aa4381aea4c35c95c787512d3581f8a0e8afba507b1cabf2a586a7ddd432b": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:65"
+      "src": "skills/setup/SKILL.md:67"
     },
     "80eea54504f27ac6f0e468b37faccf33268b7a4bda0c383c17f13f3860fcba31": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:62"
+      "src": "skills/judge/SKILL.md:61"
     },
     "8125f7c48da364e18166551f237d9779c7290acc4697afae879b89c3cebe4200": {
       "kind": "command",
@@ -1078,7 +1118,11 @@
     },
     "82a35e64f3bf13f2cbb0453086b2b70ab8d5499a884148b4f54966f087dde14a": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:216"
+      "src": "skills/judge/SKILL.md:219"
+    },
+    "83a63012234bd1d59107ed9973efaf283be9cf4deda1aca7a7173ee7f5dd5f5f": {
+      "kind": "command",
+      "src": "skills/run/SKILL.md:586"
     },
     "84328091100390c81255274c8743b3d097537050029f54db10e44dc5cf9ce82f": {
       "kind": "command",
@@ -1100,13 +1144,17 @@
       "kind": "block",
       "src": "agents/scientist.md:91"
     },
+    "85e67bf599122d705bf8595a1b5cd17c6e1cf019e4d3d0da452a95fd433cd0e0": {
+      "kind": "block",
+      "src": "skills/verify/SKILL.md:253"
+    },
     "8688655de444578a9061c03486669cc7af0c6b6428b386ffccf4d8154e6afd7a": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:327"
+      "src": "skills/fortify/SKILL.md:334"
     },
     "868f8bea9dfcc287c5bc8f8f098f7e5d2f689fa1595b922ca7bb3a16ae361c10": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "86e3f858f11521622880c061b33988772916b3c6cc57e0ca24870e6ffa6c318a": {
       "kind": "command",
@@ -1114,39 +1162,43 @@
     },
     "8756a54c4612569d5e39f429b2a129046b41f890c475372c91840dff15ba2f2c": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
-    },
-    "8851b782892bb2f495244393fba798fb6384060bab5aa1701d7d5c75ad120dd6": {
-      "kind": "block",
-      "src": "skills/verify/SKILL.md:260"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "88e75c78cc25b34fccbf90bf5b26b85443fb8bd66333902f378ebaf1ac7d84de": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:412"
+      "src": "skills/fortify/SKILL.md:421"
     },
     "895ca80f9889136d6eb7daec41839d1a3fdb771c50dfa0b1d30ef0f9221ab926": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:363"
+      "src": "skills/fortify/SKILL.md:370"
     },
     "8a1384d6f4dbdbcdf50701dcb9cd3dd029816c6ecc6536541c57979b3ff523e1": {
       "kind": "command",
       "src": "skills/_shared/codemap-context.md:7"
     },
+    "8a22f091d408b5f9003d31a3baa135c52369517a8f14ed7b57c4125edd6b7ece": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:407"
+    },
     "8a6280af74fcceab351ac3e03244740f456a4e091a561dfe393ca7ba03f54db7": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "8b01e6848cca2464be91ec857d079f27adc4cffd34620958102b01145d67092e": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "8b92cfa3ae8e242544a5f2e62b7487e3adcc6d4abf5c84e014a73736772372b2": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "8bc9df2f758bea03b1896fea736272dda6404c82baa3d2eac911d45a6e078445": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:151"
+      "src": "skills/judge/SKILL.md:154"
+    },
+    "8bfc76c28aa2d22cc6053c2fc95a2065046fe8a469276d104a3d5651fc5d34ab": {
+      "kind": "command",
+      "src": "skills/run/SKILL.md:586"
     },
     "8c3b77e2c04e6c0185452a2a4abeee50b7e100fffaa081275dbffffe76fefa90": {
       "kind": "block",
@@ -1154,15 +1206,19 @@
     },
     "8ce5674a86865b039cb4ef7456b1c73040624ff19ab1d792f56c2820a94b23b4": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "8d82dd7bcf5cafaf3bda361cba300e7f91ea6b97469ac29c02f06531959fd6e7": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
+    },
+    "8de54cea4e0e46f98dbb84a47d5dd0347f8360afa8b4104441fe37db5fa03ba1": {
+      "kind": "block",
+      "src": "skills/fortify/SKILL.md:395"
     },
     "8ecb3f335c8858e7239fc81aaab311da29257bb4db74c1d131fdaf061e803cf8": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "8f16b33b89496b335ad694b45e85ad0e6942e8398b4de437d3362d3802e514f0": {
       "kind": "command",
@@ -1174,23 +1230,23 @@
     },
     "911e7a2b2f2c81d06464d5df0051007e82a01ad1167c6219d14f172e515a489d": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:107"
+      "src": "skills/setup/SKILL.md:122"
     },
     "914a4bae983d9a49d31b0c398c466a340568d7b3cb7fc58cd0023d8f5d22bcaf": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "9270551c24a4c23cb36ba8aad0580e3e1aed8a3b1cde371299195a0bf2c449eb": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:139"
+      "src": "skills/judge/SKILL.md:140"
     },
     "93050d2d7bfc8fd3891344b69145a81b6bb436be7503e6c293dd14415aaac173": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "93300b3093730bd485568096fc3d8d3b33321a9f19715fb83bd5507116bdced0": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "9390632e1ab995bd50a197a8a7df78bb5d7b4e2a1d4c677637c797cb7af38372": {
       "kind": "command",
@@ -1199,6 +1255,10 @@
     "93a0eea5f2ac56c56385c99b90e4414565d45c630211fc0b8a5753dc760de36b": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:230"
+    },
+    "93c81d2318f645e54cda7888121473f2556f28988bd2343297ebf59012a863d2": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:125"
     },
     "943bc8f9ba32c8d2597aca08cab57adaa6ea29a7ef9e9a4b3cd0304d80b37fd1": {
       "kind": "command",
@@ -1210,11 +1270,11 @@
     },
     "95327c7676d2a5c3fc91ec03d009814adaaea2d0214c4353113c2578a2bb0b7b": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:278"
+      "src": "skills/topic/SKILL.md:288"
     },
     "964491701a94c174a17ea3a39c64b934b91e03a08464ed521558ddbbd1478e11": {
       "kind": "block",
-      "src": "skills/verify/SKILL.md:107"
+      "src": "skills/verify/SKILL.md:109"
     },
     "968537aebc4ed0ced3192783f9a2590281c1329febafbe3026cf1a0f813ee202": {
       "kind": "command",
@@ -1224,21 +1284,37 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:79"
     },
+    "971a9d9e82467a0c39d2d0f35b318e572dd58ae93235a815bdec5331d02ec10e": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:58"
+    },
     "976fc84f812fe976e77bd8d5467fb514bdc74289ec1cadc552571730b5d1a0a6": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:343"
+      "src": "skills/judge/SKILL.md:346"
+    },
+    "97720e576af09478508cd8e064ff9780f0c9127bf63742ad60c69e2dd65acc8d": {
+      "kind": "block",
+      "src": "skills/retro/SKILL.md:76"
+    },
+    "97f06aacac70d326cae698cbb40fe5a1f7d71ceffc2d58bc8abd42f85d153882": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:67"
     },
     "98f86bde29b53e04acc92838592a58a0cdcced171a3d9cbdd5a6ef11d795f134": {
       "kind": "command",
       "src": "skills/run/SKILL.md:369"
     },
-    "99914f0f5b6444115f2dc4d97613b07c3383a7caa1300f3d9b0cb5307482ccbd": {
-      "kind": "command",
-      "src": "skills/run/SKILL.md:586"
-    },
     "99d6e2025f737c5fc95031139f116e7314af692318b4c955ea8dfbd7b9f3559f": {
       "kind": "command",
       "src": "skills/plan/SKILL.md:65"
+    },
+    "9a7a472c994e618cbef24677a0305c7ad4ea1daf6cd2e74c6c44fcf948268d26": {
+      "kind": "block",
+      "src": "skills/verify/SKILL.md:264"
+    },
+    "9ac10605d8e30b7f2668df507ff3a1273090b7d53b6f559c0a668f9b47ea9f94": {
+      "kind": "block",
+      "src": "skills/fortify/SKILL.md:125"
     },
     "9ac9c393cbcd666a4058b2d8800566c8c564259dc68a34879d00cef57379c7c5": {
       "kind": "command",
@@ -1250,7 +1326,7 @@
     },
     "9bb4301a07b09c21b963fe840a42ddb7cc0c0ed46eda6164171fba886f816759": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "9c4998c0ee7e624933495f77a8a79e6b492320f97e508b5f33bbb37ed1ea8a1e": {
       "kind": "command",
@@ -1258,7 +1334,11 @@
     },
     "9cecbae6938b4088ac766feff139a1d2e9a0aa52cd4fa2b0817ffbe878c0a1b5": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:85"
+      "src": "skills/plan/SKILL.md:89"
+    },
+    "9d2a09396b12d0523d501f4853358a1aa74c47885b872f5baeb7e23d2f246146": {
+      "kind": "command",
+      "src": "skills/fortify/SKILL.md:125"
     },
     "9d76e252b8f36047f33df9fe7ee941fa97fdfd83e823c0f161413c78401819d3": {
       "kind": "command",
@@ -1268,9 +1348,9 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:147"
     },
-    "9f337bff8f189b44a4a2356792e8da187face9a1cbe0e27fd696e110c4f99fea": {
-      "kind": "command",
-      "src": "skills/run/SKILL.md:586"
+    "9f73b3411b5f0fa7b0528c6c3be785b0d69544b393f35928a524a4cd40d2a7d5": {
+      "kind": "block",
+      "src": "skills/topic/SKILL.md:85"
     },
     "9f84440dd49ecdea65442477258dcd986e92e906da6e0e367584f87da9f1d742": {
       "kind": "command",
@@ -1278,11 +1358,11 @@
     },
     "9f99e763768701a67b4ebe59d3b4ecddd50fb11a40a527126d070c5f4125a2c8": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "9fb314e2e130aba4a9cf513dcee2263b8f8e488380e975ad42b8b79a851b80a8": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:498"
+      "src": "skills/run/SKILL.md:496"
     },
     "9fb5876ca4590c81bf8fd3d7ef71a713e32845d73335dd53c191c5fa7e60ffaf": {
       "kind": "block",
@@ -1290,7 +1370,7 @@
     },
     "9fc542853ef4ff179c75a7bc300f3f15fd30e6be4c374dce4c819b8ece3befef": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "9fe04943819b74fd16eef31be982dfcfa988026c7b5f7769b01074d967e219c7": {
       "kind": "command",
@@ -1298,7 +1378,11 @@
     },
     "9fffe03bd706ab2fa2d168f473a4cf385aa5315ebe724e6ce1215727e388dcdb": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
+    },
+    "a09e936ccd6c60bc25de7a2892a84aa25ace2238b78318390d645204642f23bc": {
+      "kind": "command",
+      "src": "skills/run/SKILL.md:586"
     },
     "a0befd5910573cb46f7feea699bcf638e0a9317837a7e241a615a9e2ec680da3": {
       "kind": "command",
@@ -1314,7 +1398,7 @@
     },
     "a2c4d874d80281f213171bebf47e9e2156b49af6086a189f8ba065f35e5ef3af": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:151"
+      "src": "skills/judge/SKILL.md:154"
     },
     "a3a9155da5e112551e8898c5ca87b8d48b251063bd2ef8d86e46d4b2744091b0": {
       "kind": "command",
@@ -1322,7 +1406,7 @@
     },
     "a4bc1909046e164c6a860a44739b229d1b354ea7a56eac0fa05dcdb3a2caa528": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "a4c3ed04a95a3da14a9d235c83d868bed7c0f45cf7f3faa751ee8f50598d2211": {
       "kind": "command",
@@ -1334,7 +1418,7 @@
     },
     "a5b3b5c6532436e0df9a8300dce9eeed47dcd68c77c58618229eb297566eda5b": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:444"
+      "src": "skills/fortify/SKILL.md:453"
     },
     "a621c28cd74e045f3d851852595bc32af35a67f8a69b1c8d8e29e2851504a1a9": {
       "kind": "command",
@@ -1342,19 +1426,15 @@
     },
     "a685df4070014111a8874a94fcf62672e8358e03d625be09dbc05b6fc81ca1e3": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "a68f208d0681a45f2c0de405f05b942e8cd01862245e235439e84acc6b4e9742": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:256"
-    },
-    "a6c7cab9a84944aeb82210593cae672e18a75bd1d074063b79d130f1aaa27f6f": {
-      "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/judge/SKILL.md:259"
     },
     "a6d7c6a5577f9f803aca05cfbcdbc3370d21b6a14bee1aca3c3f920601dc2f13": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "a720df320f5e8c5c804ca237f11c4650faa62bebf43b7ac545f8aef7be519135": {
       "kind": "command",
@@ -1362,11 +1442,11 @@
     },
     "a72f44595640a29a60f87efbf665bde5604ad5ed5c1546d6c849c7683d846409": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "a774426373a90079202b9331568a318bb98f30a1750fdce483738d45079e146f": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "a7a75c0ad8cf72dad0649ab065437d6f92df3dd2daa4279f876e1d78d2197105": {
       "kind": "command",
@@ -1374,11 +1454,15 @@
     },
     "a7b12418dd51ac190a9248d91d6b7665eefaa660227aeb22c39c61f867c9a6c9": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:216"
+      "src": "skills/judge/SKILL.md:219"
     },
     "a7c00584c892218e057038c02051a20b471fb2cab175e5c2f3e65597cbf9359c": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:147"
+      "src": "skills/setup/SKILL.md:162"
+    },
+    "a8039079c44edef60d135b27535e346e6b67b6f51b9404854777928c823f16c3": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:89"
     },
     "a8774f28c53fda93d58f5569d640a74b93af31d518898c236cc0903eab8c3a1b": {
       "kind": "command",
@@ -1386,19 +1470,19 @@
     },
     "a8ce0445fb4b55fb97512223051390b11aa77ced0f8faa329632e57dd243b93a": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "a9b6417c77695c7c381e33ff0931d0ca5af2488b9b72ead127e00cee376af232": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:230"
     },
-    "a9d55dd0e046602321b39924ec41864c67aea84fe7337dc15003b9437265fe35": {
-      "kind": "block",
-      "src": "skills/plan/SKILL.md:65"
+    "a9ca42f7ffe4b99ad9a052425dd2ca0a77c489560fe3cddc0b0117e0b0ae800e": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:282"
     },
-    "ab3dc9fc4a1b11a0c7354369cec3fd0c6aa11ff1a0cd54d232c34ff2c1948417": {
-      "kind": "block",
-      "src": "skills/fortify/SKILL.md:125"
+    "ac1e3458d0e5692a17d358eb19b9a32d3694ec4587ad05dcd728bf191fa40fbc": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:213"
     },
     "ac3970035101b3056c2c1fd3dee6e2e7d1e61d3297787e10802a78d43f3b5b26": {
       "kind": "command",
@@ -1410,11 +1494,11 @@
     },
     "acd6b6ce36cb616fae1b99271c6e3076e8a25064cea90eb3dcefc85bde75d32f": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "ace52a259412130be03b03d51a333a68336103d16334e8e2dcfbc1743220cacc": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "ace8faed1f919c2825a9f99a37bf61fbebc60dbcae28cea80339fd869a684577": {
       "kind": "block",
@@ -1426,19 +1510,19 @@
     },
     "ada0be86961e5dd158ec718d2cceeb05afb30abf959cbb631290b05dba509415": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:263"
+      "src": "skills/topic/SKILL.md:271"
+    },
+    "ae078c6d6875c29af0081adb2ded751ce4b13c7d2ac9b04418f73c53571c76d8": {
+      "kind": "command",
+      "src": "skills/setup/SKILL.md:67"
     },
     "aebdf5a3ea8b746b3d6c16cdd15d890de793d2eb0eabd91c46228b7af97ce44e": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:740"
+      "src": "skills/run/SKILL.md:741"
     },
     "aeebaae716c46ec563d0ca174aeedcf7344717901710113fa8fe451fcee4100d": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
-    },
-    "af7602674391128117f944e3e71dfce13c3a82ac9aaac06b5e29dbc5bd475406": {
-      "kind": "block",
-      "src": "skills/fortify/SKILL.md:400"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "b00a36d15228559f537856337009a11fde76ad8e4aa34d9ea6964e4028ac089c": {
       "kind": "command",
@@ -1450,15 +1534,15 @@
     },
     "b068f4eef05e7e5f6e63e8a6a2d7c075b9fba034685e66cfd69623e92cd367b3": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:317"
+      "src": "skills/fortify/SKILL.md:324"
     },
     "b0ea1ca291d84043dd7f7aac35529087cba8a97ce79ec51b85f069e7ec44a3ed": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:343"
+      "src": "skills/judge/SKILL.md:346"
     },
     "b13064c2443220b231d7153e7590a48cf5fb8761ef689e846bfe322e369672f3": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "b2091379d2aa2d88b6420cafd5011a80d3b2415cc6d383265911e2ca174f4547": {
       "kind": "command",
@@ -1466,7 +1550,7 @@
     },
     "b2e69819245d6fce5b4a72f80233644ba5807316646f2b4c9a31abda363041e6": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:463"
+      "src": "skills/fortify/SKILL.md:472"
     },
     "b2ec1a6bfcf6372b22fa56bd93c322835926d4f98a477a4c3b32c7682d01039a": {
       "kind": "command",
@@ -1474,7 +1558,11 @@
     },
     "b3442da305dc22c772c7c5adf1925b271fb999d45dfd66649ab98e36a0652dec": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:107"
+      "src": "skills/verify/SKILL.md:109"
+    },
+    "b45e61a5be142eb5481fe197d6385fa0c8baced5ffc3c8bfc4584e86ea1f9cd0": {
+      "kind": "command",
+      "src": "skills/retro/SKILL.md:107"
     },
     "b4bdc848109722a383d0a972c6eb859f2abd29565b8c4cc7199e7c9eb708f1b7": {
       "kind": "command",
@@ -1482,11 +1570,11 @@
     },
     "b4f90134355801c0ccfaa6a554628c0aa1fde83e0df4f31baeb5127796bf163f": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:185"
+      "src": "skills/judge/SKILL.md:188"
     },
     "b669896c3e58d16f709e012f4120859407e8bd5456ab7f5afba28ab041977dff": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:107"
+      "src": "skills/verify/SKILL.md:109"
     },
     "b80df2ba032901f2719415625cefa4a4a224fa3cdaeff4f8c5663f3bfaec4fe6": {
       "kind": "command",
@@ -1494,15 +1582,19 @@
     },
     "b962b9dd9b371fc14bb3bbc22646a85d3845961cfee5b2a94d2610ac01090df1": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     },
     "b9df9eda6dde2ec7a9b7bb10590c2285ed87e373d8b9985dcce678976b1c30bf": {
       "kind": "block",
-      "src": "skills/retro/SKILL.md:169"
+      "src": "skills/retro/SKILL.md:170"
     },
     "ba47015af0f05b402be09bf4ec9122eb1eb5bd15ef1996ab21d2d3680adc087b": {
       "kind": "block",
       "src": "skills/run/modes/codex-copilot.md:16"
+    },
+    "baac5559fa1e45b8d79201548073517adb098f81e5c5a5029dbca3b0df91fa3a": {
+      "kind": "command",
+      "src": "skills/verify/SKILL.md:253"
     },
     "bae7b72df00039c9802070e8aed8c4f245b9b521bdd44bb6c806951d6d6e9ad4": {
       "kind": "command",
@@ -1510,19 +1602,19 @@
     },
     "bb2d695c7440fb3b55fa122c3c3bb1655e3795285d3d8cafea435aad2d8e7d15": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:216"
+      "src": "skills/judge/SKILL.md:219"
     },
     "bb3f29bc87b2617832608e0da6d23f846f1ffeabf7589df171ca893ed607f887": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "bb8bdfe1d1f81a424c0aeeeeb1d063ca182e43f196cb8011c20e8c6bb76facdd": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "bbdff66572daa8dea2a80599777da69e5e001518d61db7f9dc757b0ebbe6ad51": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:463"
+      "src": "skills/fortify/SKILL.md:472"
     },
     "bc4fa4c2c078761ed491f3bb4216166a2e19024d0ed4b9d04027370f95d070c7": {
       "kind": "command",
@@ -1530,7 +1622,7 @@
     },
     "bc6a7ce687d0fab2ee773c7f25737e490d534f9377244325fe81282a3d247dda": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/fortify/SKILL.md:125"
     },
     "bd2f385d18e31ef8a19d28a46cc8b6350d1702b27e4cd535150a2c7c2fc87c0f": {
       "kind": "command",
@@ -1542,7 +1634,7 @@
     },
     "bdb36f7776a156b0c5931e81b4b1fcd8b8394b2b9802404358349e04b10d2c57": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:135"
+      "src": "skills/retro/SKILL.md:136"
     },
     "bfd0dcf26c8e59a0df97a47303e83a982490db948b5b35deb8288a3c0b1aee6d": {
       "kind": "command",
@@ -1550,19 +1642,15 @@
     },
     "c0e48e69b2f478f2472feb6b6702c8bdbf21d94640c165b4f5a4e68be2ab8895": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "c145de27c8225b898cd0e66f773f046031357a56ca302837cd62a159dc9febd3": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:150"
-    },
-    "c2edaec188002ce5dcd42a8732a7428be9d7d7a9f01435b777af2e9219051175": {
-      "kind": "block",
-      "src": "skills/setup/SKILL.md:49"
+      "src": "skills/topic/SKILL.md:157"
     },
     "c34bff06dcc54de88a8386d57f888f2142a994a319c54c4716a91e40d6adffac": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:153"
+      "src": "skills/setup/SKILL.md:168"
     },
     "c3610776a7a9229d276a68759da72c8fbf13e5aaa7baea0b24766eacfcf752e0": {
       "kind": "command",
@@ -1570,7 +1658,7 @@
     },
     "c3acfdf92cdd0b263d39850d5c17d6ef270fe75c0009b6271afefbc12fb404f1": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:135"
+      "src": "skills/retro/SKILL.md:136"
     },
     "c423d4d4190c3fdafbb667812949a455461786c908dedcbdb3d70e5b236e8b71": {
       "kind": "command",
@@ -1582,7 +1670,7 @@
     },
     "c48491e65b7c42e70236b093d3e81fcd5a48a2194cf3127558849d1f4fc0d8c9": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "c491f768c9f2a5ff8c40e1ff75ac03bd3dff4369b32225a1ae9b038fb10f0b1e": {
       "kind": "command",
@@ -1590,7 +1678,7 @@
     },
     "c49a8600988593b0893253245e13067c2d6ccf644f3282559cc368245bf9cc50": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "c508dfb48e4d6b4c716f82c7ee601118d85573e046488c1e7a9063a33c83196d": {
       "kind": "command",
@@ -1598,7 +1686,7 @@
     },
     "c539a78a3e254565f09afd9ff78fe132831c14e97a9a4ddacba6fdb0f2f4fadd": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:169"
+      "src": "skills/retro/SKILL.md:170"
     },
     "c53cdd0eaa667e77945e57cf0475d1a6d768e1f37d138864dabbe6cfada86868": {
       "kind": "block",
@@ -1606,7 +1694,7 @@
     },
     "c56225e4cf55b6bfc01a5bda46abc06238143d0452986698f1bbd6dbb540550e": {
       "kind": "command",
-      "src": "skills/setup/SKILL.md:107"
+      "src": "skills/setup/SKILL.md:122"
     },
     "c61b6cb038dbb8c29a288638642df4e212379590060b7f6faa29e48e9e034896": {
       "kind": "command",
@@ -1626,7 +1714,7 @@
     },
     "c7464fa8bcd15f65643e7b72d9941aa1a7706db7562f1d1dc8c4a4698b631ab0": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "c7d1c8fe7b856619cdd3dcd71700292fba11ad1af17255abc610063d9585a21e": {
       "kind": "command",
@@ -1634,7 +1722,7 @@
     },
     "c820f414ac1b9231b74a38cc0822d2bf1aeac7591c96851c0da88daa778c01aa": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "c853a5f1390972a27d9a10adefd7584bc699fae14a653e1020f613d961acd7db": {
       "kind": "command",
@@ -1644,13 +1732,17 @@
       "kind": "command",
       "src": "skills/run/SKILL.md:306"
     },
+    "c99eb0ee84753ee57649f26c2b018a5b46924a0ef918cb61efb8399cf87adabe": {
+      "kind": "command",
+      "src": "skills/run/modes/phase5-metric.md:33"
+    },
     "ca61fae92bd906a565a5f327b6b053fc134f91fbd50c978fb68400e96055d1c6": {
       "kind": "command",
       "src": "skills/_shared/codemap-context.md:7"
     },
     "cac83508389ed7c052a5d94288cf76f896b496da1b98bb974a9b3c4f41060ea1": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:152"
+      "src": "skills/verify/SKILL.md:155"
     },
     "cb1724c41c727665cf8a0040a637357cd4e57a61858b3aa3c9d7dcccd13930b3": {
       "kind": "command",
@@ -1658,19 +1750,19 @@
     },
     "cb7e2391991c95b6b87dca1b9ec5259e8a553baa4abf5bb32bba2cdb6694b933": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:512"
+      "src": "skills/run/SKILL.md:510"
     },
     "cc812be002a676eaf5215f0c7407276a90eb85b4bb4105b183354eebd2c9514d": {
       "kind": "block",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:177"
     },
     "cd2e3e543c2c19462ba06bcbb077477e1f024c8c3c7ce91b639a2a41dcd9ef23": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:457"
+      "src": "skills/fortify/SKILL.md:466"
     },
     "cd5b1e472f3242786c1ac63eeeeb258d2a082b28aab3253aea71e840f34ec035": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:163"
+      "src": "skills/fortify/SKILL.md:170"
     },
     "cdb2df94089c310da601c28f5117b5d092fd3737d9bd21caf13a1c53c65d0338": {
       "kind": "command",
@@ -1680,9 +1772,17 @@
       "kind": "command",
       "src": "skills/retro/SKILL.md:24"
     },
+    "cf3f7ddea6660cc0f48c7e2f43fc6feff40d8363cdd0987dccfe797c1f162dc1": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:65"
+    },
     "d015b78616264abf202b49973d6582508036f772a4ab76258e1cf5f208571942": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
+    },
+    "d043d6aa43f0b59e0834f329f128ebe23006251e44e7586a4856ce687dab2140": {
+      "kind": "command",
+      "src": "skills/topic/SKILL.md:85"
     },
     "d064a838d71c1bb9f384bb9332b3c92c631fa7e8f39c053f2c7143aa2944945c": {
       "kind": "block",
@@ -1690,19 +1790,15 @@
     },
     "d096902c3045591bb29d6170c156ea8c588acebace2a4a144f8fd8dc0f8993d0": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "d0ceee12fba9515671ac3581e2fc6aafe6142507c2c182c77eb5a7c77766e416": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "d116b072f5a78cb57acb1a514f07fc5200501e05a8735eccfd7ecb18bdc6a157": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:151"
-    },
-    "d133f1bf92bc816a4bc3fdbf95e9db8ec736561d402d39088468a86728ce76de": {
-      "kind": "command",
-      "src": "skills/fortify/SKILL.md:388"
+      "src": "skills/judge/SKILL.md:154"
     },
     "d170410e1ea27359a0a00e93553d118ad0de334821a97e71ab03413a59827bc0": {
       "kind": "command",
@@ -1710,15 +1806,15 @@
     },
     "d1803414aeb407170c316bdb277fdb3ea72cf4e6affc89bc9a7cab448d68af86": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
-    "d272fd9e09f55bf09eb2d037765d6c8353c4151c71f6f0f74be44a7e3fab8de0": {
+    "d30e385e627dba191647da8e4288554f8592842689e0e37dabc3e40f77adb2e2": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:586"
+      "src": "skills/verify/SKILL.md:136"
     },
     "d348c7dfcb1bff1d389a0846e7756f455c2b08bd694b37e2cac5bd79261bacc1": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:241"
+      "src": "skills/judge/SKILL.md:244"
     },
     "d36086dff4a06ce6a139c324d490043a6b066f27c343d993bea69f5fa88bf3c8": {
       "kind": "command",
@@ -1742,7 +1838,7 @@
     },
     "d56245a11a35637478aad0558e52b3c2cc83b91de9e874cf45c470d3b0575321": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:171"
+      "src": "skills/judge/SKILL.md:174"
     },
     "d63203d8b0f94a1069ceaa384264c1fb5dd8da1cc52fb5e9f618b02eb05fe4c3": {
       "kind": "block",
@@ -1754,11 +1850,11 @@
     },
     "d698be1e43622f846ff9bd2b1323070935fe9a709afea8f025961112bd178bf1": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:119"
+      "src": "skills/setup/SKILL.md:134"
     },
     "d6b81248888cd96498a069245e1bd5ccda30b8ccae382c808f259de8b6130dfe": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "d725d5ac2cc3c8ed73f3e86e09485797740e5a219e8aa6eb81cc969d6bb84df1": {
       "kind": "command",
@@ -1766,11 +1862,11 @@
     },
     "d73c6231e0de9cd4fb408d3665b8567a97250116022fe03d8d73ddc5dd5119da": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     },
     "d777579412490f24053626a13780e0af1f7cc7197d9281b92b08f766f862a860": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:93"
+      "src": "skills/plan/SKILL.md:97"
     },
     "d87b38be91bed853b65e02b7593bee4f9c36a36a71291a9f1a8834bbf9bba01e": {
       "kind": "command",
@@ -1779,6 +1875,10 @@
     "d93dfddc4ca9cbf84b066351c4151af6ab784391ae3afb6504d226ff71df7aeb": {
       "kind": "block",
       "src": "skills/fortify/SKILL.md:90"
+    },
+    "d9ac4ab17305ec47b65acb8e3a7d47b5fec7fe067cc3a0dca89e33b609598ef9": {
+      "kind": "command",
+      "src": "skills/topic/SKILL.md:96"
     },
     "da4a13d7b1bed83a876daab1639b386b57a41846f09890a45ecb6550945ecadc": {
       "kind": "command",
@@ -1790,31 +1890,31 @@
     },
     "daeda2579972d105e88427fb7fc9f969e9a1a690aaa4d8f1a5233b4a22eafee2": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:221"
+      "src": "skills/topic/SKILL.md:229"
     },
     "db061d2029855e9172652cbded68a533400cbef02dfb793832265e1693403a12": {
       "kind": "command",
       "src": "agents/scientist.md:91"
     },
-    "db520dd580da11dc6032b4d4fed2e38c230fd3602f5e682b70e93f340b0a7546": {
+    "dcb40afb95987bdfa90fc1bbc9dd3e30986e31074cc3a988d7c5abec58a6a3af": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/topic/SKILL.md:85"
     },
     "dcb9f3e564eb57bda78e9eedc5c2a9069c7df4edfe0dd94c0cb1c489f991f7c9": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:95"
+      "src": "skills/retro/SKILL.md:96"
     },
     "dcdc754ba7a1c9c8df405180fc0c4e006a4d512e310900c5d9aac736d8604197": {
       "kind": "block",
-      "src": "skills/verify/SKILL.md:152"
+      "src": "skills/verify/SKILL.md:155"
     },
     "dd7aae130a8a1617dba3562009ffa2da3db36406dfd221d70aed3e70ff9b84a4": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:56"
+      "src": "skills/judge/SKILL.md:55"
     },
     "de05b176cd770a515f6217a975cbc3ee4ffe53609ce2b08d27167c1bb12fa247": {
       "kind": "block",
-      "src": "skills/retro/SKILL.md:95"
+      "src": "skills/retro/SKILL.md:96"
     },
     "de1ae81f3f2e8b59a8df1dddf9af9d5c4055567c66be203d3ea7c5dae9bfa483": {
       "kind": "command",
@@ -1822,11 +1922,11 @@
     },
     "de8cc4c42de02d2c406eada7a6a91bab07878882d24164314b3ad885389fae79": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "df43dabb60edff14ddc395b0948f4e408bb9e950c65c5fb8137b61fabacd63f8": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:287"
+      "src": "skills/fortify/SKILL.md:294"
     },
     "dfd40ee18b1b9955ce55d247b0ed5f975b529ca2d161b35ed4d16aecd57d5b9b": {
       "kind": "block",
@@ -1838,19 +1938,19 @@
     },
     "e0fe6f0082c7a53512aa32f47f8d0fb2caf03938c03974f7d41996448ece8700": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:740"
+      "src": "skills/run/SKILL.md:741"
     },
     "e15b7c4a630ad41087783ad875756953dcb3f2d52f7b0e04268dbb86f9fc5db3": {
       "kind": "block",
-      "src": "agents/data-steward.md:215"
+      "src": "agents/data-steward.md:223"
     },
     "e1d07026a73c8f6a8877c68fe8d833d342ef6d94e390ad21805230514b2b72d2": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:471"
+      "src": "skills/fortify/SKILL.md:480"
     },
     "e1de3a9fe5dcdaeb021d649c9a4f7101112721ebcb515006375de4c610b9a669": {
       "kind": "block",
-      "src": "skills/setup/SKILL.md:153"
+      "src": "skills/setup/SKILL.md:168"
     },
     "e1e004e1b898091a339416f7b52a36fbed3f897f3aea97b3b7137cfea74a688d": {
       "kind": "command",
@@ -1858,7 +1958,7 @@
     },
     "e25f0f655d986cd1546ad290abae0b719d7afccd7be34650c30298fef2be3a74": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "e36b1a65e7cdf0a251736e1ec21e5abf9359b05d7a328654a6cbfd97a1814774": {
       "kind": "command",
@@ -1866,19 +1966,23 @@
     },
     "e430f5070e1c6a762d984c6d1c0d4648272c5e5e0f43af9527e0a9f9057d5312": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+      "src": "skills/retro/SKILL.md:107"
     },
     "e487867c33caef664561b39b17faa176820c5bca2d619ed3083950f87601b6d4": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "e5494a39bcba3dbbaf54a2e5f61651d3dae9870f65ae5a87331a5368c16589c1": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:169"
+      "src": "skills/retro/SKILL.md:170"
     },
     "e649b2fbfbf5f4928e19f364de0b4f76b6f9a60136b5d30825a6b55081a257f5": {
       "kind": "block",
       "src": "skills/kaggle/SKILL.md:223"
+    },
+    "e77008225a11bcef33944d548100a0862837352eb917da099a34753aac16140b": {
+      "kind": "block",
+      "src": "skills/plan/SKILL.md:65"
     },
     "e894294cfab81bdada6a26d49084668baf76a98cb1673e7c00f091aa30129a3b": {
       "kind": "command",
@@ -1894,7 +1998,7 @@
     },
     "eb5acf05572c8e2bc7ffdfb73eb1cb732752a039fbbe2235a91773b0797c17f4": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:278"
+      "src": "skills/topic/SKILL.md:288"
     },
     "ebf91fdb3cd65228f526ad2709f8261ddd2fd1ba2e6491047a611f3850a75887": {
       "kind": "command",
@@ -1910,15 +2014,11 @@
     },
     "ee372213d1e67b6ff54630f4d67e364a2e65dfe30462fb72aa57665912323322": {
       "kind": "block",
-      "src": "skills/run/SKILL.md:526"
+      "src": "skills/run/SKILL.md:524"
     },
     "eecd2bedb719a77a9886a206caf27070c19ff0aa7d75f0b83d1ed85abbaade2a": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:144"
-    },
-    "ef0b01ec57d1b041f73555eb1a62aaab52fcf8bb6d34bc6dd54edec5f4bdc3c8": {
-      "kind": "block",
-      "src": "skills/fortify/SKILL.md:388"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "ef2a741b6c28db379afbfd1f674e20c8991caed4e2177c0e50dd0cb8ba636915": {
       "kind": "command",
@@ -1926,7 +2026,7 @@
     },
     "ef54515cc11b734824a097fb548edeb1da772c0f7bf7e96e6b8ef9bcd06e8be9": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:173"
+      "src": "skills/plan/SKILL.md:177"
     },
     "f11f24698baec5d88b6d09fb98dad862d1190be5a79988def7028a13720a72d1": {
       "kind": "command",
@@ -1938,11 +2038,11 @@
     },
     "f1b9bc8ed6e6b40619ba9908dee8d96d2be894735a6e64cfadeaa02fbce0d54b": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:263"
+      "src": "skills/topic/SKILL.md:271"
     },
     "f1f3f1626cc7226c04d773260bd69a0fe0cd464ca91eb3e31b75c31ae7bb642c": {
       "kind": "command",
-      "src": "skills/run/SKILL.md:660"
+      "src": "skills/run/SKILL.md:661"
     },
     "f22e167469d0b48d6e6a3c345af0e9520a5dbaf9a2a7ce1ff902087b6ff81324": {
       "kind": "command",
@@ -1958,15 +2058,15 @@
     },
     "f307677b3e09e187a28350ef0da4f072c62fe0fde5074f906b056ce849883c75": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:471"
+      "src": "skills/fortify/SKILL.md:480"
     },
     "f4f1f7cd71495875a59e6600d92cf4f1813ee9c0a93f745653ff4abbde34a214": {
       "kind": "block",
-      "src": "skills/topic/SKILL.md:150"
+      "src": "skills/topic/SKILL.md:157"
     },
     "f583004cec4fb1942d899c0d2aba13eb92ff4d2d8de919816f42eec15069ff91": {
       "kind": "command",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "f5b19b72497eb704d511c2e872e6ea99a53c5d1b9a072698d646693325e685e0": {
       "kind": "command",
@@ -1974,15 +2074,15 @@
     },
     "f6002e84c659d9a173330436de80567749db48164951c328c3acec81f8dbdcab": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:444"
+      "src": "skills/fortify/SKILL.md:453"
     },
     "f6019aebe09a856c56a64911154a8c838bc441bc601e6622e0f4b0c9b177b3f2": {
       "kind": "block",
-      "src": "skills/verify/SKILL.md:69"
+      "src": "skills/verify/SKILL.md:71"
     },
     "f64d027d83affd3ae95f69b55989dad59dbf7247f29cdd3039556890733bedf4": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:250"
+      "src": "skills/fortify/SKILL.md:257"
     },
     "f69c744ca3f5fce7a31af4ebe8f38d98333fa789365c02550206bc3506960a3f": {
       "kind": "command",
@@ -1990,7 +2090,7 @@
     },
     "f73124893d58419e671d2078d567bcb69b68e89c327c8b4642fdec3821283cdd": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:357"
+      "src": "skills/verify/SKILL.md:391"
     },
     "f73841f2ecb4c077d96e8373d820e54e05b8418ce65aa8f69d6a71bb65d2ec0d": {
       "kind": "command",
@@ -2008,53 +2108,65 @@
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:230"
     },
+    "f7cac570103c2dda078a3a79330d6ffffbc298ef5b72dedd27d3de2a306647c6": {
+      "kind": "block",
+      "src": "skills/verify/SKILL.md:136"
+    },
     "f85dad2b9523f31196a336bee4d7aa442145c3033a674c102c31d757e2dfecda": {
       "kind": "block",
-      "src": "skills/verify/SKILL.md:91"
+      "src": "skills/verify/SKILL.md:93"
     },
     "f892b7823085fc639b52e5664f96f84945ada618931f49f2273b4023490e3f56": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:212"
+      "src": "skills/fortify/SKILL.md:219"
     },
     "f905ea72758e79a7a3ffa87b5bb5522806ca47dfcb35c0baf2ff4846e01e70b5": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "f936ff10839e22aa0420854e5fe9ac73b7b261f5f5808902755116223156f9df": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:268"
+      "src": "skills/kaggle/SKILL.md:270"
+    },
+    "f968295d9eee18def2bd31b60393f9d37b6d2a3db788b4537798af1b09b0e1f8": {
+      "kind": "command",
+      "src": "skills/plan/SKILL.md:65"
     },
     "f9859fa2aa24b70cb578bd2e00d6b6cc3a959a6ec1f0861cb7295b2234ca643e": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:444"
+      "src": "skills/fortify/SKILL.md:453"
     },
     "fb31f49e2c1537f5b38bfc656c488255eb605a267e2885cfa2f85d03f77534a1": {
       "kind": "command",
       "src": "skills/kaggle/SKILL.md:133"
     },
-    "fb33ec7cf2c2e4cb51cd2cb4e788bd1fc1f8e5574cfb03ccc5001ddde88b3b7d": {
-      "kind": "command",
-      "src": "skills/retro/SKILL.md:106"
+    "fb592e758c6d7aceaed88ae70ec2cceea0784a4e3c8766933ade9072a2c0da1c": {
+      "kind": "block",
+      "src": "skills/setup/SKILL.md:89"
     },
     "fb5e59d2f7a435365241ce052101b47b53c718d0000e23ec2e4618fd5e0104b2": {
       "kind": "block",
-      "src": "skills/judge/SKILL.md:266"
+      "src": "skills/judge/SKILL.md:269"
     },
     "fbb2618e57196484c11ad2ef891fe1d65502114fcc176b4cfa99c6b87600ce52": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
+    },
+    "fbc05cc02e29afdc6434e23f6dbd483bb2063662f0158ab05a71341e894b5c87": {
+      "kind": "block",
+      "src": "skills/topic/SKILL.md:96"
     },
     "fc2b4a2e5cff79042a1763f0d0f76e0cdb0c038182dfb911444d8af2ccac47c9": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:263"
+      "src": "skills/topic/SKILL.md:271"
     },
     "fc6df32e600945b0eae159fd40ae64d870889e448521bbb5465cc696568dbe2c": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:260"
+      "src": "skills/verify/SKILL.md:282"
     },
     "fcb116eae9eb2d8701b5a052839a9f1713eb63fcad23266064cece34eea1d4b1": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:303"
+      "src": "skills/kaggle/SKILL.md:305"
     },
     "fce90d6c52651c12f596028a318588b4448a596c013f0aa80e6b86c53e79ebc4": {
       "kind": "block",
@@ -2070,19 +2182,19 @@
     },
     "fd674d1e6e33793ccfabd93580e81cf5279267a8f31e4ea98c99bcb009995489": {
       "kind": "command",
-      "src": "skills/plan/SKILL.md:85"
+      "src": "skills/plan/SKILL.md:89"
     },
     "fd7b6f5c712c044563eaf6dfaec500047573cd0e4ceef56b98bbab4e387ff8ff": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:278"
+      "src": "skills/topic/SKILL.md:288"
     },
     "fd8796cfc1f310f8d901cad809277efaaa04d2aea6344d615eb097e87cd936d9": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "fdb3b54960a00c48a4ff0b1008dd37ac0dd731039ea3547ead78e4f3cd109edf": {
       "kind": "command",
-      "src": "skills/kaggle/SKILL.md:324"
+      "src": "skills/kaggle/SKILL.md:326"
     },
     "fdc4c7446c495693ec62774de74c4ee8080e3c29b948f37dbd2bd7e718e575b5": {
       "kind": "command",
@@ -2090,41 +2202,41 @@
     },
     "fde6e7ab80b7c2922d5e8fc0a77a19fd13173773898152c9d5c7ef0462dc7ca3": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:263"
+      "src": "skills/topic/SKILL.md:271"
     },
     "fe0fc6b56230ef37abacdc505c793f1a86ae3ff6223a4c5d2dbf16e3e3df221c": {
       "kind": "command",
-      "src": "skills/retro/SKILL.md:86"
+      "src": "skills/retro/SKILL.md:87"
     },
     "fe72a3fe988a8c49297d54f4d28063d4e5540c5e5baf14b11dd47f1250248e80": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:388"
+      "src": "skills/fortify/SKILL.md:395"
     },
     "fe8a13a68a3be3760dc0b2603174d8638104b7d8629e22000da3c4895c8d7b81": {
       "kind": "block",
-      "src": "skills/fortify/SKILL.md:583"
+      "src": "skills/fortify/SKILL.md:602"
     },
     "feb28ebe9025ce5f63f8d3bc72e3009a712400250f0af9cc0b640229c5eabfe2": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:144"
+      "src": "skills/fortify/SKILL.md:151"
     },
     "fed184aca367753ef06f2853a689fe96db2f639df0d3a30d97484d8c534c59f1": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:187"
+      "src": "skills/fortify/SKILL.md:194"
     },
     "fee94c841c5190e13d0d33d1e306fac1c353f4bb6d6821c5b1b555c1ce8b0584": {
       "kind": "command",
-      "src": "skills/fortify/SKILL.md:388"
+      "src": "skills/fortify/SKILL.md:395"
     },
     "ffaaf83a65c649af3923caf553fb35e59eb3ccfbcd4e6d4ec5da044db2bbcd49": {
       "kind": "command",
-      "src": "skills/topic/SKILL.md:117"
+      "src": "skills/topic/SKILL.md:122"
     },
     "fff8fb28372927932994d3c025ac8572fcd4a80e9ac7e894c210ab93872d3f09": {
       "kind": "command",
-      "src": "skills/verify/SKILL.md:134"
+      "src": "skills/verify/SKILL.md:136"
     }
   },
-  "plugin": "cc_research@0.25.1",
+  "plugin": "cc_research@0.25.2",
   "schema": 1
 }

@@ -119,6 +119,19 @@ class TestMain:
         assert req[0] == {"cmd": "central", "args": ["--top", "5"]}
         assert len(req) == 11
 
+    def test_modules_override_rejects_option_like_names(self, tmp_path, monkeypatch, capsys):
+        """A caller-supplied name that looks like a CLI flag is dropped, not forwarded.
+
+        ``--evil``/``--top`` cannot be reliably distinguished from an option flag by a downstream parser once they reach
+        a batch query's argv position, so they never make it into the request.
+        """
+        monkeypatch.setattr(bcb, "_git_diff_files", lambda: pytest.fail("diff derivation must be skipped"))
+        out = tmp_path / "batch.json"
+        assert bcb.main([str(out), "--modules", "pkg.a --evil --top pkg.b"]) == 0
+        assert capsys.readouterr().out.strip() == "pkg.a pkg.b"
+        req = json.loads(out.read_text(encoding="utf-8"))
+        assert [item["args"] for item in req if item["cmd"] == "rdeps"] == [["pkg.a"], ["pkg.b"]]
+
     def test_queries_filter_omits_central(self, tmp_path, monkeypatch):
         """Emit only per-module rdeps items, no central baseline.
 

@@ -68,6 +68,8 @@ codex plugin marketplace upgrade borda-ai-rig
 codex plugin add codex-rig@borda-ai-rig
 ```
 
+`Borda/AI-Rig` (the GitHub-style slug the CLI's `marketplace add` expects) and `borda-ai-rig` (the frozen id used by `upgrade`, `plugin add`, and everywhere else in this file) name the same marketplace — the latter matches the `name` field in the repo's `.agents/plugins/marketplace.json`, the canonical id source. Supply each literally as shown; nothing here implies the CLI derives one from the other.
+
 For release pin, supply `--ref` with published revision whose Codex Rig package includes `scripts/install_github_read_rules.py`; older helper-free revisions cannot complete this refresh workflow. Native `sync_codex.py` accepts same selection through `--codex-ref`.
 
 Omitting `--ref` follows remote default branch. An explicit ref pins it. Never silently change existing marketplace between pinned and unpinned modes: report mismatch, require legacy shim cleanup before deliberate marketplace removal and re-addition. Never use `git clone`, edit marketplace configuration, delete old cache directories, or force update. A failed refresh must preserve and report prior installation state; never claim rollback unless CLI evidence proves it.

@@ -66,7 +66,7 @@ Read current project before searching, extract constraints:
 - Task (classification, detection, generation, regression)?
 - Constraints (latency, memory, dataset size, compute budget)?
 
-**Case-insensitive flag/mode normalization** — normalize before parsing so `--PLAN`, `--Team`, `Plan`, etc. accepted. Each Bash tool call runs fresh shell, so lowercased copy does NOT persist across blocks — re-derive inline from `$ARGUMENTS` (harness-substituted every block) wherever dispatch check needs it, e.g. `echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | …`. Preserve original `$ARGUMENTS` only where literal substitution into prompts required (e.g. topic string).
+**Case-insensitive flag/mode normalization** — normalize before parsing so `--PLAN`, `--Team`, `Plan`, etc. accepted. Each Bash tool call runs fresh shell, so lowercased copy does NOT persist across blocks — re-derive inline from `$ARGUMENTS` (harness-substituted every block) wherever dispatch check needs it, e.g. `echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]' | …`. Preserve original `$ARGUMENTS` only where literal substitution into prompts required (e.g. topic string). Scope: covers `--team` / mode dispatch only — `--keep` capture (via `extract-keep-flag.py`, which reads raw `$ARGUMENTS` with a lowercase-literal regex) stays case-sensitive; never route the lowered copy into keep-flag extraction.
 
 **Unsupported flag check** (runs BEFORE any mode dispatch to catch unknown flags in all modes): load and follow the protocol below. Supported flags for this skill: `--team`, `--keep`.
 
@@ -83,22 +83,27 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/extract-keep-flag.py" top
 ```
 
 ```bash
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+_ARGS_LC=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]')  # flag/mode dispatch only — never the topic-string source
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$_ARGS_LC")"  # timeout: 5000
 # scan CLEAN_ARGS, not raw blob: --team and --keep "<items>" already consumed — a
 # flag-shaped word inside a --keep value no longer reports as unknown
 UNKNOWN_FLAGS=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | grep -oE -- '--[a-z][a-z0-9-]+' || true)  # timeout: 5000
+echo "UNKNOWN_FLAGS=$UNKNOWN_FLAGS"
 ```
 
-**Early dispatch for `--team` and `plan` modes** — check BEFORE Steps 2-3. Priority: `--team` wins over `plan` (`plan --team` → Team Mode, topic string = "plan"):
+**Early dispatch for `--team` and `plan` modes** — check BEFORE Steps 2-3. `plan` as the first non-flag word wins over `--team` (plan mode has no team variant — `modes/plan.md` implements no team path); when both are present, proceed to Plan Mode and print one warning line: `⚠ --team has no effect in plan mode — ignored`. `--team` with any other first word (not `plan`) → Team Mode, as before:
 
 ```bash
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$ARGUMENTS")"  # timeout: 5000
+_ARGS_LC=$(echo "$ARGUMENTS" | tr '[:upper:]' '[:lower:]')  # flag/mode dispatch only — never the topic-string source
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags.py" --flags team "$_ARGS_LC")"  # timeout: 5000
 TEAM_MODE="$FLAG_TEAM"   # anchored-token match — no longer fires on --team inside a --keep value
 FIRST_WORD=$(echo "$CLEAN_ARGS" | tr '[:upper:]' '[:lower:]' | awk '{print $1}')  # timeout: 5000
+echo "TEAM_MODE=$TEAM_MODE FIRST_WORD=$FIRST_WORD"
+[ "$FIRST_WORD" = plan ] && [ "$TEAM_MODE" = true ] && echo "⚠ --team has no effect in plan mode — ignored"
 ```
 
-- `$TEAM_MODE` is `true` → skip Steps 2-3; jump directly to **Team Mode** section below.
-- Else `$FIRST_WORD` equals exactly `plan` → skip Steps 2-3; jump directly to **Plan Mode** section below.
+- `$FIRST_WORD` equals exactly `plan` → skip Steps 2-3; jump directly to **Plan Mode** section below (print the `⚠` line above first if `$TEAM_MODE` is also `true`).
+- Else `$TEAM_MODE` is `true` → skip Steps 2-3; jump directly to **Team Mode** section below.
 
 Steps 2-3 execute only when neither `--team` nor `plan` mode is detected.
 
@@ -136,7 +141,9 @@ Search targets (for whichever owner runs the search): arXiv, Papers With Code, S
 
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
-**Availability check** (`ls ~/.claude/plugins/cache/borda-ai-rig/foundry/*/agents/web-explorer.md 2>/dev/null`): present → spawn `Agent(subagent_type="foundry:web-explorer", prompt="...")` as the sole search owner per the rule above — its prompt carries the search targets, per-paper extraction fields, and the `$AGENT_OUT` write (resolved literal path). Absent → conduct the search inline using WebSearch and WebFetch directly.
+**Availability check** (`ls ~/.claude/plugins/cache/borda-ai-rig/foundry/*/agents/web-explorer.md 2>/dev/null`): present → spawn `Agent(subagent_type="foundry:web-explorer", prompt="...")` as the sole search owner per the rule above — its prompt frames the ask strictly within web-explorer's declared scope (sourcing, fetching, and distilling published claims from arXiv / Papers With Code / Semantic Scholar pages — explicitly NOT a paper deep-dive, hypothesis generation, or experiment design), and carries the search targets, per-paper extraction fields, and the `$AGENT_OUT` write (resolved literal path). Absent → conduct the search inline using WebSearch and WebFetch directly.
+
+If the spawned agent's returned envelope indicates it declined or redirected the task instead of completing it (e.g. cites an ML-paper-analysis or out-of-scope limitation), treat this identically to "web-explorer unavailable" — the orchestrator conducts the search inline using WebSearch/WebFetch directly (the existing fallback). Never forward this task to `research:scientist`.
 
 ### 2b: Check for existing implementations (main context)
 
@@ -167,7 +174,7 @@ Title:       Research — [topic]
 Date:        [YYYY-MM-DD]
 Scope:       [topic / research question]
 Focus:       SOTA literature research
-Agents:      [agents actually dispatched this run — e.g. foundry:web-explorer when it ran Step 2a; solution-architect only on plan-mode runs; never the full menu]
+Agents:      [agents actually dispatched this run — e.g. foundry:web-explorer when it ran Step 2a; solution-architect only on plan-mode runs; never the full menu; web-explorer declined/redirected → `web-explorer (declined) + orchestrator (inline fallback)`, never just `orchestrator (inline)`]
 Outcome:     EXPLORATORY | PROMISING | CONSENSUS
 Best method: [recommended approach / architecture]
 Papers:      [N papers analyzed]
@@ -212,6 +219,7 @@ Path:        → .reports/research/topic-<branch>-<date>.md
 ### Agent Confidence
 <!-- Rows come from the actual launch batch: one row per agent this run really spawned, named as dispatched. -->
 <!-- No agent spawned (orchestrator ran the search inline): single row, agent `orchestrator (inline)`. -->
+<!-- web-explorer declined/redirected: two rows — `foundry:web-explorer (declined)` with score `n/a`, then `orchestrator (inline fallback)`. -->
 <!-- The rows below are shape examples, never emitted verbatim — a fixed researcher-1/2/3 lineup reports agents that never ran. -->
 | Agent | Score | Gaps |
 |---|---|---|
@@ -256,7 +264,7 @@ Confidence:  [aggregate score] — [key gaps]
 
 End response with `## Confidence` block per CLAUDE.md output standards.
 
-## Team Mode — only when `--team` flag present
+## Team Mode — only when `--team` flag present and first non-flag word is not `plan`
 
 > loads: modes/team.md # also loads: modes/plan.md **Mode-file existence check** — verify before reading:
 
@@ -271,7 +279,9 @@ Follow `modes/team.md` (loaded above) and execute its workflow.
 
 **Mandatory termination gate**: after `modes/team.md` returns (consolidation complete, report written, header printed per its own mandatory print step, "Print report header" task `completed`), continue to `## Follow-up gate` section below — do NOT exit early. `AskUserQuestion` call in `## Follow-up gate` is only authorized terminal action for team mode; reaching end of team workflow without invoking it is protocol violation.
 
-## Plan Mode — only when first token of `$ARGUMENTS` is exactly `plan` (not a prefix match — "planning algorithms" must NOT trigger this mode)
+## Plan Mode — only when first non-flag word of `$ARGUMENTS` is exactly `plan` (not a prefix match — "planning algorithms" must NOT trigger this mode)
+
+> Distinct from the standalone `/research:plan` skill: this mode turns prior SOTA research output into a phased implementation roadmap; `/research:plan` writes an ML experiment `program.md` run config from a goal or file. Same word, different artifact — see `/research:plan`'s own description.
 
 > loads: modes/plan.md **Mode-file existence check** — verify before reading:
 

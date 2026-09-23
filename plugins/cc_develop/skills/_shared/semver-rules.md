@@ -8,11 +8,14 @@ Corollary: API deprecated in a prior release (with warning + forwarding shim) an
 
 ## Breaking Change Escalation Protocol
 
-Every detected breaking change: **stop, call `AskUserQuestion`, confirm intent before proceeding**.
+<!-- policy-sibling: plugins/cc_oss/agents/shepherd.md, plugins/cc_oss/skills/_shared/semver-rules.md, plugins/cc_oss/README.md -->
 
+Every detected breaking change needs explicit handling before proceeding — never pass silently. What that handling is depends on whether the reader has a foreground mode:
+
+- **Interactive/foreground-capable callers** (e.g. `plan`, `fix`, direct skill invocation): call `AskUserQuestion`, require explicit "yes, intentional" confirmation — prose question in response body does NOT count (see `communication.md`)
+- **Callers with no foreground mode** (any agent always invoked via `Agent()`, e.g. `shepherd`): `AskUserQuestion` blocks indefinitely with no parent able to respond — instead always emit a `⚠ BREAKING CHANGE DETECTED` block; the caller is responsible for acting on it
 - State: what worked before, what will break, why change needed
-- User must explicitly confirm "yes, intentional" — prose question in response body does NOT count (see `communication.md`)
-- Never batch-approve multiple breaking changes in one question unless they are logically one atomic change
+- Never batch-approve multiple breaking changes in one question/block unless they are logically one atomic change
 - Never proceed past a breaking change silently even if reason seems obvious
 - Applies to all agents/skills reading this file: shepherd (PR review, release prep), plan (risk identification), fix (applying fix), audit (flagging `! BREAKING` findings)
 

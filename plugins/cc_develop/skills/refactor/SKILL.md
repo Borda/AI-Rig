@@ -25,7 +25,7 @@ Quality stack (Branch Safety Guard, Codex Pre-pass, Progressive Review) requires
 
 <constants>
 
-- MAX_INNER_CYCLES: 5 (change-test cycles per outer session — Step 4 safety break)
+- MAX_INNER_CYCLES: 5 (change-test cycles per outer session — Step 4 safety break; mirrored via dev-max-inner-cycles/dev-max-wall-seconds sentinels in Step 4)
 
 </constants>
 
@@ -254,7 +254,7 @@ Spawn `foundry:challenger` with scope analysis from Step 1 (affected files, depe
 
 Parse result:
 
-- **Blockers found** → STOP. Present findings. Don't proceed to Step 2 until user resolves each blocker or explicitly accepts risk.
+- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the refactoring approach. How to proceed?" · (a) **Revise scope** — return to Step 1 with the blocker as a constraint · (b) **Accept risk** — proceed, record acceptance in `$DEV_DIR/checkpoint.md` · (c) **Abort**. On Abort: stop. Never proceed on prose alone.
 - **Concerns only** → surface as advisory before coverage audit; continue.
 - **No findings / all refuted** → proceed.
 
@@ -394,6 +394,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo "0"             > ${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}
 echo "$(date +%s)"   > ${TMPDIR:-/tmp}/dev-start-time-${CSID}
 MAX_WALL_SECONDS=1800  # 30 min cap (5 outer × MAX_INNER_CYCLES worst case)
+echo 5    > ${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}
+echo 1800 > ${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}
 ```
 
 At each inner iteration start, read back, increment, check:
@@ -405,12 +407,13 @@ IFS= read -r INNER_CYCLE < "${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}" 2>/dev/null
 IFS= read -r START_TIME < "${TMPDIR:-/tmp}/dev-start-time-${CSID}" 2>/dev/null || START_TIME=$(date +%s)
 INNER_CYCLE=$((INNER_CYCLE+1))
 echo "$INNER_CYCLE" > ${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}
-MAX_INNER_CYCLES=5  # must match constants block — bash can't ref it directly
+IFS= read -r MAX_INNER_CYCLES < "${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}" 2>/dev/null || MAX_INNER_CYCLES=5
+IFS= read -r MAX_WALL_SECONDS < "${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}" 2>/dev/null || MAX_WALL_SECONDS=1800
 if [ "$INNER_CYCLE" -gt $MAX_INNER_CYCLES ]; then
     echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stopping refactor loop; report what succeeded, what broke, what remains"
 fi
 ELAPSED=$(( $(date +%s) - START_TIME ))
-if [ "$ELAPSED" -ge 1800 ]; then
+if [ "$ELAPSED" -ge $MAX_WALL_SECONDS ]; then
     echo "⚠ wall-time cap reached (30 min) — stopping refactor loop"
 fi
 ```

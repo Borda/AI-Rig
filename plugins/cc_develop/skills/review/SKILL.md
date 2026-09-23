@@ -54,7 +54,7 @@ fi
 <constants>
 
 ```text
-FANOUT_MAX=3            # default: top-N spawn UNITS among classification-preselected dimensions
+FANOUT_MAX=3            # default: top-N spawn UNITS among classification-preselected dimensions; runtime form is FANOUT_CAP (Flag parsing, line ~138) — keep both in sync manually if either changes
                         # cap counts dimension spawn units only; real default lineup = up to 3
                         # dimension units + challenger + bridge co-review + consolidator
                         # (+ up to 3 cross-validation verifiers when criticals exist)
@@ -72,7 +72,7 @@ CODEMAP_ENABLED=auto    # on by default if codemap installed + index found; --no
 - Key boundary: end of Step 3 — parallel review-agent fan-out outputs collected, before Step 5 consolidation.
 - Second boundary: end of Step 5 — consolidated report written, before Step 6 follow-up.
 - Third boundary: immediately before the Step 6 follow-up gate — the idle window; refresh makes a mid-wait `/compact` lossless.
-- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, per-agent finding file paths, --keep items.
+- Preserve at boundary 1: RUN_DIR, REPORT_DIR, target, CLASSIFICATION, per-agent finding file paths, --keep items.
 - Preserve at boundary 2: final report path.
 - Preserve at boundary 3: final report path.
 
@@ -135,7 +135,8 @@ IFS= read -r CHALLENGE_ENABLED < "${TMPDIR:-/tmp}/dev-review-challenge-enabled-$
 IFS= read -r CHALLENGE_FORCED < "${TMPDIR:-/tmp}/dev-review-challenge-forced-${CSID}" 2>/dev/null || CHALLENGE_FORCED="false"  # --challenge: force Agent 7 even on small diffs
 IFS= read -r CODEMAP_RAW < "${TMPDIR:-/tmp}/dev-review-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_RAW="auto"
 IFS= read -r FANOUT_FULL < "${TMPDIR:-/tmp}/dev-review-fanout-full-${CSID}" 2>/dev/null || FANOUT_FULL="false"
-FANOUT_CAP=3; [ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
+FANOUT_CAP=3  # runtime form of FANOUT_MAX (<constants> line ~57) — keep both in sync manually if either changes
+[ "$FANOUT_FULL" = "true" ] && FANOUT_CAP=0  # 0 = no cap: all preselected dimensions
 ```
 
 **Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--worktree`, `--full`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
@@ -202,6 +203,33 @@ Before spawning agents, classify diff:
 - Count files changed, lines added/removed, new classes/modules introduced
 - Classify: **FIX** (corrects wrong behavior), **REFACTOR** (same behavior restructured), **FEATURE** (new public API or capability), **CHORE** (config/deps, no logic), **MIXED** — classify by intent, not file count
 - **Complexity smell**: 8+ files changed → note in report header
+
+Persist the classification decision for compaction-safe reuse in later steps and the boundary-1 contract. Closed set, no shell variable — run the ONE block below matching the classification just made:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "FIX" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "REFACTOR" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "FEATURE" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "CHORE" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
+```
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo "MIXED" > "${TMPDIR:-/tmp}/dev-review-classification-${CSID}"
+```
 
 Skip optional agents by classification:
 
@@ -298,6 +326,8 @@ Materialize codemap context into run directory (`$RUN_DIR` now exists):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""  # re-derive — bash resets between calls
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to copy codemap context to a root-relative path"; exit 1; }
 IFS= read -r codemap_available < "${TMPDIR:-/tmp}/dev-review-codemap-available-${CSID}" 2>/dev/null || codemap_available="false"
 if [ "$codemap_available" = "true" ] && [ -f "${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}" ]; then
     cp "${TMPDIR:-/tmp}/dev-review-codemap-context.md-${CSID}" "$RUN_DIR/codemap-context.md"
@@ -308,17 +338,19 @@ If Codex available:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""  # re-derive — bash resets between calls
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write a root-relative codex-out path"; exit 1; }
 CODEX_OUT="$RUN_DIR/codex.md"
-echo "$CODEX_OUT" > ${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}  # Step 6 re-reads — bash state lost
+echo "$CODEX_OUT" > "${TMPDIR:-/tmp}/dev-review-codex-out-${CSID}"  # Step 6 re-reads — bash state lost
 ```
 
 Read `$_DEV_SHARED/codex-prepass.md` for the **skip/run criteria only** (small-diff skip, availability check) — do NOT use its dispatch line as the spawn prompt: its args name no output path, so Step 2's watch on `$RUN_DIR/codex.md` would idle ~2 min on a file that never appears and Step 6 would silently skip.
 
-Dispatch — substitute `<TARGET>` and `<RUN_DIR>` with resolved literal values before the call (a `Skill()` dispatch gets no run-dir preamble, so an unexpanded `$RUN_DIR` reaches Codex as literal dollar-sign text): `Skill(skill="bridge:review", args="Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Write findings to <RUN_DIR>/codex.md; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
+Dispatch — substitute `<TARGET>` with its resolved literal value before the call: `Skill(skill="bridge:review", args="Read-only adversarial review of <TARGET>. Look for bugs, missed edge cases, incorrect logic, and inconsistencies with existing code patterns. Report findings with file:line locations; do not apply fixes.")` (requires `bridge@borda-ai-rig`).
 
-Note: agent spawns run in the background and cannot be timeout-wrapped via Bash `timeout:`. Dispatch, then **end the turn** — the completion notification resumes the workflow; never hold the turn open with a no-op call, a "waiting" line, or a sleep. Health monitoring per CLAUDE.md §6: at most one liveness probe per wake-up (`find "$RUN_DIR" -newer <sentinel>`); no new file activity across wake-ups for ~15 min → treat as timed out and continue with what exists.
+Note: `bridge:review` is a foreground, read-only skill with no Write tool — it returns findings inline in its response envelope and never creates a file itself, unlike a background `Agent()` spawn. No health-monitoring/liveness-probe protocol applies to this call: it blocks until it returns. After `Skill(skill="bridge:review", ...)` returns, the orchestrator itself writes `$RUN_DIR/codex.md` from the returned envelope's `.findings`/`.verdict`/`.transcript_path` fields.
 
-After Codex writes `$RUN_DIR/codex.md` (or times out), extract compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. Codex skipped, timed out, or found nothing → proceed with empty seed.
+After `$RUN_DIR/codex.md` is written (or skipped/blocked), extract compact seed list (≤10 items, `[{"loc":"file:line","note":"..."}]`) to inject into agent prompts in Step 3 as pre-flagged issues to verify or dismiss. Codex skipped, timed out, or found nothing → proceed with empty seed.
 
 **Cap-disclosure**: count total Codex findings before truncating. If ≥10, surface in consolidated report header:
 
@@ -338,6 +370,7 @@ Problem statement = a matching plan file, nothing else. A local diff has no PR b
 # timeout: 10000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write blind-solve input to a root-relative path"; exit 1; }
 IFS= read -r WORKTREE_ENABLED < "${TMPDIR:-/tmp}/dev-review-worktree-${CSID}" 2>/dev/null || WORKTREE_ENABLED=false
 # pre-change ref: working-tree diff → HEAD is untouched; --worktree reviews committed HEAD → parent is the pre-change state
 if [ "$WORKTREE_ENABLED" = "true" ]; then PRE_REF=HEAD~1; CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null); else PRE_REF=HEAD; CHANGED=$(git diff --name-only HEAD 2>/dev/null); fi
@@ -373,8 +406,8 @@ Two stages, in order — never collapse them:
 
 ### Merged spawn units (shared pattern with oss:review — each spawn costs ~120,851 tok fixed overhead, so paired dimensions share one spawn)
 
-- **Agents 3+6 = ONE `foundry:perf-optimizer` spawn** covering Performance + Architecture/API design — spawn when either dimension survives classification preselection; prompt includes only surviving dimensions' instructions (e.g. FIX with a public-signature change spawns this unit with only the Agent-6 dimension active).
-- **Agents 4+5 = ONE `foundry:doc-scribe` spawn** covering Documentation + Linting — same rule.
+- **Agents 3+6 = ONE `foundry:perf-optimizer` spawn** covering Performance + Architecture/API design — spawn when either dimension survives classification preselection; prompt includes only surviving dimensions' instructions (e.g. FIX with a public-signature change spawns this unit with only the Agent-6 dimension active). (this merged spawn is explicitly authorized to also cover architecture/SOLID review; its own NOT-for line does not apply to this dispatch)
+- **Agents 4+5 = ONE `foundry:doc-scribe` spawn** covering Documentation + Linting — same rule. (this merged spawn is explicitly authorized to also cover linting; its own NOT-for line does not apply to this dispatch)
 - Agents 1 (sw-engineer, incl. security augmentation), 2 (qa-specialist), 7 (challenger) stay standalone spawns.
 - A merged spawn writes **one file per covered dimension**, each with its OWN full sections + Confidence block — never blended: `perf-optimizer.md` + `solution-architect.md`, or `doc-scribe.md` + `linting-expert.md`. Downstream contracts (consolidator filename list, Step-4 cross-validation "same type as origin", report sections) key on those files, stay unchanged.
 - Merged-spawn envelope = JSON array, one element per dimension file, same per-element schema as the standard envelope. Element absent from the array ⇒ that dimension gets the ⏱ marker — never silently omitted.
@@ -407,26 +440,17 @@ Any OTHER shell variable inserted into an Agent spawn prompt string — `$REPORT
 Resolve develop:review checklist path (version-agnostic):
 
 ```bash
-if ! command -v jq >/dev/null 2>&1; then
-    echo "⚠ jq not available — oss:review checklist path resolution skipped; Agent 1 will proceed without checklist"
+OSS_ROOT=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/get_plugin_install_path.py" borda-ai-rig oss 2>/dev/null) || OSS_ROOT=""  # timeout: 5000
+if [ -z "$OSS_ROOT" ]; then
+    echo "⚠ oss plugin checklist unavailable — review will proceed without severity anchors; install oss plugin for full coverage"
     REVIEW_CHECKLIST=""
-fi
-```
-
-```bash
-if command -v jq >/dev/null 2>&1; then
-    OSS_ROOT=$(jq -r 'to_entries[] | select(.key | test("oss@")) | .value.installPath' ${HOME}/.claude/plugins/installed_plugins.json 2>/dev/null | head -1) || OSS_ROOT=""  # timeout: 5000; jq failure → empty, handled below
-    if [ -z "$OSS_ROOT" ]; then
+else
+    REVIEW_CHECKLIST="${OSS_ROOT}/skills/review/checklist.md"
+    if [ ! -f "$REVIEW_CHECKLIST" ]; then
         echo "⚠ oss plugin checklist unavailable — review will proceed without severity anchors; install oss plugin for full coverage"
         REVIEW_CHECKLIST=""
     else
-        REVIEW_CHECKLIST="${OSS_ROOT}/skills/review/checklist.md"
-        if [ ! -f "$REVIEW_CHECKLIST" ]; then
-            echo "⚠ oss plugin checklist unavailable — review will proceed without severity anchors; install oss plugin for full coverage"
-            REVIEW_CHECKLIST=""
-        else
-            echo "Checklist: $REVIEW_CHECKLIST"
-        fi
+        echo "Checklist: $REVIEW_CHECKLIST"
     fi
 fi
 ```
@@ -499,7 +523,7 @@ Read review checklist (Read tool → `$REVIEW_CHECKLIST`) — apply CRITICAL/HIG
 
 **Agent 7 — foundry:challenger (skip if `CHALLENGE_ENABLED=false`, or per Small-diff challenger skip in Scope pre-check when `CHALLENGE_FORCED=false`)**: Adversarial review of design decisions in diff. Attacks assumptions, missing edge cases, security risks, architectural concerns, complexity creep with mandatory refutation step. File-handoff: write full findings to `$RUN_DIR/challenger.md`. Return JSON: `{"status":"done","findings":N,"severity":{"critical":0,"high":0,"medium":0,"low":0},"file":"$RUN_DIR/challenger.md","confidence":0.88}`. Severity mapping: blockers → `high`; concerns → `medium`.
 
-**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map challenger severity labels to review severity labels before merging — CRITICAL → `critical`, HIGH → `high`, MEDIUM → `medium`, LOW → `low`. Never drop severity; challenger uses non-standard labels (e.g. "blocker", "concern") → apply mapping: blockers → `high`, concerns → `medium`.
+**Challenger severity propagation**: consolidator (Step 5) reads `challenger.md` → map its findings by section before merging — Blockers (`[CRITICAL]`) → `critical` or `high` (promote to `critical` only when independently corroborated, e.g. a Step 4 CONFIRMED verdict or matching evidence from another agent; otherwise `high`), Concerns (`[HIGH]`) → `medium`, Nitpicks (`[LOW]`) → `low`. Never drop challenger findings.
 
 **Health monitoring**: agent calls run in background. Spawn the batch, end the turn, resume on each completion notification — no filler tool calls, no "waiting" turns, no sleep. Agent returns partial results or errors → use Read tool on `$RUN_DIR/<agent-name>.md` for details. Mark agents that returned empty or error with ⏱ in final report. Never silently omit agents that **failed** (returned error/partial) — must appear with ⏱ marker. Agents **not spawned** (skipped due to mode flags, docs-only, CHORE mode) may be absent from RUN_DIR; consolidator "skip missing" applies only to legitimately-not-spawned agents.
 
@@ -510,8 +534,9 @@ IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null
 IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/dev-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/dev-review-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _TARGET < "${TMPDIR:-/tmp}/dev-review-clean-args-${CSID}" 2>/dev/null || _TARGET="working-tree diff"
+IFS= read -r _CLASS < "${TMPDIR:-/tmp}/dev-review-classification-${CSID}" 2>/dev/null || _CLASS=""
 _FINDING_FILES=$(ls "$_RUN_DIR/"*.md 2>/dev/null | tr '\n' ' ' | sed 's/ *$//')
-_PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, finding-files=$_FINDING_FILES"
+_PRESERVE="run-dir=$_RUN_DIR, report-dir=$_REPORT_DIR, target=$_TARGET, classification=$_CLASS, finding-files=$_FINDING_FILES"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:review" "consolidation (after parallel review-agent fan-out)" "$_RUN_DIR" "$_PRESERVE" "cross-validate critical findings (Step 4) → consolidate → final report"  # timeout: 5000
 ```
@@ -522,7 +547,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""   # re-derive — bash resets between calls
 [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR="$RUN_DIR"
+IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-review-run-dir-${CSID}" 2>/dev/null || RUN_DIR=""  # re-derive — bash resets between calls
+[ -n "$RUN_DIR" ] || { echo "! BLOCKED — run-dir sentinel empty; refusing to write cross-validation notes to a root-relative path"; exit 1; }
 if [ ! -f "$_DEV_SHARED/foundry--cross-validation-protocol.md" ]; then
     echo "⚠ foundry--cross-validation-protocol.md not found at $_DEV_SHARED — Step 4 skipped; critical findings are unverified. It ships in this plugin — reinstall develop@borda-ai-rig."
     echo "## Cross-Validation: SKIPPED" >> "$RUN_DIR/cross-validation.md"

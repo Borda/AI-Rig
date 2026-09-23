@@ -116,6 +116,39 @@ def _session_token() -> str:
     return os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
 
 
+def _validate_fortify_dir(raw: str) -> Path | None:
+    """Resolve ``raw`` and confirm it stays within an allowed root.
+
+    Mirrors the containment check in read_state_field.py / retro_analyze.py /
+    verify_patient_split.py. An empty value is a legitimate "no run directory yet" case
+    (the CLI arg is optional) and is returned unchanged rather than rejected.
+
+    Args:
+        raw: Raw ``fortify_dir`` positional argument.
+
+    Returns:
+        ``Path(raw)`` when ``raw`` is empty or resolves inside an allowed root; ``None``
+        when it resolves outside every allowed root.
+    """
+    if not raw:
+        return Path(raw)
+    resolved = Path(raw).expanduser().resolve()
+    project_root = Path.cwd().resolve()
+    allowed_roots = [
+        project_root,
+        (project_root / ".experiments").resolve(),
+        (Path(os.path.expanduser("~")) / ".claude" / "projects").resolve(),
+        Path(tempfile.gettempdir()).resolve(),
+    ]
+    for root in allowed_roots:
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            continue
+        return Path(raw)
+    return None
+
+
 def _read_sentinel(path: Path) -> str:
     """Return the first line of a sentinel file, or an empty string when it is absent."""
     try:
@@ -173,6 +206,12 @@ def main(argv: list[str] | None = None) -> int:
         index = 1
 
     fortify_dir = args.fortify_dir
+    if _validate_fortify_dir(fortify_dir) is None:
+        print(
+            f"! BLOCKED — fortify_dir outside allowed roots (project root, .experiments/, "
+            f"~/.claude/projects, tempdir): {fortify_dir}"
+        )
+        return 1
     total = _count_lines(Path(fortify_dir) / "variants.jsonl")
     if index > total:
         print(f"FORTIFY_LOOP_DONE=1 — all {total} variants processed; proceed to post-loop delta computation")

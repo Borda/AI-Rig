@@ -82,3 +82,36 @@ def test_session_hook_recreates_only_absent_outputs_and_cleans_them(
     manifest_session.finish_session(session)
 
     assert not any(path.exists() for path in outputs)
+
+
+@pytest.mark.parametrize(
+    ("generation_count", "build_error"),
+    [
+        pytest.param(1, None, id="successful-build"),
+        pytest.param(0, "builder failed", id="failed-build"),
+    ],
+)
+def test_xdist_worker_uses_controller_manifest_result_without_rebuilding_or_restoring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, generation_count: int, build_error: str | None
+) -> None:
+    """A worker must leave the controller's shared manifest files untouched."""
+    output = tmp_path / "methodology.json"
+    output.write_text("controller output", encoding="utf-8")
+    monkeypatch.setattr(manifest_session, "_GENERATED_MANIFEST_PATHS", (output,))
+
+    def _unexpected_build(*_: object, **__: object) -> None:
+        """Fail if a worker starts its own manifest build."""
+        pytest.fail("worker rebuilt the controller manifest")
+
+    monkeypatch.setattr(manifest_session, "_generate_manifest_artifacts", _unexpected_build)
+    session = SimpleNamespace(
+        config=SimpleNamespace(workerinput={"generated_manifest_result": (generation_count, build_error)})
+    )
+
+    manifest_session.start_session(session)
+    artifacts = session.config._generated_manifest_artifacts
+    assert artifacts.generation_count == generation_count
+    assert artifacts.build_error == build_error
+
+    manifest_session.finish_session(session)
+    assert output.read_text(encoding="utf-8") == "controller output"

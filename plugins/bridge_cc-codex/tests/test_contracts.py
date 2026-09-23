@@ -147,13 +147,13 @@ CLAUDE_SKILL_CONTRACTS = {
     ),
     "cancel": (
         'bridge_call.py" cancel --job-id "<job-id>"',
-        "`--workspace` only when explicitly supplied",
+        "same `--workspace` value the originating detached call used",
         "do not claim termination complete",
         "`/bridge:status` or `/bridge:result`",
     ),
     "result": (
         'bridge_call.py" result --job-id "<job-id>"',
-        "`--workspace` only when explicitly supplied",
+        "same `--workspace` value the originating detached call used",
         "never inline the bounded transcript",
         "open the JSON file referenced by `incident`",
         "inspect its `fault`",
@@ -161,7 +161,7 @@ CLAUDE_SKILL_CONTRACTS = {
     ),
     "status": (
         'bridge_call.py" status --job-id "<job-id>"',
-        "`--workspace` only when explicitly supplied",
+        "same `--workspace` value the originating detached call used",
         "Return JSON status unchanged",
     ),
     "setup": (

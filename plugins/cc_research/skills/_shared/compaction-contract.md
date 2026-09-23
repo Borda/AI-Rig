@@ -1,4 +1,4 @@
-<!-- file: compaction-contract.md — consumers: foundry:{audit,brainstorm,calibrate,distill,investigate}, oss:{analyse,resolve,review}, develop:{debug,feature,fix,refactor,review}, research:{fortify,judge,kaggle,run,sweep,topic} -->
+<!-- file: compaction-contract.md — consumers: foundry:{audit,brainstorm,calibrate,distill,investigate}, oss:{analyse,resolve,review}, develop:{debug,feature,fix,refactor,review}, research:{fortify,judge,kaggle,run,sweep,topic,verify} -->
 
 # Compaction Contract Protocol
 

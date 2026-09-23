@@ -199,3 +199,55 @@ class TestMain:
         with pytest.raises(SystemExit) as exc_info:
             rhfr.main(["--json-file", "x.json"])
         assert exc_info.value.code != 0
+
+    def test_match_basename_escapes_hook_name_metacharacter(self, tmp_path: Path) -> None:
+        """``--match basename`` escapes the hook name — a literal ``.`` never means "any char".
+
+        A raw ``--path-pattern`` built by interpolating the hook name unescaped (the real-world call-site shape this fix
+        replaces) would treat ``a.b`` as "a, any char, b" and remove ``axb.js`` too. The safe default must match only
+        the literal ``a.b.js``.
+        """
+        target = tmp_path / "settings.json"
+        _write_registry(
+            target,
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "*",
+                            "hooks": [{"command": ".claude/hooks/axb.js"}, {"command": ".claude/hooks/a.b.js"}],
+                        },
+                    ],
+                },
+            },
+        )
+
+        rc = rhfr.main(["--json-file", str(target), "--hook-name", "a.b", "--match", "basename"])
+
+        assert rc == 0
+        rewritten = json.loads(target.read_text(encoding="utf-8"))
+        commands = [cmd["command"] for cmd in rewritten["hooks"]["PreToolUse"][0]["hooks"]]
+        assert commands == [".claude/hooks/axb.js"]
+
+    def test_path_pattern_overrides_match_when_both_given(self, tmp_path: Path) -> None:
+        """An explicit ``--path-pattern`` wins over ``--match`` — the documented escape hatch."""
+        target = tmp_path / "settings.json"
+        _write_registry(target, _SAMPLE_REGISTRY)
+
+        rc = rhfr.main(
+            [
+                "--json-file",
+                str(target),
+                "--hook-name",
+                "rtk-rewrite",
+                "--match",
+                "basename",
+                "--path-pattern",
+                r"\.claude/hooks/rtk-rewrite\.js",
+            ],
+        )
+
+        assert rc == 0
+        rewritten = json.loads(target.read_text(encoding="utf-8"))
+        pre_cmds = [cmd["command"] for cmd in rewritten["hooks"]["PreToolUse"][0]["hooks"]]
+        assert pre_cmds == [".claude/hooks/commit-guard.js"]

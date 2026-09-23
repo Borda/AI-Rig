@@ -8,6 +8,14 @@ Triggered by `/audit --adversarial` (alias: `--challenge`). Read+executed by `/a
 
 Adversarial review of all agents + skills in scope. Runs parallel with or after standard per-file audit (Step 3). Surfaces issues curator pass misses: subtle logic flaws, inconsistent claims, NOT-for gaps, scope leakage, cross-file contradictions, security vulnerabilities in bin/ executables.
 
+**Spawn wave cap (overrides "same response"/"parallel with" phrasing below when combined count is high)**: caps are per model tier (`CAP_OPUS`/`CAP_SONNET`, constants block; canonical table in claude-config.md §Parallel Spawn Ceilings), not one shared total — "parallel" between phases means logically independent, not necessarily launched in one burst.
+
+- **Opus pool** (`CAP_OPUS`, default 5): Steps 3-4's curator batches + Phase A's curator batches + Phase A-prime's curator batches all draw from this one pool, since all three spawn `foundry:curator`. Before launching, sum every opus-tier batch about to be spawned across all currently-due phases; if that sum exceeds `CAP_OPUS`, split into ordered waves of `WAVE_STEP` (default 5) — Step 3/4 first (core audit value), then Phase A, then Phase A-prime. Wait for a wave to return before opening the next.
+- **Sonnet pool** (`CAP_SONNET`, default 8): Step 4's docs-freshness web-explorer + Phase D's qa-specialist batches draw from this pool, separately from the opus pool above — the two may run concurrently.
+- **Phase B** (Codex bridge call) isn't a Claude `Agent()` spawn and draws from neither pool — it fits any wave with room, governed by Codex-side capacity instead (see codex-rig `specialist-orchestration.md` if `bridge` routes through it).
+
+Below a pool's cap, launch that pool's phases together as written below.
+
 **Phase A — Challenger sweep** (parallel with Phase B):
 
 For each file in scope (Step 2 inventory; default all agents + skills if no explicit scope), spawn **foundry:curator** (config-file adversarial review — `foundry:challenger` NOT-for excludes config-file review, routes to `foundry:curator`):

@@ -150,11 +150,11 @@ Skill uses `eval "$(...)"` or `eval "$(python ...)"` to capture data values from
 printf "=== Check 23c: eval for data output ===\n"
 grep -rn 'eval.*"\$.*python\|eval.*"\$.*bin/' \
     plugins/*/skills/*/SKILL.md .claude/skills/*/SKILL.md 2>/dev/null |
-  grep -v 'health_sentinel\|ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup' |
+  grep -v 'health_sentinel\|ssh-agent\|direnv\|rbenv\|pyenv\|nvm\|# shell-setup\|parse-skill-flags\|derive_codemap_target\|git_slugs' |
   grep -v '^\s*#' | head -20
 ```
 
-False-positive exemption: `eval "$(python .../health_sentinel.py ...)"` — health monitoring shell-setup (emits `SENTINEL=...` for calling shell, not data output). Any other `eval "$(python ...)` = finding.
+False-positive exemption: eval whose stdout is `VAR=val` shell assignments for the calling shell — argument parsing (`parse-skill-flags.py`), target derivation (`derive_codemap_target.py`), slug helpers (`git_slugs.sh`), health monitoring (`health_sentinel.py`). Finding = eval used to capture a script's **data output** into variables, where a TMPDIR file is the correct channel. Cross-block persistence is Sub-check 23d, not this one.
 
 **Sub-check 23d** — shell variable used for state across separate Bash tool calls. **Not grep-detectable** (requires cross-block analysis of Bash call boundaries, which are runtime not lexical). Flag during curator per-file review only: when auditing a skill, scan for `VAR=$(...)` pattern in one fenced block and `"$VAR"` or `[ -z "$VAR" ]` in a later fenced block with no `cat "${TMPDIR:-/tmp}/...-${CSID}"` supplying `VAR` between them.
 
@@ -357,11 +357,17 @@ if [ "$LOCAL_MODE" != "true" ]; then
 else
     for f in plugins/*/skills/*/SKILL.md; do
       [ -f "$f" ] || continue
-      skill_plugin=$(echo "$f" | cut -d/ -f2)
+      skill_dir=$(echo "$f" | cut -d/ -f2)
+      plugin_json="plugins/$skill_dir/.claude-plugin/plugin.json"
+      [ -f "$plugin_json" ] || plugin_json="plugins/$skill_dir/.codex-plugin/plugin.json"
+      # routing prefix is plugin.json `name` (cc_foundry -> foundry); author.name precedes it, so parse JSON, never grep
+      routing_prefix=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['name'])" "$plugin_json" 2>/dev/null)
+      # unreadable manifest must not silently drop the file from scan — fall back to no self-filter
+      [ -n "$routing_prefix" ] || routing_prefix="__no_self_filter__"
       # match backtick-wrapped or plain /plugin:skill refs
       matches=$(grep -nE '`/[a-z]+:[a-z]|/oss:|/develop:|/research:|/codemap:|/codemap-py:|/foundry:' "$f" 2>/dev/null |
         grep -v "subagent_type\|#.*requires\|requires.*plugin\|plugin.*installed\|if.*plugin" |
-        grep -v "$(echo "$skill_plugin" | sed 's/[^a-z]//g'):" || true)
+        grep -v "/${routing_prefix}:" || true)
       if [ -n "$matches" ]; then
         echo "$matches" | while IFS= read -r line; do
           printf "⚠ 28c: %s — cross-plugin ref without availability guard: %s\n" "$f" "$line"
@@ -413,7 +419,8 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 [ "$LOCAL_MODE" = "true" ] && _ROOT="plugins" || _ROOT=".claude"
 printf "=== Check 30b: SKIP variable guard ===\n"
-find "$_ROOT" -path "*/skills/*" -name "*.md" -exec grep -Hn 'SKIP_[A-Z_]*=1' {} + 2>/dev/null |
+# anchor at word start — FORTIFY_SKIP_VARIANT=1 is a printed inter-block signal, not a guard variable; self-excluded because this template quotes the pattern (precedent: Check 27 at line 246). Two -e patterns, not (^|…) — `^` inside an ERE group is not portable to BSD grep.
+find "$_ROOT" -path "*/skills/*" -name "*.md" ! -name "checks-skills.md" -exec grep -Hn -E -e '^SKIP_[A-Z_]*=1' -e '[^A-Za-z0-9_]SKIP_[A-Z_]*=1' {} + 2>/dev/null |
   grep -v '^Binary' | grep -v '#' | while IFS= read -r match; do
     file=$(echo "$match" | cut -d: -f1)
     grep -q '\[ "\${SKIP_' "$file" 2>/dev/null ||
@@ -660,15 +667,22 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 printf "=== Check 32a: Dead mode files ===\n"
 found=0
 while IFS= read -r mode_file; do  # timeout: 5000
-    skill_md="$(dirname "$(dirname "$mode_file")")/SKILL.md"
-    [ -f "$skill_md" ] || continue
+    skill_dir="$(dirname "$(dirname "$mode_file")")"
+    [ -f "$skill_dir/SKILL.md" ] || continue
     mode_name=$(basename "$mode_file")
-    if ! /usr/bin/grep -qF "$mode_name" "$skill_md" 2>/dev/null; then
-        printf "⚠ 32a: %s — not referenced in %s\n" "$mode_file" "$skill_md"
+    hit=0
+    # dispatch can be multi-level: a mode may be loaded from a sibling mode file, not only SKILL.md
+    while IFS= read -r consumer; do
+        # a shared file's own `<!-- file: -->` header names it — self-match is not a reference
+        [ "$consumer" = "$mode_file" ] && continue
+        /usr/bin/grep -qF "$mode_name" "$consumer" 2>/dev/null && { hit=1; break; }
+    done < <(find "$skill_dir" \( -name "SKILL.md" -o -path "*/modes/*.md" \) 2>/dev/null | sort)
+    if [ "$hit" -eq 0 ]; then
+        printf "⚠ 32a: %s — not referenced in %s/SKILL.md or any sibling modes/*.md\n" "$mode_file" "$skill_dir"
         found=1
     fi
 done < <(find "$_ROOT" -path "*/skills/*/modes/*.md" 2>/dev/null | sort)
-[ "$found" -eq 0 ] && printf "✓: Check 32a — all mode files referenced in parent SKILL.md\n"
+[ "$found" -eq 0 ] && printf "✓: Check 32a — all mode files referenced in SKILL.md or a sibling mode file\n"
 ```
 
 Severity: **medium** — dead mode file = unreachable code; may diverge silently from live workflow. Auto-fix: delete the file, or add a reference in SKILL.md if omission was accidental.
@@ -684,15 +698,21 @@ IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/de
 printf "=== Check 32b: Dead template files ===\n"
 found=0
 while IFS= read -r tpl_file; do  # timeout: 5000
-    skill_md="$(dirname "$(dirname "$tpl_file")")/SKILL.md"
-    [ -f "$skill_md" ] || continue
+    skill_dir="$(dirname "$(dirname "$tpl_file")")"
+    [ -f "$skill_dir/SKILL.md" ] || continue
     tpl_name=$(basename "$tpl_file")
-    if ! /usr/bin/grep -qF "$tpl_name" "$skill_md" 2>/dev/null; then
-        printf "⚠ 32b: %s — not referenced in %s\n" "$tpl_file" "$skill_md"
+    hit=0
+    # templates are routinely loaded from a mode file, not SKILL.md (audit/modes/steps-4-5-7.md loads every checks-*.md)
+    while IFS= read -r consumer; do
+        [ "$consumer" = "$tpl_file" ] && continue
+        /usr/bin/grep -qF "$tpl_name" "$consumer" 2>/dev/null && { hit=1; break; }
+    done < <(find "$skill_dir" \( -name "SKILL.md" -o -path "*/modes/*.md" \) 2>/dev/null | sort)
+    if [ "$hit" -eq 0 ]; then
+        printf "⚠ 32b: %s — not referenced in %s/SKILL.md or any sibling modes/*.md\n" "$tpl_file" "$skill_dir"
         found=1
     fi
 done < <(find "$_ROOT" -path "*/skills/*/templates/*" -type f 2>/dev/null | sort)
-[ "$found" -eq 0 ] && printf "✓: Check 32b — all template files referenced in parent SKILL.md\n"
+[ "$found" -eq 0 ] && printf "✓: Check 32b — all template files referenced in SKILL.md or a mode file\n"
 ```
 
 Severity: **low** — templates may be referenced indirectly via agent spawn prompts that mention the filename inline; human review required before deletion. Auto-fix: delete if confirmed unused; no auto-delete.

@@ -11,6 +11,14 @@ Usage:
 Exit codes:
     0 — printed the created directory path
     1 — could not allocate a run directory after retrying (contested on every attempt)
+
+Security:
+    ``--pr-dir`` is trusted to come from ``oss:review`` Step 2 (``skills/review/SKILL.md``, the
+    ``PR_REPORT_DIR`` variable, built from a numeric-only ``CLEAN_ARGS`` sentinel) and is not
+    validated here. The capability is limited regardless: this script only creates directories via
+    an exclusive-create loop, never deletes or overwrites, and refuses an index already taken. A
+    future caller passing externally-influenced input for ``--pr-dir`` must validate it upstream —
+    this script does not.
 """
 
 from __future__ import annotations

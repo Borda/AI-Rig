@@ -20,7 +20,7 @@ Locate `../../scripts/manage_role_agents.py` relative to this installed `SKILL.m
 - `doctor`: run read-only live prerequisite check, render its JSON result for person.
 - `status`: run read-only health and installed-roster summary, render its JSON result for person.
 - `install`: report stable platform block. Never request approval; no new shim plan or write is allowed.
-- `remove`: use same exact-digest flow to remove every intact managed shim. Never delete by filename prefix or marker alone.
+- `remove`: use same exact-digest flow to remove every intact managed shim. Never delete by filename prefix or marker alone. On failure, apply the same per-exit-code recovery guidance listed below for `doctor` and `status` — it applies to `remove`'s failure modes too.
 
 Preserve manager's exit contract: `0` success/converged, `2` usage, `3` cancelled, `4` drift/conflict, `5` prerequisite blocked, `6` untrusted state, `7` internal/recovery failure. Never retry mutating action after codes `4`, `6`, or `7`; report evidence, keep files untouched.
 
@@ -31,9 +31,9 @@ For `doctor` and `status`, never return only raw JSON or generic safety label:
 3. State `No files changed.`
 4. Give narrow safe next step. For package or active-package failures, refresh or reinstall Codex Rig, start fresh session. For executable failures, report selected path, rerun from fresh session with stable Python and Codex selection. For permission, owner, type, or link failures, inspect only named path, verify its metadata before changing anything. For corrupt, inconsistent, modified, or foreign evidence, back it up, never adopt, edit, or delete it automatically. For recognized recovery residue, use `remove`, review its authenticated approval digest.
 
-Never recommend recursive `chmod`, `chown`, deletion, or link replacement from diagnostic alone. A protected agent target may be readable by other users, but it must be owned by current user, have no group/world write or special permission bits. Private lifecycle state remains exact mode `0700`.
+Never recommend recursive `chmod`, `chown`, deletion, or link replacement from diagnostic alone. On POSIX systems, a protected agent target may be readable by other users, but it must be owned by current user, have no group/world write or special permission bits; private lifecycle state remains exact mode `0700`. Not applicable on Windows, where `remove` is platform-blocked.
 
-After successful install, update, or removal, tell user to start fresh Codex session. Thin shims intentionally depend on installed plugin cache; uninstalling plugin makes remaining shims unavailable until safely removed or reinstalled.
+After successful install or removal, tell user to start fresh Codex session. Thin shims intentionally depend on installed plugin cache; uninstalling plugin makes remaining shims unavailable until safely removed or reinstalled.
 
 ## Output Contract
 

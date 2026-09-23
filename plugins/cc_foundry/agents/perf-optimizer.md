@@ -257,13 +257,20 @@ If runnable, time workload and measure GPU utilization:
 time python -c "import <module>; <representative_workload>"
 
 # nvidia-smi: CUDA only — skip on Apple MPS, ROCm, Intel Arc, CPU-only hosts
-# Background pid written to file — job control (kill %1) doesn't persist across Bash calls
+# session-scoped sentinels (-CSID): bare /tmp names collide across concurrent sessions; `read` not $(cat) — allow-rules match
 command -v nvidia-smi &>/dev/null && {
   TMPDIR="${TMPDIR:-$(python -c "import tempfile; print(tempfile.gettempdir())")}"
-  trap "kill \$(cat \$TMPDIR/gpu_util.pid 2>/dev/null) 2>/dev/null" EXIT
-  nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv -l 1 > "$TMPDIR/gpu_util.log" & echo $! > "$TMPDIR/gpu_util.pid"
+  export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+  GPU_PID_FILE="$TMPDIR/gpu_util-pid-${CSID}"
+  GPU_LOG_FILE="$TMPDIR/gpu_util-log-${CSID}"
+  nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv -l 1 > "$GPU_LOG_FILE" &
+  GPU_PID=$!
+  echo "$GPU_PID" > "$GPU_PID_FILE"
+  trap 'IFS= read -r _P < "$GPU_PID_FILE" 2>/dev/null && kill "$_P" 2>/dev/null' EXIT
   python <script.py>
-  kill "$(cat "$TMPDIR/gpu_util.pid" 2>/dev/null)"; tail "$TMPDIR/gpu_util.log"
+  IFS= read -r GPU_PID < "$GPU_PID_FILE" 2>/dev/null || GPU_PID=""
+  [ -n "$GPU_PID" ] && kill "$GPU_PID"
+  tail "$GPU_LOG_FILE"
 }
 ```
 
@@ -314,7 +321,32 @@ Every recommendation MUST use `<output-format>` template. Never report optimizat
 
 **Scope**: targeted micro-optimizations (vectorize loop, switch dtype, pin memory). If change requires extracting/renaming/restructuring code paths → hand off to `foundry:sw-engineer` (refactoring boundary).
 
-Before loop: `git stash` to checkpoint pre-change state; on regression: `git stash pop` to restore. **Worktree guard**: in worktree context `git stash` is shared across all worktrees — popping restores wrong state. In worktree-isolated runs, avoid `git stash`; use `git status --porcelain` to detect dirty state and `git checkout -- <file>` for per-file revert instead.
+Before loop: checkpoint pre-change state; on regression: restore it. **Worktree guard**: `git stash` is shared across all worktrees in the same repo — popping in one worktree can apply an entry created by another, or a pre-existing stash unrelated to this run. Detect worktree isolation and whether `git stash` actually created an entry before ever popping:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null); _GIT_COMMON_DIR=$(git rev-parse --git-common-dir 2>/dev/null)
+if [ "$_GIT_DIR" != "$_GIT_COMMON_DIR" ] || [ "$ISOLATION_WORKTREE" = "true" ]; then
+  echo "worktree" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}"  # git-dir != git-common-dir = linked worktree; or isolation:worktree signal — stash repo-shared, skip
+else
+  _BEFORE=$(git rev-parse --verify --quiet refs/stash 2>/dev/null)
+  git stash
+  _AFTER=$(git rev-parse --verify --quiet refs/stash 2>/dev/null)
+  [ "$_BEFORE" != "$_AFTER" ] && echo "stashed" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}" || echo "clean" > "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}"  # clean tree: git stash exits 0 but creates no entry — never pop
+fi
+```
+
+On regression:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _MODE < "${TMPDIR:-/tmp}/perf-checkpoint-mode-${CSID}" 2>/dev/null || _MODE=""
+case "$_MODE" in
+  stashed) git stash pop || echo "! stash pop failed — resolve conflict manually before retrying" ;;
+  worktree) git status --porcelain ;;  # per-file revert: git checkout -- <file>
+  *) : ;;  # clean tree — nothing to restore
+esac
+```
 
 1. **Change**: one targeted change from highest-impact finding
 

@@ -13,13 +13,17 @@ Usage:
     python "${CLAUDE_PLUGIN_ROOT}/bin/remove_hook_from_registry.py" \\
         --json-file <path> \\
         --hook-name <name> \\
-        --path-pattern <python-regex>
+        [--match path|basename]
 
-The ``--path-pattern`` is a Python regex (``re.search``-style); it is matched
-case-insensitively against each ``command`` string. The caller is responsible
-for supplying the hook-name token escaped if needed — typical usage:
+The default match builds a safe regex from ``--hook-name`` (escaped via ``re.escape``)
+per ``--match``: ``path`` -> ``\\.claude/hooks/<name>\\.js`` (default), ``basename`` ->
+``<name>\\.js``. ``--path-pattern`` is an escape hatch — a raw Python regex
+(``re.search``-style, matched case-insensitively), used verbatim instead of the
+``--match`` form when supplied. A hand-built pattern is the caller's own responsibility
+to escape: an unescaped metacharacter (e.g. a literal ``.``) over-matches, and this tool
+rewrites the target file in place. Typical usage:
 
-    --hook-name rtk-rewrite --path-pattern '\\.claude/hooks/rtk-rewrite\\.js'
+    --hook-name rtk-rewrite --match path
 
 Atomic write — writes to ``<path>.tmp`` then renames over the target. On any
 failure the temp file is removed and the original file is left untouched.
@@ -217,12 +221,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json-file", required=True, type=Path, help="JSON file to rewrite in place.")
     parser.add_argument("--hook-name", required=True, help="Hook basename (used in error messages).")
     parser.add_argument(
+        "--match",
+        choices=("path", "basename"),
+        default="path",
+        help="Build the regex from --hook-name (escaped): 'path' -> \\.claude/hooks/<name>\\.js, "
+        "'basename' -> <name>\\.js. Ignored if --path-pattern is also given.",
+    )
+    parser.add_argument(
         "--path-pattern",
-        required=True,
-        help="Python regex matched (case-insensitively) against each command field.",
+        required=False,
+        default=None,
+        help="Escape hatch: raw Python regex, used verbatim instead of the safer --match form. "
+        "Prefer --match — a metacharacter in a hand-built pattern over-matches, and this tool "
+        "rewrites the file in place.",
     )
     args = parser.parse_args(argv)
-    return run(args.json_file, args.hook_name, args.path_pattern)
+
+    if args.path_pattern:
+        effective_pattern = args.path_pattern
+    else:
+        escaped_name = re.escape(args.hook_name)
+        effective_pattern = rf"\.claude/hooks/{escaped_name}\.js" if args.match == "path" else rf"{escaped_name}\.js"
+
+    return run(args.json_file, args.hook_name, effective_pattern)
 
 
 if __name__ == "__main__":

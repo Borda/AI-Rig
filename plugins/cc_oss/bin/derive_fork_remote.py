@@ -14,7 +14,8 @@ Usage:
 
 Exit codes:
     0 — push scope computed and printed
-    1 — the fork remote or head ref is unresolved, or the push scope could not be computed
+    1 — the fork remote or head ref is unresolved, the push scope could not be computed, or one of
+        --fork-remote/--head-ref/--base-ref starts with '-' (argv-injection guard)
 """
 
 from __future__ import annotations
@@ -154,6 +155,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args.fork_remote or not args.head_ref:
         print("⛔ Step 10: FORK_REMOTE/HEAD_REF unresolved — refusing to present an empty push-authorization prompt")
         return 1
+
+    for flag, value in (
+        ("--fork-remote", args.fork_remote),
+        ("--head-ref", args.head_ref),
+        ("--base-ref", args.base_ref),
+    ):
+        if value.startswith("-"):
+            print(
+                f"⛔ Step 10: {flag} must not start with '-': {value!r} — refusing to pass it to git argv",
+                file=sys.stderr,
+            )
+            return 1
 
     ensure_fork_remote(args.fork_remote, args.timeout)
     _git(["branch", f"--set-upstream-to={args.fork_remote}/{args.head_ref}"], args.timeout)

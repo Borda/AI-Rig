@@ -80,7 +80,7 @@ One independent hypothesis per iteration. Never optimize unmeasured paths. Befor
 
 ### 05: Re-measure
 
-Re-run same retained `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/metric-after.txt` and `<run-directory>/guard-after.txt`; retain both exit codes.
+Re-run same retained `metric_cmd` and `guard_cmd` separately with host-native command runner. Write complete combined output to `<run-directory>/iteration-<n>-metric-after.txt` and `<run-directory>/iteration-<n>-guard-after.txt`; retain both exit codes.
 
 ### 06: Compare baseline and after results in `<run-directory>/comparison.md`
 

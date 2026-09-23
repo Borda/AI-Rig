@@ -28,4 +28,16 @@ Assertion raises → print `"⚠ GPU mismatch: requested ${colab_hw} but runtime
 
 <!-- Colab assertion: MCP call, not Bash — exempt from the script-file rule; correct as an inline one-liner. -->
 
-Timeout expires → refresh sentinel (use REPO_SLUG and BRANCH_SLUG from `<constants>` — re-derive per canonical formula, then `touch "${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}"` <!-- tmpdir-exempt: user-shell-boundary -->), append `status: timeout`, revert via `git revert HEAD --no-edit` **only if revert not already performed this iteration** (check: `git log --oneline -1` still shows experiment commit — HEAD already past revert commit → skip revert), continue loop.
+Timeout expires → refresh sentinel (use REPO_SLUG and BRANCH_SLUG from `<constants>` — re-derive per canonical formula, then `touch "${TMPDIR:-/tmp}/claude-commit-auth-${REPO_SLUG}-${BRANCH_SLUG}"` <!-- tmpdir-exempt: user-shell-boundary -->), append `status: timeout`, then revert only if not already reverted this iteration: <!-- policy-sibling: plugins/cc_research/skills/run/SKILL.md §Phase 7 double-revert guard -->
+
+```bash
+# revert subject embeds the original ("Revert \"experiment(...)\"") — anchor at subject start, never substring
+[ -n "$I" ] || { echo "! BLOCKED — Phase 5: iteration number unset, cannot scope revert guard"; exit 1; }
+if git log -1 --format=%s 2>/dev/null | grep -qE "^experiment\(optimize/i${I}\):"; then
+    git revert HEAD --no-edit  # timeout: 15000
+else
+    echo "Phase 5: HEAD is not iteration ${I}'s experiment commit — already reverted; skipping double-revert."
+fi
+```
+
+Continue loop.

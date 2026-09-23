@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.6
+
+- Security: fixed a decorator-injection bypass and a source-code leak in the telemetry anonymizer (found by this release's own residual adversarial scan, beyond the audit's original scope).
+- Fixed 30 audit findings across skills, bin/ scripts, and rules (model-tier mismatches, cross-reference drift, doc/behavior contradictions); see `.reports/audit/2026-09-22T22-18-03Z/fix-summary-codemap.md` for full detail.
+- `foundry:audit`'s bin/ test-coverage check (M34) now falls back to a category-nested `tests/<category>/test_<name>.py` layout when the flat path is missing, fixing false positives against this plugin's test layout.
+
 ## 0.39.5
 
 - Security: the prompt hook validates the index header's `git_sha` as a hex object name before passing it to `git diff`. A planted `.cache/codemap/<project>.json` with an option-shaped `git_sha` (for example `--output=<path>`) could otherwise make the hook write a file at that path on every prompt that starts a refresh; such a value now yields an unknown `changed_count` without any git call. A count that fails for any other reason leaves the count unknown and the refresh still starts, so the refresh lock can no longer leak.

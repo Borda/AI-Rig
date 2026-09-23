@@ -202,7 +202,7 @@ Read the doc, print its body verbatim, frontmatter stripped, under a one-line ba
 ### Substep 2c: Mark consumed
 
 1. Edit tool on the doc: `consumed: false` → `consumed: true` (frontmatter only).
-2. Write tool on `.claude/state/session/LATEST`: empty content. Hook treats blank and missing alike, so nothing re-injects on next `/clear`.
+2. Read `.claude/state/session/LATEST` (reuse the Substep 2a read when the target was unnamed) and compare its content to the resolved slug. **Only when they match**: Write tool on `.claude/state/session/LATEST` with empty content — hook treats blank and missing alike, so nothing re-injects on next `/clear`. When `LATEST` points to a different, still-unconsumed slug: leave it untouched — recalling an unrelated named doc must never silently drop the pointer to a different pending handover.
 
 End with a `## Confidence` block per `quality-gates.md` — score on: target resolved unambiguously, doc printed intact, consumed marker written.
 
@@ -284,6 +284,8 @@ Render:
 ```
 
 Then `AskUserQuestion`: (a) park all · (b) park a subset (list the numbers) · (c) skip. Selecting (a) or (b) runs **Mode: park** for each chosen item in the same turn.
+
+When a `session-restore.js`-injected handover doc is present at the start of this conversation (a freshly restored session), its `## Decisions` and `## Outstanding` sections are part of the candidate set too — an item listed there and not yet re-confirmed as landed in the live turns since restore still counts as stated-but-unlanded. Do not require post-restore Edit/Write evidence for something the restored doc's own `## Files touched` table already marked `done`.
 
 Sweep sees the **current conversation only**. A finished session's unlanded ideas are unreachable — native `/resume` revives the conversation itself; this skill never mines transcript JSONL.
 

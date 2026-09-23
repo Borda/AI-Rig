@@ -149,8 +149,8 @@ fi
 Spawn **foundry:sw-engineer** agent with full goal text from `$ARGUMENTS`. Agent should:
 
 - Classify task as `feature`, `fix`, `refactor`, or `debug`
-  - `debug`: root cause unknown — symptoms present, cause unclear, investigation needed before fix scoped; classified `debug` → recommend `/develop:debug` first, then re-run `/develop:plan` once root cause identified to produce fix plan
-  - **WARNING**: debug classification recommends `/develop:debug`; once root cause found, `/develop:debug`'s own output tells user to re-run `/develop:plan` — user-mediated plan→debug→plan cycle, not automatic re-invocation (`/develop:debug` never calls `/develop:plan` itself). Caller tracks cycle depth via shared checkpoint file to cap repeated cycles (not a CLI flag — `/develop:debug` has no `--max-depth`). Max depth = `$MAX_DEPTH` (default 3, CLAUDE.md safety break). Before invoking `/develop:debug`, execute depth-checkpoint bash block below:
+  - `debug`: root cause unknown — symptoms present, cause unclear, investigation needed before fix scoped; classified `debug` → recommend `/develop:debug` first
+  - **WARNING**: `/develop:debug` hands off directly to `/develop:fix --diagnosis <path>`, never back here; re-running `/develop:plan` afterwards is a user choice, worth it only when the fix needs its own scoped plan; because that repeat is user-driven and unbounded, cap it via the depth checkpoint below. Caller tracks cycle depth via shared checkpoint file to cap repeated cycles (not a CLI flag — `/develop:debug` has no `--max-depth`). Max depth = `$MAX_DEPTH` (default 3, CLAUDE.md safety break). Before invoking `/develop:debug`, execute depth-checkpoint bash block below:
 
 ```bash
 # anti-loop guard  # timeout: 3000
@@ -169,7 +169,7 @@ else
 fi
 ```
 
-At depth 0: stop, report current plan state, invoke `AskUserQuestion` — (a) Accept plan as-is · (b) Re-scope with reduced depth requirement.
+At depth 0: stop, report current plan state, invoke `AskUserQuestion` — "Debug-cycle cap ($MAX_DEPTH) reached for this goal; root cause still unconfirmed. How to proceed?" · (a) **Write the plan anyway** — continue to Step 2 flagging "root cause unconfirmed" under Risks · (b) **Reset the cap for this goal** — clear the depth checkpoint and recommend `/develop:debug` once more · (c) **Abort**.
 
 - Identify affected files and modules (search codebase — no guessing)
 - Assess complexity: small (1-3 files, self-contained), medium (4-8 files or 1-2 modules), large (cross-module, API changes, or 3+ modules). Effort-sizing block produced tier table → let structural reach override file count: any **HIGH** blast module (≥5 rdeps) or ≥3 affected modules → `large`, regardless of raw file count.
@@ -388,7 +388,7 @@ Plan -> <PLAN_FILE>
 
 <brief content exactly as written to the file>
 
--> /develop:<classification> <goal> when ready  [debug: -> /develop:debug <goal> first, then re-run /develop:plan]
+-> /develop:<classification> <goal> --plan <PLAN_FILE> when ready  [debug: -> /develop:debug <goal> first — it hands off to /develop:fix --diagnosis <path>]
 ```
 
 If unresolved items escalated, print each after brief:
@@ -401,7 +401,7 @@ If unresolved items escalated, print each after brief:
 
 Invoke `AskUserQuestion` before printing `-> /develop:<classification> ...`. Options: (a) Proceed — print handoff line, continue · (b) Revise plan — return to Step 2 with user edits. Don't print handoff line until user selects (a).
 
-**Handoff contract**: plan file at `<PLAN_FILE>` consumable by downstream skills. Pass via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. `debug` classification: no downstream plan file — invoke `/develop:debug <goal>` directly; once root cause identified, re-run `/develop:plan` for scoped fix plan. Skill receives `--plan <path>` → reads plan file at Step 1 and:
+**Handoff contract**: plan file at `<PLAN_FILE>` consumable by downstream skills. Pass via `--plan <PLAN_FILE>` when invoking `/develop:feature`, `/develop:fix`, or `/develop:refactor`. `debug` classification: no downstream plan file — invoke `/develop:debug <goal>` directly; it hands off to `/develop:fix --diagnosis <path>` on completion, never back to `/develop:plan` — re-running `/develop:plan` afterwards is a user choice, only when the fix needs its own scoped plan. Skill receives `--plan <path>` → reads plan file at Step 1 and:
 
 - Extracts `Classification`, `Affected files`, `Risks`, `Suggested approach` — skips cold codebase exploration
 - Inherits agent feasibility verdicts and Codex corrections already applied

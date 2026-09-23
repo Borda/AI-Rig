@@ -30,6 +30,8 @@ Run linear code remediation to close findings.
 
 ## Workflow (Exact Commands)
 
+<!-- policy-sibling: skills/assess/SKILL.md, skills/release/SKILL.md, skills/code-review/SKILL.md -->
+
 Apply [GitHub Workflow Consent](../../shared/native-skill-contract.md#github-workflow-consent) whether or not `--approve-gh` is present: reuse existing scoped authorization; never require a flag reply or reinvocation. Ask only for genuinely missing consent through the permitted question control.
 
 For required GitHub operations covered by `--approve-gh` or recorded same-scope workflow consent, apply [Managed Host Preapproval](../../shared/native-skill-contract.md#managed-host-preapproval) to the helper actually used. Reuse the loaded matching host allow rule and execute directly; do not introduce a workflow confirmation or a wrapper that breaks matching. Diagnose unexpected prompts with the exact command and applicable rules. Missing or stricter host permissions remain authoritative.
@@ -445,6 +447,8 @@ Every bucket row records:
 - owned files/evidence; parallel buckets cannot overlap
 - execution mode: `parent|sequential|parallel`
 - execution status: `planned|in-progress|fixed|verified|deferred|unresolved`
+
+When the overhead gate above keeps a domain-diverse ≤5-item selection in one bucket, that bucket's primary owner is `parent`; the owner-assignment enum below governs a bucket's primary owner only when its selected items share one domain. A domain-diverse selection may instead split into multiple single-domain buckets under sequential (not parallel) execution, keeping each bucket's own specialist owner — this precedence resolves the single-bucket case only, it does not force every domain-diverse ≤5-item selection into one parent-owned bucket.
 
 Owner assignment rules:
 

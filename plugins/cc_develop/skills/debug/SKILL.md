@@ -154,9 +154,10 @@ Follow §URL Normalization to set `CI_RUN_ID`. If `CI_RUN_ID` set, follow §Log 
 # timeout: 5000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # strip flags first — "123 --no-challenge" would fail integer detection otherwise
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,issue,no-codemap,codemap --value-flags ci-run,repo "$ARGUMENTS")"  # timeout: 5000
-if [ "$FLAG_ISSUE" = "true" ] || [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap --value-flags ci-run,repo,issue "$ARGUMENTS")"  # timeout: 5000
+if [ -n "$VALUE_ISSUE" ] || [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
     DEBUG_MODE="issue"
+    echo "${VALUE_ISSUE:-$CLEAN_ARGS}" > ${TMPDIR:-/tmp}/dev-debug-issue-num-${CSID}
 else
     DEBUG_MODE="symptom"
 fi
@@ -168,14 +169,15 @@ Subsequent steps branch by `DEBUG_MODE`:
 - **Issue mode**: Step 1 fetches issue body and extracts test path before invoking pytest; skip symptom-text pytest block. Stop after Step 4 (handoff) — do not run symptom-text branches.
 - **Symptom mode**: Step 1 skips issue fetch; uses free-text symptom directly. Skip issue-mode pytest block entirely.
 
-**If `TEAM_MODE=true`** — execute team investigation now in place of standard Steps 1-2. After team synthesis completes, run Steps 3-4 inline (hypothesis gate + handoff to fix) on winning hypothesis — never return to standard Steps 1-2. Authoritative reading: team mode **replaces** Steps 1-2 (parallel hypothesis investigation supplants serial evidence gathering); Steps 3-4 still execute (inline within this block, not by looping back to standard workflow):
+**If `TEAM_MODE=true`** — execute team investigation now in place of standard Steps 1-2. After team synthesis completes, run Steps 3-4 inline (hypothesis gate + handoff to fix) on winning hypothesis — never return to standard Steps 1-2. Authoritative reading: team mode **replaces** Steps 1-2 (parallel hypothesis investigation supplants serial evidence gathering); Steps 3-4 still execute (inline within this block, not by looping back to standard workflow): Two gates in the replaced span are **not** Steps 3-4 and still run on the consensus root cause before Step 3: the Claim-validation gate (Step 1) and the `## Challenger gate` section. `--challenge` forces the latter in team mode exactly as in solo mode.
 
 1. `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""; [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"; cat "$_DEV_SHARED/preflight-helpers.md"` §Team Spawn Template. Confirm `[ROLE_PHRASE]` = symptom text (from `$ARGUMENTS` stripped of flags), `[FILE_SLUG]` = `debug-hypothesis`.
-2. Run project detection (`export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""; [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"; cat "$_DEV_SHARED/runner-detection.md"`) to set `$TEST_CMD` and `$PYTEST_CMD`.
-3. Compute `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`, `mkdir -p ".temp/develop/$TS"`. Spawn 2-3 `foundry:sw-engineer` agents (model=opus) in parallel — each investigating one independent root-cause hypothesis. Use Team Spawn Template from preflight-helpers: replace `[ROLE_PHRASE]` with symptom, `[FILE_SLUG]` with `debug-hypothesis`, assign each agent a distinct hypothesis number N. Each agent writes full output to `.temp/develop/$TS/debug-hypothesis-N-$TS.md` (run-dir timestamp, matching preflight-helpers §Team Spawn Template), returns compact JSON `{"status":"done","file":"<path>","findings":N,"confidence":0.N,"summary":"<one-line description of hypothesis>"}`.
-4. **Coordination**: lead broadcasts `{symptom: <description>, traceback: <key lines>}` to teammates before spawning. After all return, facilitate cross-challenge between competing analyses. Convergence rule: select hypothesis with most direct evidence (observable in code or logs); truly tied → invoke `AskUserQuestion` presenting top 2 competing hypotheses.
-5. **Synthesis trace (lead, inline — no spawn)**: after individual teammate reports, lead reads all teammate findings from `.temp/develop/$TS/debug-hypothesis-*.md` (2-3 files already on disk), produces the unified cross-cutting trace map itself — entry point, modules crossed, state mutations, invariant violations across hypotheses. Write to `.temp/develop/$TS/debug-trace-synthesis.md`. A dedicated synthesis agent costs ~120,851 tok fixed overhead for a read-and-merge the lead performs inline in fix's equivalent step — spawn nothing here.
-6. Lead synthesises consensus root cause from trace map + competing hypotheses. Run Steps 3-4 of standard workflow (hypothesis gate + hand off to fix) on winning hypothesis — execute those steps inline here; never loop back through Steps 1-2. **Step 3 gate in team mode**: convergence reached by synthesis agent (all hypotheses point to same root cause, high confidence) → present converged hypothesis without new user confirmation prompt — state "Team converged on root cause (no ambiguity)", proceed directly to Step 4 handoff. Only invoke `AskUserQuestion` at Step 3 if competing hypotheses remain or convergence declared by default (tied evidence).
+2. **Issue mode** (`DEBUG_MODE=issue`): fetch the issue body **before** spawning — run the Step 1 issue-fetch block (`dev_issue_fetch_wrap.py`) and the test-path extraction block, then use the issue title + body as `[ROLE_PHRASE]` in place of the bare number. Teammates given only a number have no evidence to investigate.
+3. Run project detection (`export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""; [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"; cat "$_DEV_SHARED/runner-detection.md"`) to set `$TEST_CMD` and `$PYTEST_CMD`.
+4. Compute `TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)`, `mkdir -p ".temp/develop/$TS"`. Spawn 2-3 `foundry:sw-engineer` agents (model=opus) in parallel — each investigating one independent root-cause hypothesis. Use Team Spawn Template from preflight-helpers: replace `[ROLE_PHRASE]` with symptom, `[FILE_SLUG]` with `debug-hypothesis`, assign each agent a distinct hypothesis number N. Each agent writes full output to `.temp/develop/$TS/debug-hypothesis-N-$TS.md` (run-dir timestamp, matching preflight-helpers §Team Spawn Template), returns compact JSON `{"status":"done","file":"<path>","findings":N,"confidence":0.N,"summary":"<one-line description of hypothesis>"}`.
+5. **Coordination**: lead broadcasts `{symptom: <description>, traceback: <key lines>}` to teammates before spawning. After all return, facilitate cross-challenge between competing analyses. Convergence rule: select hypothesis with most direct evidence (observable in code or logs); truly tied → invoke `AskUserQuestion` presenting top 2 competing hypotheses.
+6. **Synthesis trace (lead, inline — no spawn)**: after individual teammate reports, lead reads all teammate findings from `.temp/develop/$TS/debug-hypothesis-*.md` (2-3 files already on disk), produces the unified cross-cutting trace map itself — entry point, modules crossed, state mutations, invariant violations across hypotheses. Write to `.temp/develop/$TS/debug-trace-synthesis.md`. A dedicated synthesis agent costs ~120,851 tok fixed overhead for a read-and-merge the lead performs inline in fix's equivalent step — spawn nothing here.
+7. Lead synthesises consensus root cause from trace map + competing hypotheses. Run Steps 3-4 of standard workflow (hypothesis gate + hand off to fix) on winning hypothesis — execute those steps inline here; never loop back through Steps 1-2. **Step 3 gate in team mode**: convergence reached by synthesis agent (all hypotheses point to same root cause, high confidence) → present converged hypothesis without new user confirmation prompt — state "Team converged on root cause (no ambiguity)", proceed directly to Step 4 handoff. Only invoke `AskUserQuestion` at Step 3 if competing hypotheses remain or convergence declared by default (tied evidence). This is a deliberate divergence from solo mode's unconditional Step 3 gate (line 436): independent convergence across 2-3 investigators is the evidence the solo gate asks the user to supply. Divergent or tied evidence → the solo gate applies unchanged.
 
 Health monitoring (CLAUDE.md §6): for each spawned agent, use a **per-agent sentinel** keyed on loop counter `$N` (not literal `N`). Loop over agent indices in actual bash:
 
@@ -187,7 +189,7 @@ for N in 1 2 3; do
 done
 ```
 
-Poll each independently every 5 min via `find .temp/develop/$TS -name "debug-hypothesis-${N}*" -newer ${TMPDIR:-/tmp}/debug-team-check-${N}-${CSID} | wc -l` where `$N` is actual agent index in loop variable — `-name` scope is load-bearing: a directory-wide `find` marks every agent alive whenever any sibling writes, collapsing exactly the per-agent isolation these sentinels exist for. Poll only indices actually spawned (2-hypothesis run → poll N=1,2 only; third touched sentinel is harmless unused file). A single shared sentinel collapses health isolation — stalled agent N=2 can't be distinguished from active agent N=1. Hard cutoff 15 min no-file-activity per agent; mark timed-out agents ⏱ in synthesis.
+Spawn the batch, **end the turn**, resume on each completion notification — never a no-op call, a "waiting" line, or a sleep. At most one liveness probe per wake-up: `find .temp/develop/$TS -name "debug-hypothesis-${N}*" -newer ${TMPDIR:-/tmp}/debug-team-check-${N}-${CSID} | wc -l` where `$N` is the actual agent index in the loop variable. `-name` scope is load-bearing: a directory-wide `find` marks every agent alive whenever any sibling writes, collapsing exactly the per-agent isolation these sentinels exist for. Poll only indices actually spawned (2-hypothesis run → poll N=1,2 only; third touched sentinel is harmless unused file). A single shared sentinel collapses health isolation — stalled agent N=2 can't be distinguished from active agent N=1. Hard cutoff 15 min no-file-activity per agent; mark timed-out agents ⏱ in synthesis.
 
 ## Step 1: Understand the symptom
 
@@ -225,7 +227,8 @@ If codemap-py results returned: prepend `## Structural Context (codemap-py)` blo
 # timeout: 6000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # wrapper: cross-repo branch from dev-upstream, persists body to dev-issue-body-${CSID} for next block (avoids re-running gh)
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" debug "$ARGUMENTS"
+IFS= read -r _ISSUE_NUM < "${TMPDIR:-/tmp}/dev-debug-issue-num-${CSID}" 2>/dev/null || _ISSUE_NUM=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" debug "${_ISSUE_NUM:-$ARGUMENTS}"
 ```
 
 ```bash
@@ -394,7 +397,7 @@ Spawn `foundry:challenger` with pattern analysis from Step 2 (differences betwee
 
 Parse result — update hypothesis ledger (`${TMPDIR:-/tmp}/dev-debug-hypotheses-${CSID}`) with each candidate's verdict as you parse:
 
-- **Blockers found** → STOP. Present findings. Incorporate challenger's surviving challenges into hypothesis list before Step 3 gate. Mark any candidate the challenger refuted `:: refuted (challenger)` in ledger.
+- **Blockers found** → STOP. Present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the candidate root cause. How to proceed?" · (a) **Address blockers** — revise candidates, re-run gate · (b) **Accept risk** — proceed to Step 3 with blockers documented in the diagnosis file · (c) **Abort**. On Abort: stop. Incorporate surviving challenges into the hypothesis list before the Step 3 gate; mark any candidate the challenger refuted `:: refuted (challenger)` in the ledger.
 - **Concerns only** → add as alternative hypotheses in Step 3; append each new concern to ledger as `:: open (alt)`; continue.
 - **No findings / all refuted** → proceed.
 

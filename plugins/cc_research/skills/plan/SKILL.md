@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Interactive wizard that scans the codebase, proposes a metric/guard/agent config, and writes a program.md run spec. Also runs cProfile on a file path to surface bottlenecks before prompting for optimization goal.
+description: Interactive wizard that scans the codebase, proposes a metric/guard/agent config, and writes a program.md run spec. Also runs cProfile on a file path to surface bottlenecks before prompting for optimization goal. Distinct from `/research:topic plan`, which turns prior SOTA research into an implementation roadmap, not a program.md.
 argument-hint: <goal> | <file.py> [out.md] [--team]
 effort: medium
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskCreate, TaskUpdate, AskUserQuestion
@@ -58,9 +58,9 @@ Parse `<input>` from arguments. Determine: **file path** or **goal string**:
 
 Extract first positional token (strip all `--<flag>` tokens from `$ARGUMENTS`, take first remaining token as `FILE_ARG`). Then:
 
-**Disambiguation guard** — treat `FILE_ARG` as file path only if it exists on disk. Multi-token strings ($ARGUMENTS containing spaces beyond `FILE_ARG`) always goal text — never run `test -f` on first token of multi-token goal:
+**Disambiguation guard** — treat `FILE_ARG` as file path only if it exists on disk, and only when the non-flag token count is 1 or 2 (the 2-token form additionally requires the second token to end `.md` — see classification below). 3+ non-flag tokens is always goal text — never run `test -f` on first token of a 3+-token goal:
 
-**Quoting note**: `$ARGUMENTS` raw string (not shell-tokenized). User-supplied quotes (e.g. `plan "reduce training loss"`) appear as literal characters. Before token counting, strip surrounding matched quotes from `$ARGUMENTS` so quoted multi-word goals correctly recognised as multi-token:
+**Quoting note**: `$ARGUMENTS` raw string (not shell-tokenized). User-supplied quotes (e.g. `plan "train.py out.md"`) appear as literal characters. Before token counting, strip surrounding matched quotes from `$ARGUMENTS` so `FILE_ARG` resolves bare (`"train.py out.md"` → `train.py`, not `"train.py`):
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -70,11 +70,15 @@ eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/parse-skill-flags
 _STRIPPED=$(echo "$CLEAN_ARGS" | sed -E 's/^"(.*)"$/\1/; s/^'\''(.*)'\''$/\1/')  # timeout: 5000
 NONFLAG_TOKEN_COUNT=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | wc -l | tr -d ' ')  # timeout: 5000
 FILE_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | head -1)  # timeout: 5000
+SECOND_ARG=$(echo "$_STRIPPED" | tr ' ' '\n' | grep -v '^--' | grep -v '^$' | sed -n '2p')  # timeout: 5000
 echo "$FILE_ARG" > "${TMPDIR:-/tmp}/research-plan-file-arg-${CSID}"
+OUT_ARG=""; [ "$NONFLAG_TOKEN_COUNT" = "2" ] && [ -f "$FILE_ARG" ] && case "$SECOND_ARG" in *.md) OUT_ARG="$SECOND_ARG";; esac
+echo "$OUT_ARG" > "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}"  # empty = no override, P-P2b defaults to program.md
 ```
 
-1. `NONFLAG_TOKEN_COUNT == 1` AND `test -f "$FILE_ARG"` succeeds → **file path**. `FILE_ARG` is script to profile. Enter profiling flow.
-2. Otherwise (multi-token, or single token not on disk) → **goal string**. Use full `$ARGUMENTS` (minus flags) as `<goal>`. Skip to Step P-P1.
+1. `NONFLAG_TOKEN_COUNT == 1` AND `test -f "$FILE_ARG"` succeeds → **file path**, default output (`program.md`). Enter profiling flow.
+2. `NONFLAG_TOKEN_COUNT == 2` AND `test -f "$FILE_ARG"` succeeds AND second token matches `*.md` → **file path**, output path = second token (persisted above as `OUT_ARG`). Enter profiling flow.
+3. Otherwise (3+ tokens, first token not on disk, or 2-token where second isn't `.md`) → **goal string**. Use `$_STRIPPED` (minus flags — not raw `$ARGUMENTS`) as `<goal>`. Skip to Step P-P1.
 
 **Profiling flow** (file path detected):
 
@@ -166,7 +170,7 @@ Dry-run both commands before presenting (add `# timeout: 60000` to timed bash ca
 
 After user confirms, run expert agent review before writing `program.md`. Dispatch conditional on goal type — run whichever apply in parallel.
 
-**Foundry availability check** — before dispatching any `foundry:*` agent: run `find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md" 2>/dev/null | head -1`. Result empty: skip architecture and perf reviews entirely; print `⚠ foundry plugin not installed — skipping foundry:solution-architect and foundry:perf-optimizer reviews. Continuing without architecture/perf advisory.`; record gap in advisory block as `architect: skipped (foundry absent)`. Proceed to P-P3 with available advisor output (scientist only if ML keywords matched).
+**Foundry availability check** — before dispatching any `foundry:*` agent: run `find ~/.claude/plugins/cache -path "*/foundry*" -name "solution-architect.md" 2>/dev/null | head -1`. Result empty: skip architecture review entirely, and skip a **solo** `foundry:perf-optimizer` spawn (perf gate fired alone, foundry absent); print `⚠ foundry plugin not installed — skipping foundry:solution-architect and foundry:perf-optimizer reviews. Continuing without architecture/perf advisory.`; record gap in advisory block as `architect: skipped (foundry absent)`. When the merged spawn is `research:scientist` (both ML and perf gates fired), the perf dimension still runs as part of that merged spawn — it is not foundry-gated. Proceed to P-P3 with available advisor output (scientist when ML gate fired, carrying the perf dimension too when both gates fired).
 
 **Pre-spawn — create plan run dir** (review files share single timestamped dir):
 
@@ -189,8 +193,10 @@ Agent(subagent_type="foundry:solution-architect", prompt="Review a proposed rese
 
 **Scientist/perf advisory — merged spawn unit.** Two keyword gates decide which dimensions are active: ML gate (`agent_strategy = ml` or goal contains accuracy, loss, model, training, inference, classification, regression) and perf gate (`agent_strategy = perf` or goal contains latency, throughput, wall-clock, speed, memory, FPS). When BOTH fire, spawn ONE agent covering both question sets — never two (their prompts overlap on metric_cmd validity, and each extra spawn pays ~120,851 tok of fixed overhead): agent type `research:scientist` when ML gate fired, else `foundry:perf-optimizer`. When only one fires, spawn that single dimension as before. Merged spawn writes ONE FILE PER DIMENSION (own Confidence block each), returns JSON array, one element per dimension file. Substitute computed `$PLAN_RUN_DIR` before spawning:
 
+> Merge is competence-safe once the perf dimension carries concrete, self-contained checks (below) rather than relying on the model's own domain branding.
+
 ```text
-Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above>", prompt="Review a proposed experiment configuration across the listed dimensions.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\nAgent strategy: <agent_strategy>\n\n[ML dimension — include only when ML gate fired] Check: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-scientist.md` using the Write tool.\n\n[Perf dimension — include only when perf gate fired] Check: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-perf.md` using the Write tool.\n\nEach review file carries its own Confidence block — never blend the dimensions into one file.\nReturn ONLY a JSON array with one element per dimension file: [{\"dim\":\"scientist|perf\",\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-<dim>.md\",\"confidence\":0.N}, ...]")
+Agent(subagent_type="<research:scientist | foundry:perf-optimizer per rule above>", prompt="Review a proposed experiment configuration across the listed dimensions.\n\nGoal: <goal>\nMetric command: <metric_cmd>\nGuard command: <guard_cmd>\nAgent strategy: <agent_strategy>\n\n[ML dimension — include only when ML gate fired] Check: (1) Is the goal a well-formed ML hypothesis — falsifiable, with a concrete success criterion? (2) Could metric_cmd improve while the real goal is not achieved (Goodhart's Law)? (3) Is agent_strategy appropriate for this goal type? Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-scientist.md` using the Write tool.\n\n[Perf dimension — include only when perf gate fired] Check: (1) Does metric_cmd measure the right performance characteristic for this goal? (2) Is guard_cmd comprehensive enough to catch regressions an ideation agent might introduce? (3) Name the unit metric_cmd reports (wall-clock / CPU time / throughput / peak RSS) and state whether it matches the goal's stated characteristic. (4) State whether a single run can distinguish the expected delta from run-to-run noise. (5) Verify guard_cmd's exit code actually depends on test outcomes. Write this dimension's full review to `<PLAN_RUN_DIR>/plan-review-perf.md` using the Write tool.\n\nEach review file carries its own Confidence block — never blend the dimensions into one file.\nReturn ONLY a JSON array with one element per dimension file: [{\"dim\":\"scientist|perf\",\"ok\":true|false,\"issues\":[\"...\"],\"suggestions\":[\"...\"],\"file\":\"<PLAN_RUN_DIR>/plan-review-<dim>.md\",\"confidence\":0.N}, ...]")
 ```
 
 Print advisory block below config:
@@ -202,7 +208,16 @@ Advisory review:
   perf:       <issues or "metric/guard look valid">      [only if dispatched]
 ```
 
-**Pre-check output path** before presenting advisor results: resolve output path (second argument after `<goal>` if provided, else `program.md` at project root). Check if file exists: `test -f <output_path> && echo "EXISTS"`. Record result as `OUTPUT_EXISTS`.
+**Pre-check output path** before presenting advisor results: resolve output path from the sentinel persisted at P-P0 (goal-string mode never populated it, correctly defaulting below):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r OUT_ARG < "${TMPDIR:-/tmp}/research-plan-out-arg-${CSID}" 2>/dev/null || OUT_ARG=""
+[ -n "$OUT_ARG" ] || OUT_ARG="program.md"
+test -f "$OUT_ARG" && echo "EXISTS"
+```
+
+Record result as `OUTPUT_EXISTS`; `$OUT_ARG` is `OUTPUT_PATH` for P-P3.
 
 Any agent returns `ok: false` → surface suggestions, then invoke `AskUserQuestion` combining advisor feedback and (if `OUTPUT_EXISTS`) overwrite decision in one call:
 
@@ -287,6 +302,6 @@ Next steps:
 
 - **Scope boundary**: plan writes `program.md` only — methodology validation = `/research:judge`; execution = `/research:run`; full pipeline = `/research:sweep`.
 - **`--team` note**: `--team` applies at run step, not plan step. Plan produces standard `program.md`; pass flag when invoking `/research:run <program.md> --team`.
-- **TTL exemption**: plan run dirs (`.experiments/plan-<timestamp>/`) don't write `result.jsonl` — exempt from 30-day TTL cleanup per `.claude/rules/foundry-artifact-lifecycle.md` (installed via `/foundry:setup` — requires `foundry` plugin); remove manually when no longer needed.
+- **TTL exemption**: plan run dirs (`.experiments/plan-<timestamp>/`) don't write `result.jsonl` — exempt from 30-day TTL cleanup per `.claude/rules/foundry-artifact-lifecycle.md` (installed via `/foundry:setup` — requires `foundry` plugin); remove manually when no longer needed. <!-- policy-sibling: plugins/cc_research/skills/fortify/SKILL.md, plugins/cc_research/skills/judge/SKILL.md, plugins/cc_research/skills/retro/SKILL.md, plugins/cc_research/skills/verify/SKILL.md — TTL-exemption note (no result.jsonl → skip 30-day cleanup) restated in each; keep in sync (plugins/CLAUDE.md §Policy Duplication Marker). -->
 
 </notes>

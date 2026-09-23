@@ -6,7 +6,7 @@ Loaded only when `TEAM_MODE=true`. Runs Step 1 inline (teammates need scope cont
 
 Guard: `[ -f "${HOME}/.claude/TEAM_PROTOCOL.md" ] || echo "TEAM_PROTOCOL_ABSENT"` — output contains `TEAM_PROTOCOL_ABSENT` → invoke `AskUserQuestion` — question: "foundry plugin not installed (TEAM_PROTOCOL.md absent) — cannot run team mode. Continue solo instead?" · (a) Continue solo — fall back to Steps 1–5 solo workflow · (b) Abort — stop, run `/foundry:setup` first. On (b): stop. On (a): set `TEAM_MODE=false`, continue.
 
-Run Step 1 scope analysis inline (same as solo Step 1) — teammates need orientation context. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
+Run Step 1 scope analysis inline (same as solo Step 1, including its Source Verification subsection) — teammates need orientation context. Then run feature/SKILL.md §Challenger gate against that analysis before any teammate spawn; three-state decision (`--no-challenge` / `--challenge` / default-substantial) applies unchanged. Blockers found → STOP, present findings, then invoke `AskUserQuestion` — "Challenger raised N blocker(s) on the implementation approach. How to proceed?" · (a) **Revise scope** — return to Step 1 analysis with the blockers as input · (b) **Accept risk** — proceed to Wave 1 with each blocker documented in the Final Report Follow-up · (c) **Abort**. On Abort: stop. Never proceed to Wave 1 on prose alone. After Step 1, broadcast to teammates: `{feature: <desc>, scope: <modules>, API: <proposed signature>}`.
 
 ```bash
 # timeout: 5000
@@ -54,7 +54,7 @@ cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/skills/feature/templates/team-spa
 
 Summary below:
 
-- **Teammate 1 — foundry:sw-engineer (model=opus)**: implement feature (Steps 2-3: demo test, TDD loop); edit source only, not `tests/`; write to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md`; return compact JSON.
+- **Teammate 1 — foundry:sw-engineer (model=opus)**: implement feature (Steps 2-3: demo test, TDD loop); edit source only, not `tests/`; write to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md`; return compact JSON. Append to this teammate's spawn prompt: capture the Step 2 demo's failing exit code before implementing, report it in the output file as `"demo_red_exit": N` and in the return envelope as `demo_red_exit:N`; demo already passes pre-implementation → return `status: blocked` instead of proceeding.
 - **Teammate 2 — foundry:qa-specialist (model=sonnet)**: add edge-case/regression/security tests; edit `tests/` only, not source; write to `.temp/develop/$_SPAWN_TS/feature-qa-specialist-$_SPAWN_TS.md`; return compact JSON.
 - **Teammate 3 — foundry:doc-scribe (model=sonnet)**: prepare docstrings and README only (no CHANGELOG); write to `.temp/develop/$_SPAWN_TS/feature-doc-scribe-$_SPAWN_TS.md`; return compact JSON.
 
@@ -74,6 +74,7 @@ if [ ! -f "$WAVE1_FILE" ]; then
     exit 1
 fi
 echo "✓ Wave 1 output verified: $WAVE1_FILE"
+grep -q '"demo_red_exit"[[:space:]]*:[[:space:]]*[1-9]' "$WAVE1_FILE" || { echo "! Wave 1 gate: demo_red_exit missing or zero — demo passed pre-implementation, or sw-engineer returned status: blocked. Aborting Wave 2."; exit 1; }
 ```
 
 **Coordination order**: QA challenges SW API design — lead routes challenge back to SW before implementation starts. SW shares implementation details with QA so tests stay accurate. Lead synthesizes outputs Step 5 onward as normal.
@@ -87,7 +88,7 @@ IFS= read -r TS < "${TMPDIR:-/tmp}/dev-feature-team-ts-${CSID}" 2>/dev/null || T
 [ -n "$TS" ] || TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 ```
 
-Create sentinel `touch ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID}`; every 5 min: `find .temp/develop/$TS -newer ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID} -type f | wc -l` — new files = alive; zero = stalled. Hard cutoff: 15 min no file activity → timed out. One extension (+5 min) if `tail -20` of output file explains delay; second unexplained stall = hard cutoff. On timeout: read `tail -100` of stalled file; surface with ⏱; never omit timed-out teammates.
+Every spawn is background: spawn, end the turn, resume on the harness completion notification — never a fixed-interval poll. Create sentinel `touch ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID}`; on resume, at most one liveness probe per turn: `find .temp/develop/$TS -newer ${TMPDIR:-/tmp}/feature-team-check-${TS}-${CSID} -type f | wc -l` — new files = alive; zero = stalled. Hard cutoff: 15 min no file activity → timed out. Two consecutive zero-progress probes = timed out. On timeout: read `tail -100` of stalled file; surface with ⏱; never omit timed-out teammates.
 
 **Path verification** — after Wave 2 completes (all three teammates spawned), verify agents got correct paths — check expected output files exist. Re-read `$TS` from temp file (bash resets between calls — spawn block persisted it). Runs only once every teammate spawned; earlier would false-flag "missing" for Wave-2 agents not yet existing:
 

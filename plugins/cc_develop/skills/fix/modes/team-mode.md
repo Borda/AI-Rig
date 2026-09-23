@@ -4,7 +4,7 @@
 
 Loaded only when `TEAM_MODE=true`. Execute team workflow now — do not proceed to Step 1.
 
-Root cause unclear after initial triage, OR bug spans 3+ modules and user accepted "Proceed anyway" at scope gate: use this path.
+Pass `--team` when you already expect an unclear root cause, or a bug spanning 3+ modules. This branch runs **before** triage and the scope gate, so these are your expectations at invocation time, not conditions the skill evaluates.
 
 **Coordination:**
 
@@ -14,7 +14,7 @@ Root cause unclear after initial triage, OR bug spans 3+ modules and user accept
 2. Spawn **foundry:sw-engineer x 2 (model=opus)** — each investigates a distinct root-cause hypothesis (A, B) independently. `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""; [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"; cat "$_DEV_SHARED/preflight-helpers.md"` §Team Spawn Template — replace `[ROLE_PHRASE]` with `[bug description]`, `[FILE_SLUG]` with `fix-hypothesis`. Third independent investigation wanted → re-invoke with a narrower hypothesis spec, don't auto-scale here.
 3. Each teammate investigates independently — claims hypothesis; returns full output to file (file-based handoff protocol).
 4. Lead facilitates cross-challenge between competing analyses.
-5. Lead synthesizes consensus root cause, proceeds with Steps 2-4 (regression test, fix, review loop) alone.
+5. Lead synthesizes consensus root cause, then re-enters the main workflow at §Premise Grounding Gate — premise grounding, inline plan generation, and the ## Challenger gate against the consensus root cause — before Steps 2-4 (regression test, fix, review loop) alone.
 
 Compute run directory and create health sentinel:
 
@@ -59,9 +59,9 @@ IFS= read -r TS < "${TMPDIR:-/tmp}/dev-fix-team-ts-${CSID}" 2>/dev/null || TS=""
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/dev-fix-run-dir-${CSID}" 2>/dev/null || RUN_DIR=".temp/develop/$TS"
 ```
 
-Every 5 min: `find $RUN_DIR -newer ${TMPDIR:-/tmp}/fix-team-check-$TS -name "fix-hypothesis-*.md" | wc -l` (sentinel dir resolved by setup_worktree.py's `_sentinel_dir()` — TMPDIR when set, else system temp dir; matches this expression) — new files = alive; zero = stalled. Hard cutoff: 15 min no file activity → timed out. One extension (+5 min) if `tail -20` of output file explains delay; second unexplained stall = hard cutoff. On timeout: read `tail -100` of each `$RUN_DIR/fix-hypothesis-*.md`; surface with ⏱; never omit.
+Spawn both teammates, **end the turn**, resume on each completion notification — never a no-op call, a "waiting" line, or a sleep. At most one liveness probe per wake-up: `find $RUN_DIR -newer ${TMPDIR:-/tmp}/fix-team-check-$TS -name "fix-hypothesis-*.md" | wc -l` (sentinel dir resolved by `setup_worktree.py`'s `_sentinel_dir()` — TMPDIR when set, else system temp dir; matches this expression) — new files = alive. No new file activity across wake-ups for ~15 min → treat as timed out. On timeout: read `tail -100` of each `$RUN_DIR/fix-hypothesis-*.md`; surface with ⏱; never omit.
 
-After both teammates complete: read output files from `$RUN_DIR/`, synthesize consensus root cause, facilitate cross-challenge between competing analyses. Lead then proceeds alone with Steps 2-4 (regression test, fix, review loop). Clean up health sentinel (exact filename, never a glob — another session's sentinel may share the base name):
+After both teammates complete: read output files from `$RUN_DIR/`, synthesize consensus root cause, facilitate cross-challenge between competing analyses. Lead then re-enters at §Premise Grounding Gate (premise grounding → plan-inline → ## Challenger gate on the consensus root cause), then proceeds alone with Steps 2-4. Clean up health sentinel (exact filename, never a glob — another session's sentinel may share the base name):
 
 ```bash
 # timeout: 5000

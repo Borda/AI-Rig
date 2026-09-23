@@ -47,6 +47,7 @@ Parse `$ARGUMENTS` for `--approve` (case-insensitive) → `APPROVE_ALL=true`, el
 ## Step 1: Python
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 PYTHON_CMD=""
 for c in python python3; do
     command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -qE "Python 3\.(1[0-9]|[2-9][0-9])" && PYTHON_CMD="$c" && break
@@ -56,6 +57,7 @@ if [ -z "$PYTHON_CMD" ] && command -v py >/dev/null 2>&1 && py -3 --version 2>/d
 fi
 [ -z "$PYTHON_CMD" ] && { printf "! Python 3.10+ not found — install it and re-run /research:setup\n"; exit 1; }
 printf "  Python: %s\n" "$PYTHON_CMD"
+echo "$PYTHON_CMD" > "${TMPDIR:-/tmp}/research-setup-python-${CSID}"
 ```
 
 ## Step 2: Dry run — see what would change
@@ -63,19 +65,32 @@ printf "  Python: %s\n" "$PYTHON_CMD"
 `$CLAUDE_PLUGIN_ROOT` is the installed plugin version. `sync_rules.py` re-validates it (manifest exists, parses, declares `research`; `rules/` is a real directory holding at least one non-empty regular `*.md`) and aborts before touching anything if any check fails.
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
+$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --dry-run  # timeout: 15000
 ```
 
 Non-zero exit → print stderr verbatim and stop; nothing was modified.
 
 ## Step 3: Apply
 
-Run without `--dry-run`. Add `--approve` only when `APPROVE_ALL=true`:
+Run without `--dry-run`. `APPROVE_ALL=true` → run the `--approve` block below instead:
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
-python "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
+$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT"  # timeout: 15000
+```
+
+`APPROVE_ALL=true` variant (also used when re-running after (b) in Step 4):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PYTHON_CMD < "${TMPDIR:-/tmp}/research-setup-python-${CSID}" 2>/dev/null || PYTHON_CMD=python
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}"
+$PYTHON_CMD "$PLUGIN_ROOT/bin/sync_rules.py" --plugin-name research --plugin-root "$PLUGIN_ROOT" --approve  # timeout: 15000
 ```
 
 Output lines, one per destination: `linked:` · `unchanged:` · `replaced (--approve):` · `removed obsolete:` · `conflict, kept as-is:` · `FAILED:`.
@@ -94,7 +109,7 @@ Otherwise invoke `AskUserQuestion`, listing each conflicting destination and its
 - (b) **Replace all with plugin links** ★ recommended — existing content is overwritten
 - (c) **Abort** — leave everything as it is
 
-On **(b)**, re-run Step 3's command with `--approve` appended and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
+On **(b)**, run the `--approve` block from Step 3 and report the resulting `replaced (--approve):` lines. On (a) or (c), report which rules remain undelivered.
 
 ## Step 5: Merge permissions.allow and permissions.deny
 

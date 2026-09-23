@@ -120,6 +120,31 @@ class TestGrepSecrets:
         """Uppercase keyword still matches."""
         assert cops._grep_secrets("+PASSWORD = 'longenoughval'") == ["+PASSWORD = 'longenoughval'"]
 
+    def test_aws_access_key_detected(self) -> None:
+        """An AWS-style access key ID is flagged with no ``key=`` prefix needed."""
+        assert cops._grep_secrets("+aws_key = AKIAABCDEFGHIJKLMNOP") == ["+aws_key = AKIAABCDEFGHIJKLMNOP"]
+
+    def test_pem_private_key_header_detected(self) -> None:
+        """A PEM private-key header line is flagged.
+
+        Built from two literals joined at runtime (not a contiguous string in the source) so this test fixture itself
+        never trips the repo's ``detect-private-key`` pre-commit hook.
+        """
+        header = "-----BEGIN RSA" + " PRIVATE KEY-----"
+        line = f"+{header}"
+        assert cops._grep_secrets(line) == [line]
+
+    def test_bare_jwt_detected_without_keyword_prefix(self) -> None:
+        """A bare JWT (no ``token=``/``secret=``/etc. keyword prefix) is still flagged by its own shape.
+
+        A value line built with a keyword like ``token=`` would already match the pre-existing ``key[=:]value`` branch
+        (the JWT's dots and underscores are inside that branch's value charset) and would pass even without the new JWT-
+        shape alternation — this line has no such keyword, so only the new alternation can catch it.
+        """
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        line = f"+Authorization: Bearer {jwt}"
+        assert cops._grep_secrets(line) == [line]
+
 
 class TestExtractRemovedExports:
     """Boundary cases — diff headers, mixed +/- blocks."""
@@ -368,5 +393,26 @@ class TestDiffFileCli:
         rc = cops.main(["--clean-args", "42", "--diff-file", str(tmp_path / "absent.diff")])
         assert rc == 0
         assert "falling back to gh" in capsys.readouterr().err
+        gh_diff_calls = [c for c in fake_subprocess["calls"] if c[:3] == ["/fake/gh", "pr", "diff"]]
+        assert len(gh_diff_calls) == 4
+
+    def test_oversized_diff_file_falls_back_to_gh(
+        self,
+        fake_subprocess: dict[str, Any],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A ``--diff-file`` above the size cap is never read; falls back to gh like an unreadable one.
+
+        Guards against an unbounded read on a runaway snapshot file — the cap is lowered via monkeypatch rather than
+        writing a real 10 MB fixture.
+        """
+        monkeypatch.setattr(cops, "_MAX_DIFF_FILE_SIZE", 10)
+        snap = tmp_path / "pr.diff"
+        snap.write_text("x" * 100, encoding="utf-8")
+        rc = cops.main(["--clean-args", "42", "--diff-file", str(snap)])
+        assert rc == 0
+        assert "too large" in capsys.readouterr().err
         gh_diff_calls = [c for c in fake_subprocess["calls"] if c[:3] == ["/fake/gh", "pr", "diff"]]
         assert len(gh_diff_calls) == 4

@@ -81,6 +81,17 @@ def start_session(session) -> None:
     Args:
         session: Active pytest session whose config carries the recorded artifacts.
     """
+    workerinput = getattr(session.config, "workerinput", None)
+    if workerinput is not None:
+        generation_count, build_error = workerinput["generated_manifest_result"]
+        session.config._generated_manifest_artifacts = GeneratedManifestArtifacts(
+            paths=_GENERATED_MANIFEST_PATHS,
+            initially_missing=(),
+            generation_count=generation_count,
+            build_error=build_error,
+        )
+        return
+
     initially_missing = tuple(path for path in _GENERATED_MANIFEST_PATHS if not path.exists())
     snapshot = _snapshot_manifests()
     session.config._generated_manifest_snapshot = snapshot
@@ -110,6 +121,8 @@ def finish_session(session) -> None:
     Args:
         session: Active pytest session whose config carries the recorded artifacts.
     """
+    if getattr(session.config, "workerinput", None) is not None:
+        return
     artifacts = getattr(session.config, "_generated_manifest_artifacts", None)
     if artifacts is None:
         return

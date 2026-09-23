@@ -2,7 +2,7 @@
 name: investigate
 description: "Systematic diagnosis for unknown failures — local environment, tool setup, CI vs local divergence, hook misbehavior, and runtime anomalies. Gathers signals broadly, ranks hypotheses, uses adversarial review (Codex or foundry:challenger) for ambiguous cases, probes each, and reports root cause with a recommended next action. NOT for known code bugs (/develop:debug (requires `develop` plugin)) or config quality (/foundry:audit). TRIGGER when: unknown failure with no Python traceback — hook not firing, CI passes locally but fails remotely, background agent stalled, behavior inconsistent with config; phrases: \"not working but config looks right\", \"hook not triggering\", \"why isn't X running\". SKIP: Python traceback present (use develop:debug (requires `develop` plugin)); known code bug with repro (use develop:fix (requires `develop` plugin)); pure config quality check (use foundry:audit)."
 argument-hint: <symptom, question, or failing command> [--fast] [--keep "<items>"]
-allowed-tools: Read, Write, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
+allowed-tools: Read, Write, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion
 model: opus
 effort: high
 ---
@@ -174,7 +174,7 @@ Common categories:
 
 ## Step 4: Auxiliary review (optional)
 
-**Skip entirely** when `--fast` passed, or top hypothesis has strong direct evidence. (`foundry:challenger` always available as part of foundry plugin, so skip condition simplifies to: skip when `--fast` passed.) Skip: proceed to Step 5.
+**Skip entirely** when `--fast` passed, or top hypothesis has strong direct evidence. Skip: proceed to Step 5.
 
 When `--fast`: mark Step 4 task `deleted` (not completed — it was skipped).
 
@@ -211,8 +211,10 @@ Bridge available (requires `bridge@borda-ai-rig` installed and enabled): substit
 > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
 ```text
-Skill(skill="bridge:review", args="Read-only adversarial review of hypothesis quality. Read <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, and <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blind spots, and surface alternative root causes. Write full findings to <CODEX_OUT> and return a compact result envelope.")
+Skill(skill="bridge:review", args="Read-only adversarial review of hypothesis quality. Read <INVESTIGATE_RUN>/symptom.txt, <INVESTIGATE_RUN>/signals.md, and <INVESTIGATE_RUN>/hypotheses.md. Challenge the top hypothesis, identify blind spots, and surface alternative root causes. Return actionable findings with locations; do not apply fixes.")
 ```
+
+After the call returns, use the Write tool yourself to persist its findings text to `<CODEX_OUT>` (bridge:review is read-only and does not write files) — Step 6 reads this path guarded by `[ -f <path> ]`.
 
 Else (Codex unavailable): substitute `<INVESTIGATE_RUN>` with printed run-dir path:
 
@@ -258,7 +260,7 @@ _REVIEW=""; [ -f "$_IR/codex-review.md" ] && _REVIEW="$_IR/codex-review.md"; [ -
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:investigate" "probe (Step 5)" "$_IR" "hypotheses=$_IR/hypotheses.md${_REVIEW:+, review=$_REVIEW}" "probe remaining pending hypotheses → confirm root cause → report (Step 6). Skip Confirmed/Ruled-out in the probed list below." "probed (do NOT re-probe)" "$_VERDICTS"  # timeout: 5000
 ```
 
-Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (expand to lower-ranked candidates).
+Stop when one hypothesis confirmed with clear evidence, or top-3 all ruled out (expand to lower-ranked candidates — max 2 expansion rounds, per CLAUDE.md §Safety breaks for loops default cap of 3). Cap hit with nothing confirmed: stop, report inconclusive with the ruled-out list — do not loop through the full candidate table.
 
 ## Step 6: Report findings
 

@@ -89,14 +89,15 @@ def _parse_cli(argv: list[str]) -> str:
 
 
 def _load_parse_scan_args(parse_bin: Path) -> ModuleType:
-    """Import ``parse_scan_args.py`` from the resolved plugin root as a module.
+    """Import ``parse_scan_args.py`` from this script's own ``bin/`` directory.
 
-    Loading by path (rather than by ``sys.path`` manipulation) keeps the helper tied
-    to the same ``$CLAUDE_PLUGIN_ROOT`` that the ``scan-index`` preflight validated,
-    and removes the former dependency on a ``python3`` subprocess.
+    Loading by path (rather than by ``sys.path`` manipulation) removes the former
+    dependency on a ``python3`` subprocess. The path is always this script's own
+    sibling — never derived from ``$CLAUDE_PLUGIN_ROOT`` — because an untrusted env
+    var reaching ``exec_module`` is arbitrary code execution (ASEC3).
 
     Args:
-        parse_bin: Path to ``<plugin root>/bin/parse_scan_args.py``.
+        parse_bin: Path to ``parse_scan_args.py`` next to this script.
 
     Returns:
         The executed module object.
@@ -266,7 +267,10 @@ def _mark_incremental_noop(arguments: str, tmpdir: Path, slug: str, proj_name: s
     """
     if f" {arguments} ".find(" --incremental ") < 0:
         return
-    index_dir = os.environ.get("CODEMAP_INDEX_DIR") or ".cache/codemap"
+    # Anchored at the git root, matching resolve_proj_index.py's own
+    # <git-root-or-cwd>/.cache/codemap/<proj>.json layout — a bare relative path here
+    # would report "no prior index" whenever this script runs from a subdirectory.
+    index_dir = os.environ.get("CODEMAP_INDEX_DIR") or os.path.join(_repo_root(), ".cache/codemap")
     if Path(index_dir, f"{proj_name}.json").is_file():
         return
     # stderr — keeps stdout reserved for the state file path so the caller can
@@ -320,13 +324,19 @@ def _derive_scan_args(plugin_root: Path, arguments: str) -> tuple[str, str | Non
     """Parse ``$ARGUMENTS`` into the quoted token line plus the raw ``--root`` value.
 
     Args:
-        plugin_root: Resolved ``$CLAUDE_PLUGIN_ROOT``.
+        plugin_root: Resolved ``$CLAUDE_PLUGIN_ROOT`` — unused here (ASEC3). Left in
+            the signature to keep this fix a one-line change; ``main()`` still needs
+            its own ``plugin_root`` for the unrelated ``scan-index`` existence check.
         arguments: Raw ``$ARGUMENTS`` string.
 
     Returns:
         Tuple of ``(SCAN_ARGS_RAW, root_value_or_None)``.
     """
-    module = _load_parse_scan_args(plugin_root / "bin" / "parse_scan_args.py")
+    # CLAUDE_PLUGIN_ROOT is untrusted input, used only for bookkeeping (the scan-index
+    # existence check in main()) — the module actually executed via exec_module must
+    # always come from this script's own installation, never from caller-supplied
+    # plugin_root, or an attacker-controlled env var becomes RCE (ASEC3).
+    module = _load_parse_scan_args(Path(__file__).resolve().parent / "parse_scan_args.py")
     tokens: list[str] = module.parse_scan_args(arguments)
     root = tokens[1] if tokens[:1] == ["--root"] else None
     return module.format_scan_args(tokens), root
@@ -337,7 +347,9 @@ def _derive_identity(arguments: str, plugin_root: Path) -> tuple[str, str, str] 
 
     Args:
         arguments: Raw ``$ARGUMENTS`` string.
-        plugin_root: Resolved ``$CLAUDE_PLUGIN_ROOT``.
+        plugin_root: Resolved ``$CLAUDE_PLUGIN_ROOT`` — forwarded to
+            ``_derive_scan_args`` but no longer read there (ASEC3); see that
+            function's docstring.
 
     Returns:
         Tuple of ``(scan_args_raw, proj_slug, proj_name)``, or ``None`` when the

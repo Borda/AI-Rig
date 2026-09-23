@@ -368,7 +368,7 @@ Generates a Kaggle competition notebook as a Jupytext `# %%` Python script. It g
 
 Supported options are `--type classification|regression|segmentation|detection|tabular`, `--eda-only`, `--inference-only`, `--offline-setup`, `--resume <path>`, and `--keep "<items>"`. `--eda-only` is always online and omits training; `--inference-only` is offline, uses the frozen-package pattern, and writes an `-inference.py` suffix; `--offline-setup` adds frozen package setup and is ignored for EDA-only mode.
 
-Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix.
+Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
 
 ### `/research:setup`
 
@@ -434,17 +434,17 @@ The metric command must emit a numeric value, and the guard must exit successful
 
 ### Reports, state, and handoff files
 
-| Workflow  | Primary report                                 | Supporting state or output                                                                |
-| --------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `topic`   | `.reports/research/topic-<branch>-<date>.md`   | Optional topic plan report and gated follow-up context.                                   |
-| `judge`   | `.reports/research/judge-<branch>-<date>.md`   | Methodology and scientific review evidence under `.experiments/judge-<timestamp>/`.       |
-| `run`     | `.reports/research/run-<branch>-<date>.md`     | `.experiments/state/<run-id>/` plus hypothesis artifacts under `.experiments/<run-id>/`.  |
-| `sweep`   | Delegated `judge` and `run` reports            | Generated contract at the requested `--out` path or project root.                         |
-| `verify`  | `.reports/research/verify-<branch>-<date>.md`  | Scientist audit under `.experiments/verify-<timestamp>/`.                                 |
-| `fortify` | `.reports/research/fortify-<branch>-<date>.md` | Candidate list, worktrees, results, and dropped variants under `.experiments/fortify-*/`. |
-| `retro`   | `.reports/research/retro-<branch>-<date>.md`   | Analysis state and compatible `hypotheses.jsonl` under `.experiments/retro-*/`.           |
-| `kaggle`  | N/A                                            | `.experiments/kaggle/<competition-name>.py` and optional downloaded data.                 |
-| `setup`   | Terminal summary                               | Namespaced links under `~/.claude/rules/`.                                                |
+| Workflow  | Primary report                                 | Supporting state or output                                                                                                                                                           |
+| --------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `topic`   | `.reports/research/topic-<branch>-<date>.md`   | Optional topic plan report and gated follow-up context.                                                                                                                              |
+| `judge`   | `.reports/research/judge-<branch>-<date>.md`   | Methodology and scientific review evidence under `.experiments/judge-<timestamp>/`.                                                                                                  |
+| `run`     | `.reports/research/run-<branch>-<date>.md`     | `.experiments/state/<run-id>/` plus hypothesis artifacts under `.experiments/<run-id>/`.                                                                                             |
+| `sweep`   | Delegated `judge` and `run` reports            | Generated contract at the requested `--out` path or project root.                                                                                                                    |
+| `verify`  | `.reports/research/verify-<branch>-<date>.md`  | Scientist audit under `.experiments/verify-<timestamp>/`.                                                                                                                            |
+| `fortify` | `.reports/research/fortify-<branch>-<date>.md` | Candidate list, worktrees, results, and dropped variants under `.experiments/fortify-*/`.                                                                                            |
+| `retro`   | `.reports/research/retro-<branch>-<date>.md`   | Analysis state and compatible `hypotheses.jsonl` under `.experiments/retro-*/`.                                                                                                      |
+| `kaggle`  | N/A                                            | `.experiments/kaggle/<competition-name>.py` and downloaded data; opt-in Step 4 gate also writes `src/<package>/<module>.py`, `tests/test_<module>.py`, `notebooks/01_<name>_pkg.py`. |
+| `setup`   | Terminal summary                               | Namespaced links under `~/.claude/rules/`.                                                                                                                                           |
 
 Reports should disclose the metric, baseline, commands, changed scope, gate results, confidence, unresolved limitations, and a concrete next action. Generated state is project-rooted and intended to be inspectable or cleaned according to the owning workflow's contract.
 

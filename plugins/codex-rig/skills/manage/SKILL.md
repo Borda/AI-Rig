@@ -25,6 +25,8 @@ The installed plugin tree is immutable input. Resolve requested targets against 
 
 ## Parallel Adoption (Portable read-only)
 
+<!-- policy-sibling: skills/implement/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
+
 This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Every write still requires a frozen plan and exact-digest approval. This route never bypasses consumer promotion, serial parent authority, or write approval.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only inventory passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
@@ -40,6 +42,8 @@ Apply shared [host compatibility check](../../shared/specialist-orchestration.md
 Before any dispatch, freeze intent, target, baseline, ownership map, exact references, calibration and routing impact, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal scan before edits, propagation, gates, or acceptance; changed scope requires new plan.
 
 The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=manage`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. A planned write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`.
+
+Bootstrap exception: run-directory creation (Step 01), the `inventory.txt`/`references.txt`/`ownership.md` writes from Step 03, and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
 Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer manage --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` only when frozen write policy declares no parent writes. A nonzero result stops route.
 
@@ -69,7 +73,7 @@ Generic parallel writes remain disabled. Stop without dispatch on missing promot
 
 ### 01: Create run directory
 
-Run `create_run.py --skill manage` per `../../shared/helper-cli-contract.md`.
+Run `create_run.py --skill manage` per `../../shared/helper-cli-contract.md`. For parallel-adoption execution-mode selection (`auto`/`serial`/`parallel-read`/`parallel-write`), see the Parallel Adoption section above before proceeding.
 
 ### 02: Parse intent and target
 
@@ -89,20 +93,22 @@ Run `rg --files` with the `AGENTS.md`, `.codex/**`, and `.agents/**` globs as ar
 
 Write `<run-directory>/ownership.md`: exact edited and intentionally untouched files.
 
-Resolve the current skill path and reject any target whose canonical path is inside the same installed plugin root. Reject generated `codex-rig-*.toml` targets here even when they are outside the cache; report the dedicated lifecycle workflow as the only permitted owner.
+Resolve the current skill path and reject any target whose canonical path is inside the same installed plugin root. Reject generated `codex-rig-*.toml` targets here even when they are outside the cache; report the bundled `agent-shims` workflow as the only permitted owner.
 
 ### 04: Run safety gates before editing
 
 Deletion safety required for `delete` and `rename`.
 
 - Delete/rename: no unresolved references or explicit migration plan.
-- Permission changes: reason, use case, risk note.
+- Permission changes: reason, use case, risk note; `security-auditor` is available for advisory review of the permission change only when the user explicitly requests that pass, under the same explicit-request gating as other specialist routing in `../../shared/specialist-orchestration.md` — not mandatory for every permission change.
 - Public behavior change: consider docs/routing/calibration.
 - Versioned calibration fixtures are committed-history markers: compare current value to `git show HEAD:<path>`; while uncommitted, advance at most one step from last committed value.
 - A new-commit request never authorizes rewriting existing commit. Amend, rebase, reset, squash, fixup, and equivalent history edits require explicit request for that exact operation.
 - Home sync out of scope unless explicitly requested.
 
 ### 05: Apply the smallest reversible edit
+
+This step's edit is provisional/staged pending Step 06's delegation-and-acceptance review; parent retains authority over the final mutation until that review completes.
 
 Use Codex's native scope: `.agents/skills/` for repository skills, `AGENTS.md` for repository guidance, and `.codex/config.toml` for project runtime settings. Use custom agent-config paths only when active Codex contract and user request require them. Never infer that source repository is present from installed cache layout.
 
@@ -128,7 +134,7 @@ Manage artifacts include `ownership.md`; follow `../../shared/helper-cli-contrac
 4. Behavior change without routing/docs/calibration decision => fail.
 5. Result artifact missing => fail.
 6. Target resolves inside installed plugin root => fail without editing.
-7. Target is generated `codex-rig-*.toml` role link => fail and route to dedicated lifecycle workflow.
+7. Target is generated `codex-rig-*.toml` role link => fail and route to the bundled `agent-shims` workflow.
 8. Existing history would be rewritten without explicit request for that exact operation => fail.
 
 ## Quality Gates

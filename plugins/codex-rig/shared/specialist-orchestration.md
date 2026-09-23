@@ -60,6 +60,17 @@ Current canonical assignments:
 
 Never downgrade architecture, security, runtime/API, release-blocking judgment, or executable acceptance to bounded Luna support. Never auto-select architecture/security advisory roles or escalate bounded support to Sol without a supported task boundary. Advisory-role selection requires user's explicit request or agent selection, not task labels or risk classification. Record that request/selection, bounded advisory question, and any escalation/de-escalation evidence in routing decision. Astra has no standing route. Avoid delegation when all need same context or parent can finish before handoff packaging/validation.
 
+### Model Concurrency Ceilings
+
+Separate pool per model, bounding how many nodes of that model may be in flight at once across a session (in addition to, not instead of, the four-node per-wave schema-v2 ceiling above — a wave can never exceed four nodes regardless of model mix; this ceiling bounds the running total across multiple waves/delegations). Grow toward a model's ceiling gradually, not in one sudden burst.
+
+| Model | Ceiling | Note |
+| -- | -- | -- |
+| Luna | 20 | Cheap bounded-support tier — highest headroom |
+| Sol | 5 | Implementation/verification tier — matches Claude's `opus` ceiling in `claude-config.md` §Parallel Spawn Ceilings |
+| Terra | 10 | Legacy pre-GPT-6 parent tier (see `roles/README.md`) — remove this row once GPT-6 rollout retires Terra entirely |
+| Astra | 2 | Has no standing route (above) — ceiling is precautionary, not an invitation to route work here |
+
 ### Reasoning-Progress Escalation
 
 The [reasoning-progress escalation policy](native-skill-contract.md#reasoning-progress-escalation) is authoritative for detecting stalled workstream and its required ledger. Two consecutive work cycles without material progress or three evidence-backed attempts without closing same condition are observed lower-tier insufficiency, not permission to bypass role boundaries.

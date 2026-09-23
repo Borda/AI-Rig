@@ -47,7 +47,7 @@ Manage lifecycle of agents, skills, rules, hooks in `.claude/`. Handles creation
 
 **Update second-argument discrimination**:
 
-- Two bare kebab-case args (second arg no spaces, no `.md` extension) → **rename mode**
+- Two bare kebab-case args (second arg no spaces, no `.md` extension) → **rename mode**, confirmed interactively before any write (Step 1 rename confirmation gate) — an unquoted change directive such as `update my-agent add-error-handling` has this exact shape and would otherwise delete `my-agent`
 - One name + quoted string → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
 - One name + path ending in `.md` → **content-edit mode** (trivial → inline; `.md`: foundry:curator; code `*.js`/`*.py`/`*.ts`: foundry:sw-engineer; rule: inline)
 
@@ -77,7 +77,14 @@ Colors in use are read from live Grep in Step 3 (authoritative) — no static us
 
 <workflow>
 
-**Task hygiene**: call `TaskList` first; close orphaned tasks. **Task tracking**: create tasks for each major phase; mark in_progress/completed throughout.
+**Task hygiene**: load and follow the protocol below.
+
+```bash
+# audit-skip: resilience-replication
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
+```
+
+**Task tracking**: create tasks for each major phase; mark in_progress/completed throughout.
 
 ## Step 1: Parse and validate
 
@@ -126,6 +133,8 @@ For `create`, check only relevant type's path.
 
 **Delete confirmation gate** — when `$MODE` is `delete`, immediately after type resolution invoke `AskUserQuestion`: "Delete `<name>` (`<type>`)? This cannot be undone. (a) Confirm · (b) Abort". On Abort: stop. On Confirm: proceed to Step 4.
 
+**Rename confirmation gate** — when the argument shape resolves to `rename`, the second token is ambiguous by construction: `update my-agent add-error-handling` and `update my-agent new-agent-name` parse identically, and rename deletes the old file. Immediately after type resolution, before any write, invoke `AskUserQuestion`: "`<name>` → `<second-arg>`: rename the file, or apply `<second-arg>` as an edit directive?" — (a) **Rename** (write `<second-arg>`, delete `<name>`, propagate cross-refs) · (b) **Content-edit** (keep the name; set `MODE=content-edit` and `DIRECTIVE=<second-arg>`, continue from the edit-complexity classifier) · (c) **Abort** (stop, nothing written). Place (b) second — it is the recommended reading whenever the second token is not a plausible entity name.
+
 ```bash
 jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/settings.json >/dev/null 2>&1  # timeout: 5000
 ```
@@ -135,7 +144,7 @@ jq -e --arg rule '<rule>' '.permissions.allow | index($rule) != null' .claude/se
 | Argument shape | `MODE` |
 | -- | -- |
 | `create <type> <name> "..."` | `create` |
-| `update <name> <new-name>` (two bare kebab-case args; second has no spaces, no `.md`) | `rename` (validate new-name does NOT already exist) |
+| `update <name> <new-name>` (two bare kebab-case args; second has no spaces, no `.md`) | `rename` (validate new-name does NOT already exist; **destructive — rename confirmation gate above must pass first**) |
 | `update <name> "<change>"` (one name + quoted string) | `content-edit` (validate spec non-empty; set `DIRECTIVE` = the quoted string) |
 | `update <name> <spec>.md` (one name + path ending in `.md`; **must be quoted if path contains spaces**) | `content-edit` (validate spec file exists on disk and path ends in `.md`; report error if not found; set `DIRECTIVE` = contents of the spec file via Read tool) |
 | `delete <name>` | `delete` |
@@ -191,6 +200,8 @@ Extract names inline from Glob results — strip `.claude/agents/` prefix and `.
 
 ## Step 4: Execute operation
 
+> **Verification gate — every write-before-delete sequence below** (Update Agent, Update Skill, Update Rule): the `rm` is authorized **only** by a successful verify read. Verification fails — file missing, content truncated, frontmatter absent, or the Read itself errors — **STOP**: do not run the `rm`, leave the old file in place, print `! Rename aborted — <new-path> failed verification; <old-path> left untouched`, and hand back to the user. Deleting the source after an unverified write is unrecoverable; an orphaned new file is not.
+
 ### Mode: Create Agent
 
 1. Fetch latest Claude Code agent frontmatter schema:
@@ -241,7 +252,7 @@ Return ONLY: {"status":"done","file":".claude/agents/<name>.md","lines":N,"confi
 
 Health monitoring §8b: `<ID>` = `sw-engineer-agent`, glob matching this agent's output files.
 
-**CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read worktree path from agent result (returned in `worktree` field or as part of result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on main-tree copy. Without this step, Steps 5–9 Globs find nothing.
+**CRITICAL — worktree isolation copy**: `foundry:sw-engineer` runs with `isolation: worktree` — scaffolded file lands in a temporary worktree, not the main tree. After agent completes: (1) read worktree path from agent result (returned in `worktree` field or as part of result message); (2) run: `cp <worktree-path>/.claude/agents/<name>.md .claude/agents/<name>.md` (substitute actual paths); (3) proceed with Steps 5–9 on main-tree copy; (4) remove the worktree once the copy is verified: read the `worktree` path and `branch` from the agent result, assert the path starts with `.claude/worktrees/` (`agents/sw-engineer.md` §Worktree isolation), then `git worktree remove --force <worktree-path>` followed by `git branch -D <branch>`. Assertion fails, removal errors, or the result carried no worktree path: change nothing — print the path and `→ leftover worktree; clean up with git worktree remove then git worktree prune` in the Step 10 report. Never run the removal on a path outside `.claude/worktrees/`. Without this step, Steps 5–9 Globs find nothing.
 
 ### Mode: Create Skill
 
@@ -295,7 +306,7 @@ Atomic rename — write new file before deleting old:
 
 2. Write new file to `.claude/agents/<new-name>.md` using the Write tool (copy content of old file with `name:` line updated to `<new-name>`).
 
-3. Verify new file exists and is valid: `Read(file_path=".claude/agents/<new-name>.md", limit=5)`
+3. Verify new file exists and is valid: `Read(file_path=".claude/agents/<new-name>.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm` below.
 
 ```bash
 rm .claude/agents/<old-name>.md # timeout: 5000
@@ -315,7 +326,7 @@ Atomic rename — create new directory before removing old:
 
    > After updating `name:` in frontmatter: also scan new SKILL.md body for TRIGGER conditions, NOT-for lines, and example invocations still referencing old skill name — update those inline with Edit tool before proceeding to Step 5.
 
-3. Verify new file exists: `Read(file_path=".claude/skills/<new-name>/SKILL.md", limit=5)`
+3. Verify new file exists: `Read(file_path=".claude/skills/<new-name>/SKILL.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm -r` below (it removes a whole directory).
 
    ```bash
    rm -r .claude/skills/<old-name>  # timeout: 5000
@@ -454,7 +465,7 @@ Atomic update — write new file before deleting old:
 
 1. Read `.claude/rules/<old-name>.md` using the Read tool.
 2. Rule files have no `name:` frontmatter field — filename IS identifier. Write new file at `.claude/rules/<new-name>.md` with identical content.
-3. Verify new file exists: `Read(file_path=".claude/rules/<new-name>.md", limit=5)`
+3. Verify new file exists: `Read(file_path=".claude/rules/<new-name>.md", limit=5)` — **verification gate applies**: fails → STOP, do not run the `rm` below.
 
 ```bash
 rm .claude/rules/<old-name>.md  # timeout: 5000
@@ -482,7 +493,7 @@ Rules:
 - Preserve CommonJS require() style; do not convert to ESM
 - stdin must use event-based accumulation (process.stdin.on("data"/"end")); never readFileSync("/dev/stdin")
 - All subprocess calls must use execFileSync or spawnSync (args array — no execSync with shell strings)
-- All logic must be wrapped in try/catch; catch always exits 0
+- Wrap all logic in try/catch; the catch destination depends on hook class (per `references/sw-engineer/hook-authoring.md` §Implementation pattern): PreToolUse gatekeeper that can emit `deny` → `process.exit(2)` (an erroring gate must block — exiting 0 is a security bypass); allow-only PreToolUse hook, or a logging hook (PostToolUse/SubagentStop) → `process.exit(0)`. Classify from the source, not from intent: any code path that can emit `deny` makes it a gatekeeper.
 - After editing: verify exit codes match documented cases, no shell injection surface added
 Write all changes using the Edit tool.
 Return ONLY: {"status":"done","file":".claude/hooks/<name>.js","edits":N,"confidence":0.N}
@@ -504,7 +515,7 @@ echo "$HOOK_NAME" > "${TMPDIR:-/tmp}/manage-hook-name-${CSID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/remove_hook_from_registry.py" \
     --json-file .claude/settings.json \
     --hook-name "$HOOK_NAME" \
-    --path-pattern "\\.claude/hooks/${HOOK_NAME}\\.js"
+    --match path
 ```
 
 Verify the entry is gone:
@@ -527,7 +538,7 @@ if [ -f "$PLUGIN_HOOKS_JSON" ]; then
     python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/remove_hook_from_registry.py" \
         --json-file "$PLUGIN_HOOKS_JSON" \
         --hook-name "$HOOK_NAME" \
-        --path-pattern "${HOOK_NAME}\\.js"
+        --match basename
     jq --arg hook "$HOOK_NAME" '[.. | objects | select(.command? // "" | test($hook + "\\.js"))] | length' "$PLUGIN_HOOKS_JSON"  # expected: 0
 else
     printf "  (no plugin hooks.json at %s — skipping registry cleanup)\n" "$PLUGIN_HOOKS_JSON"
@@ -539,8 +550,6 @@ fi
 Adds rule to both `settings.json` and `permissions-guide.md` atomically.
 
 1. Determine guide category from rule prefix:
-
-   > **Agent budget** — each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call, so work under ~73 calls is cheaper done inline: spawn nothing. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk. Every spawn prompt must require an envelope even on exhaustion — `partial: true` plus what was finished.
 
    - `WebSearch` → `## Web`
    - `WebFetch(domain:...)` → `## WebFetch — allowed domains`

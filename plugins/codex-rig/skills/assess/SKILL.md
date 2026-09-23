@@ -15,13 +15,15 @@ Run evidence-first analysis: truth, risk, next action before implementation, rev
 {
   "question": "required analysis question",
   "scope": "required files, diff, issue text, report path, PR number, or repo area",
-  "mode": "local|github|report|ecosystem",
+  "mode": "optional local|github|report|ecosystem; default local",
   "approve_gh": "optional boolean; default false; --approve-gh means the user has already approved required GitHub operations; use managed host preapproval to run without another prompt",
   "done_when": "findings are source-backed, ranked, and have explicit confidence"
 }
 ```
 
 ## Workflow
+
+<!-- policy-sibling: skills/code-remediate/SKILL.md, skills/release/SKILL.md, skills/code-review/SKILL.md -->
 
 Apply [GitHub Workflow Consent](../../shared/native-skill-contract.md#github-workflow-consent) whether or not `--approve-gh` is present: reuse existing scoped authorization; never require a flag reply or reinvocation. Ask only for genuinely missing consent through the permitted question control.
 
@@ -96,7 +98,7 @@ Required sections in `<run-directory>/analysis.md`:
 
 ### 07: Run the self-review check
 
-Run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result.
+When a diff exists — working-tree changes, a collected local diff, or pasted diff evidence, regardless of mode — run `git diff --check` as argv command. Write its combined output to `<run-directory>/review.txt` and retain its exit status as review evidence; do not erase nonzero result. When no diff exists, record that absence in `<run-directory>/review.txt` instead of running the command.
 
 ### 08: Decide gate result
 

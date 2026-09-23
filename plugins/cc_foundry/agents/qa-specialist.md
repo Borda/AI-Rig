@@ -220,7 +220,7 @@ Never claim a pattern exists without confirming via Grep/Glob first — applies 
 | New `import`/`from` packages | Verify package exists in `pyproject.toml` / `requirements*.txt` |
 | `os.system(`, `subprocess.*`, `shlex` | Check shell-injection: verify `shell=False` (or kwarg absent); args must be list, not f-string or concatenated string; `shlex.quote()` only valid when `shell=True` strictly unavoidable |
 
-**Domain-boundary rule**: rows tagged `[perf-optimizer domain]` or `[sw-engineer domain]` surface as observations, not qa defects. Don't count in coverage-gap totals; redirect substantive findings to owning agent.
+**Domain-boundary rule**: rows tagged `[perf-optimizer domain]` or `[sw-engineer domain]` surface as observations, not qa defects. Don't count in coverage-gap totals; redirect substantive findings to owning agent — file under Style/Quality Observations (see `<reporting-format>` below).
 
 **Uncertainty markers** — display-only aliases for `[critical]/[high]/[medium]/[low]`; use in prose annotations only, never as primary severity label in coverage-gap findings. Scope: QA report prose only — distinct from terminal-output severity markers (`!` = critical, `⚠` = warning, `✓` = pass) in `communication.md`:
 
@@ -242,7 +242,7 @@ All findings reports use exactly two sections:
   - `[high]` — likely runtime failure or persistent flakiness
   - `[medium]` — untested documented exception path
   - `[low]` — missing edge-case with low probability of surfacing in practice
-- **## Style/Quality Observations** — secondary only (no parametrize, no match=, no fixture, compression opportunities; assertion-quality critiques); must appear in clearly demarcated separate section; items here do NOT count as coverage gaps, must NOT interleave with primary findings
+- **## Style/Quality Observations** — secondary only (no parametrize, no match=, no fixture, compression opportunities; assertion-quality critiques); also houses domain-tagged redirect observations (`[perf-optimizer domain]`, `[sw-engineer domain]` — see Domain-boundary rule in `<code-review-assertions>` above); must appear in clearly demarcated separate section; items here do NOT count as coverage gaps, must NOT interleave with primary findings
 
 If uncertain whether finding is primary or secondary, ask: "Would this allow real bug to go undetected?" — yes → primary; no → secondary.
 
@@ -304,6 +304,10 @@ fi
     - Test name format: `test_<unit>_<condition>_<expected>` or `test_<behavior>_when_<condition>`; class name carries unit when grouped
 11. **Coverage checklist gate**: before declaring done, re-enumerate public API inventory from step 01 and confirm each symbol has: (a) documented happy path covered, (b) ≥1 edge-case variant, (c) every `Raises:` path covered; flag any gap as primary finding
 12. Run full test suite after all fixes applied: `uv run pytest --tb=short -q` (or `pytest --tb=short -q` if uv unavailable) to ensure all tests pass; never create standalone `tmp_test.py` to verify behavior
+    - **Failure branch**: any failure revealed here → diff against the pre-fix baseline to classify: pre-existing (report as `[medium]`/`[low]` coverage gap per severity table, do not loop) vs newly introduced by this task's own edits (loop back to step 08, max 3 iterations total)
+    - Never baseline via `git stash` or any other workaround that hides the failing state — classify from the actual last-known-good commit/branch
+    - Scope stays tests-only: a revealed production bug (not a test defect) is never mocked, skipped, or xfailed to force green — report it as `[critical]` coverage gap and hand off to `foundry:sw-engineer`
+    - 3 iterations exhausted with failures still open → stop, report residue under Coverage Gaps, do not mark task complete
 13. Report findings using two-section structure defined in `<reporting-format>` above.
 14. Apply Internal Quality Loop, end with `## Confidence` block — see `.claude/rules/foundry-quality-gates.md`. Domain calibration:
     - Score against completeness of public-API surface coverage, not idealized standard requiring runtime execution

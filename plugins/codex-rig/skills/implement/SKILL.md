@@ -29,6 +29,8 @@ When independent review findings are fixed in a cycle, read `../../shared/advers
 
 ## Parallel Adoption (Portable read-only)
 
+<!-- policy-sibling: skills/manage/SKILL.md (Parallel Adoption section) — near-duplicate; also see skills/code-review/SKILL.md Workflow parallel-review section as a third divergent variant; check siblings before editing this section alone -->
+
 This skill permits only its promoted portable read-only route. Resolve execution precedence from per-invocation `--execution=<mode>`, then `CODEX_RIG_EXECUTION`, then the `auto` default. The default execution mode is `auto`. `auto` selects this route only after this consumer's runtime matrix and promotion; otherwise it resolves safely to `serial`. Every write still requires a frozen plan and exact-digest approval. This route never bypasses consumer promotion, serial parent authority, or write approval.
 
 Follow the [canonical G0–G8 execution flow](../../ARCHITECTURE.md#canonical-g0g8-execution-flow) for shared gate order and fork outcomes. This consumer's read-only evidence passes are bounded by G0–G5; parent owns deterministic G6 integration, G7 verification, and G8 verdict/promotion.
@@ -44,6 +46,8 @@ Apply shared [host compatibility check](../../shared/specialist-orchestration.md
 Before any dispatch, freeze goal, mode, `done_when`, baseline, ownership DAG, context packs, role-card hashes, checks, resource locks, and plan digest. Dispatch at most one fixed dependency-ready wave, then join every terminal handoff before implementation, integration, gates, or acceptance; changed scope requires new plan.
 
 The frozen `<run-directory>/execution-plan.json` must include exact `consumer_policy` values `consumer_id=implement`, `capability=portable-read-only`, `promotion_status=promoted`, `parent_mutations=serial`, and `canonical_gates=serial`. It must also include `write_policy`: use `parent_writes=planned` with `approval_requirement=exact-plan-digest` when any parent mutation is planned, otherwise `parent_writes=none` with `approval_requirement=not-required`. A planned write requires `<run-directory>/write-approval.json` containing only exact plan SHA-256, `response=approve`, and `source=explicit-input|user-prompt`.
+
+Bootstrap exception: run-directory creation (Step 01), baseline diff/branch persistence (Step 02), and the `write-approval.json` write itself are exempt from requiring a prior approved plan digest — these precursor writes must exist before a plan digest can be computed or approved.
 
 Before dispatch, run `python PLUGIN_ROOT/shared/parallel_execution.py preflight --consumer implement --plan <run-directory>/execution-plan.json --approval <run-directory>/write-approval.json`; append `--execution=<mode>` only for explicit invocation value. Omit `--approval` only when frozen write policy declares no parent writes. A nonzero result stops route.
 
@@ -73,7 +77,7 @@ Generic parallel writes remain disabled. Stop without dispatch on missing promot
 
 ### 01: Create run directory
 
-Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`.
+Run `create_run.py --skill implement` per `../../shared/helper-cli-contract.md`. For parallel-adoption execution-mode selection (`auto`/`serial`/`parallel-read`/`parallel-write`), see the Parallel Adoption section above before proceeding.
 
 ### 02: Record baseline diff and branch
 
@@ -113,6 +117,8 @@ Define narrowest reversible change, owners, acceptance. For 3+ steps/design trad
 
 ### 05: Implement minimal change
 
+This step's "implement" produces the draft/proposal work product for the changed surface; it is not a final merge-ready change until specialists join and the terminal review gate at Step 06 completes.
+
 While implementing, keep code understandable from code itself:
 
 - Apply consolidated project coding principles from applicable `AGENTS.md` layers.
@@ -132,7 +138,7 @@ Before spawning or substituting specialists, write `<run-directory>/specialist-p
 
 Required orchestration patterns:
 
-- public API or architecture: `sw-engineer` for implementation, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the Sol parent/session, which continues and accepts.
+- public API or architecture: `sw-engineer` returns a proposal for review, `qa-specialist` for acceptance matrix, and `doc-scribe` for public docs/docstrings when applicable. Use `solution-architect` only when the user expressly requests that advisory pass or selects the role; it returns a bounded read-only design artifact to the Sol parent/session, which continues and accepts.
 - bug fix or regression: `investigate` or equivalent root-cause evidence first, then `sw-engineer` for fix and `qa-specialist` for failure-before/pass-after proof.
 - CI/tooling: `cicd-steward` for workflow behavior and `linting-expert` for ruff/mypy/pre-commit or suppression policy.
 - security-sensitive code: the Sol parent/session scopes risk before implementation and pairs `sw-engineer` with `qa-specialist` as needed. Use read-only `security-auditor` only when the user expressly requests that advisory pass or selects the role; it returns bounded evidence to the Sol parent/session, which continues and accepts.
@@ -201,11 +207,13 @@ Follow `../../shared/helper-cli-contract.md` and authoritative help. Write with 
 14. Result artifact missing => fail.
 15. New or materially changed function/method without purpose docstring in configured, established, or fallback project style => fail unless it is generated or third-party code explicitly outside edited ownership.
 16. Non-trivial new or changed code block without explanatory inline comment => fail unless code was refactored until rationale is obvious from names and structure.
-17. Explanatory inline comment immediately before new or changed function/class definition => fail; move that explanation into docstring.
+17. Explanatory inline comment placed directly above a new or changed `def`/`class` line, with no intervening blank line or code, => fail; move that explanation into docstring. A comment inside the function/class body is not this rule's target and stays governed by rule 16.
 18. Long, dense, or deeply nested new/changed code block that could be split into clear helpers/classes or simplified with guard clauses => fail unless local project pattern requires structure.
 19. Low-value tiny function/class that only remaps arguments, wraps one call without semantic purpose, or is rarely used => fail unless it materially improves readability, testability, or API stability.
 20. Missing `confidence-calibration.md` sections => fail.
 21. Shared confidence policy violation from `../../shared/quality-gates.md` => fail.
+
+**Spike exemption**: rules 15-19 (docstring/structure) do not apply to `spike` mode output that stays a disposable, non-retained probe never merged into the codebase. When a spike is later promoted to retained implementation, rules 15-19 resume in full for the promoted code — the exemption does not carry over.
 
 ## Quality Gates
 
@@ -226,7 +234,7 @@ Conditional checks:
 Update calibration when implementation routing or output expectations change:
 
 - benchmark patterns: `implement`
-- behavioral cases: symptom-first routing, specialist substitution, config behavior changes, premature portable read-only adoption, missing acceptance probe, feature demo gate bypass, missing project docstring-style detection, missing function docstrings, overlong docstrings masking complex code, long code blocks not factored, deep branching without guard clauses, low-value argument-remapping wrappers, pre-definition comments that should be docstrings, missing explanatory inline comments, low-confidence recovery loop, objective confidence evidence, artifact validator bypass
+- behavioral cases: symptom-first routing, specialist substitution, config behavior changes, premature portable read-only adoption, missing acceptance probe, feature demo gate bypass, missing project docstring-style detection, missing function docstrings, overlong docstrings masking complex code, long code blocks not factored, deep branching without guard clauses, low-value argument-remapping wrappers, pre-definition comments that should be docstrings, missing explanatory inline comments, low-confidence recovery loop, objective confidence evidence, artifact validator bypass, spike output promoted to retained implementation without resuming docstring/structure rules 15-19
 
 ## Output Contract
 

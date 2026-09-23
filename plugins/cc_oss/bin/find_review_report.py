@@ -21,7 +21,7 @@ Usage:
 
 Exit codes:
     0 — no restriction, or the head moved since the rejection
-    1 — rejected, incomplete report, or failed report-path publication
+    1 — rejected, incomplete report, non-numeric --pr, or failed report-path publication
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from typing import Final
 _GATE_PREFIX: Final = "Gate:"
 _SHA_RE: Final = re.compile(r"@([0-9a-f]{7,40})")
 _RUN_RE: Final = re.compile(r"^run-(\d+)$")
+_PR_NUMBER_RE: Final = re.compile(r"^[0-9]+$")
 _LEGACY_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
 
 
@@ -210,7 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         argv: Argument list override for testing. Defaults to ``sys.argv[1:]``.
 
     Returns:
-        Exit code — 0 when resolve may proceed, 1 when the report boundary is blocked.
+        Exit code — 0 when resolve may proceed, 1 when the report boundary is blocked or
+        ``--pr`` is not a bare number.
     """
     parser = argparse.ArgumentParser(
         prog="find_review_report.py",
@@ -237,6 +239,11 @@ def main(argv: list[str] | None = None) -> int:
         print("[gate] no PR number — reject-gate check skipped")
         return 0
 
+    if args.report is None and not _PR_NUMBER_RE.match(pr_number):
+        _write_path_out(args.path_out, None)
+        print(f"find_review_report: --pr must be digits only, got {pr_number!r}", file=sys.stderr)
+        return 1
+
     report = args.report if args.report is not None else newest_report_for_pr(pr_number)
     if report is None:
         if not _write_path_out(args.path_out, None):
@@ -257,7 +264,12 @@ def main(argv: list[str] | None = None) -> int:
 
     recorded = reject_sha(line)
     current = current_head_sha(pr_number, args.timeout) if pr_number else ""
-    if recorded and current and recorded != current:
+    # `recorded` may be an abbreviated SHA (_SHA_RE accepts 7-40 hex chars) while `current` is
+    # always the full head SHA from `gh pr view --json headRefOid` — a prefix match is required,
+    # never string equality (policy-sibling: review/SKILL.md's own reject-gate comment states the
+    # same rule). String equality would read every abbreviated recorded SHA as "head moved" even
+    # when it did not, failing the reject gate open.
+    if recorded and current and not current.startswith(recorded):
         print(
             f"⚠ PR #{pr_number} rejected ({line}), head moved {recorded}→{current} — state changed, proceeding. "
             f"Re-run /oss:review {pr_number} after to confirm the ground is gone."

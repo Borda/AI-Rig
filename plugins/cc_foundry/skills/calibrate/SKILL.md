@@ -180,7 +180,8 @@ All run dirs use this timestamp.
 **Large fan-out gate** — after target list resolves (and before any task creation or pipeline spawn), when `--skip-gate` not passed:
 
 - **Skip entirely** in pure-apply mode (`--apply` without a pace flag) — zero pipelines spawn in this mode (routes straight to Step 6), so no confirmation needed.
-- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`, `<plugin-name>` tier 2) — target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per mode-file table below). An exact spawn count isn't knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark pace flag is set (`--fast` or `--full`), independent of any count.
+- **Mode-category scopes** (`all`, `agents`, `skills`, `plugins`) — target list here is mode categories, not yet expanded to individual agent/skill files (expansion happens inside Step 2's mode files, per mode-file table below). An exact spawn count isn't knowable at this point — these scopes routinely expand to dozens of agent/skill pipelines. Gate **always fires** whenever a benchmark pace flag is set (`--fast` or `--full`), independent of any count.
+- **Tier-2 plugin scopes** (`<plugin-name>`) — one plugin's contents are countable here without entering Step 2, by the same globs the Step 2 dispatch table uses: `SPAWN_ESTIMATE = (files matching plugins/<name>/agents/*.md + files matching plugins/<name>/skills/*/SKILL.md) × (FULL_N if --full else FAST_N)`. The skill term is an upper bound — `modes/skills.md` excludes some — so the estimate over-counts, which fires the gate more often, never less; keep it that way rather than "correcting" it. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
 - **Tier-3 single-target scopes** (`<agent-name>`, `<skill-name>`) — target list is already a concrete file (or small union of files), so count is exact here: `SPAWN_ESTIMATE = <resolved-target-count> × (FULL_N if --full else FAST_N)`. Gate fires only when `SPAWN_ESTIMATE > SPAWN_GATE_THRESHOLD`.
 
 When gated (either branch), fire **even when `--apply` is set together with a pace flag** — `--apply` only skips Step 3 proposal-review gate, not this one.
@@ -188,12 +189,12 @@ When gated (either branch), fire **even when `--apply` is set together with a pa
 Call `AskUserQuestion`:
 
 - Mode-category scopes: question: "`<scope>` expands to dozens of agent/skill pipelines × `<N_PROBLEMS>` problems each — potentially 100+ spawns. Proceed?"
-- Tier-3 scopes: question: "This run resolves to `<N>` targets × `<N_PROBLEMS>` problems ≈ `<SPAWN_ESTIMATE>` pipeline spawns. Proceed?"
+- Counted scopes (tier-2 `<plugin-name>`, tier-3 `<agent-name>`/`<skill-name>`): question: "This run resolves to `<N>` targets × `<N_PROBLEMS>` problems ≈ `<SPAWN_ESTIMATE>` pipeline spawns. Proceed?"
 - (a) label: `Proceed` — description: run as specified
 - (b) label: `Switch to --fast` — description: re-run with `--fast` instead of `--full` (lowers spawn count ~3.3×) — **omit this option when pace is already `--fast`/default**; two-option menu (Proceed / Abort) in that case
 - (c) label: `Abort` — description: stop; narrow scope and re-invoke
 
-On Abort: stop immediately — no tasks created, no spawns. On Switch to --fast: replace pace flag with `--fast` (mode-category scopes still always-fire at `--fast`; tier-3 recomputes `SPAWN_ESTIMATE`), continue to task creation.
+On Abort: stop immediately — no tasks created, no spawns. On Switch to --fast: replace pace flag with `--fast` (mode-category scopes still always-fire at `--fast`; tier-2 and tier-3 recompute `SPAWN_ESTIMATE`, and a recomputed estimate at or below `SPAWN_GATE_THRESHOLD` proceeds without re-asking), continue to task creation.
 
 Create tasks before proceeding:
 
@@ -425,6 +426,8 @@ After processing all edits return **only** this compact JSON:
 
 `{"status":"done","target":"<TARGET>","applied":N,"skipped":N,"file":"<AGENT_FILE>","summary":"Applied N, skipped N edits to <AGENT_FILE>"}`
 
+**Completion handling** — like Step 3, these spawns run in the background: issue the batch, end turn, resume on completion notifications (`_FOUNDRY_SHARED/agent-spawn-protocol.md`) — never a poll loop or a filler call. A subagent that returns nothing after notification: record `{"status":"timed_out","target":"<TARGET>"}`, print with ⏱, still counted in the final table — never silently dropped from the summary.
+
 After all subagents complete, collect JSON results and print final summary:
 
 ```markdown
@@ -465,7 +468,7 @@ End response with `## Confidence` block per CLAUDE.md output standards.
 - **Report always**: every invocation surfaces report — benchmark runs print new results table; `--apply` without pace flag prints saved report from last run before applying, so user always sees basis for changes before files touched.
 - **`--apply` semantics**: `--fast --apply` / `--full --apply` = run fresh benchmark then auto-apply new proposals. `--apply` alone = apply proposals from most recent past run without re-running benchmark.
 - **Stale proposals**: `--apply` uses verbatim text matching (`old_string` = **Current** from proposal). Agent file edited between benchmark run and `--apply`: any change whose **Current** text no longer matches is skipped with warning — no silent clobbering of intermediate edits.
-- **`routing` target vs `/audit` Check 12**: `/audit` Check 12 performs static analysis of description overlap (finds potential confusion zones); `/calibrate routing` tests behavioral impact — generates real routing decisions, measures whether descriptions actually disambiguate. Run in sequence: `/audit` first (fast, structural), then `/calibrate routing` (behavioral, slower). Complementary, not redundant.
+- **`routing` target vs `/audit` Check 20**: `/audit` Check 20 (sub-check 20a, `audit/templates/checks-agents.md`) performs static analysis of description overlap (finds potential confusion zones); `/calibrate routing` tests behavioral impact — generates real routing decisions, measures whether descriptions actually disambiguate. Run in sequence: `/audit` first (fast, structural), then `/calibrate routing` (behavioral, slower). Complementary, not redundant.
 - **`routing`, `communication`, `rules` in `all`**: see `all` entry in `<inputs>` for authoritative definition — use explicit targets only when running single mode in isolation.
 - Follow-up chains:
   - Recall < 0.70 or borderline: pick "Apply proposals" from gate → `/calibrate <agent>` to verify improvement — stop, escalate to user if recall still < 0.70 after this cycle (max 1 apply cycle per run)

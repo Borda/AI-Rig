@@ -28,12 +28,15 @@ IMPL_AGENT="${VALUE_AGENT:-bridge:implement}"
 mkdir -p "$IMPL_DIR"  # timeout: 3000
 SELECTED_ITEMS="<space-separated selected ids>"
 case "$SELECTED_ITEMS" in *'<'*'>'*|"") echo "! BLOCKED — SELECTED_ITEMS still holds the placeholder; substitute the Step 3d ids before running this block"; exit 1 ;; esac
+case "$SELECTED_ITEMS" in *[!0-9\ ]*) echo "! BLOCKED — SELECTED_ITEMS must be space-separated digits only, got: $SELECTED_ITEMS"; exit 1 ;; esac
 printf '%s\n' "$SELECTED_ITEMS" > "$IMPL_DIR/selected-items.txt"
 CHALLENGE_LOG="$IMPL_DIR/challenge-log.txt"; : > "$CHALLENGE_LOG"  # one record per line: id=… resolution=… evidence=… suggestion=… finding=… evidence_why=… suggestion_why=… detail=… — resolution right after id, before any free-text field, so a reviewer's quoted text can never be mistaken for it (every consumer greps this by field name, never by position, so the order itself carries no other meaning); file, not shell array: survives compaction + separate Bash calls, Step 11 renders from it
 : > "$IMPL_DIR/skipped-items.txt"  # item_id<TAB>reason, one per line — Phase 2 appends (fenced block below), Phase 3 close-out consumes; initialized empty so a no-skip run still has a readable file
 : > "$IMPL_DIR/phase2-commits.jsonl"  # one JSON object per line: {"item_id","sha","group"} — Phase 2 appends per group (fenced block below), Phase 3's build_merge_plan.py producer consumes; initialized empty so an all-C1/all-rejected run still has a readable file
 : > "$IMPL_DIR/c1-deferred-files.txt"  # one file path per line — C1 fence appends for non-each COMMIT_MODE (fenced block below), Phase 3's clean-run staging fence consumes; initialized empty so a run with no C1 items (or CODEX_AVAILABLE=false) still has a readable file
 : > "$IMPL_DIR/specialist-worktrees.txt"  # one absolute path per line — Phase 2 appends per group (fenced block below), Phase 3's cleanup loop consumes; initialized empty so an all-C1/all-rejected run (no Phase 2 dispatch) still has a readable file
+: > "$IMPL_DIR/c1-item-summary.tsv"  # item_id<TAB>summary, one per line — C1 fence appends per DONE item; grouped-commit fence (Site 5) reads it for C1 items with no phase2-commits.jsonl row
+: > "$IMPL_DIR/c1-item-files.tsv"  # item_id<TAB>path, one per line — C1 fence appends per DONE item's files_changed; same consumer as above, kept separate from c1-deferred-files.txt (bare-path shape two other consumers already depend on)
 ```
 
 **Concurrency guard — mutex + HEAD fingerprint** (Phase 2 holds worktrees open for the slowest specialist's whole runtime — minutes — so an external write to the branch, or a second resolve run, is far likelier to land mid-flight than under the old per-item design). The lock path is deterministic (recompute anytime from the git-common-dir + branch); the base SHA is a point-in-time value, so persist it to a tmpfile — shell vars don't survive between Step 8's separate bash calls:
@@ -97,7 +100,9 @@ Process items in `SELECTED_ITEMS` (from Step 3e) in priority order (`[req]` firs
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
-ITEM_DATA=$(jq -c ". | select(.id == <id>)" "$IMPL_DIR/action-items.jsonl")  # timeout: 5000
+_ID="<id>"
+case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
+ITEM_DATA=$(jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl")  # timeout: 5000
 ```
 
 Use `.full_comment_text` for `IMPL_PROMPT`, `.file`/`.line` for commit scope and blast-radius lookup, `.change`/`.severity` for effort classification and agent routing.
@@ -183,22 +188,51 @@ Include non-empty `$ITEM_CALLERS` in impl agent prompt — see Phase 2.
 
 When `ITEM_EFFORT=medium` AND `CODEX_AVAILABLE=true`: dispatch Codex for evidence check + implementation. **Batch disjoint-file items** — collect all C1-eligible items first, group ≤3 per call with pairwise-distinct `file` values (two items on the SAME file always go in separate calls — a shared-file batch makes the per-item diff inseparable, breaking one-commit-per-item and per-item CHALLENGE_LOG attribution). Each blocking round-trip then covers up to 3 items instead of 1.
 
+**SECURITY — never type a review comment into `args=` inline.** The comment text is untrusted external content; `bridge:implement`'s own contract requires routing text you did not author through a scratch file plus `--task-file`, never inline `--task`. Build the static wrapper with `printf` (no untrusted content in it), append each item's line via a separate `jq` extraction from `action-items.jsonl` — never hand-typed — then dispatch with `--task-file`:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+[ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
+[ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
+_BATCH_TAG="<this batch's first item id>"
+case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — C1 batch tag placeholder not substituted or non-numeric"; exit 1 ;; esac
+_BRIEF="$IMPL_DIR/c1-brief-${_BATCH_TAG}.md"
+printf '%s\n' \
+    "Effort level: medium. Review each action item independently and implement it if valid." \
+    "Items touch disjoint files — never edit one item's file for another item." \
+    "" > "$_BRIEF"
+for _bid in <space-separated item ids in this batch, up to 3>; do
+    case "$_bid" in ''|*[!0-9]*) echo "! BLOCKED — batch item id not numeric: $_bid"; exit 1 ;; esac
+    _LINE=$(jq -r --arg id "$_bid" 'select((.id|tostring)==$id) | "Item \(.id): \(.full_comment_text)  File: \(.file)  Line: \(.line)"' "$IMPL_DIR/action-items.jsonl")
+    [ -n "$_LINE" ] || { echo "! BLOCKED — item $_bid not found in action-items.jsonl"; exit 1; }
+    printf '%s\n' "$_LINE" >> "$_BRIEF"
+done
+printf '%s\n' \
+    "" \
+    "Each reviewer assertion is itself an unproven claim — if it asserts a fact the file alone can't settle" \
+    "(name/identifier/version/count wrong or non-standard), verify against the actual authoritative source" \
+    "before treating it as valid; can't verify → UNCERTAIN, not DONE. Verdicts are per item — one UNCERTAIN" \
+    "never blocks another item's DONE." \
+    "Return ONLY compact JSON array as your FINAL message, one element per item:" \
+    '[{"id":<id>,"verdict":"DONE"|"UNCERTAIN","reason":"<one sentence>","files_changed":["<path>", ...]}, ...]' \
+    >> "$_BRIEF"
+```
+
+Immediately after this Skill call returns, persist its raw JSON array reply verbatim via the Write tool to `$IMPL_DIR/c1-reply-<batch_tag>.json` (same `<batch_tag>` as `_BATCH_TAG` above) — the commit fence and challenge-log append below both read it via `jq`, never by re-typing the reply's contents:
+
 ```text
-Skill(skill="bridge:implement", args="Effort level: medium. Review each action item independently and implement it if valid. Items touch disjoint files — never edit one item's file for another item.
-Item <id>: <full_comment_text>  File: <file>  Line: <line>
-[repeat per item, ≤3]
-Each reviewer assertion is itself an unproven claim — if it asserts a fact the file alone can't settle (name/identifier/version/count wrong or non-standard), verify against the actual authoritative source before treating it as valid; can't verify → UNCERTAIN, not DONE. Verdicts are per item — one UNCERTAIN never blocks another item's DONE.
-Return ONLY compact JSON array as your FINAL message, one element per item:
-[{\"id\":<id>,\"verdict\":\"DONE\"|\"UNCERTAIN\",\"reason\":\"<one sentence>\",\"files_changed\":[\"<path>\", …]}, …]")
+Skill(skill="bridge:implement", args="--task-file <substitute the absolute path written to _BRIEF above> --effort medium")
 ```
 
 Parse the JSON array — per element, in item priority order:
 
-- **DONE** → mark item resolved; commit/stage that item's `files_changed` using the fence below (per-item commit stays granular — the disjoint-file grouping guarantees the diff separates); append to `CHALLENGE_LOG`: `id=<id> resolution=codex-direct evidence=VALID suggestion=VALID finding=<full_comment_text, truncate ~80 chars> evidence_why=<Codex reason> suggestion_why=<Codex reason> detail=<Codex reason>` — `resolution=` sits right after `id=`, before any free-text field, so a reviewer's quoted text inside `finding=`/`detail=` can never be mistaken for it; skip Phase 1+2 for that item
+- **DONE** → mark item resolved; commit/stage that item's `files_changed` using the fence below (per-item commit stays granular — the disjoint-file grouping guarantees the diff separates); append to `CHALLENGE_LOG` using the shared append block (§Challenge-log append below) with `_RESOLUTION=codex-direct` and `_DOMAIN=<batch_tag>` — that block extracts `finding=`/`evidence_why=`/`suggestion_why=`/`detail=` from the persisted `c1-reply-<batch_tag>.json` via `jq`, never by retyping the reviewer's text; skip Phase 1+2 for that item
 - **UNCERTAIN** → that item falls through to Phase 1+2 (normal challenge + implementation flow)
 - element missing for a dispatched item → treat as UNCERTAIN, never silently resolved
 
 **Only `each` mode commits here.** `git add`-ing a C1 item's files before Phase 3 runs — even a `stage`/`grouped`/`all` item, even touching a file no Phase 2 item touches — leaves the index non-clean, and Phase 3's `merge_specialist_batch.py` cherry-picks refuse to run against a non-clean index (confirmed empirically: `git cherry-pick` exits 128, "your local changes would be overwritten", before it even reaches the merge). An **unstaged** working-tree edit does not trigger that refusal — **only when the C1 item's file is disjoint from every Phase 2 item's file**; an unstaged edit on a file a Phase 2 cherry-pick also touches reproduces the identical refusal (empty file list, no `CHERRY_PICK_HEAD`, no recovery route), confirmed empirically. C1 is invisible to Phase 2's file-ownership tiebreak (it skips Phase 1/2 entirely, so nothing else in the file compares a C1 item's file against a Phase 2 item's) — the merge fence's own guard right before it calls `merge_specialist_batch.py` is what actually catches this overlap; it is what makes deferring here safe, not the unstaged/staged distinction alone. So `stage`/`grouped`/`all` C1 items are left as plain unstaged edits here and only `git add`ed after Phase 3 returns clean (see the fence right after the `merge_specialist_batch.py` call below):
+
+**SECURITY — every field below comes from `jq`-extracting `action-items.jsonl`/`c1-reply-<batch_tag>.json`, never from the orchestrator retyping the reviewer's comment or Codex's reply text.** `$(jq ...)` captures a command's stdout as opaque data — bash never re-parses that value for further expansion — so this is safe regardless of what characters the source text contains; the vulnerability existed only when the untrusted text was typed as literal source in a quoted string, which this block never does:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -206,21 +240,43 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
 [ -f "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" ] && IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" || PR_REF="#${PR_NUMBER:-0}"
 [ -f "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" ] && IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" || COMMIT_MODE="unset"
-_SUMMARY="<short summary>"; _ID="<id>"; _AUTHOR="<author>"; _COMMENT="<full_comment_text>"; _FILES=(<files_changed for this item, one per array element>)
-case "$_SUMMARY$_ID$_AUTHOR$_COMMENT${_FILES[*]}" in *'<'*'>'*) echo "! BLOCKED — C1 commit placeholder not substituted"; exit 1 ;; esac
-if [ "$COMMIT_MODE" = "each" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" --build --summary "$_SUMMARY" \
-        --item-id "$_ID" --author "$_AUTHOR" --pr "$PR_REF" --comment "$_COMMENT" \
-        --challenge "evidence=VALID suggestion=VALID resolution=codex-direct" \
-        --files "${_FILES[@]}"  # timeout: 10000
-else
-    printf '%s\n' "${_FILES[@]}" >> "$IMPL_DIR/c1-deferred-files.txt"  # not git-added yet — see note above; array form (not unquoted $_FILES) keeps a path containing a space on one line
-fi
+_BATCH_TAG="<this batch's first item id — same value used for the brief file above>"
+case "$_BATCH_TAG" in ''|*[!0-9]*) echo "! BLOCKED — C1 batch tag placeholder not substituted or non-numeric"; exit 1 ;; esac
+_C1_FILE="$IMPL_DIR/c1-reply-${_BATCH_TAG}.json"
+[ -s "$_C1_FILE" ] || { echo "! BLOCKED — $_C1_FILE missing/empty; persist the Codex batch reply via the Write tool before running this block"; exit 1; }
+jq -e . "$_C1_FILE" >/dev/null 2>&1 || { echo "! BLOCKED — $_C1_FILE is not valid JSON"; exit 1; }
+while IFS= read -r _ID; do
+    case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — non-numeric id in $_C1_FILE"; exit 1 ;; esac
+    _ITEM_DATA=$(jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl")
+    [ -n "$_ITEM_DATA" ] || { echo "! BLOCKED — item $_ID not found in action-items.jsonl"; exit 1; }
+    _AUTHOR=$(printf '%s' "$_ITEM_DATA" | jq -r '.author')
+    _COMMENT=$(printf '%s' "$_ITEM_DATA" | jq -r '.full_comment_text')
+    [ -n "$_COMMENT" ] || { echo "! BLOCKED — item $_ID has empty full_comment_text"; exit 1; }
+    _ENTRY=$(jq -c --arg id "$_ID" '.[] | select((.id|tostring)==$id)' "$_C1_FILE")
+    [ -n "$_ENTRY" ] || { echo "! BLOCKED — item $_ID not present in $_C1_FILE"; exit 1; }
+    _SUMMARY=$(printf '%s' "$_ENTRY" | jq -r '(.reason // "") | gsub("[\n\t]"; " ")')
+    [ -n "$_SUMMARY" ] || _SUMMARY="resolve review item $_ID"
+    printf '%s\t%s\n' "$_ID" "$_SUMMARY" >> "$IMPL_DIR/c1-item-summary.tsv"
+    _FILES=()
+    while IFS= read -r _f; do [ -n "$_f" ] && _FILES+=("$_f"); done < <(printf '%s' "$_ENTRY" | jq -r '.files_changed[]?')
+    [ "${#_FILES[@]}" -gt 0 ] || { echo "! BLOCKED — no files_changed for item $_ID in $_C1_FILE"; exit 1; }
+    for _f in "${_FILES[@]}"; do printf '%s\t%s\n' "$_ID" "$_f" >> "$IMPL_DIR/c1-item-files.tsv"; done
+    if [ "$COMMIT_MODE" = "each" ]; then
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" --build --summary "$_SUMMARY" \
+            --item-id "$_ID" --author "$_AUTHOR" --pr "$PR_REF" --comment "$_COMMENT" \
+            --challenge "evidence=VALID suggestion=VALID resolution=codex-direct" \
+            --files "${_FILES[@]}"  # timeout: 10000
+    else
+        printf '%s\n' "${_FILES[@]}" >> "$IMPL_DIR/c1-deferred-files.txt"  # not git-added yet — see note above; array form (not unquoted $_FILES) keeps a path containing a space on one line
+    fi
+done < <(jq -r '.[] | select(.verdict=="DONE") | .id' "$_C1_FILE")
 ```
+
+`c1-item-summary.tsv`/`c1-item-files.tsv` (`item_id<TAB>value`, one row per item/file) are read by the grouped-commit fence (§Site 5 below) to cover C1 items that never reach `phase2-commits.jsonl` — separate files from `c1-deferred-files.txt`, whose bare-path shape two existing consumers (the clean-run staging fence and the overlap guard's Python) already depend on unchanged.
 
 When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use Phase 1+2 directly.
 
-> **Agent budget** — grouping already bounds parallelism here (one agent per domain group, roster-bounded; `comment-dispatch` batches at `BATCH_SIZE`), so no separate spawn cap applies. What still does: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call. **Work under ~73 calls total is cheaper inline — spawn nothing**, the common case for a 1–3 item PR. Merge a single-item group into the nearest domain rather than giving it its own agent. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk — so every spawn prompt must require an envelope even on exhaustion (`partial: true` plus the items finished).
+> **Agent budget** — Phase 1's domain grouping is roster-bounded (3 challenger types, always ≤3 spawns); `comment-dispatch` batches at `BATCH_SIZE`. Phase 2's sub-group splitting is not roster-bounded the same way — see its own §Spawn wave cap below. What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call. **Work under ~73 calls total is cheaper inline — spawn nothing**, the common case for a 1–3 item PR. Merge a single-item group into the nearest domain rather than giving it its own agent. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk — so every spawn prompt must require an envelope even on exhaustion (`partial: true` plus the items finished).
 
 ### Phase 1: Challenge — parallel by domain (skip when `--no-challenge`)
 
@@ -262,6 +318,8 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 
 **Fire every domain group's `Agent()` call in the same response turn** — read-only (no working-tree writes), safe to run concurrently regardless of file overlap between domains.
 
+Immediately after each call returns, persist its raw JSON reply verbatim via the Write tool to `$IMPL_DIR/challenge-verdicts-<domain>.json` (same `<domain>` slug as the spawn) — the verdict-processing and challenge-log append steps below both read it via `jq`, never by re-typing the reply's rationale/alternative text.
+
 **Structural prep — fire in this same turn, concurrently with the challenge agents** (the codemap queries below are read-only and depend only on item *files*, known from Step 3b — not on any challenge verdict — so they run under the challenge agents' latency shadow, adding ~0 wall-clock; grouping in Phase 2 then finds its maps already warm). Keyed off all `SELECTED_ITEMS` (not yet-unknown `SURVIVING_ITEMS`) — a few queries for items challenge later drops are cheap and hidden under the agent latency; Phase 2 filters to survivors. Resolve each file to its canonical module name + build the whole-repo centrality map (`resolve_centrality.py`), then capture each module's **forward imports** (`deps`, fan-*out*, naturally small — never the 20-cap that truncates reverse `rdeps`):
 
 ```bash
@@ -296,42 +354,83 @@ fi
 
 Parse each group's per-item verdict array — same granularity as a single-item challenge, never relaxed by grouping:
 
-- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN, same as the C1 missing-element rule above; never append that item to `CHALLENGE_LOG` on this pass. Re-dispatch it alone (single-item challenge call, same domain) once; still empty on retry → append with `evidence_why="challenge agent returned no rationale after retry"` rather than an empty field — SKILL.md's render must never receive an empty `suggestion_why`/`evidence_why` to fabricate filler for.
-- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <evidence_rationale>`; set type `[challenged:reject]`; append to `CHALLENGE_LOG`: `id=<id> resolution=rejected evidence=REJECT suggestion=— finding=<full_comment_text, truncate ~80 chars> evidence_why=<evidence_rationale> suggestion_why=— detail=<evidence_rationale>`; drop from `SURVIVING_ITEMS`; close its task — rejected item never reaches Phase 2/3, the only other place a `TaskUpdate` runs. The append block below prints the task id to dispose; call `TaskUpdate(status="deleted")` on it.
-- `evidence=VALID` + `suggestion=VALID` → `SUGGESTION_VERDICT[id]=VALID`; use original suggestion for implementation
-- `evidence=VALID` + `suggestion=REJECT` → `SUGGESTION_VERDICT[id]=REJECT`; self-resolve using `alternative` as guidance
+- Missing item id, or a present element with empty/null `evidence_rationale` or `suggestion_rationale` → treat as UNCERTAIN. Re-dispatch it alone (single-item challenge call, same domain); persist that reply via the Write tool to a **separate** file, `$IMPL_DIR/challenge-verdicts-<domain>-retry-<id>.json` — never overwrite the group's own `challenge-verdicts-<domain>.json`, which still holds every sibling item's verdict this pass hasn't appended yet. The append block below prefers the retry file for that id when present, and its `// "challenge agent returned no rationale after retry"` fallback covers the still-empty case exactly once, after the real retry — never before it.
+- `evidence=REJECT` → print `⊘ #<id> evidence rejected: <reason from the persisted verdict file>`; set type `[challenged:reject]`; run the shared append block below with `_ID=<id>`, `_RESOLUTION=rejected`, `_DOMAIN=<domain>`; drop from `SURVIVING_ITEMS`. The append block prints the task id to dispose (or explains why none exists in report mode); call `TaskUpdate(status="deleted")` on it.
+- `evidence=VALID` + `suggestion=VALID` → run the shared append block with `_RESOLUTION=as-suggested`; use original suggestion for implementation
+- `evidence=VALID` + `suggestion=REJECT` → run the shared append block with `_RESOLUTION=self-resolved`; self-resolve using `alternative` as guidance
 
-Every "append to `CHALLENGE_LOG`" in this file runs this block once per record — `$CHALLENGE_LOG` from the prelude is gone in later Bash calls, so the path is re-derived; `$_REC` is a shell variable, so apostrophes or quotes inside the reviewer's comment text cannot break it:
+### Challenge-log append (shared — every producer in this file calls this block)
+
+**SECURITY — every free-text field (`finding`/`evidence_why`/`suggestion_why`/`detail`) is `jq`-extracted from a file persisted via the Write tool, never retyped by the orchestrator.** Only `_ID` (numeric), `_RESOLUTION` (one of four fixed words), and `_DOMAIN`/batch tag (`[a-z0-9-]+`) remain literal placeholders — all three are shape-guarded below, so an unsubstituted or malformed value aborts rather than silently mismatching:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
-_REC="<record: id=… resolution=… evidence=… suggestion=… finding=… evidence_why=… suggestion_why=… detail=…>"
-case "$_REC" in "<record:"*|"") echo "! BLOCKED — _REC still holds the placeholder; substitute the verdict record before running"; exit 1 ;; esac
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; Step 3b/prelude never ran"; exit 1; }
-_REC=$(printf '%s' "$_REC" | tr '\n\t' '  ')  # translate, not delete — a genuine tab-delimited record would fuse into an unparsable line if its separators vanished instead of becoming spaces; multi-line finding text still collapses to one physical line either way
-printf '%s\n' "$_REC" >> "$IMPL_DIR/challenge-log.txt"  # timeout: 3000
-# resolution= is the field right after id=, before any free-text field (finding=/evidence_why=/suggestion_why=/
-# detail=) — so a reviewer's quoted text can never precede it and be mistaken for it; anchoring at line start
-# makes the match unambiguous with no risk of matching a substring embedded in free text later in the line.
-# -i (not tr-based normalization) absorbs casing drift; [[:space:]]*=[[:space:]]* absorbs spacing drift —
-# on id= too, not just resolution=: a model that spaces one key=value pair tends to space all of them.
-if printf '%s' "$_REC" | grep -qiE '^id[[:space:]]*=[[:space:]]*[0-9]+[[:space:]]+resolution[[:space:]]*=[[:space:]]*rejected([[:space:]]|$)'; then
-    printf '%s' "$_REC" | grep -qiE 'evidence[[:space:]]*=[[:space:]]*reject' || { echo "! BLOCKED — resolution=rejected without evidence=REJECT in record; malformed _REC, cannot dispose task safely: $_REC"; exit 1; }
-    _ID=$(printf '%s\n' "$_REC" | sed -n 's/^id[[:space:]]*=[[:space:]]*\([0-9]*\).*/\1/p')
-    if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
-        _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
-        [ -n "$_TID" ] || { echo "! BLOCKED — item $_ID has no task id in item-tasks.tsv; Step 3e never ran for it, or file is stale"; exit 1; }
-        echo "TaskUpdate target (deleted): item=$_ID task=$_TID"  # timeout: 3000
-    else
-        echo "→ item $_ID rejected (no item-tasks.tsv — report mode never runs Step 3e, no per-item task to dispose)"  # timeout: 3000
-    fi
+_ID="<numeric item id>"
+_RESOLUTION="<one of: codex-direct | rejected | as-suggested | self-resolved>"
+_DOMAIN="<domain slug (challenge call) or batch tag (C1 call) — lowercase/digits/hyphens only>"
+case "$_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id placeholder not substituted or non-numeric"; exit 1 ;; esac
+case "$_RESOLUTION" in codex-direct|rejected|as-suggested|self-resolved) ;; *) echo "! BLOCKED — resolution '$_RESOLUTION' not one of the four known values"; exit 1 ;; esac
+case "$_DOMAIN" in ''|*[!a-z0-9-]*) echo "! BLOCKED — domain/batch-tag placeholder not substituted or invalid"; exit 1 ;; esac
+if [ "$_RESOLUTION" = "codex-direct" ]; then
+    _VJSON="$IMPL_DIR/c1-reply-${_DOMAIN}.json"
+else
+    _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}-retry-${_ID}.json"
+    [ -s "$_VJSON" ] || _VJSON="$IMPL_DIR/challenge-verdicts-${_DOMAIN}.json"
 fi
+[ -s "$_VJSON" ] || { echo "! BLOCKED — $_VJSON missing/empty; persist the agent/Codex JSON reply via the Write tool before running this block"; exit 1; }
+jq -e . "$_VJSON" >/dev/null 2>&1 || { echo "! BLOCKED — $_VJSON is not valid JSON"; exit 1; }
+_ITEM_DATA=$(jq -c ". | select(.id == $_ID)" "$IMPL_DIR/action-items.jsonl")
+[ -n "$_ITEM_DATA" ] || { echo "! BLOCKED — item $_ID not found in action-items.jsonl"; exit 1; }
+_FINDING=$(printf '%s' "$_ITEM_DATA" | jq -r '(.full_comment_text // "") | gsub("[\n\t]"; " ") | .[0:80]')
+# resolution= sits right after id=, before any free-text field (finding=/evidence_why=/suggestion_why=/
+# detail=), so a reviewer's quoted text can never precede it and be mistaken for it — every consumer greps
+# by field name at line start, anchored, never by position (grep -i absorbs casing drift on both fields).
+case "$_RESOLUTION" in
+    codex-direct)
+        _V=$(jq -c --arg id "$_ID" '.[] | select((.id|tostring)==$id)' "$_VJSON")
+        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
+        _WHY=$(printf '%s' "$_V" | jq -r '(.reason // "") | gsub("[\n\t]"; " ")')
+        printf 'id=%s resolution=codex-direct evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
+            "$_ID" "$_FINDING" "$_WHY" "$_WHY" "$_WHY" >> "$IMPL_DIR/challenge-log.txt"
+        ;;
+    rejected)
+        _V=$(jq -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
+        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
+        _EV_WHY=$(printf '%s' "$_V" | jq -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+        printf 'id=%s resolution=rejected evidence=REJECT suggestion=— finding=%s evidence_why=%s suggestion_why=— detail=%s\n' \
+            "$_ID" "$_FINDING" "$_EV_WHY" "$_EV_WHY" >> "$IMPL_DIR/challenge-log.txt"
+        # item-tasks.tsv legitimately does not exist in report mode (Step 3e is pr/pr+report only) — a
+        # missing file here is normal, not malformed input, and must never abort the loop.
+        if [ -f "$IMPL_DIR/item-tasks.tsv" ]; then
+            _TID=$(awk -F'\t' -v id="$_ID" '$1==id{print $2}' "$IMPL_DIR/item-tasks.tsv")
+            [ -n "$_TID" ] || { echo "! BLOCKED — item $_ID has no task id in item-tasks.tsv; Step 3e never ran for it, or file is stale"; exit 1; }
+            echo "TaskUpdate target (deleted): item=$_ID task=$_TID"  # timeout: 3000
+        else
+            echo "→ item $_ID rejected (no item-tasks.tsv — report mode never runs Step 3e, no per-item task to dispose)"  # timeout: 3000
+        fi
+        ;;
+    as-suggested|self-resolved)
+        _V=$(jq -c --arg id "$_ID" '.items[]? | select((.id|tostring)==$id)' "$_VJSON")
+        [ -n "$_V" ] && [ "$_V" != "null" ] || { echo "! BLOCKED — item $_ID not present in $_VJSON"; exit 1; }
+        _EV_WHY=$(printf '%s' "$_V" | jq -r '(.evidence_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+        _SUG_WHY=$(printf '%s' "$_V" | jq -r '(.suggestion_rationale // "challenge agent returned no rationale after retry") | gsub("[\n\t]"; " ")')
+        if [ "$_RESOLUTION" = "self-resolved" ]; then
+            _ALT=$(printf '%s' "$_V" | jq -r '(.alternative // "") | gsub("[\n\t]"; " ")')
+            printf 'id=%s resolution=self-resolved evidence=VALID suggestion=REJECT finding=%s evidence_why=%s suggestion_why=%s detail=%s\n' \
+                "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ALT" >> "$IMPL_DIR/challenge-log.txt"
+        else
+            printf 'id=%s resolution=as-suggested evidence=VALID suggestion=VALID finding=%s evidence_why=%s suggestion_why=%s detail=pending-impl:%s\n' \
+                "$_ID" "$_FINDING" "$_EV_WHY" "$_SUG_WHY" "$_ID" >> "$IMPL_DIR/challenge-log.txt"
+        fi
+        ;;
+esac
 ```
 
 `item-tasks.tsv` legitimately does not exist in `report` mode (Step 3e is `pr`/`pr+report` only) — a missing file here is normal, not malformed input, so it must never abort the loop: every rejected item in a multi-item report-mode run has to be recorded, not just the first.
 
-Append every surviving item's verdict (one line per item — the file is the log, no in-context copy): `id=<id> resolution=<as-suggested|self-resolved> evidence=VALID suggestion=<VALID|REJECT> finding=<full_comment_text, truncate ~80 chars> evidence_why=<evidence_rationale> suggestion_why=<suggestion_rationale> detail=<when suggestion=REJECT: the `alternative`text — what gets implemented instead; when suggestion=VALID: leave as`pending-impl:<id>`, Step 11 backfills it from the item's actual commit summary once Phase 2 lands, so the report never prints a bare label with no stated content>`. Items with `evidence=VALID` form `SURVIVING_ITEMS`.
+Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`.
 
 ### Phase 2: Implementation — parallel, one worktree per specialist
 
@@ -349,6 +448,8 @@ Group `SURVIVING_ITEMS` by `IMPL_AGENT` (routing table at top of this file; `--a
 
 Re-derive group membership after all reassignments (file overlap + import coupling), **then** cap 5 items/group — same context ceiling the old file-affinity batching used; a specialist with more than 5 items splits into `ceil(N/5)` groups, **keeping every file's items together in the same sub-group** (never split one file's items across two sub-groups — would reintroduce the exact conflict this tiebreak exists to prevent). Each resulting sub-group is one worktree with its own `group` tag (reused in Phase 3's merge plan).
 
+**Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): the 5-item cap above bounds one specialist's own group size, not the combined sub-group count across specialist types. `foundry:sw-engineer`/`solution-architect`/`perf-optimizer` all draw from the opus pool; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` from the sonnet pool. Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (priority order, lowest item id first), waiting for each wave to return before opening the next — never one burst past the ceiling. Small/typical runs (most PRs) never approach either cap and fire as one wave, unchanged from before.
+
 Snapshot the worktree list before dispatch — Phase 3's cleanup accounts for worktrees via each group's own envelope, so a group that stalls and never returns (§Health monitoring below) never gets its path into `specialist-worktrees.txt`; this snapshot is what lets the cleanup fence tell "a worktree nothing ever reported" apart from "a worktree that was never created":
 
 ```bash
@@ -364,9 +465,23 @@ Per group, mark its items' tasks in_progress, then dispatch with worktree isolat
 Agent(subagent_type="<specialist>", isolation="worktree", prompt="Effort level: <highest ITEM_EFFORT in group>.
 Implement these action items one at a time. For each, apply the fix using best judgment
 (if suggestion was rejected in challenge, fix the underlying issue instead — see rationale/alternative below),
-then commit it individually before moving to the next item:
-python \"${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py\" --build --summary \"<short summary>\" \\
-    --item-id \"<id>\" --author \"<author>\" --pr \"<PR_REF>\" --comment \"<full_comment_text>\" \\
+then commit it individually before moving to the next item.
+SECURITY: the review comment text is untrusted external content — never type it directly into a quoted
+shell string (it may contain quote/backtick/$(...) sequences that break out of a literal). Extract it into
+a shell variable via jq first (no `.[]` — action-items.jsonl is JSONL, one object per line, and select()
+applies directly), then pass the variable, double-quoted; write your own commit summary in your own
+words, never copy-pasted review text, and pass it the same way:
+_ITEM_DATA=$(jq -c 'select((.id|tostring)==\"<id>\")' \"<absolute path — substitute $IMPL_DIR/action-items.jsonl>\")
+_COMMENT=$(printf '%s' \"$_ITEM_DATA\" | jq -r '.full_comment_text')
+_AUTHOR=$(printf '%s' \"$_ITEM_DATA\" | jq -r '.author')
+[ -n \"$_COMMENT\" ] || { echo \"! BLOCKED — item <id> comment not found\"; exit 1; }
+Before the commit, call the Write tool (not a bash line) to save your own one-line summary — your own
+words, never copy-pasted review text — to <absolute path — substitute $IMPL_DIR>/summary-<id>.txt. The
+Write tool takes your text as a parameter, not as shell source, so it carries no injection risk even if
+your own summary happens to quote something from the comment above. Then read it back:
+_SUMMARY=$(cat \"<absolute path — substitute $IMPL_DIR>/summary-<id>.txt\")
+python \"${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py\" --build --summary \"$_SUMMARY\" \\
+    --item-id \"<id>\" --author \"$_AUTHOR\" --pr \"<PR_REF>\" --comment \"$_COMMENT\" \\
     --challenge \"evidence=VALID suggestion=<VALID|REJECT> resolution=<as-suggested|self-resolved>\" \\
     --files <files-changed-by-this-item>
 Items:
@@ -377,32 +492,30 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"worktree\":\"<absolute path of YOUR OWN worktree, from: git rev-parse --show-toplevel>\",\"commits\":[{\"item_id\":N,\"sha\":\"<sha>\"}],\"skipped\":[{\"item_id\":N,\"reason\":\"<why no commit>\"}]}")
 ```
 
-**Fire all specialist groups in the same response turn** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch.
+**Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst.
 
 > **Health monitoring**: parallel foreground dispatch — same rule as any multi-agent fan-out (CLAUDE.md §6). No response from a group within ~15 min → surface partial results from the groups that did return; mark the stalled group ⏱, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
 
-Parse each group's JSON: `commits` entries feed Phase 3's merge plan — appended to `$IMPL_DIR/phase2-commits.jsonl`, tagged with this group's own worktree tag (the JSON envelope carries no `group` field — it is added here, not by the specialist); `skipped` entries record `skipped — <reason>` (no empty commit, no cherry-pick attempt) and are appended to `$IMPL_DIR/skipped-items.txt`; `worktree` (the specialist's own absolute worktree path, so the orchestrator's cleanup fence at Phase 3's close doesn't need a shell array to survive the intervening Bash calls — nothing does) is appended to `$IMPL_DIR/specialist-worktrees.txt`. All three are durable records so Phase 3 survives a compaction between here and there. Every group's parsing happens in this same orchestrator turn (Phase 2 fans out agents, but the orchestrator reads their envelopes one at a time), so appends are sequential — no concurrent-write risk even with multiple groups returning at once. Run each block once per group, right after that group's envelope is read (`$IMPL_DIR` pre-initialized empty in the prelude, so a run with nothing to commit/skip still leaves readable, empty files for Phase 3) — including a group whose every item was skipped: its worktree still exists and still needs removing, so this block runs regardless of whether `commits` is empty:
+**SECURITY — persist each group's raw JSON envelope verbatim via the Write tool to `$IMPL_DIR/phase2-envelope-<group_tag>.json` as soon as it returns, before running any bash on it.** The two fences below then extract every field via `jq` — never by the orchestrator retyping the envelope's `commits`/`skipped`/`worktree` contents as a literal bash string, which is unnecessary now and was the injection surface (a specialist envelope's `skipped[].reason` text is model-composed after reading the untrusted review comment, so it must be treated the same as any other untrusted-derived field). `commits` entries feed Phase 3's merge plan — appended to `$IMPL_DIR/phase2-commits.jsonl`, tagged with this group's own worktree tag; `skipped` entries are appended to `$IMPL_DIR/skipped-items.txt`; `worktree` is appended to `$IMPL_DIR/specialist-worktrees.txt`. All three are durable records so Phase 3 survives a compaction between here and there. Every group's extraction happens in this same orchestrator turn, so appends are sequential — no concurrent-write risk even with multiple groups returning at once. Run both blocks once per group, right after that group's envelope is persisted — including a group whose every item was skipped: its worktree still exists and still needs removing, so these blocks run regardless of whether `commits` is empty:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-_GROUP_TAG="<this group's worktree tag>"; _COMMITS_JSON='<this group envelope'\''s "commits" array verbatim, e.g. [{"item_id":1,"sha":"abc1234"}]>'; _WORKTREE_PATH="<this group envelope's "worktree" field verbatim — the specialist's own absolute path>"
-for _v in "$_GROUP_TAG" "$_COMMITS_JSON" "$_WORKTREE_PATH"; do
-    case "$_v" in '<'*'>') echo "! BLOCKED — group tag/commits/worktree placeholder not substituted"; exit 1 ;; esac  # checked per-field, start-to-end anchored — a real worktree path or JSON blob containing a stray < or > (unlikely, but seen in the wild) must not false-positive the way a substring test across the concatenated fields would
-done
-python -c 'import json,sys
-g, raw = sys.argv[1], sys.argv[2]
-for c in json.loads(raw):
-    c["group"] = g
-    print(json.dumps(c))' "$_GROUP_TAG" "$_COMMITS_JSON" >> "$IMPL_DIR/phase2-commits.jsonl"  # timeout: 5000 — never gate this append on the worktree field below: the commits ledger must land regardless, or a missing worktree path (specialist envelope bug, not a merge-correctness issue) would silently drop this group's items from Phase 3's plan
-if [ -n "$_WORKTREE_PATH" ]; then
+_GROUP_TAG="<this group's worktree tag>"
+case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — group tag placeholder not substituted or invalid"; exit 1 ;; esac
+_ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.json"
+[ -s "$_ENVELOPE" ] || { echo "! BLOCKED — $_ENVELOPE missing/empty; persist this group's raw JSON envelope via the Write tool before running this block"; exit 1; }
+jq -e . "$_ENVELOPE" >/dev/null 2>&1 || { echo "! BLOCKED — $_ENVELOPE is not valid JSON"; exit 1; }
+_BAD=$(jq -r '.commits[]? | select(((.item_id|type)!="number") or ((.sha|type)!="string") or ((.sha|test("^[0-9a-f]{7,40}$"))|not)) | @json' "$_ENVELOPE")
+[ -z "$_BAD" ] || { echo "! BLOCKED — malformed commit entry in $_ENVELOPE (bad item_id/sha shape): $_BAD"; exit 1; }
+jq -c --arg g "$_GROUP_TAG" '.commits[]? | . + {group:$g}' "$_ENVELOPE" >> "$IMPL_DIR/phase2-commits.jsonl"  # timeout: 5000 — never gate this append on the worktree field below: the commits ledger must land regardless, or a missing worktree path (specialist envelope bug, not a merge-correctness issue) would silently drop this group's items from Phase 3's plan
+_WORKTREE_PATH=$(jq -r '.worktree // empty' "$_ENVELOPE")
+if [ -n "$_WORKTREE_PATH" ] && [ -d "$_WORKTREE_PATH" ]; then
     printf '%s\n' "$_WORKTREE_PATH" >> "$IMPL_DIR/specialist-worktrees.txt"  # timeout: 3000
 else
-    # an empty (not placeholder) value carries no angle bracket, so the guard above alone lets it
-    # through — warn rather than silently leak, but never block: this group's commits already
-    # landed above and must not be lost over a missing cleanup-only field
-    echo "⚠ group $_GROUP_TAG: envelope omitted the worktree field — its worktree will not be auto-removed; reclaim manually via 'git worktree list' or heal_git_artifacts.py worktrees after this run"
+    # this group's commits already landed above and must not be lost over a missing/invalid cleanup-only field
+    echo "⚠ group $_GROUP_TAG: envelope omitted or gave an invalid worktree field — its worktree will not be auto-removed; reclaim manually via 'git worktree list' or heal_git_artifacts.py worktrees after this run"
 fi
 ```
 
@@ -410,9 +523,15 @@ fi
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
-_ITEM_ID="<item_id>"; _REASON="<reason, single line — strip embedded newlines/tabs>"
-case "$_ITEM_ID$_REASON" in *'<'*'>'*) echo "! BLOCKED — item_id/reason placeholder not substituted"; exit 1 ;; esac
-printf '%s\t%s\n' "$_ITEM_ID" "$_REASON" >> "$IMPL_DIR/skipped-items.txt"  # timeout: 3000
+_GROUP_TAG="<this group's worktree tag>"
+case "$_GROUP_TAG" in ''|*[!a-z0-9-]*) echo "! BLOCKED — group tag placeholder not substituted or invalid"; exit 1 ;; esac
+_ENVELOPE="$IMPL_DIR/phase2-envelope-${_GROUP_TAG}.json"
+[ -s "$_ENVELOPE" ] || { echo "! BLOCKED — $_ENVELOPE missing/empty; persist this group's raw JSON envelope via the Write tool before running this block"; exit 1; }
+jq -e . "$_ENVELOPE" >/dev/null 2>&1 || { echo "! BLOCKED — $_ENVELOPE is not valid JSON"; exit 1; }
+_SKIP_COUNT_BEFORE=$(jq '.skipped? | length // 0' "$_ENVELOPE" 2>/dev/null || echo 0)
+jq -r '.skipped[]? | select((.item_id|type)=="number") | "\(.item_id)\t\((.reason // "no reason given") | gsub("[\n\t]"; " "))"' "$_ENVELOPE" >> "$IMPL_DIR/skipped-items.txt"  # timeout: 3000
+_SKIP_COUNT_WRITTEN=$(jq -r '.skipped[]? | select((.item_id|type)=="number") | .item_id' "$_ENVELOPE" | wc -l | tr -d ' ')
+[ "$_SKIP_COUNT_BEFORE" = "$_SKIP_COUNT_WRITTEN" ] || echo "⚠ group $_GROUP_TAG: $_SKIP_COUNT_BEFORE skipped entries in envelope but only $_SKIP_COUNT_WRITTEN had a numeric item_id — malformed row(s) dropped, inspect $_ENVELOPE"
 ```
 
 ### Phase 3: Merge-back — sequential, orchestrator-owned
@@ -697,7 +816,7 @@ if [ "$COMMIT_MODE" != "each" ] && [ -n "$_BASE_SHA" ]; then
     [ "$_HEAD_NOW" = "$_BASE_FULL" ] || { echo "! BLOCKED — HEAD has not collapsed to base (HEAD=$_HEAD_NOW expected=$_BASE_FULL) — the merge fence's own collapse assertion should have caught this; refusing to stage C1 files onto uncollapsed commits"; exit 1; }
 fi
 if [ -s "$IMPL_DIR/c1-deferred-files.txt" ]; then
-    sort -u "$IMPL_DIR/c1-deferred-files.txt" | xargs -r git add --  # timeout: 5000 — deferred until Phase 3 is clean because git add-ing them earlier would have dirtied the index and broken the cherry-pick loop just run (same mechanism, see the C1 section's note)
+    sort -u "$IMPL_DIR/c1-deferred-files.txt" | tr '\n' '\0' | xargs -0 -r git add --  # timeout: 5000 — deferred until Phase 3 is clean because git add-ing them earlier would have dirtied the index and broken the cherry-pick loop just run (same mechanism, see the C1 section's note); -0/tr NUL-delimits so a Codex-supplied path containing a space or quote is never word-split or quote-interpreted by xargs
 fi
 ```
 
@@ -822,7 +941,7 @@ echo "GROUP_STRATEGY=$GROUP_STRATEGY"  # timeout: 3000
 Only `labels` reaches the user; the other three group without another idle window:
 
 - `domain` (default) — topic = each item's `.change` field, mapped by the `auto` table below
-- `file` — topic = the item's `file` basename without extension (items sharing a file share a commit)
+- `file` — topic = the item's `file` basename without extension, derived with `basename "$_FILE" | sed 's/\.[^.]*$//' | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'` (items sharing a file share a commit) — a PR-controlled filename can contain characters git permits in a path but a commit-subject prefix should not carry literally; `my_module.py` → `my-module`, `` a`id`b.py `` → `a-id-b`
 - `specialist` — topic = the Phase 2 `group` tag the item was dispatched under
 - `labels` — ask, using the block below
 
@@ -842,7 +961,9 @@ Type a topic for each item ID (e.g. '1=style 2=logic 3=tests'), or type 'auto' t
 
 `GROUP_STRATEGY` ≠ `labels` → skip the question entirely; derive topics from the strategy above (`domain` uses the same `auto` mapping). Every item lands in exactly one group; unclassified → `misc`.
 
-Group items by topic label. For each unique topic group (ordered by first item ID in group), commit the group, then close out its tasks in a **separate** fence — the commit fence below carries a heredoc, and the manifest generator bails out of per-command extraction for any block containing `<<` (loses every command's individual allow-entry, not just the heredoc's — `plugins/CLAUDE.md` §Blueprint Blocks). Splitting keeps the close-out loop's `awk`/`grep` calls covered:
+Group items by topic label. For each unique topic group (ordered by first item ID in group), commit the group, then close out its tasks in a **separate** fence — this fence's own `git diff-tree`/`git log` calls need the guard reads shared with every other fence, and keeping them apart from the close-out loop's `awk`/`grep` calls keeps both independently covered (`plugins/CLAUDE.md` §Blueprint Blocks).
+
+**SECURITY — file list and per-item summaries are derived from git itself, never from an LLM-typed array.** `phase2-commits.jsonl` (`{item_id, sha, group}`, written by the fence above) already has, for every Phase-2-committed item, the real commit; `git diff-tree`/`git log` against that sha gives the exact files and subject with zero risk of the specialist's self-report omitting one (the residual risk this file's own design-scope section already flags). A **C1** item (Codex-direct, `medium` effort) skips Phase 1+2 entirely and so has no row in `phase2-commits.jsonl` — for those, fall back to `c1-item-files.tsv`/`c1-item-summary.tsv` (written by the C1 commit fence above). An id in neither source (rejected, skipped, or a stalled Phase-2 group) is warned and excluded from this group rather than hard-blocking the commit:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -852,23 +973,42 @@ rm -f "$IMPL_DIR/group-commit-status.txt"  # cleared first, not just overwritten
 [ -f "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" ] && IFS= read -r PR_REF < "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}" || PR_REF="#0"  # reload (Check 41: fresh shell) — set in Step 4
 [ -f "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" ] && IFS= read -r CODEX_AVAILABLE < "${TMPDIR:-/tmp}/resolve-preflight-CODEX_AVAILABLE-${CSID}" || CODEX_AVAILABLE="false"  # reload (Check 41: fresh shell) — set in Step 1; a bare shell var here would always read unset in this separate Bash call, so the Codex co-author trailer below could never fire
 GROUP_IDS=(<item ids in this group>)
-GROUP_SUMMARIES=(<item summaries in this group>)
-_TOPIC="<topic>"
-_GROUP_FILES=(<all files changed by items in this group>)
-case "$_TOPIC${GROUP_IDS[*]}${GROUP_SUMMARIES[*]}${_GROUP_FILES[*]}" in *'<'*'>'*) echo "! BLOCKED — group commit placeholder not substituted"; exit 1 ;; esac
-printf '%s\n' "${GROUP_IDS[@]}" > "$IMPL_DIR/group-ids.txt"  # persist — GROUP_IDS array dies with this Bash call, close-out fence below is a separate call
-COMBINED_SUMMARY=$(printf '%s\n' "${GROUP_SUMMARIES[@]}" | head -5 | paste -sd, -)  # one array element (a whole summary) per line, not split on internal spaces — `tr ' ' '\n'` would join "fix the parser" as three separate words
+_TOPIC="<topic — already sanitized to [a-z0-9-] per the strategy above>"
+for _gid in "${GROUP_IDS[@]}"; do case "$_gid" in ''|*[!0-9]*) echo "! BLOCKED — group id '$_gid' not numeric"; exit 1 ;; esac; done
+case "$_TOPIC" in ''|*[!a-z0-9-]*) echo "! BLOCKED — topic must be lowercase alphanumeric/hyphen"; exit 1 ;; esac
+: > "$IMPL_DIR/group-files.txt"; : > "$IMPL_DIR/group-summaries.txt"
+_COMMITTED_IDS=()  # only ids that actually contributed a file/summary below — an id with neither NEVER reaches group-ids.txt or the commit body, so the close-out fence and SKILL.md's straggler gate can't mark an unimplemented item completed
+for _gid in "${GROUP_IDS[@]}"; do
+    _SHA=$(jq -r --arg id "$_gid" 'select((.item_id|tostring)==$id) | .sha' "$IMPL_DIR/phase2-commits.jsonl" 2>/dev/null | head -1)
+    if [ -n "$_SHA" ]; then
+        case "$_SHA" in *[!0-9a-f]*|'') echo "! BLOCKED — sha '$_SHA' for item $_gid is not hex"; exit 1 ;; esac
+        [ "${#_SHA}" -ge 7 ] || { echo "! BLOCKED — sha '$_SHA' for item $_gid too short to be a real commit"; exit 1; }
+        git diff-tree --no-commit-id --name-only -r --end-of-options "$_SHA" >> "$IMPL_DIR/group-files.txt" || { echo "! BLOCKED — git diff-tree failed for sha $_SHA"; exit 1; }
+        git log -1 --format=%s --end-of-options "$_SHA" >> "$IMPL_DIR/group-summaries.txt" || { echo "! BLOCKED — git log failed for sha $_SHA"; exit 1; }
+        _COMMITTED_IDS+=("$_gid")
+    elif grep -q "^${_gid}$(printf '\t')" "$IMPL_DIR/c1-item-files.tsv" 2>/dev/null; then
+        awk -F'\t' -v id="$_gid" '$1==id{print $2}' "$IMPL_DIR/c1-item-files.tsv" >> "$IMPL_DIR/group-files.txt"
+        awk -F'\t' -v id="$_gid" '$1==id{print $2; exit}' "$IMPL_DIR/c1-item-summary.tsv" >> "$IMPL_DIR/group-summaries.txt"
+        _COMMITTED_IDS+=("$_gid")
+    else
+        echo "⚠ item $_gid has no Phase-2 commit and no C1 record (rejected/skipped/stalled?) — excluded from group '$_TOPIC'"
+    fi
+done
+printf '%s\n' "${_COMMITTED_IDS[@]}" > "$IMPL_DIR/group-ids.txt"  # persisted AFTER exclusion, from the array still live in this Bash call — close-out fence below (separate call) reads only ids that actually contributed
+sort -u "$IMPL_DIR/group-files.txt" -o "$IMPL_DIR/group-files.txt"
+[ -s "$IMPL_DIR/group-files.txt" ] || { echo "! BLOCKED — group '$_TOPIC' has no resolvable files across any of its items"; exit 1; }
+COMBINED_SUMMARY=$(head -5 "$IMPL_DIR/group-summaries.txt" | paste -sd, -)
 COMMIT_MSG=$(mktemp)  # timeout: 3000
 trap 'rm -f "$COMMIT_MSG"' EXIT  # RETURN never fires at top level of a Bash-tool block (not a function/sourced script); EXIT does
-cat >"$COMMIT_MSG" <<EOF
-${_TOPIC}: ${COMBINED_SUMMARY}
-
-[resolve group] PR ${PR_REF} — items ${GROUP_IDS[*]}
-
----
-Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>
-$([ "${CODEX_AVAILABLE:-false}" = "true" ] && echo "Co-authored-by: OpenAI Codex <codex@openai.com>")
-EOF
+{
+    printf '%s: %s\n\n' "$_TOPIC" "$COMBINED_SUMMARY"
+    printf '[resolve group] PR %s — items %s\n\n' "$PR_REF" "${_COMMITTED_IDS[*]}"
+    printf -- '---\n'
+    printf 'Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>\n'
+    [ "${CODEX_AVAILABLE:-false}" = "true" ] && printf 'Co-authored-by: OpenAI Codex <codex@openai.com>\n'
+} > "$COMMIT_MSG"
+_GROUP_FILES=()
+while IFS= read -r _f; do [ -n "$_f" ] && _GROUP_FILES+=("$_f"); done < "$IMPL_DIR/group-files.txt"
 if python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/commit_action_item.py" \
     --message-file "$COMMIT_MSG" \
     --files "${_GROUP_FILES[@]}"; then  # timeout: 10000

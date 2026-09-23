@@ -174,7 +174,7 @@ For a standalone `.claude` config health report: run `cat "${CLAUDE_PLUGIN_ROOT:
 
 **Fix directive required**: every finding bullet must end with `→ Fix: <one-line action>`. If no actionable fix (e.g., gap requiring calibration batch change), write `→ Fix: n/a — calibration batch update needed`. Omitting fix directive is format violation.
 
-**Precision discipline**: every finding row must name the specific `<evaluation-criteria>` bullet or `<antipatterns-to-flag>` pattern it violates. Row with no named check still gets filed — never silently dropped — but labelled `[unlisted criterion]` instead of scored as checklist hit, staying visible without inflating precision against fixed check list. Repeated low-severity pattern instances in one file (e.g. LLM-First Formatting 41a/41b/41c hits, or same Bash-compression pattern recurring across a file) fold into one row per file ("N instances of X — see lines ...") rather than one row per occurrence. This bar doesn't apply to routing-boundaries scope guard — out-of-scope target still returns zero findings, unaffected.
+**Precision discipline**: every finding row must name the specific `<evaluation-criteria>` bullet or `<antipatterns-to-flag>` pattern it violates. Row with no named check still gets filed — never silently dropped — but labelled `[unlisted criterion]` instead of scored as checklist hit, staying visible without inflating precision against fixed check list. Repeated low-severity pattern instances in one file (e.g. LLM-First Formatting 41a/41b/41c hits, or same Bash-compression pattern recurring across a file) fold into one row per file ("N instances of X — see lines ...") rather than one row per occurrence. When one invocation spans multiple files and the same low-severity pattern recurs across 3+ of them, fold once more into a single cross-file row ("N files affected by X — see \<file:lines> per file") — collapse row count only, never the per-file line references inside it. This bar doesn't apply to routing-boundaries scope guard — out-of-scope target still returns zero findings, unaffected.
 
 Score = coverage estimate; `Gaps` = primary signal. `/calibrate` measures score-vs-recall tracking over time.
 
@@ -218,7 +218,7 @@ Loop: low score → targeted re-run → pattern identified → instruction updat
 Default: read-only audit. Write/Edit only when prompt explicitly lists fixes.
 
 01. **Guard + scope resolution**:
-    - 1a. **No-target guard**: no file path in prompt, no plugin name detectable, AND `.claude/agents/` not on disk → stop: respond "No target specified — provide a file path, plugin name, or confirm post-install context (`.claude/agents/` not found)." Do NOT fall back to globbing all plugins.
+    - 1a. **No-target guard**: no file path in prompt, no plugin name detectable, AND `.claude/agents/` not on disk → stop: respond "No target specified — provide a file path, plugin name, or confirm post-install context (`.claude/agents/` not found)." Do NOT fall back to globbing all plugins. **Invalid-path guard**: a path-shaped target (contains `/` or ends `.md`) that does not exist on disk → stop: respond "Target not found on disk: `<path>`." Scoped to path-shaped tokens only — a bare plugin-name token (no `/`, no `.md`) still resolves via 1c's plugin-name matching, never treated as an invalid path.
     - 1b. **Context detection**: post-install (`.claude/agents/` exists) → glob `.claude/agents/*.md` and `.claude/skills/**/*.md`. Plugin-dev (working in `plugins/*/`) → derive plugin name from prompt or task context.
     - 1c. **Scope resolution**: prompt contains `plugins/<name>` or bare `<name>` token matching a dir under `plugins/` → glob `plugins/<plugin>/agents/*.md` and `plugins/<plugin>/skills/**/*.md`; else use post-install paths from 1b.
 02. Read each file and evaluate: structure, cross-refs, line count, duplication — for handoff envelope compliance, run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/_shared/file-handoff-protocol.md"` via Bash tool first, verifying required fields from live source, not memory
@@ -228,7 +228,7 @@ Default: read-only audit. Write/Edit only when prompt explicitly lists fixes.
     CACHE_DIR=".cache/gh"
     CACHE_KEY=$(echo "$URL" | tr -cd 'a-zA-Z0-9' | cut -c1-32)
     CACHE_FILE="$CACHE_DIR/curator-url-$CACHE_KEY.txt"
-    if [ -f "$CACHE_FILE" ] && [ $(($(date +%s) - $(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE"))) -lt 86400 ]; then
+    if [ -f "$CACHE_FILE" ] && [ $(($(date +%s) - $(stat -f %m "$CACHE_FILE" 2>/dev/null || stat -c %Y "$CACHE_FILE" 2>/dev/null || echo 0))) -lt 86400 ]; then
       URL_CONTENT=$(cat "$CACHE_FILE")
     else
       # WebFetch call here; write result to $CACHE_FILE
