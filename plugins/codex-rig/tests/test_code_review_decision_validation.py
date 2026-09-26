@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import ModuleType
 
@@ -132,6 +133,226 @@ def test_attributed_review_notes_bind_authors_to_canonical_findings(tmp_path: Pa
     metadata["review_findings"][0]["authors"] = ["Skipped reviewer"]
     with pytest.raises(SystemExit, match="review-finding-authors-invalid"):
         validator._validate_review_decision(metadata, result)
+
+
+def test_parent_substitute_assessment_must_disclose_parent_origin() -> None:
+    """A parent judgment cannot appear as an independent specialist rating."""
+    validator = _load_validator()
+    metadata = _metadata("accept-as-is")
+    metadata["specialist_passes"] = [{"role": "sw-engineer", "mode": "substituted"}]
+    metadata["reviewer_assessments"] = [{"role": "Software engineer", "rating": 3, "evidence": "parent.md"}]
+
+    with pytest.raises(SystemExit, match="review-substitute-attribution-missing"):
+        validator._validate_review_decision(metadata, _result())
+
+    metadata["reviewer_assessments"][0]["role"] = "Software engineer (parent substitute)"
+    validator._validate_review_decision(metadata, _result())
+
+
+def test_parent_substitute_assessment_must_match_covered_role() -> None:
+    """Reject a substitute rating attributed to a different specialist role."""
+    validator = _load_validator()
+    metadata = _metadata("accept-as-is")
+    metadata["specialist_passes"] = [{"role": "qa-specialist", "mode": "substituted"}]
+    metadata["reviewer_assessments"] = [
+        {"role": "Software engineer (parent substitute)", "rating": 3, "evidence": "parent.md"}
+    ]
+
+    with pytest.raises(SystemExit, match="review-substitute-role-mismatch:qa-specialist"):
+        validator._validate_review_decision(metadata, _result())
+
+    metadata["reviewer_assessments"][0]["role"] = "QA specialist (parent substitute)"
+    validator._validate_review_decision(metadata, _result())
+    metadata["reviewer_assessments"][0]["role"] = "QA Specialist (parent substitute)"
+    validator._validate_review_decision(metadata, _result())
+
+
+def test_candidate_assessments_cover_each_validated_reviewer(tmp_path: Path) -> None:
+    """A completed QA pass cannot disappear from the reviewer ratings."""
+    (tmp_path / "qa.md").write_text("QA assessment", encoding="utf-8")
+    (tmp_path / "challenger.md").write_text(
+        "## Reviewer Assessment\n\nRating: 3\nRationale: A blocking gap remains.\n", encoding="utf-8"
+    )
+    passes = {
+        "qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"},
+        "challenger": {"role": "challenger", "mode": "inspection", "output_path": "challenger.md"},
+    }
+    metadata = {"reviewer_assessments": [{"role": "Challenger", "rating": 3, "evidence": "challenger.md"}]}
+
+    with pytest.raises(SystemExit, match="review-assessment-role-missing:qa-specialist"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+@pytest.mark.parametrize(
+    ("role", "evidence", "error"),
+    [
+        pytest.param("Invented reviewer", "qa.md", "review-assessment-role-unbound", id="invented-reviewer"),
+        pytest.param("QA specialist", "missing.md", "review-assessment-evidence-invalid", id="missing-pointer"),
+        pytest.param("QA specialist", "../outside.md", "review-assessment-evidence-invalid", id="outside-pointer"),
+        pytest.param("QA specialist", "other.md", "review-assessment-evidence-mismatch", id="wrong-reviewer-output"),
+    ],
+)
+def test_candidate_assessments_bind_role_and_retained_output(
+    tmp_path: Path, role: str, evidence: str, error: str
+) -> None:
+    """A rating needs its actual reviewer's retained output, within the run."""
+    (tmp_path / "qa.md").write_text("QA assessment", encoding="utf-8")
+    (tmp_path / "other.md").write_text("Other assessment", encoding="utf-8")
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
+    metadata = {"reviewer_assessments": [{"role": role, "rating": 3, "evidence": evidence}]}
+
+    with pytest.raises(SystemExit, match=error):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+def test_candidate_assessments_allow_one_explicit_main_reviewer(tmp_path: Path) -> None:
+    """The parent may retain its own assessment alongside a specialist pass."""
+    (tmp_path / "qa.md").write_text(
+        "## Reviewer Assessment\n\nRating: 2\nRationale: Minor changes remain.\n", encoding="utf-8"
+    )
+    (tmp_path / "review-notes.md").write_text(
+        "## Main Reviewer Assessment\n\nRating: 3\nRationale: More work is needed.\n", encoding="utf-8"
+    )
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
+    metadata = {
+        "reviewer_assessments": [
+            {"role": "QA specialist", "rating": 2, "evidence": "qa.md"},
+            {"role": "Main reviewer", "rating": 3, "evidence": "review-notes.md"},
+        ]
+    }
+
+    _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+    metadata["reviewer_assessments"][0]["evidence"] = "qa.md:1"
+    _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+    metadata["reviewer_assessments"][1]["evidence"] = "qa.md"
+    with pytest.raises(SystemExit, match="review-assessment-main-evidence-reused"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+def test_candidate_assessments_keep_parent_substitute_role_bound(tmp_path: Path) -> None:
+    """A substituted pass retains its role label and own output pointer."""
+    (tmp_path / "qa.md").write_text(
+        "role_id: qa-specialist\n\n## Reviewer Assessment\n\nRating: 3\nRationale: More work is needed.\n",
+        encoding="utf-8",
+    )
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "substituted", "output_path": "qa.md"}}
+    metadata = {
+        "reviewer_assessments": [{"role": "QA specialist (parent substitute)", "rating": 3, "evidence": "qa.md"}]
+    }
+
+    _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+def test_candidate_rejects_rating_not_stated_by_reviewer(tmp_path: Path) -> None:
+    """A metadata rating must match the retained scoped reviewer judgment."""
+    (tmp_path / "qa.md").write_text(
+        "## Reviewer Assessment\n\nRating: 2\nRationale: Coverage is incomplete.\n", encoding="utf-8"
+    )
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
+    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}]}
+
+    with pytest.raises(SystemExit, match="review-assessment-rating-mismatch:qa-specialist"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+@pytest.mark.parametrize(
+    ("filename", "schema_version"),
+    [
+        pytest.param("result.candidate.json", 3, id="current-candidate"),
+        pytest.param("result.json", 3, id="current-promoted"),
+    ],
+)
+def test_current_assessed_result_validates_reviewer_provenance_for_both_filenames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, filename: str, schema_version: int
+) -> None:
+    """An assessed rating cannot bypass retained-output checks after promotion."""
+    validator = _load_validator()
+    result_path = tmp_path / filename
+    (tmp_path / "qa.md").write_text(
+        "## Reviewer Assessment\n\nRating: 2\nRationale: A minor gap remains.\n", encoding="utf-8"
+    )
+    (tmp_path / "specialist-manifest.json").write_text("{}", encoding="utf-8")
+    qa_pass = {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}
+    result_path.write_text(
+        json.dumps(
+            {
+                **_result(),
+                "schema_version": schema_version,
+                "metadata": {
+                    **_metadata("accept-as-is"),
+                    "scope": "working-tree",
+                    "risk_tier": "TRIVIAL",
+                    "specialist_manifest": "specialist-manifest.json",
+                    "specialist_passes": [qa_pass],
+                    "reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}],
+                    "review_run_id": "current-run",
+                    "review_input_sha256": "a" * 64,
+                    "fanout_substituted": False,
+                    "independence_required": False,
+                    "independence_satisfied": False,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(validator, "_require_notes_sections", lambda *_: None)
+    monkeypatch.setattr(validator, "_validate_review_decision", lambda *_: None)
+    monkeypatch.setattr(validator, "_validate_action_table", lambda *_: None)
+    monkeypatch.setattr(validator, "_validate_confidence_gaps", lambda *_: None)
+    monkeypatch.setattr(validator, "_validate_confidence_recovery", lambda *_: None)
+    monkeypatch.setattr(validator, "_validate_routing", lambda *_: set())
+    original_load_json = validator._load_json
+
+    def load_result_or_manifest(path: Path) -> dict[str, object]:
+        """Supply the matching manifest while retaining the real result loader."""
+        if path.name == "specialist-manifest.json":
+            return {"schema_version": 3, "review_run_id": "current-run", "review_input_sha256": "a" * 64}
+        if path.name == "review-routing.json":
+            return {"sol_selection": None}
+        return original_load_json(path)
+
+    monkeypatch.setattr(validator, "_load_json", load_result_or_manifest)
+    monkeypatch.setattr(validator, "_manifest_passes", lambda *_: [])
+    monkeypatch.setattr(validator, "_validate_manifest_entries", lambda *_, **__: {"qa-specialist": qa_pass})
+    with pytest.raises(SystemExit, match="review-assessment-rating-mismatch:qa-specialist"):
+        validator._validate_result(tmp_path, result_path, tmp_path, "thread", tmp_path)
+
+
+def test_candidate_rejects_main_reviewer_evidence_from_unrelated_file(tmp_path: Path) -> None:
+    """A parent rating must point to the retained parent assessment."""
+    (tmp_path / "diff.patch").write_text("Unrelated diff evidence.\n", encoding="utf-8")
+    (tmp_path / "review-notes.md").write_text(
+        "## Main Reviewer Assessment\n\nRating: 3\nRationale: More work is needed.\n", encoding="utf-8"
+    )
+    metadata = {"reviewer_assessments": [{"role": "Main reviewer", "rating": 3, "evidence": "diff.patch"}]}
+
+    with pytest.raises(SystemExit, match="review-assessment-main-evidence-mismatch"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, {})
+
+
+def test_candidate_rejects_reviewer_without_rationale(tmp_path: Path) -> None:
+    """A bare rating cannot become a supported reviewer assessment."""
+    (tmp_path / "qa.md").write_text("## Reviewer Assessment\n\nRating: 3\n", encoding="utf-8")
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"}}
+    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 3, "evidence": "qa.md"}]}
+
+    with pytest.raises(SystemExit, match="review-assessment-content-invalid:qa-specialist"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+
+
+def test_candidate_binds_app_server_rating_to_structured_output(tmp_path: Path) -> None:
+    """A clean structured reviewer response supplies its own scoped rating."""
+    (tmp_path / "qa.md").write_text(
+        json.dumps({"assessment": {"rating": 2, "rationale": "A minor change remains."}, "findings": []}),
+        encoding="utf-8",
+    )
+    passes = {"qa-specialist": {"role": "qa-specialist", "mode": "app-server", "output_path": "qa.md"}}
+    metadata = {"reviewer_assessments": [{"role": "QA specialist", "rating": 1, "evidence": "qa.md"}]}
+
+    with pytest.raises(SystemExit, match="review-assessment-rating-mismatch:qa-specialist"):
+        _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
+    metadata["reviewer_assessments"][0]["rating"] = 2
+    _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
 
 
 def test_attributed_review_accepts_an_identifier_only_operational_blocker(tmp_path: Path) -> None:

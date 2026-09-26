@@ -12,6 +12,7 @@ import pytest
 from _platform import FILE_SYMLINKS_AVAILABLE
 from rich.console import Console
 from rich.markdown import Markdown
+from markdown_it import MarkdownIt
 
 from test_final_handoff import FINALIZER, _handoff_payload, _load_finalizer
 from test_code_remediate_final_outcome_validation import VALIDATOR
@@ -19,6 +20,7 @@ from test_code_remediate_final_outcome_validation import _metadata as resolution
 from test_final_handoff import _write_schema_v2_assess
 from test_code_remediate_work_bucket_validation import _write_workplan
 from test_review_finding_identity import _load_validator, _metadata, _result
+from test_review_completion_gate import _assessed_pr
 
 
 def _selection() -> dict:
@@ -270,10 +272,11 @@ def test_operational_blocker_accepts_bound_description() -> None:
 
 
 def test_concise_remediation_expands_resolution_once() -> None:
-    """Keep the bound resolution in its overview cell and preserve all supporting sources."""
+    """Show the resolution once and leave source details in the linked ledger."""
     payload = _handoff_payload()
     table = payload["tables"][0]
     table["layout"] = "concise"
+    table["overview_only"] = True
     table["rows"][0]["cells"][4] = "implemented — [O1]"
     table["rows"][0]["cells"][5] = "[E1] — owner/status: fixed"
     table["details"] = [{"id": "O1", "text": "Guard added."}, {"id": "E1", "text": "Tests pass."}]
@@ -282,10 +285,100 @@ def test_concise_remediation_expands_resolution_once() -> None:
     assert "| Guard added. | implemented |" in rendered
     assert rendered.count("Guard added.") == 1
     assert rendered.count("Preserve a \\| boundary") == 1
-    assert "- Sources:\n  - report [CR-1]" in rendered
-    assert "- Evidence / next action: Tests pass. — owner/status: fixed" in rendered
+    assert "- Sources:" not in rendered
+    assert "- Evidence / next action:" not in rendered
+    assert "**CR-1**" not in rendered
+    assert "Ledger: .reports/codex/code-remediate/run/action-items.md" in rendered
     assert "- Outcome:" not in rendered
     assert "[O1]" not in rendered and "[E1]" not in rendered
+
+
+def test_prior_concise_remediation_keeps_detail_blocks() -> None:
+    """Preserve byte-bound reports written before overview-only handoffs."""
+    payload = _handoff_payload()
+    table = payload["tables"][0]
+    table["layout"] = "concise"
+    table["rows"][0]["cells"][4] = "implemented — [O1]"
+    table["rows"][0]["cells"][5] = "[E1] — owner/status: fixed"
+    table["details"] = [{"id": "O1", "text": "Guard added."}, {"id": "E1", "text": "Tests pass."}]
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert "**CR-1**" in rendered
+    assert "- Sources:\n  - report [CR-1]" in rendered
+    assert "- Evidence / next action: Tests pass. — owner/status: fixed" in rendered
+
+
+def test_new_concise_remediation_requires_overview_only() -> None:
+    """New version-three handoffs must avoid repeating linked ledger details in chat."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload["presentation_version"] = 3
+    payload["tables"][0]["layout"] = "concise"
+
+    with pytest.raises(finalizer.HandoffError, match="remediation-overview-only-required"):
+        finalizer.render_handoff(payload)
+
+
+def test_overview_only_remediation_requires_linked_ledger() -> None:
+    """Reject compact chat when its complete Markdown evidence has no link."""
+    payload = _handoff_payload()
+    payload["tables"][0].update(layout="concise", overview_only=True)
+    payload["artifacts"] = [{"label": "Result", "path": "run/result.json"}]
+
+    with pytest.raises(ValueError, match="remediation-overview-ledger-missing"):
+        _load_finalizer().render_handoff(payload)
+
+
+@pytest.mark.parametrize("resolution_status", ["Unresolved", "needs-clarification", "needs-clarification "])
+def test_overview_only_remediation_requires_action_for_unresolved_row(resolution_status: str) -> None:
+    """An action for one open row cannot cover another open row."""
+    payload = _handoff_payload()
+    payload["tables"][0].update(layout="concise", overview_only=True)
+    payload["tables"][0]["rows"][0]["cells"][4] = "Unresolved — local follow-up required"
+    payload["tables"][0]["rows"][1]["cells"][4] = f"{resolution_status} — external runner unavailable"
+    payload["remaining"] = [
+        {"row_id": "CR-1", "item": "Local follow-up", "owner": "developer", "next_action": "Fix CR-1."}
+    ]
+    payload["next_steps"] = ["CR-1"]
+
+    with pytest.raises(ValueError, match="remediation-unresolved-action-missing:CR-2"):
+        _load_finalizer().render_handoff(payload)
+
+
+def test_v3_remediation_next_steps_identify_each_open_row() -> None:
+    """Identical action descriptions must remain bound to distinct result IDs."""
+    payload = _handoff_payload()
+    payload["presentation_version"] = 3
+    payload["tables"][0].update(layout="concise", overview_only=True)
+    payload["tables"][0]["rows"][0]["cells"][4] = "Unresolved — local follow-up required"
+    payload["remaining"] = [
+        {"row_id": row_id, "item": "Same action", "owner": "developer", "next_action": "Investigate."}
+        for row_id in ("CR-1", "CR-2")
+    ]
+    payload["next_steps"] = ["CR-1", "CR-2"]
+
+    rendered = _load_finalizer().render_handoff(payload)
+
+    assert "- CR-1 — Same action — owner: developer — next: Investigate." in rendered
+    assert "- CR-2 — Same action — owner: developer — next: Investigate." in rendered
+
+
+@pytest.mark.parametrize(
+    "ledger_path",
+    [
+        pytest.param("../../other-run/action-items.md", id="relative-escape"),
+        pytest.param(".reports/codex/code-remediate/other-run/action-items.md", id="other-run"),
+    ],
+)
+def test_overview_only_remediation_rejects_ledger_outside_result_run(ledger_path: str) -> None:
+    """The compact handoff must link to its own complete item ledger."""
+    payload = _handoff_payload()
+    payload["tables"][0].update(layout="concise", overview_only=True)
+    payload["artifacts"][1]["path"] = ledger_path
+
+    with pytest.raises(ValueError, match="remediation-overview-ledger-missing"):
+        _load_finalizer().render_handoff(payload)
 
 
 def test_concise_remediation_renders_reasoned_block_without_raw_unresolved() -> None:
@@ -320,6 +413,189 @@ def test_historical_presentation_keeps_digest_bound_bytes() -> None:
     assert hashlib.sha256(renderer.render_selection(_selection()).encode()).hexdigest() == (
         "2e3d8bc414fd5b5af44557801d3314f340ac97b656e90d63162f946a2bba5731"
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "wrong_value"),
+    [
+        pytest.param(
+            "PR", "[#999 — Correct widget spelling](https://github.com/acme/widgets/pull/123)", id="wrong-number"
+        ),
+        pytest.param("PR", "[#123 — Other](https://github.com/acme/widgets/pull/123)", id="wrong-title"),
+        pytest.param(
+            "PR", "[#123 — Correct widget spelling](https://github.com/acme/widgets/pull/999)", id="wrong-url"
+        ),
+        pytest.param("Author", "@someone-else", id="wrong-author"),
+        pytest.param("CI", "failing — tests", id="wrong-ci"),
+        pytest.param("Type", "imaginary", id="invalid-type"),
+    ],
+)
+def test_candidate_pr_snapshot_values_match_collected_evidence(tmp_path: Path, field: str, wrong_value: str) -> None:
+    """Reject a digest-valid candidate whose snapshot contradicts collected PR evidence."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    pr = json.loads((run / "pr.json").read_text(encoding="utf-8"))
+    pr.update(
+        title="Correct widget spelling",
+        author={"login": "contributor"},
+        statusCheckRollup=[{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"}],
+    )
+    (run / "pr.json").write_text(json.dumps(pr), encoding="utf-8")
+    assessment = {"role": "QA specialist", "rating": 1, "evidence": "specialists/qa.md"}
+    result["metadata"]["reviewer_assessments"] = [assessment]
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    snapshot = handoff["tables"][0]
+    snapshot["reviewers"] = [assessment]
+    snapshot["summary"] = result["metadata"]["review_decision"]["summary"]
+    values = {
+        "PR": "[#123 — Correct widget spelling](https://github.com/acme/widgets/pull/123)",
+        "Author": "@contributor",
+        "CI": "passing",
+        "Type": "docs",
+    }
+    for row in snapshot["rows"]:
+        if row["cells"][0] in values:
+            row["cells"][1] = values[row["cells"][0]]
+    gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
+    for replacement in (None, wrong_value):
+        if replacement is not None:
+            next(row for row in snapshot["rows"] if row["cells"][0] == field)["cells"][1] = replacement
+        handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+        validation = _load_finalizer().render_files(
+            handoff_path, run / "final.md", run / "final-handoff.validation.json"
+        )
+        result["metadata"]["final_handoff"].update(
+            handoff_sha256=validation["handoff_sha256"], rendered_sha256=validation["rendered_sha256"]
+        )
+        if replacement is None:
+            VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=True)
+
+    with pytest.raises(SystemExit, match="code-review-final-handoff-pr-snapshot-value-mismatch"):
+        VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=True)
+    VALIDATOR._validate_final_handoff(result, "code-review", run, gates)
+
+
+def test_candidate_pr_snapshot_escapes_collected_title_link_syntax(tmp_path: Path) -> None:
+    """Keep a collected title's bracket syntax inside the canonical PR link."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    pr = json.loads((run / "pr.json").read_text(encoding="utf-8"))
+    pr.update(
+        title="Fix ](https://evil.example/other) widget",
+        author={"login": "contributor"},
+        statusCheckRollup=[],
+    )
+    (run / "pr.json").write_text(json.dumps(pr), encoding="utf-8")
+    assessment = {"role": "QA specialist", "rating": 1, "evidence": "specialists/qa.md"}
+    result["metadata"]["reviewer_assessments"] = [assessment]
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    snapshot = handoff["tables"][0]
+    snapshot.update(reviewers=[assessment], summary=result["metadata"]["review_decision"]["summary"])
+    values = {
+        "PR": "[#123 — Fix &#93;(https://evil.example/other) widget](https://github.com/acme/widgets/pull/123)",
+        "Author": "@contributor",
+        "CI": "unavailable",
+        "Type": "docs",
+    }
+    for row in snapshot["rows"]:
+        if row["cells"][0] in values:
+            row["cells"][1] = values[row["cells"][0]]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
+    result["metadata"]["final_handoff"].update(
+        handoff_sha256=binding["handoff_sha256"], rendered_sha256=binding["rendered_sha256"]
+    )
+    gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
+    VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=True)
+    links = [
+        child.attrs["href"]
+        for token in MarkdownIt("default").parse((run / "final.md").read_text(encoding="utf-8"))
+        for child in token.children or []
+        if child.type == "link_open"
+    ]
+    assert links == ["https://github.com/acme/widgets/pull/123"]
+
+    snapshot["rows"][0]["cells"][1] = (
+        "[#123 — Fix ](https://evil.example/other) widget](https://github.com/acme/widgets/pull/123)"
+    )
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
+    result["metadata"]["final_handoff"].update(
+        handoff_sha256=binding["handoff_sha256"], rendered_sha256=binding["rendered_sha256"]
+    )
+    with pytest.raises(SystemExit, match="code-review-final-handoff-pr-snapshot-value-mismatch"):
+        VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=True)
+
+
+@pytest.mark.parametrize("candidate", [False, True])
+def test_rendered_non_pr_handoff_cannot_add_forged_pr_snapshot(tmp_path: Path, candidate: bool) -> None:
+    """Reject a fully rendered mixed snapshot before trusting its candidate or saved binding."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result = json.loads((run / "result.json").read_text(encoding="utf-8"))
+    result["metadata"]["scope"] = "working-tree"
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    pr_snapshot = handoff["tables"][0]
+    pr_snapshot.pop("reviewers")
+    pr_snapshot.pop("summary")
+    review_snapshot = copy.deepcopy(pr_snapshot)
+    review_snapshot["heading"] = "Review Snapshot"
+    review_snapshot["reviewers"] = result["metadata"]["reviewer_assessments"]
+    review_snapshot["summary"] = result["metadata"]["review_decision"]["summary"]
+    digest = result["metadata"]["review_input_sha256"]
+    values = [
+        ("Scope", "working-tree"),
+        ("Revision", f"diff sha256:{'0' * 64}"),
+        ("CI", "unavailable"),
+        ("Type", "docs"),
+        ("Suggestion", "approve"),
+    ]
+    assert digest != "0" * 64
+    for index, (row, value) in enumerate(zip(review_snapshot["rows"], values), start=1):
+        row.update(id=f"R{index}", cells=list(value), source_ids=[f"review:{value[0]}"])
+    handoff["tables"].append(review_snapshot)
+    handoff["source_records"].extend({"id": f"review:{field}", "evidence": "diff.patch"} for field, _ in values)
+    handoff["source_coverage"].update(source_records_total=10, represented_source_records_total=10)
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(handoff_path, run / "final.md", run / "final-handoff.validation.json")
+    result["metadata"]["final_handoff"].update(
+        handoff_sha256=binding["handoff_sha256"], rendered_sha256=binding["rendered_sha256"]
+    )
+    gates = json.loads((run / "gates.json").read_text(encoding="utf-8"))
+    with pytest.raises(SystemExit, match="code-review-final-handoff-snapshot-scope-mismatch"):
+        VALIDATOR._validate_final_handoff(result, "code-review", run, gates, candidate=candidate)
+
+
+@pytest.mark.parametrize(
+    ("rollup", "expected"),
+    [
+        pytest.param(None, "unavailable", id="absent"),
+        pytest.param([], "unavailable", id="empty"),
+        pytest.param(
+            [{"__typename": "CheckRun", "name": "tests", "status": "COMPLETED", "conclusion": "NEUTRAL"}],
+            "passing",
+            id="neutral-completed",
+        ),
+        pytest.param(
+            [{"__typename": "CheckRun", "name": "tests", "status": "IN_PROGRESS", "conclusion": None}],
+            "pending — tests",
+            id="incomplete",
+        ),
+        pytest.param(
+            [
+                {"__typename": "CheckRun", "name": "build", "status": "IN_PROGRESS", "conclusion": None},
+                {"__typename": "StatusContext", "context": "tests", "state": "FAILURE"},
+            ],
+            "failing — tests",
+            id="failure-before-pending",
+        ),
+    ],
+)
+def test_pr_snapshot_ci_uses_collected_rollup(rollup: object, expected: str) -> None:
+    """Report no checks as unavailable and prioritize failing over pending checks."""
+    assert VALIDATOR._code_review_pr_ci_snapshot(rollup) == expected
 
 
 def test_enriched_review_records_accept_titles_without_changing_identity() -> None:
@@ -722,6 +998,67 @@ def _write_remediation_candidate(
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     return result_path
+
+
+def test_explicit_commit_with_environment_only_blocker_keeps_failed_remediation_result(tmp_path: Path) -> None:
+    """Validate a pending local commit without claiming the missing docs build passed."""
+    result_path = _write_remediation_candidate(
+        tmp_path, "review-gate", ("unresolved", "Blocked: complete docs environment unavailable.")
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["status"] = "fail"
+    metadata = result["metadata"]
+    metadata["review_report_intake"]["review_gate_items_selectable"] = 1
+    metadata["unresolved_summary"].update(
+        selected_items_total=1,
+        selected_items_unresolved=1,
+        environment_blocked_items=1,
+        unresolved_reason_groups=[
+            {
+                "reason": "environment-blocked",
+                "count": 1,
+                "owner": "environment",
+                "next_action": "Run the docs build in the complete environment.",
+                "evidence_path": "unresolved.txt",
+            }
+        ],
+    )
+    (tmp_path / "unresolved.txt").write_text(
+        "## Unresolved Work Summary\n\nOne environment blocker.\n\n"
+        "## Why Selected Items Remain Unresolved\n\n"
+        "| Closure class | Next owner | Attempted evidence |\n"
+        "| --- | --- | --- |\n"
+        "| environment-blocked | environment | docs build failed |\n\n"
+        "## Next Action\n\nRun the docs build.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "commit-plan.md").write_text(
+        "## Explicit Commit Request\n\nUser requested one local commit for the verified source paths.\n\n"
+        "## Remaining Verification\n\nDocs build blocked by the incomplete environment.\n",
+        encoding="utf-8",
+    )
+    handoff_path = tmp_path / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["commit_disposition"] = {
+        "status": "pending",
+        "reason": "User requested a local commit with the docs-build environment limit disclosed.",
+        "evidence": "commit-plan.md",
+    }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(
+        handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        metadata["final_handoff"][field] = binding[field]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    (tmp_path / "commit-plan.md").write_text(
+        "## Explicit Commit Request\n\n## Remaining Verification\n", encoding="utf-8"
+    )
+    with pytest.raises(SystemExit, match="remediation-commit-plan-section-empty"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("item_type", ["code", "review-gate"])

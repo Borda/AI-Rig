@@ -26,7 +26,7 @@ While producing output — not only after — ask "what would make this wrong?".
 
 <!-- policy-sibling: plugins/cc_oss/rules/quality-gates.md, plugins/cc_develop/rules/quality-gates.md, plugins/cc_research/rules/quality-gates.md, AGENTS.md -->
 
-Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and recovery rules are mandatory.
+Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and remediation rules are mandatory.
 
 Never fork the implementing conversation for review or close a local fix before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or a stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (e.g. `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still requires the owning workflow's remaining gates.
 

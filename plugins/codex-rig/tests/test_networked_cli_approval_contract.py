@@ -10,6 +10,8 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SHARED_CONTRACT = PLUGIN_ROOT / "shared" / "native-skill-contract.md"
 GLOBAL_INSTRUCTIONS = PLUGIN_ROOT / "assets" / "AGENTS.md"
 BEHAVIORAL_CASES = PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-cases.json"
+BEHAVIORAL_OBSERVATIONS = PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-observations.jsonl"
+BENCHMARKS = PLUGIN_ROOT / "runtime" / "calibration" / "benchmarks.json"
 CODE_REVIEW_SKILL = PLUGIN_ROOT / "skills" / "code-review" / "SKILL.md"
 CODE_REMEDIATE_SKILL = PLUGIN_ROOT / "skills" / "code-remediate" / "SKILL.md"
 
@@ -27,12 +29,8 @@ APPROVAL_BRIEF_FIELDS = (
 @pytest.mark.parametrize(
     ("skill_name", "network_marker"),
     [
-        pytest.param("assess", "github_read.py", id="assess"),
         pytest.param("calibrate", "run_live_ab.py", id="calibrate"),
-        pytest.param("code-remediate", "collect_pr.py", id="code-remediate"),
-        pytest.param("code-review", "collect_pr.py", id="code-review"),
         pytest.param("kaggle", "kaggle competitions list -p 1", id="kaggle"),
-        pytest.param("release", "github_read.py", id="release"),
         pytest.param("sync", "codex plugin marketplace upgrade", id="sync"),
     ],
 )
@@ -40,7 +38,7 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
     skill_name: str,
     network_marker: str,
 ) -> None:
-    """Keep every designed shell-network path behind one owning-command approval."""
+    """Keep networked CLI outside the GitHub profile behind owning-command approval."""
     skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
 
     assert network_marker in skill
@@ -53,6 +51,26 @@ def test_networked_cli_skills_require_complete_owning_command_approval(
     for field in APPROVAL_BRIEF_FIELDS:
         assert field in approval_paragraph
     assert "denial" in approval_paragraph.lower()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    ("skill_name", "helper"),
+    [
+        pytest.param("assess", "github_read.py", id="assess"),
+        pytest.param("code-remediate", "collect_pr.py", id="code-remediate"),
+        pytest.param("code-review", "collect_pr.py", id="code-review"),
+        pytest.param("release", "github_read.py", id="release"),
+    ],
+)
+def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, helper: str) -> None:
+    """Keep audited GitHub reads under either supported runtime permission boundary."""
+    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+
+    assert helper in skill
+    assert "active opted-in `github-read` profile or request runtime approval for the complete owning command" in skill
+    assert "native-skill-contract.md#github-read-execution" in skill
+    assert "Runtime denial stops" in skill or "runtime restriction or denial stops" in skill
 
 
 def test_user_questions_expose_answers_without_weakening_authorization() -> None:
@@ -85,9 +103,14 @@ def test_shared_contract_covers_known_networked_cli_families() -> None:
     assert "Networked CLI Approval" in contract
     assert "complete owning command" in contract
     assert '`sandbox_permissions="require_escalated"`' in contract
-    assert "never enable persistent workspace network access" in contract.lower()
+    assert "Never enable broader persistent workspace network access" in contract
     for marker in ("`gh`", "`kaggle`", "`git fetch`", "Codex Git marketplace", "`codex exec`"):
         assert marker in contract
+    assert "GitHub reads through `github_read.py` and PR collection through `collect_pr.py`" in contract
+    assert (
+        "follow [GitHub Read Execution](#github-read-execution) under the selected session profile or an approved owning-command boundary"
+        in contract
+    )
     assert "marketplace add/upgrade" in contract
     assert "`codex plugin add` from a configured marketplace snapshot" in contract
 
@@ -105,50 +128,92 @@ def test_shared_contract_defines_approval_brief_and_denial_turn_recovery() -> No
     assert "Ask the user to send a new message to resume" in contract
 
 
-@pytest.mark.parametrize("authorized", [False, True])
-def test_collection_prebrief_has_behavioral_consent_coverage(authorized: bool) -> None:
-    """Keep prebrief follow-through distinct from runtime permission and already-granted consent."""
-    cases = json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]
-    case_id = "code-review-prebrief-authorized" if authorized else "code-review-prebrief-needs-consent"
-    matching = [case for case in cases if case["id"] == case_id]
-    assert len(matching) == 1
-    case = matching[0]
-    assert case["target"] == "code-review"
-    assert case["expected_findings"] == []
-    assert "five-field" in case["prompt"]
-    assert "runtime permission" in case["prompt"]
-    assert ("no workflow question" if authorized else "request_user_input_async") in case["prompt"]
+def test_github_profile_has_behavioral_coverage() -> None:
+    """Keep explicit profile setup and stricter host denial in calibration."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+    installation = cases["sync-github-read-profile-installation"]
+    denial = cases["code-review-github-read-host-denial"]
+
+    assert installation["target"] == "sync"
+    assert "profile-installed-from-skill" in installation["expected_findings"]
+    assert "profile-domain-widening" in installation["expected_findings"]
+    assert denial["target"] == "code-review"
+    assert denial["expected_findings"] == [
+        "github-read-runtime-escalation",
+        "host-denial-retried",
+        "broader-command-after-denial",
+        "denial-outcome-misreported",
+    ]
 
 
-@pytest.mark.parametrize(
-    ("skill_path", "start_marker", "end_marker"),
-    [
-        pytest.param(
-            CODE_REVIEW_SKILL, "In runtimes with network sandboxing", "\n\nPR evidence has two tiers.", id="code-review"
-        ),
-        pytest.param(
-            CODE_REMEDIATE_SKILL, "In runtimes with network sandboxing", "\n\n`github_read.py`", id="code-remediate"
-        ),
-    ],
-)
-def test_pr_collector_owning_boundary_explains_approval_brief_and_denial_recovery(
-    skill_path: Path,
-    start_marker: str,
-    end_marker: str,
-) -> None:
-    """Keep PR collector approval guidance usable at the request boundary."""
-    skill = skill_path.read_text(encoding="utf-8")
-    start = skill.index(start_marker)
-    end = skill.index(end_marker, start)
-    approval_boundary = skill[start:end]
+@pytest.mark.installed_plugin
+def test_no_approval_cases_require_an_active_profile_in_the_current_session() -> None:
+    """Reject fixture prompts that mistake installed profile availability for selection."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
 
-    assert "outer collector command" in approval_boundary
-    for field in APPROVAL_BRIEF_FIELDS:
-        assert field in approval_boundary
-    assert "Apply the other shared runtime and denial boundaries" in approval_boundary
-    assert "before any user approval request or denial" in approval_boundary
-    assert "after the user denies approval" in approval_boundary
-    assert "retry is forbidden" in approval_boundary
+    for case_id in (
+        "code-review-github-read-no-approval-escalation",
+        "code-review-github-read-profile-no-extra-approval",
+    ):
+        prompt = cases[case_id]["prompt"]
+        assert "current fresh session" in prompt
+        assert "selected and loaded" in prompt
+
+
+def test_unprofiled_github_reads_have_approval_and_denial_coverage() -> None:
+    """Keep ordinary-session collector and reader approvals distinct from profile access."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+    observations = {
+        row["case_id"]: row
+        for line in BEHAVIORAL_OBSERVATIONS.read_text(encoding="utf-8").splitlines()
+        if (row := json.loads(line))["source"] == "fixture-selftest"
+    }
+
+    for case_id, target, helper in (
+        ("code-review-github-unprofiled-collector-approved", "code-review", "collect_pr.py"),
+        ("assess-github-unprofiled-reader-approved", "assess", "github_read.py"),
+        ("code-review-github-unprofiled-denial-stops", "code-review", "collect_pr.py"),
+    ):
+        case = cases[case_id]
+        assert case["target"] == target
+        assert helper in case["prompt"]
+        assert "no active `github-read` profile" in case["prompt"]
+        assert case["expected_findings"] == []
+        assert observations[case_id]["reported_findings"] == []
+
+    missing = cases["code-review-github-unprofiled-collector-approval-missing"]
+    assert "complete-collector-network-approval-missing" in missing["expected_findings"]
+    assert observations[missing["id"]]["reported_findings"] == missing["expected_findings"]
+
+
+def test_profile_calibration_keeps_collection_failure_and_current_parent_route() -> None:
+    """Reject scope selection after failed intake and obsolete delegation model targets."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+    benchmarks = json.loads(BENCHMARKS.read_text(encoding="utf-8"))
+    clean = cases["code-remediate-github-read-profile-routes-request"]["prompt"]
+    patterns = benchmarks["agents"]["delegation-lead"]
+
+    assert "collection as incomplete" in clean
+    assert "scope question" not in clean
+    assert "gpt-6-luna" in patterns
+    assert "gpt-6-sol" in patterns
+    assert all("gpt-5.6" not in pattern for pattern in patterns)
+    for case_id in ("explicit-sol-automatic-route-rejected", "explicit-sol-advisory-boundary"):
+        case = cases[case_id]
+        assert "Terra" not in case["prompt"]
+        assert "terra-parent" not in " ".join(case["expected_findings"])
+
+
+@pytest.mark.installed_plugin
+def test_pr_collector_uses_profile_and_stops_on_denial() -> None:
+    """Keep PR collection direct while rejecting a retry after host denial."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    boundary = contract.split("## PR Collection Runtime Boundary\n", 1)[1].split("\n## ", 1)[0]
+
+    assert "Run the owning collector directly" in boundary
+    assert "An unexpected restriction or denial stops collection" in boundary
+    assert "without broadening access or retrying the denied command" in boundary
+    assert "Collection does not authorize remote mutation" in boundary
 
 
 def test_missing_kaggle_cli_remains_user_owned_setup() -> None:
@@ -187,23 +252,7 @@ def test_calibration_rejects_persistent_or_nested_only_network_approval() -> Non
         "missing-kaggle-cli-setup-not-user-owned",
         "persistent-workspace-network-enabled",
         "nested-network-cli-approval-scope-invalid",
-    ]
-
-
-def test_calibration_covers_approval_brief_and_denial_turn_recovery() -> None:
-    """Keep calibration aligned with the reproduced host-denial clarity gap."""
-    payload = json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))
-    cases = {case["id"]: case for case in payload["cases"]}
-
-    case = cases["code-review-approval-denial-turn-recovery"]
-    assert case["target"] == "code-review"
-    assert case["expected_findings"] == [
-        "approval-brief-missing",
-        "denial-turn-abort-guidance-missing",
-        "safe-new-message-resume-missing",
-        "equivalent-approval-reprompt",
-        "broader-command-after-denial",
-        "denial-outcome-misreported",
+        "github-read-conflated-with-runtime-approval",
     ]
 
 

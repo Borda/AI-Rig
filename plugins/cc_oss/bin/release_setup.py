@@ -2,13 +2,13 @@
 """release_setup.py — shared setup block for /oss:release modes.
 
 Resolves skill directory (installed cache → source tree fallback), repo
-root, branch slug, current UTC date, and branch-aware last-stable-tag
+root, portable scratch slug, branch state key, raw branch ref, current UTC date, and branch-aware last-stable-tag
 baseline. Writes each resolved value to its own file under
 ``${TMPDIR:-/tmp}/release-setup-${CSID}/`` for safe cross-block
 consumption. Informational notes go to stderr only.
 
 Output files (written to ``${TMPDIR:-/tmp}/release-setup-${CSID}/``):
-    SKILL_DIR, REPO_ROOT, BRANCH, DATE, LAST_TAG,
+    SKILL_DIR, REPO_ROOT, BRANCH, BRANCH_REF, BRANCH_KEY, DATE, LAST_TAG,
     CHERRY_PICK_SUBJECTS (may be empty), SOURCE_TAG_REF (may be empty)
 
 Stable-branch detection: when current branch has its own stable tag in
@@ -21,7 +21,8 @@ Usage:
     IFS= read -r SKILL_DIR < "${TMPDIR:-/tmp}/release-setup-${CSID}/SKILL_DIR" 2>/dev/null || SKILL_DIR=""
 
 Exit codes:
-    0 — always (caller validates resolved values)
+    0 — successful setup
+    1 — detached HEAD (no branch state published)
     2 — bad/missing required argument (argparse default)
 """
 
@@ -33,8 +34,11 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from shutil import which
+from urllib.parse import quote
+
+from release_append_marker import branch_state_key
 
 _EXCLUDE_FLAGS: tuple[str, ...] = (
     "--exclude=*rc*",
@@ -90,6 +94,25 @@ def _git(git_path: str, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _native_temp_dir() -> Path:
+    """Resolve a Git Bash temporary path for the native Python process on Windows."""
+    configured = os.environ.get("TMPDIR")
+    if not configured:
+        return Path(tempfile.gettempdir())
+    if sys.platform != "win32" or PureWindowsPath(configured).is_absolute():
+        return Path(configured)
+    converted = subprocess.run(["cygpath", "-w", configured], capture_output=True, text=True, check=True, timeout=5)
+    return Path(converted.stdout.strip())
+
+
+def _shell_path(path: str) -> str:
+    """Emit paths in Git Bash syntax when native Python is called from that shell."""
+    if sys.platform != "win32" or not PureWindowsPath(path).is_absolute():
+        return path
+    converted = subprocess.run(["cygpath", "-u", path], capture_output=True, text=True, check=True, timeout=5)
+    return converted.stdout.strip()
+
+
 def _resolve_skill_dir() -> str:
     """Find installed release skill directory, falling back to source tree path.
 
@@ -124,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``); no flags.
 
     Returns:
-        Always 0 — caller validates resolved values; argparse exits 2 on bad args.
+        Zero after setup; one on detached HEAD; argparse exits 2 on bad args.
 
     Examples:
         No doctest — subprocess-dependent; covered by pytest.
@@ -139,8 +162,11 @@ def main(argv: list[str] | None = None) -> int:
 
     skill_dir = _resolve_skill_dir()
     repo_root = _git(git, "rev-parse", "--show-toplevel") or "."
-    raw_branch = _git(git, "branch", "--show-current") or "main"
-    branch = raw_branch.replace("/", "-")
+    raw_branch = _git(git, "branch", "--show-current")
+    if not raw_branch:
+        print("Error: release requires an attached Git branch", file=sys.stderr)
+        return 1
+    branch = quote(raw_branch.replace("/", "-"), safe="-_.+")
     date = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d")
 
     branch_tag = _git(git, "describe", "--tags", "--abbrev=0", "--first-parent", *_EXCLUDE_FLAGS)
@@ -179,20 +205,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ℹ Stable-branch mode: base={last_tag}  source={source_tag}", file=sys.stderr)
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
-    tmp = os.environ.get("TMPDIR") or tempfile.gettempdir()
-    out_dir = Path(tmp) / f"release-setup-{csid}"
+    out_dir = _native_temp_dir() / f"release-setup-{csid}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for key, val in (
-        ("SKILL_DIR", skill_dir),
-        ("REPO_ROOT", repo_root),
+        ("SKILL_DIR", _shell_path(skill_dir)),
+        ("REPO_ROOT", _shell_path(repo_root)),
         ("BRANCH", branch),
+        ("BRANCH_REF", raw_branch),
+        ("BRANCH_KEY", branch_state_key(raw_branch)),
         ("DATE", date),
         ("LAST_TAG", last_tag),
         ("CHERRY_PICK_SUBJECTS", cherry_pick_subjects),
         ("SOURCE_TAG_REF", source_tag_ref),
     ):
-        (out_dir / key).write_text(f"{val}\n", encoding="utf-8")
+        (out_dir / key).write_text(f"{val}\n", encoding="utf-8", newline="\n")
 
     return 0
 

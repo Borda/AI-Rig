@@ -14,10 +14,30 @@ from types import ModuleType
 
 import pytest
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10/3.11 compatibility
+    import tomli as tomllib
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = PLUGIN_ROOT / "scripts"
 SYNC_SCRIPT = PLUGIN_ROOT / "scripts" / "sync_codex.py"
+
+
+@pytest.mark.parametrize("action", ["install", "clear"])
+def test_sync_checks_python310_tomli_before_local_changes(monkeypatch: pytest.MonkeyPatch, action: str) -> None:
+    """A missing parser must stop either sync action before invoking a command."""
+    module = _load_sync()
+    monkeypatch.setattr(module.sys, "version_info", (3, 10, 0))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None)
+
+    def forbidden_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Fail if sync reaches a local mutation or marketplace inspection."""
+        raise AssertionError("sync command ran before TOML prerequisite check")
+
+    with pytest.raises(module.SyncError, match="tomli"):
+        module.sync_codex(module.parse_args([action]), run=forbidden_run, environ={}, stdout=io.StringIO())
 
 
 def _load_sync() -> ModuleType:
@@ -578,8 +598,8 @@ def test_native_sync_clear_removes_plugin_and_managed_block(tmp_path: Path) -> N
 
 
 @pytest.mark.integration
-def test_sync_executes_rule_setup_and_clear_in_isolated_home(tmp_path: Path) -> None:
-    """Exercise real rule lifecycle helpers while replacing only external marketplace commands."""
+def test_sync_executes_profile_setup_and_clear_in_isolated_home(tmp_path: Path) -> None:
+    """Exercise the real profile lifecycle while replacing marketplace commands."""
     module = _load_sync()
     root = _marketplace_fixture(tmp_path)
     helper = root / "plugins" / "codex-rig" / "scripts" / "install_github_read_rules.py"
@@ -595,6 +615,7 @@ def test_sync_executes_rule_setup_and_clear_in_isolated_home(tmp_path: Path) -> 
     )
     (installed / "shared").mkdir()
     (installed / "shared" / "github_read.py").write_text('"""Fixture reader."""\n', encoding="utf-8")
+    (installed / "shared" / "collect_pr.py").write_text('"""Fixture collector."""\n', encoding="utf-8")
     _write_fixture_package_manifest(installed, "0.3.0")
     calls: list[tuple[str, ...]] = []
     external = _fake_runner(root, calls)
@@ -606,7 +627,7 @@ def test_sync_executes_rule_setup_and_clear_in_isolated_home(tmp_path: Path) -> 
             return subprocess.run(command, **kwargs)
         return external(command, **kwargs)
 
-    # Skipping global instructions must not skip the separately managed reader rules.
+    # Skipping global instructions must not skip the separately managed profile.
     assert (
         module.sync_codex(
             module.parse_args(["install", "--no-codex-global-agents"]),
@@ -616,9 +637,12 @@ def test_sync_executes_rule_setup_and_clear_in_isolated_home(tmp_path: Path) -> 
         )
         == 0
     )
-    managed = home / "rules" / "codex-rig-github-read.rules"
-    payload = managed.read_text(encoding="utf-8")
-    assert json.dumps(str(installed / "shared" / "github_read.py")) in payload
+    managed = home / "config.toml"
+    payload = tomllib.loads(managed.read_text(encoding="utf-8"))
+    assert "default_permissions" not in payload
+    assert payload["permissions"]["github-read"]["extends"] == ":workspace"
+    assert payload["features"]["network_proxy"] is True
+    assert not (home / "rules" / "codex-rig-github-read.rules").exists()
     assert (
         module.sync_codex(
             module.parse_args(["clear"]),

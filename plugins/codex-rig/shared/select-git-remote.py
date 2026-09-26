@@ -29,15 +29,16 @@ chosen remote before recording target and head checkout evidence, so the selecti
 
 It emits a JSON-compatible selected remote record including the expected identity and all local candidates considered.
 When multiple exact matches exist, ``origin`` wins the deterministic ordering; the payload still lists every matching
-name and URL for auditability. Numeric PR resolution emits only a canonical URL on stdout, so the caller can use
-identical URL arguments in the actual collector command and its proposed host approval prefix.
+name and URL for auditability. Numeric PR resolution prefers a valid ``origin`` repository over other configured forks,
+then uses a sole configured GitHub repository when ``origin`` is absent. It emits only a canonical URL on stdout, so the
+caller can use identical URL arguments in the actual collector command and its proposed host approval prefix.
 
 ## Failure
 
 Malformed authoritative URL or no exact match exits non-zero so PR collection does not use a guessed fork. Multiple
 exact matches are not treated as an error: the deterministic selector prefers ``origin`` and reports every matching
-candidate for auditability. Numeric PR resolution exits non-zero when no unique configured GitHub repository identity
-exists; it never contacts GitHub or mutates remotes.
+candidate for auditability. Numeric PR resolution exits non-zero when ``origin`` has no unique valid GitHub identity.
+Without ``origin``, conflicting configured GitHub repositories also fail. It never contacts GitHub or mutates remotes.
 """
 
 from __future__ import annotations
@@ -130,11 +131,12 @@ def select_remote(expected_url: str, remotes: dict[str, list[str]]) -> dict[str,
 
 
 def canonical_pr_url(number: str, remotes: dict[str, list[str]]) -> str:
-    """Bind a positive PR number to exactly one configured GitHub repository."""
+    """Bind a positive PR number to origin or the sole configured GitHub repository."""
     if not re.fullmatch(r"[1-9][0-9]*", number):
         raise ValueError("invalid-pr-number")
     repositories: set[str] = set()
-    for urls in remotes.values():
+    origin_repositories: set[str] = set()
+    for name, urls in remotes.items():
         for url in urls:
             try:
                 identity = parse_repository_url(url)
@@ -168,6 +170,14 @@ def canonical_pr_url(number: str, remotes: dict[str, list[str]]) -> str:
             ):
                 continue
             repositories.add(identity.repository)
+            if name == "origin":
+                origin_repositories.add(identity.repository)
+    if "origin" in remotes:
+        if not origin_repositories:
+            raise ValueError("no-github-origin")
+        if len(origin_repositories) != 1:
+            raise ValueError("ambiguous-github-origin")
+        return f"https://github.com/{next(iter(origin_repositories))}/pull/{number}"
     if not repositories:
         raise ValueError("no-github-repository")
     if len(repositories) != 1:

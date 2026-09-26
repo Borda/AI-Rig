@@ -30,9 +30,20 @@ Run all checks from **Mode: audit** with `$VERSION` as target. `| Check | Status
 
 ### Phase 2: Gather, classify, and changelog
 
-**a. Gather and classify** — spawn gather subagent per **Delegation strategy** for `$RANGE`; write findings to `GATHER_FILE`. Read returned JSON envelope; pass file path downstream. Don't read gather file into main context. Note `breaking` count from envelope — gates Phase 3b (migration guide). After envelope validation, check `unconfirmed_breaking` from envelope: if > 0, apply post-validation truth-check gate from **Delegation strategy** (partial `[UNCONFIRMED]` read + `AskUserQuestion` per breaking item) before proceeding to 2b.
+**a. Gather and classify** — spawn gather subagent per **Delegation strategy** for `$RANGE`; write findings to `GATHER_FILE`. Read returned JSON envelope; pass file path downstream. Don't read gather file into main context. Keep qualified ⚠️ Breaking Changes and ❌ Removed rows with unresolved baselines in the classified table; their "(not baseline-verified)" status follows the item into downstream artifacts and review, never treated as verified or moved to the waived ledger. Note `breaking` count from envelope — gates Phase 3b (migration guide). After envelope validation, apply the Delegation strategy's item-evidence review gate when `unconfirmed_breaking > 0` before proceeding to 2b.
 
-**b. Audit changelog** — apply **Audit changelog** logic inline: locate `$CHANGELOG_FILE` (per search order in Audit changelog section), cross-check classified changes from `$GATHER_FILE`, add missing entries, stamp unreleased section as `## [$VERSION] — $DATE`. Report: "N items added, M flagged."
+**b. Audit changelog** — Agent A must preflight its selected changelog path before its first read or write, as specified in `modes/changelog-audit-prompt.md`. Recheck the resolved `$CHANGELOG_FILE` and every existing release artifact path before this inline edit; a failure stops this phase without further artifact writes:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""
+[ -n "$VERSION" ] && [ -n "$CHANGELOG_FILE" ] || { echo "Error: release version or changelog path missing" >&2; exit 1; }
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/setup_release_dir.py" --validate-only "releases/$VERSION" "$CHANGELOG_FILE" || exit 1
+```
+
+Then apply **Audit changelog** logic inline: cross-check classified changes from `$GATHER_FILE`, add missing entries, stamp unreleased section as `## [$VERSION] — $DATE`. Report: "N items added, M flagged."
+
+Persist the resolved `$CHANGELOG_FILE` through the Audit changelog path sentinel in `SKILL.md` before the next shell; do not assume the path remains in memory.
 
 ### Phase 3: Highlights and migration
 
@@ -47,6 +58,7 @@ IFS= read -r REPO_ROOT < "${TMPDIR:-/tmp}/release-setup-${CSID}/REPO_ROOT" 2>/de
 RELEASE_DIR="releases/$VERSION"
 # Hard-fail: this script's .bak backup loop is the only thing standing between a re-run and silent
 # loss of hand-edited HIGHLIGHTS/MIGRATION/SUMMARY/DRAFT, which Phases 3a-5 overwrite unconditionally.
+# The helper refuses release-directory symlink traversal before unlinking or backing up files.
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/setup_release_dir.py" "$RELEASE_DIR" "$CHANGELOG_FILE" \
     || { echo "! BLOCKED — setup_release_dir failed (RELEASE_DIR='$RELEASE_DIR' CHANGELOG_FILE='$CHANGELOG_FILE'); artifact backups did not run — refusing to continue into the overwriting Write phases"; exit 1; }  # timeout: 5000
 ```
@@ -84,6 +96,35 @@ Fix and re-run until exits 0 with expected output — **max 3 attempts total**. 
 
 `releases/$VERSION/DRAFT.md` — final assembly. Source: `releases/$VERSION/HIGHLIGHTS.md` (spotlights), `releases/$VERSION/MIGRATION.md`, `releases/$VERSION/SUMMARY.md`. Apply **Write release draft** logic (release-draft.md format). Adversarial review applies (use `$GATHER_FILE` from Phase 2a as gather context). Shepherd voice review applies.
 
+### Phase 6: Consolidate waived changes
+
+Every ⚠️ Breaking/❌ Removed/rename claim that Truth check, Gather changes' cross-cycle detection, or Post-merge re-validation excluded during this run lives in this invocation's `$WAIVED_FILE` (`.temp/release-waived-$BRANCH-$DATE-<unique suffix>` — see `modes/classify-truth-check.md` "Waived changes ledger"), never in a public artifact. Consolidate it into the version directory so the audit trail survives past `.temp/` cleanup:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r VERSION < "${TMPDIR:-/tmp}/release-prepare-version-${CSID}" 2>/dev/null || VERSION=""  # reload (Check 41)
+IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
+IFS= read -r UNCONFIRMED < "${TMPDIR:-/tmp}/release-unconfirmed-${CSID}" 2>/dev/null || UNCONFIRMED=""
+IFS= read -r LAST_TAG < "${TMPDIR:-/tmp}/release-setup-${CSID}/LAST_TAG" 2>/dev/null || LAST_TAG=""
+OUT="releases/$VERSION/waived-changes.md"
+[ -n "$VERSION" ] && [ -n "$WAIVED_FILE" ] && [ -f "$WAIVED_FILE" ] || { echo "Error: waiver ledger or release version missing — cannot claim no waived changes" >&2; exit 1; }
+case "$UNCONFIRMED" in ''|*[!0-9]*) echo "Error: verified gather waiver count missing" >&2; exit 1;; esac
+LEDGER_UNCONFIRMED=$(grep -Ec '^(REMOVED|NET-STATE-ADD):' "$WAIVED_FILE" || true)
+[ "$LEDGER_UNCONFIRMED" -eq "$UNCONFIRMED" ] || { echo "Error: waiver ledger changed after gather validation" >&2; exit 1; }
+{
+  echo "# Waived changes — $VERSION"
+  echo
+  echo "Changes classified during release prep against ${LAST_TAG:-no prior tag} that did not survive into this release — never shipped under the claimed name, reverted before shipping, or superseded across append cycles. Audit trail only; not part of the public changelog."
+  echo
+  if [ -s "$WAIVED_FILE" ]; then
+    sed 's/^/- /' "$WAIVED_FILE"
+  else
+    echo "No changes were waived in this release."
+  fi
+} > "$OUT"  # timeout: 5000
+echo "→ wrote $OUT"
+```
+
 ### Output
 
 ```markdown
@@ -101,6 +142,7 @@ Render as the markdown bullet list below — NOT a box-drawing (`┌─┬─┐
 - `releases/$VERSION/demo.py` — story-telling jupytext notebook (Phase 4a; omit if demo excluded)
 - `releases/$VERSION/SUMMARY.md` — internal executive summary (Phase 4b)
 - `releases/$VERSION/DRAFT.md` — user-facing release notes, final assembly (Phase 5)
+- `releases/$VERSION/waived-changes.md` — Breaking/Removed/rename claims excluded against `$LAST_TAG` (N waived, or "No changes were waived") (Phase 6)
 
 ### Next steps
 1. Review all written files

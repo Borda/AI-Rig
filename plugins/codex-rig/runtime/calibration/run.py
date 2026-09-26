@@ -175,9 +175,9 @@ EXPLICIT_SOL_ROUTING_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
     "explicit-sol-automatic-route-rejected": (
         "delegation-lead",
         (
-            "explicit-sol-request-required",
-            "automatic-sol-routing-rejected",
-            "terra-parent-session-required",
+            "explicit-advisor-request-required",
+            "automatic-advisor-routing-rejected",
+            "sol-parent-session-required",
         ),
     ),
     "explicit-sol-advisory-boundary": (
@@ -185,7 +185,7 @@ EXPLICIT_SOL_ROUTING_CASE_CONTRACT: dict[str, tuple[str, tuple[str, ...]]] = {
         (
             "sol-advisory-boundary-violated",
             "sol-evidence-handover-missing",
-            "terra-parent-acceptance-required",
+            "sol-parent-acceptance-required",
         ),
     ),
 }
@@ -318,6 +318,7 @@ class CalibrationRun:
     leaks: int = 0
     checks_failed: list[str] = field(default_factory=list)
     accepted_route_evidence_current: bool = False
+    behavioral_version_skip_reason: str | None = None
 
     def mark_check_failed(self, check_id: str) -> None:
         """Record a failed check once."""
@@ -593,43 +594,112 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
     run.append_check(f"accepted-route-evidence=archived-stale:gpt-5.6-baseline:live-calls={observed_rows}")
 
 
-def check_behavioral_cases_version(run: CalibrationRun) -> None:
-    """Ensure behavioral case versions only move one commit-relative step."""
-    if run.paths.layout == "plugin":
-        run.append_check("behavioral-version=skipped:immutable-plugin-fixture")
-        return
-    if not run.paths.behavioral_cases.exists():
-        return
-    if not (run.paths.root / ".git").exists():
-        run.append_check("behavioral-version=skipped:no-git")
-        return
-
-    head_cases = run.paths.out_dir / "behavioral-cases.head.json"
-    git_result = subprocess.run(
-        ["git", "show", "HEAD:.codex/calibration/behavioral-cases.json"],
-        cwd=run.paths.root,
+def _head_path_exists(repository: Path, path: str) -> bool:
+    """Distinguish an absent HEAD path from a failed Git tree lookup."""
+    result = subprocess.run(
+        ["git", "ls-tree", "-r", "--name-only", "HEAD", "--", path],
+        cwd=repository,
         text=True,
         capture_output=True,
         check=False,
     )
-    if git_result.returncode != 0:
-        run.append_check("behavioral-version=skipped:no-head-version")
-        return
-    head_cases.write_text(git_result.stdout, encoding="utf-8")
+    if result.returncode != 0:
+        raise OSError("HEAD path lookup failed")
+    entries = result.stdout.splitlines()
+    if not entries:
+        return False
+    if entries != [path]:
+        raise ValueError("HEAD path lookup returned an unexpected entry")
+    return True
 
+
+def check_behavioral_cases_version(run: CalibrationRun) -> None:
+    """Check the shipped case schema against its own committed HEAD version."""
+    cases = run.paths.behavioral_cases
+    fixture_dir = cases.parent.absolute()
+    checkout = next((parent for parent in (fixture_dir, *fixture_dir.parents) if (parent / ".git").exists()), None)
+    if not cases.exists():
+        if checkout is not None and run.paths.layout == "plugin":
+            run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:shipped fixture missing in checkout")
+            return
+        run.behavioral_version_skip_reason = f"missing-{run.paths.layout}-fixture"
+        run.append_check(f"behavioral-version=skipped:{run.behavioral_version_skip_reason}")
+        return
+
+    if checkout is None:
+        reason = "immutable-plugin-fixture" if run.paths.layout == "plugin" else "no-git"
+        run.behavioral_version_skip_reason = reason
+        run.append_check(f"behavioral-version=skipped:{reason}")
+        return
     try:
-        head_version = read_json_version(head_cases)
-        current_version = read_json_version(run.paths.behavioral_cases)
-        if not same_or_single_commit_bump(parse_version(head_version), parse_version(current_version)):
-            raise ValueError(
-                "current version must equal HEAD or be one commit-relative bump: "
-                f"HEAD={head_version}, current={current_version}"
+        git_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=cases.parent, text=True, capture_output=True, check=False
+        )
+    except OSError:
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:Git checkout lookup failed")
+        return
+    if git_root.returncode != 0 or not git_root.stdout.strip():
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:Git checkout lookup failed")
+        return
+    repository = Path(git_root.stdout.strip()).resolve()
+    if repository != checkout.resolve():
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:Git checkout root mismatch")
+        return
+    try:
+        case_path = cases.resolve().relative_to(repository).as_posix()
+        runner_path = run.paths.run_py.resolve().relative_to(repository).as_posix()
+    except ValueError:
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:fixture or runner outside checkout")
+        return
+    try:
+        runner_tracked = _head_path_exists(repository, runner_path)
+    except (OSError, ValueError):
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD runner lookup failed")
+        return
+    if not runner_tracked:
+        run.behavioral_version_skip_reason = "untracked-runner"
+        run.append_check("behavioral-version=skipped:untracked-runner")
+        return
+    try:
+        case_tracked = _head_path_exists(repository, case_path)
+    except (OSError, ValueError):
+        run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD fixture lookup failed")
+        return
+    head_content = None
+    if case_tracked:
+        try:
+            head_cases = subprocess.run(
+                ["git", "show", f"HEAD:{case_path}"], cwd=repository, text=True, capture_output=True, check=False
             )
-    except Exception as exc:  # noqa: BLE001 - calibration must report the concrete parsing/version blocker.
+        except OSError:
+            run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD fixture read failed")
+            return
+        if head_cases.returncode != 0:
+            run.fail_and_leak("behavioral-version-policy", "behavioral-version-gap:HEAD fixture read failed")
+            return
+        head_content = head_cases.stdout
+    try:
+        current_payload = json.loads(cases.read_text(encoding="utf-8"))
+        if not isinstance(current_payload, dict):
+            raise ValueError("current behavioral cases must be a JSON object")
+        current_version = current_payload.get("schema_version")
+        if not isinstance(current_version, int) or isinstance(current_version, bool) or current_version < 1:
+            raise ValueError("current schema_version must be a positive integer")
+        head_payload = json.loads(head_content) if head_content is not None else {}
+        if not isinstance(head_payload, dict):
+            raise ValueError("HEAD behavioral cases must be a JSON object")
+        head_version = head_payload.get("schema_version", 0)
+        if not isinstance(head_version, int) or isinstance(head_version, bool) or head_version < 0:
+            raise ValueError("HEAD schema_version must be a nonnegative integer")
+        if current_version not in {head_version, head_version + 1}:
+            raise ValueError(
+                f"current schema_version must equal HEAD or advance once: HEAD={head_version}, current={current_version}"
+            )
+    except (OSError, ValueError, TypeError) as exc:
         run.fail_and_leak("behavioral-version-policy", f"behavioral-version-gap:{exc}")
         return
 
-    run.append_check(f"behavioral-version=ok:HEAD={head_version}:current={current_version}")
+    run.append_check(f"behavioral-version=ok:HEAD={head_version}:current={current_version}:path={case_path}")
 
 
 def check_sync_manifest_config_scope(run: CalibrationRun) -> None:
@@ -683,39 +753,6 @@ def check_sync_manifest_config_scope(run: CalibrationRun) -> None:
         return
 
     run.append_check("sync-manifest-config-scope=ok")
-
-
-def read_json_version(path: Path) -> str:
-    """Read a required string version from a JSON fixture file."""
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    version = payload.get("version")
-    if not isinstance(version, str) or not version.strip():
-        raise ValueError(f"missing string version in {path}")
-    return version.strip()
-
-
-def parse_version(value: str) -> tuple[int, ...]:
-    """Parse a dotted numeric version into comparable integer parts."""
-    parts = value.split(".")
-    if not parts or any(not part.isdecimal() for part in parts):
-        raise ValueError(f"version must be dotted numeric: {value!r}")
-    return tuple(int(part) for part in parts)
-
-
-def same_or_single_commit_bump(head: tuple[int, ...], current: tuple[int, ...]) -> bool:
-    """Return whether current is unchanged or one version step from HEAD."""
-    width = max(len(head), len(current))
-    head_parts = head + (0,) * (width - len(head))
-    current_parts = current + (0,) * (width - len(current))
-    if current_parts == head_parts:
-        return True
-    for index, (head_part, current_part) in enumerate(zip(head_parts, current_parts, strict=True)):
-        if head_part == current_part:
-            continue
-        if current_part != head_part + 1:
-            return False
-        return all(part == 0 for part in current_parts[index + 1 :])
-    return False
 
 
 def check_skill_frontmatter(run: CalibrationRun, file: Path, skill: str) -> None:
@@ -1201,6 +1238,7 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         cli_paths["remediation-branch"] = run.paths.shared_dir / "remediation_branch.py"
         cli_paths["release-evidence"] = run.paths.shared_dir / "release_evidence.py"
         cli_paths["challenge-resolve-evidence"] = run.paths.skills_dir / "challenge-resolve" / "validate_evidence.py"
+        cli_paths["challenge-resolve-chunks"] = run.paths.skills_dir / "challenge-resolve" / "chunk_diff.py"
         cli_paths["codemap-adapter"] = run.paths.codemap_adapter
         assert run.paths.github_read is not None
         cli_paths["github-read"] = run.paths.github_read
@@ -2429,7 +2467,10 @@ def selftest_find_review_report(run: CalibrationRun, selftest_dir: Path) -> None
     older.mkdir(parents=True, exist_ok=True)
     newer.mkdir(parents=True, exist_ok=True)
     assessed_result = (
-        json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "accept-as-is"}}}) + "\n"
+        json.dumps(
+            {"schema_version": 3, "metadata": {"scope": "pr", "review_decision": {"recommendation": "accept-as-is"}}}
+        )
+        + "\n"
     )
     for directory in (older, newer):
         (directory / "result.json").write_text(assessed_result, encoding="utf-8")
@@ -2929,7 +2970,7 @@ def write_result(run: CalibrationRun) -> None:
             "native-runtime-leakage",
             "confidence-policy",
             "fixed-task-set",
-            "behavioral-version-policy",
+            *(["behavioral-version-policy"] if run.behavioral_version_skip_reason is None else []),
             "benchmark-pattern-checks",
             "behavioral-metrics",
             "shared-script-selftests",
@@ -2940,6 +2981,11 @@ def write_result(run: CalibrationRun) -> None:
         "artifact_path": f".reports/codex/calibration/{run.paths.timestamp}/result.json",
         "metadata": {
             "layout": run.paths.layout,
+            "checks_skipped": (
+                [{"id": "behavioral-version-policy", "reason": run.behavioral_version_skip_reason}]
+                if run.behavioral_version_skip_reason is not None
+                else []
+            ),
             "confidence_gaps": confidence_gaps,
             "confidence_gap_closures": confidence_gap_closures,
             "confidence_recovery": {

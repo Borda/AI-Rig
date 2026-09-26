@@ -155,10 +155,11 @@ Every test must pass The Suspicious Check:
 - Route RTK-eligible shell commands through `rtk` proactive, e.g. `rtk git status --short` not `git status --short`.
 - No relying on PreToolUse hooks rewriting commands in Codex. Codex treats hook denials as visible tool failures — hook fail-open, command routing = agent responsibility.
 - Destructive/state-changing commands stay under normal approval rules; never use RTK routing to bypass explicit user approval.
-- Keep shell network access blocked by default.
-- For every intentionally networked CLI, execute complete owning command with runtime-approved external access from first attempt; wrappers own approval for nested subprocesses and HTTPS.
-- In Codex exec calls use `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent.
-- This includes every `gh` and `kaggle` invocation, collector-owned `git fetch`/HTTPS, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`; web/browser/MCP/connector tools use their own permission path.
+- Keep shell network access blocked by default. Select `github-read` for a fresh session with `codex -c 'default_permissions="github-read"'` only when the consuming checkout defines that project-local profile or explicit setup or sync has installed the managed Codex-home profile. Plugin installation alone does not provide either profile in an unrelated project.
+- Run audited GitHub data reads through installed `shared/github_read.py`, and PR collection through `shared/collect_pr.py`. An active opted-in `github-read` profile permits them without a separate runtime read request; otherwise give the five-field brief and request external access for the complete owning helper. The profile extends `:workspace`, enables the network proxy for `api.github.com` and `github.com`, and grants `.git` writes under workspace roots for all commands in the selected session. It controls destinations, not HTTP methods or executable identity; helper validation and the remote-mutation ban remain mandatory. A denial or stricter host restriction stops the read with a specific diagnostic; never retry by broadening permission.
+- For other intentionally networked CLI, execute the complete owning command with runtime-approved external access from the first attempt; wrappers own approval for nested subprocesses and HTTPS.
+- For those other Codex exec calls use `sandbox_permissions="require_escalated"` with narrow justification; never enable persistent workspace network access, request broad interpreter prefix, or assume nested executable's approval covers its parent.
+- This includes `kaggle`, Codex Git marketplace add/upgrade + owning sync wrapper, paid `codex exec`, and any networked CLI outside the audited GitHub-read boundary; web/browser/MCP/connector tools use their own permission path.
 - Marketplace/plugin listing and `codex plugin add` from existing snapshot stay sandboxed.
 - Missing external CLIs = user-owned prerequisites: explain required install + auth, but never install from workflow.
 - Before every intentional approval request, give one short plugin-owned brief containing exactly these five fields:
@@ -168,7 +169,7 @@ Every test must pass The Suspicious Check:
   - `Filesystem and worktree effects`
   - `Retry policy and safe denial outcome`
 - Denial aborts active tool call, may end assistant turn.
-- Don't issue equivalent approval request same turn or switch to broader command; don't enable persistent network access or report completion.
+- Don't issue equivalent approval request same turn or switch to broader command; don't enable unrestricted network access or report completion.
 - Ask user send new message to resume under documented command boundary.
 - For all intentional approval requests:
   - Keep runtime `justification`/reason separate from pre-brief.

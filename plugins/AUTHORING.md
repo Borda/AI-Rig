@@ -138,6 +138,8 @@ Full rule in `plugins/CLAUDE.md` §Self-Contained `_shared`.
 
 Full rule (trigger, decision table, one-bump-per-commit) in `plugins/CLAUDE.md` §Versioning.
 
+Serialized artifact schemas are separate version families under the repository Version Continuity rule. For each changed schema, compare the current writer and template with the same family's value in committed `HEAD`; start a new family at 1 and advance a committed family by exactly one. Historical readers and uncommitted intermediate designs do not change that baseline. Record the comparison beside the affected verification.
+
 **Example**: start `0.2.0`, session has both a wording fix and a feature add → commit as `0.3.0` (not `0.2.1`) — `X` absorbs any pending `Y`.
 
 **Pre-bump checklist** — all steps mandatory; skipping any step = violation:

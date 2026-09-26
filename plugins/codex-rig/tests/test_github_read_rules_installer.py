@@ -1,12 +1,10 @@
-"""Verify managed reader approvals without changing the real Codex home or using the network."""
+"""Verify safe migration of legacy GitHub rules into the default permission profile."""
 
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import runpy
-import shutil
 import subprocess
 import sys
 from pathlib import Path, PureWindowsPath
@@ -16,19 +14,18 @@ from _platform import DIRECTORY_SYMLINKS_AVAILABLE, FILE_SYMLINKS_AVAILABLE
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "install_github_read_rules.py"
-CODEX = shutil.which("codex")
 
 
-def _installed_plugin(home: Path, version: str) -> Path:
-    """Create the minimal installed identity and reader checked by setup."""
+def _installed_plugin(home: Path, version: str = "1.2.3") -> Path:
+    """Create an installed package with valid identity and integrity records."""
     root = home / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / version
     (root / ".codex-plugin").mkdir(parents=True)
     (root / ".codex-plugin" / "plugin.json").write_text(
         json.dumps({"name": "codex-rig", "version": version}), encoding="utf-8"
     )
     (root / "shared").mkdir()
-    (root / "shared" / "github_read.py").write_text('"""Unused fixture reader."""\n', encoding="utf-8")
-    (root / "shared" / "collect_pr.py").write_bytes(b"# Unused fixture collector.\n")
+    (root / "shared" / "github_read.py").write_text('"""Fixture reader."""\n', encoding="utf-8")
+    (root / "shared" / "collect_pr.py").write_text('"""Fixture collector."""\n', encoding="utf-8")
     records = [
         {
             "path": path.relative_to(root).as_posix(),
@@ -58,7 +55,7 @@ def _installed_plugin(home: Path, version: str) -> Path:
 
 
 def _run(home: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
-    """Execute the public installer CLI against a test-owned home."""
+    """Run setup or removal against an isolated Codex home."""
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--codex-home", str(home), *arguments],
         capture_output=True,
@@ -67,58 +64,8 @@ def _run(home: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _rule_pattern(path: Path) -> list[object]:
-    """Read the generated Starlark rule's literal argument pattern."""
-    (statement,) = ast.parse(path.read_text(encoding="utf-8")).body
-    assert isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call)
-    call = statement.value
-    assert isinstance(call.func, ast.Name) and call.func.id == "prefix_rule"
-    values = {keyword.arg: ast.literal_eval(keyword.value) for keyword in call.keywords}
-    assert values["decision"] == "allow"
-    return values["pattern"]
-
-
-def test_install_upgrade_and_clear_manage_only_reader_approval(tmp_path: Path) -> None:
-    """Refresh the literal installed path while preserving unrelated approval bytes."""
-    home = tmp_path / "codex home"
-    first = _installed_plugin(home, "1.2.3")
-    rules = home / "rules"
-    rules.mkdir()
-    default = rules / "default.rules"
-    original = b'# user content\r\nprefix_rule(pattern=["git", "status"], decision="allow")\r\n'
-    default.write_bytes(original)
-    managed = rules / "codex-rig-github-read.rules"
-
-    result = _run(home, "--plugin-root", str(first))
-    assert result.returncode == 0, result.stderr
-    pattern = _rule_pattern(managed)
-    assert pattern[0] == ["python", "python3"]
-    reader = first / "shared" / "github_read.py"
-    expected_paths = list(dict.fromkeys([str(reader), reader.as_posix()]))
-    assert pattern[1] == (expected_paths[0] if len(expected_paths) == 1 else expected_paths)
-    assert len(pattern) == 2
-    assert b"\r\n" not in managed.read_bytes()
-    assert default.read_bytes() == original
-    initial = managed.read_bytes()
-    assert _run(home, "--plugin-root", str(first)).returncode == 0
-    assert managed.read_bytes() == initial
-    assert not (home / "backups" / "codex-rig").exists()
-
-    second = _installed_plugin(home, "1.2.4")
-    assert _run(home, "--plugin-root", str(second)).returncode == 0
-    assert "1.2.4" in managed.read_text(encoding="utf-8")
-    assert "1.2.3" not in managed.read_text(encoding="utf-8")
-    backups = list((home / "backups" / "codex-rig").iterdir())
-    assert len(backups) == 1 and backups[0].read_bytes() == initial
-
-    assert _run(home, "--remove").returncode == 0
-    assert not managed.exists()
-    assert default.read_bytes() == original
-    assert _run(home, "--remove").returncode == 0
-
-
-def test_install_migrates_exact_legacy_prefix_and_preserves_other_rules(tmp_path: Path) -> None:
-    """Remove obsolete UI-saved wrapper rules only after backing up their original bytes."""
+def test_setup_migrates_exact_legacy_prefix_and_preserves_other_rules(tmp_path: Path) -> None:
+    """Remove only the old canonical reader grant after backing up original bytes."""
     home = tmp_path / "home"
     current = _installed_plugin(home, "2.0.0")
     old_reader = current.parent / "1.2.3" / "shared" / "github_read.py"
@@ -134,9 +81,10 @@ def test_install_migrates_exact_legacy_prefix_and_preserves_other_rules(tmp_path
 
     assert result.returncode == 0, result.stderr
     assert default.read_bytes() == other + narrow
+    assert not (default.parent / "codex-rig-github-read.rules").exists()
     backups = list((home / "backups" / "codex-rig").iterdir())
-    assert len(backups) == 1 and backups[0].read_bytes() == original
-    assert "migrated" in result.stdout
+    assert original in [backup.read_bytes() for backup in backups]
+    assert (home / "config.toml").exists()
 
 
 @pytest.mark.parametrize(
@@ -146,92 +94,103 @@ def test_install_migrates_exact_legacy_prefix_and_preserves_other_rules(tmp_path
         pytest.param(b"# codex-rig:github-read sha256=invalid\n", id="invalid-marker"),
     ],
 )
-def test_install_rejects_unowned_or_invalid_managed_file(tmp_path: Path, existing: bytes) -> None:
-    """Never overwrite a colliding filename without verified ownership and integrity."""
+def test_setup_rejects_unowned_or_invalid_old_rule(tmp_path: Path, existing: bytes) -> None:
+    """Refuse to delete an old rule file without verified ownership and integrity."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
+    root = _installed_plugin(home)
     managed = home / "rules" / "codex-rig-github-read.rules"
     managed.parent.mkdir()
     managed.write_bytes(existing)
 
     result = _run(home, "--plugin-root", str(root))
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert managed.read_bytes() == existing
-    assert not (home / "backups").exists()
+    assert not (home / "config.toml").exists()
+    assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
-def test_clear_rejects_edited_owned_rule(tmp_path: Path) -> None:
-    """Keep edited permissions available for human reconciliation instead of deleting them."""
+@pytest.mark.parametrize("rule_name", ["codex-rig-github-read.rules", "codex-rig-pr-collection.rules"])
+def test_rehashed_broad_old_rule_is_not_owned(tmp_path: Path, rule_name: str) -> None:
+    """A valid checksum cannot authorize deletion of a broadened old rule."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    managed = home / "rules" / "codex-rig-github-read.rules"
-    edited = managed.read_bytes() + b"# local modification\n"
-    managed.write_bytes(edited)
+    root = _installed_plugin(home)
+    managed = home / "rules" / rule_name
+    managed.parent.mkdir()
+    body = b'prefix_rule(pattern=["python"], decision="allow")\n'
+    marker = (
+        b"# codex-rig:github-read sha256="
+        if rule_name.endswith("github-read.rules")
+        else b"# codex-rig:pr-collection sha256="
+    )
+    original = marker + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
+    managed.write_bytes(original)
 
-    result = _run(home, "--remove")
+    result = _run(home, "--plugin-root", str(root))
 
-    assert result.returncode != 0
-    assert managed.read_bytes() == edited
-
-
-def test_clear_rejects_rehashed_unrecognized_rule_body(tmp_path: Path) -> None:
-    """A checksum must not authorize teardown of an arbitrary locally authored rule body."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    assert _run(home, "--plugin-root", str(root)).returncode == 0
-    managed = home / "rules" / "codex-rig-github-read.rules"
-    _, _, body = managed.read_bytes().partition(b"\n")
-    body += b'prefix_rule(pattern=["python"], decision="allow")\n'
-    edited = b"# codex-rig:github-read sha256=" + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
-    managed.write_bytes(edited)
-
-    result = _run(home, "--remove")
-
-    assert result.returncode != 0
-    assert managed.read_bytes() == edited
+    assert result.returncode == 2
+    assert managed.read_bytes() == original
+    assert not (home / "config.toml").exists()
 
 
 def test_clear_rejects_regular_file_home(tmp_path: Path) -> None:
-    """Malformed target homes must fail even when no managed rule appears to exist."""
+    """Reject a malformed target even when no managed state exists."""
     home = tmp_path / "not-a-directory"
     home.write_bytes(b"user file")
 
     result = _run(home, "--remove")
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert home.read_bytes() == b"user file"
 
 
-def test_install_rejects_plugin_outside_target_home(tmp_path: Path) -> None:
-    """Refuse to authorize a script merely because the caller supplies its path."""
-    foreign = _installed_plugin(tmp_path / "other", "1.2.3")
+def test_setup_rejects_plugin_outside_target_home(tmp_path: Path) -> None:
+    """Allow setup only from the selected home's versioned installed cache."""
+    foreign = _installed_plugin(tmp_path / "other")
     target = tmp_path / "target"
 
     result = _run(target, "--plugin-root", str(foreign))
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert not target.exists()
 
 
-def test_windows_rule_arguments_and_legacy_migration_on_every_host(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Keep native Windows and POSIX argument spellings usable without host-dependent conversion."""
+def test_windows_legacy_rule_recognition_on_every_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Recognize native Windows reader coordinates without host path conversion."""
     monkeypatch.syspath_prepend(str(SCRIPT.parent))
     functions = runpy.run_path(str(SCRIPT))
     home = PureWindowsPath(r"D:\User Space\codex")
     reader = home / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / "1.2.3" / "shared" / "github_read.py"
-    payload = functions["render_rules"](reader)
-    rule_file = tmp_path / "windows.rules"
-    rule_file.write_bytes(payload)
-
-    assert _rule_pattern(rule_file) == [["python", "python3"], [str(reader), reader.as_posix()]]
-    assert b"\r\n" not in payload
     legacy = f'prefix_rule(pattern={json.dumps(["python3", str(reader)])}, decision="allow")\r\n'.encode()
     unchanged = b"# user comment\r\n"
+
     assert functions["strip_legacy_rules"](unchanged + legacy, home) == unchanged
+    assert functions["strip_legacy_rules"](unchanged + legacy, PureWindowsPath(r"D:\Other\codex")) == unchanged + legacy
+
+
+def test_windows_collector_grant_migration_on_every_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove this home's Windows grant while preserving a foreign home's grant."""
+    monkeypatch.syspath_prepend(str(SCRIPT.parent))
+    functions = runpy.run_path(str(SCRIPT))
+    home = PureWindowsPath(r"D:\User Space\codex")
+    collector = home / "plugins" / "cache" / "borda-ai-rig" / "codex-rig" / "1.2.3" / "shared" / "collect_pr.py"
+    target = "https://github.com/example/project/pull/7"
+    canonical = functions["render_pr_rules"](collector, [target]).partition(b"\n")[2]
+    unrelated = b'prefix_rule(pattern=["git", "status"], decision="allow")\n'
+
+    assert functions["strip_legacy_rules"](canonical + unrelated, home) == unrelated
+    assert functions["strip_legacy_rules"](canonical + unrelated, PureWindowsPath(r"D:\Other\codex")) == (
+        canonical + unrelated
+    )
+
+    foreign = PureWindowsPath(r"D:\Other\codex") / "plugins" / "cache" / "borda-ai-rig" / "codex-rig"
+    foreign_collector = foreign / "1.2.3" / "shared" / "collect_pr.py"
+    mixed = (
+        f"prefix_rule(pattern={json.dumps([['python', 'python3'], [str(foreign_collector), str(collector)], '--target', [target]])}, "
+        'decision="allow")\n'
+    ).encode()
+    with pytest.raises(functions["UnsafeRulesState"], match="unrecognized collector grant"):
+        functions["strip_legacy_rules"](mixed, home)
 
 
 @pytest.mark.parametrize(
@@ -241,8 +200,7 @@ def test_windows_rule_arguments_and_legacy_migration_on_every_host(
             "rules",
             id="rules-directory-link",
             marks=pytest.mark.skipif(
-                not DIRECTORY_SYMLINKS_AVAILABLE,
-                reason="filesystem cannot create directory symlinks",
+                not DIRECTORY_SYMLINKS_AVAILABLE, reason="filesystem cannot create directory symlinks"
             ),
         ),
         pytest.param(
@@ -255,39 +213,51 @@ def test_windows_rule_arguments_and_legacy_migration_on_every_host(
             id="default-file-link",
             marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"),
         ),
+        pytest.param(
+            "config",
+            id="config-file-link",
+            marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="filesystem cannot create file symlinks"),
+        ),
     ],
 )
-def test_install_rejects_linked_rule_or_reader_paths(tmp_path: Path, component: str) -> None:
-    """Avoid redirecting either the approved executable or permission writes outside their owned paths."""
+def test_setup_rejects_linked_paths(tmp_path: Path, component: str) -> None:
+    """Keep profile and migration writes inside the selected home."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    rules = home / "rules"
+    root = _installed_plugin(home)
     outside = tmp_path / "outside"
     outside.mkdir()
-    original = b"# external bytes\n"
     target = outside / "file"
+    original = b"# external bytes\n"
     target.write_bytes(original)
+    rules = home / "rules"
     if component == "rules":
         rules.symlink_to(outside, target_is_directory=True)
     else:
         rules.mkdir()
-        link = rules / "default.rules" if component == "default" else root / "shared" / "github_read.py"
+        link = {
+            "reader": root / "shared" / "github_read.py",
+            "default": rules / "default.rules",
+            "config": home / "config.toml",
+        }[component]
         if link.exists():
             link.unlink()
         link.symlink_to(target)
 
     result = _run(home, "--plugin-root", str(root))
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert "linked path" in result.stderr
     assert target.read_bytes() == original
-    assert not (rules / "codex-rig-github-read.rules").exists()
+    if component == "config":
+        assert (home / "config.toml").is_symlink()
+    else:
+        assert not (home / "config.toml").exists()
 
 
 def test_setup_rejects_wrong_manifest_identity_before_migration(tmp_path: Path) -> None:
-    """Do not remove legacy permissions when the new installation has the wrong identity."""
+    """Do not alter old grants when the proposed installed package has wrong identity."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
+    root = _installed_plugin(home)
     (root / ".codex-plugin" / "plugin.json").write_text(
         json.dumps({"name": "another-plugin", "version": "1.2.3"}), encoding="utf-8"
     )
@@ -298,16 +268,16 @@ def test_setup_rejects_wrong_manifest_identity_before_migration(tmp_path: Path) 
 
     result = _run(home, "--plugin-root", str(root))
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert "identity" in result.stderr
     assert default.read_bytes() == original
-    assert not (default.parent / "codex-rig-github-read.rules").exists()
+    assert not (home / "config.toml").exists()
 
 
-def test_setup_rejects_invalid_backup_path_before_creating_approval(tmp_path: Path) -> None:
-    """Check migration backup prerequisites before granting a new persistent approval."""
+def test_setup_rejects_invalid_backup_path_before_profile_write(tmp_path: Path) -> None:
+    """Check migration backup prerequisites before selecting the new profile."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
+    root = _installed_plugin(home)
     default = home / "rules" / "default.rules"
     default.parent.mkdir()
     legacy = f'prefix_rule(pattern={json.dumps(["python", str(root / "shared/github_read.py")])}, decision="allow")\n'.encode()
@@ -319,49 +289,15 @@ def test_setup_rejects_invalid_backup_path_before_creating_approval(tmp_path: Pa
     assert result.returncode == 2
     assert "not a directory" in result.stderr
     assert default.read_bytes() == legacy
-    assert not (default.parent / "codex-rig-github-read.rules").exists()
+    assert not (home / "config.toml").exists()
     assert (home / "backups").read_bytes() == b"unrelated existing file"
-
-
-def test_setup_reports_completed_permission_write_if_later_replace_fails(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Keep completed rule updates visible when a later filesystem replacement fails."""
-    monkeypatch.syspath_prepend(str(SCRIPT.parent))
-    module = runpy.run_path(str(SCRIPT))
-    home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    default = home / "rules" / "default.rules"
-    default.parent.mkdir()
-    legacy = f'prefix_rule(pattern={json.dumps(["python", str(root / "shared/github_read.py")])}, decision="allow")\n'.encode()
-    default.write_bytes(legacy)
-    replace = module["os"].replace
-
-    def fail_default_replace(source: Path, destination: Path) -> None:
-        """Simulate the OS rejecting only the second rules-file replacement."""
-        if destination == default:
-            raise PermissionError("default replacement denied")
-        replace(source, destination)
-
-    monkeypatch.setattr(module["os"], "replace", fail_default_replace)
-    result = module["main"](["--codex-home", str(home), "--plugin-root", str(root)])
-
-    output = capsys.readouterr()
-    assert result == 2
-    assert (default.parent / "codex-rig-github-read.rules").exists()
-    assert "rules created:" in output.out
-    assert "default replacement denied" in output.err
-    assert "partial" in output.err
-    assert default.read_bytes() == legacy
-    backups = list((home / "backups/codex-rig").iterdir())
-    assert len(backups) == 1 and backups[0].read_bytes() == legacy
 
 
 @pytest.mark.parametrize("component", ["reader", "manifest"])
 def test_setup_rejects_unverified_package_bytes(tmp_path: Path, component: str) -> None:
-    """Never approve a cache with a changed reader or missing package integrity evidence."""
+    """Reject package changes before selecting the new profile."""
     home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
+    root = _installed_plugin(home)
     if component == "reader":
         (root / "shared/github_read.py").write_bytes(b'print("substituted code")\n')
     else:
@@ -370,122 +306,5 @@ def test_setup_rejects_unverified_package_bytes(tmp_path: Path, component: str) 
     result = _run(home, "--plugin-root", str(root))
 
     assert result.returncode == 2
+    assert not (home / "config.toml").exists()
     assert not (home / "rules").exists()
-
-
-def test_explicit_pr_approval_survives_upgrade_and_is_removed_on_clear(tmp_path: Path) -> None:
-    """Keep collector grants PR-specific, opt-in, backed up, and refreshable without new consent."""
-    home = tmp_path / "home"
-    first = _installed_plugin(home, "1.2.3")
-    target = "https://github.com/example/project/pull/7"
-    managed = home / "rules" / "codex-rig-pr-collection.rules"
-    assert _run(home, "--plugin-root", str(first)).returncode == 0
-    assert not managed.exists()
-    result = _run(home, "--plugin-root", str(first), "--approve-pr", target)
-    assert result.returncode == 0, result.stderr
-    pattern = _rule_pattern(managed)
-    assert pattern[0] == ["python", "python3"]
-    collector = first / "shared" / "collect_pr.py"
-    paths = list(dict.fromkeys([str(collector), collector.as_posix()]))
-    assert pattern[1] == (paths[0] if len(paths) == 1 else paths)
-    assert pattern[2:] == ["--target", [target]]
-    original = managed.read_bytes()
-    assert _run(home, "--plugin-root", str(first), "--approve-pr", target).returncode == 0
-    assert managed.read_bytes() == original
-    assert not (home / "backups").exists()
-    second = _installed_plugin(home, "1.2.4")
-    assert _run(home, "--plugin-root", str(second)).returncode == 0
-    assert _rule_pattern(managed)[2:] == ["--target", [target]]
-    assert "1.2.4" in managed.read_text(encoding="utf-8")
-    assert "1.2.3" not in managed.read_text(encoding="utf-8")
-    assert original in [path.read_bytes() for path in (home / "backups/codex-rig").iterdir()]
-    assert _run(home, "--remove").returncode == 0
-    assert not managed.exists()
-
-
-@pytest.mark.parametrize(
-    "target", ["7", "https://github.com/example/project/pull/0", "https://github.com/example/project/pull/7?x=1", "*"]
-)
-def test_pr_setup_rejects_noncanonical_targets_before_any_permission_write(tmp_path: Path, target: str) -> None:
-    """Reject ambiguous identities and URL suffixes before granting any reader or collector access."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    result = _run(home, "--plugin-root", str(root), "--approve-pr", target)
-    assert result.returncode == 2
-    assert not (home / "rules").exists()
-
-
-def test_pr_setup_refuses_modified_rules_before_updating_reader(tmp_path: Path) -> None:
-    """Do not partially expand permissions when the PR allowlist has unrecognized content."""
-    home = tmp_path / "home"
-    first = _installed_plugin(home, "1.2.3")
-    target = "https://github.com/example/project/pull/7"
-    assert _run(home, "--plugin-root", str(first), "--approve-pr", target).returncode == 0
-    managed = home / "rules" / "codex-rig-pr-collection.rules"
-    modified = managed.read_bytes() + b"# user edit\n"
-    managed.write_bytes(modified)
-    reader = home / "rules" / "codex-rig-github-read.rules"
-    original_reader = reader.read_bytes()
-    second = _installed_plugin(home, "1.2.4")
-    result = _run(home, "--plugin-root", str(second))
-    assert result.returncode == 2
-    assert managed.read_bytes() == modified
-    assert reader.read_bytes() == original_reader
-
-
-@pytest.mark.skipif(CODEX is None, reason="Codex policy checker is unavailable")
-@pytest.mark.integration
-def test_real_policy_engine_matches_only_approved_collector_and_pr(tmp_path: Path) -> None:
-    """Prove emitted Starlark grants the approved command while preserving unrelated boundaries."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    target = "https://github.com/example/project/pull/7"
-    assert _run(home, "--plugin-root", str(root), "--approve-pr", target).returncode == 0
-    rules = home / "rules" / "codex-rig-pr-collection.rules"
-    collector = str(root / "shared" / "collect_pr.py")
-    cases = [
-        (["python", collector, "--target", target, "--out", "report-one", "--checkout"], True),
-        (["python3", collector, "--target", target, "--out", "report-two"], True),
-        (["python", collector, "--target", "https://github.com/example/project/pull/8"], False),
-        (["python", collector, "--target", "https://github.com/example/other/pull/7"], False),
-        (["python", collector, "--target", "7"], False),
-        (["python", str(root / "shared" / "github_read.py"), "--target", target], False),
-        (["rtk", "python", collector, "--target", target], False),
-    ]
-    for command, allowed in cases:
-        result = subprocess.run(
-            [CODEX, "execpolicy", "check", "--rules", str(rules), "--", *command],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        payload = json.loads(result.stdout)
-        assert (payload.get("decision") == "allow") is allowed, command
-
-    restriction = home / "rules" / "admin.rules"
-    for decision in ("prompt", "forbidden"):
-        restriction.write_bytes(f'prefix_rule(pattern=["python"], decision="{decision}")\n'.encode("utf-8"))
-        result = subprocess.run(
-            [CODEX, "execpolicy", "check", "--rules", str(rules), "--rules", str(restriction), "--", *cases[0][0]],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert result.returncode == 0, result.stderr
-        assert json.loads(result.stdout)["decision"] == decision
-
-
-def test_pr_grants_reject_rehashed_broad_pattern(tmp_path: Path) -> None:
-    """A checksum does not turn an arbitrary collector-wide rule into an owned PR grant."""
-    home = tmp_path / "home"
-    root = _installed_plugin(home, "1.2.3")
-    managed = home / "rules" / "codex-rig-pr-collection.rules"
-    managed.parent.mkdir()
-    body = b'prefix_rule(pattern=["python"], decision="allow")\n'
-    original = b"# codex-rig:pr-collection sha256=" + hashlib.sha256(body).hexdigest().encode() + b"\n" + body
-    managed.write_bytes(original)
-    result = _run(home, "--plugin-root", str(root))
-    assert result.returncode == 2
-    assert managed.read_bytes() == original
-    assert not (managed.parent / "codex-rig-github-read.rules").exists()

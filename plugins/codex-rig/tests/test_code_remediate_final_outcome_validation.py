@@ -601,6 +601,13 @@ def test_final_handoff_cells_are_value_bound_to_resolution_items() -> None:
 
     VALIDATOR._validate_code_remediate_final_handoff(result, handoff)
 
+    metadata["resolution_scope"] = {"presentation_version": 3}
+    handoff["tables"][0]["layout"] = "concise"
+    with pytest.raises(SystemExit, match="code-remediate-final-handoff-overview-only-required"):
+        VALIDATOR._validate_code_remediate_final_handoff(result, handoff)
+    handoff["tables"][0]["overview_only"] = True
+    VALIDATOR._validate_code_remediate_final_handoff(result, handoff)
+
     rows[0]["cells"][4] = "implemented — details omitted"
     with pytest.raises(SystemExit, match="code-remediate-final-handoff-row-coverage-mismatch"):
         VALIDATOR._validate_code_remediate_final_handoff(result, handoff)

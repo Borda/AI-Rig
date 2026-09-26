@@ -17,7 +17,6 @@ Run tiered review with strict output gates.
 {
   "scope": "optional working-tree|path|commit|pr; infer pr for bare number, #number, or PR URL",
   "target": "optional path, commit ref, PR number, PR URL, or current branch PR",
-  "approve_gh": "optional boolean; default false; --approve-gh means the user has already approved required GitHub operations; only a loaded matching host allow rule suppresses runtime approval",
   "done_when": "blocking issues are identified with gate decision"
 }
 ```
@@ -31,8 +30,7 @@ Run tiered review with strict output gates.
 
 Input shorthand:
 
-- Normalize a standalone `--approve-gh` before target or report parsing: set `approve_gh=true`. Remove `--approve-gh` before invoking `collect_pr.py`; it is a skill flag, not a collector option. Never infer it from PR evidence; only direct user invocation may supply it. Repeated exact `--approve-gh` is idempotent. Reject `--approve-gh=<value>` as `approve-gh-invalid-value`.
-- `$code-review 123 --approve-gh` => `scope=pr`, `target=123`, `approve_gh=true`. Outside `scope=pr`, fail `approve-gh-requires-pr` before collection. Without `--approve-gh`, preserve existing PR collection approval behavior.
+- `$code-review 123` => `scope=pr`, `target=123`. Reject unsupported flags before collection.
 - Canonical in-session: `$code-review 123` or `$code-review #123` => `scope=pr`, `target=123`.
 - Natural-language aliases: `code-review 123`, `code-review #123`, and `code-review PR 123` => `scope=pr`, `target=123`.
 - `code-review <github-pr-url>` => `scope=pr`, `target=<github-pr-url>`.
@@ -42,9 +40,7 @@ Never write to remote. PR review fetches evidence and creates a detached worktre
 
 ## Workflow (Exact Commands)
 
-Apply [GitHub Workflow Consent](../../shared/native-skill-contract.md#github-workflow-consent) whether or not `--approve-gh` is present: reuse existing scoped authorization; never require a flag reply or reinvocation. Ask only for genuinely missing consent through the permitted question control.
-
-For required GitHub operations covered by `--approve-gh` or recorded same-scope workflow consent, apply [Managed Host Preapproval](../../shared/native-skill-contract.md#managed-host-preapproval) to the helper actually used. Reuse the loaded matching host allow rule and execute directly; do not introduce a workflow confirmation or a wrapper that breaks matching. Diagnose unexpected prompts with the exact command and applicable rules. Missing or stricter host permissions remain authoritative.
+For allowed GitHub reads, run the direct collector under an active opted-in `github-read` profile or request runtime approval for the complete owning command. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); runtime permission and denial remain authoritative.
 
 ### 01: Create run directory
 
@@ -54,23 +50,15 @@ Run `create_run.py --skill code-review` per `../../shared/helper-cli-contract.md
 
 For local scopes, inspect `python PLUGIN_ROOT/shared/collect_diff.py --help`; collect normalized `scope`, optional `target`, and literal `<run-directory>` path.
 
-For PR scope, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`. For a numeric target, first run `python PLUGIN_ROOT/shared/select-git-remote.py --canonical-pr-url <positive-number> --cwd <source-repository>` locally and use its single printed canonical URL for both collector `--target` and any proposed runtime prefix; stop on missing or ambiguous local GitHub repository identity. A user-supplied URL must already pass the collector's canonical PR URL validation. Collect the resulting exact target into literal `<run-directory>` path with `--checkout --checkout-mode review`. For a current-branch target with no established PR URL, use one-shot runtime approval rather than guessing a reusable prefix; authoritative `pr.json` may bind a later collection.
+For PR scope, inspect `python PLUGIN_ROOT/shared/collect_pr.py --help`. For a numeric target, first run `python PLUGIN_ROOT/shared/select-git-remote.py --canonical-pr-url <positive-number> --cwd <source-repository>` locally; it selects valid GitHub `origin` despite fork remotes, or the sole GitHub remote if `origin` is absent. Use its printed canonical URL for collector `--target`; stop only if no safe default identity exists. A user-supplied URL takes precedence and must pass the collector's canonical PR URL and configured-remote validation. Collect the resulting exact target into literal `<run-directory>` path with `--checkout --checkout-mode review`. For a current-branch target with no established PR URL, collect directly; authoritative `pr.json` may bind a later collection.
 
-When `approve_gh=true`, treat required GitHub operations as already approved by the user. Do not ask for another workflow confirmation. Apply [PR Collection Preapproval](../../shared/native-skill-contract.md#pr-collection-preapproval) before collector execution, including the direct command and exact PR URL prefix. Do not create or modify runtime approval rules files.
+Apply [PR Collection Runtime Boundary](../../shared/native-skill-contract.md#pr-collection-runtime-boundary) before collector execution. Do not create or modify runtime approval rules files.
 
 After successful authoritative `pr.json` collection, run `create_run.py --skill code-review --promote-pr-run <run-directory>` and capture its single printed final path. The promotion derives the authoritative PR number from `pr.json`, allocates `.reports/codex/code-review/pr-<number>/run-<NNN>/`, and moves the complete run without overwriting another run. Use the printed promoted path literally for every later helper, artifact, specialist context, result, and final handoff. Never reconstruct the numbered path or keep writing to the temporary path.
 
 If collection fails before authoritative PR identity exists, keep the timestamped run as an unavailable diagnostic. It is not an assessed PR review and must not be promoted. Existing flat timestamped runs remain discoverable historical artifacts; do not migrate them.
 
-In runtimes with network sandboxing, execute the complete collector command with approved external network access from its first attempt under `../../shared/native-skill-contract.md`. Before requesting it, state:
-
-- `Action and purpose`: collect current PR evidence.
-- `External capability`: read-only GitHub access plus documented local checkout.
-- `Credential behavior`: `gh` is opaque local credential broker.
-- `Filesystem and worktree effects`: write collection artifacts and create a detached review worktree without switching the invoking worktree.
-- `Retry policy and safe denial outcome`: one classified recovery only, otherwise review is unavailable.
-- For Codex exec, set `sandbox_permissions="require_escalated"` on the collector with a narrow read-only GitHub justification; never request a broad `python` approval prefix. Apply the other shared runtime and denial boundaries. A direct approval for `gh pr view` does not cover `gh` spawned by the collector: the outer collector command owns its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic. Completed user authorization through `--approve-gh` removes workflow reconfirmation, never runtime permission checks.
-- If an agent-caused unapproved attempt returns `github-network` before any user approval request or denial, rerun that same complete collector command once through the runtime's external-network approval mechanism before producing a terminal unavailable result. This recovery exists only for that pre-denial sandbox mistake; after the user denies approval, the current turn stops and the retry is forbidden. Only after that approved collector attempt fails, external-network approval is unavailable, or the user denies it may the terminal collection-failure gate apply; never repeat more than one approved recovery attempt.
+Run the direct owning collector under an active opted-in `github-read` profile or with runtime approval for the complete command. Its nested GitHub CLI, HTTPS fallback, checkout, and Git fetch traffic remain bound by the collector contract. An unexpected runtime restriction or denial stops the collection attempt; diagnose the active permissions and exact command without broadening access or retrying the denied command. Report core collection failure through the existing unavailable-evidence gate.
 
 PR evidence has two tiers.
 
@@ -96,7 +84,7 @@ Checkout and source requirements:
 When `gh pr view` metadata fails, public unauthenticated HTTPS fallback is eligible only when all of these hold:
 
 - The failure is `github-network`, `github-auth`, `github-rate-limit`, or `command-timeout`.
-- The checkout target is trusted: canonical PR URL must match configured GitHub remote; numeric target requires exactly one distinct configured GitHub repository identity.
+- The checkout target is trusted: canonical PR URL must match a configured GitHub remote; a numeric target is bound to valid GitHub `origin`, or the sole GitHub remote when `origin` is absent.
 
 Ambiguous or unsafe targets, permission failures, not-found failures, and unclassified failures remain fail-closed.
 
@@ -134,14 +122,14 @@ If `files.txt` and `untracked.txt` are empty with no explicit target, fail befor
 
 **Terminal review-unavailable output gate:** A core T0 PR collection failure is process failure, not review result.
 
-- Start with a plain-English explanation of the stopped operation and its effect, then state `PR Review Availability: unavailable` and `Reason:` with the classified failure before verification, confidence, or next-step detail; also state `Source findings: not assessed` and `Merge decision: not made`. New handoffs use the shared presentation-version-2 renderer and its artifact-bound diagnostic contract; historical output remains readable.
+- Start with a plain-English explanation of the stopped operation and its effect, then state `PR Review Availability: unavailable` and `Reason:` with the classified failure before verification, confidence, or next-step detail; also state `Source findings: not assessed` and `Merge decision: not made`. New handoffs use the shared presentation-version-3 renderer and its artifact-bound diagnostic contract; historical version-2 output remains readable.
 - Use plain diagnostic prose with exactly process diagnostic, recovery action, and evidence path.
 - Do not emit a Markdown table: neither `PR Evidence Collection Recovery` nor `Review Findings and Merge Blocks` applies before source assessment.
 - Do not emit `needs-more-work`, `minor-changes`, `reject`, `not-aligned`, or any other merge recommendation.
 - Retain current-attempt metadata, checkout state, or partial diff artifacts for diagnosis, but label them unassessed and never turn them into findings.
 - Name classified failure and `<run-directory>/pr-error.txt`, then stop. For a review-worktree creation or source-state failure, explain the exact isolated checkout obstruction and link `<run-directory>/worktree-preflight.json` or `<run-directory>/checkout-state.json` when available; invoking-worktree edits are not checkout overlap. Do not insert protected path lists into the bound summary. Follow the final-handoff redaction contract; never summarize this as generic collector failure.
 - Still write canonical `result.json` with `status=fail`, zero findings, `review_status=unavailable`, and `collection_failure={"code": "<pr-error.txt text>", "artifact": "pr-error.txt"}`; review-specific validator rejects review decision, source findings, specialist artifacts, any table, or assessed-review sections.
-- For new unavailable results, all five canonical PR checks are explicitly `not-applicable` with nonempty reasons: collection stopped before PR verification. Use `--skip-lint`, `--skip-format`, `--skip-types`, `--skip-tests`, and `--skip-review`; never run print-only diagnostic commands as passing checks. Keep any independently executed recovery diagnostics in separate evidence, not PR verification. The generated v2 handoff must say checks were not run; historical artifacts retain their reading contract.
+- For new unavailable results, all five canonical PR checks are explicitly `not-applicable` with nonempty reasons: collection stopped before PR verification. Use `--skip-lint`, `--skip-format`, `--skip-types`, `--skip-tests`, and `--skip-review`; never run print-only diagnostic commands as passing checks. Keep any independently executed recovery diagnostics in separate evidence, not PR verification. The generated versioned handoff must say checks were not run; historical artifacts retain their reading contract.
 
 Before handing collection failure to user, inspect available `pr-error.txt`, `command-failure.json`, `checkout-state.json`, `worktree-preflight.json`, `pr-head-fetch.json`, and `target-branch.json` yourself. Compare expected and observed commit IDs when present; use non-mutating `git status --short`, `git branch --show-current`, and `git rev-parse HEAD` if local state remains uncertain. Retain failed attempt before new collection. Explain failing operation and observed cause first, followed by its exact code/evidence; missing detail stays explicitly unknown. Do not assign generic recovery to "local review environment" or tell user only to "repair the checkout failure".
 
@@ -206,7 +194,7 @@ Blocking defaults guide merge judgment; they are not automatic labels:
 
 ### 04: T2 risk-routed specialist fan-out
 
-Include in every reviewer context: return a scoped integer rating and evidence-backed rationale using 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. This adds to the existing findings/confidence output contract. The parent retains the rating and actual role for the header and preserves author attribution through consolidation.
+Include in every reviewer context: return a scoped integer rating and evidence-backed rationale using 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Retained text responses include `## Reviewer Assessment` with `Rating: <1-5>` and `Rationale: <nonblank explanation>` on separate lines; the App Server route uses its exact `assessment` object instead. This adds to the existing findings/confidence output contract. The parent retains the rating and actual role for the header and preserves author attribution through consolidation.
 
 Always:
 
@@ -248,6 +236,8 @@ Run all selected read-only reviewer passes concurrently: dispatch every independ
 5. Run normal manifest/result validators after joining wave. Mirror `execution_mode`, `execution_evidence_level="instruction-bounded-review"`, `execution_observed_controls`, and `write_parallel_eligible=false` from inspection summary. Mirror plan's `independent_review_required` as metadata `independence_required` and retain `independence_requirement_evidence`; derive `independence_satisfied` from actual coverage. Missing or rejected child evidence does not count as independent pass: preserve failed attempt separately, continue parent inspection, and record new parent-only fallback plan with same source and disclosed gap. An explicitly required independent review remains incomplete until that requirement is satisfied or user revises it.
 
 When strict native launcher cannot establish its mandatory portable reviewer controls, user may explicitly approve separate [App Server review route](app-server-review.md). Read that contract before preparing its frozen plan. It is paid, parent-owned local host integration with distinct evidence schema, not native inspection route, fabricated `read_host` declaration, or automatic permission to retry. Without that approval or passing capability check, preserve process limitation while continuing permitted source inspection.
+
+Rejected events retain only static generated-schema notification names or `unrecognized` as a diagnostic, never arbitrary method text or payload; the wave still fails closed.
 
 Before every strict portable native spawned route:
 
@@ -292,7 +282,7 @@ Use runtime-provided subagents when independence materially helps and follow por
 
 The strict portable native `specialist-manifest.json` uses schema version 3 and contains `review_run_id`, `parent_thread_id=$CODEX_THREAD_ID`, `review_input_sha256`, optional exact mirrored `sol_selection`, and triggered passes only. The instruction-bounded native inspection route uses validator-defined schema-five inspection evidence and its `inspection_execution` binding; keep that route distinct from portable runtime claims. Schema 2 remains readable only for historical artifacts and must not be produced by new review. The explicitly approved App Server route uses schema 4 as described in its linked contract; never mix native spawn attempts into it.
 
-- Every pass records `role_card_sha256` for exact installed `roles/<role>/ROLE.md`. Each spawn additionally records route, attempted routes, fallback reason, requested and observed controls, parent spawn event ID when available, child thread ID/path, turn ID, actual model/effort, context/output paths/hashes, status, and transient error type when applicable.
+- Before dispatch, copy the exact installed `roles/<role>/ROLE.md` bytes for every triggered role to `<run-directory>/role-cards/<role>/ROLE.md`. Retain these files with the run. Every pass records `role_card_sha256` for those bytes. Preflight and candidate validation require each retained file to match both the installed card and manifest digest; promoted-result intake checks the retained file and digest, then uses those bytes for context, model, and route evidence. A later installed-card change does not invalidate a completed run. Each spawn additionally records route, attempted routes, fallback reason, requested and observed controls, parent spawn event ID when available, child thread ID/path, turn ID, actual model/effort, context/output paths/hashes, status, and transient error type when applicable.
 - Schema-five inspection may omit `event_id` only when actual parent logs contain one `spawn_agent` call and one matching `function_call_output` at `spawn_call_id`, whose JSON output is exactly `{"task_name": "<canonical child path>"}`. The validator binds the exact context, task name and `fork_turns=none`, requires a unique child session with matching parent/path metadata, and requires its creation timestamp inside the timezone-aware call/receipt interval. Missing, malformed, ambiguous or stale session evidence fails closed. Retain the original logs; never synthesize an activity event. A supplied but invalid `event_id` cannot fall back to receipts. Other schemas still require their existing provenance.
 - `selected_attempt` identifies completed output.
 - Validator checks hash-derived child name, parent spawn, child linkage, actual model/effort, final child message, hashes, and provenance header against Codex rollout logs.
@@ -327,11 +317,11 @@ Independence gate:
 
 ### 06: Write `<run-directory>/review-notes.md`
 
-Set `CODE_REVIEW_METADATA.finding_records_version=1` for every new assessed review; validator now rejects schema-v2 candidate that omits it — there is no bare-record fallback for new writes. Schema-v1 historical results remain exempt and readable without marker.
+Set `CODE_REVIEW_METADATA.finding_records_version=1` for every new assessed review. New assessed results use result schema 3, and the validator requires this marker under both candidate and promoted filenames. Historical schema-2 results and schema-3 results lacking retained role-card proof remain readable through `find-review-report.py --archive-result <path>` as explicitly unverified data; they cannot certify completion or feed remediation. Earlier strict portable or substituted runs without full retained card bytes cannot be certified after installed-card drift. Direct legacy validator calls may check fields and retained assessments, but do not authenticate archive provenance after role-card upgrades.
 
 Define each finding once in `CODE_REVIEW_METADATA.review_findings` with stable `id`, `severity`, `title`, `summary`, `required_change`, nonempty ordered `evidence` strings, and `closure_evidence`. These enriched records are canonical; counts, notes and final actions are views, never separately ingested findings. In `Findings`, reference canonical IDs instead of repeating complete finding text. Decision summaries and confidence gaps sharing finding's closure cross-reference that ID; independent operational obligations remain distinct. Keep genuine code/test/online evidence in canonical record, not merely repeated report-line mentions.
 
-For every new assessed review, also record `CODE_REVIEW_METADATA.reviewer_assessments`: one ordered `{role, rating, evidence}` record per actual reviewer, using a readable role name, an integer from 1 through 5, and the retained assessment's evidence pointer. Ask each reviewer to state its scoped rating and rationale; never infer approval from silence or confidence. In-main coverage uses an explicit label such as `Software engineer (parent substitute)`; parent-only reviews name the main reviewer. Do not invent skipped participants. Ratings are scoped judgments, not severity or confidence scores and never averaged into the overall verdict. Preserve disagreements for parent reconciliation. Every canonical finding and operational blocker carries a nonempty `authors` list of matching reviewer labels; deduplication retains every contributing author.
+For every new assessed review, also record `CODE_REVIEW_METADATA.reviewer_assessments`: one ordered `{role, rating, evidence}` record per actual reviewer, using a readable role name, an integer from 1 through 5, and the retained assessment's evidence pointer. Ask each reviewer to state its scoped rating and rationale; never infer approval from silence or confidence. For `mode=app-server`, copy `rating` from the retained JSON `assessment`; for other specialist passes, point to the retained response containing `## Reviewer Assessment`, `Rating: <1-5>`, and `Rationale: <nonblank explanation>`. In-main coverage uses the covered role name with ` (parent substitute)`, such as `Software engineer (parent substitute)`, and writes that same section in its retained substitute response. Parent-only reviews name the main reviewer, point to `review-notes.md`, and add `## Main Reviewer Assessment` with the same Rating and Rationale lines. The number of labels marked as parent substitutes must cover every pass with `mode=substituted`. Do not invent skipped participants. Ratings are scoped judgments, not severity or confidence scores and never averaged into the overall verdict. Preserve disagreements for parent reconciliation. Every canonical finding and operational blocker carries a nonempty `authors` list of matching reviewer labels; deduplication retains every contributing author.
 
 Required sections:
 
@@ -552,11 +542,12 @@ Final chat follows shared ordered frame with these review-specific branches.
 
 For assessed review:
 
-- New schema-v2 results use enriched canonical `CODE_REVIEW_METADATA.review_findings` records from step 06, or `[]` for none. Historical exact `{"id":"<stable finding ID>","severity":"critical|high|medium|low"}` records remain accepted; do not rewrite historical artifacts. Derive IDs from assessed source findings before writing action rows, never reconstruct them from table. Per-severity totals must equal `findings`.
+- New assessed schema-3 results use enriched canonical `CODE_REVIEW_METADATA.review_findings` records from step 06, or `[]` for none. Historical exact `{"id":"<stable finding ID>","severity":"critical|high|medium|low"}` records remain accepted as archive data; do not rewrite historical artifacts. Derive IDs from assessed source findings before writing action rows, never reconstruct them from table. Per-severity totals must equal `findings`.
 - Optional `operational_blockers` contains canonical `id`, descriptive `title`, short `required_change`, and nonempty ordered `evidence` for non-finding actions, separate from severity totals. Historical exact `{"id":"<stable blocker ID>"}` records remain readable. IDs must be nonblank, unique and disjoint. Every required notes action table and final findings table uses those exact IDs as its first cell and covers complete declared set once—no missing, duplicate or unknown action.
 - Historical schema-v1 count-only artifacts remain readable; new reviews must not downgrade to v1 to avoid identity checks. Terminal unavailable/closed results omit both assessed identity lists.
-- For schema-v2 assessed handoffs, `outcome` is exactly `{"title": "Review Decision", "summary": "Recommendation: <recommendation>."}` with recommendation copied from `CODE_REVIEW_METADATA.review_decision.recommendation`. Keep rationale, blockers, and required next work in decision summary and result rows; never replace canonical outcome with unbound approval statement.
+- For versioned assessed handoffs, `outcome` is exactly `{"title": "Review Decision", "summary": "Recommendation: <recommendation>."}` with recommendation copied from `CODE_REVIEW_METADATA.review_decision.recommendation`. Keep rationale, blockers, and required next work in decision summary and result rows; never replace canonical outcome with unbound approval statement.
 - `Results` reproduces fresh `PR Snapshot` immediately after summary and before any findings for every assessed PR. It also reproduces canonical `Review Findings and Merge Blocks` table for every assessed non-`accept-as-is` PR and every `needs-more-work` decision in another scope; this table is mandatory decision handoff.
+- For a current schema-3 non-PR `Review Snapshot`, set `Scope` to the exact normalized `metadata.scope` (`working-tree`, `path`, or `commit`) and `Revision` to `diff sha256:<digest>` from the retained `diff.patch`; the validator rehashes that file. This coordinate identifies reviewed diff bytes, not the target path or commit identity, which the collector does not retain as a structured field. Disclose that identity limit rather than displaying an unbound commit claim.
 - Apply shared `Verification`, `Remaining`, `Next steps`, `Confidence`, and supplemental `Artifact` rules; name reviewed evidence, checks, unresolved blocks, owners, and material limits.
 
 For terminal core T0 PR collection failure:

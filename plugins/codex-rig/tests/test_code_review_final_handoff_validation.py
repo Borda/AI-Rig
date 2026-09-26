@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 from types import ModuleType
@@ -272,6 +273,99 @@ def test_review_snapshot_rows_are_bound_to_their_non_pr_heading() -> None:
         VALIDATOR._validate_code_review_final_handoff(result, handoff)
 
 
+def test_current_review_snapshot_binds_scope_and_retained_diff_digest(tmp_path: Path) -> None:
+    """Reject a displayed local scope or revision contradicted by retained patch evidence."""
+    diff = b"diff --git a/widget.py b/widget.py\n"
+    (tmp_path / "diff.patch").write_bytes(diff)
+    digest = hashlib.sha256(diff).hexdigest()
+    result = _result("needs-more-work")
+    result["schema_version"] = 3
+    metadata = result["metadata"]
+    metadata.update(
+        scope="working-tree",
+        review_input_sha256=digest,
+        reviewer_assessments=[{"role": "QA specialist", "rating": 3, "evidence": "specialists/qa.md"}],
+        finding_records_version=1,
+        review_findings=[],
+        operational_blockers=[],
+    )
+    handoff = _handoff("needs-more-work", "needs work")
+    handoff["presentation_version"] = 3
+    snapshot = handoff["tables"][0]
+    _reshape_snapshot(snapshot, "Review Snapshot", "needs work")
+    snapshot["reviewers"] = metadata["reviewer_assessments"]
+    snapshot["summary"] = metadata["review_decision"]["summary"]
+    snapshot["rows"][0]["cells"][1] = "working-tree"
+    snapshot["rows"][1]["cells"][1] = f"diff sha256:{digest}"
+    VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+
+    snapshot["rows"][2]["cells"][1] = "passing"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-ci-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+    snapshot["rows"][2]["cells"][1] = "unavailable"
+    snapshot["rows"][3]["cells"][1] = "invented"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-type-invalid"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+    snapshot["rows"][3]["cells"][1] = "perf"
+
+    snapshot["rows"][0]["cells"][1] = "path"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-scope-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+    snapshot["rows"][0]["cells"][1] = "working-tree"
+    snapshot["rows"][1]["cells"][1] = f"diff sha256:{'0' * 64}"
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-revision-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+    snapshot["rows"][1]["cells"][1] = f"diff sha256:{digest}"
+    (tmp_path / "diff.patch").write_bytes(b"changed after review\n")
+    with pytest.raises(SystemExit, match="code-review-final-handoff-review-snapshot-source-invalid"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, out_dir=tmp_path)
+
+
+@pytest.mark.parametrize("candidate", [False, True])
+def test_non_pr_current_review_rejects_extra_pr_snapshot(tmp_path: Path, candidate: bool) -> None:
+    """A PR-looking table must not bypass the retained local diff binding."""
+    diff = b"diff --git a/widget.py b/widget.py\n"
+    (tmp_path / "diff.patch").write_bytes(diff)
+    digest = hashlib.sha256(diff).hexdigest()
+    result = _result("accept-as-is")
+    result["schema_version"] = 3
+    metadata = result["metadata"]
+    metadata.update(
+        scope="working-tree",
+        review_input_sha256=digest,
+        reviewer_assessments=[{"role": "QA specialist", "rating": 1, "evidence": "specialists/qa.md"}],
+        finding_records_version=1,
+        review_findings=[],
+        operational_blockers=[],
+    )
+    handoff = _handoff("accept-as-is", "approve")
+    handoff["presentation_version"] = 3
+    pr_snapshot = handoff["tables"][0]
+    review_snapshot = {**pr_snapshot, "rows": [dict(row) for row in pr_snapshot["rows"]]}
+    _reshape_snapshot(review_snapshot, "Review Snapshot", "approve")
+    review_snapshot["rows"][0]["cells"][1] = "working-tree"
+    review_snapshot["rows"][1]["cells"][1] = "diff sha256:invalid"
+    review_snapshot["reviewers"] = metadata["reviewer_assessments"]
+    review_snapshot["summary"] = metadata["review_decision"]["summary"]
+    handoff["tables"].append(review_snapshot)
+    (tmp_path / "pr.json").write_text(
+        json.dumps(
+            {
+                "number": 1399,
+                "title": "Pack targets",
+                "url": "https://github.com/example/project/pull/1399",
+                "author": {"login": "contributor"},
+                "statusCheckRollup": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    pr_snapshot["rows"][2]["cells"][1] = "unavailable"
+
+    with pytest.raises(SystemExit, match="code-review-final-handoff-snapshot-scope-mismatch"):
+        VALIDATOR._validate_code_review_final_handoff(result, handoff, candidate=candidate, out_dir=tmp_path)
+
+
 @pytest.mark.parametrize(
     "malformed_fields",
     [
@@ -502,8 +596,9 @@ def test_review_handoff_rejects_a_new_candidate_missing_the_canonical_marker() -
         ),
     ],
 )
-def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
-    tmp_path: Path, invalid_action: str, checkout_state: dict[str, object]
+@pytest.mark.parametrize("presentation_version", [2, 3])
+def test_unavailable_versioned_handoff_binds_collection_diagnostics_to_safe_artifacts(
+    tmp_path: Path, invalid_action: str, checkout_state: dict[str, object], presentation_version: int
 ) -> None:
     """Reject a generic checkout-repair message that omits the observed collection failure."""
     code = "command-failed:local-pr-checkout"
@@ -523,7 +618,7 @@ def test_unavailable_v2_handoff_binds_collection_diagnostics_to_safe_artifacts(
     checkout_status = checkout_state["status"]
     assert isinstance(checkout_status, str)
     handoff = {
-        "presentation_version": 2,
+        "presentation_version": presentation_version,
         "branch": "unavailable",
         "outcome": {
             "title": "PR Review Availability",

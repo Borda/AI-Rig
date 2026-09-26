@@ -5,15 +5,16 @@
 
 Provide portable local Codex plugin synchronization while preserving explicit action selection and bounded command
 output. It refreshes the canonical Git marketplace registration and clean-installs the managed plugin set so local Codex
-state can be restored predictably. Setup also projects reusable GitHub-reader approval from the newly installed version;
-teardown removes that approval before removing the plugin providing its lifecycle helper.
+state can be restored predictably. Setup also installs the workspace-derived GitHub-read profile; teardown removes that
+profile before removing the plugin providing its lifecycle helper.
 
 ## Scope
 
 Manages the configured local plugin set only; it neither edits GitHub state nor substitutes for a marketplace
 publication workflow. The script may invoke native local Codex commands, but it does not decide release contents or
-alter remote repositories. Explicit install includes the reader's existing GitHub reads, local PR checkout, and output
-writes through a dedicated managed user rule; it never grants arbitrary Python or direct GitHub CLI execution.
+alter remote repositories. Explicit install configures an opt-in GitHub-read profile for the reader's GitHub reads,
+local PR checkout, and output writes. That profile grants GitHub-domain network access and workspace `.git` writes to
+every command in a selected session; workflow policy still forbids remote mutation.
 
 ## Usage
 
@@ -42,6 +43,7 @@ optional cleanup may be represented as a bounded non-success result.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -149,28 +151,30 @@ def _run(run: RunCommand, command: list[str], *, required: bool = True) -> subpr
     return result
 
 
-def _run_github_rule_installer(run: RunCommand, command: list[str], stdout: TextIO) -> subprocess.CompletedProcess[str]:
-    """Run the local rule helper without hiding its completed-status output."""
+def _run_github_profile_installer(
+    run: RunCommand, command: list[str], stdout: TextIO
+) -> subprocess.CompletedProcess[str]:
+    """Run the local profile helper without hiding its completed-status output."""
     result = _run(run, command, required=False)
     if result.stdout:
         print(result.stdout.rstrip(), file=stdout)
     if result.returncode != 0:
         detail = (result.stderr or "command failed").strip()[:512]
-        raise SyncError(f"GitHub-rule installer failed ({result.returncode}): {detail}")
+        raise SyncError(f"GitHub-profile installer failed ({result.returncode}): {detail}")
     return result
 
 
 def _validate_selected_payload(root: Path) -> Path:
-    """Verify the selected Codex Rig package and required rule helper before cleanup."""
+    """Verify the selected Codex Rig package and required profile helper before cleanup."""
     plugin_root = root / "plugins" / "codex-rig"
     try:
         verify_package(plugin_root)
     except (OSError, PackageIdentityError) as error:
         raise SyncError(f"selected Codex Rig package failed verification: {error}") from error
-    rules_installer = plugin_root / "scripts" / "install_github_read_rules.py"
-    if rules_installer.is_symlink() or not rules_installer.is_file():
-        raise SyncError("installed GitHub-rule installer is incomplete or linked")
-    return rules_installer
+    profile_installer = plugin_root / "scripts" / "install_github_read_rules.py"
+    if profile_installer.is_symlink() or not profile_installer.is_file():
+        raise SyncError("installed GitHub-profile installer is incomplete or linked")
+    return profile_installer
 
 
 def _json_output(result: subprocess.CompletedProcess[str], label: str) -> dict[str, object]:
@@ -298,7 +302,7 @@ def _clear(run: RunCommand, environ: Mapping[str, str], stdout: TextIO) -> int:
         installer = Path(__file__).resolve().with_name(filename)
         command = [sys.executable, str(installer), "--remove", "--codex-home", str(_codex_home(environ))]
         if filename == "install_github_read_rules.py":
-            _run_github_rule_installer(run, command, stdout)
+            _run_github_profile_installer(run, command, stdout)
             continue
         result = _run(run, command)
         if result.stdout:
@@ -315,6 +319,8 @@ def sync_codex(
     stdout: TextIO = sys.stdout,
 ) -> int:
     """Execute one Codex-only restore or teardown with argv-safe subprocesses."""
+    if sys.version_info < (3, 11) and importlib.util.find_spec("tomli") is None:
+        raise SyncError("Python 3.10 profile sync requires tomli; install it before running sync")
     if args.action == SyncAction.CLEAR:
         return _clear(run, environ, stdout)
 
@@ -350,7 +356,7 @@ def sync_codex(
     root, _source_type = _marketplace_state(run)
     if root is None:
         raise SyncError("marketplace root is unavailable after refresh")
-    rules_installer = _validate_selected_payload(root)
+    profile_installer = _validate_selected_payload(root)
     revision = _run(run, ["git", "-C", str(root), "rev-parse", "HEAD"], required=False)
     revision_text = revision.stdout.strip()
     if revision.returncode == 0 and revision_text:
@@ -374,9 +380,9 @@ def sync_codex(
         raise SyncError("installed Codex Rig version is invalid")
     home = _codex_home(environ)
     installed_root = home / "plugins" / "cache" / MARKETPLACE / "codex-rig" / version
-    _run_github_rule_installer(
+    _run_github_profile_installer(
         run,
-        [sys.executable, str(rules_installer), "--plugin-root", str(installed_root), "--codex-home", str(home)],
+        [sys.executable, str(profile_installer), "--plugin-root", str(installed_root), "--codex-home", str(home)],
         stdout,
     )
 

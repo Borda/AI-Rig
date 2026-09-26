@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from html import escape
 import json
 import re
 import subprocess
@@ -196,7 +197,7 @@ SKILL_REQUIREMENTS: dict[str, dict[str, object]] = {
     "challenge-resolve": {
         "files": {
             "loop-ledger.json": [],
-            "loop-report.md": ["Scope", "Rounds", "Findings", "Recovery", "Verification"],
+            "loop-report.md": ["Scope", "Rounds", "Findings", "Verification"],
         },
     },
     "assess": {"files": {}},
@@ -450,6 +451,8 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
     if presentation in {2, 3} and tables[0].get("layout") != {2: "grouped", 3: "concise"}[presentation]:
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
+    if presentation == 3 and tables[0].get("overview_only") is not True:
+        raise SystemExit("code-remediate-final-handoff-overview-only-required")
     expected_rows = []
     expected_details = []
     expected_source_records = []
@@ -514,17 +517,56 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
         raise SystemExit("code-remediate-final-handoff-source-coverage-mismatch")
 
 
+def _code_review_pr_ci_snapshot(rollup: object) -> str:
+    """Summarize collected PR checks using failure, pending, then passing precedence."""
+    if rollup is None or rollup == []:
+        return "unavailable"
+    if not isinstance(rollup, list):
+        raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
+    failed: list[str] = []
+    pending: list[str] = []
+    for check in rollup:
+        if not isinstance(check, dict):
+            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
+        if check.get("__typename") == "CheckRun":
+            name = check.get("name")
+            status = check.get("status")
+            conclusion = check.get("conclusion")
+            is_pending = status != "COMPLETED"
+            is_failed = not is_pending and conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}
+        elif check.get("__typename") == "StatusContext":
+            name = check.get("context")
+            state = check.get("state")
+            is_pending = state not in {"SUCCESS", "FAILURE", "ERROR"}
+            is_failed = state in {"FAILURE", "ERROR"}
+        else:
+            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
+        if not isinstance(name, str) or not name:
+            raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
+        if is_failed:
+            failed.append(name)
+        elif is_pending:
+            pending.append(name)
+    if failed:
+        return f"failing — {', '.join(failed)}"
+    if pending:
+        return f"pending — {', '.join(pending)}"
+    return "passing"
+
+
 def _validate_code_review_final_handoff(
-    result: dict[str, Any], handoff: dict[str, Any], *, candidate: bool = False
+    result: dict[str, Any], handoff: dict[str, Any], *, candidate: bool = False, out_dir: Path | None = None
 ) -> None:
-    """Bind review presentation to its result, requiring attribution only for new assessed candidates."""
-    if handoff.get("branch") == "caller-contract":
-        return
+    """Bind current review branches to results while retaining historical caller contracts."""
     metadata = result.get("metadata")
     if not isinstance(metadata, dict):
         raise SystemExit("code-review-final-handoff-metadata-invalid")
     review_status = metadata.get("review_status")
     expected_branch = review_status if review_status in {"unavailable", "closed"} else "assessed"
+    if result.get("schema_version") == 3 and expected_branch == "assessed" and handoff.get("presentation_version") != 3:
+        raise SystemExit("review-current-handoff-presentation-v3-required")
+    if handoff.get("branch") == "caller-contract" and result.get("schema_version") != 3:
+        return
     if handoff.get("branch") != expected_branch:
         raise SystemExit("code-review-final-handoff-branch-mismatch")
     if expected_branch == "assessed":
@@ -545,9 +587,13 @@ def _validate_code_review_final_handoff(
         if isinstance(table, dict) and isinstance(table.get("heading"), str)
     }
     headings = set(tables_by_heading)
+    if result.get("schema_version") == 3 and expected_branch == "assessed":
+        expected_snapshot = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
+        if headings & {"PR Snapshot", "Review Snapshot"} != {expected_snapshot}:
+            raise SystemExit("code-review-final-handoff-snapshot-scope-mismatch")
     reviewer_tables = [table for table in tables if isinstance(table, dict) and "reviewers" in table]
     assessments = metadata.get("reviewer_assessments")
-    if candidate and expected_branch == "assessed":
+    if (candidate or result.get("schema_version") == 3) and expected_branch == "assessed":
         snapshot_heading = "PR Snapshot" if metadata.get("scope") == "pr" else "Review Snapshot"
         if (
             not isinstance(assessments, list)
@@ -605,10 +651,54 @@ def _validate_code_review_final_handoff(
             or suggestion_cells[1] != suggestions.get(recommendation)
         ):
             raise SystemExit(f"code-review-final-handoff-{label}-suggestion-mismatch")
+        if snapshot_heading == "Review Snapshot" and result.get("schema_version") == 3:
+            if rows[0]["cells"][1] != metadata.get("scope"):
+                raise SystemExit("code-review-final-handoff-review-snapshot-scope-mismatch")
+            if out_dir is None:
+                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid")
+            try:
+                diff_digest = hashlib.sha256((out_dir / "diff.patch").read_bytes()).hexdigest()
+            except OSError as exception:
+                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid") from exception
+            if metadata.get("review_input_sha256") != diff_digest:
+                raise SystemExit("code-review-final-handoff-review-snapshot-source-invalid")
+            if rows[1]["cells"][1] != f"diff sha256:{diff_digest}":
+                raise SystemExit("code-review-final-handoff-review-snapshot-revision-mismatch")
+            # A local review has no retained remote CI run. Keep its status explicit.
+            if rows[2]["cells"][1] != "unavailable":
+                raise SystemExit("code-review-final-handoff-review-snapshot-ci-mismatch")
+            if rows[3]["cells"][1] not in {"fix", "feat", "refactor", "perf", "docs", "ci", "chore", "test", "mixed"}:
+                raise SystemExit("code-review-final-handoff-review-snapshot-type-invalid")
+        if candidate and snapshot_heading == "PR Snapshot" and out_dir is not None:
+            pr = _load_json(out_dir / "pr.json")
+            number = pr.get("number")
+            title = pr.get("title")
+            url = pr.get("url")
+            author = pr.get("author")
+            login = author.get("login") if isinstance(author, dict) else None
+            if (
+                type(number) is not int
+                or number < 1
+                or not isinstance(title, str)
+                or not title.strip()
+                or not isinstance(url, str)
+                or not url.strip()
+                or not isinstance(login, str)
+                or not login.strip()
+            ):
+                raise SystemExit("code-review-final-handoff-pr-snapshot-source-invalid")
+            expected_values = (
+                f"[#{number} — {escape(title, quote=False).replace('[', '&#91;').replace(']', '&#93;')}]({url})",
+                f"@{login}",
+                _code_review_pr_ci_snapshot(pr.get("statusCheckRollup")),
+            )
+            types = {"fix", "feat", "refactor", "perf", "docs", "ci", "chore", "test", "mixed"}
+            if tuple(row["cells"][1] for row in rows[:3]) != expected_values or rows[3]["cells"][1] not in types:
+                raise SystemExit("code-review-final-handoff-pr-snapshot-value-mismatch")
     finding_total = sum(result["findings"].values())
     if expected_branch == "assessed" and finding_total and "Review Findings and Merge Blocks" not in headings:
         raise SystemExit("code-review-final-handoff-findings-table-missing")
-    if expected_branch == "assessed" and result.get("schema_version") == 2:
+    if expected_branch == "assessed" and result.get("schema_version") in {2, 3}:
         records = metadata.get("review_findings")
         blockers = metadata.get("operational_blockers", [])
         if not isinstance(records, list) or not isinstance(blockers, list):
@@ -646,6 +736,41 @@ def _validate_code_review_final_handoff(
                     raise SystemExit("code-review-final-handoff-finding-content-mismatch")
 
 
+def _environment_limited_commit(
+    result: dict[str, Any],
+    handoff: dict[str, Any],
+    unresolved: dict[str, Any],
+    open_items: list[dict[str, Any]],
+) -> bool:
+    """Allow a disclosed commit limit only for an environment-owned selected obligation."""
+    return (
+        result["status"] == "fail"
+        and not result["checks_failed"]
+        and result["findings"]["critical"] == 0
+        and all(check["status"] in {"pass", "not-applicable"} for check in handoff["verification"])
+        and bool(open_items)
+        and unresolved["selected_items_unresolved"] == len(open_items) == unresolved["environment_blocked_items"]
+        and unresolved["all_local_actionable_items_closed"]
+        and all(
+            unresolved[key] == 0
+            for key in (
+                "local_actionable_items_unresolved",
+                "process_gate_items_unresolved",
+                "external_owner_items",
+                "user_deferred_items",
+            )
+        )
+        and all(
+            item["resolution_status"] == "unresolved" and item["resolved_how"].startswith("Blocked: ")
+            for item in open_items
+        )
+        and all(
+            group["reason"] == "environment-blocked" and group["owner"] == "environment"
+            for group in unresolved["unresolved_reason_groups"]
+        )
+    )
+
+
 def _validate_final_handoff(
     result: dict[str, Any], skill: str, out_dir: Path, gates: dict[str, Any], *, candidate: bool = False
 ) -> None:
@@ -653,7 +778,7 @@ def _validate_final_handoff(
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
         return
-    if schema_version != RESULT_SCHEMA_VERSION:
+    if schema_version != RESULT_SCHEMA_VERSION and not (skill == "code-review" and schema_version == 3):
         raise SystemExit("unsupported-result-schema-version")
     _validate_result_artifact_path(out_dir, result.get("artifact_path"))
     metadata = result.get("metadata")
@@ -706,7 +831,7 @@ def _validate_final_handoff(
             raise SystemExit("remediation-commit-disposition-missing")
         if disposition is not None:
             if disposition["status"] in {"pending", "committed"}:
-                if result["status"] != "pass":
+                if result["status"] != "pass" and not isinstance(metadata.get("unresolved_summary"), dict):
                     raise SystemExit("remediation-commit-result-blocked")
                 # Explicit deferment outside the plan is not required closure; inconsistent counts still block.
                 _validate_code_remediate_unresolved_summary(metadata, out_dir)
@@ -725,10 +850,15 @@ def _validate_final_handoff(
                         "needs-clarification",
                     }
                 ]
-                if (
-                    len(selected_items) != len(selected_indexes)
-                    or unresolved["selected_items_total"] != len(selected_items)
-                    or unresolved["selected_items_unresolved"] != len(open_items)
+                if len(selected_items) != len(selected_indexes) or unresolved["selected_items_total"] != len(
+                    selected_items
+                ):
+                    raise SystemExit("remediation-commit-closure-blocked")
+                environment_limited = _environment_limited_commit(result, handoff, unresolved, open_items)
+                if result["status"] != "pass" and not environment_limited:
+                    raise SystemExit("remediation-commit-result-blocked")
+                closure_blocked = (
+                    unresolved["selected_items_unresolved"] != len(open_items)
                     or any(
                         item["resolution_status"].strip().casefold() != "unresolved"
                         or not item["resolved_how"].startswith("Deferred: ")
@@ -749,11 +879,14 @@ def _validate_final_handoff(
                         group["reason"] != "user-deferred" or group["owner"] != "user"
                         for group in unresolved["unresolved_reason_groups"]
                     )
-                ):
+                )
+                if closure_blocked and not environment_limited:
                     raise SystemExit("remediation-commit-closure-blocked")
                 plan = out_dir / "commit-plan.md"
                 if plan.is_symlink() or not plan.is_file():
                     raise SystemExit("remediation-commit-plan-missing")
+                if environment_limited:
+                    _require_commit_plan_sections(plan)
                 evidence = _code_remediate_run_path(
                     out_dir, disposition["evidence"], "remediation-commit-evidence-invalid"
                 )
@@ -761,7 +894,7 @@ def _validate_final_handoff(
                     raise SystemExit("remediation-commit-evidence-invalid")
         _validate_code_remediate_final_handoff(result, handoff)
     elif skill == "code-review":
-        _validate_code_review_final_handoff(result, handoff, candidate=candidate)
+        _validate_code_review_final_handoff(result, handoff, candidate=candidate, out_dir=out_dir)
 
 
 def _require_file_sections(path: Path, sections: list[str]) -> None:
@@ -771,6 +904,21 @@ def _require_file_sections(path: Path, sections: list[str]) -> None:
     for section in sections:
         if section.lower() not in text.lower():
             raise SystemExit(f"missing-artifact-section:{path.name}:{section}")
+
+
+def _require_commit_plan_sections(path: Path) -> None:
+    """Require written commit and verification context; text cannot prove user authorization."""
+    text = path.read_text(encoding="utf-8")
+    for heading in ("Explicit Commit Request", "Remaining Verification"):
+        matches = list(re.finditer(rf"(?m)^## {re.escape(heading)}[ \t]*$", text))
+        if len(matches) != 1:
+            raise SystemExit(f"remediation-commit-plan-section-missing:{heading}")
+        start = matches[0].end()
+        following_heading = re.search(r"(?m)^## ", text[start:])
+        body = text[start : start + following_heading.start() if following_heading else len(text)]
+        prose = " ".join(line for line in body.splitlines() if line.strip() and not line.lstrip().startswith("#"))
+        if len(re.findall(r"\b\w+\b", prose)) < 2:
+            raise SystemExit(f"remediation-commit-plan-section-empty:{heading}")
 
 
 def _validate_jsonl(path: Path) -> None:
@@ -874,7 +1022,7 @@ def _validate_code_review_unavailable_gates(result: dict[str, Any], gates: dict[
     metadata = result.get("metadata")
     if (
         skill != "code-review"
-        or result.get("schema_version") != RESULT_SCHEMA_VERSION
+        or result.get("schema_version") not in {RESULT_SCHEMA_VERSION, 3}
         or not isinstance(metadata, dict)
         or metadata.get("review_status") != "unavailable"
     ):
@@ -2423,10 +2571,29 @@ def _validate_code_remediate_merge_resolution(
         raise SystemExit("code-remediate-merge-resolution-metadata-mismatch")
 
 
-def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dict[str, Any]) -> None:
+def _validate_adversarial_loop(
+    result: dict[str, Any], out_dir: Path, gates: dict[str, Any], *, candidate: bool, current_result: bool = False
+) -> None:
     """Bind the loop decision to retained snapshots, reports, and visible result rows."""
     if result.get("schema_version") != 2:
         raise SystemExit("adversarial-loop-schema-v2-required")
+    table_version = result.get("metadata", {}).get("challenge_table_contract_version")
+    if table_version is None:
+        raise SystemExit("adversarial-loop-table-contract-required")
+    if type(table_version) is not int:
+        raise SystemExit("adversarial-loop-table-contract-version-invalid")
+    if table_version != 1:
+        raise SystemExit("adversarial-loop-table-contract-version-required")
+    scope = result["metadata"].get("challenge_scope")
+    if "child_runs" in _load_json(out_dir / "final-handoff.json") and not (
+        isinstance(scope, dict) and scope.get("mode") == "chunked"
+    ):
+        raise SystemExit("adversarial-loop-child-scores-scope-invalid")
+    if isinstance(scope, dict) and scope.get("mode") == "chunked":
+        _validate_chunked_coordinator(result, out_dir, gates, candidate=candidate, current_result=current_result)
+        return
+    if candidate or "challenge_scope" in result["metadata"]:
+        _validate_challenge_scope(result["metadata"], out_dir)
     ledger_path = out_dir / "loop-ledger.json"
     completed = subprocess.run(
         [sys.executable, str(Path(__file__).with_name("adversarial_loop.py")), "--ledger", str(ledger_path)],
@@ -2437,24 +2604,26 @@ def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dic
     if completed.returncode:
         raise SystemExit("adversarial-loop-invalid-ledger:" + completed.stderr.strip())
     action_contract = result.get("metadata", {}).get("action_contract_version")
-    if type(action_contract) is not int or action_contract != 1:
+    if type(action_contract) is not int or action_contract != 2:
         raise SystemExit("adversarial-loop-action-contract-required")
-    if action_contract == 1:
-        actions = subprocess.run(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("adversarial_loop.py")),
-                "--ledger",
-                str(ledger_path),
-                "--actions",
-                str(out_dir / "loop-actions.json"),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if actions.returncode:
-            raise SystemExit("adversarial-loop-invalid-actions:" + actions.stderr.strip())
+    actions_path = out_dir / "loop-actions.json"
+    actions = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("adversarial_loop.py")),
+            "--ledger",
+            str(ledger_path),
+            "--actions",
+            str(actions_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if actions.returncode:
+        raise SystemExit("adversarial-loop-invalid-actions:" + actions.stderr.strip())
+    if _load_json(actions_path).get("schema_version") != action_contract:
+        raise SystemExit("adversarial-loop-action-contract-required")
     summary = json.loads(completed.stdout)
     if result.get("metadata", {}).get("adversarial_loop") != summary:
         raise SystemExit("adversarial-loop-summary-mismatch")
@@ -2491,7 +2660,7 @@ def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dic
     }
     if result["findings"] != expected_findings:
         raise SystemExit("adversarial-loop-finding-count-mismatch")
-    _validate_adversarial_loop_rows(out_dir, ledger, summary)
+    _validate_adversarial_loop_rows(out_dir, ledger, summary, table_version=table_version)
     evidence_validator = (
         Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "validate_evidence.py"
     )
@@ -2503,29 +2672,153 @@ def _validate_adversarial_loop(result: dict[str, Any], out_dir: Path, gates: dic
     )
     if evidence.returncode:
         raise SystemExit("adversarial-loop-evidence-invalid:" + evidence.stderr.strip())
+    loop_evidence = _load_json(out_dir / "loop-evidence.json")
+    if (candidate or current_result) and (loop_evidence.get("schema_version") != 2 or "origin" not in loop_evidence):
+        raise SystemExit("adversarial-loop-evidence-contract-required")
+    if "origin" in loop_evidence and result["metadata"].get("challenge_origin") != loop_evidence["origin"]:
+        raise SystemExit("adversarial-loop-origin-mismatch")
 
 
-def _validate_adversarial_loop_rows(out_dir: Path, ledger: dict[str, Any], summary: dict[str, Any]) -> None:
+def _validate_challenge_scope(
+    metadata: dict[str, Any], out_dir: Path, *, summary: bool = False, stopped: bool = False
+) -> dict[str, Any] | None:
+    """Recheck declared chunk coverage and return a clean or stopped child-backed summary."""
+    scope = metadata.get("challenge_scope")
+    if not isinstance(scope, dict):
+        raise SystemExit("adversarial-loop-challenge-scope-required")
+    chunks_dir = out_dir / "chunks"
+    if scope == {"mode": "single"}:
+        if chunks_dir.exists() or chunks_dir.is_symlink():
+            raise SystemExit("adversarial-loop-challenge-scope-mismatch")
+        return
+    if scope != {
+        "mode": "chunked",
+        "manifest_path": "chunks/chunks.json",
+        "results_path": "chunks/results.json",
+    }:
+        raise SystemExit("adversarial-loop-challenge-scope-invalid")
+    manifest = chunks_dir / "chunks.json"
+    results = chunks_dir / "results.json"
+    if (
+        chunks_dir.is_symlink()
+        or manifest.is_symlink()
+        or results.is_symlink()
+        or not manifest.is_file()
+        or not results.is_file()
+        or not manifest.resolve().is_relative_to(out_dir.resolve())
+        or not results.resolve().is_relative_to(out_dir.resolve())
+    ):
+        raise SystemExit("adversarial-loop-chunk-coverage-invalid")
+    checker = Path(__file__).resolve().parent.parent / "skills" / "challenge-resolve" / "chunk_diff.py"
+    checked = subprocess.run(
+        [
+            sys.executable,
+            str(checker),
+            "check-stopped" if stopped else "check",
+            "--manifest",
+            str(manifest),
+            "--results",
+            str(results),
+        ]
+        + (["--summary"] if summary else []),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if checked.returncode:
+        raise SystemExit("adversarial-loop-chunk-coverage-invalid:" + checked.stderr.strip())
+    if not summary:
+        return None
+    try:
+        return json.loads(checked.stdout)
+    except json.JSONDecodeError as error:
+        raise SystemExit("adversarial-loop-chunk-summary-invalid") from error
+
+
+def _validate_chunked_coordinator(
+    result: dict[str, Any], out_dir: Path, gates: dict[str, Any], *, candidate: bool, current_result: bool = False
+) -> None:
+    """Bind a clean or stopped coordinator to checked child evidence without an invented parent score."""
+    recorded = result["metadata"].get("chunked_review")
+    stopped = result["status"] == "fail" and isinstance(recorded, dict) and recorded.get("status") in {None, "stopped"}
+    checked = _validate_challenge_scope(result["metadata"], out_dir, summary=True, stopped=stopped)
+    if not isinstance(checked, dict) or not checked.get("runs"):
+        raise SystemExit("adversarial-loop-chunk-summary-invalid")
+    manifest_path = out_dir / "chunks" / "chunks.json"
+    if manifest_path.is_file():
+        manifest = _load_json(manifest_path)
+        if current_result and manifest.get("schema_version") != 1:
+            raise SystemExit("adversarial-loop-chunk-origin-contract-required")
+        if manifest.get("schema_version") == 1 and result["metadata"].get("challenge_origin") != manifest.get("origin"):
+            raise SystemExit("adversarial-loop-chunk-origin-mismatch")
+    metadata = result["metadata"]
+    if metadata.get("chunked_review") != checked or "adversarial_loop" in metadata:
+        raise SystemExit("adversarial-loop-chunk-summary-mismatch")
+    review_gate = next(check for check in gates["checks"] if check["id"] == "review")
+    if stopped:
+        if (
+            result["status"] != "fail"
+            or review_gate["status"] != "fail"
+            or "review" not in result["checks_failed"]
+            or any(result["findings"].values())
+        ):
+            raise SystemExit("adversarial-loop-chunk-coordinator-must-stop")
+    elif (
+        result["status"] != "pass"
+        or review_gate["status"] != "pass"
+        or result["checks_failed"]
+        or any(result["findings"].values())
+        or any(
+            run.get("decision") != "clean" or not run.get("scores") or run["scores"][-1] != 0 for run in checked["runs"]
+        )
+    ):
+        raise SystemExit("adversarial-loop-chunk-coordinator-clean-result-invalid")
+    handoff = _load_json(out_dir / "final-handoff.json")
+    if candidate and handoff.get("presentation_version") != 3:
+        raise SystemExit("adversarial-loop-child-scores-presentation-required")
+    if handoff.get("presentation_version") == 3 and handoff.get("child_runs") != checked["runs"]:
+        raise SystemExit("adversarial-loop-child-scores-mismatch")
+    rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
+    if rows != [["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]]:
+        raise SystemExit("adversarial-loop-chunk-coordinator-table-mismatch")
+    if stopped and (not handoff["remaining"] or not handoff["next_steps"]):
+        raise SystemExit("adversarial-loop-recovery-guidance-missing")
+
+
+def _validate_adversarial_loop_rows(
+    out_dir: Path, ledger: dict[str, Any], summary: dict[str, Any], *, table_version: int
+) -> None:
     """Keep displayed round scores and decisions equal to their ledger evidence."""
     handoff = _load_json(out_dir / "final-handoff.json")
     rows = [row["cells"] for table in handoff["tables"] for row in table["rows"]]
     expected = []
+    seen: set[str] = set()
+    weights = {"security": 20, "critical": 10, "high": 6, "medium": 4, "low": 2, "nit": 1}
     for item in summary["rounds"]:
-        report = ledger["rounds"][item["index"] - 1]["report_path"]
-        expected.append(
-            [
-                str(item["index"]),
-                ", ".join(
-                    f"{tier}={item['counts'][tier]}"
-                    for tier in ("security", "critical", "high", "medium", "low", "nit")
-                ),
-                str(item["score"]),
-                item["decision"],
-                report,
-            ]
-        )
+        round_record = ledger["rounds"][item["index"] - 1]
+        report = round_record["report_path"]
+        counts = item["counts"]
+        if table_version == 1:
+            new_counts = dict.fromkeys(weights, 0)
+            for finding in round_record["findings"]:
+                if (
+                    finding["disposition"] in {"open", "fixed-pending-verification"}
+                    and finding["signature"] not in seen
+                ):
+                    new_counts[finding["tier"]] += 1
+            new_score = sum(new_counts[tier] * weight for tier, weight in weights.items())
+            expected.append(
+                [
+                    str(item["index"]),
+                    *(f"{counts[tier] - new_counts[tier]} + {new_counts[tier]}" for tier in weights),
+                    f"{item['score'] - new_score} + {new_score}",
+                    item["decision"],
+                    report,
+                ]
+            )
+        seen.update(finding["signature"] for finding in round_record["findings"])
     if not expected:
-        expected = [["not-run", "Not assessed", "N/A", summary["reason"], "loop-report.md"]]
+        expected = [["not-run", *(["N/A"] * 7), summary["reason"], "loop-report.md"]]
     if rows != expected:
         raise SystemExit("adversarial-loop-table-mismatch")
     if summary["reason"] != "clean" and (not handoff["remaining"] or not handoff["next_steps"]):
@@ -2696,7 +2989,12 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     gates = _validate_gates(out_dir)
     _validate_code_review_unavailable_gates(result, gates, skill)
     _reconcile_result_with_gates(result, gates)
-    _validate_final_handoff(result, skill, out_dir, gates, candidate=result_path.name == "result.candidate.json")
+    current_contract = (
+        result_path.name == "result.candidate.json"
+        or skill == "challenge-resolve"
+        or (skill == "code-review" and result.get("schema_version") == 3)
+    )
+    _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)
 
     requirement = SKILL_REQUIREMENTS.get(skill)
     if requirement is None:
@@ -2704,10 +3002,24 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     files = requirement.get("files", {})
     if not isinstance(files, dict):
         raise SystemExit(f"invalid-requirement:{skill}")
+    scope = result["metadata"].get("challenge_scope") if skill == "challenge-resolve" else None
+    chunked_coordinator = (
+        skill == "challenge-resolve"
+        and result["metadata"].get("challenge_table_contract_version") == 1
+        and isinstance(scope, dict)
+        and scope.get("mode") == "chunked"
+    )
     for filename, sections in files.items():
+        if chunked_coordinator and filename == "loop-ledger.json":
+            continue
         if not isinstance(sections, list):
             raise SystemExit(f"invalid-sections:{skill}:{filename}")
-        _require_file_sections(out_dir / str(filename), [str(section) for section in sections])
+        report_path = out_dir / str(filename)
+        _require_file_sections(report_path, [str(section) for section in sections])
+        if skill == "challenge-resolve" and filename == "loop-report.md":
+            report_text = report_path.read_text(encoding="utf-8")
+            if re.search(r"(?im)^#{1,6}[ \t]+(?:remediation|recovery)[ \t]*#*[ \t]*$", report_text) is None:
+                raise SystemExit("missing-artifact-section:loop-report.md:Remediation")
     jsonl_files = requirement.get("jsonl", [])
     if not isinstance(jsonl_files, list):
         raise SystemExit(f"invalid-jsonl-requirement:{skill}")
@@ -2717,7 +3029,13 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     if skill == "release":
         _validate_release_communication(result, out_dir, gates)
     if skill == "challenge-resolve":
-        _validate_adversarial_loop(result, out_dir, gates)
+        _validate_adversarial_loop(
+            result,
+            out_dir,
+            gates,
+            candidate=current_contract,
+            current_result=True,
+        )
     if skill == "code-remediate":
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
@@ -2753,7 +3071,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 "merge-tree.txt",
                 "merge-resolution.json",
             )
-            if result.get("schema_version") == 2:
+            if result.get("schema_version") in {2, 3}:
                 required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
             for filename in required_pr_artifacts:
                 if not (pr_dir / filename).exists():
@@ -2773,7 +3091,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 raise SystemExit("code-remediate-pr-routing-force-checkout-forbidden")
             if "force_policy" not in routing:
                 raise SystemExit("code-remediate-pr-routing-force-policy-missing")
-            if result.get("schema_version") != 2:
+            if result.get("schema_version") not in {2, 3}:
                 expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
                 if routing.get("pr_metadata_transport") == "public-https-fallback":
                     expected_checkout = (
@@ -2793,7 +3111,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
             if checkout.get("head_matches_pr") is not True:
                 raise SystemExit("code-remediate-pr-local-checkout-head-mismatch")
             _validate_code_remediate_pr_identity(routing, remote_selection, target_branch, checkout)
-            if result.get("schema_version") == 2:
+            if result.get("schema_version") in {2, 3}:
                 _validate_code_remediate_pr_source(pr_dir, routing, target_branch, checkout)
             thread_status = online_summary.get("review_threads_status")
             thread_error = online_summary.get("review_threads_error")
@@ -2822,7 +3140,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
                 metadata,
                 pr_dir,
                 target_branch,
-                routing.get("head_oid") if result.get("schema_version") == 2 else None,
+                routing.get("head_oid") if result.get("schema_version") in {2, 3} else None,
             )
             if (pr_dir / "head-files").exists():
                 raise SystemExit("code-remediate-pr-raw-head-file-snapshots-forbidden")

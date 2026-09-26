@@ -54,6 +54,25 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     metadata = result["metadata"]
     plan = json.loads(plan_path.read_text())
     evidence = json.loads(evidence_path.read_text())
+    for node in evidence["nodes"]:
+        role = node["role_id"]
+        retained_card = run / "role-cards" / role / "ROLE.md"
+        retained_card.parent.mkdir(parents=True, exist_ok=True)
+        retained_card.write_bytes((PLUGIN_ROOT / "roles" / role / "ROLE.md").read_bytes())
+        output = evidence_path.parent / node["output_path"]
+        output.write_text(
+            json.dumps(
+                {
+                    "source_sha256": plan["source_sha256"],
+                    "diff_sha256": plan["review_input_sha256"],
+                    "assessment": {"rating": 1, "rationale": "The inspected scope is clean."},
+                    "findings": [],
+                }
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        node["output_sha256"] = hashlib.sha256(output.read_bytes()).hexdigest()
     for payload in (plan, evidence):
         payload.update(
             review_run_id=metadata["review_run_id"],
@@ -105,6 +124,22 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
         execution_evidence_level="app-server-parent-observed",
         write_parallel_eligible=False,
     )
+    metadata["reviewer_assessments"].extend(
+        {
+            "role": "QA specialist" if item["role"] == "qa-specialist" else "Challenger",
+            "rating": 1,
+            "evidence": item["output_path"],
+        }
+        for item in passes
+    )
+    handoff_path = run / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["tables"][0]["reviewers"] = metadata["reviewer_assessments"]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+        handoff_path, run / "final.md", run / "final-handoff.validation.json"
+    )
+    metadata["final_handoff"].update({key: binding[key] for key in ("handoff_sha256", "rendered_sha256")})
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     return run
 
@@ -127,6 +162,60 @@ def test_high_risk_app_server_review_completes_and_is_discoverable(isolated_revi
     )
     assert lookup.returncode == 0, lookup.stderr
     assert Path(lookup.stdout.strip()) == isolated_review / "result.json"
+
+
+@pytest.mark.parametrize(
+    ("roles", "output_tamper", "expected_error"),
+    [
+        pytest.param(("challenger",), False, None, id="one-challenger"),
+        pytest.param(("qa-specialist",), False, "manifest-triggered-role-set-mismatch", id="wrong-role"),
+        pytest.param(("qa-specialist", "challenger"), False, "manifest-triggered-role-set-mismatch", id="extra-role"),
+        pytest.param(("challenger",), True, "evidence-output-sha256-mismatch", id="forged-output"),
+    ],
+)
+def test_challenge_manifest_requires_exact_authenticated_challenger(
+    isolated_review: Path, roles: tuple[str, ...], output_tamper: bool, expected_error: str | None
+) -> None:
+    """Admit one verified challenger independently of generic Code Review routing."""
+    manifest_path = isolated_review / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    plan_path = Path(manifest["app_server_execution"]["plan_path"])
+    evidence_path = Path(manifest["app_server_execution"]["evidence_path"])
+    plan = json.loads(plan_path.read_text())
+    evidence = json.loads(evidence_path.read_text())
+    plan["nodes"] = [node for node in plan["nodes"] if node["role_id"] in roles]
+    evidence["nodes"] = [node for node in evidence["nodes"] if node["role_id"] in roles]
+    manifest["passes"] = [item for item in manifest["passes"] if item["role"] in roles]
+    plan_path.write_text(json.dumps(plan), encoding="utf-8", newline="\n")
+    evidence["plan_sha256"] = hashlib.sha256(plan_path.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
+    manifest["app_server_execution"]["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
+    if output_tamper:
+        Path(manifest["passes"][0]["output_path"]).write_text(
+            "Forged reviewer output\n", encoding="utf-8", newline="\n"
+        )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py"),
+            "--out",
+            str(isolated_review),
+            "--manifest-only",
+            "--challenge-only",
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if expected_error is None:
+        assert completed.returncode == 0, completed.stderr
+    else:
+        assert completed.returncode != 0
+        assert expected_error in completed.stderr
 
 
 def test_code_review_validator_rejects_legacy_app_server_plan_dispatch(isolated_review: Path) -> None:
@@ -186,6 +275,57 @@ def test_review_completion_rejects_changed_app_server_evidence(isolated_review: 
     assert not completed.stdout
 
 
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "missing-source-digest",
+        "missing-diff-digest",
+        "invalid-rating",
+        "invalid-finding",
+    ],
+)
+def test_review_completion_rejects_rehashed_invalid_reviewer_output(isolated_review: Path, tamper: str) -> None:
+    """A consistent receipt cannot authorize reviewer JSON that violates the turn contract."""
+    manifest_path = isolated_review / "specialist-manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    evidence_path = Path(manifest["app_server_execution"]["evidence_path"])
+    evidence = json.loads(evidence_path.read_text())
+    node = evidence["nodes"][0]
+    output_path = evidence_path.parent / node["output_path"]
+    output = json.loads(output_path.read_text())
+    if tamper == "missing-source-digest":
+        del output["source_sha256"]
+    elif tamper == "missing-diff-digest":
+        del output["diff_sha256"]
+    elif tamper == "invalid-rating":
+        output["assessment"]["rating"] = True
+    else:
+        output["findings"] = [{"signature": "unsupported"}]
+    output_path.write_text(json.dumps(output), encoding="utf-8", newline="\n")
+    node["output_sha256"] = hashlib.sha256(output_path.read_bytes()).hexdigest()
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8", newline="\n")
+    manifest["app_server_execution"]["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8", newline="\n")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/find-review-report.py"),
+            "--complete-run",
+            str(isolated_review),
+            "--parent-thread-id",
+            "thread",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert completed.returncode == 1
+    assert "review-app-server-evidence-invalid:app-server-review-output-" in completed.stderr
+    assert not completed.stdout
+
+
 def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(isolated_review: Path) -> None:
     """A valid challenger wave cannot lend its independence to substituted QA."""
     manifest_path = isolated_review / "specialist-manifest.json"
@@ -205,7 +345,8 @@ def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(is
             item["mode"] = "substituted"
             substitute_path = isolated_review / "qa-specialist-parent.md"
             substitute_path.write_text(
-                "role_id: qa-specialist\nParent inspected the QA axis; independent QA evidence remains unavailable.\n",
+                "role_id: qa-specialist\n## Reviewer Assessment\n\nRating: 3\n"
+                "Rationale: Parent inspection cannot establish independent QA.\n",
                 encoding="utf-8",
                 newline="\n",
             )
@@ -216,6 +357,9 @@ def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(is
     result["metadata"].update(
         specialist_passes=manifest["passes"], fanout_substituted=True, independence_satisfied=False
     )
+    for assessment in result["metadata"]["reviewer_assessments"]:
+        if assessment["role"] == "QA specialist":
+            assessment.update(role="QA specialist (parent substitute)", rating=3, evidence="qa-specialist-parent.md")
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
 

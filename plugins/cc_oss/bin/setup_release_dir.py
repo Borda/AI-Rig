@@ -1,22 +1,18 @@
 #!/usr/bin/env python
-"""setup_release_dir.py — create release dir, symlink changelog, back up artifacts.
+"""Create a release directory and protect existing draft artifacts before prepare writes.
 
-Creates RELEASE_DIR (including parents), force-symlinks CHANGELOG_FILE
-into it as ``CHANGELOG.md``, then backs up any pre-existing release
-artifact files to ``.bak`` before overwrite. Extracted from oss:release
-prepare Phase 3 setup block.
+Purpose: Prepare release artifact paths while preserving the previous drafts. Scope: One local release directory and a
+validated changelog target. Usage: ``setup_release_dir.py RELEASE_DIR CHANGELOG_FILE`` from the release prepare step.
+Outputs: Creates RELEASE_DIR and its parents, links CHANGELOG.md, and copies existing artifacts to ``.bak`` siblings
+before later phases overwrite them. ``--validate-only`` checks all paths without writes before the changelog audit.
+Refuses linked changelog inputs, unrelated changelog names, linked artifact sources, and occupied release changelog
+paths before changing any release artifact. Failure: Returns 1 for missing or unsafe arguments and occupied release
+changelog paths. Ordinary filesystem errors propagate. Used by: ``skills/release/modes/prepare.md`` before its artifact
+writing phases.
 
-Re-running prepare for the same version is legitimate (post-audit-fix
-retry); silently overwriting hand-edited notes is destructive, hence
-the backups. CHANGELOG.md is excluded from the backup loop — it is a
-symlink; re-linking on re-run is safe and intentional.
-
-Usage:
-    setup_release_dir.py RELEASE_DIR CHANGELOG_FILE
-
-Exit codes:
-    0 — on success
-    1 — missing/unsafe argument
+Re-running prepare for the same version is legitimate (post-audit-fix retry); silently overwriting hand-edited notes is
+destructive, hence the backups. A prior CHANGELOG.md symlink may be re-linked on re-run; a regular file is preserved and
+blocks setup.
 """
 
 from __future__ import annotations
@@ -28,7 +24,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-_ARTIFACTS: tuple[str, ...] = ("HIGHLIGHTS.md", "DRAFT.md", "SUMMARY.md", "MIGRATION.md", "demo.py")
+_ARTIFACTS: tuple[str, ...] = (
+    "HIGHLIGHTS.md",
+    "DRAFT.md",
+    "SUMMARY.md",
+    "MIGRATION.md",
+    "demo.py",
+    "waived-changes.md",
+)
 
 
 def _allowed_abs_roots() -> tuple[Path, ...]:
@@ -70,8 +73,8 @@ def _is_within(target: Path, root: Path) -> bool:
 def _validate_path_arg(raw: str, label: str) -> Path:
     """Resolve and validate a path argument, rejecting unsafe absolute paths.
 
-    Relative paths are accepted unconditionally (resolved against the caller's
-    cwd).  Absolute paths must resolve under :func:`_allowed_abs_roots`.  Any
+    Relative paths must resolve under the caller's cwd. Absolute paths must
+    resolve under :func:`_allowed_abs_roots`. Any
     ``..`` traversal token in the raw input is rejected.
 
     Args:
@@ -90,6 +93,8 @@ def _validate_path_arg(raw: str, label: str) -> Path:
         raise ValueError(f"{label} must not contain '..': {raw!r}")
     p = Path(raw)
     if not p.is_absolute():
+        if not _is_within(p.resolve(), Path.cwd().resolve()):
+            raise ValueError(f"{label} resolves outside project root: {raw!r}")
         return p
     resolved = p.expanduser().resolve()
     for root in _allowed_abs_roots():
@@ -108,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         argv: Optional argument list (defaults to ``sys.argv[1:]``).
 
     Returns:
-        Exit code: 1 on missing args; 0 on success.
+        Exit code: 1 on unsafe input or backup destination; 0 on success.
 
     Examples:
         No doctest — filesystem I/O; covered by pytest with ``tmp_path``.
@@ -120,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     # nargs="*" keeps the per-arg "release_dir required" / "changelog_file required"
     # stderr messages and exit-1 contract (vs argparse's exit 2).
+    parser.add_argument(
+        "--validate-only", action="store_true", help="Check paths without creating or changing artifacts."
+    )
     parser.add_argument("paths", nargs="*", help="RELEASE_DIR CHANGELOG_FILE (2 paths).")
     args_ns = parser.parse_args(argv)
     positional = args_ns.paths
@@ -134,33 +142,62 @@ def main(argv: list[str] | None = None) -> int:
     try:
         release_dir = _validate_path_arg(positional[0], "release_dir")
         changelog_file = _validate_path_arg(positional[1], "changelog_file")
+        if any(component.is_symlink() for component in (release_dir, *release_dir.parents)):
+            raise ValueError("release_dir must not traverse a symlink")
+        if not changelog_file.name.startswith("CHANGELOG"):
+            raise ValueError("changelog_file must have a CHANGELOG name")
+        if any(component.is_symlink() for component in (changelog_file, *changelog_file.parents)):
+            raise ValueError("changelog_file must not traverse a symlink")
+        if changelog_file.exists() and not changelog_file.is_file():
+            raise ValueError("changelog_file must be a regular file")
+        resolved_target = changelog_file.resolve()
+        if not any(_is_within(resolved_target, root) for root in _allowed_abs_roots()):
+            raise ValueError(f"resolved changelog target outside allowed roots: {resolved_target.as_posix()}")
+        # Release sources belong to the project that owns the version directory, even in temporary test projects.
+        project_root = release_dir.parent.parent if release_dir.parent.name == "releases" else release_dir.parent
+        if not _is_within(resolved_target, project_root.resolve()):
+            raise ValueError("changelog_file must be inside the release project")
+        link_path = release_dir / "CHANGELOG.md"
+        if changelog_file.parent.resolve() / changelog_file.name == release_dir.resolve() / "CHANGELOG.md":
+            raise ValueError("changelog_file must not be the release changelog link")
+        if link_path.exists() and not link_path.is_symlink():
+            raise ValueError("release CHANGELOG.md exists and is not a symlink")
     except ValueError as exc:
         print(f"setup_release_dir: {exc}", file=sys.stderr)
         return 1
 
+    # Validate the complete artifact set before relinking the changelog or making any backup.
+    for name in _ARTIFACTS:
+        target = release_dir / name
+        if target.is_symlink():
+            print(f"setup_release_dir: artifact source must not be a symlink: {target}", file=sys.stderr)
+            return 1
+        backup = release_dir / f"{name}.bak"
+        if backup.is_symlink():
+            print(f"setup_release_dir: backup destination must not be a symlink: {backup}", file=sys.stderr)
+            return 1
+
+    if args_ns.validate_only:
+        return 0
+
     release_dir.mkdir(parents=True, exist_ok=True)
 
-    link_path = release_dir / "CHANGELOG.md"
-    if link_path.exists() or link_path.is_symlink():
+    if link_path.is_symlink():
         link_path.unlink()
-    # Re-validate the *resolved* symlink target — _validate_path_arg validated
-    # the raw input, but the post-resolve path could escape the allowed roots
-    # via an existing symlink in the changelog_file path. Refuse to create
-    # the symlink in that case rather than embedding a path-escape primitive
-    # in the release directory.
-    resolved_target = changelog_file.resolve()
-    if not any(_is_within(resolved_target, root) for root in _allowed_abs_roots()):
-        print(
-            f"setup_release_dir: resolved changelog target outside allowed roots: {resolved_target.as_posix()}",
-            file=sys.stderr,
-        )
-        return 1
     link_path.symlink_to(resolved_target)
 
     for name in _ARTIFACTS:
         target = release_dir / name
         if target.is_file():
-            shutil.copy2(target, release_dir / f"{name}.bak")
+            # Replace the directory entry atomically so a changed link or hardlink cannot redirect the copy.
+            fd, temporary_name = tempfile.mkstemp(prefix=f".{name}.bak-", dir=release_dir)
+            os.close(fd)
+            temporary = Path(temporary_name)
+            try:
+                shutil.copy2(target, temporary)
+                os.replace(temporary, release_dir / f"{name}.bak")
+            finally:
+                temporary.unlink(missing_ok=True)
             print(f"⚠ {target} exists — backed up to {name}.bak before overwrite")
 
     return 0

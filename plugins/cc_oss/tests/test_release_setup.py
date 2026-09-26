@@ -11,6 +11,13 @@ Output is written below ``${TMPDIR}/release-setup-<CSID>``; tests redirect ``TMP
 
 from __future__ import annotations
 
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import pytest
@@ -45,8 +52,35 @@ def _patch_git_sequence(monkeypatch: pytest.MonkeyPatch, *outcomes: tuple[int, s
     return recorded
 
 
+def test_git_bash_temp_dir_converts_for_native_windows_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Release setup must write where Git Bash reads its POSIX TMPDIR."""
+    monkeypatch.setenv("TMPDIR", "/c/Users/test/AppData/Local/Temp")
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def convert(command: list[str], **_: Any) -> _FakeCompleted:
+        """Model Git Bash cygpath translating its temp path to a drive path."""
+        assert command == ["cygpath", "-w", "/c/Users/test/AppData/Local/Temp"]
+        return _FakeCompleted(stdout="C:\\Users\\test\\AppData\\Local\\Temp\n")
+
+    monkeypatch.setattr(rs.subprocess, "run", convert)
+    assert str(rs._native_temp_dir()) == "C:\\Users\\test\\AppData\\Local\\Temp"
+
+
+def test_release_setup_emits_git_bash_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A setup path written by native Python must be readable in Git Bash."""
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    def convert(command: list[str], **_: Any) -> _FakeCompleted:
+        """Model cygpath converting a native drive path for the shell."""
+        assert command == ["cygpath", "-u", "C:\\Users\\test\\plugin"]
+        return _FakeCompleted(stdout="/c/Users/test/plugin\n")
+
+    monkeypatch.setattr(rs.subprocess, "run", convert)
+    assert rs._shell_path("C:\\Users\\test\\plugin") == "/c/Users/test/plugin"
+
+
 def test_stable_branch_all_keys_emitted(monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory) -> None:
-    """Stable branch (BRANCH_TAG found) → all 7 key files written under TMPDIR/release-setup-shared/, exit 0."""
+    """Stable branch (BRANCH_TAG found) → all setup files written under TMPDIR/release-setup-shared/."""
     monkeypatch.setenv("TMPDIR", str(tmp_path))
     _patch_git_sequence(
         monkeypatch,
@@ -57,7 +91,17 @@ def test_stable_branch_all_keys_emitted(monkeypatch: pytest.MonkeyPatch, tmp_pat
     rc = rs.main([])
     assert rc == 0
     out_dir = tmp_path / "release-setup-shared"
-    for key in ("SKILL_DIR", "REPO_ROOT", "BRANCH", "DATE", "LAST_TAG", "CHERRY_PICK_SUBJECTS", "SOURCE_TAG_REF"):
+    for key in (
+        "SKILL_DIR",
+        "REPO_ROOT",
+        "BRANCH",
+        "BRANCH_REF",
+        "BRANCH_KEY",
+        "DATE",
+        "LAST_TAG",
+        "CHERRY_PICK_SUBJECTS",
+        "SOURCE_TAG_REF",
+    ):
         assert (out_dir / key).exists(), f"expected output file missing: {key}"
 
 
@@ -87,6 +131,57 @@ def test_branch_slash_replaced_with_hyphen(monkeypatch: pytest.MonkeyPatch, tmp_
     )
     rs.main([])
     assert (tmp_path / "release-setup-shared" / "BRANCH").read_text() == "feature-my-thing\n"
+
+
+@pytest.mark.parametrize(
+    ("git_branch", "slug"),
+    [
+        pytest.param("feature+append", "feature+append", id="plus-preserved"),
+        pytest.param("feature%append", "feature%25append", id="percent-encoded"),
+        pytest.param("feature%25append", "feature%2525append", id="encoded-looking-name-distinct"),
+        pytest.param("feature<append", "feature%3Cappend", id="windows-reserved-encoded"),
+    ],
+)
+def test_branch_slug_preserves_identity_and_windows_filename_safety(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory, git_branch: str, slug: str
+) -> None:
+    """Git branch punctuation must yield distinct, portable artifact filenames."""
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    _patch_git_sequence(monkeypatch, (0, "/repo"), (0, git_branch), (0, "v1.0.0"))
+
+    rs.main([])
+
+    output = tmp_path / "release-setup-shared"
+    assert (output / "BRANCH").read_text(encoding="utf-8") == slug + "\n"
+    assert (output / "BRANCH_REF").read_text(encoding="utf-8") == git_branch + "\n"
+    filename = f"release-last-processed-{slug}"
+    assert PureWindowsPath(filename).name == filename
+    assert not any(char in filename for char in '<>:"/\\|?*')
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("feature/append", "feature-append", id="slash-versus-hyphen"),
+        pytest.param("Feature", "feature", id="windows-case-only"),
+    ],
+)
+def test_branch_state_key_distinguishes_legacy_collisions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory, first: str, second: str
+) -> None:
+    """Persistent filenames must bind the raw Git ref even when legacy slugs collide."""
+    keys = []
+    for index, raw_branch in enumerate((first, second)):
+        out = tmp_path / str(index)
+        monkeypatch.setenv("TMPDIR", str(out))
+        _patch_git_sequence(monkeypatch, (0, "/repo"), (0, raw_branch), (0, "v1.0.0"))
+        rs.main([])
+        key = (out / "release-setup-shared/BRANCH_KEY").read_text(encoding="utf-8").strip()
+        assert key.endswith(hashlib.sha256(raw_branch.encode("utf-8")).hexdigest())
+        assert len(key) < 100
+        assert PureWindowsPath(key).name == key
+        keys.append(key)
+    assert keys[0] != keys[1]
 
 
 def test_fallback_path_emits_source_and_cherry(
@@ -173,6 +268,67 @@ def test_git_missing_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rs, "which", lambda _: None)
     with pytest.raises(FileNotFoundError, match="git"):
         rs.main([])
+
+
+def test_detached_head_does_not_publish_main_branch_state(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A detached checkout must stop before publishing a synthetic main identity."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "start",
+        ],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--detach", "HEAD"], check=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    output = tmp_path / "release-setup-shared"
+    output.mkdir()
+    (output / "BRANCH_REF").write_text("main\n", encoding="utf-8", newline="\n")
+
+    assert rs.main([]) == 1
+    assert (output / "BRANCH_REF").read_text(encoding="utf-8") == "main\n"
+    assert not (output / "BRANCH_KEY").exists()
+
+    # The documented consumer must propagate setup failure even when a previous
+    # invocation left apparently valid branch files in this session directory.
+    (output / "BRANCH_KEY").write_text("stale-key\n", encoding="utf-8", newline="\n")
+    (output / "REPO_ROOT").write_text(f"{repo}\n", encoding="utf-8", newline="\n")
+    (tmp_path / "release-mode-shared").write_text("notes\n", encoding="utf-8", newline="\n")
+    skill = (Path(__file__).resolve().parents[1] / "skills/release/SKILL.md").read_text(encoding="utf-8")
+    shared_setup = re.search(r"Extracted to `bin/release_setup.py`.*?```bash\n(.*?)```", skill, re.DOTALL)
+    assert shared_setup is not None
+    env = os.environ.copy()
+    env.update(
+        {
+            "TMPDIR": str(tmp_path),
+            "CLAUDE_CODE_SESSION_ID": "shared",
+            "CLAUDE_PLUGIN_ROOT": str(Path(__file__).resolve().parents[1]),
+        }
+    )
+    completed = subprocess.run(
+        [shutil.which("bash"), "-c", shared_setup.group(1)],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 1
+    assert "requires an attached Git branch" in completed.stderr
 
 
 def test_help_exits_0_no_git(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType
 
@@ -38,6 +39,57 @@ def _adapter() -> ModuleType:
 def test_adapter_exports_evidence_validator() -> None:
     """Expose the evidence validator required by code-review integration."""
     assert callable(_adapter().validate_evidence)
+
+
+def test_code_review_clean_output_requires_scoped_assessment() -> None:
+    """An empty findings list must still carry the reviewer's rating and rationale."""
+    adapter = _adapter()
+    plan = {"consumer_id": "code-review", "source_sha256": "a" * 64, "review_input_sha256": "b" * 64}
+    response = {
+        "source_sha256": plan["source_sha256"],
+        "diff_sha256": plan["review_input_sha256"],
+        "findings": [],
+        "assessment": {"rating": 1, "rationale": "The inspected scope has no open findings."},
+    }
+
+    assert "assessment" in adapter._review_output_schema(plan)["required"]
+    adapter._validate_review_output(json.dumps(response), plan)
+    del response["assessment"]
+    with pytest.raises(adapter.ReviewRouteError, match="app-server-review-output-schema-mismatch"):
+        adapter._validate_review_output(json.dumps(response), plan)
+
+
+@pytest.mark.parametrize(
+    ("assessment", "error"),
+    [
+        pytest.param({"rating": True, "rationale": "Evidence."}, "assessment-invalid", id="boolean-rating"),
+        pytest.param({"rating": 2, "rationale": "  "}, "assessment-invalid", id="blank-rationale"),
+        pytest.param({"rating": 6, "rationale": "Evidence."}, "assessment-invalid", id="out-of-range"),
+    ],
+)
+def test_code_review_rejects_invalid_scoped_assessment(assessment: dict[str, object], error: str) -> None:
+    """A present but unsupported judgment must fail before output retention."""
+    adapter = _adapter()
+    plan = {"consumer_id": "code-review", "source_sha256": "a" * 64, "review_input_sha256": "b" * 64}
+    response = {
+        "source_sha256": plan["source_sha256"],
+        "diff_sha256": plan["review_input_sha256"],
+        "findings": [],
+        "assessment": assessment,
+    }
+
+    with pytest.raises(adapter.ReviewRouteError, match=error):
+        adapter._validate_review_output(json.dumps(response), plan)
+
+
+def test_other_review_consumer_retains_findings_only_output() -> None:
+    """The Code Review assessment field does not change other review routes."""
+    adapter = _adapter()
+    plan = {"consumer_id": "challenge-resolve", "source_sha256": "a" * 64, "review_input_sha256": "b" * 64}
+    response = {"source_sha256": plan["source_sha256"], "diff_sha256": plan["review_input_sha256"], "findings": []}
+
+    assert adapter._review_output_schema(plan)["required"] == ["source_sha256", "diff_sha256", "findings"]
+    adapter._validate_review_output(json.dumps(response), plan)
 
 
 def test_invocation_controls_disable_each_discovered_simple_mcp_server() -> None:
@@ -177,7 +229,12 @@ def _review_answer(plan_path: Path) -> str:
     """Build a raw no-findings review bound to the fixture's exact source and diff."""
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     return json.dumps(
-        {"source_sha256": plan["source_sha256"], "diff_sha256": plan["review_input_sha256"], "findings": []}
+        {
+            "source_sha256": plan["source_sha256"],
+            "diff_sha256": plan["review_input_sha256"],
+            "findings": [],
+            "assessment": {"rating": 1, "rationale": "No open findings in the inspected scope."},
+        }
     )
 
 
@@ -291,6 +348,9 @@ def _fake_public_processes(monkeypatch: pytest.MonkeyPatch, launches: list[list[
     """Install fake process and version boundaries while keeping public adapter paths intact."""
     adapter = _adapter()
     factory = _PopenFactory(launches)
+    # Protocol tests supply synthetic source records; source-binding tests restore
+    # the real checkout boundary and exercise it against a local Git repository.
+    monkeypatch.setattr(adapter, "_live_source_unchanged", lambda *args: None)
     monkeypatch.setattr(adapter.sys, "platform", "darwin")
     monkeypatch.setattr(adapter.subprocess, "Popen", factory)
     monkeypatch.setattr(
@@ -300,6 +360,33 @@ def _fake_public_processes(monkeypatch: pytest.MonkeyPatch, launches: list[list[
     monkeypatch.setattr(adapter.signal, "SIGTERM", 15, raising=False)
     monkeypatch.setattr(adapter.signal, "SIGKILL", 9, raising=False)
     monkeypatch.setattr(adapter, "_posix_group_exists", lambda process_id: False)
+    return factory
+
+
+def _fake_host_with_git(monkeypatch: pytest.MonkeyPatch, launches: list[list[dict[str, object]]]) -> _PopenFactory:
+    """Mock only Codex host calls while keeping live Git source recapture executable."""
+    real_run = subprocess.run
+    real_popen = subprocess.Popen
+    live_check = _adapter()._live_source_unchanged
+    factory = _fake_public_processes(monkeypatch, launches)
+    monkeypatch.setattr(_adapter(), "_live_source_unchanged", live_check)
+    codex_run = subprocess.run
+
+    def run(command: object, *args: object, **kwargs: object) -> subprocess.CompletedProcess[object]:
+        """Keep Git as a real local source boundary and stub the Codex CLI version call."""
+        if isinstance(command, list) and command and command[0] == "git":
+            return real_run(command, *args, **kwargs)
+        return codex_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    def popen(command: object, *args: object, **kwargs: object) -> subprocess.Popen[object] | _FakeProcess:
+        """Use the real process boundary for local Git and the host fake for Codex."""
+        if isinstance(command, list) and command and command[0] == "git":
+            return real_popen(command, *args, **kwargs)
+        return factory(command, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
     return factory
 
 
@@ -635,7 +722,18 @@ def test_check_host_recomputes_capacity_input_before_process_launch(
     assert factory.processes == []
 
 
-@pytest.mark.parametrize("tamper", ["empty", "missing-scope", "extra-record", "substituted-record", "directory-scope"])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "empty",
+        "missing-scope",
+        "extra-record",
+        "substituted-record",
+        "directory-scope",
+        "forged-directory-file",
+        "forged-directory-slash",
+    ],
+)
 def test_source_inventory_must_match_explicit_file_scopes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
 ) -> None:
@@ -652,6 +750,12 @@ def test_source_inventory_must_match_explicit_file_scopes(
         source["files"].insert(0, dict(source["files"][0], path="extra.py"))
     elif tamper == "substituted-record":
         source["files"][0]["path"] = "other.py"
+    elif tamper == "forged-directory-file":
+        source["scope_paths"] = ["."]
+        source["files"][0]["path"] = "."
+    elif tamper == "forged-directory-slash":
+        source["scope_paths"] = ["package/"]
+        source["files"][0]["path"] = "package/"
     else:
         source["scope_paths"] = ["."]
     _write_json(source_path, source)
@@ -663,12 +767,184 @@ def test_source_inventory_must_match_explicit_file_scopes(
         _replace_context(plan_path, index, "")
     factory = _fake_public_processes(monkeypatch, [])
 
-    with pytest.raises(_adapter().ReviewRouteError, match="plan-source-scope-coverage-invalid"):
+    expected_error = (
+        "plan-source-snapshot-invalid"
+        if tamper in {"directory-scope", "forged-directory-file", "forged-directory-slash"}
+        else "plan-source-scope-coverage-invalid"
+    )
+    with pytest.raises(_adapter().ReviewRouteError, match=expected_error):
         _adapter().check_host(plan_path, Path("codex"), 10)
-    with pytest.raises(_adapter().ReviewRouteError, match="plan-source-scope-coverage-invalid"):
+    with pytest.raises(_adapter().ReviewRouteError, match=expected_error):
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
     assert factory.processes == []
+
+
+def test_dispatch_rejects_existing_directory_claimed_as_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A forged file record cannot turn a real directory into a leaf scope."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    repository = tmp_path / "repository"
+    (repository / "package").mkdir(parents=True)
+    plan = json.loads(plan_path.read_bytes())
+    source_path = plan_path.parent / plan["source_path"]
+    source = json.loads(source_path.read_bytes())
+    source["repository"] = repository.as_posix()
+    source["scope_paths"] = ["package"]
+    source["files"][0]["path"] = "package"
+    _write_json(source_path, source)
+    plan["source_sha256"] = _sha256(source_path.read_bytes())
+    for node in plan["nodes"]:
+        node["capacity_receipt"]["source_sha256"] = plan["source_sha256"]
+    _write_json(plan_path, plan)
+    for index in range(len(plan["nodes"])):
+        _replace_context(plan_path, index, "")
+    factory = _fake_public_processes(monkeypatch, [])
+
+    with pytest.raises(_adapter().ReviewRouteError, match="plan-source-snapshot-invalid"):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+    assert factory.processes == []
+
+
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_AVAILABLE, reason="filesystem cannot create directory symlinks")
+def test_dispatch_accepts_tracked_symlink_to_in_repository_directory(tmp_path: Path) -> None:
+    """Keep a tracked symlink leaf valid when its directory target stays inside the checkout."""
+    plan_path, repository = _live_source_plan(tmp_path)
+    (repository / "package").mkdir()
+    (repository / "directory-link").symlink_to("package", target_is_directory=True)
+    subprocess.run(["git", "add", "directory-link"], cwd=repository, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "add link"],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+    )
+    collector_path = PLUGIN_ROOT / "shared" / "collect_diff.py"
+    spec = importlib.util.spec_from_file_location("collect_diff_symlink_test", collector_path)
+    assert spec is not None and spec.loader is not None
+    collector = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(collector)
+    source = collector.capture_source_snapshot(repository, ["directory-link"])
+    assert source["files"][0]["kind"] == "symlink"
+    _bind_source_snapshot(plan_path, source)
+
+    validated, _ = _adapter()._validated_plan(plan_path, CANONICAL_ROLES, require_dispatch=True)
+
+    assert validated["_source_bytes"] == (plan_path.parent / validated["source_path"]).read_bytes()
+
+
+@pytest.mark.parametrize("tamper", ["forged-snapshot", "stale-live-file"])
+def test_dispatch_rejects_snapshot_that_differs_from_live_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
+) -> None:
+    """Reject internally consistent frozen bytes that do not describe the review checkout."""
+    plan_path, repository = _live_source_plan(tmp_path)
+    _adapter()._validated_plan(plan_path, CANONICAL_ROLES, require_dispatch=True)
+    if tamper == "forged-snapshot":
+        plan = json.loads(plan_path.read_bytes())
+        source = json.loads((plan_path.parent / plan["source_path"]).read_bytes())
+        source["files"][0]["content"] = "VALUE = 2\n"
+        source["files"][0]["sha256"] = _sha256(b"VALUE = 2\n")
+        _bind_source_snapshot(plan_path, source)
+    else:
+        (repository / "widget.py").write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
+    launches = _launches_for_plan(plan_path)
+    launches[1] = launches[1][:5]
+    factory = _fake_host_with_git(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+def test_dispatch_rejects_snapshot_from_another_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The snapshot repository must be the checkout selected for reviewer turns."""
+    plan_path, repository = _live_source_plan(tmp_path)
+    decoy = _committed_source_repository(tmp_path / "decoy")
+    plan = json.loads(plan_path.read_bytes())
+    source = json.loads((plan_path.parent / plan["source_path"]).read_bytes())
+    source["repository"] = decoy.as_posix()
+    source["revision"] = (
+        subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=decoy, check=True, capture_output=True)
+        .stdout.decode("ascii")
+        .strip()
+    )
+    source["index_sha256"] = _sha256(
+        subprocess.run(
+            ["git", "ls-files", "--stage", "-z", "--", "widget.py"], cwd=decoy, check=True, capture_output=True
+        ).stdout
+    )
+    _bind_source_snapshot(plan_path, source)
+    assert plan["cwd"] == str(repository)
+    launches = _launches_for_plan(plan_path)
+    launches[1] = launches[1][:5]
+    factory = _fake_host_with_git(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError):
+        _adapter().check_host(plan_path, Path("codex"), 10)
+
+    assert factory.processes == []
+
+
+def test_dispatch_rechecks_live_source_after_host_setup_before_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A checkout change during host setup must stop every paid reviewer turn."""
+    plan_path, repository = _live_source_plan(tmp_path)
+    _adapter()._validated_plan(plan_path, CANONICAL_ROLES, require_dispatch=True)
+    factory = _fake_host_with_git(monkeypatch, _launches_for_plan(plan_path))
+    launch = subprocess.Popen
+
+    def change_source_on_host_launch(*args: object, **kwargs: object) -> _FakeProcess:
+        """Change only the live leaf after the second external host process starts."""
+        process = launch(*args, **kwargs)
+        if len(factory.processes) == 2:
+            (repository / "widget.py").write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", change_source_on_host_launch)
+
+    with pytest.raises(_adapter().ReviewRouteError):
+        _adapter().run_review(plan_path, tmp_path / "live-source-review", Path("codex"), 10)
+
+    requests = [json.loads(line)["method"] for line in factory.processes[1].stdin.getvalue().splitlines()]
+    assert "turn/start" not in requests
+
+
+def test_dispatch_rechecks_live_source_after_reviewer_turn(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file changed during review cannot produce accepted completion evidence."""
+    plan_path, repository = _live_source_plan(tmp_path)
+    factory = _fake_host_with_git(monkeypatch, _launches_for_plan(plan_path))
+    launch = subprocess.Popen
+    changed = False
+
+    class SourceChangingStdin(io.StringIO):
+        """Change the live checkout when the fake host receives its first reviewer turn."""
+
+        def write(self, data: str) -> int:
+            """Preserve the request transcript and change only the first turn's source."""
+            nonlocal changed
+            count = super().write(data)
+            if not changed and '"method":"turn/start"' in data:
+                (repository / "widget.py").write_text("VALUE = 2\n", encoding="utf-8", newline="\n")
+                changed = True
+            return count
+
+    def launch_with_source_change(*args: object, **kwargs: object) -> _FakeProcess:
+        """Attach the source-changing stdin to the reviewer host process only."""
+        process = launch(*args, **kwargs)
+        if len(factory.processes) == 2:
+            process.stdin = SourceChangingStdin()
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", launch_with_source_change)
+
+    with pytest.raises(_adapter().ReviewRouteError):
+        _adapter().run_review(plan_path, tmp_path / "post-turn-source-review", Path("codex"), 10)
+
+    assert changed
+    requests = [json.loads(line)["method"] for line in factory.processes[1].stdin.getvalue().splitlines()]
+    assert "turn/start" in requests
 
 
 @pytest.mark.parametrize("suffix", ["ASCII", "café 😀"])
@@ -804,6 +1080,22 @@ def test_check_host_reports_only_a_sanitized_trailing_notification_method(
         _adapter().check_host(plan_path, Path("codex"), 10)
 
 
+def test_check_host_discards_account_update_after_cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ignore a schema-defined account notification after the host exits."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    launches[1][2] = {"method": "account/updated"}
+    launches[1] = launches[1][:5]
+    _fake_public_processes(monkeypatch, launches)
+
+    assert _adapter().check_host(plan_path, Path("codex"), 10)["model_invoked"] is False
+
+
+def test_cleanup_rejects_account_update_with_request_id() -> None:
+    """Keep server requests out of the account notification allowance."""
+    assert not _adapter()._is_harmless_lifecycle({"id": 1, "method": "account/updated"})
+
+
 def test_check_host_accepts_only_disabled_remote_control_status(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -878,9 +1170,10 @@ def test_review_turns_enforce_output_schema(tmp_path: Path, monkeypatch: pytest.
         schema = turn["params"]["outputSchema"]
         assert schema["type"] == "object"
         assert schema["additionalProperties"] is False
-        assert set(schema["required"]) == {"source_sha256", "diff_sha256", "findings"}
+        assert set(schema["required"]) == {"source_sha256", "diff_sha256", "findings", "assessment"}
         assert schema["properties"]["source_sha256"]["enum"] == [plan["source_sha256"]]
         assert schema["properties"]["diff_sha256"]["enum"] == [plan["review_input_sha256"]]
+        assert schema["properties"]["assessment"]["required"] == ["rating", "rationale"]
         finding = schema["properties"]["findings"]["items"]
         assert finding["additionalProperties"] is False
         assert set(finding["required"]) == {"signature", "tier", "structural", "disposition", "evidence"}
@@ -1092,6 +1385,7 @@ def test_run_review_preserves_nested_output_under_plan_parent(tmp_path: Path, mo
 def test_run_review_wraps_output_directory_setup_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Return a bounded route error when the new contained output directory cannot be created."""
     plan_path, _ = review_evidence_files(tmp_path)
+    monkeypatch.setattr(_adapter(), "_live_source_unchanged", lambda *args: None)
     output = tmp_path / "review-output"
     original_mkdir = Path.mkdir
 
@@ -1569,12 +1863,45 @@ def test_check_host_cleans_up_when_initialize_fails(tmp_path: Path, monkeypatch:
     assert len(factory.processes) == 1
 
 
-def test_run_review_rejects_unknown_execution_bearing_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fail closed when the host emits an event outside the narrow reviewer allowlist."""
+@pytest.mark.parametrize(
+    "notification",
+    [
+        pytest.param({"method": "account/updated"}, id="method-only"),
+        pytest.param(
+            {"jsonrpc": "2.0", "method": "account/updated", "params": {"authMode": "chatgpt", "planType": "plus"}},
+            id="schema-payload",
+        ),
+    ],
+)
+def test_run_review_discards_account_update_during_turn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notification: dict[str, object]
+) -> None:
+    """A host account notification must not interrupt a read-only review turn."""
     plan_path, _ = review_evidence_files(tmp_path)
     launches = _launches_for_plan(plan_path)
     first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
-    launches[1][first_event] = {"jsonrpc": "2.0", "method": "shellCommand/executed", "params": {}}
+    launches[1].insert(first_event, notification)
+    _fake_public_processes(monkeypatch, launches)
+
+    evidence_path = _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    assert json.loads(evidence_path.read_text(encoding="utf-8"))["status"] == "completed"
+    assert "authMode" not in evidence_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        pytest.param("shellCommand/executed", id="execution-event"),
+        pytest.param("model/verification/opaqueSuffix", id="documented-prefix-with-extra-segment"),
+    ],
+)
+def test_run_review_rejects_unknown_event_method(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    """Fail closed without retaining an event method outside the diagnostic allowlist."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1][first_event] = {"jsonrpc": "2.0", "method": method, "params": {}}
     _fake_public_processes(monkeypatch, launches)
 
     with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
@@ -1591,7 +1918,60 @@ def test_run_review_rejects_unknown_execution_bearing_event(tmp_path: Path, monk
             "supported event schema."
         ),
     }
-    assert "shellCommand/executed" not in json.dumps(evidence)
+    assert method not in json.dumps(evidence)
+
+
+@pytest.mark.parametrize(
+    ("method", "category"),
+    [
+        pytest.param("model/verification", "model/verification", id="model-notification"),
+        pytest.param("item/autoApprovalReview/started", "item/autoApprovalReview/started", id="approval-review"),
+    ],
+)
+def test_run_review_classifies_documented_rejected_event_without_retaining_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, category: str
+) -> None:
+    """Identify a documented event by static label while failing closed and discarding its payload."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1][first_event] = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": {"sensitive": "do-not-retain-this-payload"},
+    }
+    _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    evidence_text = (tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8")
+    diagnostic = json.loads(evidence_text)["failure_diagnostic"]
+    assert diagnostic["method_category"] == category
+    assert "do-not-retain-this-payload" not in evidence_text
+
+
+def test_run_review_rejects_nontext_event_method_without_retaining_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Treat malformed method values as unknown rather than raising a Python type error."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    launches = _launches_for_plan(plan_path)
+    first_event = next(index for index, frame in enumerate(launches[1]) if frame.get("method") == "item/completed")
+    launches[1][first_event] = {
+        "jsonrpc": "2.0",
+        "method": {"sensitive": "do-not-retain-this-method"},
+        "params": {},
+    }
+    _fake_public_processes(monkeypatch, launches)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-event-rejected"):
+        _adapter().run_review(plan_path, tmp_path / "review-output", Path("codex"), 10)
+
+    evidence_text = (tmp_path / "review-output" / "evidence.json").read_text(encoding="utf-8")
+    diagnostic = json.loads(evidence_text)["failure_diagnostic"]
+    assert diagnostic["method_category"] == "unrecognized"
+    assert "do-not-retain-this-method" not in evidence_text
 
 
 def test_run_review_accepts_schema_planning_events_bound_to_active_turn(
@@ -1920,7 +2300,14 @@ def review_evidence_files(
         context = role_card + b"\nFrozen source:\n" + source + b"\nFrozen diff:\n" + diff
         context_path = contexts / f"{role_id}.txt"
         context_path.write_bytes(context)
-        output = f"{role_id} final response\n".encode()
+        output = json.dumps(
+            {
+                "source_sha256": _sha256(source),
+                "diff_sha256": _sha256(diff),
+                "findings": [],
+                "assessment": {"rating": 1, "rationale": f"No open findings for {role_id}."},
+            }
+        ).encode()
         output_path = outputs / f"{role_id}.md"
         output_path.write_bytes(output)
         nodes.append(
@@ -2004,6 +2391,54 @@ def review_evidence_files(
     return plan_path, evidence_path
 
 
+def _committed_source_repository(root: Path) -> Path:
+    """Create a real local Git checkout whose leaf bytes can be compared with a plan."""
+    root.mkdir()
+    (root / "widget.py").write_text("VALUE = 1\n", encoding="utf-8", newline="\n")
+    for arguments in (
+        ("init", "-q"),
+        ("add", "widget.py"),
+        ("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial"),
+    ):
+        subprocess.run(["git", *arguments], cwd=root, check=True, capture_output=True)
+    return root
+
+
+def _bind_source_snapshot(plan_path: Path, source: dict[str, object]) -> None:
+    """Keep frozen plan, role contexts, and capacity receipts consistent after test tampering."""
+    plan = json.loads(plan_path.read_bytes())
+    source_path = plan_path.parent / plan["source_path"]
+    _write_json(source_path, source)
+    plan["source_sha256"] = _sha256(source_path.read_bytes())
+    for node in plan["nodes"]:
+        node["capacity_receipt"]["source_sha256"] = plan["source_sha256"]
+    _write_json(plan_path, plan)
+    for index in range(len(plan["nodes"])):
+        _replace_context(plan_path, index, "")
+
+
+def _live_source_plan(tmp_path: Path) -> tuple[Path, Path]:
+    """Bind the two-role plan to a committed checkout with matching source bytes."""
+    plan_path, _ = review_evidence_files(tmp_path)
+    repository = _committed_source_repository(tmp_path / "repository")
+    plan = json.loads(plan_path.read_bytes())
+    plan["cwd"] = str(repository)
+    _write_json(plan_path, plan)
+    source_path = plan_path.parent / plan["source_path"]
+    source = json.loads(source_path.read_bytes())
+    source["repository"] = repository.as_posix()
+    revision = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"], cwd=repository, check=True, capture_output=True
+    ).stdout.rstrip(b"\n")
+    index = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", "widget.py"], cwd=repository, check=True, capture_output=True
+    ).stdout
+    source["revision"] = revision.decode("ascii")
+    source["index_sha256"] = _sha256(index)
+    _bind_source_snapshot(plan_path, source)
+    return plan_path, repository
+
+
 def test_validate_evidence_binds_canonical_roles_and_outputs(tmp_path: Path) -> None:
     """Return only conservative parent-consumable execution facts for valid evidence."""
     plan_path, evidence_path = review_evidence_files(tmp_path)
@@ -2018,6 +2453,42 @@ def test_validate_evidence_binds_canonical_roles_and_outputs(tmp_path: Path) -> 
         "approval_policy": "never",
         "consumer_id": "code-review",
     }
+
+
+def test_historical_schema_two_output_revalidates_without_later_assessment(tmp_path: Path) -> None:
+    """Retain a prior source-bound response whose original schema had three fields."""
+    plan_path, evidence_path = review_evidence_files(tmp_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    for node in evidence["nodes"]:
+        output_path = evidence_path.parent / node["output_path"]
+        output = json.loads(output_path.read_text(encoding="utf-8"))
+        del output["assessment"]
+        output_path.write_text(json.dumps(output), encoding="utf-8", newline="\n")
+        node["output_sha256"] = _sha256(output_path.read_bytes())
+    _write_json(evidence_path, evidence)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-review-output-schema-mismatch"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
+    assert (
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES, require_assessment=False)["consumer_id"]
+        == "code-review"
+    )
+
+
+def test_retained_output_rejects_malformed_optional_assessment(tmp_path: Path) -> None:
+    """An assessment present in retained evidence cannot bypass rating validation."""
+    plan_path, evidence_path = review_evidence_files(tmp_path)
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    node = evidence["nodes"][0]
+    output_path = evidence_path.parent / node["output_path"]
+    output = json.loads(output_path.read_text(encoding="utf-8"))
+    output["assessment"]["rating"] = True
+    output_path.write_text(json.dumps(output), encoding="utf-8", newline="\n")
+    node["output_sha256"] = _sha256(output_path.read_bytes())
+    _write_json(evidence_path, evidence)
+
+    with pytest.raises(_adapter().ReviewRouteError, match="app-server-review-output-assessment-invalid"):
+        _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 
 def test_app_server_rejects_explicit_selection_advisors(tmp_path: Path) -> None:

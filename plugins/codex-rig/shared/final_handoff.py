@@ -13,8 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New workflow handoffs set ``presentation_version=2`` before ``render``; omitted presentation version remains available
-only for validating historical v1 artifacts. Run ``render`` after gates and handoff creation, then run ``check``
+New workflow handoffs set ``presentation_version=3`` before ``render``; earlier presentation versions remain available
+for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
 --out-scope resolution-scope.md`` to validate source ownership and render the scope; add ``--check`` for a read-only
@@ -53,8 +53,21 @@ SCHEMA_VERSION = 1
 GATE_IDS = ("lint", "format", "types", "tests", "review")
 GATE_STATUSES = {"pass", "fail", "missing-command", "not-applicable", "timeout"}
 GAP_STATUSES = {"closed", "unresolved", "deferred"}
+CHALLENGE_SEVERITY_COLUMNS = (
+    "Challenge",
+    "Security",
+    "Critical",
+    "High",
+    "Medium",
+    "Low",
+    "Nits",
+    "Weighted score",
+    "Decision",
+    "Evidence",
+)
+LEGACY_CHALLENGE_COLUMNS = ("Iteration", "Open findings", "Weighted score", "Decision", "Evidence")
 STANDARD_COLUMNS = {
-    "challenge-resolve": ("Iteration", "Open findings", "Weighted score", "Decision", "Evidence"),
+    "challenge-resolve": CHALLENGE_SEVERITY_COLUMNS,
     "audit": ("Item", "Severity / impact", "Decision", "Evidence", "Next action"),
     "calibrate": ("Check / metric", "Result", "Evidence", "Next action"),
     "assess": ("Finding", "Impact", "Decision", "Evidence", "Next action"),
@@ -95,7 +108,7 @@ HANDOFF_FIELDS = {
     "artifacts",
     "caller_contract",
 }
-PRESENTATION_VERSION = 2
+PRESENTATION_VERSION = 3
 REVIEW_PLAIN_SUMMARIES = {
     "accept-as-is": "This review found no blocking change requests.",
     "minor-changes": "This review can proceed after minor changes.",
@@ -230,9 +243,21 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             )
         ):
             raise HandoffError(f"table-layout-invalid:{heading}")
+        if "overview_only" in table and (
+            table["overview_only"] is not True or skill != "code-remediate" or layout != "concise"
+        ):
+            raise HandoffError(f"table-overview-only-invalid:{heading}")
+        if (
+            skill == "code-remediate"
+            and payload.get("presentation_version") == 3
+            and table.get("overview_only") is not True
+        ):
+            raise HandoffError("remediation-overview-only-required")
         expected = REVIEW_TABLE_COLUMNS.get(heading) if skill == "code-review" else STANDARD_COLUMNS[skill]
         if skill == "release" and heading == "Readiness":
             expected = ("Check", "Status", "Evidence", "Blocker / next action")
+        if skill == "challenge-resolve" and tuple(columns) == LEGACY_CHALLENGE_COLUMNS:
+            expected = LEGACY_CHALLENGE_COLUMNS
         if expected is None or tuple(columns) != expected:
             raise HandoffError(f"table-columns-mismatch:{skill}:{heading}")
         rows = table.get("rows")
@@ -337,7 +362,7 @@ def _validate_unavailable_review_verification(
     payload: dict[str, Any], skill: str, branch: str, presentation_version: object
 ) -> None:
     """Require new terminal PR-review handoffs to label unrun gates accurately."""
-    if skill != "code-review" or branch != "unavailable" or presentation_version != PRESENTATION_VERSION:
+    if skill != "code-review" or branch != "unavailable" or presentation_version not in {2, 3}:
         return
     verification = payload.get("verification")
     if not isinstance(verification, list) or any(entry.get("status") != "not-applicable" for entry in verification):
@@ -345,7 +370,7 @@ def _validate_unavailable_review_verification(
 
 
 def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str) -> None:
-    """Require every remaining item to carry a unique owner and next action."""
+    """Bind every compact unresolved item to a unique owner and next action."""
     remaining = payload.get("remaining")
     if not isinstance(remaining, list):
         raise HandoffError("remaining-not-list")
@@ -366,6 +391,17 @@ def _validate_remaining(payload: dict[str, Any], row_ids: set[str], branch: str)
         raise HandoffError("closed-branch-next-steps-forbidden")
     if branch != "closed" and next_steps != remaining_ids:
         raise HandoffError("next-steps-remaining-mismatch")
+    if payload["skill"] == "code-remediate":
+        for table in payload["tables"]:
+            if not table.get("overview_only"):
+                continue
+            for row in table["rows"]:
+                disposition = row["cells"][4].split(" — ", 1)[0].strip().casefold()
+                if (
+                    disposition in {"unresolved", "deferred", "blocked", "needs-clarification"}
+                    and row["id"] not in remaining_ids
+                ):
+                    raise HandoffError(f"remediation-unresolved-action-missing:{row['id']}")
 
 
 def _validate_confidence(payload: dict[str, Any]) -> None:
@@ -410,6 +446,18 @@ def _validate_artifacts(payload: dict[str, Any]) -> None:
         if label in labels:
             raise HandoffError(f"artifact-label-duplicate:{label}")
         labels.add(label)
+    if payload["skill"] == "code-remediate" and any(table.get("overview_only") for table in payload["tables"]):
+        result_paths = [artifact["path"].replace("\\", "/") for artifact in artifacts if artifact["label"] == "Result"]
+        if len(result_paths) != 1 or PurePosixPath(result_paths[0]).name != "result.json":
+            raise HandoffError("remediation-overview-ledger-missing")
+        ledger = str(PurePosixPath(result_paths[0]).with_name("action-items.md"))
+        ledgers = [
+            artifact["path"].replace("\\", "/")
+            for artifact in artifacts
+            if PurePosixPath(artifact["path"].replace("\\", "/")).name == "action-items.md"
+        ]
+        if ".." in PurePosixPath(result_paths[0]).parts or ledgers != [ledger]:
+            raise HandoffError("remediation-overview-ledger-missing")
 
 
 def _validate_caller_contract(payload: dict[str, Any], branch: str) -> None:
@@ -454,10 +502,12 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     expected_fields = HANDOFF_FIELDS if presentation_version is None else HANDOFF_FIELDS | {"presentation_version"}
     if "commit_disposition" in handoff:
         expected_fields = expected_fields | {"commit_disposition"}
+    if "child_runs" in handoff and handoff.get("skill") == "challenge-resolve" and presentation_version == 3:
+        expected_fields = expected_fields | {"child_runs"}
     if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
     if presentation_version is not None and (
-        type(presentation_version) is not int or presentation_version != PRESENTATION_VERSION
+        type(presentation_version) is not int or presentation_version not in {2, PRESENTATION_VERSION}
     ):
         raise HandoffError("handoff-presentation-version-invalid")
     if handoff.get("schema_version") != SCHEMA_VERSION:
@@ -476,7 +526,29 @@ def validate_handoff(payload: object) -> dict[str, Any]:
             f"Recommendation: {recommendation}." for recommendation in REVIEW_RECOMMENDATIONS
         }:
             raise HandoffError("review-outcome-not-canonical")
+    if "child_runs" in handoff:
+        runs = handoff["child_runs"]
+        if not isinstance(runs, list) or not runs:
+            raise HandoffError("challenge-child-runs-invalid")
+        for run in runs:
+            if (
+                not isinstance(run, dict)
+                or set(run)
+                not in ({"result_path", "scores", "decision"}, {"result_path", "scores", "decision", "reason"})
+                or not isinstance(run.get("result_path"), str)
+                or not run["result_path"].strip()
+                or not isinstance(run.get("scores"), list)
+                or any(type(score) is not int or score < 0 for score in run["scores"])
+                or not isinstance(run.get("decision"), str)
+                or not run["decision"].strip()
+                or ("reason" in run and (not isinstance(run["reason"], str) or not run["reason"].strip()))
+            ):
+                raise HandoffError("challenge-child-runs-invalid")
     row_ids, represented_sources = _validate_tables(handoff, skill, branch)
+    if "child_runs" in handoff and [row["cells"] for table in handoff["tables"] for row in table["rows"]] != [
+        ["not-run", *(["N/A"] * 7), "chunk-only", "chunks/results.json"]
+    ]:
+        raise HandoffError("challenge-child-runs-scope-invalid")
     _validate_source_coverage(handoff, branch, represented_sources)
     _validate_verification(handoff)
     _validate_commit_disposition(handoff)
@@ -560,6 +632,8 @@ def _render_grouped_table(table: dict[str, Any], *, suppress_heading: bool = Fal
         if attributed:
             overview.insert(1, ", ".join(row["authors"]))
         lines.append("| " + " | ".join(_table_cell(value) for value in overview) + " |")
+    if table.get("overview_only"):
+        return lines
     for row in table["rows"]:
         cells = row["cells"]
         title = cells[2] if remediation else row["title"]
@@ -765,7 +839,7 @@ def render_handoff(payload: object) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") == PRESENTATION_VERSION:
+    if handoff.get("presentation_version") in {2, PRESENTATION_VERSION}:
         return _render_v2_handoff(handoff)
 
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
@@ -831,6 +905,13 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
         lines.extend(("", "**Results**"))
         for table in handoff["tables"]:
             lines.extend(("", *_render_table(table, suppress_heading=table["heading"] == "Results")))
+    if runs := handoff.get("child_runs"):
+        lines.extend(("", "Validated child and interaction scores:"))
+        lines.extend(
+            f"- {run['result_path']}: {' → '.join(map(str, run['scores'])) if run['scores'] else 'not-run'} "
+            f"({run['decision']})"
+            for run in runs
+        )
 
     visible_checks = [entry for entry in handoff["verification"] if entry["status"] != "not-applicable"]
     lines.extend(("", "**Verification**", ""))
@@ -847,8 +928,10 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
     if remaining_by_id:
         lines.extend(("", "**Next steps**", ""))
         lines.extend(
-            f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            for item in remaining_by_id.values()
+            f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
+            if handoff["presentation_version"] == 3
+            else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
+            for row_id, item in remaining_by_id.items()
         )
 
     confidence = handoff["confidence"]
@@ -881,10 +964,17 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _require_siblings(*paths: Path) -> None:
-    """Keep generated and checked files inside one resolved run directory."""
-    parents = {path.resolve().parent for path in paths}
+    """Keep input and output files distinct inside one resolved run directory."""
+    resolved = [path.resolve() for path in paths]
+    parents = {path.parent for path in resolved}
     if len(parents) != 1:
         raise HandoffError("handoff-paths-not-siblings")
+    if len(set(resolved)) != len(paths) or any(path.is_symlink() for path in paths[1:]):
+        raise HandoffError("handoff-paths-alias")
+    for index, path in enumerate(paths):
+        for other in paths[index + 1 :]:
+            if path.exists() and other.exists() and path.samefile(other):
+                raise HandoffError("handoff-paths-alias")
 
 
 def render_files(handoff_path: Path, final_path: Path, validation_path: Path) -> dict[str, Any]:

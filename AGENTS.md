@@ -25,6 +25,12 @@ Simplicity and reliability come first. Understand the affected flow and root cau
 
 Verification is part of implementation. Work is not complete until relevant checks pass and failures, residual risks, and deliberately deferred scope are reported accurately.
 
+## Version Continuity
+
+- Before changing any shipped version or serialized artifact schema, identify its version family and read that family's value from the last committed `HEAD`; do not use an earlier uncommitted edit or an unrelated nested version as the baseline.
+- A changed integer schema advances exactly one step from its committed current value. A new version family starts at 1. Keep older versions only as explicitly labeled historical readers; several revisions before the next commit still produce one bump from `HEAD`.
+- Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in `plugins/AGENTS.md`.
+
 ## Python Record Types
 
 - Prefer dataclasses for reused, fixed-shape internal records to clarify contracts and reduce field-name mistakes.
@@ -71,7 +77,7 @@ Scripts, hooks, `bin/` entry points, and CI steps all run on Linux, macOS, and n
 
 ## Adversarial Convergence Loop
 
-Use the canonical procedure in [plugins/codex-rig/shared/adversarial-loop.md](plugins/codex-rig/shared/adversarial-loop.md) for every independent review → authorized-fix cycle. Read it before dispatch; its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and recovery rules are mandatory.
+Use the canonical procedure in [plugins/codex-rig/shared/adversarial-loop.md](plugins/codex-rig/shared/adversarial-loop.md) for every independent review → authorized-fix cycle. Read it before dispatch; its scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, and remediation rules are mandatory.
 
 Do not fork the implementing conversation for review or treat a local fix as closed before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then asks for the concrete missing decision; a clean loop still requires the owning workflow’s remaining gates.
 

@@ -49,6 +49,30 @@ def test_every_skill_preserves_its_closing_gate_after_reentry() -> None:
 
 
 @pytest.mark.installed_plugin
+def test_helper_help_is_batched_for_selected_workflow_path() -> None:
+    """Prevent repeated help turns and full-roster output on ordinary skill runs."""
+    contract = (PLUGIN_ROOT / "shared/helper-cli-contract.md").read_text(encoding="utf-8")
+    section = contract.split("For the selected workflow path,", 1)[1].split("\nCreate every skill run", 1)[0]
+
+    for requirement in (
+        "one tool batch",
+        "each command's exit status",
+        "complete output available",
+        "compact labeled index",
+        "16 KiB of aggregate text",
+        "retained full help",
+        "selected subcommand's `--help`",
+        "Never silently truncate a failed help check",
+        "Do not run the full release roster",
+        "when its branch is selected",
+        "same packaged helper bytes",
+        "A failed help check blocks that helper's invocation",
+        "never combines approval boundaries",
+    ):
+        assert requirement in section
+
+
+@pytest.mark.installed_plugin
 @pytest.mark.parametrize(
     "skill_path",
     [pytest.param(path, id=path.parent.name) for path in sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))],

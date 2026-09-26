@@ -16,13 +16,17 @@
     "medium": 0
   },
   "metadata": {
-    "action_contract_version": 1,
+    "action_contract_version": 2,
     "adversarial_loop": {
       "reason": "independence-unavailable",
       "rounds": [],
       "scores": [],
       "status": "stopped"
     },
+    "challenge_scope": {
+      "mode": "single"
+    },
+    "challenge_table_contract_version": 1,
     "confidence_gap_closures": [],
     "confidence_gaps": [],
     "confidence_recovery": {
@@ -32,7 +36,7 @@
       "final_confidence": 0.0,
       "initial_confidence": 0.0,
       "recovery_actions": [
-        "record actual evidence-backed recovery"
+        "record evidence-backed actions that addressed confidence gaps"
       ],
       "remaining_limits": [
         "record actual remaining limits"

@@ -58,44 +58,44 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
 
 
 @pytest.mark.installed_plugin
-def test_pr_review_approves_the_complete_collector_before_terminal_network_failure() -> None:
-    """Require network approval to cover the collector and its nested GitHub reads."""
+def test_pr_review_uses_active_profile_before_terminal_network_failure() -> None:
+    """Keep PR collection inside the installed profile before an unavailable result."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
 
-    assert "execute the complete collector command with approved external network access" in skill
-    assert '`sandbox_permissions="require_escalated"`' in skill
-    assert "never request a broad `python` approval prefix" in skill
-    assert "A direct approval for `gh pr view` does not cover `gh` spawned by the collector" in skill
-    assert "Only after that approved collector attempt fails" in skill
-    assert skill.index("execute the complete collector command") < skill.index(
-        "**Terminal review-unavailable output gate:**"
+    assert (
+        "Run the direct owning collector under an active opted-in `github-read` profile or with runtime approval"
+        in skill
     )
+    assert "An unexpected runtime restriction or denial stops the collection attempt" in skill
+    assert "without broadening access or retrying the denied command" in skill
+    assert skill.index("Run the direct owning collector") < skill.index("**Terminal review-unavailable output gate:**")
 
 
 @pytest.mark.installed_plugin
-def test_pr_remediation_approves_the_complete_collector_before_terminal_network_failure() -> None:
-    """Keep PR remediation from repeating the review collector's sandbox failure."""
+def test_pr_remediation_uses_active_profile_before_terminal_network_failure() -> None:
+    """Keep PR remediation from escalating its collector's allowed reads."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
 
-    assert "execute the complete collector command with approved external network access" in skill
-    assert '`sandbox_permissions="require_escalated"`' in skill
-    assert "never request a broad `python` approval prefix" in skill
-    assert "A direct approval for `gh pr view` does not cover `gh` spawned by the collector" in skill
-    assert "Only after that approved collector attempt fails" in skill
-    assert skill.index("execute the complete collector command") < skill.index("Findings intake:")
+    assert (
+        "Run the direct owning collector under an active opted-in `github-read` profile or with runtime approval"
+        in skill
+    )
+    assert "An unexpected runtime restriction or denial stops" in skill
+    assert "without broadening access or retrying the denied command" in skill
+    assert skill.index("Run the direct owning collector") < skill.index("Findings intake:")
 
 
-def test_calibration_covers_sandboxed_collector_network_approval() -> None:
-    """Keep behavioral calibration aligned with the collector approval contract."""
+def test_calibration_covers_missing_pr_profile() -> None:
+    """Keep behavioral calibration aligned with explicit profile installation."""
     payload = json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))
     cases = {case["id"]: case for case in payload["cases"]}
 
-    case = cases["code-review-pr-sandboxed-collector-network-approval"]
+    case = cases["code-review-pr-profile-not-installed"]
     assert case["target"] == "code-review"
     assert case["expected_findings"] == [
-        "complete-collector-network-approval-missing",
-        "nested-github-read-sandboxed",
-        "terminal-unavailable-before-approved-retry",
+        "plugin-add-assumed-profile-install",
+        "profile-auto-installed-from-skill",
+        "host-restriction-retried",
     ]
 
 

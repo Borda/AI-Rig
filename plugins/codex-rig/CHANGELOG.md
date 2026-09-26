@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+- Check the shipped behavioral-case version against its own committed HEAD path, fail on Git probe and blob-read errors in a checkout, and record genuine installed-cache skips explicitly.
+- Accept current schema-3 challenge plans at the no-model preflight while checking continuation lineage and prior findings; retain schema-2 archive preflight.
+- Revalidate retained isolated reviewer JSON against its frozen source and diff during evidence acceptance, even after its output digest matches.
+- Require schema-3 bound handoffs before Code Review producer completion for assessed, unavailable, and closed results, while preserving historical result intake.
+- Reject mixed PR/local snapshot tables, encode collected PR titles as safe link text, and require substantive environment-only commit-plan sections in current review and remediation results.
+- Assert the large-scope challenge calibration case's expected findings so its oracle cannot silently disappear.
+- Bind current non-PR review handoff Scope to normalized review scope and Revision to retained diff bytes, while disclosing that this is not a structured target or commit identity.
+- Front-load a bounded challenge discovery inventory, date first-reported defects against prior source, and require an invariant, original case, consumer, sibling route, and source-path closure plan for every new schema-2 fix action. Keep the total-score stop while exposing prior-finding residue separately.
+- Call post-review fix work remediation in challenge-resolve guidance and shared adversarial rules. New loop reports use a `Remediation` section; the validator still accepts historical `Recovery` sections.
+- Run each challenge round with a fresh independent challenger given frozen source and original counterexamples, never resolver handoffs. Record parent decisions on finding identity and severity in a checked schema-2 triage map before weighted scoring. Require the same current challenge artifact contract under candidate and canonical result filenames; older reports remain archive data.
+- Require resolver checks to reproduce each earlier counterexample through its consumer before repeat review; keep solver claims pending until an independent challenger assesses the same signature with its required source.
+- Bind continued chunked remediation to a copied prior ledger, complete declared source assignments, exact prior evidence in the reviewer request, and an authenticated current disposition for every earlier signature before a clean claim. List unresolved earlier signatures in stopped summaries and reject historical manifest versions for result validation so old debt cannot disappear through a version downgrade.
+- Triage challenge findings by underlying defect across all prior validated runs before assigning severity; preserve parent stops across chunk baselines, mark omitted-source prior findings unassessed, and report whether old open weight fell by at least half on comparable repeat reviews.
+- Add a no-model challenge reviewer preflight that checks the same exact source, diff, request, and supporting-context labels as the post-review evidence gate before a paid turn.
+- Require scoped labels and chronological old/new finding history when a stopped challenge loop continues through separate chunk runs; retain each run's local score without implying one combined convergence trend.
+- Validate stopped chunk coordinators against real completed child results and explicit pending slots, while preserving the strict complete clean-coverage gate.
+- Require each declared supporting source to have a captured file record, bind frozen primary source to its exact context label, and check prior-finding visibility from retained records rather than path names; reject unsorted continuation paths before creating output.
+- Reject reviewer-rating mismatches in assessed historical results that retain assessments, while keeping older results without assessments readable. Resume an interrupted first GitHub-read profile install only from its verified canonical state.
+- Bind challenge preflight to line-start evidence labels, the current scoped tracked patch, and canonical current source copies before dispatch; correct schema-version guidance for chunk checks and assessed review handoffs.
+- Require exact reviewer request, source, diff, and supporting-source section boundaries and compare the final clean round's retained patch with current Git for both current reviewer routes; include staged deletions in source snapshots and complete-file chunk inventories.
+- Bind current single-run continuation to the earlier ledger and require an exact reviewer disposition for every prior signature. Check structured declared reviewer path coverage for clean challenge results, and validate non-PR CI and Type snapshot cells against their current contract.
+
+## 0.25.0
+
+- Replace workflow-specific GitHub approval flags and managed command allow rules with an opt-in `github-read` permission profile. The source checkout defines a project-local profile; explicit setup or repository sync separately installs the managed Codex-home profile, while direct plugin installation alone does not install that profile. Neither selects itself by default; use `codex -c 'default_permissions="github-read"'` for a fresh opted-in session. Both extend `:workspace` and route GitHub-domain traffic through the network proxy for that session. Host restrictions remain controlling, and the profiles do not enforce HTTP methods or executable identity. Remove legacy plugin-owned reader and PR-collector rules and migrate verified automatic profiles during setup while preserving unrelated user settings.
+- Bind bare PR numbers to valid GitHub `origin` even when fork remotes exist; explicit PR URLs still select their named configured repository. Apply the default in review, remediation, and PR assessment.
+- Keep remediation chat results to the finding, resolution, and outcome table; retain full source and closure evidence in the linked Markdown resolution ledger and validated machine handoff.
+- Permit an explicitly requested local remediation commit with an environment-only verification blocker, retaining the failed result and open obligation in artifacts and commit limits; require rule and evidence citations when a commit remains blocked.
+- Show carried + newly found findings and weighted score as `old + new` in every new severity-ranked Results row, including zero cells; bind every split to ledger signatures and retain historical result formats.
+- Partition large challenge scopes into measured whole-file source and patch chunks, run ordinary independent review-and-fix loops for each chunk, and reject stale or incomplete coverage without treating an optional transport limit as a universal reviewer limit. Revalidate promoted results and give coordinators a stopped child-backed result that lists each child score series without fabricating an overall score.
+- Validate proposed `github-read` profile TOML and unrelated parsed settings before writes, rejecting unsupported multiline or quoted-key forms without changing user configuration. Python 3.10 profile edits require `tomli`.
+- Classify rejected App Server notifications by a fixed public-schema name while keeping the wave stopped and discarding arbitrary methods and payloads; retain `unrecognized` for malformed or future events.
+
 ## 0.24.1
 
 - Fixed ACR2: shepherd's breaking-change `AskUserQuestion` gate was structurally unreachable (agent has no foreground mode) — now unconditionally emits a report block instead, with `semver-rules.md` and README updated to match.
@@ -20,7 +55,7 @@
 
 ## 0.22.0
 
-- Require reviewer attribution and the aggregate summary when promoting new assessed review candidates without retroactively rejecting historical reports. Non-PR assessed candidates must now carry a `Review Snapshot` table, which earlier releases did not require — a breaking change for that promotion path only; stored artifacts still read unchanged. Require convergence tables in challenge updates, approval/recovery questions and pauses, including unvalidated runs.
+- Require reviewer attribution and the aggregate summary when promoting new assessed review candidates without retroactively rejecting historical reports. Non-PR assessed candidates must now carry a `Review Snapshot` table, which earlier releases did not require — a breaking change for that promotion path only; stored artifacts still read unchanged. Require convergence tables in challenge updates, approval/remediation questions and pauses, including unvalidated runs.
 - Add scoped reviewer ratings in review header tables, a five-value legend below, and finding authors retaining all deduplicated contributors. Preserve aggregate prose summaries, existing verdicts and evidence; bind rendered attribution to canonical records and retain historical report rendering.
 
 ## 0.21.4

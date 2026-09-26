@@ -244,6 +244,30 @@ def test_repeated_open_finding_requires_root_cause_before_another_fix() -> None:
     assert module.validate_actions(ledger, actions) == []
 
 
+def test_current_fix_action_requires_invariant_and_sibling_evidence() -> None:
+    """Block a fix record that proves only the original example."""
+    module = _load_module()
+    ledger = _ledger(_round(1, [_finding("external-write")]))
+    action = {
+        "signature": "external-write",
+        "decision": "fix",
+        "evidence": [
+            "invariant: release preparation cannot write outside its directory",
+            "original: release-directory symlink regression failed before and passed after",
+            "consumer: setup release command returned an error before any external write",
+            "source-paths: setup_release_dir.py and its regression test",
+        ],
+        "owner": "parent",
+        "next_action": "Seek a fresh independent challenge.",
+        "root_cause": None,
+    }
+    actions = {"schema_version": 2, "rounds": [{"index": 1, "actions": [action]}]}
+
+    assert "round-1-fix-evidence-missing:sibling:external-write" in module.validate_actions(ledger, actions)
+    action["evidence"].append("sibling: existing backup symlink failed before and passed after")
+    assert module.validate_actions(ledger, actions) == []
+
+
 @pytest.mark.parametrize(
     ("disposition", "decision", "score"),
     [

@@ -185,11 +185,13 @@ def _normalize_scope_paths(repository: Path, scope_paths: list[str]) -> list[str
 
 
 def _source_inventory(repository: Path, scope_paths: list[str]) -> bytes:
-    """Return the tracked and non-ignored file names selected by literal scopes."""
-    return _git_output(
+    """Return HEAD, index, and non-ignored worktree names selected by literal scopes."""
+    head = _git_output(repository, ("ls-tree", "-r", "--name-only", "-z", "HEAD", "--", *scope_paths))
+    current = _git_output(
         repository,
         ("ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *scope_paths),
     )
+    return head + current
 
 
 def _source_content(source: bytes) -> tuple[str, str]:

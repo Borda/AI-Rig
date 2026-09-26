@@ -10,7 +10,7 @@ paths:
 
 Governs `/develop:review` → `/develop:fix`, `/develop:debug` root-cause loops, pre-commit review. Permitted independent pass: dispatch `foundry:challenger` via `Agent()` (requires `foundry` plugin), or `bridge:review` if available; never `subagent_type: "fork"`. Give reviewer diff, spec, symptom — never implementation narrative.
 
-Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, recovery rules — all mandatory.
+Read `_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Scope, evidence ledger, three-round limit including initial `W_0`, independent final snapshot, score weights (`20/10/6/4/2/1`), trend, remediation rules — all mandatory.
 
 Never close a local fix before later independent verification. An open structural finding, same open signature in consecutive reviews, unavailable independent coverage, or stale final snapshot stops a clean claim; open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or round cap with open findings. Every such stop reports only completed-round scores (e.g. `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then invokes `AskUserQuestion` for the concrete missing decision; a clean loop still needs the owning workflow's remaining gates.
 

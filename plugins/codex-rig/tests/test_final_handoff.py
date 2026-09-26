@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from _platform import FILE_SYMLINKS_AVAILABLE
+from _platform import FILE_SYMLINKS_AVAILABLE, HARD_LINKS_AVAILABLE
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -252,11 +253,11 @@ def test_release_handoff_renders_changes_and_readiness_tables() -> None:
     assert "| Verification | unavailable | CI unavailable | CI owner: rerun |" in rendered
 
 
-def test_v2_handoff_leads_with_plain_english_and_omits_empty_or_duplicate_sections() -> None:
+def test_v3_handoff_leads_with_plain_english_and_row_bound_next_steps() -> None:
     """Keep new reports useful when only one recovery action and no executable checks exist."""
     finalizer = _load_finalizer()
     payload = _handoff_payload()
-    payload["presentation_version"] = 2
+    payload["presentation_version"] = 3
     payload["skill"] = "code-review"
     payload["branch"] = "unavailable"
     payload["outcome"] = {
@@ -297,7 +298,77 @@ def test_v2_handoff_leads_with_plain_english_and_omits_empty_or_duplicate_sectio
     assert "**Remaining**" not in rendered
     assert rendered.count("Resume only after a fresh collector run") == 1
     assert rendered.count("PR collection stopped at `github-network:gh-pr-view`.") == 1
-    assert "**Next steps**\n\n- PR collection stopped at `github-network:gh-pr-view`. — owner: code-review" in rendered
+    assert (
+        "**Next steps**\n\n- collection-recovery — PR collection stopped at `github-network:gh-pr-view`. — owner: code-review"
+        in rendered
+    )
+
+
+def test_retained_v2_handoff_checks_original_next_steps_bytes(tmp_path: Path) -> None:
+    """A previously bound v2 result keeps its exact rendered bytes after later presentation changes."""
+    finalizer = _load_finalizer()
+    payload = _handoff_payload()
+    payload.update(
+        presentation_version=2,
+        skill="code-review",
+        branch="unavailable",
+        outcome={"title": "PR Review Availability", "summary": "Collection stopped."},
+        tables=[],
+        source_records=[],
+        source_coverage={
+            "source_records_total": 0,
+            "represented_source_records_total": 0,
+            "omitted_source_records_total": 0,
+        },
+        verification=[
+            {"check": gate, "status": "not-applicable", "evidence": "gates.json"}
+            for gate in ("lint", "format", "types", "tests", "review")
+        ],
+        remaining=[
+            {"row_id": "recovery", "item": "Collect PR", "owner": "code-review", "next_action": "Run collector."}
+        ],
+        next_steps=["recovery"],
+        artifacts=[{"label": "Result", "path": "run/result.json"}],
+    )
+    prior_render = (
+        "Collection stopped.\n\n"
+        "**Outcome**\n\n"
+        "PR Review Availability\n\n"
+        "**Verification**\n\n"
+        "- Checks were not run; no executable verification applies to this branch.\n\n"
+        "**Next steps**\n\n"
+        "- Collect PR — owner: code-review — next: Run collector.\n\n"
+        "**Confidence**\n\n"
+        "0.95 (fair).\n"
+        "Limits: External CI was not run.\n"
+        "Gap [unresolved]: External CI was not run. — CI is external.\n\n"
+        "**Artifact**\n\n"
+        "Result: run/result.json\n"
+    ).encode("utf-8")
+    handoff_path = tmp_path / "final-handoff.json"
+    final_path = tmp_path / "final.md"
+    validation_path = tmp_path / "final-handoff.validation.json"
+    handoff_bytes = json.dumps(payload).encode("utf-8")
+    handoff_path.write_bytes(handoff_bytes)
+    final_path.write_bytes(prior_render)
+    validation_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "status": "pass",
+                "skill": "code-review",
+                "branch": "unavailable",
+                "handoff_sha256": hashlib.sha256(handoff_bytes).hexdigest(),
+                "rendered_sha256": hashlib.sha256(prior_render).hexdigest(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    assert finalizer.check_files(handoff_path, final_path, validation_path)["status"] == "pass"
 
 
 def test_v2_handoff_avoids_a_duplicate_results_title() -> None:
@@ -546,6 +617,51 @@ def test_cli_render_and_check_bind_exact_file_digests(tmp_path: Path) -> None:
     assert "rendered-final-mismatch" in drifted.stderr
 
 
+@pytest.mark.parametrize(
+    "alias",
+    [
+        "same-path",
+        pytest.param(
+            "symlink",
+            marks=pytest.mark.skipif(not FILE_SYMLINKS_AVAILABLE, reason="host cannot create file symlinks"),
+        ),
+        pytest.param(
+            "hardlink",
+            marks=pytest.mark.skipif(not HARD_LINKS_AVAILABLE, reason="host cannot create hard links"),
+        ),
+    ],
+)
+@pytest.mark.parametrize("output_name", ["final", "validation"])
+def test_render_refuses_output_aliasing_handoff_input(tmp_path: Path, alias: str, output_name: str) -> None:
+    """A generated output must never overwrite its input through any file alias."""
+    finalizer = _load_finalizer()
+    handoff = tmp_path / "final-handoff.json"
+    payload = _handoff_payload()
+    payload["commit_disposition"] = {
+        "status": "pending",
+        "reason": "Awaiting the user's commit choice; changes remain unstaged.",
+        "evidence": "commit-plan.md",
+    }
+    original = json.dumps(payload).encode("utf-8")
+    handoff.write_bytes(original)
+    output = (
+        handoff
+        if alias == "same-path"
+        else tmp_path / ("final.md" if output_name == "final" else "final-handoff.validation.json")
+    )
+    if alias == "symlink":
+        output.symlink_to(handoff.name)
+    elif alias == "hardlink":
+        os.link(handoff, output)
+    final = output if output_name == "final" else tmp_path / "final.md"
+    validation = output if output_name == "validation" else tmp_path / "final-handoff.validation.json"
+
+    with pytest.raises(finalizer.HandoffError):
+        finalizer.render_files(handoff, final, validation)
+    assert handoff.read_bytes() == original
+    assert not (tmp_path / ("final-handoff.validation.json" if output_name == "final" else "final.md")).exists()
+
+
 def test_new_remediation_render_requires_commit_disposition(tmp_path: Path) -> None:
     """Prevent a remediation summary from silently skipping the commit checkpoint."""
     finalizer = _load_finalizer()
@@ -584,6 +700,37 @@ def test_remediation_commit_cannot_claim_readiness_with_failed_gate(status: str,
 
     with pytest.raises(finalizer.HandoffError, match="remediation-commit-verification-blocked"):
         finalizer.render_handoff(payload)
+
+
+def test_environment_limited_commit_preserves_failed_result_without_opening_other_failures() -> None:
+    """Permit only a disclosed environment-owned verification obligation."""
+    validator = _load_shared_validator()
+    result = {"status": "fail", "checks_failed": [], "findings": {"critical": 0}}
+    handoff = _handoff_payload()
+    unresolved = {
+        "selected_items_unresolved": 1,
+        "environment_blocked_items": 1,
+        "all_local_actionable_items_closed": True,
+        "local_actionable_items_unresolved": 0,
+        "process_gate_items_unresolved": 0,
+        "external_owner_items": 0,
+        "user_deferred_items": 0,
+        "unresolved_reason_groups": [{"reason": "environment-blocked", "owner": "environment"}],
+    }
+    open_items = [{"resolution_status": "unresolved", "resolved_how": "Blocked: docs environment unavailable."}]
+
+    assert validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    assert result["status"] == "fail"
+    assert open_items[0]["resolution_status"] == "unresolved"
+
+    result["checks_failed"] = ["tests"]
+    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    result["checks_failed"] = []
+    unresolved["unresolved_reason_groups"][0]["reason"] = "process-gate"
+    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    unresolved["unresolved_reason_groups"][0]["reason"] = "environment-blocked"
+    open_items[0]["resolved_how"] = "Deferred: user request."
+    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
 
 
 def test_declined_commit_does_not_claim_verification_readiness() -> None:

@@ -11,6 +11,12 @@ Start every user-facing message with a short plain-English explanation that name
 
 Repository-wide policy belongs in this top-level file. Lower-scope instruction files inherit it and must add only narrower rules or explicit exceptions, never repeat the same policy.
 
+## Version Continuity
+
+- Before changing any shipped version or serialized artifact schema, identify its version family and read that family's value from the last committed `HEAD`; do not use an earlier uncommitted edit or an unrelated nested version as the baseline.
+- A changed integer schema advances exactly one step from its committed current value. A new version family starts at 1. Keep older versions only as explicitly labeled historical readers; several revisions before the next commit still produce one bump from `HEAD`.
+- Check the proposed value against `HEAD` before handoff and record the comparison with the affected verification. Reject skipped or downgraded versions. Plugin release versions also follow the separate SemVer pre-bump gate in `plugins/CLAUDE.md`.
+
 When a top-level policy changes, review lower layers for conflicts or obsolete duplication rather than copying the new text into them.
 
 ## Edit Scope — Hard Constraint
@@ -83,7 +89,7 @@ Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style �
 
 ## Adversarial Convergence Loop
 
-Use `foundry:rules/_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, ledger, three-round limit including initial `W_0`, independent final snapshot, weights (`security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`), stop rules, and recovery contract are mandatory. Never close an unreviewed fix; open structural findings, repeated open signatures, unavailable independent coverage, or stale final snapshots stop a clean claim; open `security` or `critical` findings also forbid completion and commit. Every stop with open findings names the residue, evidence, score series, and concrete decision required. `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships this local copy for Claude. No repo-specific addition.
+Use `foundry:rules/_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, ledger, three-round limit including initial `W_0`, independent final snapshot, weights (`security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`), stop rules, and remediation contract are mandatory. Never close an unreviewed fix; open structural findings, repeated open signatures, unavailable independent coverage, or stale final snapshots stop a clean claim; open `security` or `critical` findings also forbid completion and commit. Every stop with open findings names the residue, evidence, score series, and concrete decision required. `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships this local copy for Claude. No repo-specific addition.
 
 ## Markdown Policy
 

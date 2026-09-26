@@ -27,13 +27,12 @@ def _assessed_local(tmp_path: Path) -> Path:
     result["metadata"]["scope"] = "working-tree"
     handoff_path = run / "final-handoff.json"
     handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-    handoff["tables"] = []
-    handoff["source_records"] = []
-    handoff["source_coverage"] = {
-        "source_records_total": 0,
-        "represented_source_records_total": 0,
-        "omitted_source_records_total": 0,
-    }
+    snapshot = handoff["tables"][0]
+    snapshot["heading"] = "Review Snapshot"
+    snapshot["rows"][0]["cells"] = ["Scope", "working-tree"]
+    snapshot["rows"][1]["cells"] = ["Revision", f"diff sha256:{result['metadata']['review_input_sha256']}"]
+    snapshot["rows"][2]["cells"] = ["CI", "unavailable"]
+    snapshot["rows"][3]["cells"] = ["Type", "docs"]
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
         handoff_path, run / "final.md", run / "final-handoff.validation.json"
@@ -58,6 +57,122 @@ def _load_finder() -> object:
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
+
+
+@pytest.mark.integration
+def test_explicit_local_archive_schema_two_is_readable_but_unverified(assessed_local: Path) -> None:
+    """Keep archive access without admitting an old result as remediation evidence."""
+    result = json.loads(assessed_local.read_text(encoding="utf-8"))
+    result["schema_version"] = 2
+    del result["metadata"]["reviewer_assessments"]
+    handoff_path = assessed_local.parent / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["presentation_version"] = 2
+    del handoff["tables"][0]["reviewers"]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+        handoff_path, assessed_local.parent / "final.md", assessed_local.parent / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        result["metadata"]["final_handoff"][field] = validation[field]
+    assessed_local.write_text(json.dumps(result), encoding="utf-8")
+    finder = _load_finder()
+
+    with pytest.raises(LookupError, match="historical-review-unverified-archive"):
+        finder.require_assessed_review_result(assessed_local, parent_thread_id="thread")
+    archive = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--archive-result", str(assessed_local)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert archive.returncode == 0, archive.stderr
+    assert json.loads(archive.stdout) == {
+        "status": "unverified-archive",
+        "path": str(assessed_local),
+        "schema_version": 2,
+        "scope": "working-tree",
+    }
+    with pytest.raises(LookupError, match="review-completion-requires-bound-schema-v3"):
+        finder.complete_review_run(assessed_local.parent, parent_thread_id="thread")
+
+
+def test_schema_three_without_retained_role_proof_is_readable_only_as_archive(tmp_path: Path) -> None:
+    """Older current-format reports remain inspectable without certifying their provenance."""
+    result = tmp_path / "result.json"
+    result.write_text(json.dumps({"schema_version": 3, "metadata": {"scope": "pr"}}), encoding="utf-8")
+
+    archive = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--archive-result", str(result)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert archive.returncode == 0, archive.stderr
+    assert json.loads(archive.stdout) == {
+        "status": "unverified-archive",
+        "path": str(result),
+        "schema_version": 3,
+        "scope": "pr",
+    }
+
+
+@pytest.mark.integration
+def test_pr_target_lookup_rejects_unverified_archive(tmp_path: Path) -> None:
+    """Prevent automatic PR remediation from consuming a schema-two result."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["schema_version"] = 2
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    targeted = subprocess.run(
+        [sys.executable, str(FINDER_PATH), "--target", "123", "--reports-dir", str(run.parent.parent)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert targeted.returncode == 1
+    assert targeted.stdout == ""
+    assert "historical-review-unverified-archive" in targeted.stderr
+
+
+@pytest.mark.integration
+def test_schema_downgrade_cannot_admit_a_rewritten_review_for_remediation(assessed_local: Path) -> None:
+    """Reject a rewritten current result even after its assessment fields are stripped."""
+    notes_path = assessed_local.parent / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8")
+    assert notes.count("Rating: 1") == 1
+    notes_path.write_text(notes.replace("Rating: 1", "Rating: 2"), encoding="utf-8")
+
+    command = [sys.executable, str(FINDER_PATH), "--result", str(assessed_local), "--parent-thread-id", "thread"]
+    current = subprocess.run(command, capture_output=True, text=True, check=False)
+    assert current.returncode == 1
+    assert current.stdout == ""
+    assert "review-assessment-rating-mismatch:main reviewer" in current.stderr
+
+    result = json.loads(assessed_local.read_text(encoding="utf-8"))
+    assert result["schema_version"] == 3
+    result["schema_version"] = 2
+    del result["metadata"]["reviewer_assessments"]
+    handoff_path = assessed_local.parent / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["presentation_version"] = 2
+    del handoff["tables"][0]["reviewers"]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+        handoff_path, assessed_local.parent / "final.md", assessed_local.parent / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        result["metadata"]["final_handoff"][field] = validation[field]
+    assessed_local.write_text(json.dumps(result), encoding="utf-8")
+    downgraded = subprocess.run(command, capture_output=True, text=True, check=False)
+
+    assert downgraded.returncode == 1
+    assert downgraded.stdout == ""
+    assert "historical-review-unverified-archive" in downgraded.stderr
 
 
 def _write_report(root: Path, timestamp: str, *, unavailable: bool) -> Path:
@@ -154,6 +269,59 @@ class TestPrScopedReviewRuns:
         (incomplete / "review-notes.md").write_text("Preliminary findings; promotion failed.", encoding="utf-8")
 
         with pytest.raises(LookupError, match="matching-review-incomplete:"):
+            finder.find_latest_review_report("123", [tmp_path])
+
+    def test_newer_promoted_run_before_notes_blocks_older_review(self, tmp_path: Path) -> None:
+        """A collected and promoted PR remains current before notes or result are written."""
+        finder = _load_finder()
+        _write_nested_report(tmp_path, "run-001")
+        pending = tmp_path / "pr-123" / "run-002"
+        pending.mkdir()
+        (pending / "pr.json").write_text(
+            json.dumps({"number": 123, "url": "https://github.com/acme/widgets/pull/123"}), encoding="utf-8"
+        )
+
+        with pytest.raises(LookupError, match="matching-review-incomplete:") as error:
+            finder.find_latest_review_report("123", [tmp_path])
+
+        assert str(pending) in str(error.value)
+
+    def test_newer_partial_identity_blocks_url_lookup(self, tmp_path: Path) -> None:
+        """A run with a PR number but no URL cannot revive an older URL-matched result."""
+        finder = _load_finder()
+        _write_nested_report(tmp_path, "run-001")
+        pending = tmp_path / "pr-123" / "run-002"
+        pending.mkdir()
+        (pending / "pr.json").write_text(json.dumps({"number": 123}), encoding="utf-8")
+
+        with pytest.raises(LookupError, match="matching-review-incomplete:"):
+            finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
+
+    @pytest.mark.parametrize(
+        ("artifact_name", "identity"),
+        [
+            pytest.param("result.candidate.json", None, id="candidate-missing-identity"),
+            pytest.param("result.candidate.json", "{", id="candidate-malformed-identity"),
+            pytest.param("result.candidate.json", '{"number": 456}', id="candidate-conflicting-identity"),
+            pytest.param("result.json", "{", id="result-malformed-identity"),
+        ],
+    )
+    def test_newer_identity_damaged_run_blocks_older_review(
+        self, tmp_path: Path, artifact_name: str, identity: str | None
+    ) -> None:
+        """Identity damage in a newer PR run cannot revive stale assessed findings."""
+        finder = _load_finder()
+        _write_nested_report(tmp_path, "run-001")
+        pending = _write_nested_report(tmp_path, "run-002", result_name=artifact_name)
+        identity_path = pending.parent / "pr.json"
+        if identity is None:
+            identity_path.unlink()
+        else:
+            identity_path.write_text(identity, encoding="utf-8")
+
+        with pytest.raises(
+            LookupError, match="matching-review-candidate-unpromoted|invalid-review-report-rerun-code-review"
+        ):
             finder.find_latest_review_report("123", [tmp_path])
 
     @pytest.mark.parametrize("incomplete_kind", ["notes", "candidate"])
@@ -282,7 +450,7 @@ class TestPrScopedReviewRuns:
         result = _write_nested_report(tmp_path, "run-001")
         (result.parent / "pr.json").unlink()
 
-        with pytest.raises(LookupError, match="missing-matching-review-report"):
+        with pytest.raises(LookupError, match="invalid-review-report-rerun-code-review"):
             finder.find_latest_review_report("123", [tmp_path])
 
     def test_nested_result_rejects_directory_identity_disagreement(self, tmp_path: Path) -> None:
@@ -385,6 +553,75 @@ def test_only_unavailable_reports_require_a_new_code_review(tmp_path: Path) -> N
         finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
 
 
+@pytest.mark.parametrize("target", ["123", "#123"])
+def test_numeric_target_recognizes_url_only_unavailable_report(tmp_path: Path, target: str) -> None:
+    """A pre-identity collection failure keeps its unavailable diagnosis for numeric lookup."""
+    finder = _load_finder()
+    _write_report(tmp_path, "2026-08-10T11-00-00Z", unavailable=True)
+
+    with pytest.raises(LookupError, match="matching-review-unavailable-rerun-code-review"):
+        finder.find_latest_review_report(target, [tmp_path])
+
+
+@pytest.mark.parametrize(
+    ("newer_result", "expected_error"),
+    [
+        pytest.param("{", "invalid-review-report-rerun-code-review", id="malformed-result"),
+        pytest.param(
+            json.dumps({"metadata": {"scope": "pr", "review_status": "closed"}}),
+            "invalid-review-report-rerun-code-review",
+            id="closed-result",
+        ),
+    ],
+)
+def test_newer_flat_target_only_result_blocks_stale_assessment(
+    tmp_path: Path, newer_result: str, expected_error: str
+) -> None:
+    """A flat run identified by its recorded PR target cannot revive old findings."""
+    finder = _load_finder()
+    _write_report(tmp_path, "2026-08-10T10-00-00Z", unavailable=False)
+    newer = tmp_path / "2026-08-10T11-00-00Z"
+    newer.mkdir()
+    (newer / "pr-target.txt").write_text("https://github.com/acme/widgets/pull/123\n", encoding="utf-8")
+    (newer / "result.json").write_text(newer_result, encoding="utf-8")
+
+    with pytest.raises(LookupError, match=expected_error):
+        finder.find_latest_review_report("123", [tmp_path])
+
+    with pytest.raises(LookupError, match=expected_error):
+        finder.find_latest_review_report("https://github.com/acme/widgets/pull/123", [tmp_path])
+
+
+@pytest.mark.parametrize(
+    ("pending_file", "target"),
+    [
+        pytest.param("pr-target.txt", "123", id="target-only-numeric"),
+        pytest.param("pr-target.txt", "https://github.com/acme/widgets/pull/123", id="target-only-url"),
+        pytest.param("pr.json", "123", id="identity-only-numeric"),
+        pytest.param("pr.json", "https://github.com/acme/widgets/pull/123", id="identity-only-url"),
+    ],
+)
+def test_newer_flat_collection_before_result_blocks_stale_assessment(
+    tmp_path: Path, pending_file: str, target: str
+) -> None:
+    """A started flat collection stays pending before notes or result exist."""
+    finder = _load_finder()
+    _write_report(tmp_path, "2026-08-10T10-00-00Z", unavailable=False)
+    pending = tmp_path / "2026-08-10T11-00-00Z"
+    pending.mkdir()
+    payload = (
+        "https://github.com/acme/widgets/pull/123\n"
+        if pending_file == "pr-target.txt"
+        else json.dumps({"number": 123, "url": "https://github.com/acme/widgets/pull/123"})
+    )
+    (pending / pending_file).write_text(payload, encoding="utf-8")
+
+    with pytest.raises(LookupError, match="matching-review-incomplete:") as error:
+        finder.find_latest_review_report(target, [tmp_path])
+
+    assert str(pending) in str(error.value)
+
+
 @pytest.mark.parametrize("intake", ["explicit", "target"])
 def test_pr_metadata_only_report_is_rejected(tmp_path: Path, intake: str) -> None:
     """PR intake must not accept a disposition without the producer's required evidence."""
@@ -393,7 +630,9 @@ def test_pr_metadata_only_report_is_rejected(tmp_path: Path, intake: str) -> Non
     (report_dir / "pr.json").write_text(json.dumps({"number": 123}), encoding="utf-8")
     result = report_dir / "result.json"
     result.write_text(
-        json.dumps({"metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}),
+        json.dumps(
+            {"schema_version": 3, "metadata": {"scope": "pr", "review_decision": {"recommendation": "needs-more-work"}}}
+        ),
         encoding="utf-8",
     )
 
@@ -406,19 +645,10 @@ def test_pr_metadata_only_report_is_rejected(tmp_path: Path, intake: str) -> Non
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("schema", [1, 2])
-def test_pr_intake_revalidates_recorded_producer_across_sessions(tmp_path: Path, schema: int) -> None:
-    """Retain validated historical PR intake without confusing the current thread with the producer."""
+def test_pr_intake_revalidates_recorded_producer_across_sessions(tmp_path: Path) -> None:
+    """Validate current PR intake against its producer rather than the consumer thread."""
     run = _assessed_pr.__wrapped__(tmp_path)
     path = run / "result.json"
-    if schema == 1:
-        result = json.loads(path.read_text(encoding="utf-8"))
-        result.pop("schema_version")
-        path.write_text(json.dumps(result), encoding="utf-8")
-        routing_path = run / "pr-routing.json"
-        routing = json.loads(routing_path.read_text(encoding="utf-8"))
-        routing["local_checkout_command"] = "gh pr checkout 123"
-        routing_path.write_text(json.dumps(routing), encoding="utf-8")
     for args in (["--result", str(path)], ["--target", "123", "--reports-dir", str(run.parent.parent)]):
         completed = subprocess.run(
             [sys.executable, str(FINDER_PATH), *args], capture_output=True, text=True, check=False
@@ -435,11 +665,109 @@ def test_pr_intake_revalidates_recorded_producer_across_sessions(tmp_path: Path,
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("run_name", "result_name", "review_status", "expected_error"),
+    [
+        pytest.param(
+            "run-002", "result.candidate.json", None, "matching-review-candidate-unpromoted", id="higher-candidate"
+        ),
+        pytest.param(
+            "run-001", "result.candidate.json", None, "matching-review-candidate-unpromoted", id="equal-candidate"
+        ),
+        pytest.param("run-001", "result.json", "closed", "matching-review-closed-not-remediable", id="equal-closed"),
+        pytest.param("run-001", "result.json", None, "review-completion-not-current", id="equal-assessed"),
+    ],
+)
+def test_explicit_legacy_pr_result_is_superseded_by_canonical_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    run_name: str,
+    result_name: str,
+    review_status: str | None,
+    expected_error: str,
+) -> None:
+    """An equally numbered current run supersedes a legacy PR result."""
+    legacy_run = _assessed_pr.__wrapped__(tmp_path / "legacy")
+    canonical_root = tmp_path / "canonical" / "code-review"
+    newer = _write_nested_report(canonical_root, run_name, result_name=result_name, review_status=review_status)
+    finder = _load_finder()
+    monkeypatch.setattr(finder, "CURRENT_REPORTS_DIR", canonical_root)
+    monkeypatch.setattr(finder, "LEGACY_REPORTS_DIR", legacy_run.parent.parent)
+
+    with pytest.raises(LookupError, match=expected_error) as error:
+        finder.complete_review_run(legacy_run, parent_thread_id="thread")
+
+    if result_name == "result.candidate.json":
+        assert str(newer) in str(error.value)
+
+
+def test_canonical_root_supersedes_larger_legacy_run_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A legacy run number is never a cross-root recency claim."""
+    legacy_root = tmp_path / "legacy"
+    canonical_root = tmp_path / "canonical"
+    _write_nested_report(legacy_root, "run-009")
+    current = _write_nested_report(canonical_root, "run-001")
+    finder = _load_finder()
+    monkeypatch.setattr(finder, "CURRENT_REPORTS_DIR", canonical_root)
+    monkeypatch.setattr(finder, "LEGACY_REPORTS_DIR", legacy_root)
+
+    assert finder.find_latest_review_report("123", [legacy_root, canonical_root]) == current
+
+
+@pytest.mark.integration
+def test_candidate_beside_promoted_result_blocks_pr_intake(tmp_path: Path) -> None:
+    """A pending candidate in the same run cannot hide behind its promoted sibling."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    promoted = run / "result.json"
+    candidate = run / "result.candidate.json"
+    candidate.write_bytes(promoted.read_bytes())
+    finder = _load_finder()
+
+    with pytest.raises(LookupError, match="matching-review-candidate-unpromoted") as error:
+        finder.require_assessed_review_result(promoted, parent_thread_id="thread")
+
+    assert str(candidate) in str(error.value)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("pending_file", "expected_error"),
+    [
+        pytest.param("pr.json", "matching-review-incomplete", id="collected-only"),
+        pytest.param("result.candidate.json", "matching-review-candidate-unpromoted", id="candidate-identity-lost"),
+    ],
+)
+def test_explicit_pr_intake_rejects_newer_pending_run(tmp_path: Path, pending_file: str, expected_error: str) -> None:
+    """A valid older result cannot pass explicit intake while a newer PR run is unfinished."""
+    run = _assessed_pr.__wrapped__(tmp_path)
+    pending = run.parent / "run-002"
+    pending.mkdir()
+    if pending_file == "pr.json":
+        (pending / "pr.json").write_text(
+            json.dumps({"number": 123, "url": "https://github.com/acme/widgets/pull/123"}), encoding="utf-8"
+        )
+    else:
+        (pending / "result.candidate.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(LookupError, match=expected_error):
+        _load_finder().require_assessed_review_result(run / "result.json", parent_thread_id="thread")
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("scope", ["working-tree", "path", "commit"])
 def test_explicit_local_report_requires_complete_validation(assessed_local: Path, scope: str) -> None:
     """Accept real local artifacts through both producer validators before intake."""
     result = json.loads(assessed_local.read_text(encoding="utf-8"))
     result["metadata"]["scope"] = scope
+    handoff_path = assessed_local.parent / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["tables"][0]["rows"][0]["cells"] = ["Scope", scope]
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    validation = _module(PLUGIN_ROOT / "shared/final_handoff.py").render_files(
+        handoff_path, assessed_local.parent / "final.md", assessed_local.parent / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        result["metadata"]["final_handoff"][field] = validation[field]
     assessed_local.write_text(json.dumps(result), encoding="utf-8")
 
     completed = subprocess.run(
@@ -459,7 +787,12 @@ def test_explicit_local_metadata_only_report_is_rejected(tmp_path: Path, scope: 
     """A canonical filename and plausible disposition do not establish producer validation."""
     result = tmp_path / "result.json"
     result.write_text(
-        json.dumps({"metadata": {"scope": scope, "review_decision": {"recommendation": "needs-more-work"}}}),
+        json.dumps(
+            {
+                "schema_version": 3,
+                "metadata": {"scope": scope, "review_decision": {"recommendation": "needs-more-work"}},
+            }
+        ),
         encoding="utf-8",
     )
 

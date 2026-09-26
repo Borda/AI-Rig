@@ -578,7 +578,7 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 
 
 Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process. Deliberate deviations: `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary; `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level; `agent_id` is `<plugin>/<hook>` rather than a URI; `session_id` is the host's id verbatim rather than a UUID; and `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
 
-`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires its local `_full/adversarial-loop.md` procedure for independent review/fix cycles. `/research:setup` delivers it as a namespaced user rule instead of editing global configuration.
+`rules/quality-gates.md` requires confidence blocks on analysis output, defines report-file and terminal-header formatting, and requires its local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight. `/research:setup` delivers it as a namespaced user rule instead of editing global configuration.
 
 `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`). Both files are merged into `~/.claude/settings.json` by `/research:setup` (Step 5) — additive and idempotent, nothing is ever removed. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 
@@ -653,7 +653,7 @@ Potential future work includes richer native agent selection, broader compute ba
 
 The canonical sources are the ten `skills/*/SKILL.md` files, the two `agents/*.md` files, `rules/*.md`, registered hooks, sidecar references, and `bin/*`. Keep this README synchronized when a public skill, flag, trigger, prerequisite, output path, hook, or boundary changes.
 
-The plugin version is currently `0.19.0`. This bridge integration is a designed capability change and therefore uses a minor version bump.
+The current plugin version is recorded in `.claude-plugin/plugin.json`; use that manifest as the source of truth when preparing a release.
 
 When editing a skill, update its README entry, flags, NOT-for boundaries, output paths, fallback behavior, and relevant troubleshooting guidance. Verify that references loaded from `skills/_shared/`, `skills/*/modes/`, agent sidecars, or `bin/` remain installed-path safe and do not assume a source checkout.
 

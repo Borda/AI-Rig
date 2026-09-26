@@ -26,9 +26,10 @@ on the writer's enum values and list normalization rather than reparsing workflo
 
 ## Outputs
 
-It writes a deterministic schema-v2 candidate JSON with enum-validated status, check lists, findings, and metadata
-supplied by the completed workflow. The payload includes ``status``, ``checks_run``, ``checks_failed``, finding counts,
-final confidence, recommendations/follow-up lists, ``artifact_path``, and digest-bound final-handoff metadata.
+It writes deterministic schema-v2 JSON, or schema v3 for every Code Review disposition. The payload has enum-validated
+status, check lists, findings, and metadata supplied by the workflow. It includes ``status``, ``checks_run``,
+``checks_failed``, finding counts, final confidence, recommendations/follow-up lists, ``artifact_path``, and digest-
+bound final-handoff metadata.
 
 ## Failure
 
@@ -351,8 +352,13 @@ def build_payload(args: argparse.Namespace) -> dict[str, Any]:
     validate_confidence_metadata(metadata, args.confidence, status, checks_failed)
     validate_final_handoff_metadata(metadata)
 
+    review_status = metadata.get("review_status")
+    current_review = ("review_decision" in metadata and review_status is None) or review_status in {
+        "unavailable",
+        "closed",
+    }
     payload = {
-        "schema_version": RESULT_SCHEMA_VERSION,
+        "schema_version": 3 if current_review else RESULT_SCHEMA_VERSION,
         "status": status.value,
         "checks_run": checks_run,
         "checks_failed": checks_failed,

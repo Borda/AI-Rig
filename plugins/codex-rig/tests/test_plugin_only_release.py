@@ -256,6 +256,8 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
         "adversarial-loop-progress-transcript",
         "adversarial-loop-premature-progress-table",
         "adversarial-loop-five-step-convergence",
+        "adversarial-loop-closure-and-discovery",
+        "challenge-resolve-large-scope-premature-stop",
     }
     # One unreproduced -n4 failure here showed only a truncated set diff, leaving it impossible to tell an edited
     # case list from a stale read of the same file. On mismatch, read the file a second time and report both: two
@@ -272,7 +274,17 @@ def test_adversarial_loop_calibration_covers_independence_and_stop_conditions() 
             f"re-read={sorted(recheck)} sha256[:12]={first_digest}->{second_digest}"
         )
     assert cases["adversarial-loop-premature-progress-table"]["expected_findings"] == ["premature-convergence-table"]
+    assert cases["challenge-resolve-large-scope-premature-stop"]["expected_findings"] == [
+        "route-specific-size-limit-treated-as-global",
+        "chunkable-scope-stopped-before-review",
+    ]
     assert cases["adversarial-loop-five-step-convergence"]["expected_findings"] == []
+    assert cases["adversarial-loop-closure-and-discovery"]["expected_findings"] == [
+        "original-example-does-not-close-invariant",
+        "sibling-route-unchecked",
+        "new-finding-source-age-unclassified",
+        "first-pass-coverage-incomplete",
+    ]
     assert cases["adversarial-loop-progress-transcript"]["expected_findings"] == [
         "cumulative-progress-history-missing",
         "old-new-split-missing",

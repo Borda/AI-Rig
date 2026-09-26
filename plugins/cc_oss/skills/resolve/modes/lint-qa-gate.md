@@ -2,7 +2,7 @@
 
 <!-- fragment — no <workflow> wrapper; executed inline by SKILL.md -->
 
-<!-- Input: $BASE_REF_MERGE, current working tree after Step 8; $RUN_DIR optional (created here if unset) -->
+<!-- Input: resolve-base-ref-${CSID} sentinel from Step 4 or report mode, current working tree after Step 8; $RUN_DIR optional (created here if unset) -->
 
 <!-- $CHANGE_SCOPE: lint-only | targeted | full (default=targeted; set in SKILL.md Step 8 effort classification) -->
 
@@ -11,10 +11,14 @@
 ## Step 9: Lint and QA gate
 
 ```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null || BASE_REF=""
+[ -n "$BASE_REF" ] && git check-ref-format --branch "$BASE_REF" >/dev/null 2>&1 || { echo "⛔ BASE_REF sentinel missing or invalid; refusing vacuous QA range"; exit 1; }
 [ -z "$RUN_DIR" ] && RUN_DIR=".reports/resolve/$(date -u +%Y-%m-%dT%H-%M-%SZ)"  # expand $RUN_DIR to literal value in prompts below — agents receive text, not shell context
 mkdir -p "$RUN_DIR" # timeout: 5000
 # merge-base for accurate diff range in agent prompts
-BASE_REF_MERGE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null || echo "origin/$BASE_REF")
+BASE_REF_MERGE=$(git merge-base HEAD "origin/$BASE_REF" 2>/dev/null)
+[ -n "$BASE_REF_MERGE" ] || { echo "⛔ Cannot establish a merge base with origin/$BASE_REF; refusing vacuous QA range"; exit 1; }
 ```
 
 When `$CHANGE_SCOPE=lint-only` (all selected items were typing/doc/formatting): skip `foundry:qa-specialist` — linting only. Otherwise spawn both in parallel:

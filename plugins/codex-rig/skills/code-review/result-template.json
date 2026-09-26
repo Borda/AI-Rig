@@ -96,7 +96,7 @@
       {
         "evidence": "retained assessment pointer with scoped rating and rationale",
         "rating": 4,
-        "role": "Readable actual reviewer role; label parent substitutes"
+        "role": "Readable actual reviewer role; suffix (parent substitute) for in-main coverage"
       }
     ],
     "risk_tier": "TRIVIAL|LOCAL|BROAD|HIGH_RISK",
@@ -134,6 +134,6 @@
     ],
     "write_parallel_eligible": false
   },
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "pass|fail|timeout"
 }

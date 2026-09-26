@@ -7,7 +7,6 @@ review_model                       = "gpt-6-sol"
 model_reasoning_effort             = "medium"
 model_reasoning_summary            = "auto"
 approval_policy                    = "on-request"
-sandbox_mode                       = "workspace-write"
 personality                        = "pragmatic"
 suppress_unstable_features_warning = true
 project_doc_fallback_filenames     = ["CONTRIBUTING.md", "CONTRIBUTING", "docs/CONTRIBUTING.md"]
@@ -17,6 +16,20 @@ commit_attribution                 = "Co-authored-by: Codex <codex@openai.com>"
 multi_agent = true
 personality = true
 hooks       = true
+network_proxy = true
+
+[permissions.github-read]
+extends = ":workspace"
+
+[permissions.github-read.filesystem.":workspace_roots"]
+".git" = "write"
+
+[permissions.github-read.network]
+enabled = true
+
+[permissions.github-read.network.domains]
+"api.github.com" = "allow"
+"github.com" = "allow"
 
 [agents]
 max_threads             = 4

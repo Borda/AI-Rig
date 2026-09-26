@@ -45,7 +45,7 @@ def _output_contract(text: str) -> str:
         pytest.param("agent-shims", "Action | Outcome | Verification | Remaining limit", id="agent-shims"),
         pytest.param(
             "challenge-resolve",
-            "Iteration | Open findings | Weighted score | Decision | Evidence",
+            "Challenge | Security | Critical | High | Medium | Low | Nits | Weighted score | Decision | Evidence",
             id="challenge-resolve",
         ),
         pytest.param("audit", "Item | Severity / impact | Decision | Evidence | Next action", id="audit"),
@@ -89,7 +89,7 @@ def test_shared_final_chat_frame_keeps_artifacts_supplemental() -> None:
 
 
 @pytest.mark.parametrize("skill", ARTIFACT_SKILLS)
-def test_artifact_skill_final_chat_is_an_executable_schema_v2_handoff(skill: str) -> None:
+def test_artifact_skill_final_chat_is_an_executable_versioned_handoff(skill: str) -> None:
     """Require every artifact workflow to bind and emit the validated final render."""
     skill_text = (SKILLS_ROOT / skill / "SKILL.md").read_text(encoding="utf-8")
     output_contract = _output_contract(skill_text)
@@ -97,7 +97,7 @@ def test_artifact_skill_final_chat_is_an_executable_schema_v2_handoff(skill: str
 
     assert "../../shared/final-handoff-contract.md" in output_contract
     assert "emit `final.md` verbatim" in output_contract
-    assert template["schema_version"] == 2
+    assert template["schema_version"] == (3 if skill == "code-review" else 2)
     assert template["metadata"]["final_handoff"]["schema_version"] == 1
 
 

@@ -76,7 +76,7 @@ Skill checks:
 - configured skill file exists; frontmatter has unindented `---`, `name:`, `description:`; required sections exist; artifact path `.reports/codex/<skill>/`; examples include `status`, `checks_run`, `checks_failed`, `findings`, `confidence`, `artifact_path`; no external runner-only metadata/cache.
 - CLI checks find every local shebang Python/shell entry point in calibration, shared helpers, code-review, offline harness; each executable, fixed-help-roster registered, authoritative `--help`.
 - every skill references `helper-cli-contract.md`, not complete local CLI invocations.
-- source layout compares `../../runtime/calibration/behavioral-cases.json` version to `HEAD`: dirty tree same or exactly one commit-relative version step; installed plugin layout records packaged fixture as immutable.
+- a source checkout compares the shipped `../../runtime/calibration/behavioral-cases.json` integer `schema_version` to that file in `HEAD`: same or exactly one commit-relative version step; a new family starts at 1. Installed plugin layout records an immutable-fixture skip; source layout with no `.codex/calibration/behavioral-cases.json` records a missing-source-fixture skip.
 
 Role checks:
 
@@ -99,7 +99,7 @@ Role checks:
 - Each live task names canonical role. Plugin layout prepends exact packaged role card to both prompts; source layout preserves project-instruction plus source-agent prompt construction. Tool pairs can accept candidate passing executable gate when successfully invoked baseline fails; infrastructure timeout is never candidate win.
 - Archived GPT-5.6 paired evidence and `live-route-policy.json` keep their original Sol/Terra quality rule; that legacy campaign must not be used to validate GPT-6 routing. Define a new model-and-effort paired campaign before claiming GPT-6 quality or cost acceptance.
 - Never claim currency savings from `normalized-token-v1`; need dated authoritative model-specific price.
-- Fixture `version` is committed-history marker: compare `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit.
+- Fixture `schema_version` is a committed-history marker: compare the actual shipped path with `git show HEAD:<path>`; dirty tree stays committed or one-next version until commit. An absent source-layout fixture records a skip, not a completed check.
 - Missing registration/pattern mismatch: inspect named file and expected registration or pattern first; record observed mismatch. Apply smallest evidenced correction only within authorized edit scope, then rerun that failed check before widening. Otherwise ask for exact missing file, scope approval, or owner decision; never offer only "fix configuration and retry".
 
 ## Fail-Fast Rules
@@ -110,7 +110,7 @@ Role checks:
 4. Runtime leakage in native skill or role files => fail.
 5. Behavioral gate below threshold => fail.
 6. Result artifact missing => fail.
-7. Behavioral case-set version >1 step from committed version => fail.
+7. Behavioral case-set `schema_version` skips or downgrades from committed HEAD, or starts a new family above 1 => fail.
 8. `require_live_routes=true` with incomplete route pairs => fail.
 9. Live row without strict paired execution schema => fail.
 
@@ -119,7 +119,7 @@ Role checks:
 Required checks:
 
 - `calibration`: `../../runtime/calibration/run.py --layout plugin --root <consuming-project>`.
-- `behavioral-version-policy`: compare case-set version to `HEAD`; avoid meaningless dirty-tree gaps.
+- `behavioral-version-policy`: compare the shipped case-set integer `schema_version` to its own `HEAD` path in a source checkout; record explicit installed-cache or missing-source-fixture skips.
 - `review`: inspect failed patterns, leaks, behavioral gaps, stale fixtures before recommendations.
 
 Conditional checks:

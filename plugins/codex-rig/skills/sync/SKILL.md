@@ -9,7 +9,7 @@ description: Dry-run active plugin cache drift; refresh/reinstall only with appr
 
 Inspect and refresh the public-GitHub Codex Rig plugin through supported Codex CLI operations. Never copy files into an installed cache, edit Codex configuration by hand, or treat cached package directories as mutable source trees.
 
-Sync never mutates external agent files. Direct plugin installation stays inert; explicit setup or sync invokes installed-package GitHub reader-rule helper. Never substitute approval-UI saved prefix or direct home-file edit for this managed lifecycle. Before plugin removal, run `agent-shims remove` while manager is still available. After refresh or reinstall, run `agent-shims doctor` to report prior shim residue; new installation and relinking remain platform-blocked. Report unknown or modified `codex-rig-*.toml` files without removing, adopting, or repairing them.
+Sync never mutates external agent files. Direct plugin installation does not install Codex-home permissions; explicit setup or sync invokes the installed-package GitHub profile helper without changing default permissions. This checkout separately defines a project-local opt-in profile. Never edit Codex home by hand in place of this managed lifecycle. Before plugin removal, run `agent-shims remove` while manager is still available. After refresh or reinstall, run `agent-shims doctor` to report prior shim residue; new installation and relinking remain platform-blocked. Report unknown or modified `codex-rig-*.toml` files without removing, adopting, or repairing them.
 
 ## Input Schema
 
@@ -19,11 +19,11 @@ Sync never mutates external agent files. Direct plugin installation stays inert;
   "marketplace": "borda-ai-rig",
   "plugin": "codex-rig@borda-ai-rig",
   "ref": "optional Git ref; omitted follows the remote default branch",
-  "done_when": "active selection, package identity, and reader-rule ownership/integrity are recorded; an approved refresh is reinstalled and rechecked"
+  "done_when": "active selection, package identity, and profile ownership/integrity are recorded; an approved refresh is reinstalled and rechecked"
 }
 ```
 
-Only frozen marketplace and plugin identifiers are accepted. `check` is default and is read-only. `refresh` requires explicit user approval because it fetches marketplace state, changes local plugin cache, and manages persistent GitHub reader approval in Codex home.
+Only frozen marketplace and plugin identifiers are accepted. `check` is default and is read-only. `refresh` requires explicit user approval because it fetches marketplace state, changes local plugin cache, and manages the opt-in GitHub-read profile in Codex home.
 
 ## Workflow
 
@@ -44,9 +44,7 @@ If documented `--json` option is absent, capture text form and mark structured c
 
 For one active installation, resolve selected cache path reported or implied by observed CLI contract. Require regular `.codex-plugin/plugin.json` and `package-manifest.json`; reject symlinks, path escape, duplicate selections, name/version disagreement, unsupported manifest schema, and package-file hash mismatch. Never select cache by lexical or modification-time "latest" rules.
 
-Inspect managed reader-rule state without writing: report absent, current, stale-version, or unverifiable. Absence is valid before setup and doesn't authorize installing rules during `check`.
-
-Inspect optional `rules/codex-rig-pr-collection.rules` with the same ownership/integrity discipline. Record its exact approved PR URLs; absent is the default. Approved refresh carries forward only those managed targets to the new verified installed collector. New targets require explicit setup with repeatable `--approve-pr <canonical-pr-url>` on the rule helper; never infer targets from PR metadata or migrate UI-saved collector grants. Disclose collector fetch, supported output writes, and safe local checkout in addition to existing reader-wide scope. Teardown removes both owned files. Any invalid managed PR file blocks all permission updates before backups or writes.
+Inspect the managed `github-read` config state without writing: report absent, current, or unverifiable. Inspect legacy plugin-owned reader and PR rules for safe removal; an edited or unrecognized owned rule blocks setup before writes. Absence is valid before setup and does not authorize installation during `check`.
 
 ### 03: Report external-agent residue without touching it
 
@@ -54,7 +52,7 @@ Read-only scan user agent directory for exact `codex-rig-*.toml` names. Record n
 
 ### 04: Stop after dry run unless refresh was explicitly approved
 
-Show installed state, marketplace source, configured ref or default-branch tracking, resolved revision when marketplace checkout exposes it, current version, package verification result, possible external-agent residue, proposed commands, network/cache effects, reader-rule changes, and rollback limit. Disclose full wrapper scope: GitHub reads, local PR checkout, and output-file writes. Include exact legacy-rule migration and backups in approved effects. Ask for approval before `refresh`. A check-only request, missing approval, ambiguous source, foreign marketplace, or unverified active package stops without mutation.
+Show installed state, marketplace source, configured ref or default-branch tracking, resolved revision when marketplace checkout exposes it, current version, package verification result, possible external-agent residue, proposed commands, network/cache effects, profile changes, and rollback limit. Disclose GitHub reads, local PR checkout, output-file writes, `.git` workspace write access, and proxy destination rules. Include legacy-rule removal and backups in approved effects. Ask for approval before `refresh`. A check-only request, missing approval, ambiguous source, foreign marketplace, or unverified active package stops without mutation.
 
 ### 05: Refresh through the Codex CLI
 
@@ -74,9 +72,9 @@ For release pin, supply `--ref` with published revision whose Codex Rig package 
 
 Omitting `--ref` follows remote default branch. An explicit ref pins it. Never silently change existing marketplace between pinned and unpinned modes: report mismatch, require legacy shim cleanup before deliberate marketplace removal and re-addition. Never use `git clone`, edit marketplace configuration, delete old cache directories, or force update. A failed refresh must preserve and report prior installation state; never claim rollback unless CLI evidence proves it.
 
-The native sync wrapper verifies selected source package hashes/closure and required reader-rule helper before managed-plugin removal. An already configured explicit pin is checked before marketplace mutation; default-branch refresh and new marketplace registration may precede source verification.
+The native sync wrapper verifies selected source package hashes/closure and required profile helper before managed-plugin removal. An already configured explicit pin is checked before marketplace mutation; default-branch refresh and new marketplace registration may precede source verification.
 
-After successful managed-plugin installation, resolve active installed Codex Rig cache root and invoke packaged reader-rule helper:
+After successful managed-plugin installation, resolve active installed Codex Rig cache root and invoke the packaged profile helper:
 
 ```bash
 python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
@@ -85,16 +83,15 @@ python <installed-codex-rig-cache-root>/scripts/install_github_read_rules.py \
 
 The helper has no positional install verb:
 
-- Owns `CODEX_HOME/rules/codex-rig-github-read.rules`; migration may rewrite `CODEX_HOME/rules/default.rules` to remove only exact canonical two-token legacy reader allow entries. Preserve unrelated bytes and back up changed existing files.
-- Validate installed cache location, manifest name/version, complete package hashes/closure, ordinary reader, canonical managed body, and checksum. A checksum alone doesn't establish ownership or publisher authenticity. Refuse unverifiable state. Persistent approval trusts cache throughout its lifetime; setup-time validation cannot prevent later same-user code replacement.
-- Regenerate for installed version; repeated setup is idempotent. Allow only literal `python`/`python3` launcher union and installed wrapper-path union, including native and POSIX spellings on Windows. Never grant broad Python or `gh` access or change network settings.
-- `--no-codex-global-agents` skips only global `AGENTS.md` block. Native `sync_codex.py clear` invokes `--remove --codex-home <CODEX_HOME>` before removing plugins and migrates recognized legacy entries while removing owned, canonical, integrity-valid rules file.
-- Prepare every required existing-file backup before changing either rules file. Restart existing Codex sessions after sync. Report completed updates and later failures accurately: each replacement is atomic, but migration across two files and overall sync are not transactional.
-- When managed PR grants exist, include their third rule file in the same preflight and backup phase; refresh exact targets only, never broaden them. Restart remains required for file-based rules. Report partial updates without claiming a transactional rollback.
+- Owns the marked `CODEX_HOME/config.toml` profile settings and state file. The profile extends `:workspace`, enables the network proxy for `api.github.com` and `github.com`, and permits `.git` writes under workspace roots. GitHub helper validation and the remote-mutation ban remain mandatory because domain rules do not restrict HTTP methods.
+- Validate installed cache location, manifest name/version, complete package hashes/closure, ordinary reader, owned state, and unchanged managed config settings. Refuse a conflicting user profile or edited owned content.
+- Remove only verified plugin-owned legacy reader and PR rules; migrate exact canonical reader entries from `default.rules`. Preserve unrelated bytes. Repeated setup is idempotent.
+- `--no-codex-global-agents` skips only global `AGENTS.md` block. Native `sync_codex.py clear` invokes `--remove --codex-home <CODEX_HOME>` before removing plugins and restores prior root/feature settings while preserving unrelated later edits.
+- Prepare backups before changing existing files. Restart existing Codex sessions after sync. Report completed updates and later failures accurately: each replacement is atomic, but the migration across files and overall sync are not transactional.
 
 ### 06: Recheck exact active identity
 
-Repeat read-only inspection and package validation. Pass only when exactly one enabled selection is reported and its manifest plus all recorded payload hashes agree. After refresh, re-read managed reader-rule file and any migrated `default.rules` bytes; bind canonical-body, ownership, checksum, wrapper-path, launcher, backup, and migration evidence to refreshed package identity. Creation and idempotent setup need no backup; record that reason. Record requested/configured ref, resolved revision when available, old/new version, and package-manifest hashes. Same version with different package bytes is cache-identity failure.
+Repeat read-only inspection and package validation. Pass only when exactly one enabled selection is reported and its manifest plus all recorded payload hashes agree. After refresh, re-read the owned profile settings and legacy-rule cleanup; bind state integrity, backup, and migration evidence to refreshed package identity. Creation and idempotent setup need no backup; record that reason. Record requested/configured ref, resolved revision when available, old/new version, and package-manifest hashes. Same version with different package bytes is cache-identity failure.
 
 ### 07: Write the validated artifact
 
@@ -110,11 +107,11 @@ Follow `../../shared/helper-cli-contract.md`. Write `SYNC_METADATA`, gate logs, 
 6. Same version with different package bytes => fail.
 7. Refresh command failure or post-refresh identity mismatch => fail; report prior state without invented rollback.
 8. Result artifact missing => fail.
-9. A planned reader-rule mutation has unverifiable cache, ownership, or checksum state => fail before writing. Required post-change migration, backup, or removal evidence missing => fail without claiming rollback.
+9. A planned profile or legacy-rule mutation has unverifiable cache, ownership, or checksum state => fail before writing. Required post-change migration, backup, or removal evidence missing => fail without claiming rollback.
 
 ## Quality Gates
 
-Required: CLI-help evidence, before-state identity, complete package hash validation, external-agent residue summary, clean diff review, reader-rule ownership/integrity and backup evidence, and validated result JSON. Refresh also requires explicit approval evidence, exact command/exit logs, after-state identity, and confirmation that existing sessions must restart to observe synchronized rules.
+Required: CLI-help evidence, before-state identity, complete package hash validation, external-agent residue summary, clean diff review, profile ownership/integrity and backup evidence, and validated result JSON. Refresh also requires explicit approval evidence, exact command/exit logs, after-state identity, and confirmation that existing sessions must restart to observe synchronized permissions.
 
 ## Calibration Hooks
 

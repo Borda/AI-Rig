@@ -194,6 +194,8 @@ No plugin dependency system in Claude Code — never propose "install `foo` as p
 
 ## Versioning
 
+Apply the repository Version Continuity rule to serialized artifact schemas separately from this plugin SemVer gate; compare each schema family with its own committed `HEAD` baseline before handoff.
+
 > **Commit gate:** Any `plugins/<name>/` **non-test** file in `git diff HEAD` requires the pre-bump checklist (`AUTHORING.md` §Versioning) before `git add`.
 >
 > All changed files under `tests/` → no bump, skip entirely. When a shipped test requires regenerated package-manifest hashes, that generated manifest is supporting test metadata: validate it but do not bump the version or update the changelog. Each touched plugin bumps independently.

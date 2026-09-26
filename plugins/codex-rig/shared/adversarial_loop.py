@@ -69,6 +69,7 @@ _ACTION_ROUND_KEYS = {"index", "actions"}
 _ACTION_KEYS = {"signature", "decision", "evidence", "owner", "next_action", "root_cause"}
 _ROOT_CAUSE_KEYS = {"claim", "evidence", "falsification", "rejected_alternative"}
 _ACTION_DECISIONS = {"fix", "escalate", "defer"}
+_FIX_EVIDENCE_PREFIXES = ("invariant:", "original:", "consumer:", "sibling:", "source-paths:")
 
 
 def _text(value: object) -> bool:
@@ -299,7 +300,8 @@ def validate_actions(ledger: object, payload: object) -> list[str]:
     root = _exact_keys(payload, _ACTION_ROOT_KEYS, "actions", errors)
     if root is None:
         return errors
-    if root.get("schema_version") != 1 or isinstance(root.get("schema_version"), bool):
+    action_version = root.get("schema_version")
+    if action_version not in {1, 2} or isinstance(action_version, bool):
         errors.append("actions-schema-version-invalid")
     rounds = root.get("rounds")
     if not isinstance(rounds, list) or len(rounds) != len(ledger["rounds"]):
@@ -346,6 +348,10 @@ def validate_actions(ledger: object, payload: object) -> list[str]:
             evidence = action.get("evidence")
             if not isinstance(evidence, list) or not evidence or any(not _text(item) for item in evidence):
                 errors.append(f"round-{index}-action-evidence-required:{signature}")
+            elif action_version == 2 and decision == "fix":
+                for prefix in _FIX_EVIDENCE_PREFIXES:
+                    if not any(item.startswith(prefix) and item[len(prefix) :].strip() for item in evidence):
+                        errors.append(f"round-{index}-fix-evidence-missing:{prefix}{signature}")
             for field in ("owner", "next_action"):
                 if not _text(action.get(field)):
                     errors.append(f"round-{index}-action-{field}-required:{signature}")

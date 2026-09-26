@@ -19,7 +19,9 @@ def test_assess_replaces_change_analysis_as_the_discoverable_skill() -> None:
     template = json.loads(ASSESS_TEMPLATE.read_text(encoding="utf-8"))
 
     assert "name: assess" in skill
-    assert '"approve_gh": "optional boolean; default false' in skill
+    assert '"mode": "optional local|github|report|ecosystem; default local"' in skill
+    assert "approve_gh" not in skill
+    assert "--approve-gh" not in skill
     assert "ASSESS_METADATA" in skill
     assert template["artifact_path"] == ".reports/codex/assess/<timestamp>/result.json"
     assert (

@@ -78,6 +78,9 @@ def _inspection_run(
     for index, role in enumerate(ROLES, start=1):
         card_path = PLUGIN_ROOT / "roles" / role / "ROLE.md"
         card = card_path.read_text(encoding="utf-8")
+        retained = run / "role-cards" / role / "ROLE.md"
+        retained.parent.mkdir(parents=True, exist_ok=True)
+        retained.write_bytes(card_path.read_bytes())
         fields = _validator()._load_role_card(PLUGIN_ROOT / "roles", role)
         context = f"{card}\nReview only the supplied source."
         context_path = specialists / f"{role}-context.md"
@@ -92,7 +95,8 @@ def _inspection_run(
         )
         message = (
             f"<!-- codex-review-provenance role={role} run=inspection-run input={input_hash} "
-            f"context={context_hash} attempt=1 -->\nNo finding."
+            f"context={context_hash} attempt=1 -->\nNo finding.\n\n"
+            "## Reviewer Assessment\n\nRating: 1\nRationale: The inspected scope is clean."
         )
         output_path = specialists / f"{role}.md"
         output_path.write_text(message + "\n", encoding="utf-8", newline="\n")
@@ -625,16 +629,36 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
         write_parallel_eligible=False,
         execution_observed_controls={role: {"sandbox_mode": "unknown", "approval_policy": "unknown"} for role in ROLES},
     )
+    metadata["reviewer_assessments"].extend(
+        {
+            "role": "QA specialist" if item["role"] == "qa-specialist" else "Challenger",
+            "rating": 1,
+            "evidence": item["output_path"],
+        }
+        for item in fixture["passes"]
+    )
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
 
     validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
+    candidate = json.loads(json.dumps(result))
+    candidate["metadata"]["reviewer_assessments"] = [
+        {"role": "Invented reviewer", "rating": 1, "evidence": fixture["passes"][0]["output_path"]}
+    ]
+    candidate_path = assessed / "result.candidate.json"
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8", newline="\n")
+    with pytest.raises(SystemExit, match="review-assessment-role-unbound:Invented reviewer"):
+        validator._validate_result(assessed, candidate_path, fixture["sessions"], "thread", assessed)
 
     for item in fixture["passes"]:
         item.pop("attempts")
         item.pop("selected_attempt")
         item["mode"] = "substituted"
         output = assessed / item["output_path"]
-        output.write_text(f"role_id: {item['role']}\n\nBounded parent-only review evidence.\n", encoding="utf-8")
+        output.write_text(
+            f"role_id: {item['role']}\n\n## Reviewer Assessment\n\nRating: 3\n"
+            "Rationale: Parent inspection lacks independent coverage.\n",
+            encoding="utf-8",
+        )
     fixture["plan"].update(
         independent_review_required=False,
         independence_requirement_evidence=None,
@@ -651,6 +675,14 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
         execution_mode="serial-fallback",
         execution_observed_controls={},
     )
+    for assessment in metadata["reviewer_assessments"]:
+        for item in fixture["passes"]:
+            if assessment["evidence"] == item["output_path"]:
+                assessment.update(
+                    role=("QA specialist" if item["role"] == "qa-specialist" else "Challenger")
+                    + " (parent substitute)",
+                    rating=3,
+                )
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
 
     validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
@@ -679,3 +711,31 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
 
     with pytest.raises(SystemExit, match="independent-review-required-for-pass:challenger,qa-specialist"):
         validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
+
+
+def test_historical_assessed_result_keeps_original_rating_contract(tmp_path: Path) -> None:
+    """Keep a schema-two assessed result readable without a later prose rating section."""
+    completion = _module(Path(__file__).with_name("test_review_completion_gate.py"))
+    run = completion._assessed_pr.__wrapped__(tmp_path)
+    result_path = run / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["schema_version"] = 2
+    del result["metadata"]["reviewer_assessments"]
+    result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
+    notes_path = run / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8")
+    notes_path.write_text(notes.split("\n\n## Main Reviewer Assessment", 1)[0], encoding="utf-8", newline="\n")
+
+    _validator()._validate_result(run, result_path, tmp_path / "codex-home", "thread", run)
+
+
+def test_current_assessed_result_requires_retained_rating_content(tmp_path: Path) -> None:
+    """Keep a schema-three rating bound to the retained reviewer prose."""
+    completion = _module(Path(__file__).with_name("test_review_completion_gate.py"))
+    run = completion._assessed_pr.__wrapped__(tmp_path)
+    notes_path = run / "review-notes.md"
+    notes = notes_path.read_text(encoding="utf-8")
+    notes_path.write_text(notes.split("\n\n## Main Reviewer Assessment", 1)[0], encoding="utf-8", newline="\n")
+
+    with pytest.raises(SystemExit, match="review-assessment-content-invalid:main reviewer"):
+        _validator()._validate_result(run, run / "result.json", tmp_path / "codex-home", "thread", run)

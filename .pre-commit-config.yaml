@@ -336,13 +336,12 @@ repos:
         always_run: true
 
       - id: check-plugin-version-sync
-        name: "🔀 dual-host plugin manifest version sync"
+        name: "🔀 plugin version sync and HEAD continuity"
         language: system
         entry: python3 plugins/cc_foundry/bin/check_plugin_version_sync.py --scan-dir plugins
-        # General: any dir holding BOTH .claude-plugin and .codex-plugin must agree
-        # on version — one release, two host manifests (bridge, codemap-py today).
-        files: ^plugins/[^/]+/\.(claude|codex)-plugin/plugin\.json$
-        pass_filenames: false
+        always_run: true
+        # Only shipped plugin JSON/Python: avoid tests, reports, and other generated evidence.
+        files: ^plugins/[^/]+/(?!(?:.*?/)?(?:tests|reports|\.reports)/).*\.(?:json|py)$
 
       - id: check-codemap-guard
         name: "🗺️ unmanaged codemap index-guard copy"

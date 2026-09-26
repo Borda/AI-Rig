@@ -18,6 +18,7 @@ import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 COLLECT_DIFF = PLUGIN_ROOT / "shared" / "collect_diff.py"
+CHALLENGE_VALIDATOR = PLUGIN_ROOT / "skills" / "challenge-resolve" / "validate_evidence.py"
 RUN_GATES = PLUGIN_ROOT / "shared" / "run_gates.py"
 SHARED_VALIDATOR = PLUGIN_ROOT / "shared" / "validate-artifacts.py"
 REVIEW_VALIDATOR = PLUGIN_ROOT / "skills" / "code-review" / "validate_artifacts.py"
@@ -96,6 +97,37 @@ def test_collect_diff_runs_natively_and_writes_complete_artifacts(tmp_path: Path
     assert (output / "untracked.txt").read_text(encoding="utf-8") == "untracked.txt\n"
     assert "-before" in (output / "diff.patch").read_text(encoding="utf-8")
     assert "+after" in (output / "diff.patch").read_text(encoding="utf-8")
+
+
+def test_source_snapshot_records_staged_deletion(tmp_path: Path) -> None:
+    """Retain a missing source record when HEAD has a file removed from the index."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _initialize_repository(repository)
+    subprocess.run(["git", "-C", str(repository), "rm", "tracked.txt"], check=True, capture_output=True)
+    patch = subprocess.run(
+        ["git", "-C", str(repository), "diff", "HEAD", "--", "tracked.txt"],
+        check=True,
+        capture_output=True,
+    ).stdout
+    assert b"deleted file mode" in patch
+
+    module = _load_module(COLLECT_DIFF, "codex_rig_staged_deletion_collect_diff")
+    snapshot = module.capture_source_snapshot(repository, ["tracked.txt"])
+
+    assert snapshot["scope_paths"] == ["tracked.txt"]
+    assert snapshot["files"] == [
+        {
+            "path": "tracked.txt",
+            "kind": "missing",
+            "sha256": None,
+            "executable": False,
+            "encoding": "utf-8",
+            "content": "",
+        }
+    ]
+    validator = _load_module(CHALLENGE_VALIDATOR, "codex_rig_staged_deletion_validator")
+    validator._require_supporting_source_records(snapshot, ["tracked.txt"])
 
 
 def test_collect_diff_uses_only_git_argv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

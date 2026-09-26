@@ -100,7 +100,7 @@ cat >"$TMP_BIN/git" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 case "\${1:-}" in
-  status|diff|ls-files|show|init|config|add|commit)
+  status|diff|ls-files|ls-tree|rev-parse|show|init|config|add|commit)
     exec "$REAL_GIT" "\$@"
     ;;
   remote)

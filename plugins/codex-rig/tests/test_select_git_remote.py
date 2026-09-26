@@ -46,8 +46,86 @@ def test_numeric_target_becomes_canonical_url_from_one_repository(tmp_path: Path
 
 
 @pytest.mark.installed_plugin
+def test_numeric_target_prefers_origin_over_configured_forks(tmp_path: Path) -> None:
+    """Use the default repository for a bare PR number despite fork remotes."""
+    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget.git"])
+    subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "fork", "https://github.com/contributor/widget.git"],
+        check=True,
+    )
+
+    result = _resolve(repo, "1510")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "https://github.com/example/widget/pull/1510\n"
+
+
+@pytest.mark.installed_plugin
+def test_numeric_target_rejects_invalid_origin_even_with_one_fork(tmp_path: Path) -> None:
+    """Do not silently switch a bare PR number from origin to a fork."""
+    repo = _repo_with_remotes(tmp_path, ["https://gitlab.com/example/widget.git"])
+    subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "fork", "https://github.com/contributor/widget.git"],
+        check=True,
+    )
+
+    result = _resolve(repo, "1510")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "no-github-origin" in result.stderr
+
+
+@pytest.mark.installed_plugin
+def test_numeric_target_rejects_conflicting_origin_urls(tmp_path: Path) -> None:
+    """Require one origin identity before binding a bare PR number."""
+    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget.git"])
+    subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "--add", "remote.origin.url", "https://github.com/other/widget.git"],
+        check=True,
+    )
+
+    result = _resolve(repo, "1510")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "ambiguous-github-origin" in result.stderr
+
+
+@pytest.mark.installed_plugin
+def test_explicit_pr_url_selects_named_fork_over_origin(tmp_path: Path) -> None:
+    """Honor the requested repository when a full PR URL is supplied."""
+    repo = _repo_with_remotes(tmp_path, ["https://github.com/example/widget.git"])
+    subprocess.run(["git", "-C", str(repo), "remote", "rename", "remote0", "origin"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "fork", "https://github.com/contributor/widget.git"],
+        check=True,
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SELECTOR),
+            "--expected-url",
+            "https://github.com/contributor/widget/pull/17",
+            "--cwd",
+            str(repo),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["remote"] == "fork"
+
+
+@pytest.mark.installed_plugin
 def test_numeric_target_rejects_ambiguous_repositories(tmp_path: Path) -> None:
-    """Do not bind the same PR number to either a base repository or a fork by guess."""
+    """Do not guess a default when origin is absent and repositories conflict."""
     repo = _repo_with_remotes(
         tmp_path,
         ["https://github.com/example/widget.git", "git@github.com:someone/widget.git"],

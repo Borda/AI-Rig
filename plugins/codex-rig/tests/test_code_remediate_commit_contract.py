@@ -49,6 +49,21 @@ def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
     assert "Result validation alone must never skip this continuation" in shared
 
 
+def test_explicit_commit_rechecks_environment_only_limit_and_cites_remaining_blockers() -> None:
+    """Keep a user-requested commit actionable while making every refusal auditable."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
+    commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
+    shared = (PLUGIN_ROOT / "shared" / "final-handoff-contract.md").read_text(encoding="utf-8")
+
+    assert "Environment-only exception" in preparation
+    assert "## Explicit Commit Request" in preparation
+    assert "## Remaining Verification" in preparation
+    assert "controlling rule" in preparation
+    assert "A later explicit `commit this` request reopens a previously blocked disposition" in commit
+    assert "A failed result may permit a local commit only after an explicit user request" in shared
+
+
 def test_remediation_commit_stages_only_proven_owned_paths() -> None:
     """Reject commits that could absorb user or overlapping worktree changes."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")

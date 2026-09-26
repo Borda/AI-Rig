@@ -51,6 +51,22 @@ Infer `INTEL_AGENT` from `PR_LABELS` + `PR_TITLE` (lowercase, first match wins) 
 
 **`--agent` override applies to `INTEL_AGENT`**: when caller passes `--agent <name>`, resolved agent overrides routing table for `INTEL_AGENT` as well as Step 8 implementation. Bridge implementation skill is never a classification agent — fall back to routing table for `INTEL_AGENT`.
 
+Read the normalized Step 1 agent override before choosing the routing-table default:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+_AGENT_FILE="${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
+[ -f "$_AGENT_FILE" ] || { echo "! BLOCKED — agent override sentinel missing; Step 1 parser never ran"; exit 1; }
+IFS= read -r _AGENT_OVERRIDE < "$_AGENT_FILE" || _AGENT_OVERRIDE=""
+if [ -n "$_AGENT_OVERRIDE" ] && [ "$_AGENT_OVERRIDE" != "bridge:implement" ]; then
+    echo "INTEL_AGENT=$_AGENT_OVERRIDE"
+else
+    echo "INTEL_AGENT=route-by-table"
+fi
+```
+
+Use the printed override as `INTEL_AGENT` exactly when present; `route-by-table` means choose from the table above, including when `--agent bridge:implement` was explicit. Do not reparse cleaned `$ARGUMENTS` or prefix the saved value again. Substitute the chosen agent literally in the `Agent` call below.
+
 Apply `agent-resolution.md` fallback to `INTEL_AGENT` (foundry absent → substitute with `general-purpose` + role prefix).
 
 Raw PR discussion — all `--comments`, formal reviews, inline code comments — can be thousands of tokens on active PR. Offload fetching + classification to subagent; orchestrator context stays small. Subagent writes structured output to `$IMPL_DIR/`; orchestrator reads only compact envelope, loads classified table from file.
@@ -121,10 +137,10 @@ Per location:discussion comment: skip resolved-thread list entirely — PR discu
 **Deprecation false-positive filter**: Before finalising any action item whose `full_comment_text` requests adding a deprecation warning (keywords: "deprecate", "deprecation", "DeprecationWarning", "deprecated") for a removed argument, parameter, or function:
 1. Determine the removed symbol name from comment context or diff.
 2. Get latest release tag: `LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null)`  # timeout: 6000
-3. Check if symbol existed in that release: `git show "$LATEST_TAG" -- <file_path> 2>/dev/null | grep -qF "<symbol>"`  # timeout: 6000
-4. **Not found in latest tag** → symbol was never released; downgrade item to `[done]`; set Notes to "unreleased API — deprecation not required; clean removal OK".
-5. **Found in latest tag** → symbol was released; keep original classification ([gh][req] or [gh][suggest]) — deprecation is legitimately needed.
-6. **No tag found** → cannot determine; keep original classification but add Notes "no release tag — deprecation status unknown".
+3. Read the tagged file content, not the tag commit patch: `git show "${LATEST_TAG}:${file_path}"`  # timeout: 6000. Treat a failed read or path missing at the tag as unknown, not as proof that the symbol was unreleased. A rename may put the released symbol at another path.
+4. **Symbol found in tagged content** → keep original classification ([gh][req] or [gh][suggest]); this is evidence that deprecation is needed.
+5. **Symbol absent from tagged content** → keep original classification and add Notes "release status unknown — inspect older tags and renamed paths". Absence from one release cannot prove the symbol was never released.
+6. **No tag or unreadable tagged file** → keep original classification and add Notes "release history or path missing — deprecation status unknown". Never downgrade solely from missing release evidence.
 
 ACTION_ITEM fields: id (sequential int starting at 1), type, change, severity, author,
 summary (≤60 chars, truncated at word boundary with …), file, line, url (html_url from
@@ -196,7 +212,7 @@ fi
 [ "${RESOLVED_THREAD_IDS_COUNT:-0}" = "0" ] && echo "⚠ Could not fetch resolved thread status — some items may already be resolved; review table carefully"  # timeout: 3000
 ```
 
-Read `$IMPL_DIR/pr-intelligence.md`, print its contents (Sources block + motivation + action item table) **inline to terminal** — only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
+Read `$IMPL_DIR/pr-intelligence.md`, then put its full contents (Sources block + motivation + every action item table row) in an **assistant user-facing reply**, not Bash/tool stdout, immediately before Step 3d's AskUserQuestion. This is the only ACTION_ITEMS table in pure `pr` mode; Output-Routing `.temp` diversion does **not** apply (selection-driving, read-in-context; canonical exemption in SKILL.md Step 3c). Orchestrator context now holds *classified* table (~500–1000 tokens) rather than raw PR thread (often 5000–20000+ tokens on active PRs). Later steps read per-item details from `$IMPL_DIR/action-items.jsonl` when `full_comment_text` or other fields needed:
 
 ```bash
 _ID="<id>"

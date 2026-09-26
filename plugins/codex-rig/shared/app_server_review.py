@@ -50,11 +50,13 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import os
 import queue
 import re
 import signal
+import stat
 import subprocess
 import sys
 import threading
@@ -120,6 +122,7 @@ HARMLESS_LIFECYCLE_METHODS = frozenset(
         "thread/tokenUsage/updated",
         "mcpServer/startupStatus/updated",
         "account/rateLimits/updated",
+        "account/updated",
     }
 )
 HARMLESS_TEXT_NOTIFICATION_FIELDS = {"warning": "message", "configWarning": "summary"}
@@ -135,6 +138,96 @@ ALLOWED_STREAM_METHODS = frozenset(
 PLAN_NOTIFICATION_METHODS = frozenset({"turn/plan/updated", "item/plan/delta"})
 PLAN_STEP_STATUSES = frozenset({"pending", "inProgress", "completed"})
 REMOTE_CONTROL_STATUS_CHANGED = "remoteControl/status/changed"
+# Public notification names from the installed CLI schema are safe diagnostic labels.
+# Unknown method strings may contain untrusted data, so they never enter evidence.
+SCHEMA_NOTIFICATION_METHODS = frozenset(
+    {
+        "error",
+        "thread/started",
+        "thread/status/changed",
+        "thread/archived",
+        "thread/deleted",
+        "thread/unarchived",
+        "thread/closed",
+        "thread/reverted",
+        "skills/changed",
+        "thread/name/updated",
+        "thread/attachment/updated",
+        "thread/goal/updated",
+        "thread/goal/cleared",
+        "thread/queue/changed",
+        "project/changed",
+        "thread/project/updated",
+        "thread/environment/connected",
+        "thread/environment/disconnected",
+        "thread/settings/updated",
+        "thread/tokenUsage/updated",
+        "turn/started",
+        "hook/started",
+        "turn/completed",
+        "hook/completed",
+        "turn/diff/updated",
+        "turn/plan/updated",
+        "item/started",
+        "item/autoApprovalReview/started",
+        "item/autoApprovalReview/completed",
+        "autoApprovalReview/strictReviewRequired",
+        "item/completed",
+        "rawResponseItem/completed",
+        "rawResponse/completed",
+        "item/agentMessage/delta",
+        "item/plan/delta",
+        "command/exec/outputDelta",
+        "process/outputDelta",
+        "process/exited",
+        "item/commandExecution/outputDelta",
+        "item/commandExecution/terminalInteraction",
+        "item/fileChange/outputDelta",
+        "item/fileChange/patchUpdated",
+        "serverRequest/resolved",
+        "item/mcpToolCall/progress",
+        "mcpServer/oauthLogin/completed",
+        "mcpServer/startupStatus/updated",
+        "mcpServer/event/stream/notification",
+        "account/updated",
+        "account/rateLimits/updated",
+        "app/list/updated",
+        "remoteControl/status/changed",
+        "externalAgentConfig/import/progress",
+        "externalAgentConfig/import/completed",
+        "fs/changed",
+        "item/reasoning/summaryTextDelta",
+        "item/reasoning/summaryPartAdded",
+        "item/reasoning/textDelta",
+        "thread/compacted",
+        "model/rerouted",
+        "model/verification",
+        "modelProvider/authRecoveryStarted",
+        "modelProvider/authRecoveryCompleted",
+        "turn/moderationMetadata",
+        "model/safetyBuffering/updated",
+        "warning",
+        "guardianWarning",
+        "deprecationNotice",
+        "configWarning",
+        "fuzzyFileSearch/sessionUpdated",
+        "fuzzyFileSearch/sessionCompleted",
+        "thread/realtime/started",
+        "thread/realtime/itemAdded",
+        "thread/realtime/item/started",
+        "thread/realtime/item/transcript/delta",
+        "thread/realtime/item/completed",
+        "thread/realtime/transcript/delta",
+        "thread/realtime/transcript/done",
+        "thread/realtime/outputAudio/delta",
+        "thread/realtime/sdp",
+        "thread/realtime/error",
+        "thread/realtime/closed",
+        "windows/worldWritableWarning",
+        "windowsSandbox/setupCompleted",
+        "account/login/completed",
+    }
+)
 
 
 class ReviewRouteError(RuntimeError):
@@ -224,6 +317,8 @@ def _is_harmless_lifecycle(message: Mapping[str, object]) -> bool:
     if "id" in message:
         return False
     method = message.get("method")
+    if not isinstance(method, str):
+        return False
     if method in HARMLESS_LIFECYCLE_METHODS:
         return True
     if method in HARMLESS_TEXT_NOTIFICATION_FIELDS:
@@ -309,8 +404,8 @@ def _role_settings(role_bytes: bytes) -> tuple[str, str]:
     return model.group(1), effort.group(1)
 
 
-def _source_snapshot(source_bytes: bytes) -> None:
-    """Require complete explicit-file scope records from the local source collector."""
+def _source_snapshot(source_bytes: bytes) -> dict[str, Any]:
+    """Return a validated snapshot with complete explicit-file scope records."""
     try:
         snapshot = json.loads(source_bytes.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -336,7 +431,14 @@ def _source_snapshot(source_bytes: bytes) -> None:
         or not (PurePosixPath(repository).is_absolute() or PureWindowsPath(repository).is_absolute())
         or not isinstance(scopes, list)
         or not scopes
-        or any(not isinstance(scope, str) or not scope for scope in scopes)
+        or any(
+            not isinstance(scope, str)
+            or not scope
+            or scope == "."
+            or PurePosixPath(scope).as_posix() != scope
+            or PureWindowsPath(scope).as_posix() != scope
+            for scope in scopes
+        )
         or any(
             PurePosixPath(scope).is_absolute()
             or PureWindowsPath(scope).is_absolute()
@@ -371,6 +473,9 @@ def _source_snapshot(source_bytes: bytes) -> None:
         if (
             not isinstance(path, str)
             or not path
+            or path == "."
+            or PurePosixPath(path).as_posix() != path
+            or PureWindowsPath(path).as_posix() != path
             or PurePosixPath(path).is_absolute()
             or PureWindowsPath(path).is_absolute()
             or ".." in PurePosixPath(path).parts
@@ -398,6 +503,32 @@ def _source_snapshot(source_bytes: bytes) -> None:
     # consulting a mutable checkout when validating historical review evidence.
     if not paths or paths != scopes:
         raise ReviewRouteError("plan-source-scope-coverage-invalid")
+    return snapshot
+
+
+def _live_source_unchanged(plan: Mapping[str, object], phase: str) -> None:
+    """Require the selected checkout to match the frozen source at a dispatch boundary."""
+    if plan.get("schema_version") != SCHEMA_VERSION:
+        return
+    source_bytes = plan.get("_source_bytes")
+    if not isinstance(source_bytes, bytes):
+        raise ReviewRouteError("plan-source-binding-invalid")
+    frozen = _source_snapshot(source_bytes)
+    cwd = Path(str(plan["cwd"])).resolve()
+    if Path(frozen["repository"]).resolve() != cwd:
+        raise ReviewRouteError(f"live-source-root-mismatch-{phase}")
+    collector_path = Path(__file__).with_name("collect_diff.py")
+    specification = importlib.util.spec_from_file_location("codex_rig_collect_diff", collector_path)
+    if specification is None or specification.loader is None:
+        raise ReviewRouteError(f"live-source-unavailable-{phase}")
+    collector = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(collector)
+    try:
+        current = collector.capture_source_snapshot(cwd, frozen["scope_paths"])
+    except (OSError, RuntimeError, ValueError) as error:
+        raise ReviewRouteError(f"live-source-unavailable-{phase}") from error
+    if current != frozen:
+        raise ReviewRouteError(f"live-source-mutated-{phase}")
 
 
 def _capacity_evidence(capacity_bytes: bytes, model: object) -> dict[str, object]:
@@ -466,7 +597,19 @@ def _validated_plan(
             raise ReviewRouteError("plan-diff-sha256-mismatch")
         if plan["diff_sha256"] != plan["review_input_sha256"]:
             raise ReviewRouteError("plan-diff-review-input-mismatch")
-        _source_snapshot(source_bytes)
+        source_snapshot = _source_snapshot(source_bytes)
+        if require_dispatch:
+            # Frozen records support historical validation, but a live dispatch can also reject a directory
+            # that a self-consistent snapshot falsely labels as a file.
+            repository = Path(source_snapshot["repository"])
+            for scope in source_snapshot["scope_paths"]:
+                path = repository / Path(*PurePosixPath(scope).parts)
+                try:
+                    mode = path.lstat().st_mode
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISDIR(mode):
+                    raise ReviewRouteError("plan-source-snapshot-invalid")
         plan["_source_file"] = source_path
         plan["_source_bytes"] = source_bytes
         plan["_diff_file"] = diff_path
@@ -616,6 +759,7 @@ def _source_materials_unchanged(plan: Mapping[str, object], nodes: list[dict[str
             raise ReviewRouteError("plan-capacity-binding-invalid")
         if _read_bytes(capacity_file, "plan-capacity-evidence", MAX_FILE_BYTES) != capacity_bytes:
             raise ReviewRouteError(f"capacity-evidence-mutated-{phase}")
+    _live_source_unchanged(plan, phase)
 
 
 def _validate_capabilities(value: object) -> dict[str, bool]:
@@ -643,12 +787,19 @@ def _controls(value: object, node: Mapping[str, object]) -> dict[str, object]:
 
 
 def validate_evidence(
-    plan_path: Path, evidence_path: Path, roles_dir: Path, *, require_dispatch: bool = False
+    plan_path: Path,
+    evidence_path: Path,
+    roles_dir: Path,
+    *,
+    require_dispatch: bool = False,
+    require_assessment: bool = True,
 ) -> dict[str, object]:
     """Bind completed App Server evidence to its frozen plan and installed role cards.
 
     The returned summary is intentionally conservative: it never claims native lineage, credential isolation, or write
     eligibility. ``parallel`` is returned only when the adapter retained overlapping substantive node intervals.
+    Historical schema-two results may omit the later rating field when the owning result validator selects that
+    contract.
     """
     plan, plan_nodes = _validated_plan(plan_path, roles_dir, require_dispatch=require_dispatch)
     evidence = _json_object(evidence_path, "evidence")
@@ -711,6 +862,8 @@ def validate_evidence(
             raise ReviewRouteError("evidence-output-empty-or-secret")
         if _digest(node.get("output_sha256"), "evidence-output-sha256") != _sha256_bytes(output):
             raise ReviewRouteError("evidence-output-sha256-mismatch")
+        if plan["schema_version"] == SCHEMA_VERSION:
+            _validate_review_output(output_text, plan, require_assessment=require_assessment)
         thread_id = _text(node.get("thread_id"), "evidence-thread-id")
         turn_id = _text(node.get("turn_id"), "evidence-turn-id")
         if thread_id in thread_ids or turn_id in turn_ids:
@@ -1198,6 +1351,7 @@ def check_host(plan_path: Path, codex: Path, timeout_seconds: float) -> dict[str
         raise ReviewRouteError("timeout-seconds-invalid")
     roles_dir = Path(__file__).resolve().parents[1] / "roles"
     plan, nodes = _validated_plan(plan_path, roles_dir, require_dispatch=True)
+    _live_source_unchanged(plan, "before-host")
     cwd = Path(str(plan["cwd"]))
     cli_version = _codex_version(codex, cwd)
     process: subprocess.Popen[str] | None = None
@@ -1251,7 +1405,7 @@ def check_host(plan_path: Path, codex: Path, timeout_seconds: float) -> dict[str
 
 
 def _review_output_schema(plan: Mapping[str, object]) -> dict[str, Any]:
-    """Constrain every review turn to source-bound, machine-readable findings."""
+    """Constrain review turns to source-bound findings and Code Review judgments."""
     finding_properties = {
         "signature": {"type": "string"},
         "tier": {"type": "string", "enum": ["security", "critical", "high", "medium", "low", "nit"]},
@@ -1262,41 +1416,65 @@ def _review_output_schema(plan: Mapping[str, object]) -> dict[str, Any]:
         },
         "evidence": {"type": "array", "items": {"type": "string"}},
     }
-    return {
-        "type": "object",
-        "properties": {
-            "source_sha256": {"type": "string", "enum": [plan["source_sha256"]]},
-            "diff_sha256": {"type": "string", "enum": [plan["review_input_sha256"]]},
-            "findings": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": finding_properties,
-                    "required": list(finding_properties),
-                    "additionalProperties": False,
-                },
+    properties: dict[str, Any] = {
+        "source_sha256": {"type": "string", "enum": [plan["source_sha256"]]},
+        "diff_sha256": {"type": "string", "enum": [plan["review_input_sha256"]]},
+        "findings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": finding_properties,
+                "required": list(finding_properties),
+                "additionalProperties": False,
             },
         },
-        "required": ["source_sha256", "diff_sha256", "findings"],
+    }
+    if plan.get("consumer_id") == "code-review":
+        properties["assessment"] = {
+            "type": "object",
+            "properties": {"rating": {"type": "integer", "enum": [1, 2, 3, 4, 5]}, "rationale": {"type": "string"}},
+            "required": ["rating", "rationale"],
+            "additionalProperties": False,
+        }
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
         "additionalProperties": False,
     }
 
 
-def _validate_review_output(text: str, plan: Mapping[str, object]) -> None:
-    """Reject malformed or unbound results even when the host accepted the schema request."""
+def _validate_review_output(text: str, plan: Mapping[str, object], *, require_assessment: bool = True) -> None:
+    """Validate source-bound findings and require assessments from newly dispatched turns."""
     try:
         response = json.loads(text)
     except (ValueError, RecursionError) as error:
         raise ReviewRouteError("app-server-review-output-invalid-json") from error
+    schema = _review_output_schema(plan)
+    required = set(schema["required"])
+    permitted = {frozenset(required)}
+    if not require_assessment and "assessment" in required:
+        permitted.add(frozenset(required - {"assessment"}))
     if (
         not isinstance(response, dict)
-        or set(response) != {"source_sha256", "diff_sha256", "findings"}
+        or frozenset(response) not in permitted
         or response["source_sha256"] != plan["source_sha256"]
         or response["diff_sha256"] != plan["review_input_sha256"]
         or not isinstance(response["findings"], list)
     ):
         raise ReviewRouteError("app-server-review-output-schema-mismatch")
-    properties = _review_output_schema(plan)["properties"]["findings"]["items"]["properties"]
+    if "assessment" in response:
+        assessment = response["assessment"]
+        if (
+            not isinstance(assessment, dict)
+            or set(assessment) != {"rating", "rationale"}
+            or type(assessment["rating"]) is not int
+            or assessment["rating"] not in range(1, 6)
+            or not isinstance(assessment["rationale"], str)
+            or not assessment["rationale"].strip()
+        ):
+            raise ReviewRouteError("app-server-review-output-assessment-invalid")
+    properties = schema["properties"]["findings"]["items"]["properties"]
     signatures: set[str] = set()
     for finding in response["findings"]:
         if (
@@ -1354,6 +1532,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
     roles_dir = Path(__file__).resolve().parents[1] / "roles"
     frozen_plan = _read_bytes(plan_path, "plan")
     plan, nodes = _validated_plan(plan_path, roles_dir, require_dispatch=True)
+    _live_source_unchanged(plan, "before-host")
     try:
         plan_parent = plan_path.resolve().parent
         output_root = output_root.resolve(strict=False)
@@ -1457,9 +1636,12 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 raise ReviewRouteError("app-server-server-request-rejected")
             if _is_harmless_lifecycle(message):
                 continue
-            if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+            if isinstance(method, str) and method in {
+                "item/commandExecution/requestApproval",
+                "item/fileChange/requestApproval",
+            }:
                 raise ReviewRouteError("app-server-approval-requested")
-            if method not in {
+            if not isinstance(method, str) or method not in {
                 "item/started",
                 "item/completed",
                 "turn/completed",
@@ -1469,7 +1651,9 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 failure_diagnostic = {
                     "stage": "turn-events",
                     "reason": "method-not-allowlisted",
-                    "method_category": "unrecognized",
+                    "method_category": method
+                    if isinstance(method, str) and method in SCHEMA_NOTIFICATION_METHODS
+                    else "unrecognized",
                     "recovery": (
                         "Continue permitted source inspection using native instruction-bounded reviewers or disclosed "
                         "parent-serial review; resume this launcher only after protocol-maintainer triage validates a "
@@ -1541,6 +1725,7 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
                 pending.remove(role_id)
                 # Preserve the original response before rejecting it; never repair or retry a paid result.
                 _validate_review_output(final, plan)
+                _source_materials_unchanged(plan, nodes, "during-review")
         if _read_bytes(plan_path, "plan") != frozen_plan:
             raise ReviewRouteError("plan-mutated-during-review")
         _source_materials_unchanged(plan, nodes, "during-review")

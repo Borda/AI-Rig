@@ -17,7 +17,10 @@ proposal-level close results, including path containment and provenance checks f
 
 run this validator from the code-review workflow after all evidence and draft result files have been written. Provide
 the review output directory and candidate ``result.json`` through the CLI. ``--project-root`` remains accepted for
-command-line compatibility, but role policy comes only from installed role cards.
+command-line compatibility. Code Review preflight and candidates bind installed role cards to retained run-local copies;
+promoted schema-three results validate those retained bytes. The challenge-resolve owner may run ``--manifest-only
+--challenge-only`` to validate exactly one independent challenger without Code Review's other specialist routing; this
+mode still checks the same reviewer execution, role card, source, and output evidence.
 
 ## Used by
 
@@ -246,7 +249,7 @@ WORKTREE_FAILURE_RECOVERY_ACTIONS = {
 
 
 def _load_role_card(roles_dir: Path, role: str) -> dict[str, str]:
-    """Load the flat installed role-card contract and bind it to its exact bytes."""
+    """Load a role-card contract and bind it to its exact bytes."""
     path = roles_dir / role / "ROLE.md"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
@@ -530,7 +533,7 @@ def _review_finding_identities(metadata: dict[str, Any], result: dict[str, Any])
     schema_version = result.get("schema_version", 1)
     if schema_version == 1:
         return None
-    if schema_version != 2:
+    if schema_version not in {2, 3}:
         raise SystemExit("unsupported-result-schema-version")
 
     records = metadata.get("review_findings")
@@ -618,6 +621,97 @@ def _operational_blocker_identities(metadata: dict[str, Any], finding_ids: set[s
     return identities
 
 
+def _readable_review_role(role_id: str) -> str:
+    """Name a manifest role as it appears in a reviewer assessment."""
+    parts = role_id.split("-")
+    first = {"qa": "QA", "oss": "OSS", "cicd": "CICD", "sw": "Software"}.get(parts[0], parts[0].capitalize())
+    return " ".join([first, *parts[1:]])
+
+
+def _retained_reviewer_rating(path: Path, *, app_server: bool, main: bool, role: str) -> int:
+    """Read a scoped rating and rationale from the retained reviewer response."""
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise SystemExit(f"review-assessment-content-invalid:{role}") from error
+    if app_server:
+        try:
+            payload = json.loads(content)
+        except (ValueError, RecursionError) as error:
+            raise SystemExit(f"review-assessment-content-invalid:{role}") from error
+        assessment = payload.get("assessment") if isinstance(payload, dict) else None
+        rating = assessment.get("rating") if isinstance(assessment, dict) else None
+        rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
+    else:
+        heading = "Main Reviewer Assessment" if main else "Reviewer Assessment"
+        section = re.search(rf"(?ms)^## {re.escape(heading)}\s*\n(?P<body>.*?)(?=^## |\Z)", content)
+        body = section.group("body") if section else ""
+        ratings = re.findall(r"(?m)^Rating: ([1-5])\s*$", body)
+        rationales = re.findall(r"(?m)^Rationale: (\S.*)$", body)
+        rating = int(ratings[0]) if len(ratings) == 1 else None
+        rationale = rationales[0] if len(rationales) == 1 else None
+    if type(rating) is not int or rating not in range(1, 6) or not isinstance(rationale, str) or not rationale.strip():
+        raise SystemExit(f"review-assessment-content-invalid:{role}")
+    return rating
+
+
+def _validate_reviewer_assessments(
+    out_dir: Path, metadata: dict[str, Any], passes_by_role: dict[str, dict[str, Any]]
+) -> None:
+    """Bind each supplied assessment to a validated reviewer and retained output."""
+    assessments = metadata.get("reviewer_assessments")
+    if not isinstance(assessments, list) or not assessments:
+        raise SystemExit("review-assessments-invalid")
+    expected = {
+        (_readable_review_role(role) + (" (parent substitute)" if item["mode"] == "substituted" else "")).casefold(): (
+            role,
+            item,
+        )
+        for role, item in passes_by_role.items()
+    }
+    specialist_outputs = {_resolve_path(out_dir, item["output_path"]) for item in passes_by_role.values()}
+    seen: set[str] = set()
+    for assessment in assessments:
+        if not isinstance(assessment, dict) or not isinstance(assessment.get("role"), str):
+            raise SystemExit("review-assessment-invalid")
+        label = assessment["role"].casefold()
+        if label in seen:
+            raise SystemExit("review-assessment-role-duplicate")
+        seen.add(label)
+        if label not in expected and label != "main reviewer":
+            raise SystemExit(f"review-assessment-role-unbound:{assessment['role']}")
+        pointer = assessment.get("evidence")
+        if not isinstance(pointer, str):
+            raise SystemExit(f"review-assessment-evidence-invalid:{assessment['role']}")
+        locator = re.search(r"(?::|#L)[1-9][0-9]*$", pointer)
+        try:
+            evidence_path = _resolve_path(out_dir, pointer[: locator.start()] if locator else pointer)
+        except SystemExit:
+            raise SystemExit(f"review-assessment-evidence-invalid:{assessment['role']}") from None
+        if not evidence_path.is_file():
+            raise SystemExit(f"review-assessment-evidence-invalid:{assessment['role']}")
+        if label in expected:
+            role, item = expected[label]
+            if evidence_path != _resolve_path(out_dir, item["output_path"]):
+                raise SystemExit(f"review-assessment-evidence-mismatch:{role}")
+            app_server = item["mode"] == "app-server"
+        else:
+            role = "main reviewer"
+            if evidence_path in specialist_outputs:
+                raise SystemExit("review-assessment-main-evidence-reused")
+            if evidence_path != _resolve_path(out_dir, "review-notes.md"):
+                raise SystemExit("review-assessment-main-evidence-mismatch")
+            app_server = False
+        rating = _retained_reviewer_rating(
+            evidence_path, app_server=app_server, main=label == "main reviewer", role=role
+        )
+        if rating != assessment.get("rating"):
+            raise SystemExit(f"review-assessment-rating-mismatch:{role}")
+    for label, (role, _) in expected.items():
+        if label not in seen:
+            raise SystemExit(f"review-assessment-role-missing:{role}")
+
+
 def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) -> None:
     """Bind an assessed review recommendation to finding severities and quality-gate status."""
     decision = metadata.get("review_decision")
@@ -658,6 +752,25 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
             ):
                 raise SystemExit("review-assessment-invalid")
             roles.add(assessment["role"])
+        passes = metadata.get("specialist_passes")
+        if isinstance(passes, list):
+            normalized_roles = {role.casefold() for role in roles}
+            expected_substitutes: set[str] = set()
+            for item in passes:
+                if not isinstance(item, dict) or item.get("mode") != "substituted":
+                    continue
+                role_id = item.get("role")
+                if not isinstance(role_id, str) or role_id not in ALL_MANIFEST_ROLES | {"sw-engineer"}:
+                    raise SystemExit("review-substitute-role-invalid")
+                label = f"{_readable_review_role(role_id)} (parent substitute)"
+                expected_substitutes.add(label.casefold())
+                if label.casefold() not in normalized_roles:
+                    if not any(role.endswith(" (parent substitute)") for role in roles):
+                        raise SystemExit("review-substitute-attribution-missing")
+                    raise SystemExit(f"review-substitute-role-mismatch:{role_id}")
+            disclosed = {role.casefold() for role in roles if role.endswith(" (parent substitute)")}
+            if disclosed != expected_substitutes:
+                raise SystemExit("review-substitute-attribution-unbound")
         for record in metadata.get("review_findings", []) + metadata.get("operational_blockers", []):
             authors = record.get("authors")
             if (
@@ -887,7 +1000,7 @@ def _validate_unavailable_result(out_dir: Path, result: dict[str, Any], metadata
 
 def _validate_unavailable_gates(out_dir: Path, result: dict[str, Any]) -> None:
     """Require explicit skipped PR gates for new terminal unavailable results."""
-    if result.get("schema_version") != 2:
+    if result.get("schema_version") not in {2, 3}:
         return
     gates_path = out_dir / "gates.json"
     if not gates_path.is_file():
@@ -912,7 +1025,7 @@ def _validate_unavailable_gates(out_dir: Path, result: dict[str, Any]) -> None:
 
 
 def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any]) -> None:
-    """Bind a v2 unavailable-review explanation to classified, non-secret local diagnostics."""
+    """Bind versioned unavailable-review explanations to classified, non-secret local diagnostics."""
     binding = metadata.get("final_handoff")
     if not isinstance(binding, dict) or not isinstance(binding.get("handoff_path"), str):
         return
@@ -920,7 +1033,7 @@ def _validate_unavailable_final_handoff(out_dir: Path, metadata: dict[str, Any])
     if not handoff_path.is_file():
         return
     handoff = _load_json(handoff_path)
-    if handoff.get("presentation_version") != 2:
+    if handoff.get("presentation_version") not in {2, 3}:
         return
     failure = metadata["collection_failure"]
     code = failure["code"]
@@ -1414,7 +1527,7 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
     if forbidden:
         raise SystemExit("closed-review-has-detailed-review-artifacts:" + ",".join(forbidden))
     required_pr_artifacts = set(CLOSED_REQUIRED_PR_ARTIFACTS)
-    if result.get("schema_version") == 2:
+    if result.get("schema_version") in {2, 3}:
         required_pr_artifacts.update({"pr-head-fetch.json", "worktree-preflight.json"})
     for filename in sorted(required_pr_artifacts):
         if not (out_dir / filename).is_file():
@@ -1469,7 +1582,7 @@ def _validate_closed_result(out_dir: Path, result: dict[str, Any], metadata: dic
     routing = _load_json(out_dir / "pr-routing.json")
     target_branch = _load_json(out_dir / "target-branch.json")
     checkout = _load_json(out_dir / "local-checkout.json")
-    if result.get("schema_version") == 2:
+    if result.get("schema_version") in {2, 3}:
         _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
     if pr_payload.get("state") != "OPEN" or routing.get("pr_state") != "OPEN":
         raise SystemExit("closed-review-pr-state-not-open")
@@ -1688,12 +1801,17 @@ def _validate_review_runtime(
     passes: list[dict[str, Any]],
     codex_home: Path,
     parent_thread_id: str,
+    *,
+    require_assessment: bool = True,
+    roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
     if manifest.get("schema_version") == 5:
-        return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id)
+        return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
     if manifest.get("schema_version") == 4:
-        return _validate_app_server_review(out_dir, manifest, passes)
+        return _validate_app_server_review(
+            out_dir, manifest, passes, require_assessment=require_assessment, roles_dir=roles_dir
+        )
     spawned = [item for item in passes if item.get("mode") == "spawned"]
     if not spawned:
         if manifest.get("runtime_execution") is not None:
@@ -1753,7 +1871,7 @@ def _validate_review_runtime(
             parent_rollout=_find_rollout(codex_home, parent_thread_id),
             sessions_dir=codex_home / "sessions",
             run_dir=out_dir,
-            roles_dir=PLUGIN_ROOT / "roles",
+            roles_dir=roles_dir,
             expected_consumer_id="code-review",
         )
     except ValueError as error:
@@ -1904,6 +2022,7 @@ def _validate_instruction_bounded_review(
     passes: list[dict[str, Any]],
     codex_home: Path,
     parent_thread_id: str,
+    roles_dir: Path,
 ) -> dict[str, object]:
     """Validate supplied-context inspection without claiming host-enforced isolation."""
     if manifest.get("runtime_execution") is not None or manifest.get("app_server_execution") is not None:
@@ -1927,7 +2046,7 @@ def _validate_instruction_bounded_review(
     intervals: list[tuple[int | float, int | float]] = []
     for item in inspections:
         role = item["role"]
-        role_card_path = PLUGIN_ROOT / "roles" / role / "ROLE.md"
+        role_card_path = roles_dir / role / "ROLE.md"
         role_card = role_card_path.read_text(encoding="utf-8")
         selected = item["selected_attempt"]
         for attempt in item["attempts"]:
@@ -2014,7 +2133,12 @@ def _validate_instruction_bounded_review(
 
 
 def _validate_app_server_review(
-    out_dir: Path, manifest: dict[str, Any], passes: list[dict[str, Any]]
+    out_dir: Path,
+    manifest: dict[str, Any],
+    passes: list[dict[str, Any]],
+    *,
+    require_assessment: bool = True,
+    roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Bind an isolated review wave without manufacturing native child lineage."""
     execution = manifest.get("app_server_execution")
@@ -2027,7 +2151,13 @@ def _validate_app_server_review(
     if not evidence_path.is_file() or _sha256(evidence_path) != execution["evidence_sha256"]:
         raise SystemExit("review-app-server-evidence-hash-mismatch")
     try:
-        summary = validate_app_server_evidence(plan_path, evidence_path, PLUGIN_ROOT / "roles", require_dispatch=True)
+        summary = validate_app_server_evidence(
+            plan_path,
+            evidence_path,
+            roles_dir,
+            require_dispatch=True,
+            require_assessment=require_assessment,
+        )
     except (ReviewRouteError, ValueError, OSError) as error:
         raise SystemExit(f"review-app-server-evidence-invalid:{error}") from error
     evidence = _load_json(evidence_path)
@@ -2289,6 +2419,10 @@ def _validate_manifest_entries(
     codex_home: Path,
     parent_thread_id: str,
     project_root: Path,
+    *,
+    require_assessment: bool = True,
+    retained_role_cards: bool = False,
+    require_role_card_receipts: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to unique, role-specific evidence for its declared route."""
     schema_version = manifest.get("schema_version")
@@ -2302,8 +2436,11 @@ def _validate_manifest_entries(
     review_input = out_dir / "diff.patch"
     if not review_input.exists() or _sha256(review_input) != manifest["review_input_sha256"]:
         raise SystemExit("manifest-review-input-hash-mismatch")
+    roles_dir = out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles"
     if schema_version == 4:
-        _validate_app_server_review(out_dir, manifest, passes)
+        _validate_app_server_review(
+            out_dir, manifest, passes, require_assessment=require_assessment, roles_dir=roles_dir
+        )
     elif manifest.get("app_server_execution") is not None or any(item.get("mode") == "app-server" for item in passes):
         raise SystemExit("review-app-server-schema-required")
     parent_rows: list[dict[str, Any]] | None = None
@@ -2323,9 +2460,15 @@ def _validate_manifest_entries(
             raise SystemExit(f"manifest-invalid-role:{role!r}")
         if role in by_role:
             raise SystemExit(f"manifest-duplicate-role:{role}")
-        role_card = _load_role_card(PLUGIN_ROOT / "roles", role)
+        if retained_role_cards:
+            _resolve_path(out_dir, str(roles_dir / role / "ROLE.md"))
+        role_card = _load_role_card(roles_dir, role)
         if schema_version in {3, 4, 5} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
+        if require_role_card_receipts and schema_version in {3, 4, 5} and not retained_role_cards:
+            retained_path = _resolve_path(out_dir, f"role-cards/{role}/ROLE.md")
+            if not retained_path.is_file() or _sha256(retained_path) != role_card["role_card_sha256"]:
+                raise SystemExit(f"manifest-retained-role-card-mismatch:{role}")
         if not isinstance(axis, str) or not axis.strip():
             raise SystemExit(f"manifest-missing-axis:{role}")
         if mode not in VALID_MODES:
@@ -2408,9 +2551,38 @@ def _validate_manifest_preflight(
         codex_home,
         parent_thread_id,
         project_root,
+        require_role_card_receipts=True,
     )
     if manifest.get("schema_version") in {3, 4, 5}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
+
+
+def _validate_challenge_manifest_preflight(
+    out_dir: Path,
+    codex_home: Path,
+    parent_thread_id: str,
+    project_root: Path,
+) -> None:
+    """Validate one challenge reviewer without Code Review's multi-axis routing."""
+    manifest = _load_json(out_dir / "specialist-manifest.json")
+    passes = _manifest_passes(manifest)
+    if (
+        manifest.get("schema_version") not in {4, 5}
+        or len(passes) != 1
+        or passes[0].get("role") != "challenger"
+        or passes[0].get("mode") not in {"app-server", "inspection"}
+    ):
+        raise SystemExit("manifest-triggered-role-set-mismatch")
+    _validate_manifest_entries(
+        out_dir,
+        manifest,
+        passes,
+        {"challenger"},
+        codex_home,
+        parent_thread_id,
+        project_root,
+    )
+    _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
 def _validate_result(
@@ -2475,7 +2647,7 @@ def _validate_result(
             "remote-selection.json",
             "diff.patch",
         )
-        if result.get("schema_version") == 2:
+        if result.get("schema_version") in {2, 3}:
             required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
         for filename in required_pr_artifacts:
             if not (out_dir / filename).exists():
@@ -2508,7 +2680,7 @@ def _validate_result(
             raise SystemExit("pr-routing-force-checkout-forbidden")
         if "force_policy" not in routing:
             raise SystemExit("pr-routing-force-policy-missing")
-        if result.get("schema_version") == 2:
+        if result.get("schema_version") in {2, 3}:
             # Older receipts omit the method; current collectors record the operation actually performed.
             review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
             checkout_commands = {
@@ -2591,7 +2763,7 @@ def _validate_result(
             or checkout.get("diff_command") != expected_diff_command
         ):
             raise SystemExit("pr-local-diff-provenance-invalid")
-        if result.get("schema_version") == 2:
+        if result.get("schema_version") in {2, 3}:
             _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
         thread_status = online_summary.get("review_threads_status")
         thread_error = online_summary.get("review_threads_error")
@@ -2621,10 +2793,13 @@ def _validate_result(
     triggered_roles = _validate_routing(out_dir, risk_tier)
     manifest_path = _resolve_path(out_dir, metadata.get("specialist_manifest"))
     manifest = _load_json(manifest_path)
+    if result.get("schema_version") == 3 and manifest.get("schema_version") == 2:
+        raise SystemExit("current-review-specialist-manifest-schema")
     routing = _load_json(out_dir / "review-routing.json")
     if manifest.get("sol_selection") != routing.get("sol_selection"):
         raise SystemExit("manifest-sol-selection-routing-mismatch")
     passes = _manifest_passes(manifest)
+    retained_role_cards = result.get("schema_version") == 3 and result_path.name == "result.json"
     by_role = _validate_manifest_entries(
         out_dir,
         manifest,
@@ -2633,9 +2808,20 @@ def _validate_result(
         codex_home,
         parent_thread_id,
         project_root,
+        require_assessment=result.get("schema_version") != 2,
+        retained_role_cards=retained_role_cards,
+        require_role_card_receipts=result.get("schema_version") == 3,
     )
     runtime_summary = (
-        _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
+        _validate_review_runtime(
+            out_dir,
+            manifest,
+            passes,
+            codex_home,
+            parent_thread_id,
+            require_assessment=result.get("schema_version") != 2,
+            roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
+        )
         if manifest.get("schema_version") in {3, 4, 5}
         else {}
     )
@@ -2683,6 +2869,8 @@ def _validate_result(
         ):
             if metadata_item.get(key) != item.get(key):
                 raise SystemExit(f"metadata-specialist-pass-mismatch:{role}:{key}")
+    if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
+        _validate_reviewer_assessments(out_dir, metadata, by_role)
 
     triggered_required = REQUIRED_ROLES & triggered_roles
     substituted_roles = sorted(role for role in triggered_required if by_role[role]["mode"] == "substituted")
@@ -2729,6 +2917,11 @@ def main() -> int:
         action="store_true",
         help="Validate specialist routing and manifest provenance before candidate creation.",
     )
+    parser.add_argument(
+        "--challenge-only",
+        action="store_true",
+        help="With --manifest-only, validate exactly one independent challenger without Code Review routing.",
+    )
     # Resolve the fallback lazily: an argparse default is built even when CODEX_HOME is set, and
     # Path.home() raises on any host that exposes no home variable the platform recognizes.
     codex_home = os.environ.get("CODEX_HOME")
@@ -2751,10 +2944,15 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.challenge_only and not args.manifest_only:
+        parser.error("--challenge-only requires --manifest-only")
     if not args.parent_thread_id:
         raise SystemExit("missing-parent-thread-id")
     if args.manifest_only:
-        _validate_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
+        if args.challenge_only:
+            _validate_challenge_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
+        else:
+            _validate_manifest_preflight(args.out, args.codex_home, args.parent_thread_id, args.project_root)
         return 0
     _validate_result(args.out, args.result, args.codex_home, args.parent_thread_id, args.project_root)
     return 0

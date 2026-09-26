@@ -81,6 +81,7 @@ Root `AGENTS.md` already applies here and is not restated: edit scope, core prin
 
 ## Version Pre-Bump Gate
 
+- Apply the repository Version Continuity rule to serialized artifact schemas separately from this plugin SemVer gate; compare each schema family with its own committed `HEAD` baseline before handoff.
 - Every commit touching a plugin's non-test file must apply exactly one SemVer bump to that plugin from its HEAD baseline, except a generated package manifest updated only to record test-file bytes.
 - A commit changing only files under `plugins/<name>/tests/` needs no bump. When the plugin ships its tests, regenerate and validate the package manifest for those test bytes without bumping the version or updating the changelog.
 - Pure test, CI, and documentation changes need no changelog entry unless they change shipped product or plugin behavior.

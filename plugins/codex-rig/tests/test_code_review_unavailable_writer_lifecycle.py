@@ -138,7 +138,7 @@ def test_write_result_unavailable_review_emits_validator_accepted_candidate(tmp_
 
     assert completed.returncode == 0, completed.stderr
     candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
-    assert candidate["schema_version"] == 2
+    assert candidate["schema_version"] == 3
     assert candidate["status"] == "fail"
     assert candidate["findings"] == {"critical": 0, "high": 0, "medium": 0, "low": 0}
     assert candidate["metadata"]["review_status"] == "unavailable"

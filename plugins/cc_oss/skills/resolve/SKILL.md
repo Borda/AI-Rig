@@ -35,7 +35,7 @@ Bare comment text → skip to Codex dispatch (Step 12).
 - **`--no-challenge`**: optional — skip challenge gate per item; all selected items treated as `VALID`
 - **`--no-codemap`**: optional — disable codemap structural context (on by default when codemap installed + index present)
 - **`--codemap`**: optional — strict mode: stop and report if codemap not installed or index missing
-- **`--agent <name>`**: optional — use `<name>` agent for implementation instead of Codex; must be an implementation agent; bare name auto-prefixed with `foundry:` if no plugin prefix detected (e.g. `--agent sw-engineer` → `foundry:sw-engineer`; `--agent linting-expert` → `foundry:linting-expert`; `--agent doc-scribe` → `foundry:doc-scribe`); explicit prefix also accepted (`--agent foundry:sw-engineer`); see routing table in `action-item-dispatch.md`. **`--agent` also applies to `INTEL_AGENT` (Step 3b thread intelligence)** — explicit `--agent` overrides label/title routing for the thread-intelligence subagent as well, so a docs-focused PR routed via `--agent foundry:doc-scribe` uses doc-scribe for both classification and implementation.
+- **`--agent <name>`**: optional — use `<name>` agent for implementation instead of Codex; must be an implementation agent or the `bridge:implement` Skill marker; bare name auto-prefixed with `foundry:` if no plugin prefix detected (e.g. `--agent sw-engineer` → `foundry:sw-engineer`; `--agent linting-expert` → `foundry:linting-expert`; `--agent doc-scribe` → `foundry:doc-scribe`); explicit prefix also accepted (`--agent foundry:sw-engineer`); see routing table in `action-item-dispatch.md`. **`--agent` also applies to `INTEL_AGENT` (Step 3b thread intelligence)** — explicit real Agent types override label/title routing for classification as well. `bridge:implement` is never passed to `Agent`: classification falls back to label/title routing, eligible medium items use the Skill route, and other items use the change-to-specialist table.
 
 NOT-for additions (scope guards):
 
@@ -188,6 +188,11 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # comment-dispatch and drops PR_NUMBER. Every supported flag must be stripped here, not just codemap/keep.
 eval "$(python "${CLAUDE_PLUGIN_ROOT}/bin/parse-skill-flags.py" --flags no-codemap,codemap,worktree,no-challenge --value-flags agent "$ARGUMENTS")"  # timeout: 5000
 ARGUMENTS="$CLEAN_ARGS"
+case "${VALUE_AGENT:-}" in
+    '') ;;
+    *:*) ;;
+    *) VALUE_AGENT="foundry:$VALUE_AGENT" ;;
+esac
 echo "$FLAG_NO_CHALLENGE" > "${TMPDIR:-/tmp}/resolve-no-challenge-${CSID}"  # read by Step 8 Phase 1
 echo "${VALUE_AGENT:-}" > "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}"
 echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 10 overwrites; a run that never reaches it must not inherit last run's `open`
@@ -208,6 +213,8 @@ fi
 . "$tmpenv"
 # sets: PR_NUMBER, PR_URL, MODE, ARGUMENTS ('#' stripped, comment-dispatch only)
 echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeout: 3000
+: > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"  # Step 4 or report mode must publish this run's base before Step 9
+: > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # Step 4 or local report mode must publish this run's commit reference
 ```
 
 <!-- branch: unsupported-flags — isolated; ≤1 call; fires only when unknown flags present -->
@@ -348,6 +355,8 @@ Read the report already resolved by **Report source resolution** (Step 1) — `I
 - Semantic match (same file, no exact line, similar description) → drop report item; same annotation and Author update
 - No match → append report finding as `[report]` item
 
+Before Step 3d, rewrite `$IMPL_DIR/action-items.jsonl` using the Write tool with the complete merged ACTION_ITEMS, replacing Step 3b's PR-only records. Preserve each retained GitHub item's `full_comment_text`, `file`, `line`, `url`, `location`, and `origin`; apply dedup annotations to its `author` and `summary` consistently with the displayed row. Append each unmatched report finding with the Step 3b ACTION_ITEM field set, `location: "report"`, `origin: "posted"`, an empty `url`, and its full finding bullet in `full_comment_text`. Renumber every merged record sequentially from 1 in displayed order, including retained GitHub rows, so table IDs, Step 3d `SELECTED_ITEMS`, Step 3e task IDs, and Step 8's JSONL lookup name the same item. Keep a zero-item file empty. Stop before printing the merged table or opening Step 3d if the rewritten file is missing, malformed, or its IDs/row count differ from the merged table; never let Step 8 consume the stale PR-only JSONL.
+
 **Re-prefix GitHub items** in deduplication: `[gh][req]` stays `[gh][req]`; `[suggest]` → `[gh][suggest]`, `[question]` → `[gh][question]` if not already prefixed. GitHub items carry `[gh]` prefix in all modes — no change needed for items already classified with `[gh]` in Step 3b.
 
 ### Sources confirmation
@@ -360,9 +369,9 @@ Result: single merged `ACTION_ITEMS`. GitHub items first (`[gh][req]`/`[gh][sugg
 Report merged: <N> findings from /review · <M> deduplicated against GitHub comments · <K> added as [report] items
 ```
 
-Print merged ACTION_ITEMS as markdown table to terminal immediately after the merge summary (severity descending; same columns as pr-intelligence.md table):
+**MANDATORY — print merged ACTION_ITEMS as markdown table in an assistant user-facing reply immediately after the merge summary and before Step 3d's AskUserQuestion** (severity descending; same columns as pr-intelligence.md table). Include every row in that reply, not Bash/tool stdout. This table is selection-driving data, not a decorative table — print it in full under every compression mode and every communication style active this session (caveman included), never replace it with a prose count or summary line. A reply that references "the table above" without the table in the same message, or in the message immediately before it, is a defect — regenerate the table before sending.
 
-> **Output-Routing exemption (canonical — applies to every ACTION_ITEMS table in this skill, Steps 3b/3c/3d)**: ACTION_ITEMS tables are selection-driving, read-in-context enumerations user must see before Step 3d picker. Always print inline to terminal regardless of row count. Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply — never divert these tables to a file. Makes explicit what the global rule's own copy-intent override (*read-in-context, acted-on-immediately → terminal only even if long*) already implies.
+> **Output-Routing exemption (canonical — applies to every ACTION_ITEMS table in this skill, Steps 3b/3c/3d)**: ACTION_ITEMS tables are selection-driving, read-in-context enumerations user must see before Step 3d picker. Put every row in an assistant user-facing reply regardless of row count, not Bash/tool stdout. Global Output Routing (*5+ findings → `.temp/output-*.md`, summary only*) does **not** apply — never divert these tables to a file. Makes explicit what the global rule's own copy-intent override (*read-in-context, acted-on-immediately → user-facing reply even if long*) already implies.
 
 ```markdown
 ### Action Items — PR #<N> (merged)
@@ -390,14 +399,14 @@ Summary ≤60 chars. Notes = `—` when empty; carries commit SHA for `[done]` r
 
 ! IMPORTANT — invoke `AskUserQuestion` tool directly. Never write options as plain text.
 
-Gather is complete here (3b/3c done). Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running:
+Gather is complete here (3a, 3b, or 3c done). Report mode also enters this step for nonempty report items, so the same user choice supplies item scope, commit mode, and the over-20 cap decision. Mark TASK_GATHER `completed` and TASK_SELECT `in_progress` **before** the selection prompt — otherwise the gather `activeForm` keeps driving the spinner through the user-selection window, falsely implying gather is still running:
 
 ```text
 TaskUpdate(task_id=TASK_GATHER, status="completed")
 TaskUpdate(task_id=TASK_SELECT, status="in_progress")
 ```
 
-Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero pending → set `SELECTED_ITEMS` = all pending IDs, skip to Step 3e.
+Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero pending → set `SELECTED_ITEMS` = all pending IDs; continue to Step 3e for `pr`/`pr+report`, or skip Step 3e in `report` mode.
 
 Sort all pending items by severity descending (most impactful first).
 
@@ -415,6 +424,8 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:
 ```
 
 Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+
+Immediately before the first `AskUserQuestion`, ensure the latest assistant user-facing reply contains every ACTION_ITEMS row the user is selecting from (the full Step 3b or 3c table, or the ≥19 compressed table). If intervening work separated the earlier table reply from the picker, repeat that table in the reply now. Bash/tool stdout and a row count do not satisfy this gate.
 
 **Cap mechanics — read before building any call**: the tool cap is **4 questions per call**. The `Submit` tab is NOT a question — a 4-question call renders 5 tabs. Never stop at 3 questions believing the cap is reached, and never over-pack a question past 3 items to avoid opening a 4th. Within one question, `AskUserQuestion` appends "Type something" outside the option list, so 3 items + Type something = 4 visible rows; that is the **≤3 items/question** limit, a separate constraint from the 4-question cap.
 
@@ -460,7 +471,7 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
 - Any bulk answer other than "unanswered" in Call 1 → skip Call 2 entirely (scope already resolved).
 - ≥19 pending → context-budget mode below instead, decided before Call 1; never open a Call 3.
 
-**≥19 pending items — context-budget mode**: skip per-item checkboxes; print compressed table (type · id · summary ≤40 chars · file) **inline to terminal** (Output-Routing exemption from Step 3c applies — never divert to `.temp`), then ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group (3 of the 4 slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
+**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group (3 of the 4 slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
 <!-- branch: main-path — commit-mode (same call in the ≤6-item merged layout; separate call 2 only in the >6-item flow; skipped only when bulk action = (d) skip) -->
 
@@ -562,11 +573,15 @@ IFS= read -r _GS < "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}" 2>/dev/null 
 echo "commit-mode=$_CM group-strategy=$_GS"  # timeout: 3000
 ```
 
+**Over-20 selection gate** — after bulk or checkbox resolution and before creating any item tasks, count `SELECTED_ITEMS`. When more than 20 IDs are selected, invoke `AskUserQuestion`: "More than 20 items were selected; one resolve pass can handle at most 20. What should run now?" Options: (a) Apply the first 20 selected items in the displayed severity/priority order now, then rerun for the remaining items; (b) Stop and reselect at most 20 items. For (a), set `SELECTED_ITEMS` to exactly those first 20 selected IDs, print the deferred IDs, and tell the user to rerun for the remaining items. For (b) or no answer, stop without creating tasks. Never silently trim a bulk choice, run a second batch inside this pass, or pass more than 20 IDs to Step 3e.
+
 ```text
 TaskUpdate(task_id=TASK_SELECT, status="completed")
 ```
 
 ## Step 3e: Create tasks for selected items
+
+`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 4 when a PR# was found, otherwise to Step 8. `pr` and `pr+report` create per-item tasks below.
 
 > Step 2 gather task already marked `completed` at top of Step 3d.
 
@@ -595,7 +610,7 @@ case "$_ITEM_ID" in ''|*[!0-9]*) echo "! BLOCKED — item id '$_ITEM_ID' is not 
 printf '%s\t%s\n' "$_ITEM_ID" "$_TASK_ID" >> "$IMPL_DIR/item-tasks.tsv"  # timeout: 3000
 ```
 
-**Applies to `pr` and `pr+report` modes only** — these are the only modes that run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks.
+**Applies to `pr` and `pr+report` modes only** — these run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks; Step 3a initialises `IMPL_DIR` instead.
 
 ## Step 4: Checkout PR branch
 
@@ -634,12 +649,16 @@ command -v gh >/dev/null 2>&1 || { echo "! BLOCKED — gh CLI required; install:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "<PR#>"  # timeout: 15000
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_pr_refs.py" --pr "$PR_NUMBER"  # timeout: 15000
 ```
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # fresh shell (Check 41) — reload what resolve_pr_refs.py persisted above
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing checkout"; exit 1 ;; esac
 IFS= read -r PR_HEAD_REF < "${TMPDIR:-/tmp}/resolve-head-ref-${CSID}" 2>/dev/null || PR_HEAD_REF=""
 IFS= read -r PR_HEAD_OID < "${TMPDIR:-/tmp}/resolve-pr-head-oid-${CSID}" 2>/dev/null || PR_HEAD_OID=""
 # SHA-first: skip if at PR head — avoids worktree conflict (gh pr checkout aliases pr-N-slug if branch active elsewhere)
@@ -657,7 +676,7 @@ if [ -n "$PR_HEAD_OID" ] && [ "$LOCAL_SHA" = "$PR_HEAD_OID" ]; then
 else
     # hard-exit on failure — else HEAD_REF set but git stuck on caller branch, Step8 commits land wrong branch
     # --branch required: w/o it gh CLI v2.93+ falls back to pr<N> alias on collision → Step10 push makes unrelated branch (CRITICAL bug pyDeprecate 2026-06-13T08:33Z)
-    gh pr checkout <PR#> --branch "$PR_HEAD_REF" \
+    gh pr checkout "$PR_NUMBER" --branch "$PR_HEAD_REF" \
         || { echo "⛔ gh pr checkout failed — aborting (network, branch deleted, auth expired, or local conflicts)"; exit 1; }   # timeout: 15000
 fi
 ```
@@ -686,10 +705,16 @@ Determine `FORK_REMOTE` for push in Step 10:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 4 PR number sentinel missing or invalid; refusing PR reference"; exit 1 ;; esac
+: > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"
+: > "${TMPDIR:-/tmp}/resolve-fork-remote-${CSID}"
 IFS= read -r IS_CROSS_REPO < "${TMPDIR:-/tmp}/resolve-is-cross-repo-${CSID}" 2>/dev/null || IS_CROSS_REPO="false"
 if [ "$IS_CROSS_REPO" = "true" ]; then
     IFS= read -r FORK_REMOTE < "${TMPDIR:-/tmp}/resolve-head-repo-owner-${CSID}" 2>/dev/null || FORK_REMOTE=""
-    [ -n "$FORK_REMOTE" ] || FORK_REMOTE=$(gh pr view "<PR#>" --json headRepositoryOwner --jq .headRepositoryOwner.login) # sentinel-miss fallback only # timeout: 6000
+    [ -n "$FORK_REMOTE" ] || FORK_REMOTE=$(gh pr view "$PR_NUMBER" --json headRepositoryOwner --jq .headRepositoryOwner.login) # sentinel-miss fallback only # timeout: 6000
+    PR_URL=$(gh pr view "$PR_NUMBER" --json url --jq .url) || { echo "⛔ Could not resolve fork PR URL"; exit 1; } # timeout: 6000
+    [[ "$PR_URL" =~ ^https://[^/]+/[^/]+/[^/]+/pull/${PR_NUMBER}$ ]] || { echo "⛔ Fork PR URL does not match PR number"; exit 1; }
     PR_REF="$PR_URL"
 else
     FORK_REMOTE="origin"
@@ -744,20 +769,6 @@ TaskUpdate(task_id=TASK_IMPL, status="deleted")
 TaskUpdate(task_id=TASK_IMPL, status="in_progress")
 ```
 
-**Soft cap: 8 bridge implementation calls per session** — skip this cap when `--agent <name>` selects a non-bridge implementation agent:
-
-```bash
-# computed here for cap-threshold branch (full resolve in action-item-dispatch.md)
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _AGENT_OVERRIDE < "${TMPDIR:-/tmp}/resolve-agent-override-${CSID}" 2>/dev/null || _AGENT_OVERRIDE=""
-_RESOLVE_IMPL_AGENT="${_AGENT_OVERRIDE:-bridge:implement}"
-echo "$_RESOLVE_IMPL_AGENT"   # item count belongs to the prose gate below; SELECTED_ITEMS only enters the shell in action-item-dispatch.md's prelude, later than this
-```
-
-<!-- branch: codex-cap — only when codex agent AND N>8 items; adds 1 call (max 5 if user proceeds; worst case at 10-18 items = two item pages + commit-mode + codex-cap + push-auth/post-pr) -->
-
-If `_RESOLVE_IMPL_AGENT = bridge:implement` AND `SELECTED_ITEMS` has > 8 items, invoke `AskUserQuestion`: "N items selected — bridge implementation cap is 8 per session. Split into batches?" Options: (a) Apply first 8 now, re-run for remainder · (b) Apply all [req] only (if ≤8) · (c) Proceed anyway (sequential, may be slow). For non-bridge agents, skip this gate.
-
 **Codemap index identity (if `CODEMAP_ENABLED=true`)**: resolve the index path the next block reuses. No query runs here — per-item blast radius is action-item-dispatch.md's **Pre-loop blast-radius scan**, which resolves each item's canonical module first and passes it as `rdeps`' positional argument.
 
 ```bash
@@ -810,7 +821,7 @@ cat "$_OSS_RESOLVE/modes/action-item-dispatch.md"  # timeout: 5000
 
 `action-item-dispatch.md` (loaded above) — execute its prelude (IMPL_AGENT routing, IMPL_DIR init, blast-radius scan, plus a branch mutex + HEAD fingerprint so a second concurrent resolve aborts and an external mid-flight write surfaces at merge-back), then run its three-phase dispatch directly in the orchestrator: Phase 1 challenge (parallel by domain, read-only) → Phase 2 implementation (parallel, one isolated `git worktree` per specialist; groups formed by specialist then a file-ownership + import-coupling tiebreak so items that would collide on same file — or across an import edge — land in one worktree) → Phase 3 merge-back (sequential cherry-pick, whole worktree groups ordered most-central-first so foundational commits land before dependents, `TaskUpdate` per item as its commit lands). `TaskUpdate` calls stay orchestrator-owned throughout — Phase 1/2 subagents never touch task list (subagent can't drive parent's task list); only Phase 3, run by orchestrator itself after each cherry-pick, flips a task to `completed`. Explains why tasks flip in item-priority order during Phase 3 even though the work producing them ran concurrently in Phase 2.
 
-`action-item-dispatch.md` caps a single pass at 20 items and gates >20 behind `AskUserQuestion` (split into ≤20 batches · `[req]` only · proceed with all). On "proceed with all", run the same three-phase dispatch over every item — more specialist groups in Phase 2, slower Phase 3 merge-back at that size, but no separate code path.
+`action-item-dispatch.md` caps a single pass at 20 items. Step 3d asks before task creation when a bulk or checkbox selection exceeds 20; only the chosen first 20 can enter Step 8, and the rest require a later invocation. Step 8's prelude rejects more than 20 IDs if that earlier gate was missed.
 
 **Straggler gate — before flipping `TASK_IMPL`**: `action-item-dispatch.md`'s per-item close-out (REJECT, skipped, cherry-pick landed — including the C1 medium-effort Codex-direct shortcut, which never enters Phase 1/2/3 at all) should have already terminated every id in `item-tasks.tsv`; this catches whichever one didn't. Never flip `TASK_IMPL` over an open child — that hid the original leak. Fails closed on a lost `IMPL_DIR` sentinel: distinct from "no items were selected," which the file's own absence still reports safely.
 
@@ -938,7 +949,7 @@ IFS= read -r BASE_REF < "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}" 2>/dev/null |
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/derive_fork_remote.py" --fork-remote "$FORK_REMOTE" --head-ref "$HEAD_REF" --base-ref "$BASE_REF"  # timeout: 10000
 ```
 
-<!-- branch: main-path — push-auth + post-pr in one call (call 3 of 3 normal / 4 of 4 with codex-cap) -->
+<!-- branch: main-path — push-auth + post-pr in one call (call 3 of 3) -->
 
 **Push authorization + post-PR gate — one `AskUserQuestion` call, two questions.** Per `git-commit.md` push-safety rule ("Never push without explicit user confirmation") the push question precedes any `git push`; the post-PR question rides in the same call because each window is pure human idle and Step 11 has nothing left to ask that the user cannot decide now. Never split these into two calls.
 
@@ -993,7 +1004,10 @@ git push "$FORK_REMOTE" HEAD:"$HEAD_REF" # timeout: 30000
 Verify push reached GitHub — confirm latest commit headlines match what was committed:
 
 ```bash
-gh pr view <PR_NUMBER> --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' # timeout: 6000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || PR_NUMBER=""
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "⛔ Step 10 PR number sentinel missing or invalid; cannot verify push"; exit 1 ;; esac
+gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.commits[-3:] | .[].messageHeadline' # timeout: 6000
 ```
 
 ## Step 11: Final report
@@ -1102,11 +1116,11 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **`[question]` items** — answer inline in resolve report only; reclassify before implementing; never silently implement unanswered question.
 - **Push verification** — confirm via `gh pr view --json commits`; exit 0 from `git push` necessary but not sufficient (branch protection can silently reject).
 - **Merge-push sequencing + escape hatch** — not atomic; concurrent push → non-fast-forward rejection; retry push only (don't re-run full merge). `git merge --abort` = undo conflict state; `git push --force-with-lease` on explicit user request only.
-- **Impl agent health + effort**: bridge implementation calls use `bridge:implement`; effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`. `--agent foundry:*` stays foreground only.
+- **Impl agent health + effort**: C1 medium-effort bridge implementation calls use `bridge:implement` on the default or explicit bridge route, one item from a clean worktree per call; Git-derived changed paths must match the reply before per-item records. Explicit `--agent foundry:*` sends medium items through Phase 1+2 with the selected specialist. Dirty or non-medium bridge items use the change-to-specialist table. Effort is never `low`, minimum `medium`, typo/doc `medium`, multi-file/new-feature `xhigh`, default `high`.
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
-- **AskUserQuestion usage**: calls spread across independent branch-paths — the longest sequential path is 5 calls (10-18 items: two checkbox pages + commit-mode follow-up, then codex-cap when N>8 items and codex available, then push-auth/post-pr); ≤6 items with no codex-cap is 2 (3 when 4-6 items pick grouped commits). Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
+- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.
