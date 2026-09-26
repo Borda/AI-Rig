@@ -6501,6 +6501,6 @@
       "src": "skills/resolve/SKILL.md:130"
     }
   },
-  "plugin": "cc_oss@0.40.0",
+  "plugin": "cc_oss@0.40.1",
   "schema": 1
 }

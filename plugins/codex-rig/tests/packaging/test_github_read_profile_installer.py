@@ -233,6 +233,23 @@ def test_setup_migrates_root_workspace_mode_and_clear_restores_it(tmp_path: Path
     assert config.read_bytes() == original
 
 
+def test_setup_migrates_single_quoted_workspace_mode(tmp_path: Path) -> None:
+    """Preserve TOML single quotes when migrating and restoring the legacy setting."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = b"sandbox_mode = 'workspace-write'\n"
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["default_permissions"] == ":workspace"
+    assert "sandbox_mode" not in _config(home)
+    assert _run(home, "--remove").returncode == 0
+    assert config.read_bytes() == original
+
+
 def test_setup_resumes_workspace_migration_after_state_write(tmp_path: Path) -> None:
     """A state-first interruption must still converge from the original config."""
     home = tmp_path / "home"
@@ -257,7 +274,9 @@ def test_clear_restores_legacy_workspace_mode_after_unrelated_edit(tmp_path: Pat
     config = home / "config.toml"
     config.write_bytes(b'model = "old"\nsandbox_mode = "workspace-write"\n')
     assert _run(home, "--plugin-root", str(root)).returncode == 0
-    config.write_text(config.read_text(encoding="utf-8").replace('model = "old"', 'model = "new"'), encoding="utf-8")
+    config.write_text(
+        config.read_text(encoding="utf-8").replace('model = "old"', 'model = "new"'), encoding="utf-8", newline="\n"
+    )
 
     result = _run(home, "--remove")
 
@@ -277,6 +296,7 @@ def test_clear_preserves_user_replacement_of_migrated_default(tmp_path: Path) ->
             'default_permissions = ":workspace"', 'default_permissions = ":read-only"'
         ),
         encoding="utf-8",
+        newline="\n",
     )
 
     result = _run(home, "--remove")

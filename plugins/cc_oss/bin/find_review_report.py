@@ -38,6 +38,7 @@ _SHA_RE: Final = re.compile(r"@([0-9a-f]{7,40})")
 _RUN_RE: Final = re.compile(r"^run-(\d+)$")
 _PR_NUMBER_RE: Final = re.compile(r"^[0-9]+$")
 _LEGACY_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
+_VERDICT_SYMBOL_RE: Final = re.compile(r"^[✓⚠✗]\s*")
 
 
 def _run_sort_key(run_dir: Path) -> tuple[int, str]:
@@ -126,10 +127,11 @@ def gate_line(report: Path) -> str:
         fields[key.strip()] = value.strip()
     if not all(fields.get(key) for key in ("Title", "PR", "Gate", "Outcome", "Summary")):
         return ""
+    outcome = _VERDICT_SYMBOL_RE.sub("", fields["Outcome"])
     if fields["Gate"].startswith("REJECT_"):
-        if not fields["Outcome"].startswith("N/A"):
+        if not outcome.startswith("N/A"):
             return ""
-    elif fields["Outcome"] not in {"APPROVE", "NEEDS_WORK", "REQUEST_CHANGES"}:
+    elif outcome not in {"APPROVE", "NEEDS_WORK", "REQUEST_CHANGES"}:
         return ""
     return f"{_GATE_PREFIX} {fields['Gate']}"
 

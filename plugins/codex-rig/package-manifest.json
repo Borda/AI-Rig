@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "7e9f2d426e5d9f6f36791d6b96dba49b8512040fde529163999fa408f802ad73"
+      "sha256": "3ca077b1d3c4e9da9a1b5498faeebaf122c4eabd9f44ef4a0e523ec0942c8d70"
     },
     {
       "mode": "0644",
@@ -303,7 +303,7 @@
     {
       "mode": "0644",
       "path": "scripts/install_github_read_rules.py",
-      "sha256": "0d7b18a4f41807dac1a303f1757d7d5cce5405df0ffc6efca227da2baf10297d"
+      "sha256": "a641e2b8897ad9dfdcc2b006cedbee96c7f772e0a24eb287634a8dbd56525f20"
     },
     {
       "mode": "0644",
@@ -863,7 +863,7 @@
     {
       "mode": "0644",
       "path": "tests/packaging/test_github_read_profile_installer.py",
-      "sha256": "28469fba5407914ab6d8bdbb6821e67800aff188a5431c38c72620bf6784cfdc"
+      "sha256": "8ffbea7804fd2b9a889a39ae3386a6432d4fc86d698e7d578aac74311d158083"
     },
     {
       "mode": "0644",

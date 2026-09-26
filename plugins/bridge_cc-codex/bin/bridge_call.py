@@ -1012,7 +1012,13 @@ def _wait_for_cleanup_grace(process: subprocess.Popen[str]) -> None:
 
 
 def _terminate_windows_process_tree(pid: int) -> bool:
-    """Force-terminate a Windows process and descendants with the native taskkill utility."""
+    """Force-terminate a Windows process and descendants with the native taskkill utility.
+
+    ``taskkill`` runs under the same bounded-wait contract as every other termination path: an unbounded call could
+    stall behind a slow or wedged tree enumeration and outlive the cutoff the rest of ``_terminate_process_group``
+    establishes. A timed-out or failed ``taskkill`` falls back to ``Popen.kill()`` on the immediate child, same as any
+    other failure to reach the utility.
+    """
     try:
         result = subprocess.run(
             ["taskkill", "/PID", str(pid), "/T", "/F"],
@@ -1020,8 +1026,9 @@ def _terminate_windows_process_tree(pid: int) -> bool:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=5.0,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 

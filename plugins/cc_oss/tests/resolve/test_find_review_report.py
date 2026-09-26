@@ -23,14 +23,17 @@ class _FakeCompleted:
         self.stdout = stdout
 
 
-def _write_report(root: Path, run_id: str, pr: str, gate: str = "", mtime: int | None = None) -> Path:
+def _write_report(
+    root: Path, run_id: str, pr: str, gate: str = "", mtime: int | None = None, outcome: str | None = None
+) -> Path:
     """Create a review report for ``pr`` under its ``run_id`` run directory, with an optional ``Gate:`` line."""
     report = root / ".reports/review" / f"pr-{pr}" / run_id / "review-report.md"
     report.parent.mkdir(parents=True, exist_ok=True)
     body = f"---\nTitle: Review\nPR: #{pr}\n"
     if gate:
         body += f"Gate: {gate}\n"
-    outcome = "N/A — rejected at gate" if gate.startswith("REJECT_") else "NEEDS_WORK"
+    if outcome is None:
+        outcome = "N/A — rejected at gate" if gate.startswith("REJECT_") else "NEEDS_WORK"
     body += f"Outcome: {outcome}\nSummary: Reviewed the change.\n---\n"
     report.write_text(body, encoding="utf-8")
     if mtime is not None:
@@ -113,6 +116,24 @@ def test_gate_line_returns_empty_without_field(tmp_path: Path) -> None:
     """A pre-gate report with no ``Gate:`` field yields an empty line."""
     report = _write_report(tmp_path, "run-001", "42")
     assert frr.gate_line(report) == ""
+
+
+@pytest.mark.parametrize(
+    ("gate", "outcome"),
+    [
+        pytest.param("PASS", "⚠ REQUEST_CHANGES", id="pass-gate-warning-symbol"),
+        pytest.param("PASS", "✓ APPROVE", id="pass-gate-check-symbol"),
+        pytest.param("REJECT_SCOPE @a1b2c3d", "✗ N/A — rejected at gate", id="reject-gate-cross-symbol"),
+    ],
+)
+def test_gate_line_accepts_verdict_symbol_prefixed_outcome(tmp_path: Path, gate: str, outcome: str) -> None:
+    """A ``quality-gates.md``-style verdict symbol on ``Outcome`` does not make the report look incomplete.
+
+    Regression guard: ``oss:review`` writes ``Outcome: ⚠ REQUEST_CHANGES`` per the shared verdict-symbol
+    convention; a parser that only matches the bare word would wrongly block a complete, real report.
+    """
+    report = _write_report(tmp_path, "run-001", "42", gate=gate, outcome=outcome)
+    assert frr.gate_line(report) == f"Gate: {gate}"
 
 
 @pytest.mark.parametrize(

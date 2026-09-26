@@ -953,7 +953,10 @@ def test_normal_leader_exit_with_an_inherited_pipe_cannot_block_output_drain(tmp
             stderr=subprocess.DEVNULL,
             env=environment,
         )
-        runner_process.wait(timeout=5)
+        # Margin covers the bounded worst case, not just the happy path: the internal
+        # 1.0s _run_child timeout, the taskkill bound, and its cleanup wait can stack
+        # to several seconds before three nested Windows process launches even start.
+        runner_process.wait(timeout=20)
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
 
         assert runner_process.returncode == 0

@@ -96,9 +96,8 @@ TABLE = re.compile(r"^\s*\[([^]]+)\]\s*(?:#.*)?$")
 TABLE_KEY = re.compile(r"""\s*(?:([A-Za-z0-9_-]+)|("(?:[^"\\]|\\.)*")|('(?:[^']*)'))\s*(?:\.|$)""")
 ASSIGNMENT = re.compile(r'^\s*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z_0-9-]*)\s*=')
 LEGACY_WORKSPACE_LINE = re.compile(
-    r"""^(\s*)(?:sandbox_mode|"sandbox_mode"|'sandbox_mode')(\s*=\s*)(?:"workspace-write"|'workspace-
-    write')(?=\s*(?:#|$))"""
-
+    r"^(\s*)(?:sandbox_mode|\"sandbox_mode\"|'sandbox_mode')(\s*=\s*)"
+    r"(?:\"workspace-write\"|'workspace-write')(?=\s*(?:#|$))"
 )
 
 
