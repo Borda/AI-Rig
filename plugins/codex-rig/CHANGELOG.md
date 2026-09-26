@@ -24,6 +24,10 @@
 - Require exact reviewer request, source, diff, and supporting-source section boundaries and compare the final clean round's retained patch with current Git for both current reviewer routes; include staged deletions in source snapshots and complete-file chunk inventories.
 - Bind current single-run continuation to the earlier ledger and require an exact reviewer disposition for every prior signature. Check structured declared reviewer path coverage for clean challenge results, and validate non-PR CI and Type snapshot cells against their current contract.
 
+## 0.25.1
+
+- Migrate a sole root `sandbox_mode = "workspace-write"` to `default_permissions = ":workspace"` during GitHub-read profile setup, with a byte-exact backup and reversible clear; retain fail-closed checks for other legacy sandbox settings.
+
 ## 0.25.0
 
 - Replace workflow-specific GitHub approval flags and managed command allow rules with an opt-in `github-read` permission profile. The source checkout defines a project-local profile; explicit setup or repository sync separately installs the managed Codex-home profile, while direct plugin installation alone does not install that profile. Neither selects itself by default; use `codex -c 'default_permissions="github-read"'` for a fresh opted-in session. Both extend `:workspace` and route GitHub-domain traffic through the network proxy for that session. Host restrictions remain controlling, and the profiles do not enforce HTTP methods or executable identity. Remove legacy plugin-owned reader and PR-collector rules and migrate verified automatic profiles during setup while preserving unrelated user settings.

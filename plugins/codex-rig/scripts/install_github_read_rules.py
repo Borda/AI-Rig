@@ -14,25 +14,25 @@ workflow instructions constrain GitHub methods and remote writes. Existing defau
 
 ## Usage
 
-Run with ``--plugin-root`` pointing to the installed Codex Rig cache and ``--codex-home`` during explicit setup.
-Use ``--remove --codex-home`` for teardown. Direct plugin installation does not execute this helper. Restart Codex to
-load changed permissions.
+Run with ``--plugin-root`` pointing to the installed Codex Rig cache and ``--codex-home`` during explicit setup. Use
+``--remove --codex-home`` for teardown. Direct plugin installation does not execute this helper. Restart Codex to load
+changed permissions.
 
 ## Outputs
 
 Write an ownership-marked opt-in profile and state record, byte-exact backups under ``backups/codex-rig``, and per-file
-status. Repeated setup is idempotent; verified older automatic profiles migrate to opt-in. An interrupted legacy
-migration recovers only when its config still matches the validated source recorded in the new state. Each changed file
-is replaced atomically; a multi-file migration is not transactional.
+status. Repeated setup is idempotent; verified older automatic profiles migrate to opt-in. A root ``workspace-write``
+sandbox setting without a permission default migrates to ``:workspace``. An interrupted legacy migration recovers only
+when its config still matches the validated source recorded in the new state. Each changed file is replaced atomically;
+a multi-file migration is not transactional.
 
 ## Failure
 
 Reject missing or hash-invalid installed identity, linked paths, a preexisting global ``github-read`` default,
-conflicting profile settings, a local legacy sandbox override, a proxy change that affects an existing network-enabled
-permission profile, edited owned content, TOML changes to unrelated settings, and observable races. Python
-3.10 needs ``tomli`` for this safety check. Return
-nonzero without silently replacing unrecognized content. Checksums establish integrity, not author authentication.
-Package verification checks setup-time consistency only.
+conflicting profile settings, ambiguous or unsupported legacy sandbox overrides, a proxy change affecting an existing
+network-enabled permission profile, edited owned content, TOML changes to unrelated settings, and observable races.
+Python 3.10 needs ``tomli`` for this safety check. Return nonzero without silently replacing unrecognized content.
+Checksums establish integrity, not author authentication. Package verification checks setup-time consistency only.
 
 ## Used by
 
@@ -95,6 +95,11 @@ PROFILE_BLOCK = PROFILE_BEGIN + PROFILE_BODY + PROFILE_END
 TABLE = re.compile(r"^\s*\[([^]]+)\]\s*(?:#.*)?$")
 TABLE_KEY = re.compile(r"""\s*(?:([A-Za-z0-9_-]+)|("(?:[^"\\]|\\.)*")|('(?:[^']*)'))\s*(?:\.|$)""")
 ASSIGNMENT = re.compile(r'^\s*("[^"]+"|\x27[^\x27]+\x27|[A-Za-z_][A-Za-z_0-9-]*)\s*=')
+LEGACY_WORKSPACE_LINE = re.compile(
+    r"""^(\s*)(?:sandbox_mode|"sandbox_mode"|'sandbox_mode')(\s*=\s*)(?:"workspace-write"|'workspace-
+    write')(?=\s*(?:#|$))"""
+
+)
 
 
 class UnsafeRulesState(ValueError):
@@ -402,6 +407,17 @@ def _split_config(content: str) -> tuple[list[str], dict[str, list[str]], list[s
     return kept, saved, lines
 
 
+def _workspace_default_line(originals: dict[str, list[str]]) -> str | None:
+    """Convert one unambiguous legacy workspace setting while retaining its comment."""
+    if originals["default_permissions"] or len(originals["sandbox_mode"]) != 1:
+        return None
+    legacy = originals["sandbox_mode"][0]
+    match = LEGACY_WORKSPACE_LINE.match(legacy)
+    if match is None:
+        return None
+    return f'{match.group(1)}default_permissions{match.group(2)}":workspace"{legacy[match.end() :]}'
+
+
 def _insert_profile_settings(
     lines: list[str],
     originals: dict[str, list[str]],
@@ -410,7 +426,7 @@ def _insert_profile_settings(
     select_default: bool = False,
     preserve_root: bool = True,
 ) -> str:
-    """Insert the profile while preserving the user's default permission choice."""
+    """Insert the profile and migrate a canonical legacy workspace default."""
     if not preserve_root or select_default:
         first_table = next((i for i, line in enumerate(lines) if TABLE.fullmatch(line.rstrip("\r\n"))), len(lines))
         root_lines = [
@@ -446,6 +462,9 @@ def _insert_profile_settings(
         lines.extend(["\n[features]\n", *network])
     elif features is not None:
         lines[features + 1 : features + 1] = network
+    if install and not select_default and (workspace_default := _workspace_default_line(originals)) is not None:
+        # Keep the old root assignment in state so clear can restore its exact bytes.
+        lines[lines.index(originals["sandbox_mode"][0])] = workspace_default
     result = "".join(lines)
     if install:
         result += ("" if not result or result.endswith("\n") else "\n") + "\n" + PROFILE_BLOCK
@@ -467,7 +486,7 @@ def _unmanaged_config(parsed: dict[str, object]) -> dict[str, object]:
 
 
 def _validate_config_transition(before: bytes | None, after: bytes | None, *, installing: bool = False) -> None:
-    """Reject invalid TOML and profile transitions that change other permissions."""
+    """Reject invalid TOML and unsafe permission-profile transitions."""
     if before == after and not installing:
         return
     if tomllib is None:
@@ -480,7 +499,19 @@ def _validate_config_transition(before: bytes | None, after: bytes | None, *, in
     if installing and updated.get("default_permissions") == "github-read":
         raise UnsafeRulesState("github-read is already the global default; choose a different default before setup")
     if installing and "sandbox_mode" in original:
-        raise UnsafeRulesState("legacy sandbox_mode overrides permission profiles; remove it before setup")
+        migrated_workspace = (
+            original["sandbox_mode"] == "workspace-write"
+            and "default_permissions" not in original
+            and "sandbox_workspace_write" not in original
+            and updated.get("default_permissions") == ":workspace"
+            and "sandbox_mode" not in updated
+        )
+        if not migrated_workspace:
+            raise UnsafeRulesState("legacy sandbox_mode overrides permission profiles; remove it before setup")
+    if installing and "sandbox_workspace_write" in original:
+        raise UnsafeRulesState(
+            "legacy sandbox_workspace_write conflicts with permission profiles; remove it before setup"
+        )
     profiles = original.get("profiles")
     if installing and isinstance(profiles, dict):
         for profile in profiles.values():
@@ -643,6 +674,12 @@ def _remove_profile_settings(content: str, state: dict[str, object]) -> str | No
     else:
         restored_settings["default_permissions"] = added_settings["default_permissions"]
         restored_settings["sandbox_mode"] = added_settings["sandbox_mode"]
+        migrated_default = _workspace_default_line(settings)
+        if migrated_default is not None and added_settings["default_permissions"] == [migrated_default]:
+            # Preserve later user edits while reversing only the unchanged converted setting.
+            kept.remove(migrated_default)
+            restored_settings["default_permissions"] = []
+            restored_settings["sandbox_mode"] = added_settings["sandbox_mode"] or settings["sandbox_mode"]
     restored = _insert_profile_settings(kept, restored_settings, install=False)
     return restored if original is not None or restored.strip() else None
 

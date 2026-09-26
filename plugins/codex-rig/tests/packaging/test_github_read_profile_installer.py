@@ -198,8 +198,95 @@ def test_setup_rejects_proxy_change_for_nondefault_network_profile(tmp_path: Pat
     assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
-def test_setup_rejects_legacy_sandbox_override_before_write(tmp_path: Path) -> None:
-    """Reject setup when a retained sandbox mode would override permission profiles."""
+@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
+def test_setup_migrates_root_workspace_mode_and_clear_restores_it(tmp_path: Path, line_ending: str) -> None:
+    """Replace a legacy workspace default and retain a byte-exact recovery path."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = (
+        (
+            '# user setting\nmodel = "gpt-6-sol"\nsandbox_mode = "workspace-write" # keep workspace access\n'
+            "\n[features]\nmulti_agent = true\n"
+        )
+        .replace("\n", line_ending)
+        .encode()
+    )
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode == 0, result.stderr
+    installed = _config(home)
+    assert "sandbox_mode" not in installed
+    assert installed["default_permissions"] == ":workspace"
+    assert installed["model"] == "gpt-6-sol"
+    assert installed["features"]["multi_agent"] is True
+    assert installed["permissions"]["github-read"]["extends"] == ":workspace"
+    assert 'default_permissions = ":workspace" # keep workspace access' in config.read_text(encoding="utf-8")
+    assert any(path.read_bytes() == original for path in (home / "backups" / "codex-rig").glob("config.toml.*"))
+    first = config.read_bytes()
+
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    assert config.read_bytes() == first
+    assert _run(home, "--remove").returncode == 0
+    assert config.read_bytes() == original
+
+
+def test_setup_resumes_workspace_migration_after_state_write(tmp_path: Path) -> None:
+    """A state-first interruption must still converge from the original config."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = b'sandbox_mode = "workspace-write"\n'
+    config.write_bytes(original)
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode == 0, result.stderr
+    assert _config(home)["default_permissions"] == ":workspace"
+    assert "sandbox_mode" not in _config(home)
+
+
+def test_clear_restores_legacy_workspace_mode_after_unrelated_edit(tmp_path: Path) -> None:
+    """Retain later model edits while reversing the unchanged workspace migration."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    config.write_bytes(b'model = "old"\nsandbox_mode = "workspace-write"\n')
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config.write_text(config.read_text(encoding="utf-8").replace('model = "old"', 'model = "new"'), encoding="utf-8")
+
+    result = _run(home, "--remove")
+
+    assert result.returncode == 0, result.stderr
+    assert _config(home) == {"model": "new", "sandbox_mode": "workspace-write"}
+
+
+def test_clear_preserves_user_replacement_of_migrated_default(tmp_path: Path) -> None:
+    """A later explicit permission choice must not regain the old sandbox mode."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    config.write_bytes(b'sandbox_mode = "workspace-write"\n')
+    assert _run(home, "--plugin-root", str(root)).returncode == 0
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            'default_permissions = ":workspace"', 'default_permissions = ":read-only"'
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(home, "--remove")
+
+    assert result.returncode == 0, result.stderr
+    assert _config(home) == {"default_permissions": ":read-only"}
+
+
+def test_setup_rejects_ambiguous_legacy_sandbox_override_before_write(tmp_path: Path) -> None:
+    """Reject a legacy sandbox value mixed with a separate permission default."""
     home = tmp_path / "home"
     root = _installed_plugin(home)
     config = home / "config.toml"
@@ -220,6 +307,55 @@ def test_setup_rejects_legacy_sandbox_override_before_write(tmp_path: Path) -> N
     assert not (home / "codex-rig-github-read-profile.json").exists()
     assert not (rules / "codex-rig-github-read.rules").exists()
     assert not (home / "backups" / "codex-rig").exists()
+
+
+def test_setup_rejects_legacy_workspace_table_before_write(tmp_path: Path) -> None:
+    """Do not discard extra settings attached to the old workspace sandbox."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = b'sandbox_mode = "workspace-write"\n[sandbox_workspace_write]\nnetwork_access = true\n'
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode != 0
+    assert "legacy sandbox_mode overrides permission profiles" in result.stderr
+    assert config.read_bytes() == original
+    assert not (home / "codex-rig-github-read-profile.json").exists()
+
+
+def test_setup_rejects_legacy_workspace_table_without_root_mode(tmp_path: Path) -> None:
+    """A remaining legacy workspace table still requires an explicit migration."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = b"[sandbox_workspace_write]\nnetwork_access = true\n"
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode != 0
+    assert "legacy sandbox_workspace_write conflicts" in result.stderr
+    assert config.read_bytes() == original
+    assert not (home / "codex-rig-github-read-profile.json").exists()
+
+
+@pytest.mark.parametrize("legacy_mode", ["read-only", "danger-full-access"])
+def test_setup_rejects_other_legacy_sandbox_modes(tmp_path: Path, legacy_mode: str) -> None:
+    """Keep other sandbox policies under explicit owner review."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    config = home / "config.toml"
+    original = f'sandbox_mode = "{legacy_mode}"\n'.encode()
+    config.write_bytes(original)
+
+    result = _run(home, "--plugin-root", str(root))
+
+    assert result.returncode != 0
+    assert "legacy sandbox_mode overrides permission profiles" in result.stderr
+    assert config.read_bytes() == original
+    assert not (home / "codex-rig-github-read-profile.json").exists()
 
 
 def test_setup_rejects_selectable_profile_sandbox_override_before_write(tmp_path: Path) -> None:
