@@ -286,127 +286,174 @@ def test_contract_artifacts_exist(relative_path: str) -> None:
     assert (PLUGIN_ROOT / relative_path).is_file(), relative_path
 
 
-def test_model_core_schema_accepts_only_model_authored_result() -> None:
-    """Prevent model output from claiming harness-observed lifecycle metadata."""
-    schema = _read_json(CORE_SCHEMA_PATH)
+class TestModelCoreSchema:
+    """Contract checks for the model-authored core envelope schema."""
 
-    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert schema["type"] == "object"
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == PEER_FIELDS
-    assert set(schema["properties"]) == PEER_FIELDS
-    assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked"]
-    assert PEER_FIELDS.isdisjoint(HARNESS_ONLY_FIELDS)
-    assert schema["properties"]["verdict"]["maxLength"] == 500
-    for field in ("findings", "files_touched", "remaining", "blockers"):
-        assert schema["properties"][field]["maxItems"] == 8
-        assert schema["properties"][field]["items"]["maxLength"] == 500
-    assert schema["properties"]["details"]["maxItems"] == 32
-    assert schema["properties"]["details"]["items"]["maxLength"] == 2000
+    @pytest.fixture()
+    def schema(self) -> dict[str, object]:
+        """Load the core envelope schema shared by every test in this class."""
+        return _read_json(CORE_SCHEMA_PATH)
 
-    _assert_value_matches_contract(
-        schema,
-        {
-            "status": "partial",
-            "verdict": "The bounded result is usable.",
-            "findings": ["one finding"],
-            "files_touched": [],
-            "remaining": ["one follow-up"],
-            "blockers": [],
-            "details": ["one transcript-only detail"],
-        },
-    )
+    def test_declares_peer_fields_and_excludes_harness_only_fields(self, schema: dict[str, object]) -> None:
+        """Core schema exposes only peer fields and keeps them disjoint from harness-only ones.
 
-    with pytest.raises(AssertionError):
+        Prevents model output from claiming harness-observed lifecycle metadata (e.g. cost, tokens, transcript_path)
+        that only the harness may attach after the model call returns.
+        """
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == PEER_FIELDS
+        assert set(schema["properties"]) == PEER_FIELDS
+        assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked"]
+        assert PEER_FIELDS.isdisjoint(HARNESS_ONLY_FIELDS)
+        assert schema["properties"]["verdict"]["maxLength"] == 500
+        for field in ("findings", "files_touched", "remaining", "blockers"):
+            assert schema["properties"][field]["maxItems"] == 8
+            assert schema["properties"][field]["items"]["maxLength"] == 500
+        assert schema["properties"]["details"]["maxItems"] == 32
+        assert schema["properties"]["details"]["items"]["maxLength"] == 2000
+
+    def test_accepts_a_well_formed_peer_result(self, schema: dict[str, object]) -> None:
+        """A partial-status result carrying only peer fields, including bounded details, validates.
+
+        Confirms the schema's positive path independently of the shape rules asserted above.
+        """
         _assert_value_matches_contract(
             schema,
             {
-                "status": "timeout",
-                "verdict": "wrong layer",
-                "findings": [],
+                "status": "partial",
+                "verdict": "The bounded result is usable.",
+                "findings": ["one finding"],
                 "files_touched": [],
-                "remaining": [],
+                "remaining": ["one follow-up"],
                 "blockers": [],
-                "details": [],
-            },
-        )
-    with pytest.raises(AssertionError):
-        _assert_value_matches_contract(
-            schema,
-            {
-                "status": "complete",
-                "verdict": "wrong layer",
-                "findings": [],
-                "files_touched": [],
-                "remaining": [],
-                "blockers": [],
-                "details": [],
-                "cost": 1.0,
+                "details": ["one transcript-only detail"],
             },
         )
 
+    def test_rejects_a_status_value_outside_the_model_authored_enum(self, schema: dict[str, object]) -> None:
+        """A status value only the harness may assign ("timeout") is rejected at the model layer.
 
-def test_harness_schema_adds_observed_metadata_and_terminal_statuses() -> None:
-    """Prevent timeout/refusal and telemetry from leaking into the model-core schema."""
-    schema = _read_json(HARNESS_SCHEMA_PATH)
+        Guards against a model claiming a harness-observed lifecycle outcome it cannot itself have witnessed.
+        """
+        with pytest.raises(AssertionError):
+            _assert_value_matches_contract(
+                schema,
+                {
+                    "status": "timeout",
+                    "verdict": "wrong layer",
+                    "findings": [],
+                    "files_touched": [],
+                    "remaining": [],
+                    "blockers": [],
+                    "details": [],
+                },
+            )
 
-    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert schema["type"] == "object"
-    assert schema["additionalProperties"] is False
-    assert set(schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
-    assert set(schema["properties"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
-    assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked", "timeout", "refused"]
+    def test_rejects_a_result_carrying_a_harness_only_field(self, schema: dict[str, object]) -> None:
+        """A result that adds a harness-only field ("cost") is rejected by additionalProperties.
 
-    _assert_value_matches_contract(
-        schema,
-        {
-            "status": "refused",
-            "verdict": "Recursion was refused.",
-            "findings": [],
-            "files_touched": [],
-            "remaining": [],
-            "blockers": ["recursion-depth"],
-            "model": "test-model",
-            "effort": "low",
-            "effort_substituted": None,
-            "cost": None,
-            "tokens": {"input": 0, "output": 0},
-            "duration_seconds": 0.0,
-            "depth": 1,
-            "run_id": "run-123",
-            "incident": None,
-            "session_id": None,
-            "transcript_path": ".temp/bridge/raw.txt",
-            "verb": "advise",
-            "direction": "codex_to_claude",
-        },
-    )
+        Guards against a model result impersonating harness-attached telemetry it never computed.
+        """
+        with pytest.raises(AssertionError):
+            _assert_value_matches_contract(
+                schema,
+                {
+                    "status": "complete",
+                    "verdict": "wrong layer",
+                    "findings": [],
+                    "files_touched": [],
+                    "remaining": [],
+                    "blockers": [],
+                    "details": [],
+                    "cost": 1.0,
+                },
+            )
 
-    with pytest.raises(AssertionError):
+
+class TestHarnessSchema:
+    """Contract checks for the harness-observed envelope schema."""
+
+    @pytest.fixture()
+    def schema(self) -> dict[str, object]:
+        """Load the harness envelope schema shared by every test in this class."""
+        return _read_json(HARNESS_SCHEMA_PATH)
+
+    def test_declares_core_and_harness_only_fields_with_terminal_statuses(self, schema: dict[str, object]) -> None:
+        """Harness schema layers observed metadata and terminal statuses onto the core fields.
+
+        Prevents timeout/refusal handling and telemetry from leaking into the model-authored core schema instead.
+        """
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["type"] == "object"
+        assert schema["additionalProperties"] is False
+        assert set(schema["required"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
+        assert set(schema["properties"]) == CORE_FIELDS | HARNESS_ONLY_FIELDS
+        assert schema["properties"]["status"]["enum"] == ["complete", "partial", "blocked", "timeout", "refused"]
+
+    def test_accepts_a_refused_result_with_full_harness_metadata(self, schema: dict[str, object]) -> None:
+        """A refused-status result carrying every harness-only field validates end to end.
+
+        Exercises the recursion-refusal path together with the full set of harness telemetry fields (model, effort,
+        cost, tokens, duration, depth, run_id, incident, ...).
+        """
         _assert_value_matches_contract(
             schema,
             {
-                "status": "complete",
-                "verdict": "wrong token count",
+                "status": "refused",
+                "verdict": "Recursion was refused.",
                 "findings": [],
                 "files_touched": [],
                 "remaining": [],
-                "blockers": [],
+                "blockers": ["recursion-depth"],
                 "model": "test-model",
                 "effort": "low",
                 "effort_substituted": None,
-                "cost": 0.0,
-                "tokens": {"input": -1},
+                "cost": None,
+                "tokens": {"input": 0, "output": 0},
                 "duration_seconds": 0.0,
-                "depth": 0,
+                "depth": 1,
                 "run_id": "run-123",
                 "incident": None,
                 "session_id": None,
                 "transcript_path": ".temp/bridge/raw.txt",
                 "verb": "advise",
-                "direction": "claude_to_codex",
+                "direction": "codex_to_claude",
             },
         )
+
+    def test_rejects_a_negative_token_count(self, schema: dict[str, object]) -> None:
+        """A negative token count is rejected even though every other field is well-formed.
+
+        Guards the `minimum: 0` constraint on the nested `tokens` object, distinct from the enum/shape checks covered
+        elsewhere.
+        """
+        with pytest.raises(AssertionError):
+            _assert_value_matches_contract(
+                schema,
+                {
+                    "status": "complete",
+                    "verdict": "wrong token count",
+                    "findings": [],
+                    "files_touched": [],
+                    "remaining": [],
+                    "blockers": [],
+                    "model": "test-model",
+                    "effort": "low",
+                    "effort_substituted": None,
+                    "cost": 0.0,
+                    "tokens": {"input": -1},
+                    "duration_seconds": 0.0,
+                    "depth": 0,
+                    "run_id": "run-123",
+                    "incident": None,
+                    "session_id": None,
+                    "transcript_path": ".temp/bridge/raw.txt",
+                    "verb": "advise",
+                    "direction": "claude_to_codex",
+                },
+            )
 
 
 def test_setup_result_schema_cannot_impersonate_a_model_or_provider_result() -> None:

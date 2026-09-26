@@ -8,8 +8,13 @@ from pathlib import Path
 import pytest
 
 _TESTS_DIR = Path(__file__).parent
-if str(_TESTS_DIR) not in sys.path:
-    sys.path.insert(0, str(_TESTS_DIR))
+# Domain subdirectories share one flat module namespace so cross-group helper imports keep resolving after grouping.
+for _MODULE_DIR in (
+    _TESTS_DIR,
+    *sorted(path for path in _TESTS_DIR.iterdir() if path.is_dir() and path.name != "__pycache__"),
+):
+    if str(_MODULE_DIR) not in sys.path:
+        sys.path.insert(0, str(_MODULE_DIR))
 
 from _platform import POSIX_BASH  # noqa: E402
 

@@ -176,10 +176,28 @@ def test_alias_limitations_veto_central_and_target_blast_queries(
     assert data["index"]["symbol_alias_limitations"]
 
 
+def _build_compact_central_fixture(tmp_path: Path, limitation_count: int) -> tuple[dict, Path, dict]:
+    """Scan a project carrying *limitation_count* ambiguous aliases and run compact fn-central."""
+    _write_project(tmp_path)
+    _add_ambiguous_aliases(tmp_path, limitation_count)
+    index = scan(tmp_path)
+    index_path = _write_index(tmp_path, index)
+    compact = _query(tmp_path, index_path, "--compact", "fn-central", "--top", "5")
+    return compact, index_path, index
+
+
+def test_compact_central_omits_alias_limitations_when_none(tmp_path: Path) -> None:
+    """Compact centrality with zero ambiguous aliases stays fully complete."""
+    compact, _, _ = _build_compact_central_fixture(tmp_path, 0)
+    compact_index = compact["index"]
+
+    assert compact_index["query_complete"] is True
+    assert "symbol_alias_limitations" not in compact_index
+
+
 @pytest.mark.parametrize(
     ("limitation_count", "truncated"),
     [
-        pytest.param(0, False, id="none"),
         pytest.param(_COMPACT_ALIAS_LIMITATION_LIMIT, False, id="at-limit"),
         pytest.param(128, True, id="above-limit"),
     ],
@@ -188,18 +206,8 @@ def test_compact_central_bounds_alias_limitations_without_losing_full_output(
     tmp_path: Path, limitation_count: int, truncated: bool
 ) -> None:
     """Compact centrality samples ambiguous aliases; full output retains every record."""
-    _write_project(tmp_path)
-    _add_ambiguous_aliases(tmp_path, limitation_count)
-    index = scan(tmp_path)
-    index_path = _write_index(tmp_path, index)
-
-    compact = _query(tmp_path, index_path, "--compact", "fn-central", "--top", "5")
+    compact, index_path, index = _build_compact_central_fixture(tmp_path, limitation_count)
     compact_index = compact["index"]
-
-    if limitation_count == 0:
-        assert compact_index["query_complete"] is True
-        assert "symbol_alias_limitations" not in compact_index
-        return
 
     assert compact_index["query_complete"] is False
     assert compact_index["completeness_reason"] == "symbol_alias_ambiguous"
@@ -217,10 +225,17 @@ def test_compact_central_bounds_alias_limitations_without_losing_full_output(
     assert "symbol_alias_limitations_total" not in full_index
     assert "symbol_alias_limitations_truncated" not in full_index
 
-    if truncated:
-        assert "symbol_alias_limitations_hint" in compact_index
-        assert "Run without --compact" in compact_index["note"]
-        assert len(json.dumps(compact, separators=(",", ":"))) < len(json.dumps(full, separators=(",", ":")))
+
+def test_compact_central_truncated_response_hints_and_shrinks_payload(tmp_path: Path) -> None:
+    """A truncated compact response carries a hint and stays smaller than the full payload."""
+    compact, index_path, _ = _build_compact_central_fixture(tmp_path, 128)
+    compact_index = compact["index"]
+
+    full = _query(tmp_path, index_path, "fn-central", "--top", "5")
+
+    assert "symbol_alias_limitations_hint" in compact_index
+    assert "Run without --compact" in compact_index["note"]
+    assert len(json.dumps(compact, separators=(",", ":"))) < len(json.dumps(full, separators=(",", ":")))
 
 
 @pytest.mark.parametrize(

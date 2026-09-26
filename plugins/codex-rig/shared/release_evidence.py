@@ -34,8 +34,8 @@ patch equivalence fails closed rather than being inferred from subjects, titles,
 ## Used by
 
 ``shared/validate-artifacts.py`` invokes this helper for release contract version one. ``skills/release`` documents the
-receipt producer contract. ``tests/test_release_artifacts.py`` uses real temporary Git histories to exercise the public
-validator entrypoint.
+receipt producer contract. ``tests/packaging/test_release_artifacts.py`` uses real temporary Git histories to exercise
+the public validator entrypoint.
 """
 
 from __future__ import annotations

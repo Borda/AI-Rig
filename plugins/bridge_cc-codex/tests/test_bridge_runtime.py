@@ -1122,19 +1122,32 @@ def test_timeout_retries_read_only_once_at_a_lower_tier_but_never_implement(
     assert implement["effort_substituted"] is None
 
 
-def test_event_parsing_and_terminal_incident_health_workspace_delta(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Prevent lost session/usage data and missing implement-delta evidence after a cutoff."""
+def test_parse_output_preserves_session_usage_and_cost() -> None:
+    """Parsing a child's stdout keeps the session id, token usage, and cost beside the review core.
+
+    A future refactor that renames or drops one of these fields would otherwise silently lose the evidence a caller
+    needs to attribute cost and continue the same session.
+    """
     parsed = bridge_call._parse_output(_outcome(core=_core()).stdout, "codex")
+
     assert parsed.core == _core()
     assert parsed.session_id == "session-fixed"
     assert parsed.tokens == {"input": 3.0, "output": 2.0}
     assert parsed.cost == 0.01
 
+
+def test_timeout_incident_records_workspace_delta_and_health_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A child timeout still records the workspace delta in the incident file and the health log.
+
+    Losing this evidence after a cutoff would leave the operator unable to tell whether the peer's partial edits landed
+    on disk before the child was terminated.
+    """
     snapshots = iter([[], [" M landed.py"]])
     monkeypatch.setattr(bridge_call, "_workspace_state", lambda workspace: next(snapshots))
     monkeypatch.setattr(bridge_call, "_run_child", lambda *args: _outcome(timed_out=True))
+
     result = bridge_call.run_request(_request(tmp_path, verb="implement"))
 
     incident = json.loads((tmp_path / result["incident"]).read_text(encoding="utf-8"))
@@ -1945,10 +1958,8 @@ def test_cli_implement_is_the_only_write_capable_verb(
         bridge_call.main(["delegate", "--task", "Rejected.", "--workspace", str(tmp_path)])
 
 
-def test_mcp_exposes_implement_and_refuses_the_retired_delegate_tool(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Prevent the reverse bridge from dropping implement or resurrecting a second write-capable tool name."""
+def _capturing_run_request(monkeypatch: pytest.MonkeyPatch) -> list[bridge_call.Request]:
+    """Patch run_request to record every dispatched request instead of calling out to a peer."""
     captured: list[bridge_call.Request] = []
 
     def _fake_run_request(request: bridge_call.Request, *, host: str) -> dict[str, object]:
@@ -1958,6 +1969,16 @@ def test_mcp_exposes_implement_and_refuses_the_retired_delegate_tool(
         return {"status": "complete"}
 
     monkeypatch.setattr(bridge_mcp, "run_request", _fake_run_request)
+    return captured
+
+
+def test_implement_tool_is_listed_and_dispatches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reverse bridge keeps exposing the implement tool and routes calls through to it.
+
+    A prior regression could drop bridge_implement from the tool list while retiring bridge_delegate, which would remove
+    the only write-capable path from Codex to Claude.
+    """
+    captured = _capturing_run_request(monkeypatch)
     listed = {tool["name"] for tool in bridge_mcp.tool_definitions()}
 
     response = bridge_mcp.handle_message(
@@ -1969,7 +1990,20 @@ def test_mcp_exposes_implement_and_refuses_the_retired_delegate_tool(
         },
         trusted_workspace=tmp_path,
     )
+
     assert response["result"]["isError"] is False
+    assert "bridge_implement" in listed
+    assert [request.verb for request in captured] == ["implement"]
+
+
+def test_delegate_tool_is_retired_and_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The retired bridge_delegate tool name is refused rather than resurrected as a second write path.
+
+    A prior rename could leave a delegate-named tool reachable again; this pins that name permanently rejected before it
+    ever reaches provider dispatch.
+    """
+    captured = _capturing_run_request(monkeypatch)
+    listed = {tool["name"] for tool in bridge_mcp.tool_definitions()}
 
     retired = bridge_mcp.handle_message(
         {
@@ -1980,11 +2014,10 @@ def test_mcp_exposes_implement_and_refuses_the_retired_delegate_tool(
         },
         trusted_workspace=tmp_path,
     )
-    assert "error" in retired
 
-    assert "bridge_implement" in listed
+    assert "error" in retired
     assert "bridge_delegate" not in listed
-    assert [request.verb for request in captured] == ["implement"]
+    assert captured == []
 
 
 def test_mcp_handshake_tools_call_and_recursion_guard_preserve_run_id(

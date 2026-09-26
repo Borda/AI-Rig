@@ -153,37 +153,71 @@ class _CountingParse:
         return self._real(filepath, root, src_root)
 
 
-@pytest.mark.packaging
-def test_pyi_rebuild_single_pass_then_stable(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corpus_pyi_dir: Path
-) -> None:
-    """First scan after the .pyi migration rebuilds once; the next scan reuses it byte-stable.
-
-    Executable oracle: a parse-invocation counter proves the ``.pyi`` set
-    is parsed exactly once on the migration scan and not at all on the following scan, and a canonical-bytes comparison
-    proves the index is stable.
-    """
+@pytest.fixture
+def legacy_pyi_project(tmp_path: Path, corpus_pyi_dir: Path) -> tuple[Path, dict]:
+    """Copy the .pyi corpus and reshape a fresh scan into a pre-migration legacy index."""
     root = tmp_path / "proj"
     shutil.copytree(corpus_pyi_dir, root)
-
-    # A pre-migration index: no .pyi discovered, no stub fields.
     legacy = _to_legacy_shape(graph.scan(root))
+    return root, legacy
+
+
+@pytest.fixture
+def migrated_index(legacy_pyi_project: tuple[Path, dict]) -> tuple[Path, dict]:
+    """Run the one-time .pyi migration scan and return the project root plus its rebuilt index."""
+    root, legacy = legacy_pyi_project
+    rebuilt = graph.incremental_scan(root, legacy)
+    return root, rebuilt
+
+
+@pytest.mark.packaging
+def test_legacy_shape_excludes_pyi_and_stub_fields(legacy_pyi_project: tuple[Path, dict]) -> None:
+    """The simulated pre-migration index carries no ``.pyi`` or stub-derived fields.
+
+    Confirms the reshaping in ``_to_legacy_shape`` reflects a real pre-migration scanner run, where stubs were never
+    discovered, before the migration scan asserted below is exercised.
+    """
+    _root, legacy = legacy_pyi_project
     assert not any(k.endswith(".pyi") for k in legacy["file_shas"])
     assert not any(m.get("stub_only") for m in legacy["modules"])
 
+
+@pytest.mark.packaging
+def test_migration_scan_parses_pyi_exactly_once(
+    legacy_pyi_project: tuple[Path, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The first scan after the .pyi migration rebuilds by parsing the new stub set exactly once.
+
+    Executable oracle: a parse-invocation counter proves only the newly-discovered ``.pyi``
+    files are parsed, each at most once, and the rebuilt index now carries stub fields.
+    """
+    root, legacy = legacy_pyi_project
     counter = _CountingParse()
     monkeypatch.setattr(graph, "_parse_file", counter)
 
-    # Migration scan: the newly-discovered .pyi files drift file_shas and are parsed once.
     rebuilt = graph.incremental_scan(root, legacy)
+
     assert counter.names, "the migration scan must rebuild (parse the new .pyi set)"
     assert all(n.endswith(".pyi") for n in counter.names), counter.names
     assert len(counter.names) == len(set(counter.names)), "each stub parsed at most once"
     assert any(m.get("stub_only") for m in rebuilt["modules"]), "stubs now indexed"
     assert any(k.endswith(".pyi") for k in rebuilt["file_shas"]), "stubs now in the hash set"
 
-    # Stable reuse: no drift -> zero parses, identical bytes.
-    counter.names.clear()
+
+@pytest.mark.packaging
+def test_stable_reuse_after_migration_reparses_nothing(
+    migrated_index: tuple[Path, dict], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan following the migration reuses the rebuilt index byte-stable with zero reparsing.
+
+    Starting from the already-migrated index with no further drift, the next incremental scan must not touch the parser
+    and must reproduce identical canonical bytes.
+    """
+    root, rebuilt = migrated_index
+    counter = _CountingParse()
+    monkeypatch.setattr(graph, "_parse_file", counter)
+
     stable = graph.incremental_scan(root, rebuilt)
+
     assert counter.names == [], "stable reuse must not re-parse any file"
     assert _canonical(stable) == _canonical(rebuilt), "index bytes stable across reuse"

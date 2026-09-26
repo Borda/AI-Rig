@@ -20,8 +20,8 @@ ROOT = Path(__file__).resolve().parents[1]
         "benchmarks/tests/test_run_all.py",
         "tests/test_makefile_sync.py",
         "plugins/cc_develop/tests/test_enforce_review_header_js.py",
-        "plugins/cc_oss/tests/test_enforce_analyse_header_js.py",
-        "plugins/cc_oss/tests/test_enforce_review_header_js.py",
+        "plugins/cc_oss/tests/vitality/test_enforce_analyse_header_js.py",
+        "plugins/cc_oss/tests/resolve/test_enforce_review_header_js.py",
         "plugins/cc_research/tests/test_enforce_topic_header_js.py",
     ],
 )

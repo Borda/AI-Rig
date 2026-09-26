@@ -48,8 +48,8 @@ import pytest
 _WINDOWS_UNSUPPORTED_PATHS = (
     "scripts/_agent_shim_posix.py",
     "scripts/_agent_shim_transaction.py",
-    "tests/test_agent_shim_posix.py",
-    "tests/test_agent_shim_transaction.py",
+    "tests/agent_shim/test_agent_shim_posix.py",
+    "tests/agent_shim/test_agent_shim_transaction.py",
 )
 
 

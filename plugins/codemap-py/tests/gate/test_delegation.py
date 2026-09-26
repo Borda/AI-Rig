@@ -25,6 +25,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -260,15 +261,22 @@ def test_split_index_roots_diagnostic(tmp_path: Path) -> None:
     assert ii.diagnose_split_index_roots(a.index_path, a.index_path) is None
 
 
-def test_reuse_across_cwd_and_runtime_no_rebuild(
-    project: Path, shim: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Both runtimes reuse one built index across working directories without rebuilding."""
+@dataclass(frozen=True, slots=True)
+class _BuiltIndex:
+    """Identity, scan counter, and content baseline for one already-built index."""
+
+    ident: ii.IndexIdentity
+    counter: Path
+    h0: str
+    m0: int
+
+
+@pytest.fixture(name="built_index")
+def _built_index(project: Path, shim: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _BuiltIndex:
+    """Resolve one project's index and build it once via the scan shim, ready for reuse scenarios."""
     monkeypatch.setenv("CODEMAP_LOGGING", "true")
     counter = tmp_path / "counter.txt"
-    log_root = tmp_path / "logs"
     ident = ii.resolve_index(root=project)
-
     subprocess.run(
         [sys.executable, str(shim), "--root", str(ident.root)],
         cwd=str(project),
@@ -276,27 +284,51 @@ def test_reuse_across_cwd_and_runtime_no_rebuild(
         check=True,
         capture_output=True,
     )
-    assert _count(counter) == 1
-    assert ident.index_path.is_file()
-    h0 = _sha(ident.index_path)
-    m0 = ident.index_path.stat().st_mtime_ns
+    return _BuiltIndex(ident=ident, counter=counter, h0=_sha(ident.index_path), m0=ident.index_path.stat().st_mtime_ns)
 
+
+def test_scan_once_builds_index(built_index: _BuiltIndex) -> None:
+    """One scan-index invocation records exactly one scan and leaves a readable index file."""
+    assert _count(built_index.counter) == 1
+    assert built_index.ident.index_path.is_file()
+
+
+def test_subdir_resolves_to_built_index(built_index: _BuiltIndex, project: Path) -> None:
+    """Resolving from a nested working directory returns the same index path as the repo root.
+
+    Cross-runtime delegation depends on both runtimes agreeing on the index path even when invoked from different
+    subdirectories of the same repo, not only from the repo root.
+    """
     sub = project / "pkg" / "deep"
     sub.mkdir(parents=True)
     id_sub = ii.resolve_index(cwd=sub)
-    assert id_sub.index_path == ident.index_path
+    assert id_sub.index_path == built_index.ident.index_path
 
-    # Delegated reuse: claude then codex read the same bytes through the gate; runtime
-    # identity only routes the log, never the index path.
+
+def test_cross_runtime_read_does_not_trigger_rebuild(built_index: _BuiltIndex) -> None:
+    """Claude then codex reading the same built index through the gate never triggers a rebuild.
+
+    Runtime identity only routes the log, never the index path: the scanner-invocation counter must stay at one, and the
+    index bytes/mtime must be untouched after both runtimes have read it.
+    """
+    ident = built_index.ident
     for runtime in ("claude", "codex"):
         with rw.read_index(ident.index_path, timeout=5) as data:
             assert data["scan_root"] == str(ident.root)
             assert data["project"] == ident.project
-        rl.write_log(runtime, {"event": "reused_index"}, session="deleg", root=project, override=str(log_root))
+    assert _count(built_index.counter) == 1  # no rebuild on reuse
+    assert _sha(ident.index_path) == built_index.h0
+    assert ident.index_path.stat().st_mtime_ns == built_index.m0
 
-    assert _count(counter) == 1  # no rebuild on reuse
-    assert _sha(ident.index_path) == h0
-    assert ident.index_path.stat().st_mtime_ns == m0
+
+def test_cross_runtime_read_writes_per_runtime_log(built_index: _BuiltIndex, project: Path, tmp_path: Path) -> None:
+    """Each runtime's delegated read writes its own runtime-scoped delegation log file."""
+    ident = built_index.ident
+    log_root = tmp_path / "logs"
+    for runtime in ("claude", "codex"):
+        with rw.read_index(ident.index_path, timeout=5):
+            pass
+        rl.write_log(runtime, {"event": "reused_index"}, session="deleg", root=project, override=str(log_root))
     assert (log_root / "claude" / "cli_deleg.jsonl").is_file()
     assert (log_root / "codex" / "cli_deleg.jsonl").is_file()
 

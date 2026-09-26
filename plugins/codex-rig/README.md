@@ -600,14 +600,14 @@ The package is accepted only when generated manifest is current, every recorded 
 The denial gate is deterministic and offline: it validates local JSON Lines transcript, requires one exact `item/commandExecution/requestApproval` callback followed by `decline`, matching resolution and declined completion, rejects output or fallback execution, and requires later local recovery item. Run its focused tests and inspect supported probe interface with:
 
 ```bash
-python3 -m pytest -q plugins/codex-rig/tests/test_app_server_denial_protocol.py
+python3 -m pytest -q plugins/codex-rig/tests/review/test_app_server_denial_protocol.py
 python3 plugins/codex-rig/tests/app_server_denial_probe.py --help
 ```
 
 The installed-package-safe gate copies only manifest-declared payload into disposable cache and runs explicit package-safe test selection without checkout context (`Makefile`, `.github`, and `.git`). Run it with:
 
 ```bash
-python3 -m pytest -q plugins/codex-rig/tests/test_installed_package_gate.py
+python3 -m pytest -q plugins/codex-rig/tests/packaging/test_installed_package_gate.py
 ```
 
 > **CI matrix:** The repository CI test matrix runs complete plugin test suite on Linux, macOS, and Windows with Python 3.10, 3.11, 3.12, and 3.13. The synthetic denial gate and installed-package-safe gate are included in that offline matrix.
