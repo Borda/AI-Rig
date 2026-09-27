@@ -285,6 +285,104 @@ def cmd_write(args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_missing_metadata(prefix: dict, git_sha: str) -> str | None:
+    """Check that the artifact's own sha/scanned_at fields and the current sha are present and typed.
+
+    Args:
+        prefix: The artifact's ``prefix`` block.
+        git_sha: Current index ``git_sha``.
+
+    Returns:
+        ``"missing_freshness_metadata"`` when any required field is absent or malformed, else
+        ``None``.
+    """
+    art_sha = prefix.get("git_sha")
+    art_scanned = prefix.get("scanned_at")
+    if (
+        not isinstance(art_sha, str)
+        or not art_sha.strip()
+        or not isinstance(git_sha, str)
+        or not git_sha.strip()
+        or not isinstance(art_scanned, str)
+    ):
+        return "missing_freshness_metadata"
+    return None
+
+
+def _check_git_sha(prefix: dict, git_sha: str) -> str | None:
+    """Check the artifact's recorded ``git_sha`` against the current index.
+
+    Args:
+        prefix: The artifact's ``prefix`` block.
+        git_sha: Current index ``git_sha``.
+
+    Returns:
+        ``"git_sha_mismatch"`` when the two differ, else ``None``.
+    """
+    if prefix.get("git_sha") != git_sha:
+        return "git_sha_mismatch"
+    return None
+
+
+def _check_freshness_time(art_scanned: str, scanned_at: str) -> str | None:
+    """Parse and compare the artifact's and index's ``scanned_at`` instants.
+
+    Compares actual instants, not strings: valid ISO timestamps can use different offsets.
+
+    Args:
+        art_scanned: The artifact's recorded ``scanned_at``.
+        scanned_at: Current index ``scanned_at``.
+
+    Returns:
+        ``None`` when both parsed with timezone info and the artifact is not older than the
+        index; ``"invalid_freshness_metadata"`` on any parse failure or a naive timestamp;
+        ``"index_rebuilt"`` when the artifact predates the index.
+    """
+    try:
+        artifact_time = datetime.fromisoformat(art_scanned.replace("Z", "+00:00"))
+        index_time = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
+        if artifact_time.tzinfo is None or index_time.tzinfo is None:
+            return "invalid_freshness_metadata"
+    except ValueError:
+        return "invalid_freshness_metadata"
+    if artifact_time < index_time:
+        return "index_rebuilt"
+    return None
+
+
+def _check_index_stamp(prefix: dict, index_stamp: str) -> str | None:
+    """Check the artifact's file-stat stamp against the current index file.
+
+    Fail closed: an artifact written before this field existed has no stamp and is re-queried
+    rather than trusted. Catches an in-place rewrite that left ``git_sha`` and ``scanned_at``
+    untouched — invisible to the two checks above.
+
+    Args:
+        prefix: The artifact's ``prefix`` block.
+        index_stamp: Current index ``"<canonical-path>:<size>:<mtime_ns>"``.
+
+    Returns:
+        ``"index_stamp_mismatch"`` when the two differ, else ``None``.
+    """
+    if str(prefix.get("index_stamp", "")) != index_stamp:
+        return "index_stamp_mismatch"
+    return None
+
+
+def _check_content_hash(prefix: dict) -> str | None:
+    """Check the artifact's stored answers against its own recorded content hash.
+
+    Args:
+        prefix: The artifact's ``prefix`` block.
+
+    Returns:
+        ``"content_hash_mismatch"`` when the recomputed hash differs, else ``None``.
+    """
+    if _content_hash(prefix.get("answers", {})) != prefix.get("content_hash", ""):
+        return "content_hash_mismatch"
+    return None
+
+
 def _reuse_verdict(artifact: dict, git_sha: str, scanned_at: str, index_stamp: str) -> tuple[bool, str]:
     """Decide whether an artifact may be reused against the current index.
 
@@ -310,35 +408,22 @@ def _reuse_verdict(artifact: dict, git_sha: str, scanned_at: str, index_stamp: s
         (False, 'index_stamp_mismatch')
     """
     prefix = artifact.get("prefix", {})
-    art_sha = prefix.get("git_sha")
-    art_scanned = prefix.get("scanned_at")
-    if (
-        not isinstance(art_sha, str)
-        or not art_sha.strip()
-        or not isinstance(git_sha, str)
-        or not git_sha.strip()
-        or not isinstance(art_scanned, str)
-    ):
-        return False, "missing_freshness_metadata"
-    if art_sha != git_sha:
-        return False, "git_sha_mismatch"
-    # Compare actual instants, not strings: valid ISO timestamps can use different offsets.
-    try:
-        artifact_time = datetime.fromisoformat(art_scanned.replace("Z", "+00:00"))
-        index_time = datetime.fromisoformat(scanned_at.replace("Z", "+00:00"))
-        if artifact_time.tzinfo is None or index_time.tzinfo is None:
-            return False, "invalid_freshness_metadata"
-    except ValueError:
-        return False, "invalid_freshness_metadata"
-    if artifact_time < index_time:
-        return False, "index_rebuilt"
-    # Fail closed: an artifact written before this field existed has no stamp and
-    # is re-queried rather than trusted. Catches an in-place rewrite that left
-    # git_sha and scanned_at untouched — invisible to both checks above.
-    if str(prefix.get("index_stamp", "")) != index_stamp:
-        return False, "index_stamp_mismatch"
-    if _content_hash(prefix.get("answers", {})) != prefix.get("content_hash", ""):
-        return False, "content_hash_mismatch"
+    reason = _check_missing_metadata(prefix, git_sha)
+    if reason is not None:
+        return False, reason
+    reason = _check_git_sha(prefix, git_sha)
+    if reason is not None:
+        return False, reason
+    art_scanned = str(prefix.get("scanned_at", ""))
+    reason = _check_freshness_time(art_scanned, scanned_at)
+    if reason is not None:
+        return False, reason
+    reason = _check_index_stamp(prefix, index_stamp)
+    if reason is not None:
+        return False, reason
+    reason = _check_content_hash(prefix)
+    if reason is not None:
+        return False, reason
     return True, "fresh"
 
 

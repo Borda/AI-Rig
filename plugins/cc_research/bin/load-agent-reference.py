@@ -74,6 +74,7 @@ def _sidecar_dir(agent: str) -> Path | None:
 
 
 def main(argv: list[str]) -> int:
+    """Resolve an agent's references/ sidecar directory and emit one fragment."""
     args = argv[1:]
     if len(args) != 3:
         print(

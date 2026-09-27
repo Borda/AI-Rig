@@ -144,6 +144,28 @@ def search_consumers(package: str, symbols: list[str]) -> tuple[int, set[str]]:
     return successes, repos
 
 
+def _parse_args(args: list[str]) -> tuple[str, list[str]]:
+    """Separate ``--package`` from bare symbol positionals in the manual argv loop.
+
+    Args:
+        args: Raw argv tokens (``-h``/``--help`` already handled by the caller).
+
+    Returns:
+        ``(package, symbols)`` — ``package`` is empty when ``--package`` was never given.
+    """
+    package = ""
+    symbols: list[str] = []
+    i = 0
+    while i < len(args):
+        if args[i] == "--package" and i + 1 < len(args):
+            package = args[i + 1]
+            i += 2
+        else:
+            symbols.append(args[i])
+            i += 1
+    return package, symbols
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``search_downstream_consumers.sh`` behaviour.
 
@@ -167,16 +189,7 @@ def main(argv: list[str] | None = None) -> int:
         ).parse_args(["-h"])
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-    package = ""
-    symbols: list[str] = []
-    i = 0
-    while i < len(args):
-        if args[i] == "--package" and i + 1 < len(args):
-            package = args[i + 1]
-            i += 2
-        else:
-            symbols.append(args[i])
-            i += 1
+    package, symbols = _parse_args(args)
     if not package:
         print("search_downstream_consumers: --package required", file=sys.stderr)
         return 1

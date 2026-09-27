@@ -194,6 +194,7 @@ def _relative_to_root(script: Path, root: Path | None) -> str | None:
 
 
 def main() -> int:
+    """Verify every bin/ script has a real, non-stub test file."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scan-dir", default="plugins")
     parser.add_argument("--local", action="store_true", help="run the check; without it, report a skip")

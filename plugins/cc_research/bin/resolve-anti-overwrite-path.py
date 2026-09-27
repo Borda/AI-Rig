@@ -21,6 +21,7 @@ def _has_traversal(component: str) -> bool:
 
 
 def main(argv: list[str]) -> int:
+    """Print the first free "<dir>/<stem>.md" path, appending -2, -3, … when taken."""
     directory = argv[1] if len(argv) > 1 else ""
     stem = argv[2] if len(argv) > 2 else ""
     if not directory:

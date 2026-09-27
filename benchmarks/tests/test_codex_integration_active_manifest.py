@@ -318,7 +318,7 @@ def test_integration_manifest_locks_plain_cli_and_skill_arms_and_artifacts() -> 
         "bin/codemap-py",
         "bin/_exclusions.py",
         "scripts/codemap_py_entry.py",
-        "src/codemap_py/query.py",
+        "src/codemap_py/query/__init__.py",
     }
     assert re.fullmatch(r"[0-9a-f]{64}", direct_runtime["aggregate_sha256"])
     assert manifest["direct_cli_admission"] == {

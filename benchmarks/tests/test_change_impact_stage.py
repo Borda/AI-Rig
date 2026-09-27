@@ -15,6 +15,11 @@ import pytest
 
 from _bench_common import change_impact_stage as stage
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_claude.agentic import cli as agentic_cli
+from _bench_claude.agentic import runner as agentic_runner
+
 
 def test_paid_impact_lifecycle_uses_isolated_fixture_and_native_rows(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -110,7 +115,11 @@ def test_existing_provider_cli_dispatches_impact_preflight(
         assert kwargs["dry_run"] is True
         yield None
 
-    monkeypatch.setattr(module, "impact_runtime", _runtime)
+    # Claude's runner is a re-export shim over a package, so its seam lives in that package's
+    # ``cli`` module; the Codex runner is still a single file and owns the name itself. Patching
+    # the shim for Claude would leave ``cli``'s own binding intact and run real provider probing.
+    impact_target = agentic_cli if provider == "claude" else module
+    monkeypatch.setattr(impact_target, "impact_runtime", _runtime)
     module.main(study="change-impact", dry_run=True)
     assert "PAID_COMMAND" in capsys.readouterr().out
 
@@ -466,7 +475,7 @@ def test_real_claude_adapter_connects_native_transport_to_shared_quality(
         )
         return SimpleNamespace(error=None, stderr="", returncode=0, exc_timeout=False, elapsed_s=0.1)
 
-    monkeypatch.setattr(module, "stream_claude", _stream)
+    monkeypatch.setattr(agentic_runner, "stream_claude", _stream)
     scope = stage.resolve_scope("claude", model="sonnet")
     destination = tmp_path / "actual-adapter"
     module.main(study="change-impact", model="sonnet", run_dir=destination, paid_approval=scope["scope_sha256"][:16])

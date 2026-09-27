@@ -133,6 +133,7 @@ def report_overhead(claude_dir: Path, project_claude: Path, global_dir: Path) ->
 
 
 def main() -> int:
+    """Size the config Claude loads, for /foundry:audit."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--mode", choices=("inventory", "overhead"), required=True)
     parser.add_argument("--claude-dir", default=".claude")

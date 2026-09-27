@@ -343,6 +343,38 @@ class TestHeadContinuity:
         assert vs.main(["--scan-dir", "plugins", str(path.relative_to(tmp_path))]) == 1
         assert "new version family" in capsys.readouterr().out
 
+    def test_new_python_version_matches_deleted_sibling(self, tmp_path: Path, monkeypatch) -> None:
+        """A version constant carried unchanged into a new file passes when its old file is deleted in the same diff.
+
+        Splitting one committed module into several new files loses the constant's own path-keyed HEAD baseline. This
+        covers the pure-extraction case: the same plugin still HEAD-tracks a now-deleted file defining the same
+        constant at the same value, so the new file is not starting a fresh family.
+        """
+        old_path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 2\n")
+        old_path.unlink()
+        new_path = tmp_path / "plugins/example/bin/writer_pkg/types.py"
+        new_path.parent.mkdir(parents=True)
+        new_path.write_text("SCHEMA_VERSION = 2\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        assert vs.main(["--scan-dir", "plugins", str(new_path.relative_to(tmp_path))]) == 0
+
+    def test_new_python_version_ignores_unrelated_deleted_sibling(self, tmp_path: Path, monkeypatch, capsys) -> None:
+        """A deleted sibling's value only excuses an exact match, not an arbitrary new value.
+
+        Confirms the deleted-sibling fallback does not turn into a blanket exemption for new files: a genuinely new
+        family still has to start at 1 even when the same plugin lost an unrelated versioned file this diff.
+        """
+        old_path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 2\n")
+        old_path.unlink()
+        new_path = tmp_path / "plugins/example/bin/writer_pkg/types.py"
+        new_path.parent.mkdir(parents=True)
+        new_path.write_text("SCHEMA_VERSION = 5\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+
+        assert vs.main(["--scan-dir", "plugins", str(new_path.relative_to(tmp_path))]) == 1
+        assert "new version family" in capsys.readouterr().out
+
     def test_removed_python_literal_version_fails(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """Replacing a static version with a dynamic expression cannot evade the gate."""
         path = _committed_file(tmp_path, "plugins/example/bin/writer.py", "SCHEMA_VERSION = 1\n")

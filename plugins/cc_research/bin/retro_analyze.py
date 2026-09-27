@@ -42,15 +42,49 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
 import tempfile
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Final
 
 MIN_SAMPLES_FOR_TEST: Final[int] = 6
+
+
+@dataclass(frozen=True, slots=True)
+class WilcoxonResult:
+    """Outcome of one signed-rank comparison of candidate scores against a baseline.
+
+    ``reason`` is set only when no test could be run — too few paired samples, or
+    scipy missing — in which case ``p_value`` and ``statistic`` stay ``None``.
+
+    Examples:
+        >>> WilcoxonResult(significant=False, p_value=None, statistic=None, n=3, reason="too few").as_payload()
+        {'significant': False, 'p_value': None, 'statistic': None, 'n': 3, 'reason': 'too few'}
+        >>> WilcoxonResult(significant=True, p_value=0.01, statistic=2.0, n=8).as_payload()
+        {'significant': True, 'p_value': 0.01, 'statistic': 2.0, 'n': 8}
+    """
+
+    significant: bool
+    p_value: float | None
+    statistic: float | None
+    n: int
+    reason: str | None = None
+
+    def as_payload(self) -> dict[str, Any]:
+        """Return the stdout JSON mapping, omitting ``reason`` when no reason applies.
+
+        The published CLI contract (module docstring, ``retro/SKILL.md``) lists ``reason`` as an extra key on the
+        partial paths only, so a conclusive run must not emit ``"reason": null``.
+        """
+        payload = dataclasses.asdict(self)
+        if self.reason is None:
+            del payload["reason"]
+        return payload
 
 
 class Direction(str, Enum):
@@ -107,7 +141,7 @@ def run_wilcoxon(
     candidate_scores: list[float],
     alpha: float = 0.05,
     direction: Direction | str = Direction.HIGHER,
-) -> dict[str, Any]:
+) -> WilcoxonResult:
     """Run a Wilcoxon signed-rank test comparing candidate scores to baseline scores.
 
     Compares candidate scores against ``baseline_scores`` element-wise (same index).
@@ -128,9 +162,8 @@ def run_wilcoxon(
             forwards a raw CLI/JSON string.
 
     Returns:
-        Dict with keys ``significant`` (bool), ``p_value`` (float), ``statistic`` (float),
-        ``n`` (int). On insufficient data or missing scipy, returns
-        ``{"significant": False, "p_value": None, "statistic": None, "n": N, "reason": "<msg>"}``.
+        A :class:`WilcoxonResult`. On insufficient data or missing scipy, its ``p_value``
+        and ``statistic`` are ``None`` and ``reason`` explains which case applied.
 
     Raises:
         ValueError: if ``direction`` is not a legal :class:`Direction` value or the score
@@ -139,11 +172,11 @@ def run_wilcoxon(
     Examples:
         >>> # Insufficient data (< 6 paired samples) returns a reason rather than a p-value.
         >>> out = run_wilcoxon([1.0, 1.0, 1.0], [2.0, 2.0, 2.0], alpha=0.05, direction=Direction.HIGHER)
-        >>> out["significant"]
+        >>> out.significant
         False
-        >>> out["n"]
+        >>> out.n
         3
-        >>> "reason" in out
+        >>> out.reason is not None
         True
         >>> # Bad direction raises.
         >>> run_wilcoxon([1.0], [2.0], direction="sideways")
@@ -164,35 +197,35 @@ def run_wilcoxon(
 
     n = len(candidate_scores)
     if n < MIN_SAMPLES_FOR_TEST:
-        return {
-            "significant": False,
-            "p_value": None,
-            "statistic": None,
-            "n": n,
-            "reason": f"insufficient data for significance testing (N={n}, minimum {MIN_SAMPLES_FOR_TEST} required)",
-        }
+        return WilcoxonResult(
+            significant=False,
+            p_value=None,
+            statistic=None,
+            n=n,
+            reason=f"insufficient data for significance testing (N={n}, minimum {MIN_SAMPLES_FOR_TEST} required)",
+        )
 
     try:
         from scipy.stats import wilcoxon
     except ImportError:
-        return {
-            "significant": False,
-            "p_value": None,
-            "statistic": None,
-            "n": n,
-            "reason": "scipy not installed — run: pip install scipy",
-        }
+        return WilcoxonResult(
+            significant=False,
+            p_value=None,
+            statistic=None,
+            n=n,
+            reason="scipy not installed — run: pip install scipy",
+        )
 
     alternative = "greater" if direction == Direction.HIGHER else "less"
     result = wilcoxon(candidate_scores, baseline_scores, alternative=alternative)
     statistic = float(result.statistic)
     p_value = float(result.pvalue)
-    return {
-        "significant": p_value < alpha,
-        "p_value": p_value,
-        "statistic": statistic,
-        "n": n,
-    }
+    return WilcoxonResult(
+        significant=p_value < alpha,
+        p_value=p_value,
+        statistic=statistic,
+        n=n,
+    )
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -313,8 +346,8 @@ def main(argv: list[str] | None = None) -> int:
         alpha=args.alpha,
         direction=Direction(args.direction),
     )
-    print(json.dumps(result))
-    return 0 if result["significant"] else 1
+    print(json.dumps(result.as_payload()))
+    return 0 if result.significant else 1
 
 
 if __name__ == "__main__":

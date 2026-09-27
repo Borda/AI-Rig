@@ -49,11 +49,24 @@ import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from live_contract import Layout, build_prompt, candidate_findings, prompt_sha256, role_context, task_contract_sha256
 
 PRICING_REF = "normalized-token-v1:uncached+0.1*cached+4*output"
+
+
+class BoundedProcessResult(NamedTuple):
+    """Captured output, exit status, and wall time of one bounded subprocess run.
+
+    ``exit_code`` is ``124`` when the process exceeded its timeout and was terminated, matching the convention the
+    campaign observations record for timed-out calls.
+    """
+
+    stdout: str
+    stderr: str
+    exit_code: int
+    elapsed_ms: int
 
 
 def _context_root(layout: str, project_root: Path) -> Path:
@@ -233,23 +246,94 @@ def _require_local_subscription_run() -> None:
         raise SystemExit("live-paid-run-requires-chatgpt-subscription-login")
 
 
-def _run_model(
-    work_dir: Path,
-    out_dir: Path,
-    prompt: str,
-    model: str,
-    effort: str,
-    label: str,
+def _terminate_process_group(process: subprocess.Popen[str], timeout_seconds: int) -> tuple[str, str]:
+    """Stop a timed-out process group and drain whatever output it already produced.
+
+    SIGTERM goes to the whole group first; a group still alive two seconds later gets SIGKILL. A group that exited on
+    its own between the timeout and the signal raises ``ProcessLookupError``, which is the expected race and not a
+    failure. The returned stderr carries the appended timeout note.
+    """
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        stdout, stderr = process.communicate(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = process.communicate()
+    return stdout, f"{stderr or ''}\ntimeout after {timeout_seconds} seconds\n"
+
+
+def _run_bounded_process(
+    argv: list[str],
+    cwd: Path | None,
     timeout_seconds: int,
-    sandbox: str,
-) -> tuple[dict[str, Any], dict[str, int], int, int]:
-    """Execute one isolated Codex call and return response, usage, latency, and exit code."""
-    last_message = out_dir / f"{label}.response.json"
-    events = out_dir / f"{label}.events.jsonl"
-    stderr_path = out_dir / f"{label}.stderr.txt"
-    schema_path = out_dir / "response-schema.json"
+    stdin: int | None = None,
+) -> BoundedProcessResult:
+    """Run one child process under a hard timeout and capture everything it produced.
+
+    The child starts in its own session, so a timeout terminates the whole process group instead of leaving orphaned
+    grandchildren behind: SIGTERM first, then SIGKILL if the group has not exited within two seconds. A timed-out run
+    reports exit code 124 and keeps whatever output was already captured, with the timeout noted in ``stderr``.
+
+    Args:
+        argv: Executable and arguments to run; never passed through a shell.
+        cwd: Working directory for the child, or ``None`` to inherit the runner's own.
+        timeout_seconds: Wall-clock budget before the escalating termination sequence starts.
+        stdin: Standard-input disposition, e.g. ``subprocess.DEVNULL``; ``None`` inherits the runner's stdin.
+    """
     started = time.monotonic()
     process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        text=True,
+        stdin=stdin,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        exit_code = process.returncode
+    except subprocess.TimeoutExpired:
+        stdout, stderr = _terminate_process_group(process, timeout_seconds)
+        exit_code = 124
+    if isinstance(stdout, bytes):
+        stdout = stdout.decode(errors="replace")
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode(errors="replace")
+    elapsed_ms = round((time.monotonic() - started) * 1000)
+    return BoundedProcessResult(stdout or "", stderr or "", exit_code, elapsed_ms)
+
+
+class ModelCallRequest(NamedTuple):
+    """Everything one paid model call needs, bundled so the campaign loop passes a single value.
+
+    ``work_dir`` is the directory the model is pointed at through ``--cd``; the process itself keeps the runner's own
+    working directory.
+    """
+
+    work_dir: Path
+    out_dir: Path
+    label: str
+    timeout_seconds: int
+    prompt: str
+    model: str
+    effort: str
+    sandbox: str
+
+
+def _run_model(request: ModelCallRequest) -> tuple[dict[str, Any], dict[str, int], int, int]:
+    """Execute one isolated Codex call and return response, usage, latency, and exit code."""
+    last_message = request.out_dir / f"{request.label}.response.json"
+    events = request.out_dir / f"{request.label}.events.jsonl"
+    stderr_path = request.out_dir / f"{request.label}.stderr.txt"
+    schema_path = request.out_dir / "response-schema.json"
+    call = _run_bounded_process(
         [
             "codex",
             "exec",
@@ -257,56 +341,32 @@ def _run_model(
             "--json",
             "--skip-git-repo-check",
             "--sandbox",
-            sandbox,
+            request.sandbox,
             "--cd",
-            str(work_dir),
+            str(request.work_dir),
             "--model",
-            model,
+            request.model,
             "--config",
-            f'model_reasoning_effort="{effort}"',
+            f'model_reasoning_effort="{request.effort}"',
             "--output-schema",
             str(schema_path),
             "--output-last-message",
             str(last_message),
-            prompt,
+            request.prompt,
         ],
-        text=True,
+        None,
+        request.timeout_seconds,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
     )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-        exit_code = process.returncode
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
-        stderr = f"{stderr or ''}\ntimeout after {timeout_seconds} seconds\n"
-        exit_code = 124
-    if isinstance(stdout, bytes):
-        stdout = stdout.decode(errors="replace")
-    if isinstance(stderr, bytes):
-        stderr = stderr.decode(errors="replace")
-    events.write_text(stdout or "", encoding="utf-8")
-    stderr_path.write_text(stderr or "", encoding="utf-8")
-    latency_ms = round((time.monotonic() - started) * 1000)
+    stdout, stderr, exit_code, latency_ms = call
+    events.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
     response = _read_json(last_message) if exit_code == 0 and last_message.exists() else {}
     if exit_code == 0:
         try:
             _validate_response(response)
         except ValueError as exc:
-            stderr_path.write_text(f"{stderr or ''}\n{exc}\n", encoding="utf-8")
+            stderr_path.write_text(f"{stderr}\n{exc}\n", encoding="utf-8")
             exit_code = 1
             response = {}
     usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
@@ -314,49 +374,33 @@ def _run_model(
         try:
             usage = _usage_from_jsonl(stdout)
         except (json.JSONDecodeError, ValueError) as exc:
-            stderr_path.write_text(f"{stderr or ''}\n{exc}\n", encoding="utf-8")
+            stderr_path.write_text(f"{stderr}\n{exc}\n", encoding="utf-8")
             exit_code = exit_code or 1
     return response, usage, latency_ms, exit_code
 
 
-def _run_gate(work_dir: Path, out_dir: Path, label: str, command: str, timeout_seconds: int) -> int:
+class GateRunRequest(NamedTuple):
+    """Everything one argv-only executable gate run needs, bundled as a single value."""
+
+    work_dir: Path
+    out_dir: Path
+    label: str
+    timeout_seconds: int
+    command: str
+
+
+def _run_gate(request: GateRunRequest) -> int:
     """Run one argv-only executable gate and persist its output."""
-    argv = shlex.split(command)
+    argv = shlex.split(request.command)
     if not argv:
         raise ValueError("tool-use task needs a non-empty gate_command")
-    started = time.monotonic()
-    process = subprocess.Popen(
-        argv,
-        cwd=work_dir,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
-        exit_code = process.returncode
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, stderr = process.communicate(timeout=2)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            stdout, stderr = process.communicate()
-        stderr = f"{stderr or ''}\ntimeout after {timeout_seconds} seconds\n"
-        exit_code = 124
-    elapsed_ms = round((time.monotonic() - started) * 1000)
-    (out_dir / f"{label}.gate.txt").write_text(
-        f"command={argv!r}\nexit_code={exit_code}\nelapsed_ms={elapsed_ms}\n\nstdout:\n{stdout or ''}\n\nstderr:\n{stderr or ''}",
+    gate = _run_bounded_process(argv, request.work_dir, request.timeout_seconds)
+    (request.out_dir / f"{request.label}.gate.txt").write_text(
+        f"command={argv!r}\nexit_code={gate.exit_code}\nelapsed_ms={gate.elapsed_ms}\n\n"
+        f"stdout:\n{gate.stdout}\n\nstderr:\n{gate.stderr}",
         encoding="utf-8",
     )
-    return exit_code
+    return gate.exit_code
 
 
 def _observation(
@@ -534,17 +578,27 @@ def main() -> int:
                         work_dir = args.root.resolve()
                         sandbox = "read-only"
                     response, usage, latency_ms, exit_code = _run_model(
-                        work_dir,
-                        args.out,
-                        prompt,
-                        model,
-                        route["effort"],
-                        label,
-                        args.timeout_seconds,
-                        sandbox,
+                        ModelCallRequest(
+                            work_dir=work_dir,
+                            out_dir=args.out,
+                            label=label,
+                            timeout_seconds=args.timeout_seconds,
+                            prompt=prompt,
+                            model=model,
+                            effort=route["effort"],
+                            sandbox=sandbox,
+                        )
                     )
                     gate_exit_code = (
-                        _run_gate(work_dir, args.out, label, task["gate_command"], args.timeout_seconds)
+                        _run_gate(
+                            GateRunRequest(
+                                work_dir=work_dir,
+                                out_dir=args.out,
+                                label=label,
+                                timeout_seconds=args.timeout_seconds,
+                                command=task["gate_command"],
+                            )
+                        )
                         if evidence_scope == "tool-use" and exit_code == 0
                         else 0
                         if evidence_scope == "classification" and exit_code == 0

@@ -204,6 +204,183 @@ def _detect_trunk(git: str) -> str:
     return "main"
 
 
+def _derive_range(git: str, range_arg: str) -> tuple[str, int]:
+    """Resolve the effective audit range, validating any user-supplied ``--range``."""
+    if not range_arg:
+        last_tag = os.environ.get("LAST_TAG", "")
+        if not last_tag:
+            desc = _run([git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_TAG_FLAGS])
+            if desc:
+                last_tag = desc
+            else:
+                rev = _run([git, "rev-list", "--max-parents=0", "HEAD"])
+                last_tag = rev.splitlines()[0] if rev else ""
+        # Allowlist: only accept SemVer-style tags or 7-40 hex short SHAs.
+        # Anything else (option-style ``--foo``, ref expressions ``HEAD~``,
+        # arbitrary text) is rejected outright (A03:2021).
+        if not last_tag or not _TAG_OR_SHA_RE.match(last_tag):
+            print(
+                f"run_audit_checks: invalid tag (must be SemVer or 7-40 hex SHA): {last_tag!r}",
+                file=sys.stderr,
+            )
+            return "", 2
+        range_arg = f"{last_tag}..HEAD"
+    else:
+        # User-supplied ``--range`` bypasses the auto-derived allowlist above —
+        # apply the same allowlist on both endpoints of the range so a crafted
+        # value cannot smuggle git option flags (`--upload-pack=…`) or ref
+        # expressions (`HEAD~`) past the SemVer/SHA gate (A03:2021).
+        # Accept `<endpoint>..<endpoint>` (two-dot) or `<endpoint>...<endpoint>`
+        # (three-dot symmetric diff) only; each endpoint must match
+        # _TAG_OR_SHA_RE or be the literal `HEAD` (the only ref expression
+        # accepted — `HEAD~`, branch names, etc. remain rejected).
+        if "..." in range_arg:
+            endpoints = range_arg.split("...", maxsplit=1)
+        elif ".." in range_arg:
+            endpoints = range_arg.split("..", maxsplit=1)
+        else:
+            endpoints = []
+
+        def _endpoint_ok(ep: str) -> bool:
+            return ep == "HEAD" or bool(_TAG_OR_SHA_RE.match(ep))
+
+        if len(endpoints) != 2 or not all(_endpoint_ok(ep) for ep in endpoints):
+            print(
+                f"run_audit_checks: invalid --range format (expect <tag-or-sha-or-HEAD>..<tag-or-sha-or-HEAD>): {range_arg!r}",
+                file=sys.stderr,
+            )
+            return range_arg, 2
+
+    return range_arg, 0
+
+
+def _check_gh_auth(gh: str | None) -> int:
+    """Print the gh-auth banner and verify ``gh auth status`` succeeds."""
+    print("--- check: gh-auth ---")
+    if gh is None:
+        print("gh not authenticated — run 'gh auth login' first")
+        return 2
+    auth_proc = subprocess.run(  # noqa: S603
+        [gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10
+    )
+    combined = auth_proc.stdout + auth_proc.stderr
+    if combined:
+        print(combined, end="")
+    if auth_proc.returncode != 0:
+        print("gh not authenticated — run 'gh auth login' first")
+        return 2
+    return 0
+
+
+def _check_repo_state(git: str, range_arg: str) -> None:
+    """Print uncommitted-changes and unreleased-commits sections for the range."""
+    print("--- check: repo-state ---")
+    print("## uncommitted changes:")
+    status_out = _run([git, "status", "--short"])
+    if status_out:
+        print(status_out)
+    print(f"## unreleased commits in range {range_arg}:")
+    log_out = _run([git, "log", "--oneline", "--no-merges", range_arg, "--"])
+    if log_out:
+        print(log_out)
+
+
+def _check_ci_health(git: str, gh: str) -> None:
+    """Print the CI run list for the current branch."""
+    print("--- check: ci-health ---")
+    branch_out = _run([git, "rev-parse", "--abbrev-ref", "HEAD"])
+    branch = branch_out or "HEAD"
+    ci_out = _run([gh, "run", "list", "--branch", branch, "--limit", "5", "--json", "status,conclusion,name"])
+    print(ci_out or "[]")
+
+
+def _check_open_issues_prs(gh: str, git: str) -> None:
+    """Print open issues and open PRs targeting the detected trunk branch."""
+    print("--- check: open-issues-prs ---")
+    print("## open issues with high-severity labels:")
+    issues_out = _run([gh, "issue", "list", "--state", "open", "--limit", "100", "--json", "number,title,labels"])
+    print(issues_out or "[]")
+    trunk = _detect_trunk(git)
+    print(f"## open PRs targeting {trunk}:")
+    prs_out = _run(
+        [
+            gh,
+            "pr",
+            "list",
+            "--state",
+            "open",
+            "--base",
+            trunk,
+            "--limit",
+            "20",
+            "--json",
+            "number,title,draft,reviewDecision",
+        ]
+    )
+    print(prs_out or "[]")
+
+
+def _check_docs_alignment(git: str, range_arg: str) -> None:
+    """Print files changed in the range and which of them touch docs/README."""
+    print("--- check: docs-alignment ---")
+    print(f"## files changed since {range_arg}:")
+    diff_files = _run([git, "diff", "--name-only", range_arg, "--"])
+    if diff_files:
+        print(diff_files)
+    print("## docs/README touched:")
+    docs_changed = [f for f in diff_files.splitlines() if _DOCS_RE.search(f)]
+    if docs_changed:
+        print("\n".join(docs_changed))
+    else:
+        print("no docs changed")
+
+
+def _check_version_consistency(tag: str) -> None:
+    """Print version-string matches across source files and the target version."""
+    print("--- check: version-consistency ---")
+    for match_line in _grep_version_files():
+        print(match_line)
+    if tag:
+        print(f"## target version: {tag}")
+
+
+def _check_code_signals() -> None:
+    """Print release-blocking code signals and the dependency CVE scan."""
+    print("--- check: code-signals ---")
+    print("## release-blocking TODOs / FIXME / HACK / XXX (outside tests):")
+    for match_line in _grep_code_signals():
+        print(match_line)
+    print("## dependency CVE scan:")
+    pip_audit = which("pip-audit")
+    if pip_audit:
+        parse_script = Path(__file__).parent / "parse_audit_json.py"
+        audit_proc = subprocess.run(  # noqa: S603
+            [pip_audit, "--format=json"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if audit_proc.returncode == 0 and parse_script.is_file():
+            parse_proc = subprocess.run(  # noqa: S603
+                [sys.executable, str(parse_script)],
+                input=audit_proc.stdout,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=10,
+            )
+            if parse_proc.returncode == 0:
+                print(parse_proc.stdout, end="")
+            else:
+                print("pip-audit ran but JSON parsing failed")
+        else:
+            print("pip-audit ran but JSON parsing failed")
+    else:
+        print(PIP_AUDIT_MISSING_SIGNAL)
+        print("pip-audit not installed — CVE scan skipped; install with: pip install pip-audit")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``run_audit_checks.sh`` behaviour.
 
@@ -251,163 +428,21 @@ def main(argv: list[str] | None = None) -> int:
 
     git = _resolve("git")
 
-    if not range_arg:
-        last_tag = os.environ.get("LAST_TAG", "")
-        if not last_tag:
-            desc = _run([git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_TAG_FLAGS])
-            if desc:
-                last_tag = desc
-            else:
-                rev = _run([git, "rev-list", "--max-parents=0", "HEAD"])
-                last_tag = rev.splitlines()[0] if rev else ""
-        # Allowlist: only accept SemVer-style tags or 7-40 hex short SHAs.
-        # Anything else (option-style ``--foo``, ref expressions ``HEAD~``,
-        # arbitrary text) is rejected outright (A03:2021).
-        if not last_tag or not _TAG_OR_SHA_RE.match(last_tag):
-            print(
-                f"run_audit_checks: invalid tag (must be SemVer or 7-40 hex SHA): {last_tag!r}",
-                file=sys.stderr,
-            )
-            return 2
-        range_arg = f"{last_tag}..HEAD"
-    else:
-        # User-supplied ``--range`` bypasses the auto-derived allowlist above —
-        # apply the same allowlist on both endpoints of the range so a crafted
-        # value cannot smuggle git option flags (`--upload-pack=…`) or ref
-        # expressions (`HEAD~`) past the SemVer/SHA gate (A03:2021).
-        # Accept `<endpoint>..<endpoint>` (two-dot) or `<endpoint>...<endpoint>`
-        # (three-dot symmetric diff) only; each endpoint must match
-        # _TAG_OR_SHA_RE or be the literal `HEAD` (the only ref expression
-        # accepted — `HEAD~`, branch names, etc. remain rejected).
-        if "..." in range_arg:
-            endpoints = range_arg.split("...", maxsplit=1)
-        elif ".." in range_arg:
-            endpoints = range_arg.split("..", maxsplit=1)
-        else:
-            endpoints = []
+    range_arg, exit_code = _derive_range(git, range_arg)
+    if exit_code:
+        return exit_code
 
-        def _endpoint_ok(ep: str) -> bool:
-            return ep == "HEAD" or bool(_TAG_OR_SHA_RE.match(ep))
-
-        if len(endpoints) != 2 or not all(_endpoint_ok(ep) for ep in endpoints):
-            print(
-                f"run_audit_checks: invalid --range format (expect <tag-or-sha-or-HEAD>..<tag-or-sha-or-HEAD>): {range_arg!r}",
-                file=sys.stderr,
-            )
-            return 2
-
-    # --- Pre-flight: gh authentication ------------------------------------------
-    print("--- check: gh-auth ---")
     gh = which("gh")
-    if gh is None:
-        print("gh not authenticated — run 'gh auth login' first")
-        return 2
-    auth_proc = subprocess.run(  # noqa: S603
-        [gh, "auth", "status"], capture_output=True, text=True, check=False, timeout=10
-    )
-    combined = auth_proc.stdout + auth_proc.stderr
-    if combined:
-        print(combined, end="")
-    if auth_proc.returncode != 0:
-        print("gh not authenticated — run 'gh auth login' first")
-        return 2
+    exit_code = _check_gh_auth(gh)
+    if exit_code:
+        return exit_code
 
-    # --- Check 1: Repository state -----------------------------------------------
-    print("--- check: repo-state ---")
-    print("## uncommitted changes:")
-    status_out = _run([git, "status", "--short"])
-    if status_out:
-        print(status_out)
-    print(f"## unreleased commits in range {range_arg}:")
-    log_out = _run([git, "log", "--oneline", "--no-merges", range_arg, "--"])
-    if log_out:
-        print(log_out)
-
-    # --- Check 2: CI health ------------------------------------------------------
-    print("--- check: ci-health ---")
-    branch_out = _run([git, "rev-parse", "--abbrev-ref", "HEAD"])
-    branch = branch_out or "HEAD"
-    ci_out = _run([gh, "run", "list", "--branch", branch, "--limit", "5", "--json", "status,conclusion,name"])
-    print(ci_out or "[]")
-
-    # --- Check 3: Open issues and PRs --------------------------------------------
-    print("--- check: open-issues-prs ---")
-    print("## open issues with high-severity labels:")
-    issues_out = _run([gh, "issue", "list", "--state", "open", "--limit", "100", "--json", "number,title,labels"])
-    print(issues_out or "[]")
-    trunk = _detect_trunk(git)
-    print(f"## open PRs targeting {trunk}:")
-    prs_out = _run(
-        [
-            gh,
-            "pr",
-            "list",
-            "--state",
-            "open",
-            "--base",
-            trunk,
-            "--limit",
-            "20",
-            "--json",
-            "number,title,draft,reviewDecision",
-        ]
-    )
-    print(prs_out or "[]")
-
-    # --- Check 4: Documentation alignment ----------------------------------------
-    print("--- check: docs-alignment ---")
-    print(f"## files changed since {range_arg}:")
-    diff_files = _run([git, "diff", "--name-only", range_arg, "--"])
-    if diff_files:
-        print(diff_files)
-    print("## docs/README touched:")
-    docs_changed = [f for f in diff_files.splitlines() if _DOCS_RE.search(f)]
-    if docs_changed:
-        print("\n".join(docs_changed))
-    else:
-        print("no docs changed")
-
-    # --- Check 5: Version consistency --------------------------------------------
-    print("--- check: version-consistency ---")
-    for match_line in _grep_version_files():
-        print(match_line)
-    if tag:
-        print(f"## target version: {tag}")
-
-    # --- Check 6: Critical code signals ------------------------------------------
-    print("--- check: code-signals ---")
-    print("## release-blocking TODOs / FIXME / HACK / XXX (outside tests):")
-    for match_line in _grep_code_signals():
-        print(match_line)
-    print("## dependency CVE scan:")
-    pip_audit = which("pip-audit")
-    if pip_audit:
-        parse_script = Path(__file__).parent / "parse_audit_json.py"
-        audit_proc = subprocess.run(  # noqa: S603
-            [pip_audit, "--format=json"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        )
-        if audit_proc.returncode == 0 and parse_script.is_file():
-            parse_proc = subprocess.run(  # noqa: S603
-                [sys.executable, str(parse_script)],
-                input=audit_proc.stdout,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=10,
-            )
-            if parse_proc.returncode == 0:
-                print(parse_proc.stdout, end="")
-            else:
-                print("pip-audit ran but JSON parsing failed")
-        else:
-            print("pip-audit ran but JSON parsing failed")
-    else:
-        print(PIP_AUDIT_MISSING_SIGNAL)
-        print("pip-audit not installed — CVE scan skipped; install with: pip install pip-audit")
+    _check_repo_state(git, range_arg)
+    _check_ci_health(git, gh)
+    _check_open_issues_prs(gh, git)
+    _check_docs_alignment(git, range_arg)
+    _check_version_consistency(tag)
+    _check_code_signals()
 
     print("--- check: end ---")
     return 0

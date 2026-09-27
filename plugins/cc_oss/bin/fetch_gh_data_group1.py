@@ -337,31 +337,22 @@ def _build_datasets(
     ]
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point — mirrors ``fetch_gh_data_group1.sh`` behaviour.
+def _parse_args(args: list[str]) -> tuple[dict, str | None]:
+    """Parse the manual reject-strict argv flags for ``--repo``/``--output-dir``/cutoffs.
+
+    Already reject-strict (unknown arg → error) and enforces required ``--repo``/
+    ``--output-dir`` plus the owner/repo regex — kept manual rather than a broad
+    ``argparse.parse_args`` call, which would replace this exit-1 contract with
+    argparse's exit-2.
 
     Args:
-        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+        args: Argument list to parse (``-h``/``--help`` already handled by the caller).
 
     Returns:
-        Exit code: 1 on bad args; 0 on success (individual failures non-fatal).
-
-    Examples:
-        No doctest — subprocess-dependent; covered by pytest.
+        ``(fields, None)`` on success, or ``(fields, error_message)`` on the first
+        invalid/unknown/missing-required flag. ``fields`` keys: ``owner_repo``,
+        ``output_dir``, ``cutoff_3y``, ``cutoff_90d``, ``cutoff_180d``.
     """
-    args = list(sys.argv[1:] if argv is None else argv)
-    # Honour only ``-h/--help`` via argparse; every other flag flows through the manual
-    # loop below, which is already reject-strict (unknown arg → exit 1) and enforces
-    # required --repo/--output-dir plus owner/repo regex. A broad parse_args would
-    # replace that exit-1 contract with argparse's exit-2 — keep the manual parser.
-    if args in (["-h"], ["--help"]):
-        argparse.ArgumentParser(
-            prog="fetch_gh_data_group1.py",
-            description="Group 1 parallel gh API data fetch for oss:gh-scraper.",
-        ).parse_args(["-h"])
-
-    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-
     owner_repo = ""
     output_dir = ""
     cutoff_3y = ""
@@ -387,22 +378,95 @@ def main(argv: list[str] | None = None) -> int:
             i += 1
             cutoff_180d = args[i] if i < len(args) else ""
         else:
-            print(f"fetch_gh_data_group1: unknown arg '{a}'", file=sys.stderr)
-            return 1
+            fields = {
+                "owner_repo": owner_repo,
+                "output_dir": output_dir,
+                "cutoff_3y": cutoff_3y,
+                "cutoff_90d": cutoff_90d,
+                "cutoff_180d": cutoff_180d,
+            }
+            return fields, f"fetch_gh_data_group1: unknown arg '{a}'"
         i += 1
 
+    fields = {
+        "owner_repo": owner_repo,
+        "output_dir": output_dir,
+        "cutoff_3y": cutoff_3y,
+        "cutoff_90d": cutoff_90d,
+        "cutoff_180d": cutoff_180d,
+    }
+
     if not owner_repo:
-        print("fetch_gh_data_group1: --repo required", file=sys.stderr)
-        return 1
+        return fields, "fetch_gh_data_group1: --repo required"
     if not _REPO_RE.match(owner_repo):
-        print(
+        return (
+            fields,
             f"fetch_gh_data_group1: --repo must match 'owner/repo' (allowed chars: A-Za-z0-9._-), got: {owner_repo!r}",
-            file=sys.stderr,
         )
-        return 1
     if not output_dir:
-        print("fetch_gh_data_group1: --output-dir required", file=sys.stderr)
+        return fields, "fetch_gh_data_group1: --output-dir required"
+
+    return fields, None
+
+
+def _fetch_all(gh: str, datasets: list[tuple[str, list[str]]], out_path: Path) -> int:
+    """Fan out ``_fetch_one`` across all datasets and count the written files.
+
+    Cap concurrency at 10 — running 21 simultaneous ``gh api`` calls easily
+    triggers GitHub's secondary rate limits (HTTP 403 "abuse detection")
+    which cause silent partial failures across the dataset.
+
+    Args:
+        gh: Absolute path to the gh binary.
+        datasets: List of ``(name, cmd_args)`` tuples to fetch.
+        out_path: Directory each dataset is written into.
+
+    Returns:
+        Count of ``.json`` dataset files written to ``out_path``.
+    """
+    with ThreadPoolExecutor(max_workers=min(len(datasets), 10)) as executor:
+        futures = {executor.submit(_fetch_one, gh, name, cmd_args, out_path): name for name, cmd_args in datasets}
+        for future in as_completed(futures):
+            future.result()
+
+    return sum(1 for f in out_path.iterdir() if f.suffix == ".json" and f.is_file())
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point — mirrors ``fetch_gh_data_group1.sh`` behaviour.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Exit code: 1 on bad args; 0 on success (individual failures non-fatal).
+
+    Examples:
+        No doctest — subprocess-dependent; covered by pytest.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    # Honour only ``-h/--help`` via argparse; every other flag flows through the manual
+    # loop below, which is already reject-strict (unknown arg → exit 1) and enforces
+    # required --repo/--output-dir plus owner/repo regex. A broad parse_args would
+    # replace that exit-1 contract with argparse's exit-2 — keep the manual parser.
+    if args in (["-h"], ["--help"]):
+        argparse.ArgumentParser(
+            prog="fetch_gh_data_group1.py",
+            description="Group 1 parallel gh API data fetch for oss:gh-scraper.",
+        ).parse_args(["-h"])
+
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+
+    fields, err = _parse_args(args)
+    if err:
+        print(err, file=sys.stderr)
         return 1
+
+    owner_repo: str = fields["owner_repo"]
+    output_dir: str = fields["output_dir"]
+    cutoff_3y: str = fields["cutoff_3y"]
+    cutoff_90d: str = fields["cutoff_90d"]
+    cutoff_180d: str = fields["cutoff_180d"]
 
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -416,15 +480,7 @@ def main(argv: list[str] | None = None) -> int:
     gh = _resolve("gh")
     datasets = _build_datasets(owner_repo, cutoff_3y, cutoff_90d, cutoff_180d)
 
-    # Cap concurrency at 10 — running 21 simultaneous `gh api` calls easily
-    # triggers GitHub's secondary rate limits (HTTP 403 "abuse detection")
-    # which cause silent partial failures across the dataset.
-    with ThreadPoolExecutor(max_workers=min(len(datasets), 10)) as executor:
-        futures = {executor.submit(_fetch_one, gh, name, cmd_args, out_path): name for name, cmd_args in datasets}
-        for future in as_completed(futures):
-            future.result()
-
-    count = sum(1 for f in out_path.iterdir() if f.suffix == ".json" and f.is_file())
+    count = _fetch_all(gh, datasets, out_path)
     print(f"[fetch_gh_data_group1] wrote {count} dataset files → {output_dir}", file=sys.stderr)
     return 0
 

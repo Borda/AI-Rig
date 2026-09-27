@@ -40,14 +40,14 @@ def _spawn_recorder(monkeypatch) -> list[tuple]:
         calls.append((scan_index_bin, scan_root, changed_count))
         return False
 
-    monkeypatch.setattr(_query_mod, "_run_incremental_scan", _record)
+    monkeypatch.setattr(_query_mod.index_io, "_run_incremental_scan", _record)
     return calls
 
 
 @pytest.fixture(name="one_changed_file")
 def _one_changed_file(monkeypatch) -> None:
     """Report exactly one changed file, keeping the change set under the heal cap."""
-    monkeypatch.setattr(_query_mod, "_changed_py_files", lambda index: ["pkg/mod.py"])
+    monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: ["pkg/mod.py"])
 
 
 @pytest.mark.usefixtures("one_changed_file")
@@ -95,7 +95,7 @@ def test_gate_is_not_consulted_when_the_index_is_fresh(tmp_path: Path, monkeypat
     Nearly every query runs against a fresh index, so the probe must sit after the change-set check, not before it.
     """
     probed: list[Path] = []
-    monkeypatch.setattr(_query_mod, "_changed_py_files", lambda index: [])
+    monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: [])
     monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
 
     maybe_self_heal({"file_shas": {}}, tmp_path / "idx.json", tmp_path)
@@ -107,7 +107,7 @@ def test_gate_is_not_consulted_when_the_change_set_exceeds_the_cap(tmp_path: Pat
     """An oversized change set is refused before the gate, as it was before gating existed."""
     probed: list[Path] = []
     oversized = [f"pkg/mod_{n}.py" for n in range(_query_mod._HEAL_MAX_CHANGED_FILES + 1)]
-    monkeypatch.setattr(_query_mod, "_changed_py_files", lambda index: oversized)
+    monkeypatch.setattr(_query_mod.index_io, "_changed_py_files", lambda index: oversized)
     monkeypatch.setattr(_query_mod.rwgate, "writer_active", lambda path: probed.append(path) or False)
 
     maybe_self_heal({"file_shas": {}}, tmp_path / "idx.json", tmp_path)

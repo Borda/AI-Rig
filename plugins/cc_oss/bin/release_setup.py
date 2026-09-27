@@ -140,6 +140,59 @@ def _resolve_skill_dir() -> str:
     return "plugins/cc_oss/skills/release"
 
 
+def _resolve_stable_baseline(git: str) -> tuple[str, str, str]:
+    """Resolve the stable-branch baseline when the current branch has no own stable tag.
+
+    Source-tag resolution (with its own first-commit fallback), ``merge-base``
+    common-ancestor resolution (with its own fallback), ``last_tag`` resolution,
+    and the cherry-pick-subjects log.
+
+    Args:
+        git: Absolute path to the git binary.
+
+    Returns:
+        ``(last_tag, cherry_pick_subjects, source_tag_ref)``.
+    """
+    source_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS)
+    if not source_tag:
+        first_commit_out = _git(git, "rev-list", "--max-parents=0", "HEAD")
+        source_tag = first_commit_out.splitlines()[0] if first_commit_out else ""
+        print(
+            "ℹ No stable tags found — using initial commit as range base (first release; range covers full history)",
+            file=sys.stderr,
+        )
+
+    source_commit_raw = _git(git, "rev-list", "-n1", f"refs/tags/{source_tag}")
+    source_commit = source_commit_raw or source_tag
+
+    common_commit = _git(git, "merge-base", "HEAD", source_commit)
+    if not common_commit:
+        print("Warning: no common ancestor found — range may span full history", file=sys.stderr)
+        initial_out = _git(git, "rev-list", "--max-parents=0", "HEAD")
+        common_commit = initial_out.splitlines()[0] if initial_out else ""
+
+    last_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS, common_commit)
+    if not last_tag:
+        last_tag = common_commit
+
+    cherry_pick_subjects = _git(git, "log", f"{last_tag}..{source_tag}", "--no-merges", "--format=%s")
+    source_tag_ref = source_tag
+    print(f"ℹ Stable-branch mode: base={last_tag}  source={source_tag}", file=sys.stderr)
+
+    return last_tag, cherry_pick_subjects, source_tag_ref
+
+
+def _write_setup_outputs(out_dir: Path, values: dict[str, str]) -> None:
+    """Write each resolved value to its own file under ``out_dir``.
+
+    Args:
+        out_dir: Directory to write ``<KEY>`` files into (caller ensures it exists).
+        values: Ordered key → value mapping; one file written per entry.
+    """
+    for key, val in values.items():
+        (out_dir / key).write_text(f"{val}\n", encoding="utf-8", newline="\n")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — writes resolved vars to ${TMPDIR:-/tmp}/release-setup-${CSID}/<KEY> files.
 
@@ -177,49 +230,24 @@ def main(argv: list[str] | None = None) -> int:
     if branch_tag:
         last_tag = branch_tag
     else:
-        source_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS)
-        if not source_tag:
-            first_commit_out = _git(git, "rev-list", "--max-parents=0", "HEAD")
-            source_tag = first_commit_out.splitlines()[0] if first_commit_out else ""
-            print(
-                "ℹ No stable tags found — using initial commit as range base"
-                " (first release; range covers full history)",
-                file=sys.stderr,
-            )
-
-        source_commit_raw = _git(git, "rev-list", "-n1", f"refs/tags/{source_tag}")
-        source_commit = source_commit_raw or source_tag
-
-        common_commit = _git(git, "merge-base", "HEAD", source_commit)
-        if not common_commit:
-            print("Warning: no common ancestor found — range may span full history", file=sys.stderr)
-            initial_out = _git(git, "rev-list", "--max-parents=0", "HEAD")
-            common_commit = initial_out.splitlines()[0] if initial_out else ""
-
-        last_tag = _git(git, "describe", "--tags", "--abbrev=0", *_EXCLUDE_FLAGS, common_commit)
-        if not last_tag:
-            last_tag = common_commit
-
-        cherry_pick_subjects = _git(git, "log", f"{last_tag}..{source_tag}", "--no-merges", "--format=%s")
-        source_tag_ref = source_tag
-        print(f"ℹ Stable-branch mode: base={last_tag}  source={source_tag}", file=sys.stderr)
+        last_tag, cherry_pick_subjects, source_tag_ref = _resolve_stable_baseline(git)
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     out_dir = _native_temp_dir() / f"release-setup-{csid}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for key, val in (
-        ("SKILL_DIR", _shell_path(skill_dir)),
-        ("REPO_ROOT", _shell_path(repo_root)),
-        ("BRANCH", branch),
-        ("BRANCH_REF", raw_branch),
-        ("BRANCH_KEY", branch_state_key(raw_branch)),
-        ("DATE", date),
-        ("LAST_TAG", last_tag),
-        ("CHERRY_PICK_SUBJECTS", cherry_pick_subjects),
-        ("SOURCE_TAG_REF", source_tag_ref),
-    ):
-        (out_dir / key).write_text(f"{val}\n", encoding="utf-8", newline="\n")
+    values = {
+        "SKILL_DIR": _shell_path(skill_dir),
+        "REPO_ROOT": _shell_path(repo_root),
+        "BRANCH": branch,
+        "BRANCH_REF": raw_branch,
+        "BRANCH_KEY": branch_state_key(raw_branch),
+        "DATE": date,
+        "LAST_TAG": last_tag,
+        "CHERRY_PICK_SUBJECTS": cherry_pick_subjects,
+        "SOURCE_TAG_REF": source_tag_ref,
+    }
+    _write_setup_outputs(out_dir, values)
 
     return 0
 

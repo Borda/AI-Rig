@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from typing import Any, Iterable, Mapping
 
 
@@ -163,6 +163,25 @@ class Request:
     session_id: str | None = None
     origin_workspace: Path | None = None
     supported_efforts: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EnvelopeContext:
+    """Bundle the request and observed-execution values every envelope of one attempt is built from.
+
+    The same seven values repeat across each early-out and each post-execution branch of a single
+    :func:`run_request` attempt, so the supervisor builds one context before the child runs and one after it, instead
+    of threading the identical positional arguments through nine call sites. The context is an internal parameter
+    bundle only: it is never serialized, and never reaches :func:`validate_envelope`.
+    """
+
+    request: Request
+    paths: BridgePaths
+    transcript_path: str | None
+    tokens: dict[str, float]
+    session_id: str | None
+    duration: float
+    substitution: dict[str, str] | None = None
 
 
 def validate_request_transport_budget(request: Request) -> None:
@@ -400,6 +419,11 @@ def _is_write_verb(verb: str) -> bool:
     return verb == "implement"
 
 
+def _unstarted_context(request: Request, paths: BridgePaths) -> EnvelopeContext:
+    """Return the envelope context for a request rejected before any child observation exists."""
+    return EnvelopeContext(request, paths, None, {}, None, 0.0)
+
+
 def run_request(
     request: Request,
     *,
@@ -422,13 +446,13 @@ def run_request(
         # a structured result, not as an opaque transport error; the envelope
         # itself needs a valid depth, so the rejected value is clamped there.
         reportable = Request(**{**request.__dict__, "depth": max(request.depth, 0)})
-        return _terminal_envelope(reportable, paths, "blocked", str(error), None, {}, None, 0.0)
+        return _terminal_envelope(_unstarted_context(reportable, paths), "blocked", str(error))
     if request.depth >= 1:
-        return _terminal_envelope(request, paths, "refused", "recursion-depth", None, {}, None, 0.0)
+        return _terminal_envelope(_unstarted_context(request, paths), "refused", "recursion-depth")
     try:
         effective_effort, substitution = normalize_effort(request.effort, host, request.supported_efforts)
     except ValueError as error:
-        return _terminal_envelope(request, paths, "blocked", str(error), None, {}, None, 0.0)
+        return _terminal_envelope(_unstarted_context(request, paths), "blocked", str(error))
     effective_request = Request(**{**request.__dict__, "effort": effective_effort})
     schema_path = Path(__file__).resolve().parents[1] / "schemas" / "envelope.schema.json"
     command = (
@@ -444,9 +468,7 @@ def run_request(
         )
     else:
         if _job_cancel_requested(_job_path):
-            return _terminal_envelope(
-                effective_request, paths, "blocked", "cancelled by job owner", None, {}, None, 0.0
-            )
+            return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
         outcome = _run_child(
             command,
             effective_request.workspace,
@@ -456,17 +478,20 @@ def run_request(
     duration = time.monotonic() - started
     transcript = _write_transcript(paths, outcome.stdout, outcome.stderr)
     event_info = _parse_output(outcome.stdout, host)
+    observed = EnvelopeContext(
+        effective_request,
+        paths,
+        transcript,
+        event_info.tokens,
+        event_info.session_id,
+        duration,
+        _recovery or substitution,
+    )
     if outcome.output_limited:
         return _terminal_envelope(
-            effective_request,
-            paths,
+            observed,
             "blocked",
             outcome.error or "child output exceeded the Bridge capture limit",
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
             fault="output-limit",
             workspace_delta=(
                 _workspace_delta(before_delta, effective_request.workspace)
@@ -487,15 +512,9 @@ def run_request(
                 retry, host=host, _attempt=1, _recovery=recovery, _prior_incident=incident, _job_path=_job_path
             )
         return _terminal_envelope(
-            effective_request,
-            paths,
+            observed,
             "timeout",
             "hard cutoff reached",
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
             workspace_delta=(
                 _workspace_delta(before_delta, effective_request.workspace)
                 if _is_write_verb(effective_request.verb)
@@ -505,15 +524,9 @@ def run_request(
         )
     if outcome.error:
         return _terminal_envelope(
-            effective_request,
-            paths,
+            observed,
             "blocked",
             outcome.error,
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
             workspace_delta=(
                 _workspace_delta(before_delta, effective_request.workspace)
                 if _is_write_verb(effective_request.verb)
@@ -543,74 +556,22 @@ def run_request(
             return run_request(
                 retry, host=host, _attempt=1, _recovery=recovery, _prior_incident=incident, _job_path=_job_path
             )
-        return _terminal_envelope(
-            effective_request,
-            paths,
-            "blocked",
-            reason,
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
-            prior_incident=_prior_incident,
-        )
+        return _terminal_envelope(observed, "blocked", reason, prior_incident=_prior_incident)
     if event_info.core is None and event_info.error:
         # A zero exit can still carry a structured provider failure; surface
         # that cause instead of a generic invalid-model-result message.
-        return _terminal_envelope(
-            effective_request,
-            paths,
-            "blocked",
-            event_info.error,
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
-            prior_incident=_prior_incident,
-        )
+        return _terminal_envelope(observed, "blocked", event_info.error, prior_incident=_prior_incident)
     try:
         core = _public_core(validate_model_core(event_info.core))
     except ValueError as error:
-        return _terminal_envelope(
-            effective_request,
-            paths,
-            "blocked",
-            f"invalid model result: {error}",
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
-            prior_incident=_prior_incident,
-        )
-    envelope = _make_envelope(
-        effective_request,
-        core,
-        transcript,
-        event_info.tokens,
-        event_info.cost,
-        event_info.session_id if _is_write_verb(effective_request.verb) else None,
-        duration,
-        _recovery or substitution,
-        _prior_incident,
-    )
+        return _terminal_envelope(observed, "blocked", f"invalid model result: {error}", prior_incident=_prior_incident)
+    # Only the write-capable verb may report a resumable session; the others drop it from the envelope.
+    reportable_session = observed if _is_write_verb(effective_request.verb) else replace(observed, session_id=None)
+    envelope = _make_envelope(reportable_session, core, event_info.cost, _prior_incident)
     try:
         _append_health(paths, envelope)
     except ArtifactBoundaryError as error:
-        return _terminal_envelope(
-            effective_request,
-            paths,
-            "blocked",
-            str(error),
-            transcript,
-            event_info.tokens,
-            event_info.session_id,
-            duration,
-            _recovery or substitution,
-            record_health=False,
-        )
+        return _terminal_envelope(observed, "blocked", str(error), record_health=False)
     return envelope
 
 
@@ -832,8 +793,12 @@ def _extra_child_environment_keys(env: Mapping[str, str]) -> list[str]:
     return [name for name in names if name != CHILD_ENV_EXTRA_VARIABLE and _ENVIRONMENT_NAME.match(name)]
 
 
-def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Path | None = None) -> ChildOutcome:
-    """Run a child in its own process group with stdin closed from birth."""
+def _spawn_child(command: list[str], workspace: Path, timeout: float) -> subprocess.Popen[bytes] | ChildOutcome:
+    """Start one child in its own process group, or return the outcome that replaces supervising it.
+
+    A refused spawn and an adapter that supplies no pipes both finish the call before supervision can begin, so each
+    returns a complete :class:`ChildOutcome` instead of a process for the caller to wait on.
+    """
     environment = build_child_environment()
     environment[DEPTH_ENVIRONMENT_VARIABLE] = str(_next_bridge_depth())
     kwargs: dict[str, Any] = {
@@ -858,27 +823,32 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
         # production Popen always supplies them because both streams are PIPE.
         stdout, stderr = process.communicate(timeout=timeout)
         return ChildOutcome(stdout, stderr, process.returncode, False, None)
-    output = _ChildOutputBuffer()
-    readers = _start_output_readers(process, output)
-    deadline = time.monotonic() + timeout
-    timed_out = False
-    error = None
+    return process
+
+
+def _wait_for_child(
+    process: subprocess.Popen[bytes],
+    output: _ChildOutputBuffer,
+    readers: list[threading.Thread],
+    deadline: float,
+    job_path: Path | None,
+) -> tuple[bool, str | None, bool]:
+    """Supervise one running child until capture overflow, cancellation, the hard cutoff, or its own exit.
+
+    Returns whether the cutoff was reached, the cooperative-cancellation reason when there is one, and whether both
+    output readers drained inside the cleanup grace.
+    """
     while True:
         if output.output_limited.is_set():
             _terminate_process_group(process)
-            drained = _finish_output_readers(readers)
-            break
+            return False, None, _finish_output_readers(readers)
         if job_path is not None and _job_cancel_requested(job_path):
             _terminate_process_group(process)
-            drained = _finish_output_readers(readers)
-            error = "cancelled by job owner"
-            break
+            return False, "cancelled by job owner", _finish_output_readers(readers)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             _terminate_process_group(process)
-            drained = _finish_output_readers(readers)
-            timed_out = True
-            break
+            return True, None, _finish_output_readers(readers)
         if process.poll() is not None:
             drained = _finish_output_readers(readers)
             if not drained:
@@ -886,8 +856,19 @@ def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Pa
                 # terminate the remaining group before returning its bounded output.
                 _terminate_process_group(process)
                 _finish_output_readers(readers)
-            break
+            return False, None, drained
         time.sleep(min(0.05, remaining))
+
+
+def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Path | None = None) -> ChildOutcome:
+    """Run a child in its own process group with stdin closed from birth."""
+    spawned = _spawn_child(command, workspace, timeout)
+    if isinstance(spawned, ChildOutcome):
+        return spawned
+    process = spawned
+    output = _ChildOutputBuffer()
+    readers = _start_output_readers(process, output)
+    timed_out, error, drained = _wait_for_child(process, output, readers, time.monotonic() + timeout, job_path)
     # Final flush can reveal that an incomplete record was not compactable.
     # Overflow wins on every exit path so timeout recovery cannot replay it.
     stdout, stderr = output.text()
@@ -1281,30 +1262,23 @@ def _workspace_delta(before: list[str], workspace: Path) -> list[str]:
 
 
 def _make_envelope(
-    request: Request,
-    core: dict[str, Any],
-    transcript_path: str,
-    tokens: dict[str, float],
-    cost: float | None,
-    session_id: str | None,
-    duration: float,
-    substitution: dict[str, str] | None,
-    incident: str | None,
+    context: EnvelopeContext, core: dict[str, Any], cost: float | None, incident: str | None
 ) -> dict[str, Any]:
     """Merge validated core and observed values into the sole public result shape."""
+    request = context.request
     envelope = {
         **core,
         "model": request.model or "host-default",
         "effort": request.effort,
-        "effort_substituted": substitution,
+        "effort_substituted": context.substitution,
         "cost": cost,
-        "tokens": tokens,
-        "duration_seconds": duration,
+        "tokens": context.tokens,
+        "duration_seconds": context.duration,
         "depth": request.depth,
         "run_id": request.run_id,
         "incident": incident,
-        "session_id": session_id,
-        "transcript_path": transcript_path,
+        "session_id": context.session_id,
+        "transcript_path": context.transcript_path,
         "verb": request.verb,
         "direction": request.direction,
     }
@@ -1312,23 +1286,20 @@ def _make_envelope(
 
 
 def _terminal_envelope(
-    request: Request,
-    paths: BridgePaths,
+    context: EnvelopeContext,
     status: str,
     reason: str,
-    transcript_path: str | None,
-    tokens: dict[str, float],
-    session_id: str | None,
-    duration: float,
-    substitution: dict[str, str] | None = None,
+    *,
     workspace_delta: list[str] | None = None,
     prior_incident: str | None = None,
     record_health: bool = True,
     fault: str | None = None,
 ) -> dict[str, Any]:
     """Create, record, and return a harness-owned terminal result."""
-    if transcript_path is None:
-        transcript_path = _write_transcript(paths, "", reason)
+    paths = context.paths
+    if context.transcript_path is None:
+        context = replace(context, transcript_path=_write_transcript(paths, "", reason))
+    transcript_path = str(context.transcript_path)
     core = {
         "status": status,
         "verdict": reason,
@@ -1338,11 +1309,9 @@ def _terminal_envelope(
         "blockers": [reason],
     }
     incident = _write_incident(
-        paths, request, fault or status, reason, transcript_path, workspace_delta, prior_incident
+        paths, context.request, fault or status, reason, transcript_path, workspace_delta, prior_incident
     )
-    envelope = _make_envelope(
-        request, core, transcript_path, tokens, None, session_id, duration, substitution, incident
-    )
+    envelope = _make_envelope(context, core, None, incident)
     if record_health:
         try:
             _append_health(paths, envelope)
@@ -1772,6 +1741,40 @@ def _resolve_task(args: argparse.Namespace) -> str:
         raise ValueError(f"--task-file could not be read: {error}") from error
 
 
+def _run_as_supervisor(request: Request, job_id: str) -> dict[str, Any]:
+    """Run one detached job inside this process and leave its job record in a terminal state."""
+    record_path = _job_record_path(request.workspace, job_id)
+    record = _read_job(request.workspace, job_id)
+    if record is None:
+        raise ValueError("supervisor job record is missing")
+    if not _job_cancel_requested(record_path):
+        record["pid"] = os.getpid()
+        record["status"] = "running"
+        _write_json(record_path, record)
+    try:
+        output = run_request(request, _job_path=record_path)
+    except (OSError, ValueError) as error:
+        # Leave a terminal record so lifecycle callers stop polling
+        # a supervisor that died before writing its result.
+        failed = _read_job(request.workspace, job_id)
+        if failed is not None:
+            failed["status"] = "failed"
+            failed["error"] = str(error)
+            _write_json(record_path, failed)
+        raise
+    record = _read_job(request.workspace, job_id)
+    if record is None:
+        raise ValueError("supervisor job record disappeared")
+    if _job_cancel_requested(record_path):
+        output = _cancelled_envelope(output)
+        record["status"] = "cancelled"
+    else:
+        record["status"] = "finished"
+    record["result"] = output
+    _write_json(record_path, record)
+    return output
+
+
 def _request_from_args(args: argparse.Namespace) -> Request:
     """Build a validated public request from one command-line namespace."""
     workspace = Path(args.workspace).resolve()
@@ -1858,35 +1861,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.supervisor:
                 if args.job_id is None:
                     raise ValueError("--supervisor requires --job-id")
-                record_path = _job_record_path(request.workspace, args.job_id)
-                record = _read_job(request.workspace, args.job_id)
-                if record is None:
-                    raise ValueError("supervisor job record is missing")
-                if not _job_cancel_requested(record_path):
-                    record["pid"] = os.getpid()
-                    record["status"] = "running"
-                    _write_json(record_path, record)
-                try:
-                    output = run_request(request, _job_path=record_path)
-                except (OSError, ValueError) as error:
-                    # Leave a terminal record so lifecycle callers stop polling
-                    # a supervisor that died before writing its result.
-                    failed = _read_job(request.workspace, args.job_id)
-                    if failed is not None:
-                        failed["status"] = "failed"
-                        failed["error"] = str(error)
-                        _write_json(record_path, failed)
-                    raise
-                record = _read_job(request.workspace, args.job_id)
-                if record is None:
-                    raise ValueError("supervisor job record disappeared")
-                if _job_cancel_requested(record_path):
-                    output = _cancelled_envelope(output)
-                    record["status"] = "cancelled"
-                else:
-                    record["status"] = "finished"
-                record["result"] = output
-                _write_json(record_path, record)
+                output = _run_as_supervisor(request, args.job_id)
             elif request.background:
                 output = start_background(request)
             else:

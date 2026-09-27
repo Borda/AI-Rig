@@ -107,6 +107,7 @@ STATIC_REFERENCE_TYPES = frozenset({"symbol_extraction", "real_issue"})
 
 sys.path.insert(0, str(BENCHMARKS))
 import _bench_common.provider_parity_contracts as core  # noqa: E402
+from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
 
 
 def _sha256(path: Path) -> str:
@@ -244,6 +245,16 @@ def _build_suites(policy: Mapping[str, Any]) -> list[dict[str, Any]]:
     return suites
 
 
+# Runners whose implementation lives in a package behind a thin re-export shim: the pin has to
+# cover the package too, or it would only prove the shim is unchanged. Keyed exactly as before so
+# every consumer of ``artifact_sha256`` keeps reading the same names.
+RUNNER_PACKAGES = {
+    "run_claude_agentic": ("benchmarks/run-claude-agentic.py", "benchmarks/_bench_claude/agentic"),
+    "run_claude_structural": ("benchmarks/run-claude-structural.py", "benchmarks/_bench_claude/structural"),
+    "run_codex_structural": ("benchmarks/run-codex-structural.py", "benchmarks/_bench_codex/structural"),
+}
+
+
 def _artifact_hashes() -> dict[str, str]:
     """Lock shared provider-neutral implementation bytes used by both runners."""
     paths = {
@@ -251,7 +262,7 @@ def _artifact_hashes() -> dict[str, str]:
         "agentic_reporting": "benchmarks/_bench_common/agentic_reporting.py",
         "claude_query_skill": "plugins/codemap-py/claude-skills/query-code/SKILL.md",
         "codemap_graph": "plugins/codemap-py/src/codemap_py/graph.py",
-        "codemap_query": "plugins/codemap-py/src/codemap_py/query.py",
+        "codemap_query": "plugins/codemap-py/src/codemap_py/query",
         "codex_query_skill": "plugins/codemap-py/codex-skills/query-code/SKILL.md",
         "provider_parity_contracts": "benchmarks/_bench_common/provider_parity_contracts.py",
         "edit_patch_contracts": "benchmarks/_bench_common/edit_patch_contracts.py",
@@ -260,12 +271,15 @@ def _artifact_hashes() -> dict[str, str]:
         "presentation": "benchmarks/_bench_common/presentation.py",
         "patch_index_locks": "benchmarks/suites/patch-index-locks.json",
         "run_all": "benchmarks/run-all.sh",
-        "run_claude_agentic": "benchmarks/run-claude-agentic.py",
-        "run_claude_structural": "benchmarks/run-claude-structural.py",
         "run_codex_agentic": "benchmarks/run-codex-agentic.py",
-        "run_codex_structural": "benchmarks/run-codex-structural.py",
     }
-    return {name: _sha256(ROOT / relative_path) for name, relative_path in paths.items()}
+    # module_sha256, not _sha256: a pinned codemap module may now be a package directory,
+    # which _sha256 rejects outright. It still plain-hashes every entry that is a file.
+    hashes = {name: module_sha256(ROOT / relative_path) for name, relative_path in paths.items()}
+    hashes.update(
+        {name: runner_sha256(ROOT / runner, ROOT / package) for name, (runner, package) in RUNNER_PACKAGES.items()}
+    )
+    return dict(sorted(hashes.items()))
 
 
 def _suite_integrity(suites: list[dict[str, Any]]) -> dict[str, Any]:

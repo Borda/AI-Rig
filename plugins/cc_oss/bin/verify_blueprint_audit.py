@@ -179,20 +179,26 @@ def row_kind(record: dict) -> str | None:
     return None
 
 
-def _detail_findings_before(detail: dict, record: dict) -> list[str]:
-    """Return schema findings for a before-row's ``action_detail``."""
+def _check_decision_and_verdicts(detail: dict) -> list[str]:
+    """Check a before-row's own decision and lane, and the pair of verdicts behind them."""
     findings = []
     if detail.get("decision") not in DECISIONS or detail.get("lane") not in LANES:
         findings.append("before-row needs a valid decision and lane")
     verdicts = detail.get("verdicts")
     if not isinstance(verdicts, list) or len(verdicts) != 2:
         findings.append("before-row needs exactly two verdicts")
-    else:
-        lanes = [entry.get("lane") if isinstance(entry, dict) else None for entry in verdicts]
-        if len(set(lanes)) != 2 or not set(lanes) <= LANES:
-            findings.append("verdicts must carry two distinct known lanes")
-        if any(not isinstance(entry, dict) or entry.get("decision") not in DECISIONS for entry in verdicts):
-            findings.append("each verdict needs a valid decision")
+        return findings
+    lanes = [entry.get("lane") if isinstance(entry, dict) else None for entry in verdicts]
+    if len(set(lanes)) != 2 or not set(lanes) <= LANES:
+        findings.append("verdicts must carry two distinct known lanes")
+    if any(not isinstance(entry, dict) or entry.get("decision") not in DECISIONS for entry in verdicts):
+        findings.append("each verdict needs a valid decision")
+    return findings
+
+
+def _check_outcome_and_forbidden_fields(detail: dict, record: dict) -> list[str]:
+    """Check the allow-only fields, the pending outcome, and the after-row-only keys."""
+    findings = []
     if detail.get("decision") != "allow" and ("rank" in detail or "src" in detail):
         findings.append("rank and src belong to an allow only")
     if record.get("outcome") not in BEFORE_OUTCOMES:
@@ -200,6 +206,11 @@ def _detail_findings_before(detail: dict, record: dict) -> list[str]:
     if {"status", "event", "reason"} & set(detail):
         findings.append("status, event and reason are forbidden on a before-row")
     return findings
+
+
+def _detail_findings_before(detail: dict, record: dict) -> list[str]:
+    """Return schema findings for a before-row's ``action_detail``."""
+    return _check_decision_and_verdicts(detail) + _check_outcome_and_forbidden_fields(detail, record)
 
 
 def _detail_findings_after(detail: dict, record: dict) -> list[str]:
@@ -386,11 +397,8 @@ def _derive_parent(before_rows: list[dict]) -> str | None:
     return str(ranked[0].get("record_id"))
 
 
-def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileReport) -> None:
-    """Classify one ``(session_id, tool_use_id)`` group and record its buckets."""
-    before = [record for _, record in rows if row_kind(record) == "before"]
-    after = [record for _, record in rows if row_kind(record) == "after"]
-
+def _check_evidence_completeness(before: list[dict], after: list[dict], context: dict, report: FileReport) -> None:
+    """Record whether every writer decided, and every closer closed, this group."""
     writers = {str(record.get("agent_id")) for record in before}
     if before and writers < context["all_writers"]:
         report.buckets["incomplete-evidence"] += 1
@@ -405,6 +413,10 @@ def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileRep
     if not before:
         report.buckets["no-decision-evidence"] += 1
 
+
+def _check_allow_consensus(before: list[dict], context: dict, report: FileReport) -> None:
+    """Record competing allows, and an abstention every writer witnessed."""
+    writers = {str(record.get("agent_id")) for record in before}
     allowed = {str(r.get("agent_id")) for r in before if (r.get("action_detail") or {}).get("decision") == "allow"}
     declined = any((r.get("action_detail") or {}).get("decision") == "passthrough" for r in before)
     if len(allowed) > 1:
@@ -412,6 +424,9 @@ def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileRep
     if before and not allowed and declined and writers >= context["all_writers"]:
         report.buckets["observed-abstention"] += 1
 
+
+def _check_close_consistency(after: list[dict], report: FileReport) -> None:
+    """Record duplicated close rows and groups closed both successfully and not."""
     seen_closes: Counter = Counter(
         (str(record.get("agent_id")), (record.get("action_detail") or {}).get("event")) for record in after
     )
@@ -420,6 +435,11 @@ def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileRep
     if {"success", "failure"} <= outcomes:
         report.buckets["dual-close"] += 1
 
+
+def _check_completion_state(
+    rows: list[tuple[int, dict]], before: list[dict], after: list[dict], context: dict, report: FileReport
+) -> None:
+    """Bucket a never-closed group, and derive the parent its allows imply."""
     if before and not after:
         last_before = max(index for index, record in rows if row_kind(record) == "before")
         bucket = "completion-unobserved" if context["last_session_end"] > last_before else "in-flight-or-hard-kill"
@@ -428,6 +448,17 @@ def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileRep
     parent = _derive_parent(before)
     if parent is not None:
         report.counts["parent"][f"{context['session_id']}|{context['tool_use_id']}"] = parent
+
+
+def _classify_group(rows: list[tuple[int, dict]], context: dict, report: FileReport) -> None:
+    """Classify one ``(session_id, tool_use_id)`` group and record its buckets."""
+    before = [record for _, record in rows if row_kind(record) == "before"]
+    after = [record for _, record in rows if row_kind(record) == "after"]
+
+    _check_evidence_completeness(before, after, context, report)
+    _check_allow_consensus(before, context, report)
+    _check_close_consistency(after, report)
+    _check_completion_state(rows, before, after, context, report)
 
 
 def verify_file(path: Path, max_lines: int, nosession_max_bytes: int) -> FileReport:

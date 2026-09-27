@@ -77,6 +77,7 @@ def compare(prefixes: list[str], help_text: str) -> tuple[list[str], list[str]]:
 
 
 def main() -> int:
+    """Compare the RTK rewrite hook's prefix list against the installed RTK."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--hook", default=".claude/hooks/rtk-rewrite.js")
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds for `rtk --help`")

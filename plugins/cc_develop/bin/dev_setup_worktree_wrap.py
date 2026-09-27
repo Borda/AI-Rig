@@ -67,6 +67,7 @@ def _run_setup(bin_dir: Path, sentinel: str) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Set up a team-mode run directory shared by feature/fix/refactor."""
     skill = argv[1] if len(argv) > 1 else ""
     entry = _SKILLS.get(skill)
     if entry is None:

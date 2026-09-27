@@ -137,6 +137,52 @@ def _write_venue(slug: str, args: str, choices: str, sentinel: Path) -> int:
     return 0
 
 
+def _resolve_sentinel_path(slug: str, csid: str, out_file: str, out_file_named: bool, tmp: Path) -> Path | None:
+    """Choose where the keep value is written, or ``None`` when ``--out-file`` is unusable.
+
+    Without ``--out-file`` the path is the per-session slug sentinel. With it, the caller's path must stay inside the
+    temp dir or the working directory; the rejection is printed here.
+    """
+    if out_file_named and not out_file:
+        # Falling back to the slug path here would exit 0 while writing somewhere the caller
+        # does not read, losing the keep value silently. A caller that names the option owes
+        # a value.
+        print("extract-keep-flag: --out-file given without a value", file=sys.stderr)
+        return None
+    if not out_file:
+        return tmp / f"{slug}-keep-items-{csid}"
+    # Callers spell the same directory `${TMPDIR:-/tmp}`, which is not what this process sees
+    # when TMPDIR is unset: tempfile.gettempdir() answers TEMP/TMP on native Windows and may
+    # answer a private per-session dir on macOS. Accepting the shell's spelling as a root too
+    # keeps a caller-computed --out-file from being rejected as "outside the temp dir".
+    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")
+    sentinel = Path(out_file)
+    if not _within(sentinel, (tmp, shell_tmp, Path.cwd())):
+        # Every real caller writes into the session temp dir or the project it runs in. The
+        # value is fixed skill text today, but this script creates parent directories, so an
+        # unconstrained path would let a future caller — or a blob that reached argv — build
+        # a tree anywhere the process can write.
+        print(
+            f"extract-keep-flag: --out-file {sentinel} is outside the temp dir and the working directory",
+            file=sys.stderr,
+        )
+        return None
+    return sentinel
+
+
+def _write_keep_sentinel(sentinel: Path, keep_items: str) -> int | None:
+    """Write the keep value to its sentinel, returning ``1`` if the write failed."""
+    try:
+        # The per-session state directory is the caller's to name but not always its to
+        # create: with --out-file this script may be the first writer into it.
+        sentinel.parent.mkdir(parents=True, exist_ok=True)
+        sentinel.write_text(keep_items + "\n", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        print(f"extract-keep-flag: cannot write {sentinel}: {exc}", file=sys.stderr)
+        return 1
+    return None
+
+
 def main(argv: list[str]) -> int:
     """Persist the first quoted keep value after clearing stale compaction state.
 
@@ -169,41 +215,17 @@ def main(argv: list[str]) -> int:
         return 1
 
     tmp = Path(os.environ.get("TMPDIR") or tempfile.gettempdir())
-    if "--out-file" in argv[3:] and not out_file:
-        # Falling back to the slug path here would exit 0 while writing somewhere the caller
-        # does not read, losing the keep value silently. A caller that names the option owes
-        # a value.
-        print("extract-keep-flag: --out-file given without a value", file=sys.stderr)
+    sentinel = _resolve_sentinel_path(slug, csid, out_file, "--out-file" in argv[3:], tmp)
+    if sentinel is None:
         return 2
-    # Callers spell the same directory `${TMPDIR:-/tmp}`, which is not what this process sees
-    # when TMPDIR is unset: tempfile.gettempdir() answers TEMP/TMP on native Windows and may
-    # answer a private per-session dir on macOS. Accepting the shell's spelling as a root too
-    # keeps a caller-computed --out-file from being rejected as "outside the temp dir".
-    shell_tmp = Path(os.environ.get("TMPDIR") or "/tmp")
-    sentinel = Path(out_file) if out_file else tmp / f"{slug}-keep-items-{csid}"
-    if out_file and not _within(sentinel, (tmp, shell_tmp, Path.cwd())):
-        # Every real caller writes into the session temp dir or the project it runs in. The
-        # value is fixed skill text today, but this script creates parent directories, so an
-        # unconstrained path would let a future caller — or a blob that reached argv — build
-        # a tree anywhere the process can write.
-        print(
-            f"extract-keep-flag: --out-file {sentinel} is outside the temp dir and the working directory",
-            file=sys.stderr,
-        )
-        return 2
-    try:
-        # The per-session state directory is the caller's to name but not always its to
-        # create: with --out-file this script may be the first writer into it.
-        sentinel.parent.mkdir(parents=True, exist_ok=True)
-        sentinel.write_text(keep_items + "\n", encoding="utf-8", newline="\n")
-    except OSError as exc:
-        print(f"extract-keep-flag: cannot write {sentinel}: {exc}", file=sys.stderr)
-        return 1
+
+    write_failure = _write_keep_sentinel(sentinel, keep_items)
+    if write_failure is not None:
+        return write_failure
 
     print(keep_items)
-    if venue_choices:
-        return _write_venue(slug, args, venue_choices, tmp / f"{slug}-venue-{csid}")
-    return 0
+    venue_sentinel = tmp / f"{slug}-venue-{csid}"
+    return _write_venue(slug, args, venue_choices, venue_sentinel) if venue_choices else 0
 
 
 if __name__ == "__main__":

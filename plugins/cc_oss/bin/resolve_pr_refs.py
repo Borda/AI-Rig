@@ -180,6 +180,44 @@ def head_repo_owner(meta: dict) -> str:
     return str(owner.get("login") or "")
 
 
+def _collect_ref_metadata(args: argparse.Namespace) -> dict[str, str] | None:
+    """Resolve the default branch, the PR's head/base/fork metadata, and the current branch/sha.
+
+    Args:
+        args: Parsed CLI namespace (``pr``, ``timeout``).
+
+    Returns:
+        The 7-key sentinel-name-to-value mapping, or ``None`` when the default branch could not be
+        determined or the PR head ref equals the default branch — both cases already printed their
+        own failure message.
+    """
+    base_default = default_branch(args.timeout)
+    if not base_default:
+        print("! BLOCKED — cannot determine default branch; refusing to proceed")
+        return None
+
+    meta = fetch_pr_meta(args.pr, args.timeout)
+    head_ref = str(meta.get("headRefName") or "")
+    base_ref = str(meta.get("baseRefName") or "") or base_default
+    cross_repo = "true" if meta.get("isCrossRepository") else "false"
+    head_oid = str(meta.get("headRefOid") or "")
+    if head_ref == base_default:
+        print(f"⛔ PR HEAD ref ({head_ref}) equals default branch — refusing to check out and commit on default branch")
+        return None
+
+    saved_branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], args.timeout)
+    local_sha = _run(["git", "rev-parse", "HEAD"], args.timeout)
+    return {
+        "resolve-head-ref": head_ref,
+        "resolve-base-ref": base_ref,
+        "resolve-is-cross-repo": cross_repo,
+        "resolve-head-repo-owner": head_repo_owner(meta),
+        "resolve-saved-branch": saved_branch,
+        "resolve-pr-head-oid": head_oid,
+        "resolve-local-sha": local_sha,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
@@ -210,33 +248,17 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
-    base_default = default_branch(args.timeout)
-    if not base_default:
-        print("! BLOCKED — cannot determine default branch; refusing to proceed")
+    metadata = _collect_ref_metadata(args)
+    if metadata is None:
         return 1
 
-    meta = fetch_pr_meta(args.pr, args.timeout)
-    head_ref = str(meta.get("headRefName") or "")
-    base_ref = str(meta.get("baseRefName") or "") or base_default
-    cross_repo = "true" if meta.get("isCrossRepository") else "false"
-    head_oid = str(meta.get("headRefOid") or "")
-    if head_ref == base_default:
-        print(f"⛔ PR HEAD ref ({head_ref}) equals default branch — refusing to check out and commit on default branch")
-        return 1
-
-    saved_branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], args.timeout)
-    local_sha = _run(["git", "rev-parse", "HEAD"], args.timeout)
-    for name, value in (
-        ("resolve-head-ref", head_ref),
-        ("resolve-base-ref", base_ref),
-        ("resolve-is-cross-repo", cross_repo),
-        ("resolve-head-repo-owner", head_repo_owner(meta)),
-        ("resolve-saved-branch", saved_branch),
-        ("resolve-pr-head-oid", head_oid),
-        ("resolve-local-sha", local_sha),
-    ):
+    for name, value in metadata.items():
         _write_sentinel(name, value)
 
+    saved_branch = metadata["resolve-saved-branch"]
+    head_ref = metadata["resolve-head-ref"]
+    head_oid = metadata["resolve-pr-head-oid"]
+    local_sha = metadata["resolve-local-sha"]
     # Reflog trace (cf. investigate 2026-06-13T11-00-00Z: pr195 alias, opaque state).
     print(
         f"→ Step 4 state: SAVED_BRANCH={saved_branch} PR_HEAD_REF={head_ref} "

@@ -69,6 +69,7 @@ def _run_resolver(raw: str, csid: str) -> tuple[str, bool]:
 
 
 def main(argv: list[str]) -> int:
+    """Resolve --codemap/--no-codemap and persist the skill's codemap-enabled sentinel."""
     slug = argv[1] if len(argv) > 1 else ""
     args = argv[2] if len(argv) > 2 else ""
     if not slug:

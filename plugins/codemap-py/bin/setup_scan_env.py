@@ -252,21 +252,26 @@ def _write_handoff_tmpfiles(tmpdir: Path, csid: str, state: dict[str, str]) -> N
         _write_atomic(tmpdir / f"codemap-proj-name-{slug}{qualifier}-{csid}", state["PROJ_NAME"])
 
 
-def _mark_incremental_noop(arguments: str, tmpdir: Path, slug: str, proj_name: str, csid: str) -> None:
+def _mark_incremental_noop(arguments: str, tmpdir: Path, csid: str, state: dict[str, str]) -> None:
     """Drop the full-scan-fallback sentinel when ``--incremental`` cannot apply.
 
     The surrounding spaces make this a whole-token match, so ``--incremental-foo``
     does not trigger it.
 
+    ``arguments`` stays a separate parameter rather than being read from
+    ``state["SCAN_ARGS_RAW"]``: that field holds the re-quoted token line from
+    ``_derive_scan_args``, whose quoting would break this whole-token match.
+
     Args:
         arguments: Raw ``$ARGUMENTS`` string.
         tmpdir: Validated base temp directory.
-        slug: Derived ``PROJ_SLUG``.
-        proj_name: Derived ``PROJ_NAME``, naming the expected index file.
         csid: Session-scope suffix.
+        state: Mapping with the four ``_STATE_FIELDS`` keys; ``PROJ_SLUG`` names the
+            sentinel and ``PROJ_NAME`` names the expected index file.
     """
     if f" {arguments} ".find(" --incremental ") < 0:
         return
+    slug, proj_name = state["PROJ_SLUG"], state["PROJ_NAME"]
     # Anchored at the git root, matching resolve_proj_index.py's own
     # <git-root-or-cwd>/.cache/codemap/<proj>.json layout — a bare relative path here
     # would report "no prior index" whenever this script runs from a subdirectory.
@@ -416,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
         "PROJ_NAME": proj_name,
     }
     _write_handoff_tmpfiles(tmpdir, csid, state)
-    _mark_incremental_noop(arguments, tmpdir, proj_slug, proj_name, csid)
+    _mark_incremental_noop(arguments, tmpdir, csid, state)
     print(_write_state_file(tmpdir, state))
     return _EXIT_OK
 

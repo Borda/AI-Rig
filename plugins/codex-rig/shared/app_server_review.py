@@ -560,11 +560,18 @@ def _capacity_evidence(capacity_bytes: bytes, model: object) -> dict[str, object
     return evidence
 
 
-def _validated_plan(
-    plan_path: Path, roles_dir: Path, *, require_dispatch: bool = False
-) -> tuple[dict[str, object], list[dict[str, object]]]:
-    """Validate frozen source, roles, and recomputed input bounds before resolving nodes."""
-    plan = _json_object(plan_path, "plan")
+@dataclass(slots=True, kw_only=True)
+class _PlanSourceMaterials:
+    """Frozen source and diff files a schema-current plan binds its reviewer contexts to."""
+
+    source_path: Path
+    source_bytes: bytes
+    diff_path: Path
+    diff_bytes: bytes
+
+
+def _validate_plan_shape(plan: dict[str, object], *, require_dispatch: bool) -> list[object]:
+    """Check plan schema, consumer, identifiers, and working directory; return the raw node list."""
     plan_schema = plan.get("schema_version")
     if plan_schema not in {LEGACY_PLAN_SCHEMA_VERSION, SCHEMA_VERSION}:
         raise ReviewRouteError("plan-schema-version-invalid")
@@ -576,161 +583,258 @@ def _validated_plan(
         if not RUN_IDENTIFIER.fullmatch(_text(plan.get(key), f"plan-{key}")):
             raise ReviewRouteError(f"plan-{key}-invalid")
     _digest(plan.get("review_input_sha256"), "plan-review-input-sha256")
-    cwd_text = _text(plan.get("cwd"), "plan-cwd")
-    cwd = Path(cwd_text)
+    cwd = Path(_text(plan.get("cwd"), "plan-cwd"))
     if not cwd.is_absolute() or not cwd.is_dir():
         raise ReviewRouteError("plan-cwd-invalid")
     raw_nodes = plan.get("nodes")
     if not isinstance(raw_nodes, list) or not 1 <= len(raw_nodes) <= 4:
         raise ReviewRouteError("plan-nodes-count-invalid")
+    return raw_nodes
+
+
+def _reject_directory_scope_paths(source_snapshot: Mapping[str, Any]) -> None:
+    """Reject a scope path the snapshot labels as a file when it is a directory on disk."""
+    # Frozen records support historical validation, but a live dispatch can also reject a directory
+    # that a self-consistent snapshot falsely labels as a file.
+    repository = Path(source_snapshot["repository"])
+    for scope in source_snapshot["scope_paths"]:
+        path = repository / Path(*PurePosixPath(scope).parts)
+        try:
+            mode = path.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISDIR(mode):
+            raise ReviewRouteError("plan-source-snapshot-invalid")
+
+
+def _validate_plan_source_and_diff(
+    plan: dict[str, object],
+    plan_root: Path,
+    *,
+    require_dispatch: bool,
+) -> _PlanSourceMaterials:
+    """Read and digest-verify the plan's frozen source and diff, returning both for node binding."""
+    source_path = _safe_relative(plan.get("source_path"), plan_root, "plan-source-path")
+    diff_path = _safe_relative(plan.get("diff_path"), plan_root, "plan-diff-path")
+    source_bytes = _read_bytes(source_path, "plan-source", MAX_CONTEXT_BYTES)
+    diff_bytes = _read_bytes(diff_path, "plan-diff", MAX_CONTEXT_BYTES)
+    if _digest(plan.get("source_sha256"), "plan-source-sha256") != _sha256_bytes(source_bytes):
+        raise ReviewRouteError("plan-source-sha256-mismatch")
+    if _digest(plan.get("diff_sha256"), "plan-diff-sha256") != _sha256_bytes(diff_bytes):
+        raise ReviewRouteError("plan-diff-sha256-mismatch")
+    if plan["diff_sha256"] != plan["review_input_sha256"]:
+        raise ReviewRouteError("plan-diff-review-input-mismatch")
+    source_snapshot = _source_snapshot(source_bytes)
+    if require_dispatch:
+        _reject_directory_scope_paths(source_snapshot)
+    return _PlanSourceMaterials(
+        source_path=source_path,
+        source_bytes=source_bytes,
+        diff_path=diff_path,
+        diff_bytes=diff_bytes,
+    )
+
+
+def _resolve_node_role(node: dict[str, object], roles_dir: Path, role_ids: set[str]) -> tuple[Path, bytes]:
+    """Bind one node to its role card and confirm the declared model settings match it."""
+    role_id = _text(node.get("role_id"), "plan-role-id")
+    if not ROLE_IDENTIFIER.fullmatch(role_id) or role_id in role_ids:
+        raise ReviewRouteError("plan-role-id-invalid-or-duplicate")
+    role_ids.add(role_id)
+    role_path = roles_dir / role_id / "ROLE.md"
+    role_bytes = _read_bytes(role_path, "role-card")
+    model, effort = _role_settings(role_bytes)
+    if model not in {"gpt-6-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
+        raise ReviewRouteError("plan-role-model-unsupported")
+    if node.get("model") != model or node.get("reasoning_effort") != effort:
+        raise ReviewRouteError("plan-role-settings-mismatch")
+    if _digest(node.get("role_card_sha256"), "plan-role-card-sha256") != _sha256_bytes(role_bytes):
+        raise ReviewRouteError("plan-role-card-sha256-mismatch")
+    return role_path, role_bytes
+
+
+def _resolve_node_context(
+    node: dict[str, object],
+    plan_root: Path,
+    role_bytes: bytes,
+    source_bytes: bytes | None,
+    diff_bytes: bytes | None,
+) -> tuple[Path, bytes, str]:
+    """Read one node's context pack and confirm it carries the role card, source, and diff."""
+    context_path = _safe_relative(node.get("context_path"), plan_root, "plan-context-path")
+    context = _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES)
+    try:
+        context_text = context.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ReviewRouteError("plan-context-invalid-utf8") from error
+    if _contains_secret(context) or not context.startswith(role_bytes):
+        raise ReviewRouteError("plan-context-secret-or-role-prefix-invalid")
+    if _digest(node.get("context_sha256"), "plan-context-sha256") != _sha256_bytes(context):
+        raise ReviewRouteError("plan-context-sha256-mismatch")
+    if source_bytes is not None and (source_bytes not in context or diff_bytes not in context):
+        raise ReviewRouteError("plan-context-source-or-diff-incomplete")
+    if "model_context_window" in node and (
+        not isinstance(node["model_context_window"], int)
+        or isinstance(node["model_context_window"], bool)
+        or node["model_context_window"] <= 0
+    ):
+        raise ReviewRouteError("plan-model-context-window-invalid")
+    return context_path, context, context_text
+
+
+def _require_capacity_receipt_binding(
+    receipt: Mapping[str, object],
+    node: dict[str, object],
+    plan: dict[str, object],
+) -> None:
+    """Check the capacity receipt carries exactly the required fields and binds to this node."""
+    receipt_fields = {
+        "context_sha256",
+        "model",
+        "tokenizer",
+        "input_tokens",
+        "instruction_reserve_tokens",
+        "output_reserve_tokens",
+        "supported_capacity_tokens",
+        "default_context_window",
+        "effective_window_percent",
+        "source_path",
+        "source_sha256",
+        "capacity_evidence_path",
+        "capacity_evidence_sha256",
+    }
+    if set(receipt) != receipt_fields:
+        raise ReviewRouteError("plan-capacity-receipt-fields-invalid")
+    if (
+        receipt.get("context_sha256") != node["context_sha256"]
+        or receipt.get("model") != node["model"]
+        or not isinstance(receipt.get("tokenizer"), str)
+        or not receipt["tokenizer"]
+        or receipt.get("source_path") != plan["source_path"]
+        or receipt.get("source_sha256") != plan["source_sha256"]
+    ):
+        raise ReviewRouteError("plan-capacity-receipt-binding-invalid")
+
+
+def _require_capacity_receipt_values(receipt: Mapping[str, object]) -> None:
+    """Check every capacity receipt counter is a positive integer within its declared window."""
+    numeric = (
+        "input_tokens",
+        "instruction_reserve_tokens",
+        "output_reserve_tokens",
+        "supported_capacity_tokens",
+        "default_context_window",
+        "effective_window_percent",
+    )
+    if any(not isinstance(receipt[key], int) or isinstance(receipt[key], bool) for key in numeric):
+        raise ReviewRouteError("plan-capacity-receipt-types-invalid")
+    if (
+        receipt["input_tokens"] <= 0
+        or receipt["instruction_reserve_tokens"] <= 0
+        or receipt["output_reserve_tokens"] <= 0
+        or receipt["supported_capacity_tokens"] <= 0
+        or not 0 < receipt["default_context_window"] <= receipt["supported_capacity_tokens"]
+        or not 0 < receipt["effective_window_percent"] <= 100
+    ):
+        raise ReviewRouteError("plan-capacity-receipt-values-invalid")
+
+
+def _require_capacity_admission(
+    receipt: Mapping[str, object],
+    node: dict[str, object],
+    capacity: Mapping[str, object],
+    context: bytes,
+) -> None:
+    """Confirm the measured input plus reserves fits the reviewer's evidenced effective window."""
+    # Bound byte-level text tokenization without trusting an operator's proxy count
+    # or adding a tokenizer/download dependency. Message overhead stays reserved.
+    if receipt["tokenizer"] != "utf8-byte-upper-bound" or receipt["input_tokens"] != len(context):
+        raise ReviewRouteError("plan-capacity-input-measurement-invalid")
+    if (
+        receipt["supported_capacity_tokens"] != capacity["observed_supported_capacity_tokens"]
+        or receipt["default_context_window"] != capacity["observed_default_context_window"]
+    ):
+        raise ReviewRouteError("plan-capacity-receipt-evidence-mismatch")
+    selected_window = node.get("model_context_window", receipt["default_context_window"])
+    if selected_window > receipt["supported_capacity_tokens"]:
+        raise ReviewRouteError("plan-capacity-admission-insufficient")
+    effective_capacity = selected_window * receipt["effective_window_percent"] // 100
+    if (
+        receipt["input_tokens"] + receipt["instruction_reserve_tokens"] + receipt["output_reserve_tokens"]
+        > effective_capacity
+    ):
+        raise ReviewRouteError("plan-capacity-admission-insufficient")
+
+
+def _validate_node_capacity_receipt(
+    node: dict[str, object],
+    plan: dict[str, object],
+    plan_root: Path,
+    context: bytes,
+) -> tuple[Path, bytes]:
+    """Validate one node's capacity receipt against its evidence file and admission bounds."""
+    receipt = _mapping(node.get("capacity_receipt"), "plan-capacity-receipt")
+    _require_capacity_receipt_binding(receipt, node, plan)
+    capacity_path = _safe_relative(receipt.get("capacity_evidence_path"), plan_root, "plan-capacity-evidence-path")
+    capacity_bytes = _read_bytes(capacity_path, "plan-capacity-evidence", MAX_FILE_BYTES)
+    if _digest(receipt.get("capacity_evidence_sha256"), "plan-capacity-evidence-sha256") != _sha256_bytes(
+        capacity_bytes
+    ):
+        raise ReviewRouteError("plan-capacity-evidence-sha256-mismatch")
+    capacity = _capacity_evidence(capacity_bytes, node["model"])
+    _require_capacity_receipt_values(receipt)
+    _require_capacity_admission(receipt, node, capacity, context)
+    return capacity_path, capacity_bytes
+
+
+def _validate_and_resolve_node(
+    raw_node: object,
+    plan: dict[str, object],
+    plan_root: Path,
+    roles_dir: Path,
+    role_ids: set[str],
+    source_bytes: bytes | None,
+    diff_bytes: bytes | None,
+) -> dict[str, object]:
+    """Validate one reviewer node end to end and return it with its resolved file bindings."""
+    node = dict(_mapping(raw_node, "plan-node"))
+    role_path, role_bytes = _resolve_node_role(node, roles_dir, role_ids)
+    context_path, context, context_text = _resolve_node_context(node, plan_root, role_bytes, source_bytes, diff_bytes)
+    if source_bytes is not None:
+        capacity_path, capacity_bytes = _validate_node_capacity_receipt(node, plan, plan_root, context)
+        node["_capacity_evidence_file"] = capacity_path
+        node["_capacity_evidence_bytes"] = capacity_bytes
+    node["_context_file"] = context_path
+    node["_context_bytes"] = context
+    node["_context_text"] = context_text
+    node["_role_file"] = role_path
+    node["_role_bytes"] = role_bytes
+    return node
+
+
+def _validated_plan(
+    plan_path: Path, roles_dir: Path, *, require_dispatch: bool = False
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    """Validate frozen source, roles, and recomputed input bounds before resolving nodes."""
+    plan = _json_object(plan_path, "plan")
+    raw_nodes = _validate_plan_shape(plan, require_dispatch=require_dispatch)
     plan_root = plan_path.parent.resolve()
     source_bytes: bytes | None = None
     diff_bytes: bytes | None = None
-    if plan_schema == SCHEMA_VERSION:
-        source_path = _safe_relative(plan.get("source_path"), plan_root, "plan-source-path")
-        diff_path = _safe_relative(plan.get("diff_path"), plan_root, "plan-diff-path")
-        source_bytes = _read_bytes(source_path, "plan-source", MAX_CONTEXT_BYTES)
-        diff_bytes = _read_bytes(diff_path, "plan-diff", MAX_CONTEXT_BYTES)
-        if _digest(plan.get("source_sha256"), "plan-source-sha256") != _sha256_bytes(source_bytes):
-            raise ReviewRouteError("plan-source-sha256-mismatch")
-        if _digest(plan.get("diff_sha256"), "plan-diff-sha256") != _sha256_bytes(diff_bytes):
-            raise ReviewRouteError("plan-diff-sha256-mismatch")
-        if plan["diff_sha256"] != plan["review_input_sha256"]:
-            raise ReviewRouteError("plan-diff-review-input-mismatch")
-        source_snapshot = _source_snapshot(source_bytes)
-        if require_dispatch:
-            # Frozen records support historical validation, but a live dispatch can also reject a directory
-            # that a self-consistent snapshot falsely labels as a file.
-            repository = Path(source_snapshot["repository"])
-            for scope in source_snapshot["scope_paths"]:
-                path = repository / Path(*PurePosixPath(scope).parts)
-                try:
-                    mode = path.lstat().st_mode
-                except FileNotFoundError:
-                    continue
-                if stat.S_ISDIR(mode):
-                    raise ReviewRouteError("plan-source-snapshot-invalid")
-        plan["_source_file"] = source_path
-        plan["_source_bytes"] = source_bytes
-        plan["_diff_file"] = diff_path
-        plan["_diff_bytes"] = diff_bytes
+    if plan.get("schema_version") == SCHEMA_VERSION:
+        materials = _validate_plan_source_and_diff(plan, plan_root, require_dispatch=require_dispatch)
+        source_bytes = materials.source_bytes
+        diff_bytes = materials.diff_bytes
+        plan["_source_file"] = materials.source_path
+        plan["_source_bytes"] = materials.source_bytes
+        plan["_diff_file"] = materials.diff_path
+        plan["_diff_bytes"] = materials.diff_bytes
     resolved_nodes: list[dict[str, object]] = []
     role_ids: set[str] = set()
     for raw_node in raw_nodes:
-        node = dict(_mapping(raw_node, "plan-node"))
-        role_id = _text(node.get("role_id"), "plan-role-id")
-        if not ROLE_IDENTIFIER.fullmatch(role_id) or role_id in role_ids:
-            raise ReviewRouteError("plan-role-id-invalid-or-duplicate")
-        role_ids.add(role_id)
-        role_path = roles_dir / role_id / "ROLE.md"
-        role_bytes = _read_bytes(role_path, "role-card")
-        model, effort = _role_settings(role_bytes)
-        if model not in {"gpt-6-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
-            raise ReviewRouteError("plan-role-model-unsupported")
-        if node.get("model") != model or node.get("reasoning_effort") != effort:
-            raise ReviewRouteError("plan-role-settings-mismatch")
-        if _digest(node.get("role_card_sha256"), "plan-role-card-sha256") != _sha256_bytes(role_bytes):
-            raise ReviewRouteError("plan-role-card-sha256-mismatch")
-        context_path = _safe_relative(node.get("context_path"), plan_root, "plan-context-path")
-        context = _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES)
-        try:
-            context_text = context.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise ReviewRouteError("plan-context-invalid-utf8") from error
-        if _contains_secret(context) or not context.startswith(role_bytes):
-            raise ReviewRouteError("plan-context-secret-or-role-prefix-invalid")
-        if _digest(node.get("context_sha256"), "plan-context-sha256") != _sha256_bytes(context):
-            raise ReviewRouteError("plan-context-sha256-mismatch")
-        if source_bytes is not None and (source_bytes not in context or diff_bytes not in context):
-            raise ReviewRouteError("plan-context-source-or-diff-incomplete")
-        if "model_context_window" in node and (
-            not isinstance(node["model_context_window"], int)
-            or isinstance(node["model_context_window"], bool)
-            or node["model_context_window"] <= 0
-        ):
-            raise ReviewRouteError("plan-model-context-window-invalid")
-        if source_bytes is not None:
-            receipt = _mapping(node.get("capacity_receipt"), "plan-capacity-receipt")
-            receipt_fields = {
-                "context_sha256",
-                "model",
-                "tokenizer",
-                "input_tokens",
-                "instruction_reserve_tokens",
-                "output_reserve_tokens",
-                "supported_capacity_tokens",
-                "default_context_window",
-                "effective_window_percent",
-                "source_path",
-                "source_sha256",
-                "capacity_evidence_path",
-                "capacity_evidence_sha256",
-            }
-            if set(receipt) != receipt_fields:
-                raise ReviewRouteError("plan-capacity-receipt-fields-invalid")
-            if (
-                receipt.get("context_sha256") != node["context_sha256"]
-                or receipt.get("model") != node["model"]
-                or not isinstance(receipt.get("tokenizer"), str)
-                or not receipt["tokenizer"]
-                or receipt.get("source_path") != plan["source_path"]
-                or receipt.get("source_sha256") != plan["source_sha256"]
-            ):
-                raise ReviewRouteError("plan-capacity-receipt-binding-invalid")
-            capacity_path = _safe_relative(
-                receipt.get("capacity_evidence_path"), plan_root, "plan-capacity-evidence-path"
-            )
-            capacity_bytes = _read_bytes(capacity_path, "plan-capacity-evidence", MAX_FILE_BYTES)
-            if _digest(receipt.get("capacity_evidence_sha256"), "plan-capacity-evidence-sha256") != _sha256_bytes(
-                capacity_bytes
-            ):
-                raise ReviewRouteError("plan-capacity-evidence-sha256-mismatch")
-            capacity = _capacity_evidence(capacity_bytes, node["model"])
-            numeric = (
-                "input_tokens",
-                "instruction_reserve_tokens",
-                "output_reserve_tokens",
-                "supported_capacity_tokens",
-                "default_context_window",
-                "effective_window_percent",
-            )
-            if any(not isinstance(receipt[key], int) or isinstance(receipt[key], bool) for key in numeric):
-                raise ReviewRouteError("plan-capacity-receipt-types-invalid")
-            if (
-                receipt["input_tokens"] <= 0
-                or receipt["instruction_reserve_tokens"] <= 0
-                or receipt["output_reserve_tokens"] <= 0
-                or receipt["supported_capacity_tokens"] <= 0
-                or not 0 < receipt["default_context_window"] <= receipt["supported_capacity_tokens"]
-                or not 0 < receipt["effective_window_percent"] <= 100
-            ):
-                raise ReviewRouteError("plan-capacity-receipt-values-invalid")
-            # Bound byte-level text tokenization without trusting an operator's proxy count
-            # or adding a tokenizer/download dependency. Message overhead stays reserved.
-            if receipt["tokenizer"] != "utf8-byte-upper-bound" or receipt["input_tokens"] != len(context):
-                raise ReviewRouteError("plan-capacity-input-measurement-invalid")
-            if (
-                receipt["supported_capacity_tokens"] != capacity["observed_supported_capacity_tokens"]
-                or receipt["default_context_window"] != capacity["observed_default_context_window"]
-            ):
-                raise ReviewRouteError("plan-capacity-receipt-evidence-mismatch")
-            selected_window = node.get("model_context_window", receipt["default_context_window"])
-            if selected_window > receipt["supported_capacity_tokens"]:
-                raise ReviewRouteError("plan-capacity-admission-insufficient")
-            effective_capacity = selected_window * receipt["effective_window_percent"] // 100
-            if (
-                receipt["input_tokens"] + receipt["instruction_reserve_tokens"] + receipt["output_reserve_tokens"]
-                > effective_capacity
-            ):
-                raise ReviewRouteError("plan-capacity-admission-insufficient")
-            node["_capacity_evidence_file"] = capacity_path
-            node["_capacity_evidence_bytes"] = capacity_bytes
-        node["_context_file"] = context_path
-        node["_context_bytes"] = context
-        node["_context_text"] = context_text
-        node["_role_file"] = role_path
-        node["_role_bytes"] = role_bytes
-        resolved_nodes.append(node)
+        resolved_nodes.append(
+            _validate_and_resolve_node(raw_node, plan, plan_root, roles_dir, role_ids, source_bytes, diff_bytes)
+        )
     return plan, resolved_nodes
 
 
@@ -1521,18 +1625,18 @@ def _accept_input_echo(method: object, item: Mapping[str, object], state: _Activ
     raise ReviewRouteError("app-server-user-message-lifecycle-invalid")
 
 
-def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds: float) -> Path:
-    """Run one explicitly authorized App Server review wave and write bounded local evidence."""
+def _require_review_timeout(timeout_seconds: float) -> None:
+    """Reject a review timeout outside the bounded range this launcher will honor."""
     if (
         not isinstance(timeout_seconds, (int, float))
         or isinstance(timeout_seconds, bool)
         or not 0 < timeout_seconds <= 900
     ):
         raise ReviewRouteError("timeout-seconds-invalid")
-    roles_dir = Path(__file__).resolve().parents[1] / "roles"
-    frozen_plan = _read_bytes(plan_path, "plan")
-    plan, nodes = _validated_plan(plan_path, roles_dir, require_dispatch=True)
-    _live_source_unchanged(plan, "before-host")
+
+
+def _prepare_review_output_root(plan_path: Path, output_root: Path) -> Path:
+    """Resolve the output root inside the plan directory and create it as a new directory."""
     try:
         plan_parent = plan_path.resolve().parent
         output_root = output_root.resolve(strict=False)
@@ -1549,6 +1653,348 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
         output_root.mkdir(parents=True)
     except OSError as error:
         raise ReviewRouteError("output-root-unavailable") from error
+    return output_root
+
+
+def _start_review_threads(
+    client: _JsonRpcStdio,
+    plan: dict[str, object],
+    nodes: list[dict[str, object]],
+) -> dict[str, _ActiveReview]:
+    """Re-verify every context pack, then open one read-only thread per reviewer node."""
+    for node in nodes:
+        context_path = Path(str(node["_context_file"]))
+        if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
+            raise ReviewRouteError("context-mutated-before-turn")
+    active: dict[str, _ActiveReview] = {}
+    for node in nodes:
+        result = client.request(
+            "thread/start",
+            {
+                "cwd": plan["cwd"],
+                "model": node["model"],
+                "approvalPolicy": "never",
+                "sandbox": "read-only",
+                "ephemeral": True,
+                "allowProviderModelFallback": False,
+                "config": _thread_config(node),
+            },
+        )
+        thread = _mapping(result.get("thread"), "app-server-thread")
+        thread_id = _text(thread.get("id"), "app-server-thread-id")
+        active[str(node["role_id"])] = _ActiveReview(
+            node=node,
+            thread_id=thread_id,
+            controls=_thread_controls(result, node),
+        )
+    return active
+
+
+def _verify_turn_preconditions(
+    plan: dict[str, object],
+    nodes: list[dict[str, object]],
+    node: dict[str, object],
+    plan_path: Path,
+    frozen_plan: bytes,
+) -> None:
+    """Confirm the plan, role card, and context pack are unchanged before spending a turn."""
+    if _read_bytes(plan_path, "plan") != frozen_plan:
+        raise ReviewRouteError("plan-mutated-before-turn")
+    _source_materials_unchanged(plan, nodes, "before-turn")
+    role_path = Path(str(node["_role_file"]))
+    role_bytes = node["_role_bytes"]
+    if not isinstance(role_bytes, bytes):
+        raise ReviewRouteError("role-card-bytes-invalid")
+    if _read_bytes(role_path, "role-card") != role_bytes:
+        raise ReviewRouteError("role-card-mutated-before-turn")
+    context_path = Path(str(node["_context_file"]))
+    if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
+        raise ReviewRouteError("context-mutated-before-turn")
+
+
+def _require_allowlisted_event_method(method: object) -> None:
+    """Reject any stream event whose method is outside the allowlisted review protocol."""
+    if not isinstance(method, str) or method not in {
+        "item/started",
+        "item/completed",
+        "turn/completed",
+        *ALLOWED_STREAM_METHODS,
+        *PLAN_NOTIFICATION_METHODS,
+    }:
+        # Carried on the error so the failure-evidence tail records it; a caller-local cannot cross this boundary.
+        raise ReviewRouteError(
+            "app-server-event-rejected",
+            diagnostic={
+                "stage": "turn-events",
+                "reason": "method-not-allowlisted",
+                "method_category": method
+                if isinstance(method, str) and method in SCHEMA_NOTIFICATION_METHODS
+                else "unrecognized",
+                "recovery": (
+                    "Continue permitted source inspection using native instruction-bounded reviewers or disclosed "
+                    "parent-serial review; resume this launcher only after protocol-maintainer triage validates a "
+                    "supported event schema."
+                ),
+            },
+        )
+
+
+def _match_event_target(
+    params: Mapping[str, object],
+    active: dict[str, _ActiveReview],
+    pending: set[str],
+) -> tuple[str, _ActiveReview]:
+    """Resolve the still-pending reviewer this event belongs to, requiring every identity to agree."""
+    # Every supplied identity must agree; one matching field cannot mask another turn.
+    turn_ids = [params["turnId"]] if "turnId" in params else []
+    if "turn" in params:
+        turn_ids.append(_mapping(params["turn"], "event-turn").get("id"))
+    matching = [
+        (role_id, state)
+        for role_id, state in active.items()
+        if params.get("threadId") == state.thread_id
+        and turn_ids
+        and state.turn_id is not None
+        and all(turn_id == state.turn_id for turn_id in turn_ids)
+    ]
+    if not matching:
+        raise ReviewRouteError("app-server-thread-or-turn-mismatch")
+    role_id, state = matching[0]
+    if role_id not in pending:
+        raise ReviewRouteError("app-server-event-after-turn-completed")
+    return role_id, state
+
+
+def _accept_final_answer(item: Mapping[str, object], state: _ActiveReview) -> None:
+    """Accept one reviewer's single bounded final answer, rejecting a duplicate or leaked secret."""
+    final = item.get("text")
+    if (
+        not isinstance(final, str)
+        or not final.strip()
+        or len(final.encode("utf-8")) > MAX_OUTPUT_BYTES
+        or state.final is not None
+    ):
+        raise ReviewRouteError("app-server-final-output-invalid-or-duplicate")
+    if _contains_secret(final.encode("utf-8")):
+        raise ReviewRouteError("app-server-final-output-secret")
+    state.final = final
+
+
+def _apply_event_item(method: object, item: Mapping[str, object], state: _ActiveReview) -> bool:
+    """Validate one event item, reporting whether it was an input echo needing no further handling."""
+    item_type = item.get("type")
+    if item_type == "userMessage":
+        _accept_input_echo(method, item, state)
+        return True
+    if item_type == "plan" and (not isinstance(item.get("id"), str) or not isinstance(item.get("text"), str)):
+        raise ReviewRouteError("app-server-plan-item-invalid")
+    if item_type not in ALLOWED_ITEM_TYPES:
+        raise ReviewRouteError("app-server-item-type-rejected")
+    state.started_at_ms = state.started_at_ms or int(time.monotonic() * 1000)
+    if method == "item/completed" and item_type == "agentMessage" and item.get("phase") == "final_answer":
+        _accept_final_answer(item, state)
+    return False
+
+
+def _complete_review_turn(
+    params: Mapping[str, object],
+    state: _ActiveReview,
+    role_id: str,
+    pending: set[str],
+    output_root: Path,
+    plan: dict[str, object],
+    nodes: list[dict[str, object]],
+) -> None:
+    """Accept one completed reviewer turn and write its final output to the evidence directory."""
+    turn = _mapping(params.get("turn"), "app-server-completed-turn")
+    if turn.get("status") != "completed":
+        raise ReviewRouteError("app-server-turn-status-invalid")
+    if state.final is None:
+        raise ReviewRouteError("app-server-turn-final-missing")
+    if state.input_echo_item_id is not None and state.input_echo_completed is not True:
+        raise ReviewRouteError("app-server-user-message-lifecycle-incomplete")
+    state.finished_at_ms = int(time.monotonic() * 1000)
+    output = output_root / f"{role_id}.md"
+    final = _text(state.final, "app-server-final-output")
+    output.write_bytes(final.encode("utf-8"))
+    state.output_path = output
+    pending.remove(role_id)
+    # Preserve the original response before rejecting it; never repair or retry a paid result.
+    _validate_review_output(final, plan)
+    _source_materials_unchanged(plan, nodes, "during-review")
+
+
+def _handle_review_event(
+    message: Mapping[str, object],
+    active: dict[str, _ActiveReview],
+    pending: set[str],
+    output_root: Path,
+    plan: dict[str, object],
+    nodes: list[dict[str, object]],
+) -> None:
+    """Route one App Server stream event to its reviewer after rejecting anything off-protocol."""
+    method = message.get("method")
+    if "id" in message:
+        raise ReviewRouteError("app-server-server-request-rejected")
+    if _is_harmless_lifecycle(message):
+        return
+    if isinstance(method, str) and method in {
+        "item/commandExecution/requestApproval",
+        "item/fileChange/requestApproval",
+    }:
+        raise ReviewRouteError("app-server-approval-requested")
+    _require_allowlisted_event_method(method)
+    params = _mapping(message.get("params"), "app-server-event-params")
+    role_id, state = _match_event_target(params, active, pending)
+    if method in PLAN_NOTIFICATION_METHODS:
+        _validate_plan_notification(method, params)
+        return
+    item = params.get("item")
+    if method in {"item/started", "item/completed"} and not isinstance(item, Mapping):
+        raise ReviewRouteError("app-server-event-item-not-object")
+    if isinstance(item, Mapping) and _apply_event_item(method, item, state):
+        return
+    if message.get("method") == "turn/completed":
+        _complete_review_turn(params, state, role_id, pending, output_root, plan, nodes)
+
+
+def _verify_review_materials_after(
+    plan: dict[str, object],
+    nodes: list[dict[str, object]],
+    plan_path: Path,
+    frozen_plan: bytes,
+) -> None:
+    """Confirm the plan, role cards, and context packs are unchanged after every turn completed."""
+    if _read_bytes(plan_path, "plan") != frozen_plan:
+        raise ReviewRouteError("plan-mutated-during-review")
+    _source_materials_unchanged(plan, nodes, "during-review")
+    for node in nodes:
+        role_path = Path(str(node["_role_file"]))
+        role_bytes = node["_role_bytes"]
+        if not isinstance(role_bytes, bytes):
+            raise ReviewRouteError("role-card-bytes-invalid")
+        if _read_bytes(role_path, "role-card") != role_bytes:
+            raise ReviewRouteError("role-card-mutated-during-review")
+        context_path = Path(str(node["_context_file"]))
+        if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
+            raise ReviewRouteError("context-mutated-during-review")
+
+
+def _assemble_review_evidence(
+    active: dict[str, _ActiveReview],
+    plan: dict[str, object],
+    output_root: Path,
+    cli_version: str | None,
+    capabilities: dict[str, object],
+    frozen_plan: bytes,
+) -> dict[str, object]:
+    """Build the completed-wave evidence record from every reviewer's accepted final output."""
+    evidence_nodes: list[dict[str, object]] = []
+    if cli_version is None:
+        raise ReviewRouteError("codex-version-unavailable")
+    for role_id, state in active.items():
+        node = state.node
+        output = state.output_path
+        assert output is not None
+        output_name = output.relative_to(output_root).as_posix()
+        final = _text(state.final, "app-server-final-output")
+        evidence_nodes.append(
+            {
+                "role_id": role_id,
+                "role_card_sha256": node["role_card_sha256"],
+                "context_path": node["context_path"],
+                "context_sha256": node["context_sha256"],
+                "output_path": output_name,
+                "output_sha256": _sha256_bytes(final.encode("utf-8")),
+                "thread_id": state.thread_id,
+                "turn_id": state.turn_id,
+                "observed_controls": state.controls,
+                "terminal_status": "completed",
+                "started_at_ms": state.started_at_ms,
+                "finished_at_ms": state.finished_at_ms,
+            }
+        )
+        if state.context_delivery is not None:
+            evidence_nodes[-1]["context_delivery"] = state.context_delivery
+    return {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "route": "app-server",
+        "plan_sha256": _sha256_bytes(frozen_plan),
+        "consumer_id": plan["consumer_id"],
+        "review_run_id": plan["review_run_id"],
+        "parent_thread_id": plan["parent_thread_id"],
+        "review_input_sha256": plan["review_input_sha256"],
+        "cli_version": cli_version,
+        "status": "completed",
+        "cleanup": "completed",
+        "capabilities": capabilities,
+        "nodes": evidence_nodes,
+    }
+
+
+def _shutdown_review_host(
+    process: subprocess.Popen[str],
+    client: _JsonRpcStdio | None,
+) -> tuple[str, Exception | None]:
+    """Terminate the host and drain its stream, reporting the cleanup state and any failure."""
+    try:
+        _terminate(process)
+        if client is not None:
+            client.drain_after_exit()
+    except Exception as cleanup_error:
+        return "failed", cleanup_error
+    return "completed", None
+
+
+def _review_failure_evidence(
+    failure: Exception,
+    failure_phase: str,
+    turn_dispatch: dict[str, int],
+    cleanup: str,
+    failure_diagnostic: dict[str, object] | None,
+) -> dict[str, object]:
+    """Build the failed-wave evidence record from the phase and counters the run accumulated."""
+    failure_evidence: dict[str, object] = {
+        "schema_version": EVIDENCE_SCHEMA_VERSION,
+        "route": "app-server",
+        "status": "failed",
+        "failure_code": str(failure).split(":", 1)[0]
+        if isinstance(failure, ReviewRouteError)
+        else "app-server-review-failed",
+        "failure_phase": failure_phase,
+        "turn_dispatch": turn_dispatch,
+        "cleanup": cleanup,
+    }
+    if failure_diagnostic is not None:
+        failure_evidence["failure_diagnostic"] = failure_diagnostic
+    return failure_evidence
+
+
+def _finalize_review_evidence(
+    evidence: dict[str, object] | None,
+    evidence_path: Path,
+    plan_path: Path,
+    roles_dir: Path,
+) -> Exception | None:
+    """Write and re-validate the completed evidence, returning the rejection instead of raising."""
+    try:
+        assert evidence is not None
+        _atomic_json(evidence_path, evidence)
+        validate_evidence(plan_path, evidence_path, roles_dir, require_dispatch=True)
+    except Exception as error:
+        # A rejected final artifact must enter the same failure path as rejected events.
+        return error
+    return None
+
+
+def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds: float) -> Path:
+    """Run one explicitly authorized App Server review wave and write bounded local evidence."""
+    _require_review_timeout(timeout_seconds)
+    roles_dir = Path(__file__).resolve().parents[1] / "roles"
+    frozen_plan = _read_bytes(plan_path, "plan")
+    plan, nodes = _validated_plan(plan_path, roles_dir, require_dispatch=True)
+    _live_source_unchanged(plan, "before-host")
+    output_root = _prepare_review_output_root(plan_path, output_root)
     deadline = time.monotonic() + timeout_seconds
     cli_version: str | None = None
     process: subprocess.Popen[str] | None = None
@@ -1565,49 +2011,14 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
         process, client, capabilities = _prepared_host(codex, Path(str(plan["cwd"])), deadline)
         failure_phase = "thread-setup"
         _source_materials_unchanged(plan, nodes, "before-turn")
-        for node in nodes:
-            context_path = Path(str(node["_context_file"]))
-            if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
-                raise ReviewRouteError("context-mutated-before-turn")
-        active: dict[str, _ActiveReview] = {}
-        for node in nodes:
-            result = client.request(
-                "thread/start",
-                {
-                    "cwd": plan["cwd"],
-                    "model": node["model"],
-                    "approvalPolicy": "never",
-                    "sandbox": "read-only",
-                    "ephemeral": True,
-                    "allowProviderModelFallback": False,
-                    "config": _thread_config(node),
-                },
-            )
-            thread = _mapping(result.get("thread"), "app-server-thread")
-            thread_id = _text(thread.get("id"), "app-server-thread-id")
-            active[str(node["role_id"])] = _ActiveReview(
-                node=node,
-                thread_id=thread_id,
-                controls=_thread_controls(result, node),
-            )
+        active = _start_review_threads(client, plan, nodes)
         # Complete every no-model preload first: a later incompatible reviewer must not spend an earlier turn.
         failure_phase = "context-preload"
         for state in active.values():
             state.context_delivery = _preload_context(client, state.thread_id, state.node)
         for role_id, state in active.items():
             node = state.node
-            if _read_bytes(plan_path, "plan") != frozen_plan:
-                raise ReviewRouteError("plan-mutated-before-turn")
-            _source_materials_unchanged(plan, nodes, "before-turn")
-            role_path = Path(str(node["_role_file"]))
-            role_bytes = node["_role_bytes"]
-            if not isinstance(role_bytes, bytes):
-                raise ReviewRouteError("role-card-bytes-invalid")
-            if _read_bytes(role_path, "role-card") != role_bytes:
-                raise ReviewRouteError("role-card-mutated-before-turn")
-            context_path = Path(str(node["_context_file"]))
-            if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
-                raise ReviewRouteError("context-mutated-before-turn")
+            _verify_turn_preconditions(plan, nodes, node, plan_path, frozen_plan)
             context = _turn_input_text(node)
             failure_phase = "turn-dispatch"
             turns_attempted += 1
@@ -1630,199 +2041,32 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
         pending = set(active)
         failure_phase = "turn-events"
         while pending:
-            message = client.events()
-            method = message.get("method")
-            if "id" in message:
-                raise ReviewRouteError("app-server-server-request-rejected")
-            if _is_harmless_lifecycle(message):
-                continue
-            if isinstance(method, str) and method in {
-                "item/commandExecution/requestApproval",
-                "item/fileChange/requestApproval",
-            }:
-                raise ReviewRouteError("app-server-approval-requested")
-            if not isinstance(method, str) or method not in {
-                "item/started",
-                "item/completed",
-                "turn/completed",
-                *ALLOWED_STREAM_METHODS,
-                *PLAN_NOTIFICATION_METHODS,
-            }:
-                failure_diagnostic = {
-                    "stage": "turn-events",
-                    "reason": "method-not-allowlisted",
-                    "method_category": method
-                    if isinstance(method, str) and method in SCHEMA_NOTIFICATION_METHODS
-                    else "unrecognized",
-                    "recovery": (
-                        "Continue permitted source inspection using native instruction-bounded reviewers or disclosed "
-                        "parent-serial review; resume this launcher only after protocol-maintainer triage validates a "
-                        "supported event schema."
-                    ),
-                }
-                raise ReviewRouteError("app-server-event-rejected")
-            params = _mapping(message.get("params"), "app-server-event-params")
-            # Every supplied identity must agree; one matching field cannot mask another turn.
-            turn_ids = [params["turnId"]] if "turnId" in params else []
-            if "turn" in params:
-                turn_ids.append(_mapping(params["turn"], "event-turn").get("id"))
-            matching = [
-                (role_id, state)
-                for role_id, state in active.items()
-                if params.get("threadId") == state.thread_id
-                and turn_ids
-                and state.turn_id is not None
-                and all(turn_id == state.turn_id for turn_id in turn_ids)
-            ]
-            if not matching:
-                raise ReviewRouteError("app-server-thread-or-turn-mismatch")
-            role_id, state = matching[0]
-            if role_id not in pending:
-                raise ReviewRouteError("app-server-event-after-turn-completed")
-            if method in PLAN_NOTIFICATION_METHODS:
-                _validate_plan_notification(method, params)
-                continue
-            item = params.get("item")
-            if method in {"item/started", "item/completed"} and not isinstance(item, Mapping):
-                raise ReviewRouteError("app-server-event-item-not-object")
-            if isinstance(item, Mapping):
-                item_type = item.get("type")
-                if item_type == "userMessage":
-                    _accept_input_echo(method, item, state)
-                    continue
-                if item_type == "plan" and (
-                    not isinstance(item.get("id"), str) or not isinstance(item.get("text"), str)
-                ):
-                    raise ReviewRouteError("app-server-plan-item-invalid")
-                if item_type not in ALLOWED_ITEM_TYPES:
-                    raise ReviewRouteError("app-server-item-type-rejected")
-                state.started_at_ms = state.started_at_ms or int(time.monotonic() * 1000)
-                if method == "item/completed" and item_type == "agentMessage" and item.get("phase") == "final_answer":
-                    final = item.get("text")
-                    if (
-                        not isinstance(final, str)
-                        or not final.strip()
-                        or len(final.encode("utf-8")) > MAX_OUTPUT_BYTES
-                        or state.final is not None
-                    ):
-                        raise ReviewRouteError("app-server-final-output-invalid-or-duplicate")
-                    if _contains_secret(final.encode("utf-8")):
-                        raise ReviewRouteError("app-server-final-output-secret")
-                    state.final = final
-            if message.get("method") == "turn/completed":
-                turn = _mapping(params.get("turn"), "app-server-completed-turn")
-                if turn.get("status") != "completed":
-                    raise ReviewRouteError("app-server-turn-status-invalid")
-                if state.final is None:
-                    raise ReviewRouteError("app-server-turn-final-missing")
-                if state.input_echo_item_id is not None and state.input_echo_completed is not True:
-                    raise ReviewRouteError("app-server-user-message-lifecycle-incomplete")
-                state.finished_at_ms = int(time.monotonic() * 1000)
-                output = output_root / f"{role_id}.md"
-                final = _text(state.final, "app-server-final-output")
-                output.write_bytes(final.encode("utf-8"))
-                state.output_path = output
-                pending.remove(role_id)
-                # Preserve the original response before rejecting it; never repair or retry a paid result.
-                _validate_review_output(final, plan)
-                _source_materials_unchanged(plan, nodes, "during-review")
-        if _read_bytes(plan_path, "plan") != frozen_plan:
-            raise ReviewRouteError("plan-mutated-during-review")
-        _source_materials_unchanged(plan, nodes, "during-review")
-        for node in nodes:
-            role_path = Path(str(node["_role_file"]))
-            role_bytes = node["_role_bytes"]
-            if not isinstance(role_bytes, bytes):
-                raise ReviewRouteError("role-card-bytes-invalid")
-            if _read_bytes(role_path, "role-card") != role_bytes:
-                raise ReviewRouteError("role-card-mutated-during-review")
-            context_path = Path(str(node["_context_file"]))
-            if _read_bytes(context_path, "plan-context", MAX_CONTEXT_BYTES) != node["_context_bytes"]:
-                raise ReviewRouteError("context-mutated-during-review")
-        evidence_nodes: list[dict[str, object]] = []
-        if cli_version is None:
-            raise ReviewRouteError("codex-version-unavailable")
-        for role_id, state in active.items():
-            node = state.node
-            output = state.output_path
-            assert output is not None
-            output_name = output.relative_to(output_root).as_posix()
-            final = _text(state.final, "app-server-final-output")
-            evidence_nodes.append(
-                {
-                    "role_id": role_id,
-                    "role_card_sha256": node["role_card_sha256"],
-                    "context_path": node["context_path"],
-                    "context_sha256": node["context_sha256"],
-                    "output_path": output_name,
-                    "output_sha256": _sha256_bytes(final.encode("utf-8")),
-                    "thread_id": state.thread_id,
-                    "turn_id": state.turn_id,
-                    "observed_controls": state.controls,
-                    "terminal_status": "completed",
-                    "started_at_ms": state.started_at_ms,
-                    "finished_at_ms": state.finished_at_ms,
-                }
-            )
-            if state.context_delivery is not None:
-                evidence_nodes[-1]["context_delivery"] = state.context_delivery
-        evidence = {
-            "schema_version": EVIDENCE_SCHEMA_VERSION,
-            "route": "app-server",
-            "plan_sha256": _sha256_bytes(frozen_plan),
-            "consumer_id": plan["consumer_id"],
-            "review_run_id": plan["review_run_id"],
-            "parent_thread_id": plan["parent_thread_id"],
-            "review_input_sha256": plan["review_input_sha256"],
-            "cli_version": cli_version,
-            "status": "completed",
-            "cleanup": "completed",
-            "capabilities": capabilities,
-            "nodes": evidence_nodes,
-        }
+            _handle_review_event(client.events(), active, pending, output_root, plan, nodes)
+        _verify_review_materials_after(plan, nodes, plan_path, frozen_plan)
+        evidence = _assemble_review_evidence(active, plan, output_root, cli_version, capabilities, frozen_plan)
     except Exception as error:
         failure = error
         if isinstance(error, ReviewRouteError) and error.diagnostic is not None:
             failure_diagnostic = error.diagnostic
     finally:
         if process is not None:
-            cleanup = "started"
-            try:
-                _terminate(process)
-                if client is not None:
-                    client.drain_after_exit()
-                cleanup = "completed"
-            except Exception as cleanup_error:
-                cleanup = "failed"
-                if failure is None:
-                    failure = cleanup_error
+            cleanup, cleanup_error = _shutdown_review_host(process, client)
+            if failure is None:
+                failure = cleanup_error
     evidence_path = output_root / "evidence.json"
     if failure is None:
         failure_phase = "evidence-validation"
-        try:
-            assert evidence is not None
-            _atomic_json(evidence_path, evidence)
-            validate_evidence(plan_path, evidence_path, roles_dir, require_dispatch=True)
-        except Exception as error:
-            # A rejected final artifact must enter the same failure path as rejected events.
-            failure = error
+        failure = _finalize_review_evidence(evidence, evidence_path, plan_path, roles_dir)
     if failure is not None:
-        failure_evidence: dict[str, object] = {
-            "schema_version": EVIDENCE_SCHEMA_VERSION,
-            "route": "app-server",
-            "status": "failed",
-            "failure_code": str(failure).split(":", 1)[0]
-            if isinstance(failure, ReviewRouteError)
-            else "app-server-review-failed",
-            "failure_phase": failure_phase,
-            "turn_dispatch": {"attempted": turns_attempted, "acknowledged": turns_acknowledged},
-            "cleanup": cleanup,
-        }
-        if failure_diagnostic is not None:
-            failure_evidence["failure_diagnostic"] = failure_diagnostic
         _atomic_json(
             evidence_path,
-            failure_evidence,
+            _review_failure_evidence(
+                failure,
+                failure_phase,
+                {"attempted": turns_attempted, "acknowledged": turns_acknowledged},
+                cleanup,
+                failure_diagnostic,
+            ),
         )
         if isinstance(failure, ReviewRouteError):
             raise failure

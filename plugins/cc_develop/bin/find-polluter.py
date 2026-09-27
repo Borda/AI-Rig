@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_TEST_DIR = "tests"
@@ -295,6 +296,51 @@ def binary_search(
     return candidates[lo], rounds
 
 
+@dataclass(frozen=True, slots=True)
+class ValidatedArgs:
+    """Command-line input that passed every safety gate, ready to search with."""
+
+    failing_test: str
+    test_dir: str
+    pytest_cmd: list[str]
+
+
+def _validate_and_resolve(args: argparse.Namespace) -> ValidatedArgs | None:
+    """Check the parsed arguments and locate pytest, or explain why the run cannot start.
+
+    Returns ``None`` after printing the reason — a missing failing-test ID, a node ID carrying shell metacharacters, a
+    ``test_dir`` escaping the project root, or no pytest on PATH.
+    """
+    failing_test = args.failing_test
+    test_dir = args.test_dir
+    if not failing_test:
+        print(
+            "Usage: find-polluter.py <failing-test-id> [test-dir]\n\tExample: find-polluter.py tests/test_foo.py::test_bar tests/",
+            file=sys.stderr,
+        )
+        return None
+
+    if not _is_safe_node_id(failing_test):
+        print(f"✗ failing test node ID rejected (shell metacharacters): {failing_test!r}", file=sys.stderr)
+        return None
+
+    # Reject test_dir values that escape the project root (path traversal).
+    # pytest loads conftest.py from any directory it collects, so a traversal
+    # path (e.g. ``../../etc``) would cause arbitrary Python execution.
+    try:
+        Path(test_dir).resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        print(f"! SECURITY: test_dir must be within project root: {test_dir}", file=sys.stderr)
+        return None
+
+    pytest_cmd = _resolve_pytest_cmd()
+    if pytest_cmd is None:
+        print("✗ pytest not found on PATH or via python -m pytest", file=sys.stderr)
+        return None
+
+    return ValidatedArgs(failing_test=failing_test, test_dir=test_dir, pytest_cmd=pytest_cmd)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Find the test that pollutes a failing test and return the process status.
 
@@ -323,40 +369,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
-    failing_test = args.failing_test
-    test_dir = args.test_dir
-    if not failing_test:
-        print(
-            "Usage: find-polluter.py <failing-test-id> [test-dir]\n\tExample: find-polluter.py tests/test_foo.py::test_bar tests/",
-            file=sys.stderr,
-        )
+    validated = _validate_and_resolve(args)
+    if validated is None:
         return 1
-
-    if not _is_safe_node_id(failing_test):
-        print(
-            f"✗ failing test node ID rejected (shell metacharacters): {failing_test!r}",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Reject test_dir values that escape the project root (path traversal).
-    # pytest loads conftest.py from any directory it collects, so a traversal
-    # path (e.g. ``../../etc``) would cause arbitrary Python execution.
-    test_dir_path = Path(test_dir).resolve()
-    project_root = Path.cwd().resolve()
-    try:
-        test_dir_path.relative_to(project_root)
-    except ValueError:
-        print(
-            f"! SECURITY: test_dir must be within project root: {test_dir}",
-            file=sys.stderr,
-        )
-        return 1
-
-    pytest_cmd = _resolve_pytest_cmd()
-    if pytest_cmd is None:
-        print("✗ pytest not found on PATH or via python -m pytest", file=sys.stderr)
-        return 1
+    failing_test, test_dir, pytest_cmd = validated.failing_test, validated.test_dir, validated.pytest_cmd
 
     # Step 1: verify the failing test passes in isolation.
     print(f"→ Checking {failing_test} in isolation...")

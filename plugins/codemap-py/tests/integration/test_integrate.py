@@ -285,7 +285,7 @@ def test_audit_direct_records_are_reported_separately_and_do_not_observe_claude(
 
 def test_audit_exposes_monkeypatched_codex_rig_global_status(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Codex audits surface the read-only global-instructions status instead of silently omitting it."""
-    monkeypatch.setattr(integration, "codex_rig_global_status", lambda: "authenticated")
+    monkeypatch.setattr(integration.native, "codex_rig_global_status", lambda: "authenticated")
 
     report = integration.build_audit_report("codex", repo / integration.PROVIDER_DIR)
 
@@ -305,7 +305,7 @@ def test_audit_observes_same_version_native_content_divergence_and_session_catal
     _write_manifest(native, integration.Runtime.CODEX, integration.PROVIDER_NAME, integration.__version__)
     (native / "README.md").write_text("installed bytes\n")
     monkeypatch.setattr(
-        integration,
+        integration.native,
         "_native_json_probe",
         lambda argv: [
             {
@@ -365,7 +365,7 @@ def test_audit_content_identity_equal_or_unknown_never_claims_drift(
     )
     path = repo / integration.PROVIDER_DIR if native_path == "same-source" else repo / "missing-native-root"
     monkeypatch.setattr(
-        integration,
+        integration.native,
         "_native_json_probe",
         lambda argv: [
             {
@@ -394,7 +394,7 @@ def test_audit_observes_codex_native_source_path(repo: Path, monkeypatch: pytest
     source = repo / integration.PROVIDER_DIR
     _write_manifest(source, integration.Runtime.CODEX, integration.PROVIDER_NAME, integration.__version__)
     monkeypatch.setattr(
-        integration,
+        integration.native,
         "_native_json_probe",
         lambda argv: {
             "installed": [
@@ -454,7 +454,7 @@ def test_audit_warns_on_same_version_consumer_content_drift(
     _write_manifest(native_consumer, integration.Runtime.CLAUDE, "foundry", "1.0.0")
     (native_consumer / "README.md").write_text("native consumer\n")
     monkeypatch.setattr(
-        integration,
+        integration.native,
         "_native_json_probe",
         lambda argv: [
             {
@@ -522,7 +522,7 @@ def test_audit_checks_referenced_consumer_guidance_without_writes(
         if native_state == "absent_consumer"
         else [{"name": "codex-rig", "version": "1.0.0", "enabled": True, "source": {"path": str(native)}}]
     )
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: {"installed": installed})
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: {"installed": installed})
     before = _tree_snapshot(repo), _tree_snapshot(native)
 
     report = integration.build_audit_report("codex", repo / integration.PROVIDER_DIR)
@@ -867,7 +867,7 @@ def test_audit_reports_provider_and_consumer_drift_only_when_source_provider_is_
         repo / integration.PROVIDER_DIR, integration.Runtime.CLAUDE, integration.PROVIDER_NAME, integration.__version__
     )
     monkeypatch.setattr(
-        integration,
+        integration.native,
         "_native_json_probe",
         lambda argv: [
             {"id": "codemap-py@borda-ai-rig", "version": "older", "enabled": True},
@@ -890,10 +890,10 @@ def test_audit_never_calls_query_or_mutation_paths(repo: Path, monkeypatch: pyte
         raise AssertionError("audit invoked a forbidden mutation/query path")
 
     monkeypatch.setattr(integration.query, "main", _forbidden)
-    monkeypatch.setattr(integration, "apply_plan", _forbidden)
-    monkeypatch.setattr(integration, "sync_plan", _forbidden)
-    monkeypatch.setattr(integration, "_run_native_required", _forbidden)
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.apply_sync, "apply_plan", _forbidden)
+    monkeypatch.setattr(integration.apply_sync, "sync_plan", _forbidden)
+    monkeypatch.setattr(integration.native, "_run_native_required", _forbidden)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
 
     report = integration.build_audit_report("both", repo / integration.PROVIDER_DIR)
 
@@ -973,7 +973,7 @@ def test_audit_reports_absent_consumer_as_named_state_not_error(
             _write_manifest(root / target.plugin_dir, target.runtime, target.consumer, "1.0.0")
     _write_manifest(root / integration.PROVIDER_DIR, integration.Runtime.CLAUDE, integration.PROVIDER_NAME, "9.9.9")
     monkeypatch.chdir(root)
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     report = integration.build_audit_report("claude", root / integration.PROVIDER_DIR)
     oss_status = report["consumers"]["claude"]["oss"]
     assert {
@@ -989,7 +989,7 @@ def test_audit_reports_absent_consumer_as_named_state_not_error(
 
 def test_runtime_and_source_members_preserve_plan_json_values(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Enum-backed integration plans preserve the CLI's original JSON strings."""
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     plan = integration.build_plan(
         integration.Runtime.CLAUDE,
         ["oss"],
@@ -1348,13 +1348,13 @@ def test_rollback_failure_reports_recovery_required(
 
 def test_sync_refuses_drift_before_native_call(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Revalidate installed state immediately before every plugin op; drift stops it early."""
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     plan = integration.build_plan("claude", ["oss"], "local-candidate", repo / integration.PROVIDER_DIR)
 
     fake_installed = [{"id": "codemap-py@borda-ai-rig", "version": "9.9.9", "enabled": True}]
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: fake_installed)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: fake_installed)
     calls: list[list[str]] = []
-    monkeypatch.setattr(integration, "_run_native_required", lambda argv: calls.append(list(argv)))
+    monkeypatch.setattr(integration.native, "_run_native_required", lambda argv: calls.append(list(argv)))
 
     with pytest.raises(integration.IntegrationError) as exc:
         integration.sync_plan(plan, plan["plan_sha256"], "local-candidate", repo / integration.PROVIDER_DIR)
@@ -1364,7 +1364,7 @@ def test_sync_refuses_drift_before_native_call(repo: Path, monkeypatch: pytest.M
 
 def test_sync_approve_source_mismatch_is_approval_error(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Require synchronization approval to match the source recorded in the plan."""
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     plan = integration.build_plan("claude", ["oss"], "local-candidate", repo / integration.PROVIDER_DIR)
     with pytest.raises(integration.ApprovalError) as exc:
         integration.sync_plan(plan, plan["plan_sha256"], "release", repo / integration.PROVIDER_DIR)
@@ -1373,14 +1373,14 @@ def test_sync_approve_source_mismatch_is_approval_error(repo: Path, monkeypatch:
 
 def test_apply_and_sync_ignore_each_others_operation_kind(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A mixed plan keeps source edits in apply and native runtime work in sync."""
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     plan = integration.build_plan("claude", ["oss"], "local-candidate", repo / integration.PROVIDER_DIR)
     source_op = next(op for op in plan["ops"] if op["kind"] == "source_write")
     marketplace_op = next(op for op in plan["ops"] if op["kind"] == "runtime_sync" and op["role"] == "marketplace")
     plan["ops"] = [source_op, marketplace_op]
     plan["plan_sha256"] = integration.compute_plan_sha256(plan)
     native_calls: list[list[str]] = []
-    monkeypatch.setattr(integration, "_run_native_required", lambda argv: native_calls.append(list(argv)))
+    monkeypatch.setattr(integration.native, "_run_native_required", lambda argv: native_calls.append(list(argv)))
 
     integration.apply_plan(plan, plan["plan_sha256"], repo / integration.PROVIDER_DIR)
     source_path = repo / source_op["path"]

@@ -120,6 +120,7 @@ def write_state(values: dict[str, str]) -> Path:
 
 
 def main() -> int:
+    """Parse /foundry:audit arguments and prepare its run state."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--arguments", default="")
     parser.add_argument("--claude-dir", default=".claude")

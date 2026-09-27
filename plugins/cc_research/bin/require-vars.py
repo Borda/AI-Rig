@@ -18,6 +18,7 @@ import sys
 
 
 def main(argv: list[str]) -> int:
+    """Assert that sentinel-derived values are non-empty, else abort the step."""
     args = argv[1:]
     if len(args) < 2:
         print(f"require-vars: expected <value> <fail-msg> pairs, got {len(args)}", file=sys.stderr)

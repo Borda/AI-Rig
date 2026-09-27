@@ -23,6 +23,21 @@ from _launcher_capability import _private_filesystem_available
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched. Inside the package every seam
+# below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex.structural import arms as codex_arms  # noqa: E402
+from _bench_codex.structural import cli as codex_cli  # noqa: E402
+from _bench_codex.structural import config as codex_config  # noqa: E402
+from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
+from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
+from _bench_codex.structural import provenance as codex_provenance  # noqa: E402
+from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
+from _bench_codex.structural import rescore as codex_rescore  # noqa: E402
+from _bench_codex.structural import runner as codex_structural_runner  # noqa: E402
+from _bench_codex.structural import scoring as codex_scoring  # noqa: E402
+from _bench_codex.structural import tasks as codex_tasks  # noqa: E402
+
 from _bench_codex import runtime as codex_runtime  # noqa: E402
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 from benchmarks._bench_common import provider_parity_contracts as core  # noqa: E402
@@ -1217,14 +1232,14 @@ def test_paid_skill_home_installs_only_from_bound_run_snapshot(
         snapshot_root,
         {"C_strict": {"codemap-py": codemap_source, "codex-rig": rig_source}},
     )
-    monkeypatch.setattr(script_run_codex, "prepare_arm_home", _prepare)
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_locked_codemap_python", lambda **_kwargs: "/usr/bin/python3")
-    monkeypatch.setattr(script_run_codex, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_admit_installed_skill_pair", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_write_permission_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_installed_plugin_pair", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "prepare_arm_home", _prepare)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_locked_codemap_python", lambda **_kwargs: "/usr/bin/python3")
+    monkeypatch.setattr(codex_provisioning, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_admit_installed_skill_pair", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_write_permission_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_installed_plugin_pair", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
 
     home = runner._prepare_verified_home("C_strict")
     try:
@@ -1374,8 +1389,8 @@ def test_initial_skill_admission_failure_keeps_identity_evidence_after_cleanup(
             setattr(home, "codemap_plugin_path" if name == "codemap-py" else "codex_rig_path", plugin)
         raise RuntimeError("fixture plugin identity mismatch")
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_install_codemap_plugin", _fail_after_staging)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_install_codemap_plugin", _fail_after_staging)
 
     with pytest.raises(RuntimeError, match="fixture plugin identity mismatch"):
         runner.create_input_snapshot(
@@ -1557,11 +1572,11 @@ def test_prepare_verified_home_cleans_credential_home_after_keyboard_interrupt(
         raise KeyboardInterrupt("fixture interrupt")
 
     runner = script_run_codex.CodexRunner("fixture-model", tmp_path, auth_source=auth_source)
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "prepare_arm_home", _prepare)
-    monkeypatch.setattr(script_run_codex, "_write_permission_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_authentication", _interrupt_authentication)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "prepare_arm_home", _prepare)
+    monkeypatch.setattr(codex_provisioning, "_write_permission_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_authentication", _interrupt_authentication)
 
     try:
         with pytest.raises(KeyboardInterrupt, match="fixture interrupt"):
@@ -1627,7 +1642,7 @@ def test_probe_verifies_authentication_without_disclosing_auth_source(
         calls.append(command)
         return _successful_plain_profile_command(command, **kwargs)
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
     fixture_index = tmp_path / "fixture-index.json"
     fixture_index.write_text("{}", encoding="utf-8")
     runner = script_run_codex.CodexRunner(
@@ -1666,9 +1681,9 @@ def test_runner_cleans_auth_home_when_transport_raises(
         homes.append(home.path)
         return home
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "prepare_arm_home", _prepare_home)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "prepare_arm_home", _prepare_home)
     fixture_index = tmp_path / "fixture-index.json"
     fixture_index.write_text("{}", encoding="utf-8")
     runner = script_run_codex.CodexRunner(
@@ -1711,11 +1726,11 @@ def test_runner_reuses_rotated_auth_state_without_mutating_immutable_source(
     index_path = tmp_path / "fixture-index.json"
     index_path.write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        script_run_codex, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
+        codex_provisioning, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
     )
     runner = script_run_codex.CodexRunner(
         "fixture-model",
@@ -1776,11 +1791,11 @@ def test_runner_rejects_auth_source_drift_before_the_next_model_call(
     index_path = tmp_path / "fixture-index.json"
     index_path.write_text("{}", encoding="utf-8")
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        script_run_codex, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
+        codex_provisioning, "_verify_authentication", lambda home, **_kwargs: setattr(home, "authenticated", True)
     )
     runner = script_run_codex.CodexRunner(
         "fixture-model",
@@ -1858,8 +1873,8 @@ def test_locked_runtime_requires_one_shared_locked_index_for_every_arm(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(script_run_codex, "PARITY_MANIFEST_PATH", manifest_path)
-    monkeypatch.setattr(script_run_codex, "_repo_sha", lambda _path: "fixture-commit")
+    monkeypatch.setattr(codex_config, "PARITY_MANIFEST_PATH", manifest_path)
+    monkeypatch.setattr(codex_provenance, "_repo_sha", lambda _path: "fixture-commit")
     monkeypatch.setattr(
         script_run_codex.subprocess,
         "run",
@@ -1910,8 +1925,8 @@ def test_locked_runtime_admits_only_a_provenance_bound_worktree_index(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(script_run_codex, "_repo_sha", lambda _path: "fixture-commit")
-    monkeypatch.setattr(script_run_codex, "_git_porcelain_status", lambda _path: {})
+    monkeypatch.setattr(codex_provenance, "_repo_sha", lambda _path: "fixture-commit")
+    monkeypatch.setattr(codex_diff_impact, "_git_porcelain_status", lambda _path: {})
 
     script_run_codex._validate_locked_runtime(
         worktree_root,
@@ -1968,8 +1983,8 @@ def test_historical_runtime_coordinate_uses_patch_baseline_not_main_manifest(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(script_run_codex, "_repo_sha", lambda _path: baseline_commit)
-    monkeypatch.setattr(script_run_codex, "_git_porcelain_status", lambda _path: {})
+    monkeypatch.setattr(codex_provenance, "_repo_sha", lambda _path: baseline_commit)
+    monkeypatch.setattr(codex_diff_impact, "_git_porcelain_status", lambda _path: {})
     coordinate = {
         "baseline_commit": baseline_commit,
         "raw_index_sha256": hashlib.sha256(frozen_bytes).hexdigest(),
@@ -2090,7 +2105,7 @@ def test_subprocess_timeout_and_nonzero_exit_keep_distinct_error_types(
     runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
 
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=""))
-    monkeypatch.setattr(script_run_codex, "terminate_process_group", lambda _process: None)
+    monkeypatch.setattr(codex_structural_runner, "terminate_process_group", lambda _process: None)
     timed_out = codex_runtime.parse_codex_jsonl(runner._subprocess(["codex"], {}))
 
     assert timed_out.incomplete is True
@@ -2168,7 +2183,7 @@ def test_failed_coordination_cleanup_is_recorded_not_silently_dropped(
         """Reject cleanup as though its target directory were not empty."""
         raise ValueError("directory not empty")
 
-    monkeypatch.setattr(script_run_codex, "_cleanup_coordination_root", _refuse)
+    monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", _refuse)
 
     message = runner._cleanup_coordination(coordination)
 
@@ -2182,7 +2197,7 @@ def test_successful_coordination_cleanup_records_nothing(
 ) -> None:
     """The ordinary path stays silent."""
     runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
-    monkeypatch.setattr(script_run_codex, "_cleanup_coordination_root", lambda _path: None)
+    monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", lambda _path: None)
 
     assert runner._cleanup_coordination(tmp_path / "coordination") is None
     assert runner.coordination_cleanup_errors == []
@@ -2198,7 +2213,7 @@ def test_coordination_cleanup_never_raises_from_a_finally_block(
         """Reject cleanup as though its target directory were not empty."""
         raise ValueError("directory not empty")
 
-    monkeypatch.setattr(script_run_codex, "_cleanup_coordination_root", _refuse)
+    monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", _refuse)
 
     try:
         raise RuntimeError("original cause")
@@ -2217,7 +2232,7 @@ def test_timed_out_transport_preserves_streamed_usage_events(
     runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
     streamed = _completed_stream(output="partial answer")
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=streamed))
-    monkeypatch.setattr(script_run_codex, "terminate_process_group", lambda _process: None)
+    monkeypatch.setattr(codex_structural_runner, "terminate_process_group", lambda _process: None)
 
     parsed = codex_runtime.parse_codex_jsonl(runner._subprocess(["codex"], {}))
 
@@ -2232,7 +2247,7 @@ def test_timed_out_transport_kills_the_whole_process_group(
     runner = script_run_codex.CodexRunner("fixture-model", tmp_path)
     terminated: list[Any] = []
     monkeypatch.setattr(script_run_codex.subprocess, "Popen", _FakePopen.factory(timeout_after_streaming=""))
-    monkeypatch.setattr(script_run_codex, "terminate_process_group", terminated.append)
+    monkeypatch.setattr(codex_structural_runner, "terminate_process_group", terminated.append)
 
     runner._subprocess(["codex"], {})
 
@@ -2269,10 +2284,10 @@ def test_main_dry_run_never_requires_or_writes_output(
 ) -> None:
     """No-model planning performs probes without reserving a result artifact."""
     task = {"id": "fixture", "prompt": "prompt", "type": "demo"}
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
     monkeypatch.setattr(
-        script_run_codex,
+        codex_arms,
         "deterministic_arm_order",
         lambda *_args, **_kwargs: script_run_codex.CODEX_STRUCTURAL_ARMS,
     )
@@ -2290,7 +2305,7 @@ def test_main_dry_run_never_requires_or_writes_output(
             """Report the arm's fixture availability."""
             return {"codemap_available": False}
 
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     script_run_codex.main(
         repo_path=tmp_path,
@@ -2322,10 +2337,10 @@ def test_dry_run_prints_the_manifest_driven_per_cell_timeout_without_global_dead
             """Report the arm's fixture availability."""
             return {"codemap_available": False}
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
-    monkeypatch.setattr(script_run_codex, "print", planned.append, raising=False)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_cli, "print", planned.append, raising=False)
     monkeypatch.setattr(codex_runtime, "print_plan_row", planned.append)
 
     script_run_codex.main(
@@ -2345,10 +2360,10 @@ def test_main_rejects_missing_or_existing_output_before_model_execution(
 ) -> None:
     """Paid execution must have a fresh durable destination before constructing a runner."""
     task = {"id": "fixture", "prompt": "prompt", "type": "demo"}
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
     monkeypatch.setattr(
-        script_run_codex,
+        codex_structural_runner,
         "CodexRunner",
         lambda *_args, **_kwargs: pytest.fail("invalid output reached runner construction"),
     )
@@ -2381,9 +2396,9 @@ def test_main_rejects_existing_canonical_telemetry_before_model_execution_or_mut
     metadata_path = tmp_path / "fresh-metadata.json"
     canonical_path = script_run_codex._canonical_telemetry_path(output_path)
     canonical_path.write_text('{"preserve": true}\n', encoding="utf-8")
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
     monkeypatch.setattr(
-        script_run_codex,
+        codex_structural_runner,
         "CodexRunner",
         lambda *_args, **_kwargs: pytest.fail("existing sidecar reached runner construction"),
     )
@@ -2422,9 +2437,9 @@ def test_main_rejects_unreviewed_implementation_revision_before_reserving_output
         json.dumps(manifest),
         encoding="utf-8",
     )
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
     monkeypatch.setattr(
-        script_run_codex,
+        codex_structural_runner,
         "CodexRunner",
         lambda *_args, **_kwargs: pytest.fail("unreviewed manifest reached runner construction"),
     )
@@ -2447,8 +2462,8 @@ def test_main_persists_each_completed_cell_in_task_then_arm_order(
 ) -> None:
     """A partial JSONL artifact retains every completed cell in deterministic plan order."""
     tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
 
     class FixtureRunner:
         """Return one minimal serializable result per planned cell."""
@@ -2481,10 +2496,10 @@ def test_main_persists_each_completed_cell_in_task_then_arm_order(
                 compliance=True,
             )
 
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_arms,
         "deterministic_arm_order",
         lambda *_args, **_kwargs: script_run_codex.CODEX_STRUCTURAL_ARMS,
     )
@@ -2547,10 +2562,10 @@ def test_main_records_cell_failures_and_continues_after_smoke(
                 locked_query_conformance=task["id"] == "second",
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     output_path = tmp_path / "admission.jsonl"
 
     script_run_codex.main(
@@ -2663,10 +2678,10 @@ def test_main_stops_after_three_equivalent_unknown_infrastructure_failures(
                 error_type="transport_error",
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     output_path = tmp_path / "infrastructure.jsonl"
 
     with pytest.raises(RuntimeError, match="infrastructure failure"):
@@ -2729,10 +2744,10 @@ def test_main_stops_immediately_after_a_deterministic_authentication_failure(
                 error_type="authentication_failed",
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     output_path = tmp_path / "authentication.jsonl"
 
     with pytest.raises(RuntimeError, match="authentication failed"):
@@ -2791,10 +2806,10 @@ def test_main_continues_after_semantic_or_model_quality_failures(
                 error_type="semantic_quality_failure",
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     output_path = tmp_path / "semantic.jsonl"
 
     script_run_codex.main(
@@ -2855,10 +2870,10 @@ def test_main_closes_runner_auth_state_on_all_study_exits(
             nonlocal closed
             closed += 1
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     output_path = tmp_path / f"runner-close-{raise_from_run}.jsonl"
 
     if raise_from_run:
@@ -2927,12 +2942,12 @@ def test_main_closes_runner_when_setup_raises_before_the_first_cell(
         if failure_site == "metadata-write":
             raise KeyboardInterrupt("metadata write interrupted")
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
-    monkeypatch.setattr(script_run_codex, "_initial_run_metadata", _initial_metadata)
-    monkeypatch.setattr(script_run_codex, "_write_run_metadata", _write_metadata)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_rescore, "_initial_run_metadata", _initial_metadata)
+    monkeypatch.setattr(codex_structural_runner, "_write_run_metadata", _write_metadata)
 
     with pytest.raises(KeyboardInterrupt, match="interrupted"):
         script_run_codex.main(
@@ -2982,10 +2997,10 @@ def test_main_emits_plans_only_for_dry_runs_and_paths_only_in_artifact_announcem
                 compliance=None,
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     script_run_codex.main(
         repo_path=tmp_path,
@@ -3045,11 +3060,11 @@ def test_main_dry_run_routes_plan_through_shared_plan_renderer(
             """Report the arm's fixture availability."""
             return {"codemap_available": False}
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     plain: list[str] = []
-    monkeypatch.setattr(script_run_codex, "print", plain.append, raising=False)
+    monkeypatch.setattr(codex_cli, "print", plain.append, raising=False)
     monkeypatch.setattr(codex_runtime, "print_plan_row", printed.append)
 
     script_run_codex.main(
@@ -3107,16 +3122,16 @@ def test_main_progress_denominator_matches_selected_cells(
                 compliance=selected_arm != "A_plain",
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
-    monkeypatch.setattr(script_run_codex, "_validate_unscoped_paid_task_ids", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_manifest, "_validate_unscoped_paid_task_ids", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_arms,
         "deterministic_arm_order",
         lambda *_args, **_kwargs: ("C_strict", "B_auto", "A_plain"),
     )
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     script_run_codex.main(
         repo_path=tmp_path,
@@ -3168,15 +3183,15 @@ def test_main_prints_interrupted_partial_block_with_planned_denominator(
                 compliance=True,
             )
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_validate_execution_manifest", lambda _path: None)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_manifest, "_validate_execution_manifest", lambda _path: None)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_arms,
         "deterministic_arm_order",
         lambda *_args, **_kwargs: ("C_strict", "B_auto", "A_plain"),
     )
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     with pytest.raises(RuntimeError, match="fixture interruption"):
         script_run_codex.main(
@@ -3573,8 +3588,8 @@ def test_main_filters_locked_tasks_in_suite_order_and_rejects_invalid_ids(
 ) -> None:
     """Smoke selection keeps canonical suite order without accepting unknown or duplicate IDs."""
     tasks = [{"id": "first", "prompt": "one", "type": "demo"}, {"id": "second", "prompt": "two", "type": "demo"}]
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
     planned: list[str] = []
 
     class FixtureRunner:
@@ -3590,7 +3605,7 @@ def test_main_filters_locked_tasks_in_suite_order_and_rejects_invalid_ids(
             """Report the arm's fixture availability."""
             return {"codemap_available": False}
 
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
     monkeypatch.setattr(
         script_run_codex,
         "print",
@@ -3646,8 +3661,8 @@ def test_main_plans_every_preregistered_pilot_coordinate_once(
     pilot_ids = manifest["preregistered_cells"]["structural_pilot_task_ids"]
     repetitions = manifest["preregistered_cells"]["pilot_repetitions"]
     tasks = [{"id": task_id, "prompt": task_id, "type": "demo"} for task_id in pilot_ids]
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
     planned: list[str] = []
 
     class FixtureRunner:
@@ -3663,11 +3678,11 @@ def test_main_plans_every_preregistered_pilot_coordinate_once(
             """Report the arm's fixture availability."""
             return {"codemap_available": arm != "A_plain"}
 
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
-    monkeypatch.setattr(script_run_codex, "print", planned.append, raising=False)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_cli, "print", planned.append, raising=False)
     monkeypatch.setattr(codex_runtime, "print_plan_row", planned.append)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_arms,
         "deterministic_arm_order",
         lambda *_args, **_kwargs: script_run_codex.CODEX_STRUCTURAL_ARMS,
     )
@@ -5120,11 +5135,11 @@ def test_main_dry_run_calls_diff_impact_preflight_and_can_suppress_legend(
             """Record the treatments supplied for diff-impact preflight."""
             calls.append(arms)
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", lambda _path, *_args: [task])
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda *_args: "fixture-revision")
-    monkeypatch.setattr(script_run_codex, "_locked_task_ordinal", lambda *_args: 0)
-    monkeypatch.setattr(script_run_codex, "_validate_diff_impact_stage", lambda *_args: None)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", lambda _path, *_args: [task])
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda *_args: "fixture-revision")
+    monkeypatch.setattr(codex_arms, "_locked_task_ordinal", lambda *_args: 0)
+    monkeypatch.setattr(codex_scoring, "_validate_diff_impact_stage", lambda *_args: None)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     script_run_codex.main(
         repo_path=tmp_path,
@@ -5483,12 +5498,12 @@ def test_unified_paid_execution_uses_one_counter_across_native_stage_rows(
         for completed, arm in enumerate(("A_plain", "B_auto", "C_strict"), start=1):
             script_run_codex.runtime.print_arm_row(f"({completed}/3) ✓ {stage_id} {arm}", arm)
 
-    monkeypatch.setattr(script_run_codex, "resolve_task_selection", lambda *_args: selection)
-    monkeypatch.setattr(script_run_codex, "_resolve_execution_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(script_run_codex, "main", lambda **_kwargs: _emit_stage_rows("structural"))
+    monkeypatch.setattr(codex_manifest, "resolve_task_selection", lambda *_args: selection)
+    monkeypatch.setattr(codex_cli, "_resolve_execution_scope", lambda **_kwargs: scope)
+    monkeypatch.setattr(codex_cli, "main", lambda **_kwargs: _emit_stage_rows("structural"))
     monkeypatch.setattr(readcrop_stage, "run_stage", lambda **_kwargs: _emit_stage_rows("readcrop"))
     monkeypatch.setattr(fix_stage, "run_fix_stage", lambda study, **_kwargs: _emit_stage_rows(study))
-    monkeypatch.setattr(script_run_codex, "write_checksums", lambda _path: None)
+    monkeypatch.setattr(codex_cli, "write_checksums", lambda _path: None)
 
     script_run_codex._run_unified_execution(
         repo_path=tmp_path,
@@ -5543,7 +5558,7 @@ def test_run_level_relocation_reaches_every_admission_inside_the_runner(
     """
     captured: list[Any] = []
     monkeypatch.setattr(
-        script_run_codex,
+        codex_diff_impact,
         "_validate_locked_runtime",
         lambda *args, **kwargs: captured.append(args[5] if len(args) > 5 else kwargs.get("index_relocation")),
     )

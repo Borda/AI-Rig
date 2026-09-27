@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.39.7
+
+- Internal restructuring only; no CLI, output or behavior change. `scanner.py`, `query.py` and `integration.py` each become a package of focused modules (`scanner/` by AST-extraction responsibility, `query/` by verb family over a shared index/coverage/output layer, `integration/` by integration mode). Each package's `__init__.py` re-exports the full surface of the module it replaces — including that module's own imports — so every existing `from codemap_py.<mod> import ...` and `<mod>.<attr>` access keeps working.
+- The eight query globals whose writer and reader are different concerns (`_CMD`, `_FORMAT`, `_capture`, `_invocation`, `_LOADED_INDEX_PATH`, `_root_mismatch`, `_verbose_coverage`, `_force_compact_coverage`) move to `codemap_py.query_state`, reached as `state.<name>` so a rebind in `main()` is visible to every reader. Per-function caches stay with the code that owns them.
+- `graph.py` keeps its single-file layout; `_recompute_metrics` is split into collect/stamp phases and the whole-index phases shared by `scan` and `incremental_scan` are extracted, which brings the file under the complexity limits and lets it drop its `per-file-ignores` entry.
+- Benchmark reproducibility pins hash a pinned codemap module by shape (`_bench_common.artifact_hashing.module_sha256`): a file still hashes to its own SHA-256, a package tree-hashes its modules. Without this the next manifest regeneration raised on the now-absent `query.py`.
+
 ## 0.39.6
 
 - Security: fixed a decorator-injection bypass and a source-code leak in the telemetry anonymizer (found by this release's own residual adversarial scan, beyond the audit's original scope).

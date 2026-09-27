@@ -432,7 +432,7 @@ class TestFileTooLargeDegradation:
 
     def test_too_large_uses_reason_key(self, tmp_path: Path, monkeypatch):
         """_parse_file over the size cap returns a degraded entry keyed on 'reason', not 'error'."""
-        monkeypatch.setattr(_scanner_mod, "_MAX_FILE_SIZE_BYTES", 8)
+        monkeypatch.setattr(_scanner_mod.discovery, "_MAX_FILE_SIZE_BYTES", 8)
         big = tmp_path / "big.py"
         big.write_text("x = 1234567890\n")  # >8 bytes on disk
 
@@ -444,7 +444,7 @@ class TestFileTooLargeDegradation:
 
     def test_all_degraded_reasons_printable(self, tmp_path: Path, monkeypatch):
         """Every degraded branch of _parse_file exposes 'reason' — the key the print loop reads."""
-        monkeypatch.setattr(_scanner_mod, "_MAX_FILE_SIZE_BYTES", 8)
+        monkeypatch.setattr(_scanner_mod.discovery, "_MAX_FILE_SIZE_BYTES", 8)
         too_large = tmp_path / "big.py"
         too_large.write_text("x = 1234567890\n")
         bad_utf8 = tmp_path / "bad.py"

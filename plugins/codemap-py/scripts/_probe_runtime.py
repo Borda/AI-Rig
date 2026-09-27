@@ -38,6 +38,7 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parent
@@ -251,9 +252,53 @@ def _run(cmd: list[str], proj: Path, env: dict[str, str]) -> subprocess.Complete
         return subprocess.CompletedProcess(cmd, returncode=126, stdout="", stderr=f"exec failed: {error}")
 
 
+@dataclass(frozen=True)
+class RuntimeProof:
+    """Outcome of one source-independent runtime proof against installed bytes.
+
+    Dataclass (not TypedDict): named construction and attribute access;
+    converted to a dict by :meth:`to_dict` at the JSON-emission boundary.
+
+    Attributes:
+        ok: Whether every check in ``checks`` passed.
+        checks: Per-channel verdicts (source deletion, env/argv/byte leaks, command exits).
+        interpreter: Non-forbidden interpreter the launcher ran under, or ``None``.
+        detail: Per-command stderr, or a ``skipped`` note when the proof did not run.
+        execution_path: How the commands ran (``"launcher"``), or ``None`` when skipped.
+
+    Examples:
+        >>> RuntimeProof(ok=False, checks={}, detail={"skipped": "x"}).to_dict()["ok"]
+        False
+    """
+
+    ok: bool
+    checks: dict[str, bool]
+    detail: dict[str, str]
+    interpreter: str | None = None
+    execution_path: str | None = None
+
+    def to_dict(self) -> dict:
+        """Return the JSON-envelope projection of this proof.
+
+        Returns:
+            A dict with ``ok``, ``checks``, ``execution_path``, ``interpreter``, ``detail``.
+
+        Examples:
+            >>> sorted(RuntimeProof(ok=True, checks={}, detail={}).to_dict())
+            ['checks', 'detail', 'execution_path', 'interpreter', 'ok']
+        """
+        return {
+            "ok": self.ok,
+            "checks": self.checks,
+            "execution_path": self.execution_path,
+            "interpreter": self.interpreter,
+            "detail": self.detail,
+        }
+
+
 def runtime_proof(
     installed_path: Path, workdir: Path, install_sources: list[Path], forbidden_roots: list[Path]
-) -> dict:
+) -> RuntimeProof:
     """Delete the disposable source, then prove source-independent execution from installed bytes.
 
     Args:
@@ -263,7 +308,7 @@ def runtime_proof(
         forbidden_roots: paths that must not leak via env/argv/bytes (temp checkout + repo).
 
     Returns:
-        ``{"ok": bool, "checks": {...}, "interpreter": str|None, "detail": {...}}``.
+        A :class:`RuntimeProof` whose ``ok`` is true only when every check passed.
     """
     forbidden = [str(root.resolve()) for root in forbidden_roots]
     for source in install_sources:
@@ -301,10 +346,10 @@ def runtime_proof(
         "index_ok": runs["index"].returncode == 0,
         "query_ok": runs["query"].returncode == 0,
     }
-    return {
-        "ok": all(checks.values()),
-        "checks": checks,
-        "execution_path": "launcher",
-        "interpreter": interpreter,
-        "detail": {name: run.stderr.strip() for name, run in runs.items()},
-    }
+    return RuntimeProof(
+        ok=all(checks.values()),
+        checks=checks,
+        detail={name: run.stderr.strip() for name, run in runs.items()},
+        interpreter=interpreter,
+        execution_path="launcher",
+    )

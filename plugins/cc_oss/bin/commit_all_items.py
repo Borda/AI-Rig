@@ -27,10 +27,35 @@ import re
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from shutil import which
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+@dataclass(frozen=True)
+class CommitSummaryFields:
+    """Fields for the bulk-commit summary message.
+
+    Attributes:
+        pr_number: Pre-formatted PR reference to embed verbatim — ``#<N>`` when the
+            commit lands in the same repo as the PR, or the full PR URL when it lands
+            in a different repo (e.g. pushed to a contributor's fork). Caller resolves
+            which form applies (see ``PR_REF`` in ``resolve/SKILL.md`` Step 4).
+        n_as_suggested: Count of items applied as-suggested.
+        n_self_resolved: Count of items self-resolved.
+        n_rejected: Count of items rejected.
+        bullet_list: Optional bullet-list body (may be empty string).
+        include_codex: Whether to add the OpenAI Codex co-author trailer.
+    """
+
+    pr_number: str
+    n_as_suggested: int
+    n_self_resolved: int
+    n_rejected: int
+    bullet_list: str
+    include_codex: bool = False
 
 
 def _slug(text: str) -> str:
@@ -104,32 +129,17 @@ def _resolve(cmd: str) -> str:
     return p
 
 
-def build_commit_message(
-    pr_number: str,
-    n_as_suggested: int,
-    n_self_resolved: int,
-    n_rejected: int,
-    bullet_list: str,
-    include_codex: bool,
-) -> str:
+def build_commit_message(fields: CommitSummaryFields) -> str:
     """Build the commit message string.
 
     Args:
-        pr_number: Pre-formatted PR reference to embed verbatim — ``#<N>`` when the
-            commit lands in the same repo as the PR, or the full PR URL when it lands
-            in a different repo (e.g. pushed to a contributor's fork). Caller resolves
-            which form applies (see ``PR_REF`` in ``resolve/SKILL.md`` Step 4).
-        n_as_suggested: Count of items applied as-suggested.
-        n_self_resolved: Count of items self-resolved.
-        n_rejected: Count of items rejected.
-        bullet_list: Optional bullet-list body (may be empty string).
-        include_codex: Whether to add OpenAI Codex co-author trailer.
+        fields: Structured message fields (see :class:`CommitSummaryFields`).
 
     Returns:
         Full commit message string.
 
     Examples:
-        >>> msg = build_commit_message("#42", 3, 1, 0, "", False)
+        >>> msg = build_commit_message(CommitSummaryFields("#42", 3, 1, 0, "", False))
         >>> "PR #42" in msg
         True
         >>> "3 as-suggested" in msg
@@ -137,17 +147,77 @@ def build_commit_message(
         >>> "Co-authored-by: claude[bot]" in msg
         True
     """
-    codex_trailer = "\nCo-authored-by: OpenAI Codex <codex@openai.com>" if include_codex else ""
-    body_section = f"\n{bullet_list}\n" if bullet_list.strip() else "\n"
+    codex_trailer = "\nCo-authored-by: OpenAI Codex <codex@openai.com>" if fields.include_codex else ""
+    body_section = f"\n{fields.bullet_list}\n" if fields.bullet_list.strip() else "\n"
     return (
-        f"Resolve review items for PR {pr_number}\n"
+        f"Resolve review items for PR {fields.pr_number}\n"
         f"{body_section}"
-        f"Challenge log: {n_as_suggested} as-suggested, "
-        f"{n_self_resolved} self-resolved, {n_rejected} rejected\n"
+        f"Challenge log: {fields.n_as_suggested} as-suggested, "
+        f"{fields.n_self_resolved} self-resolved, {fields.n_rejected} rejected\n"
         f"\n---\n"
         f"Co-authored-by: claude[bot] <209825114+claude[bot]@users.noreply.github.com>"
         f"{codex_trailer}"
     )
+
+
+def _parse_positional_args(args: list[str]) -> tuple[str, list[str], str, bool]:
+    """Dispatch positional args by index, honouring ``--codex`` anywhere.
+
+    Args:
+        args: Raw argument list (after the ``-h``/``--help`` guard).
+
+    Returns:
+        ``(pr_number, raw_counts, summaries_file, include_codex)``.
+
+    Examples:
+        >>> _parse_positional_args(["#7", "5", "2", "1", "s.txt", "--codex"])
+        ('#7', ['5', '2', '1'], 's.txt', True)
+    """
+    pr_number = ""
+    raw_counts: list[str] = ["0", "0", "0"]
+    summaries_file = ""
+    include_codex = False
+    pos = 0
+    for arg in args:
+        if arg == "--codex":
+            include_codex = True
+            continue
+        if pos == 0:
+            pr_number = arg
+        elif pos == 1:
+            raw_counts[0] = arg
+        elif pos == 2:
+            raw_counts[1] = arg
+        elif pos == 3:
+            raw_counts[2] = arg
+        elif pos == 4:
+            summaries_file = arg
+        pos += 1
+    return pr_number, raw_counts, summaries_file, include_codex
+
+
+def _validate_counts(raw_counts: list[str]) -> tuple[list[int], str | None]:
+    """Validate that every raw count string is a non-negative integer.
+
+    Args:
+        raw_counts: Raw count strings from the positional parse.
+
+    Returns:
+        ``(int_counts, error)`` — ``error`` is ``None`` on success, or a message
+        naming the first non-digit value otherwise.
+
+    Examples:
+        >>> _validate_counts(["5", "2", "1"])
+        ([5, 2, 1], None)
+        >>> _validate_counts(["5", "x", "1"])
+        ([], "commit_all_items: expected integer, got: 'x'")
+    """
+    int_counts: list[int] = []
+    for val in raw_counts:
+        if not str(val).isdigit():
+            return [], f"commit_all_items: expected integer, got: {val!r}"
+        int_counts.append(int(val))
+    return int_counts, None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,42 +245,21 @@ def main(argv: list[str] | None = None) -> int:
             description="Create a bulk commit for all resolved review items.",
         ).parse_args(["-h"])
 
-    pr_number = ""
-    raw_counts: list[str] = ["0", "0", "0"]
-    summaries_file = ""
-    include_codex = False
-    pos = 0
-    for arg in args:
-        if arg == "--codex":
-            include_codex = True
-            continue
-        if pos == 0:
-            pr_number = arg
-        elif pos == 1:
-            raw_counts[0] = arg
-        elif pos == 2:
-            raw_counts[1] = arg
-        elif pos == 3:
-            raw_counts[2] = arg
-        elif pos == 4:
-            summaries_file = arg
-        pos += 1
+    pr_number, raw_counts, summaries_file, include_codex = _parse_positional_args(args)
     if not pr_number:
         print(
             "Usage: commit_all_items.py PR_NUMBER N_AS N_SELF N_REJECTED [SUMMARIES_FILE] [--codex]",
             file=sys.stderr,
         )
         return 1
-    int_counts: list[int] = []
-    for val in raw_counts:
-        if not str(val).isdigit():
-            print(f"commit_all_items: expected integer, got: {val!r}", file=sys.stderr)
-            return 2
-        int_counts.append(int(val))
+    int_counts, err = _validate_counts(raw_counts)
+    if err is not None:
+        print(err, file=sys.stderr)
+        return 2
     bullet_list = ""
     if summaries_file and Path(summaries_file).is_file():
         bullet_list = Path(summaries_file).read_text(encoding="utf-8")
-    msg = build_commit_message(pr_number, *int_counts, bullet_list, include_codex)
+    msg = build_commit_message(CommitSummaryFields(pr_number, *int_counts, bullet_list, include_codex))
     git = _resolve("git")
     sentinel = _sentinel_path(git)
     sentinel.touch()

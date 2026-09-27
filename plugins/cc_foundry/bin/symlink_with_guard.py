@@ -591,29 +591,38 @@ def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
         :func:`main` also prints these lines to stdout.
     """
     log: list[str] = []
-    skills_dest = home / ".claude" / "skills"
-    agents_dest = home / ".claude" / "agents"
-    team_dest = home / ".claude" / "TEAM_PROTOCOL.md"
-
     _cleanup_rules(plugin_root, home, log)
+    _cleanup_team_protocol(plugin_root, home, log)
+    _purge_skills_links(home / ".claude" / "skills", marker, log)
+    _purge_agent_links(home / ".claude" / "agents", marker, plugin_root, log)
+    return log
 
-    # --- TEAM_PROTOCOL.md ---
-    if team_dest.is_symlink() and not (plugin_root / "TEAM_PROTOCOL.md").is_file():
-        target = _readlink(team_dest)
-        if target is not None and _owns(team_dest, target, plugin_root, _cache_lineage(plugin_root, home)):
-            try:
-                team_dest.unlink()
-                log.append("removed obsolete: TEAM_PROTOCOL.md")
-            except OSError:
-                pass
 
-    # --- skills/ (unconditional purge) ---
-    # No source-existence check and — unlike the agents scope below — no
-    # `_is_current` skip either. A link pointing at the CURRENT plugin root is
-    # precisely the bug this purge exists to fix: it registers the dir as a
-    # USER-LEVEL skill, which silently shadows Claude Code's bundled skill of
-    # the same name (this is what broke bare `/review`). Do not "restore parity"
-    # with the agents scope here — the asymmetry is deliberate.
+def _cleanup_team_protocol(plugin_root: Path, home: Path, log: list[str]) -> None:
+    """Remove an owned ``TEAM_PROTOCOL.md`` link the current plugin no longer provides."""
+    team_dest = home / ".claude" / "TEAM_PROTOCOL.md"
+    if not team_dest.is_symlink() or (plugin_root / "TEAM_PROTOCOL.md").is_file():
+        return
+    target = _readlink(team_dest)
+    if target is None or not _owns(team_dest, target, plugin_root, _cache_lineage(plugin_root, home)):
+        return
+    try:
+        team_dest.unlink()
+        log.append("removed obsolete: TEAM_PROTOCOL.md")
+    except OSError:
+        pass
+
+
+def _purge_skills_links(skills_dest: Path, marker: str, log: list[str]) -> None:
+    """Remove every foundry-managed link under ``~/.claude/skills/``.
+
+    No source-existence check and — unlike :func:`_purge_agent_links` — no
+    ``_is_current`` skip either. A link pointing at the CURRENT plugin root is
+    precisely the bug this purge exists to fix: it registers the dir as a
+    USER-LEVEL skill, which silently shadows Claude Code's bundled skill of the
+    same name (this is what broke bare ``/review``). Do not "restore parity"
+    with the agents scope here — the asymmetry is deliberate.
+    """
     for link_path in _existing_dest_symlinks(skills_dest):
         target = _readlink(link_path)
         if target is None or not _is_foundry_managed(target, marker):
@@ -624,10 +633,13 @@ def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
             continue
         log.append(f"removed user-level skill link: {link_path.name}")
 
-    # --- agents/ (unconditional purge) ---
-    # No source-existence check — agents are dispatched from the plugin
-    # namespace and are never (re-)created in ~/.claude/agents/. Any
-    # foundry-managed symlink lingering here is by definition obsolete.
+
+def _purge_agent_links(agents_dest: Path, marker: str, plugin_root: Path, log: list[str]) -> None:
+    """Remove obsolete foundry-managed links under ``~/.claude/agents/``.
+
+    No source-existence check — agents are dispatched from the plugin namespace and are never (re-)created in
+    ``~/.claude/agents/``. Any foundry-managed symlink lingering here is by definition obsolete.
+    """
     for link_path in _existing_dest_symlinks(agents_dest):
         target = _readlink(link_path)
         if target is None or not _is_foundry_managed(target, marker):
@@ -643,8 +655,6 @@ def cleanup(plugin_root: Path, home: Path, marker: str) -> list[str]:
         except OSError:
             continue
         log.append(f"removed obsolete agent: {link_path.name}")
-
-    return log
 
 
 def scan(plugin_root: Path, home: Path, marker: str) -> list[str]:
@@ -763,6 +773,60 @@ def create_link(src: Path, dest: Path, home: Path) -> str:
     return "copy"
 
 
+def _run_create_mode(args: argparse.Namespace, home: Path) -> int:
+    """Materialise one guarded link, after proving --src and --dest are in bounds."""
+    if not args.src or not args.dest:
+        print("symlink_with_guard: `create` mode requires both --src and --dest", file=sys.stderr)
+        return 2
+    if not args.plugin_root:
+        print("symlink_with_guard: `create` mode requires --plugin-root", file=sys.stderr)
+        return 2
+    src = Path(os.path.abspath(args.src))
+    plugin_root_bases = _base_paths(Path(args.plugin_root))
+    if not any(src.is_relative_to(base) for base in plugin_root_bases):
+        print(f"symlink_with_guard: --src must be under --plugin-root, got: {src}", file=sys.stderr)
+        return 2
+    try:
+        dest = _assert_dest_under_home_claude(Path(args.dest), home)
+    except ValueError as exc:
+        print(f"symlink_with_guard: {exc}", file=sys.stderr)
+        return 2
+    try:
+        tier = create_link(src, dest, home)
+    except OSError as exc:
+        print(f"symlink_with_guard: {exc}", file=sys.stderr)
+        return 1
+    print(tier)
+    return 0
+
+
+def _run_cleanup_or_scan_mode(args: argparse.Namespace, home: Path) -> int:
+    """Run the cleanup or scan pass, after the prerequisites both modes share."""
+    try:
+        _validate_marker(args.marker or "")
+    except ValueError as exc:
+        print(f"symlink_with_guard: {exc}", file=sys.stderr)
+        return 2
+
+    if not args.plugin_root:
+        print("symlink_with_guard: `cleanup` and `scan` modes require --plugin-root", file=sys.stderr)
+        return 2
+
+    plugin_root = Path(args.plugin_root)
+    if not plugin_root.is_dir():
+        print(f"error: --plugin-root {args.plugin_root!r} is not a directory", file=sys.stderr)
+        return 1
+
+    if args.mode == GuardMode.CLEANUP:
+        for line in cleanup(plugin_root, home, args.marker):
+            print(f"  {line}")
+        return 0
+
+    for conflict in scan(plugin_root, home, args.marker):
+        print(conflict)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Install or remove guarded links requested by the command line."""
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
@@ -818,65 +882,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.mode == GuardMode.CREATE:
-        if not args.src or not args.dest:
-            print(
-                "symlink_with_guard: `create` mode requires both --src and --dest",
-                file=sys.stderr,
-            )
-            return 2
-        if not args.plugin_root:
-            print("symlink_with_guard: `create` mode requires --plugin-root", file=sys.stderr)
-            return 2
-        src = Path(os.path.abspath(args.src))
-        plugin_root_bases = _base_paths(Path(args.plugin_root))
-        if not any(src.is_relative_to(base) for base in plugin_root_bases):
-            print(f"symlink_with_guard: --src must be under --plugin-root, got: {src}", file=sys.stderr)
-            return 2
-        dest = Path(args.dest)
-        try:
-            dest = _assert_dest_under_home_claude(dest, home)
-        except ValueError as exc:
-            print(f"symlink_with_guard: {exc}", file=sys.stderr)
-            return 2
-        try:
-            tier = create_link(src, dest, home)
-        except OSError as exc:
-            print(f"symlink_with_guard: {exc}", file=sys.stderr)
-            return 1
-        print(tier)
-        return 0
-
-    # cleanup / scan share these prerequisites
-    try:
-        _validate_marker(args.marker or "")
-    except ValueError as exc:
-        print(f"symlink_with_guard: {exc}", file=sys.stderr)
-        return 2
-
-    if not args.plugin_root:
-        print(
-            "symlink_with_guard: `cleanup` and `scan` modes require --plugin-root",
-            file=sys.stderr,
-        )
-        return 2
-
-    plugin_root = Path(args.plugin_root)
-    if not plugin_root.is_dir():
-        print(
-            f"error: --plugin-root {args.plugin_root!r} is not a directory",
-            file=sys.stderr,
-        )
-        return 1
-
-    if args.mode == GuardMode.CLEANUP:
-        for line in cleanup(plugin_root, home, args.marker):
-            print(f"  {line}")
-        return 0
-
-    # mode == GuardMode.SCAN
-    for conflict in scan(plugin_root, home, args.marker):
-        print(conflict)
-    return 0
+        return _run_create_mode(args, home)
+    return _run_cleanup_or_scan_mode(args, home)
 
 
 if __name__ == "__main__":

@@ -141,8 +141,8 @@ class TestEmit:
     @pytest.fixture(autouse=True)
     def _reset_format(self, monkeypatch) -> None:
         """Keep the module-level format global from leaking between tests."""
-        monkeypatch.setattr(_query_mod, "_FORMAT", "json")
-        monkeypatch.setattr(_query_mod, "_CMD", "")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "json")
+        monkeypatch.setattr(_query_mod.state, "_CMD", "")
 
     def test_json_is_the_default(self, capsys) -> None:
         """Callers that never pass --format see exactly what they saw before."""
@@ -152,7 +152,7 @@ class TestEmit:
 
     def test_tsv_writes_rows_to_stdout(self, capsys, monkeypatch) -> None:
         """Rows go to stdout so the common consumer reads only the table."""
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
 
         _query_mod._print(json.dumps({"central": [{"name": "a", "n": 1}], "index": {"stale": False}}))
 
@@ -164,7 +164,7 @@ class TestEmit:
         Dropping the envelope would make a stale or incomplete answer indistinguishable from a good one, which is the
         one thing this format must not cost.
         """
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
 
         _query_mod._print(json.dumps({"central": [{"name": "a", "n": 1}], "index": {"stale": True}}))
 
@@ -172,7 +172,7 @@ class TestEmit:
 
     def test_tsv_refuses_a_non_tabular_result(self, capsys, monkeypatch) -> None:
         """A non-tabular result exits non-zero with a JSON error, never a mangled table."""
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
 
         with pytest.raises(SystemExit) as excinfo:
             _query_mod._print(json.dumps({"imported_by": ["a.b"], "importer_count": 1}))
@@ -186,7 +186,7 @@ class TestEmit:
         It did once, and because an error object is not a table the formatter refused it by calling back into
         ``_die_json`` until the stack ran out.
         """
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
 
         with pytest.raises(SystemExit):
             _query_mod._die_json({"error": "boom"})
@@ -199,9 +199,9 @@ class TestEmit:
         The batch driver owns the one real stdout write and re-parses each captured subquery as JSON; formatting there
         would leak rows past the buffer and hand the driver something it cannot read back.
         """
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
         buf: list[str] = []
-        monkeypatch.setattr(_query_mod, "_capture", buf)
+        monkeypatch.setattr(_query_mod.state, "_capture", buf)
 
         _query_mod._print(json.dumps({"central": [{"name": "a", "n": 1}], "index": {"stale": False}}))
 
@@ -210,7 +210,7 @@ class TestEmit:
 
     def test_empty_result_emits_no_rows_and_exits_zero(self, capsys, monkeypatch) -> None:
         """An empty table writes nothing to stdout and does not raise SystemExit."""
-        monkeypatch.setattr(_query_mod, "_FORMAT", "tsv")
+        monkeypatch.setattr(_query_mod.state, "_FORMAT", "tsv")
 
         _query_mod._print(json.dumps({"central": [], "index": {"stale": False}}))
 

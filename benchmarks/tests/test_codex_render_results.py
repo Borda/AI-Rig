@@ -15,6 +15,12 @@ import pytest
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched. Inside the package every seam
+# below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex.structural import cli as codex_cli  # noqa: E402
+from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
+
 from _bench_codex import runtime as codex_runtime  # noqa: E402
 from _bench_common.presentation import (  # noqa: E402
     BENCHMARK_OUTPUT_WIDTH,
@@ -331,14 +337,12 @@ def test_paid_command_suppression_leaves_scope_and_probes_intact(
         "stages": stages,
     }
     scope = {**selection, "scope_sha256": "1234567890123456" + "a" * 48}
-    monkeypatch.setattr(script_run_codex, "resolve_task_selection", lambda *_args: selection)
-    monkeypatch.setattr(script_run_codex, "_resolve_execution_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(
-        script_run_codex, "main", lambda **_kwargs: print("PROBE   A_plain   codemap=false  use=forbidden")
-    )
+    monkeypatch.setattr(codex_manifest, "resolve_task_selection", lambda *_args: selection)
+    monkeypatch.setattr(codex_cli, "_resolve_execution_scope", lambda **_kwargs: scope)
+    monkeypatch.setattr(codex_cli, "main", lambda **_kwargs: print("PROBE   A_plain   codemap=false  use=forbidden"))
     monkeypatch.setattr(readcrop_stage, "run_stage", lambda **_kwargs: None)
     monkeypatch.setattr(fix_stage, "run_fix_stage", lambda study, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "write_checksums", lambda _path: None)
+    monkeypatch.setattr(codex_cli, "write_checksums", lambda _path: None)
 
     script_run_codex._run_unified_execution(
         repo_path=tmp_path,

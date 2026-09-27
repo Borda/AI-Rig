@@ -68,6 +68,7 @@ def resolve(plugin: str, rel: str, *, root: Path = PLUGINS_ROOT) -> Path | None:
 
 
 def main() -> int:
+    """Locate the source file for a calibration target."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", required=True, help="agent name, plugin:agent, or /skill")
     parser.add_argument("--timestamp", default="", help="calibrate run timestamp for the proposal path")

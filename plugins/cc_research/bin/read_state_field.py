@@ -141,6 +141,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _load_state_dict(raw_path: str) -> tuple[dict, None] | tuple[None, str]:
+    """Load a state file as a JSON object, or say why it could not be.
+
+    Bundles the three ways this can fail — a path that does not validate, a file that cannot be read or parsed, and
+    valid JSON whose top level is not an object — into one ``(None, reason)`` result for the caller to report.
+    """
+    state_file, reason = _validate_state_path(raw_path)
+    if state_file is None:
+        return None, reason
+    try:
+        with state_file.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, f"cannot read {state_file}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"top-level JSON in {state_file} is not an object"
+    return data, None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Read a dotted field from a JSON state file and return the process status.
 
@@ -162,20 +181,9 @@ def main(argv: list[str] | None = None) -> int:
         print("read_state_field: dotted-path must be non-empty", file=sys.stderr)
         return 2
 
-    state_file, reason = _validate_state_path(args.state_file)
-    if state_file is None:
+    data, reason = _load_state_dict(args.state_file)
+    if data is None:
         print(f"read_state_field: {reason}", file=sys.stderr)
-        return 1
-
-    try:
-        with state_file.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"read_state_field: cannot read {state_file}: {exc}", file=sys.stderr)
-        return 1
-
-    if not isinstance(data, dict):
-        print(f"read_state_field: top-level JSON in {state_file} is not an object", file=sys.stderr)
         return 1
 
     try:

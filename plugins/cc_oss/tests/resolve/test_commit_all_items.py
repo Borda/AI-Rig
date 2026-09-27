@@ -187,7 +187,7 @@ def test_golden_all_mode_invocation_constructs_expected_commit(fake_git: list[li
 
 def test_build_commit_message_pure() -> None:
     """Return expected subject and counts; no subprocess needed."""
-    msg = cai.build_commit_message("#7", 5, 2, 1, "", False)
+    msg = cai.build_commit_message(cai.CommitSummaryFields("#7", 5, 2, 1, "", False))
     assert "PR #7" in msg
     assert "5 as-suggested" in msg
     assert "2 self-resolved" in msg

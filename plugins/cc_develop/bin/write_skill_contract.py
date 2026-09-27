@@ -38,6 +38,7 @@ _USAGE = (
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Write the compaction-boundary contract the PreCompact hook appends verbatim."""
     args = list(sys.argv[1:] if argv is None else argv)
     if "-h" in args or "--help" in args:
         print(_USAGE)

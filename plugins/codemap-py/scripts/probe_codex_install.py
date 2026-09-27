@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 _THIS = Path(__file__).resolve()
@@ -52,6 +53,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from _probe_runtime import (  # noqa: E402  (needs the scripts path insert above)
+    RuntimeProof,
     build_from_checkout,
     runtime_proof,
     stage_disposable_source,
@@ -108,7 +110,56 @@ def _package_codex_roster(installed_path: Path) -> list | None:
     return roster if isinstance(roster, list) else None
 
 
-def verify_codex_install(installed_path: Path) -> dict:
+@dataclass(frozen=True)
+class CodexInstallReport:
+    """Static verification result for one installed Codex plugin tree.
+
+    Dataclass (not TypedDict): named construction and attribute access;
+    converted to a dict by :meth:`to_dict` at the JSON-emission boundary.
+
+    Unlike its Claude counterpart there is no ``roster`` field: the Codex
+    contract compares ``skill_dirs`` against the manifest's declared source,
+    and the package-manifest roster is only read to assert it stays empty on
+    the undeclared-source fallback.
+
+    Attributes:
+        ok: Whether every check in ``checks`` passed.
+        checks: Per-check verdicts keyed by check name.
+        issues: Human-readable reasons for each failed check.
+        skill_dirs: Installed ``codex-skills/`` subdirectory names.
+        manifest: Identity fields echoed from ``.codex-plugin/plugin.json``.
+
+    Examples:
+        >>> CodexInstallReport(ok=False, checks={}, issues=[], skill_dirs=[], manifest={}).ok
+        False
+    """
+
+    ok: bool
+    checks: dict[str, bool]
+    issues: list[str]
+    skill_dirs: list[str]
+    manifest: dict
+
+    def to_dict(self) -> dict:
+        """Return the JSON-envelope projection of this report.
+
+        Returns:
+            A dict with ``ok``, ``checks``, ``issues``, ``skill_dirs``, ``manifest``.
+
+        Examples:
+            >>> sorted(CodexInstallReport(True, {}, [], [], {}).to_dict())
+            ['checks', 'issues', 'manifest', 'ok', 'skill_dirs']
+        """
+        return {
+            "ok": self.ok,
+            "checks": self.checks,
+            "issues": self.issues,
+            "skill_dirs": self.skill_dirs,
+            "manifest": self.manifest,
+        }
+
+
+def verify_codex_install(installed_path: Path) -> CodexInstallReport:
     """Statically check the installed Codex plugin bytes; return a checks/issues report.
 
     Verifies the manifest identity, then checks the skill roster against the
@@ -118,7 +169,7 @@ def verify_codex_install(installed_path: Path) -> dict:
     unexpected roster directories and requires an empty package-manifest roster.
 
     Examples:
-        >>> verify_codex_install(Path("/nonexistent"))["ok"]
+        >>> verify_codex_install(Path("/nonexistent")).ok
         False
     """
     checks: dict[str, bool] = {}
@@ -170,18 +221,18 @@ def verify_codex_install(installed_path: Path) -> dict:
         if not checks["declared_roster_nonempty"]:
             issues.append(f"manifest declares {skills_field!r} but no skill dirs found")
 
-    return {
-        "ok": all(checks.values()),
-        "checks": checks,
-        "issues": issues,
-        "skill_dirs": skill_dirs,
-        "manifest": {
+    return CodexInstallReport(
+        ok=all(checks.values()),
+        checks=checks,
+        issues=issues,
+        skill_dirs=skill_dirs,
+        manifest={
             "name": manifest.get("name"),
             "version": manifest.get("version"),
             "skills": skills_field,
             "hooks": hooks_field,
         },
-    }
+    )
 
 
 def _codex_version() -> str | None:
@@ -251,16 +302,16 @@ def run_probe() -> dict:
         verification = verify_codex_install(installed_path)
         runtime = (
             runtime_proof(installed_path, workdir, [src_root], [_REPO_ROOT, src_root])
-            if verification["ok"]
-            else {"ok": False, "checks": {}, "detail": {"skipped": "static verification failed"}}
+            if verification.ok
+            else RuntimeProof(ok=False, checks={}, detail={"skipped": "static verification failed"})
         )
-        verification["runtime_ok"] = runtime["ok"]
+        verification_payload = {**verification.to_dict(), "runtime_ok": runtime.ok}
         return {
             **result,
-            "status": "ok" if verification["ok"] and runtime["ok"] else "verification-failed",
+            "status": "ok" if verification.ok and runtime.ok else "verification-failed",
             "installed_path": str(installed_path),
-            "verification": verification,
-            "runtime": runtime,
+            "verification": verification_payload,
+            "runtime": runtime.to_dict(),
         }
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

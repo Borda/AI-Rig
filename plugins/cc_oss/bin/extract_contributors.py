@@ -141,6 +141,42 @@ def _build_range(range_arg: str, from_ref: str, to_ref: str) -> str:
     return ""
 
 
+def _parse_args(args: list[str]) -> tuple[str, str, str, str, bool, str | None]:
+    """Parse the hand-rolled flag loop into its five values.
+
+    Handles ``--range``/``--from``/``--to``/``--repo``/``--include-bots``.
+
+    Args:
+        args: Raw argv tokens (``-h``/``--help`` already handled by the caller).
+
+    Returns:
+        ``(range_arg, from_ref, to_ref, repo, include_bots, error)`` — ``error`` is ``None`` on
+        success, or a message naming the unrecognized flag.
+    """
+    range_arg = from_ref = to_ref = repo = ""
+    include_bots = False
+    i = 0
+    while i < len(args):
+        flag = args[i]
+        if flag == "--include-bots":
+            include_bots = True
+            i += 1
+            continue
+        value = args[i + 1] if i + 1 < len(args) else ""
+        if flag == "--range":
+            range_arg = value
+        elif flag == "--from":
+            from_ref = value
+        elif flag == "--to":
+            to_ref = value
+        elif flag == "--repo":
+            repo = value
+        else:
+            return range_arg, from_ref, to_ref, repo, include_bots, f"extract_contributors: unknown arg '{flag}'"
+        i += 2
+    return range_arg, from_ref, to_ref, repo, include_bots, None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — parse args, run ``git log``, print contributor list.
 
@@ -165,28 +201,10 @@ def main(argv: list[str] | None = None) -> int:
 
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
 
-    range_arg = from_ref = to_ref = repo = ""
-    include_bots = False
-    i = 0
-    while i < len(args):
-        flag = args[i]
-        if flag == "--include-bots":
-            include_bots = True
-            i += 1
-            continue
-        value = args[i + 1] if i + 1 < len(args) else ""
-        if flag == "--range":
-            range_arg = value
-        elif flag == "--from":
-            from_ref = value
-        elif flag == "--to":
-            to_ref = value
-        elif flag == "--repo":
-            repo = value
-        else:
-            print(f"extract_contributors: unknown arg '{flag}'", file=sys.stderr)
-            return 1
-        i += 2
+    range_arg, from_ref, to_ref, repo, include_bots, error = _parse_args(args)
+    if error is not None:
+        print(error, file=sys.stderr)
+        return 1
 
     if range_arg and (from_ref or to_ref):
         print("extract_contributors: pass either --range or --from/--to, not both", file=sys.stderr)

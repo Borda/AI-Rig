@@ -34,6 +34,7 @@ def _read_sentinel(path: Path) -> str:
 
 
 def main(argv: list[str]) -> int:
+    """Abort a phase unless a prior phase's sentinel holds the expected value."""
     args = argv[1:]
     if len(args) != 4:
         print(

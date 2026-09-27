@@ -83,31 +83,16 @@ def _preflight_pass(name: str, state_dir: Path = _PREFLIGHT_DIR) -> None:
     (state_dir / f"{name}.ok").write_text(str(int(datetime.now(tz=timezone.utc).timestamp())), encoding="utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point — mirrors ``resolve_preflight.sh`` behaviour.
+def _check_bridge() -> bool:
+    """Check the optional bridge@borda-ai-rig plugin and report status on stderr.
 
-    Args:
-        argv: Optional argument list (defaults to ``sys.argv[1:]``); no flags.
+    Cache key is "bridge", not "codex": the previous build cached "codex" to mean the
+    retired Codex rescue plugin, and reusing that key would let a pre-migration entry
+    answer a question about a different plugin for the rest of its TTL.
 
     Returns:
-        Exit code: 0 on success; 1 on required-check failure; argparse exits 2 on bad args.
-
-    Examples:
-        No doctest — subprocess-dependent; covered by pytest.
+        ``True`` when the bridge plugin is installed and enabled (or cached as such).
     """
-    # Parse args before any network/git call — a bare ``-h/--help`` must print usage
-    # and exit without running gh auth / git fetch / git pull.
-    argparse.ArgumentParser(
-        prog="resolve_preflight.py",
-        description="Preflight checks (codex, gh auth, remote state) for /oss:resolve Step 1.",
-    ).parse_args(argv)
-
-    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
-
-    # --- bridge (optional) ------------------------------------------------------
-    # Cache key is "bridge", not "codex": the previous build cached "codex" to mean the
-    # retired Codex rescue plugin, and reusing that key would let a pre-migration entry
-    # answer a question about a different plugin for the rest of its TTL.
     codex_available = False
     if _preflight_ok("bridge"):
         codex_available = True
@@ -125,8 +110,16 @@ def main(argv: list[str] | None = None) -> int:
                 " (see Step 8 degradation)",
                 file=sys.stderr,
             )
+    return codex_available
 
-    # --- gh (required) ----------------------------------------------------------
+
+def _check_gh() -> int | None:
+    """Check ``gh`` presence and authentication, reporting status on stderr.
+
+    Returns:
+        ``1`` when ``gh`` is missing or unauthenticated (error already printed);
+        ``None`` on success.
+    """
     gh = which("gh")
     if _preflight_ok("gh"):
         print("gh: ok (cached)", file=sys.stderr)
@@ -152,67 +145,83 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("Pre-flight failed: gh not found — install: brew install gh", file=sys.stderr)
         return 1
+    return None
 
-    # --- git state --------------------------------------------------------------
-    git = which("git")
-    if git:
-        remote_proc = subprocess.run(  # noqa: S603
-            [git, "remote", "-v"],
+
+def _sync_git_state(git: str) -> int | None:
+    """Fetch origin and pull when the remote is ahead, reporting status on stderr.
+
+    Args:
+        git: Absolute path to the git binary (must be non-empty — caller only invokes
+            this when ``which("git")`` resolved).
+
+    Returns:
+        ``1`` when ``git pull`` hit conflicts (error already printed); ``None`` otherwise.
+    """
+    remote_proc = subprocess.run(  # noqa: S603
+        [git, "remote", "-v"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+    )
+    if remote_proc.stdout:
+        print(remote_proc.stdout, file=sys.stderr, end="")
+
+    # Always fetch all remotes so origin/$BASE_REF is current before Step 5 merges it.
+    # Conditional fetch (gated on current branch having @{u}) left origin/$BASE_REF stale
+    # when invoked from a branch with no upstream tracking ref.
+    subprocess.run(  # noqa: S603
+        [git, "fetch", "origin"],
+        capture_output=True,
+        check=False,
+        timeout=30,
+    )
+
+    upstream_proc = subprocess.run(  # noqa: S603
+        [git, "rev-parse", "--abbrev-ref", "@{u}"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=3,
+    )
+    if upstream_proc.returncode == 0 and upstream_proc.stdout.strip():
+        log_proc = subprocess.run(  # noqa: S603
+            [git, "log", "HEAD..@{u}", "--oneline"],
             capture_output=True,
             text=True,
             check=False,
             timeout=3,
         )
-        if remote_proc.stdout:
-            print(remote_proc.stdout, file=sys.stderr, end="")
-
-        # Always fetch all remotes so origin/$BASE_REF is current before Step 5 merges it.
-        # Conditional fetch (gated on current branch having @{u}) left origin/$BASE_REF stale
-        # when invoked from a branch with no upstream tracking ref.
-        subprocess.run(  # noqa: S603
-            [git, "fetch", "origin"],
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
-
-        upstream_proc = subprocess.run(  # noqa: S603
-            [git, "rev-parse", "--abbrev-ref", "@{u}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=3,
-        )
-        if upstream_proc.returncode == 0 and upstream_proc.stdout.strip():
-            log_proc = subprocess.run(  # noqa: S603
-                [git, "log", "HEAD..@{u}", "--oneline"],
-                capture_output=True,
-                text=True,
+        remote_ahead = len([ln for ln in log_proc.stdout.splitlines() if ln.strip()])
+        if remote_ahead > 0:
+            print(f"Remote is {remote_ahead} commit(s) ahead — running git pull...", file=sys.stderr)
+            pull_proc = subprocess.run(  # noqa: S603
+                [git, "pull"],
                 check=False,
-                timeout=3,
+                timeout=60,
             )
-            remote_ahead = len([ln for ln in log_proc.stdout.splitlines() if ln.strip()])
-            if remote_ahead > 0:
-                print(f"Remote is {remote_ahead} commit(s) ahead — running git pull...", file=sys.stderr)
-                pull_proc = subprocess.run(  # noqa: S603
-                    [git, "pull"],
-                    check=False,
-                    timeout=60,
-                )
-                if pull_proc.returncode == 0:
-                    print("✓ git pull: merged", file=sys.stderr)
-                else:
-                    print(
-                        "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve",
-                        file=sys.stderr,
-                    )
-                    return 1
+            if pull_proc.returncode == 0:
+                print("✓ git pull: merged", file=sys.stderr)
             else:
-                print("✓ git: up to date", file=sys.stderr)
+                print(
+                    "Pre-flight failed: git pull had conflicts — resolve manually before running /resolve",
+                    file=sys.stderr,
+                )
+                return 1
         else:
-            print("✓ git: fetched origin (no upstream tracking on current branch — pull skipped)", file=sys.stderr)
+            print("✓ git: up to date", file=sys.stderr)
+    else:
+        print("✓ git: fetched origin (no upstream tracking on current branch — pull skipped)", file=sys.stderr)
+    return None
 
-    # --- write vars to TMPDIR files for safe cross-block consumption ------------
+
+def _write_preflight_outputs(codex_available: bool) -> None:
+    """Write CODEX_AVAILABLE and GH_OK to their TMPDIR sentinel files.
+
+    Args:
+        codex_available: Value to write to the ``CODEX_AVAILABLE`` sentinel.
+    """
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     # TMPDIR counts only when absolute for this host: Windows CI inherits a POSIX-style
     # value with no native directory, and a drive-less path would resolve against
@@ -224,6 +233,42 @@ def main(argv: list[str] | None = None) -> int:
         f"{str(codex_available).lower()}\n", encoding="utf-8", newline="\n"
     )
     (tmpdir / f"resolve-preflight-GH_OK-{csid}").write_text("true\n", encoding="utf-8", newline="\n")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point — mirrors ``resolve_preflight.sh`` behaviour.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``); no flags.
+
+    Returns:
+        Exit code: 0 on success; 1 on required-check failure; argparse exits 2 on bad args.
+
+    Examples:
+        No doctest — subprocess-dependent; covered by pytest.
+    """
+    # Parse args before any network/git call — a bare ``-h/--help`` must print usage
+    # and exit without running gh auth / git fetch / git pull.
+    argparse.ArgumentParser(
+        prog="resolve_preflight.py",
+        description="Preflight checks (codex, gh auth, remote state) for /oss:resolve Step 1.",
+    ).parse_args(argv)
+
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+
+    codex_available = _check_bridge()
+
+    rc = _check_gh()
+    if rc is not None:
+        return rc
+
+    git = which("git")
+    if git:
+        rc = _sync_git_state(git)
+        if rc is not None:
+            return rc
+
+    _write_preflight_outputs(codex_available)
     return 0
 
 

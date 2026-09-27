@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from benchmarks._bench_common import provider_parity_contracts as core
+from benchmarks._bench_common.artifact_hashing import module_sha256, runner_sha256
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -454,8 +455,9 @@ def test_methodology_manifest_locks_luna_high_and_exact_implementation_identitie
         "agentic_contracts": _sha256(BENCHMARKS / "_bench_common" / "agentic_contracts.py"),
         "agentic_reporting": _sha256(BENCHMARKS / "_bench_common" / "agentic_reporting.py"),
         "claude_query_skill": _sha256(ROOT / "plugins/codemap-py/claude-skills/query-code/SKILL.md"),
-        "codemap_graph": _sha256(ROOT / "plugins/codemap-py/src/codemap_py/graph.py"),
-        "codemap_query": _sha256(ROOT / "plugins/codemap-py/src/codemap_py/query.py"),
+        "codemap_graph": module_sha256(ROOT / "plugins/codemap-py/src/codemap_py/graph.py"),
+        # query.py is now a package; module_sha256 tree-hashes it, matching the generator.
+        "codemap_query": module_sha256(ROOT / "plugins/codemap-py/src/codemap_py/query"),
         "codex_query_skill": _sha256(ROOT / "plugins/codemap-py/codex-skills/query-code/SKILL.md"),
         "edit_patch_contracts": _sha256(BENCHMARKS / "_bench_common" / "edit_patch_contracts.py"),
         "mutation_isolation": _sha256(BENCHMARKS / "_bench_common" / "mutation_isolation.py"),
@@ -464,10 +466,18 @@ def test_methodology_manifest_locks_luna_high_and_exact_implementation_identitie
         "patch_index_locks": _sha256(BENCHMARKS / "suites" / "patch-index-locks.json"),
         "provider_parity_contracts": _sha256(BENCHMARKS / "_bench_common" / "provider_parity_contracts.py"),
         "run_all": _sha256(BENCHMARKS / "run-all.sh"),
-        "run_claude_agentic": _sha256(BENCHMARKS / "run-claude-agentic.py"),
-        "run_claude_structural": _sha256(BENCHMARKS / "run-claude-structural.py"),
+        "run_claude_agentic": runner_sha256(
+            BENCHMARKS / "run-claude-agentic.py", BENCHMARKS / "_bench_claude" / "agentic"
+        ),
+        # Split runner: the pin covers the shim plus its package, so a change to the code that
+        # actually runs still moves the hash. See _bench_common.artifact_hashing.runner_sha256.
+        "run_claude_structural": runner_sha256(
+            BENCHMARKS / "run-claude-structural.py", BENCHMARKS / "_bench_claude" / "structural"
+        ),
         "run_codex_agentic": _sha256(BENCHMARKS / "run-codex-agentic.py"),
-        "run_codex_structural": _sha256(BENCHMARKS / "run-codex-structural.py"),
+        "run_codex_structural": runner_sha256(
+            BENCHMARKS / "run-codex-structural.py", BENCHMARKS / "_bench_codex" / "structural"
+        ),
     }
     assert "CODEMAP_BIN" in manifest["codex_permission_profiles"]["shell_environment"]["set_allowlist"]
 

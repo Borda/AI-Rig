@@ -24,7 +24,7 @@ from collections import deque
 from pathlib import Path
 import subprocess
 import sys
-from typing import Any
+from typing import Any, TypedDict
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
 # file without launching it as a script from its installed ``bin`` directory.
@@ -35,7 +35,59 @@ if _BIN_DIRECTORY not in sys.path:
 from bridge_call import BridgePaths, DEFAULT_EFFORT, DEFAULT_MODEL, DEFAULT_TIMEOUTS, Request, run_request  # noqa: E402
 
 
-def diagnose(direction: str, workspace: Path, live: bool) -> dict[str, Any]:
+class PayloadIdentity(TypedDict):
+    """Identity and completeness of the installed Bridge runtime closure."""
+
+    name: str
+    version: str
+    complete: bool
+    fingerprint: str | None
+    missing: list[str]
+
+
+class _StaticResultBase(TypedDict):
+    """Fields every static help-surface finding carries."""
+
+    target: str
+    mode: str
+    ok: bool
+    missing: list[str]
+
+
+class StaticResult(_StaticResultBase, total=False):
+    """One host's static help-surface finding.
+
+    The two branches emit different shapes on purpose: a finished probe reports ``returncode`` and a probe that never
+    ran reports ``error``. Neither key is padded into the other branch, because the omission is the evidence that the
+    command did or did not run.
+    """
+
+    error: str
+    returncode: int
+
+
+class LiveResult(TypedDict):
+    """One host's live probe finding, carrying the complete bridge envelope it produced."""
+
+    target: str
+    mode: str
+    ok: bool
+    status: str
+    result: dict[str, Any]
+
+
+class DiagnoseResult(TypedDict):
+    """The single JSON object the doctor writes to stdout."""
+
+    direction: str
+    live: bool
+    ok: bool
+    findings: list[dict[str, Any]]
+    payload: PayloadIdentity
+    health: dict[str, Any]
+
+
+def diagnose(direction: str, workspace: Path, live: bool) -> DiagnoseResult:
     """Run static help checks and optionally one bounded live request per host.
 
     Payload completeness is checked before the baseline loads: a truncated
@@ -84,7 +136,7 @@ PAYLOAD_FILES = (
 )
 
 
-def _installed_payload_identity() -> dict[str, Any]:
+def _installed_payload_identity() -> PayloadIdentity:
     """Return a sanitized identity and digest for the installed runtime closure."""
     root = Path(__file__).resolve().parents[1]
     missing = [relative for relative in PAYLOAD_FILES if not _regular_payload_file(root / relative)]
@@ -186,7 +238,7 @@ def _load_baseline() -> dict[str, dict[str, list[str]]]:
     return value
 
 
-def _static_result(target: str, baseline: dict[str, list[str]]) -> dict[str, Any]:
+def _static_result(target: str, baseline: dict[str, list[str]]) -> StaticResult:
     """Check one host's required help tokens without starting an agent request."""
     executable = "codex" if target == "codex" else "claude"
     command = [executable, "exec", "--help"] if target == "codex" else [executable, "--help"]
@@ -229,7 +281,7 @@ def _token_present(token: str, text: str) -> bool:
     return re.search(rf"(?<![\w-]){re.escape(token)}(?![\w-])", text) is not None
 
 
-def _live_result(target: str, workspace: Path) -> dict[str, Any]:
+def _live_result(target: str, workspace: Path) -> LiveResult:
     """Run the smallest explicit paid probe only after the caller passed ``--live``."""
     direction = "claude_to_codex" if target == "codex" else "codex_to_claude"
     request = Request(

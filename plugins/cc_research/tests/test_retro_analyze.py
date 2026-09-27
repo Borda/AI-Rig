@@ -27,26 +27,26 @@ class TestRunWilcoxon:
         baseline = [1.0] * 8
         candidate = [1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2]
         result = ra.run_wilcoxon(baseline, candidate, alpha=0.05, direction=ra.Direction.HIGHER)
-        assert result["n"] == 8
-        assert result["significant"] is True
-        assert result["p_value"] is not None and result["p_value"] < 0.05
+        assert result.n == 8
+        assert result.significant is True
+        assert result.p_value is not None and result.p_value < 0.05
 
     def test_lower_direction_detects_consistent_improvement(self) -> None:
         """Lower-is-better metric: candidates below baseline → significant."""
         baseline = [10.0] * 8
         candidate = [9.0, 8.5, 8.0, 7.5, 7.0, 6.5, 6.0, 5.5]
         result = ra.run_wilcoxon(baseline, candidate, alpha=0.05, direction=ra.Direction.LOWER)
-        assert result["significant"] is True
-        assert result["p_value"] is not None and result["p_value"] < 0.05
+        assert result.significant is True
+        assert result.p_value is not None and result.p_value < 0.05
 
     def test_insufficient_samples_returns_reason_not_pvalue(self) -> None:
         """N below MIN_SAMPLES_FOR_TEST → significant=False, p_value=None, reason present."""
         result = ra.run_wilcoxon([1.0] * 3, [2.0] * 3, alpha=0.05, direction=ra.Direction.HIGHER)
-        assert result["significant"] is False
-        assert result["p_value"] is None
-        assert result["statistic"] is None
-        assert result["n"] == 3
-        assert "insufficient data" in result["reason"]
+        assert result.significant is False
+        assert result.p_value is None
+        assert result.statistic is None
+        assert result.n == 3
+        assert "insufficient data" in result.reason
 
     @pytest.mark.parametrize(
         "baseline,candidate,direction",
@@ -67,8 +67,8 @@ class TestRunWilcoxon:
     ) -> None:
         """Adequate sample size alone does not imply significance."""
         result = ra.run_wilcoxon(baseline, candidate, alpha=0.05, direction=direction)
-        assert result["n"] == 8
-        assert result["significant"] is False
+        assert result.n == 8
+        assert result.significant is False
 
     def test_invalid_direction_raises_value_error(self) -> None:
         """Direction must be 'higher' or 'lower' — anything else raises."""
@@ -112,6 +112,23 @@ class TestMainCLI:
         assert exit_code == 0
         assert out["significant"] is True
         assert out["n"] == 8
+
+    def test_success_payload_omits_reason_key(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A conclusive run emits exactly the four result keys, with no ``reason``.
+
+        The module docstring documents ``reason`` as present only on the insufficient-data / no-scipy paths, and
+        ``retro/SKILL.md`` consumes this line as JSON. Serializing the result unconditionally would leak ``"reason":
+        null`` into every success payload and silently widen that published contract.
+        """
+        jsonl = tmp_path / "experiments.jsonl"
+        _write_jsonl(
+            jsonl,
+            [{"status": "baseline", "metric": 1.0}]
+            + [{"status": "kept", "metric": 1.0 + 0.1 * (i + 1)} for i in range(8)],
+        )
+        ra.main(["--jsonl", str(jsonl), "--alpha", "0.05", "--direction", "higher"])
+        out = json.loads(capsys.readouterr().out.strip())
+        assert set(out) == {"significant", "p_value", "statistic", "n"}
 
     def test_insufficient_data_exits_one_with_reason(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """Few kept iterations → exit 1 (not significant) with reason field."""

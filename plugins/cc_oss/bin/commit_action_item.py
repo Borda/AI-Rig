@@ -271,6 +271,95 @@ def _resolve_message_file(opts: dict[str, str | bool]) -> tuple[str, str | None]
     return msg_file, None
 
 
+def _compute_commit_sentinel(git: str) -> Path:
+    """Derive the Gate 1 commit-auth sentinel path for the current repo+branch.
+
+    Args:
+        git: Absolute path to the ``git`` executable.
+
+    Returns:
+        Path to sentinel file (may not yet exist).
+
+    Examples:
+        No doctest — requires live git; covered by pytest with monkeypatch.
+    """
+    root_proc = subprocess.run(  # noqa: S603
+        [git, "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch_proc = subprocess.run(  # noqa: S603
+        [git, "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    repo_slug = _slug(Path(root_proc.stdout.strip()).name if root_proc.returncode == 0 else "repo")
+    branch_slug = _slug(branch_proc.stdout.strip() if branch_proc.returncode == 0 else "main")
+
+    # Prefer per-user temp dirs over a world-readable `/tmp` (macOS `/tmp`
+    # is mode 1777 — sentinel name leaks branch metadata). Order: TMPDIR
+    # (per-user on macOS) → XDG_RUNTIME_DIR (per-user on Linux) → fallback.
+    # A candidate counts only when absolute for this host: Windows CI inherits a
+    # POSIX-style TMPDIR with no native directory, and a drive-less path would
+    # resolve against whatever drive the process happens to run on.
+    _native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
+    _candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
+    _tmp = Path(next((c for c in _candidates if c and _native(c).is_absolute()), tempfile.gettempdir()))
+    return _tmp / f"claude-commit-auth-{repo_slug}-{branch_slug}"
+
+
+def _stage_and_commit(git: str, msg_file: str, files: list[str]) -> int:
+    """Stage ``files`` and commit them using ``msg_file`` as the message.
+
+    Args:
+        git: Absolute path to the ``git`` executable.
+        msg_file: Path to the commit message file.
+        files: Pathspec of files to stage and commit.
+
+    Returns:
+        Exit code: the git subprocess's own return code; 3 when nothing is
+        staged for these files after ``git add``.
+
+    Examples:
+        No doctest — subprocess-dependent; covered by pytest.
+    """
+    add_proc = subprocess.run([git, "add", "--", *files], check=False)  # noqa: S603
+    if add_proc.returncode != 0:
+        print(f"commit_action_item: git add failed (exit {add_proc.returncode})", file=sys.stderr)
+        return add_proc.returncode
+
+    # Empty staging area for THESE files → nothing to commit. Scoped with `-- *files`, not a bare
+    # `git diff --cached --quiet` — an unscoped check reads true (has staged changes) whenever any
+    # OTHER path is staged in the index, which a caller collapsing multiple groups into one staged
+    # diff via a combined reset does deliberately; scoping is what lets this group's own emptiness
+    # be told apart from "some unrelated group's diff happens to still be staged".
+    cached_proc = subprocess.run(  # noqa: S603
+        [git, "diff", "--cached", "--quiet", "--", *files],
+        check=False,
+    )
+    if cached_proc.returncode == 0:
+        print(
+            "commit_action_item: staging area empty after add — no commit created",
+            file=sys.stderr,
+        )
+        return 3
+
+    # Pathspec the commit — commits only THESE files' staged state, leaving any other group's
+    # files staged untouched for their own subsequent commit. Without `-- *files`, `git commit`
+    # commits the entire index: the first of several sequential per-group commits (a combined
+    # reset stages every group's diff at once) would silently absorb every later group's changes,
+    # and each later group's own commit call would then find nothing staged for its files.
+    # NOTE: a partial `git commit -- <paths>` commits the WORKING-TREE content of those paths, not
+    # necessarily the staged (index) content — invisible here because every caller's flow leaves
+    # index and working tree identical for these files (a soft reset touches only the index). Any
+    # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
+    # `add`) would silently commit content the caller never staged.
+    result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)  # noqa: S603
+    return result.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``commit_action_item.sh`` behaviour.
 
@@ -313,72 +402,14 @@ def main(argv: list[str] | None = None) -> int:
     if git is None:
         raise FileNotFoundError("executable not found on PATH: git")
 
-    # --- Compute Gate 1 sentinel path ----------------------------------------
-    root_proc = subprocess.run(  # noqa: S603
-        [git, "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    branch_proc = subprocess.run(  # noqa: S603
-        [git, "branch", "--show-current"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    repo_slug = _slug(Path(root_proc.stdout.strip()).name if root_proc.returncode == 0 else "repo")
-    branch_slug = _slug(branch_proc.stdout.strip() if branch_proc.returncode == 0 else "main")
-
-    # Prefer per-user temp dirs over a world-readable `/tmp` (macOS `/tmp`
-    # is mode 1777 — sentinel name leaks branch metadata). Order: TMPDIR
-    # (per-user on macOS) → XDG_RUNTIME_DIR (per-user on Linux) → fallback.
-    # A candidate counts only when absolute for this host: Windows CI inherits a
-    # POSIX-style TMPDIR with no native directory, and a drive-less path would
-    # resolve against whatever drive the process happens to run on.
-    _native = PureWindowsPath if sys.platform == "win32" else PurePosixPath
-    _candidates = (os.environ.get("TMPDIR"), os.environ.get("XDG_RUNTIME_DIR"))
-    _tmp = Path(next((c for c in _candidates if c and _native(c).is_absolute()), tempfile.gettempdir()))
-    sentinel = _tmp / f"claude-commit-auth-{repo_slug}-{branch_slug}"
+    sentinel = _compute_commit_sentinel(git)
 
     # Touch sentinel and register cleanup (mirrors bash `trap EXIT INT TERM`).
     sentinel.touch()
     atexit.register(lambda: sentinel.unlink(missing_ok=True))
 
     try:
-        # --- Stage files ------------------------------------------------------
-        add_proc = subprocess.run([git, "add", "--", *files], check=False)  # noqa: S603
-        if add_proc.returncode != 0:
-            print(f"commit_action_item: git add failed (exit {add_proc.returncode})", file=sys.stderr)
-            return add_proc.returncode
-
-        # Empty staging area for THESE files → nothing to commit. Scoped with `-- *files`, not a bare
-        # `git diff --cached --quiet` — an unscoped check reads true (has staged changes) whenever any
-        # OTHER path is staged in the index, which a caller collapsing multiple groups into one staged
-        # diff via a combined reset does deliberately; scoping is what lets this group's own emptiness
-        # be told apart from "some unrelated group's diff happens to still be staged".
-        cached_proc = subprocess.run(  # noqa: S603
-            [git, "diff", "--cached", "--quiet", "--", *files],
-            check=False,
-        )
-        if cached_proc.returncode == 0:
-            print(
-                "commit_action_item: staging area empty after add — no commit created",
-                file=sys.stderr,
-            )
-            return 3
-
-        # Pathspec the commit — commits only THESE files' staged state, leaving any other group's
-        # files staged untouched for their own subsequent commit. Without `-- *files`, `git commit`
-        # commits the entire index: the first of several sequential per-group commits (a combined
-        # reset stages every group's diff at once) would silently absorb every later group's changes,
-        # and each later group's own commit call would then find nothing staged for its files.
-        # NOTE: a partial `git commit -- <paths>` commits the WORKING-TREE content of those paths, not
-        # necessarily the staged (index) content — invisible here because every caller's flow leaves
-        # index and working tree identical for these files (a soft reset touches only the index). Any
-        # future caller that stages a file via a partial `git add -p` (or a hook rewrites it after
-        # `add`) would silently commit content the caller never staged.
-        result = subprocess.run([git, "commit", "-F", msg_file, "--", *files], check=False)  # noqa: S603
-        return result.returncode
+        return _stage_and_commit(git, msg_file, files)
     finally:
         sentinel.unlink(missing_ok=True)
 

@@ -21,6 +21,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = ROOT / "benchmarks"
+
+sys.path.insert(0, str(BENCHMARKS))
+from _bench_common.artifact_hashing import module_sha256, runner_sha256  # noqa: E402
+
 # Self-named so a rename cannot leave the stale-output hint pointing at a missing script.
 REBUILD_COMMAND = f"uv run python {Path(__file__).resolve().relative_to(ROOT).as_posix()}"
 MANIFESTS = BENCHMARKS / "manifests"
@@ -75,6 +79,13 @@ def _codex_cli_identity() -> dict[str, str | bool]:
     }
 
 
+# The structural runner is a thin re-export shim over a package, so the pin has to cover the
+# package too: the runtime gate in _validate_execution_manifest recomputes this exact value.
+RUNNER_PACKAGES = {
+    "run_codex_structural": ("benchmarks/run-codex-structural.py", "benchmarks/_bench_codex/structural"),
+}
+
+
 def _artifact_hashes() -> dict[str, str]:
     """Lock candidate package, runtime, adapter, and runner bytes used by the arms."""
     paths = {
@@ -83,15 +94,14 @@ def _artifact_hashes() -> dict[str, str]:
         "codemap_runtime_cli": "plugins/codemap-py/bin/codemap-py",
         "codemap_runtime_entrypoint": "plugins/codemap-py/src/codemap_py/cli.py",
         "codemap_runtime_graph": "plugins/codemap-py/src/codemap_py/graph.py",
-        "codemap_runtime_integration": "plugins/codemap-py/src/codemap_py/integration.py",
-        "codemap_runtime_query": "plugins/codemap-py/src/codemap_py/query.py",
+        "codemap_runtime_integration": "plugins/codemap-py/src/codemap_py/integration",
+        "codemap_runtime_query": "plugins/codemap-py/src/codemap_py/query",
         "codex_rig_adapter": "plugins/codex-rig/shared/codemap_adapter.py",
         "codex_rig_contract": "plugins/codex-rig/shared/codemap-contract.md",
         "codex_rig_integration_host": "plugins/codex-rig/shared/codemap-py-integration.md",
         "codex_rig_package_manifest": "plugins/codex-rig/package-manifest.json",
         "codex_rig_plugin_manifest": "plugins/codex-rig/.codex-plugin/plugin.json",
         "run_all": "benchmarks/run-all.sh",
-        "run_codex_structural": "benchmarks/run-codex-structural.py",
         "codex_stage_readcrop": "benchmarks/_bench_codex/stage_readcrop.py",
         "codex_stage_fix": "benchmarks/_bench_codex/stage_fix.py",
         "codex_stage_runtime": "benchmarks/_bench_codex/runtime.py",
@@ -99,7 +109,13 @@ def _artifact_hashes() -> dict[str, str]:
         "presentation": "benchmarks/_bench_common/presentation.py",
         "prepare_codex_index": "benchmarks/prepare-codex-index.py",
     }
-    return {name: _sha256(ROOT / relative_path) for name, relative_path in paths.items()}
+    # module_sha256, not _sha256: a pinned codemap module may now be a package directory,
+    # which _sha256 rejects outright. It still plain-hashes every entry that is a file.
+    hashes = {name: module_sha256(ROOT / relative_path) for name, relative_path in paths.items()}
+    hashes.update(
+        {name: runner_sha256(ROOT / runner, ROOT / package) for name, (runner, package) in RUNNER_PACKAGES.items()}
+    )
+    return dict(sorted(hashes.items()))
 
 
 def _direct_cli_runtime() -> dict[str, Any]:

@@ -27,6 +27,8 @@ from __future__ import annotations
 import argparse
 import base64
 from collections import deque
+from collections.abc import Callable
+from dataclasses import dataclass
 import hashlib
 import hmac
 import json
@@ -872,26 +874,178 @@ def _verify_live(target: str, workspace: Path) -> bool:
     )
 
 
+@dataclass(frozen=True)
+class _Resolved:
+    """Bundle the invocation identity shared by every result built after scope resolution.
+
+    The six fields repeat unchanged in almost every ``_base_result`` call once the target and scope are known, so
+    carrying them as one value keeps each terminal path down to the fields that actually differ between paths.
+    """
+
+    current_host: str
+    target: str
+    direction: str | None
+    requested: dict[str, str]
+    scope: str | None
+    workspace: Path
+
+    def result(self, **fields: object) -> dict[str, object]:
+        """Build one sanitized result that carries this invocation's resolved identity."""
+        return _base_result(**vars(self), **fields)
+
+
+@dataclass(frozen=True)
+class _Terminal:
+    """Pair one sanitized result with the exit code its path reports."""
+
+    result: dict[str, object]
+    exit_code: int
+
+
+def _emit(terminal: _Terminal) -> int:
+    """Write the single sanitized JSON result for one terminal path and return its exit code."""
+    sys.stdout.write(json.dumps(terminal.result, sort_keys=True) + "\n")
+    return terminal.exit_code
+
+
+@dataclass(frozen=True)
+class _MutationOutcome:
+    """Report what one branch's native execution step produced, before its result is built."""
+
+    ok: bool
+    verification_outcome: str
+
+
+@dataclass(frozen=True)
+class _MutationCompletion:
+    """Carry the outcome of an executed mutation together with the approval state rebound under the lock."""
+
+    ok: bool
+    verification_outcome: str
+    state: dict[str, object]
+    operations: list[dict[str, object]]
+    payload: dict[str, object]
+
+
+def _launch_authentication(target: str) -> _MutationOutcome:
+    """Start only the native provider login, with the operator's streams inherited and nothing captured."""
+    try:
+        authentication_process = subprocess.run(list(CAPABILITY_MATRIX[target]["authentication_argv"]))
+    except OSError:
+        authentication_process = None
+    authentication_ok = authentication_process is not None and authentication_process.returncode == 0
+    return _MutationOutcome(authentication_ok, "auth-flow-launched" if authentication_ok else "failed")
+
+
+def _apply_configuration(target: str, operations: list[dict[str, object]]) -> _MutationOutcome:
+    """Run the approved marketplace operation and re-probe the inventory it was expected to change."""
+    configured = _run_configuration(operations)
+    verified = False
+    if configured:
+        inventory_ok, inventory = _inventory(target)
+        verified = bool(inventory_ok and inventory and inventory["installed"] and inventory["enabled"])
+    return _MutationOutcome(configured, "configuration-verified" if verified else "fresh-session-required")
+
+
+def _run_live_verification(target: str, workspace: Path) -> _MutationOutcome:
+    """Run the approved live doctor and retain only its boolean outcome."""
+    live_ok = _verify_live(target, workspace)
+    return _MutationOutcome(live_ok, "live-verified" if live_ok else "failed")
+
+
+def _execute_approved_mutation(
+    *,
+    resolved: _Resolved,
+    args: argparse.Namespace,
+    approval_key: bytes | None,
+    approval_fingerprint: str | None,
+    lock_pair: tuple[Path, Path],
+    operation_fingerprint: str,
+    execute: Callable[[list[dict[str, object]]], _MutationOutcome],
+) -> _Terminal | _MutationCompletion:
+    """Run the lock-held part every approved mutation shares and report its outcome or its denial.
+
+    The caller acquires the lock and owns its failure result, because that result is not the same shape in all three
+    branches. From there the order is fixed: ``_reinspect_approved_operation`` re-verifies the signature against state
+    read under the lock, ``_consume_approval_once`` spends the single-use approval, the branch's own native step runs,
+    and ``_record_mutation`` journals the result and releases the lock. Both failure exits before execution release the
+    lock explicitly. The caller must only reach this function from inside the region already gated by the approval
+    digest and state-fingerprint drift check.
+    """
+    lock, journal = lock_pair
+    bound = _reinspect_approved_operation(
+        args.approve,
+        approval_key or b"",
+        resolved.workspace,
+        resolved.requested,
+        resolved.current_host,
+        resolved.target,
+        str(resolved.scope),
+    )
+    if bound is None:
+        _release_mutation_lock(lock)
+        return _Terminal(
+            resolved.result(
+                status="denied",
+                classification="state-drift",
+                remaining=["fresh-inspection"],
+                manual_next_action="Inspect again and approve the current action before mutation.",
+            ),
+            2,
+        )
+    state, operations, payload = bound
+    consumption = _consume_approval_once(
+        journal.with_name(f"{resolved.target}-{resolved.scope}.approvals.jsonl"), approval_fingerprint or ""
+    )
+    if consumption != "consumed":
+        _release_mutation_lock(lock)
+        return _Terminal(
+            resolved.result(
+                status="denied" if consumption == "replayed" else "blocked",
+                classification=("approval-replayed" if consumption == "replayed" else "approval-consumption-failed"),
+                remaining=["fresh-approval"],
+                manual_next_action="Inspect again; approvals are single use."
+                if consumption == "replayed"
+                else "Repair the regular user state path and inspect again.",
+            ),
+            2,
+        )
+    outcome = execute(operations)
+    record_ok = _record_mutation(
+        lock,
+        journal,
+        resolved.target,
+        str(payload["state_fingerprint"]),
+        operation_fingerprint,
+        "complete" if outcome.ok else "failed",
+        outcome.verification_outcome,
+    )
+    return _MutationCompletion(outcome.ok and record_ok, outcome.verification_outcome, state, operations, payload)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Emit one sanitized plan or approved result and never print native output."""
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if _contains_sensitive_option(raw_argv):
         # The sensitive value is deliberately discarded before parser errors can echo it.
-        output = _base_result(
-            status="blocked",
-            current_host="unknown",
-            target="unknown",
-            direction=None,
-            requested={"action": "unknown", "target": "unknown", "scope": "unknown", "live": "unknown"},
-            scope=None,
-            workspace=Path.cwd(),
-            classification="sensitive-input-rejected",
-            remaining=["credential-free-input"],
-            manual_next_action="Use the provider-owned interactive login; do not pass credentials to Bridge.",
-            limits=["Sensitive option rejected before argument parsing."],
+        return _emit(
+            _Terminal(
+                _base_result(
+                    status="blocked",
+                    current_host="unknown",
+                    target="unknown",
+                    direction=None,
+                    requested={"action": "unknown", "target": "unknown", "scope": "unknown", "live": "unknown"},
+                    scope=None,
+                    workspace=Path.cwd(),
+                    classification="sensitive-input-rejected",
+                    remaining=["credential-free-input"],
+                    manual_next_action="Use the provider-owned interactive login; do not pass credentials to Bridge.",
+                    limits=["Sensitive option rejected before argument parsing."],
+                ),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
     if raw_argv and raw_argv[-1] == "--approve":
         # argparse would print usage to stderr for the missing approval value;
         # an empty approval is a normal denied state and must preserve the
@@ -903,14 +1057,12 @@ def main(argv: list[str] | None = None) -> int:
         except SystemExit:
             return 2
         workspace = _canonical_workspace(args.workspace)
-        output = _denied_result(
-            args.current_host,
-            _target(args.current_host, args.target),
-            _requested(args),
-            workspace,
+        return _emit(
+            _Terminal(
+                _denied_result(args.current_host, _target(args.current_host, args.target), _requested(args), workspace),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
     try:
         args = _parse_args(raw_argv)
     except SystemExit:
@@ -921,37 +1073,53 @@ def main(argv: list[str] | None = None) -> int:
     action = requested["action"]
     target = _target(args.current_host, args.target)
     if target == args.current_host:
-        output = _base_result(
-            status="manual",
-            current_host=args.current_host,
-            target=target,
-            direction=None,
-            requested=requested,
-            scope=None,
-            workspace=workspace,
-            classification="bootstrap-required",
-            remaining=["current-host-bootstrap", "fresh-session"],
-            manual_next_action="Install or enable the current host externally, then start a fresh host session.",
-            limits=["A loaded setup skill never mutates the surface that loaded it."],
+        return _emit(
+            _Terminal(
+                _base_result(
+                    status="manual",
+                    current_host=args.current_host,
+                    target=target,
+                    direction=None,
+                    requested=requested,
+                    scope=None,
+                    workspace=workspace,
+                    classification="bootstrap-required",
+                    remaining=["current-host-bootstrap", "fresh-session"],
+                    manual_next_action=(
+                        "Install or enable the current host externally, then start a fresh host session."
+                    ),
+                    limits=["A loaded setup skill never mutates the surface that loaded it."],
+                ),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
     scope = _resolved_scope(target, args.scope)
     if scope is None:
-        output = _base_result(
-            status="unsupported",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=None,
-            workspace=workspace,
-            classification="unsupported-scope",
-            remaining=["supported-scope"],
-            manual_next_action="Select a scope supported by the target host.",
+        return _emit(
+            _Terminal(
+                _base_result(
+                    status="unsupported",
+                    current_host=args.current_host,
+                    target=target,
+                    direction=_direction(args.current_host, target),
+                    requested=requested,
+                    scope=None,
+                    workspace=workspace,
+                    classification="unsupported-scope",
+                    remaining=["supported-scope"],
+                    manual_next_action="Select a scope supported by the target host.",
+                ),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
+    resolved = _Resolved(
+        current_host=args.current_host,
+        target=target,
+        direction=_direction(args.current_host, target),
+        requested=requested,
+        scope=scope,
+        workspace=workspace,
+    )
     approved: dict[str, object] | None = None
     approval_fingerprint: str | None = None
     if args.approve is not None:
@@ -967,46 +1135,36 @@ def main(argv: list[str] | None = None) -> int:
             or approved.get("resolved_scope") != scope
             or approved.get("action") != requested["action"]
         ):
-            output = _denied_result(args.current_host, target, requested, workspace)
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
+            return _emit(_Terminal(_denied_result(args.current_host, target, requested, workspace), 2))
         now = int(time.time())
         expires_at = approved.get("expires_at")
         if type(expires_at) is int and expires_at < now:
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="approval-expired",
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again and approve a current setup plan.",
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="denied",
+                        classification="approval-expired",
+                        remaining=["fresh-approval"],
+                        manual_next_action="Inspect again and approve a current setup plan.",
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
         if not _approval_time_is_valid(approved, now):
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="approval-time-invalid",
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again and approve a fixed-lifetime current setup plan.",
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="denied",
+                        classification="approval-time-invalid",
+                        remaining=["fresh-approval"],
+                        manual_next_action="Inspect again and approve a fixed-lifetime current setup plan.",
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
         approval_fingerprint = _stable_fingerprint(args.approve)
     elif "--approve" in raw_argv:
-        output = _denied_result(args.current_host, target, requested, workspace)
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
+        return _emit(_Terminal(_denied_result(args.current_host, target, requested, workspace), 2))
     if approved is not None and requested["action"] == "verify-live":
         prerequisites = approved.get("prerequisites")
         if (
@@ -1014,89 +1172,77 @@ def main(argv: list[str] | None = None) -> int:
             or not isinstance(prerequisites.get("configuration_ready"), bool)
             or not isinstance(prerequisites.get("host_authenticated"), bool)
         ):
-            output = _denied_result(args.current_host, target, requested, workspace)
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
+            return _emit(_Terminal(_denied_result(args.current_host, target, requested, workspace), 2))
         if not prerequisites["configuration_ready"]:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="configuration-needed",
-                remaining=["configuration"],
-                manual_next_action="Configure the target host, start a fresh session if required, then inspect again.",
-                limits=[
-                    "Live verification did not invoke a host or provider because the approved plan lacks configuration evidence."
-                ],
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        classification="configuration-needed",
+                        remaining=["configuration"],
+                        manual_next_action=(
+                            "Configure the target host, start a fresh session if required, then inspect again."
+                        ),
+                        limits=[
+                            "Live verification did not invoke a host or provider because the approved plan lacks configuration evidence."
+                        ],
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
         if not prerequisites["host_authenticated"]:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="authentication-needed",
-                remaining=["authentication"],
-                manual_next_action="Run separately approved native authentication, then inspect again.",
-                limits=[
-                    "Live verification did not invoke a host or provider because the approved plan lacks authentication evidence."
-                ],
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        classification="authentication-needed",
+                        remaining=["authentication"],
+                        manual_next_action="Run separately approved native authentication, then inspect again.",
+                        limits=[
+                            "Live verification did not invoke a host or provider because the approved plan lacks authentication evidence."
+                        ],
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
     state, inspection_error = _inspect(args.current_host, target, scope)
     if state is None:
         missing = inspection_error == "missing-prerequisite"
-        output = _base_result(
-            status="blocked" if missing else "unsupported",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            classification=inspection_error or "unsupported-capability",
-            remaining=["host-cli" if missing else "supported-host-capability"],
-            manual_next_action="Install or update the target host through its documented external workflow.",
-            limits=["Malformed or unsupported host output is never treated as an empty inventory."],
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="blocked" if missing else "unsupported",
+                    classification=inspection_error or "unsupported-capability",
+                    remaining=["host-cli" if missing else "supported-host-capability"],
+                    manual_next_action="Install or update the target host through its documented external workflow.",
+                    limits=["Malformed or unsupported host output is never treated as an empty inventory."],
+                ),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
     operations = _planned_operations(
         requested["action"], target, scope, state["inventory"], workspace, requested["live"]
     )
     if requested["live"] == "skip" and not operations:
-        output = _base_result(
-            status="blocked" if action == "verify-live" else "partial",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            classification="inference-unverified",
-            authentication="inference-unverified",
-            verification_level=_verification_level(state),
-            remaining=["session-workspace-verification"],
-            manual_next_action=(
-                "Live verification is disabled by live=skip; remove that option before requesting it."
-                if action == "verify-live"
-                else "Live verification was skipped; use bridge status to verify this session and workspace."
-            ),
-            limits=["No provider call was requested because live=skip."],
-            state_fingerprint=_stable_fingerprint(state),
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="blocked" if action == "verify-live" else "partial",
+                    classification="inference-unverified",
+                    authentication="inference-unverified",
+                    verification_level=_verification_level(state),
+                    remaining=["session-workspace-verification"],
+                    manual_next_action=(
+                        "Live verification is disabled by live=skip; remove that option before requesting it."
+                        if action == "verify-live"
+                        else "Live verification was skipped; use bridge status to verify this session and workspace."
+                    ),
+                    limits=["No provider call was requested because live=skip."],
+                    state_fingerprint=_stable_fingerprint(state),
+                ),
+                2 if action == "verify-live" else 0,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2 if action == "verify-live" else 0
     payload = _approval_payload(
         workspace,
         requested,
@@ -1116,435 +1262,283 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError):
         approval_key = None
     if action != "check" and approval_key is None:
-        output = _base_result(
-            status="blocked",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            classification="approval-key-unavailable",
-            remaining=["safe-user-state"],
-            manual_next_action="Repair the regular per-user setup state before retrying.",
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="blocked",
+                    classification="approval-key-unavailable",
+                    remaining=["safe-user-state"],
+                    manual_next_action="Repair the regular per-user setup state before retrying.",
+                ),
+                2,
+            )
         )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 2
     digest = _encode_approval(payload, approval_key) if approval_key is not None else None
     if args.approve is not None and action != "check":
         if _stable_fingerprint(state) != payload["state_fingerprint"] or args.approve != digest:
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="state-drift",
-                remaining=["fresh-inspection"],
-                manual_next_action="Inspect again and approve the new digest before mutation.",
-                limits=["Host state changed or the operation no longer matches the approved plan."],
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="denied",
+                        classification="state-drift",
+                        remaining=["fresh-inspection"],
+                        manual_next_action="Inspect again and approve the new digest before mutation.",
+                        limits=["Host state changed or the operation no longer matches the approved plan."],
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
     if action == "verify-live" and args.approve is not None:
         if not state["inventory"]["installed"] or not state["inventory"]["enabled"]:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                approval_digest=digest,
-                operations=operations,
-                classification="configuration-needed",
-                authentication=_authentication_label(state),
-                verification_level=_verification_level(state),
-                remaining=["configuration"],
-                manual_next_action="Configure the target host, start a fresh session if required, then inspect again.",
-                limits=["Live verification did not invoke the provider because target configuration is not verified."],
-                state_fingerprint=str(payload["state_fingerprint"]),
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        approval_digest=digest,
+                        operations=operations,
+                        classification="configuration-needed",
+                        authentication=_authentication_label(state),
+                        verification_level=_verification_level(state),
+                        remaining=["configuration"],
+                        manual_next_action=(
+                            "Configure the target host, start a fresh session if required, then inspect again."
+                        ),
+                        limits=[
+                            "Live verification did not invoke the provider because target configuration is not verified."
+                        ],
+                        state_fingerprint=str(payload["state_fingerprint"]),
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
         if state["authenticated"] is not True:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                approval_digest=digest,
-                operations=operations,
-                classification="authentication-needed",
-                authentication="not-checked",
-                verification_level=_verification_level(state),
-                remaining=["authentication"],
-                manual_next_action="Run separately approved native authentication, then inspect again.",
-                limits=["Live verification did not invoke the provider because target authentication is not verified."],
-                state_fingerprint=str(payload["state_fingerprint"]),
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        approval_digest=digest,
+                        operations=operations,
+                        classification="authentication-needed",
+                        authentication="not-checked",
+                        verification_level=_verification_level(state),
+                        remaining=["authentication"],
+                        manual_next_action="Run separately approved native authentication, then inspect again.",
+                        limits=[
+                            "Live verification did not invoke the provider because target authentication is not verified."
+                        ],
+                        state_fingerprint=str(payload["state_fingerprint"]),
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
     if action == "authenticate" and args.approve is not None:
         operation_fingerprint = _stable_fingerprint(operations)
         lock_pair = _acquire_mutation_lock(target, scope, operation_fingerprint, str(payload["state_fingerprint"]))
         if lock_pair is None:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="mutation-locked-or-repeat-fault",
-                remaining=["fresh-inspection"],
-                manual_next_action="Wait for the active setup operation before retrying.",
+            # Deliberately plainer than the configure branch's lock-failure result; the asymmetry is
+            # deliberate pending a maintainer decision. Do not normalize it.
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        classification="mutation-locked-or-repeat-fault",
+                        remaining=["fresh-inspection"],
+                        manual_next_action="Wait for the active setup operation before retrying.",
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        lock, journal = lock_pair
-        bound = _reinspect_approved_operation(
-            args.approve, approval_key or b"", workspace, requested, args.current_host, target, scope
+        mutation = _execute_approved_mutation(
+            resolved=resolved,
+            args=args,
+            approval_key=approval_key,
+            approval_fingerprint=approval_fingerprint,
+            lock_pair=lock_pair,
+            operation_fingerprint=operation_fingerprint,
+            execute=lambda _operations: _launch_authentication(target),
         )
-        if bound is None:
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="state-drift",
-                remaining=["fresh-inspection"],
-                manual_next_action="Inspect again and approve the current action before mutation.",
+        if isinstance(mutation, _Terminal):
+            return _emit(mutation)
+        state, operations, payload = mutation.state, mutation.operations, mutation.payload
+        if not mutation.ok:
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="failed",
+                        approval_digest=digest,
+                        operations=operations,
+                        classification="authentication-launch-failed",
+                        remaining=["authentication"],
+                        manual_next_action="Run the native provider login directly and retry static inspection.",
+                        limits=["Bridge did not capture login output."],
+                        state_fingerprint=str(payload["state_fingerprint"]),
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        state, operations, payload = bound
-        consumption = _consume_approval_once(
-            journal.with_name(f"{target}-{scope}.approvals.jsonl"), approval_fingerprint or ""
-        )
-        if consumption != "consumed":
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied" if consumption == "replayed" else "blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="approval-replayed" if consumption == "replayed" else "approval-consumption-failed",
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again; approvals are single use."
-                if consumption == "replayed"
-                else "Repair the regular user state path and inspect again.",
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="partial",
+                    approval_digest=digest,
+                    operations=operations,
+                    authentication="auth-flow-launched",
+                    verification_level=_verification_level(state),
+                    remaining=(
+                        ["static-authentication-check"] + ([] if requested["live"] == "skip" else ["live-verification"])
+                    ),
+                    manual_next_action="Complete the provider-owned login, then re-run setup inspection.",
+                    limits=["Login output and provider credentials are not captured."],
+                    state_fingerprint=str(payload["state_fingerprint"]),
+                ),
+                0,
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        try:
-            authentication_process = subprocess.run(list(CAPABILITY_MATRIX[target]["authentication_argv"]))
-        except OSError:
-            authentication_process = None
-        authentication_ok = authentication_process is not None and authentication_process.returncode == 0
-        record_ok = _record_mutation(
-            lock,
-            journal,
-            target,
-            str(payload["state_fingerprint"]),
-            operation_fingerprint,
-            "complete" if authentication_ok else "failed",
-            "auth-flow-launched" if authentication_ok else "failed",
         )
-        if not record_ok:
-            authentication_ok = False
-        if not authentication_ok:
-            output = _base_result(
-                status="failed",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                approval_digest=digest,
-                operations=operations,
-                classification="authentication-launch-failed",
-                remaining=["authentication"],
-                manual_next_action="Run the native provider login directly and retry static inspection.",
-                limits=["Bridge did not capture login output."],
-                state_fingerprint=str(payload["state_fingerprint"]),
-            )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        output = _base_result(
-            status="partial",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            approval_digest=digest,
-            operations=operations,
-            authentication="auth-flow-launched",
-            verification_level=_verification_level(state),
-            remaining=["static-authentication-check"] + ([] if requested["live"] == "skip" else ["live-verification"]),
-            manual_next_action="Complete the provider-owned login, then re-run setup inspection.",
-            limits=["Login output and provider credentials are not captured."],
-            state_fingerprint=str(payload["state_fingerprint"]),
-        )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 0
     if args.approve is not None and operations and action in {"all", "configure", "repair"}:
         operation_fingerprint = _stable_fingerprint(operations)
         lock_pair = _acquire_mutation_lock(target, scope, operation_fingerprint, str(payload["state_fingerprint"]))
         if lock_pair is None:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                approval_digest=digest,
-                operations=operations,
-                classification="mutation-locked-or-repeat-fault",
-                authentication=_authentication_label(state),
-                verification_level=_verification_level(state),
-                remaining=["fresh-inspection"],
-                manual_next_action="Wait for the active setup operation or inspect changed state before retrying.",
-                limits=["Per-user setup locking prevents concurrent or repeated failed mutation."],
-                state_fingerprint=str(payload["state_fingerprint"]),
+            # Richer than the authenticate and verify-live lock-failure results: it also reports the digest,
+            # operations, authentication, verification level, and limits. The asymmetry is deliberate pending a
+            # maintainer decision. Do not normalize it.
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        approval_digest=digest,
+                        operations=operations,
+                        classification="mutation-locked-or-repeat-fault",
+                        authentication=_authentication_label(state),
+                        verification_level=_verification_level(state),
+                        remaining=["fresh-inspection"],
+                        manual_next_action=(
+                            "Wait for the active setup operation or inspect changed state before retrying."
+                        ),
+                        limits=["Per-user setup locking prevents concurrent or repeated failed mutation."],
+                        state_fingerprint=str(payload["state_fingerprint"]),
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        lock, journal = lock_pair
-        bound = _reinspect_approved_operation(
-            args.approve, approval_key or b"", workspace, requested, args.current_host, target, scope
+        mutation = _execute_approved_mutation(
+            resolved=resolved,
+            args=args,
+            approval_key=approval_key,
+            approval_fingerprint=approval_fingerprint,
+            lock_pair=lock_pair,
+            operation_fingerprint=operation_fingerprint,
+            execute=lambda rebound_operations: _apply_configuration(target, rebound_operations),
         )
-        if bound is None:
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="state-drift",
-                remaining=["fresh-inspection"],
-                manual_next_action="Inspect again and approve the current action before mutation.",
+        if isinstance(mutation, _Terminal):
+            return _emit(mutation)
+        state, operations, payload = mutation.state, mutation.operations, mutation.payload
+        if not mutation.ok:
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="failed",
+                        approval_digest=digest,
+                        operations=operations,
+                        classification="configuration-failed",
+                        authentication=_authentication_label(state),
+                        verification_level=_verification_level(state),
+                        remaining=["configuration"],
+                        manual_next_action="Use the documented native host workflow; do not retry blindly.",
+                        limits=["Native command output was discarded; the credential-free journal is per-user state."],
+                        state_fingerprint=str(payload["state_fingerprint"]),
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        state, operations, payload = bound
-        consumption = _consume_approval_once(
-            journal.with_name(f"{target}-{scope}.approvals.jsonl"), approval_fingerprint or ""
-        )
-        if consumption != "consumed":
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied" if consumption == "replayed" else "blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="approval-replayed" if consumption == "replayed" else "approval-consumption-failed",
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again; approvals are single use."
-                if consumption == "replayed"
-                else "Repair the regular user state path and inspect again.",
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="partial",
+                    approval_digest=digest,
+                    operations=operations,
+                    classification=mutation.verification_outcome,
+                    authentication=_authentication_label(state),
+                    verification_level=_verification_level(state),
+                    state_changed=True,
+                    remaining=_remaining([], state, requested["live"]),
+                    manual_next_action="Start provider-owned authentication with a separately approved setup run.",
+                    limits=[
+                        "A fresh host session may be required before inventory becomes visible.",
+                        "Credential-free setup journal is deliberately stored in platform-native per-user state.",
+                    ],
+                    state_fingerprint=str(payload["state_fingerprint"]),
+                ),
+                0,
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        configured = _run_configuration(operations)
-        verified = False
-        if configured:
-            inventory_ok, inventory = _inventory(target)
-            verified = bool(inventory_ok and inventory and inventory["installed"] and inventory["enabled"])
-        record_ok = _record_mutation(
-            lock,
-            journal,
-            target,
-            str(payload["state_fingerprint"]),
-            operation_fingerprint,
-            "complete" if configured else "failed",
-            "configuration-verified" if verified else "fresh-session-required",
         )
-        if not record_ok:
-            configured = False
-        if not configured:
-            output = _base_result(
-                status="failed",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                approval_digest=digest,
-                operations=operations,
-                classification="configuration-failed",
-                authentication=_authentication_label(state),
-                verification_level=_verification_level(state),
-                remaining=["configuration"],
-                manual_next_action="Use the documented native host workflow; do not retry blindly.",
-                limits=["Native command output was discarded; the credential-free journal is per-user state."],
-                state_fingerprint=str(payload["state_fingerprint"]),
-            )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        output = _base_result(
-            status="partial",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            approval_digest=digest,
-            operations=operations,
-            classification="configuration-verified" if verified else "fresh-session-required",
-            authentication=_authentication_label(state),
-            verification_level=_verification_level(state),
-            state_changed=True,
-            remaining=_remaining([], state, requested["live"]),
-            manual_next_action="Start provider-owned authentication with a separately approved setup run.",
-            limits=[
-                "A fresh host session may be required before inventory becomes visible.",
-                "Credential-free setup journal is deliberately stored in platform-native per-user state.",
-            ],
-            state_fingerprint=str(payload["state_fingerprint"]),
-        )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 0
     if action == "verify-live" and args.approve is not None:
         operation_fingerprint = _stable_fingerprint(operations)
         lock_pair = _acquire_mutation_lock(target, scope, operation_fingerprint, str(payload["state_fingerprint"]))
         if lock_pair is None:
-            output = _base_result(
-                status="blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="mutation-locked-or-repeat-fault",
-                remaining=["fresh-inspection"],
-                manual_next_action="Wait for the active setup operation before retrying.",
+            # Deliberately plainer than the configure branch's lock-failure result; the asymmetry is
+            # deliberate pending a maintainer decision. Do not normalize it.
+            return _emit(
+                _Terminal(
+                    resolved.result(
+                        status="blocked",
+                        classification="mutation-locked-or-repeat-fault",
+                        remaining=["fresh-inspection"],
+                        manual_next_action="Wait for the active setup operation before retrying.",
+                    ),
+                    2,
+                )
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        lock, journal = lock_pair
-        bound = _reinspect_approved_operation(
-            args.approve, approval_key or b"", workspace, requested, args.current_host, target, scope
+        mutation = _execute_approved_mutation(
+            resolved=resolved,
+            args=args,
+            approval_key=approval_key,
+            approval_fingerprint=approval_fingerprint,
+            lock_pair=lock_pair,
+            operation_fingerprint=operation_fingerprint,
+            execute=lambda _operations: _run_live_verification(target, workspace),
         )
-        if bound is None:
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="state-drift",
-                remaining=["fresh-inspection"],
-                manual_next_action="Inspect again and approve the current action before mutation.",
+        if isinstance(mutation, _Terminal):
+            return _emit(mutation)
+        state, operations, payload = mutation.state, mutation.operations, mutation.payload
+        live_ok = mutation.ok
+        return _emit(
+            _Terminal(
+                resolved.result(
+                    status="partial" if live_ok else "failed",
+                    approval_digest=digest,
+                    operations=operations,
+                    classification="live-verified" if live_ok else "live-verification-failed",
+                    authentication="live-verified" if live_ok else _authentication_label(state),
+                    verification_level="live-verified" if live_ok else _verification_level(state),
+                    provider_call=True,
+                    ready_to_use=False,
+                    remaining=["session-workspace-verification"] if live_ok else ["live-verification"],
+                    manual_next_action=(
+                        "Run bridge status to verify the active session and workspace before treating Bridge as ready."
+                        if live_ok
+                        else "Inspect and obtain a fresh live-verification approval."
+                    ),
+                    state_fingerprint=str(payload["state_fingerprint"]),
+                ),
+                0 if live_ok else 2,
             )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        state, operations, payload = bound
-        consumption = _consume_approval_once(
-            journal.with_name(f"{target}-{scope}.approvals.jsonl"), approval_fingerprint or ""
         )
-        if consumption != "consumed":
-            _release_mutation_lock(lock)
-            output = _base_result(
-                status="denied" if consumption == "replayed" else "blocked",
-                current_host=args.current_host,
-                target=target,
-                direction=_direction(args.current_host, target),
-                requested=requested,
-                scope=scope,
-                workspace=workspace,
-                classification="approval-replayed" if consumption == "replayed" else "approval-consumption-failed",
-                remaining=["fresh-approval"],
-                manual_next_action="Inspect again; approvals are single use."
-                if consumption == "replayed"
-                else "Repair the regular user state path and inspect again.",
-            )
-            sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-            return 2
-        live_ok = _verify_live(target, workspace)
-        record_ok = _record_mutation(
-            lock,
-            journal,
-            target,
-            str(payload["state_fingerprint"]),
-            operation_fingerprint,
-            "complete" if live_ok else "failed",
-            "live-verified" if live_ok else "failed",
-        )
-        if not record_ok:
-            live_ok = False
-        output = _base_result(
-            status="partial" if live_ok else "failed",
-            current_host=args.current_host,
-            target=target,
-            direction=_direction(args.current_host, target),
-            requested=requested,
-            scope=scope,
-            workspace=workspace,
-            approval_digest=digest,
-            operations=operations,
-            classification="live-verified" if live_ok else "live-verification-failed",
-            authentication="live-verified" if live_ok else _authentication_label(state),
-            verification_level="live-verified" if live_ok else _verification_level(state),
-            provider_call=True,
-            ready_to_use=False,
-            remaining=["session-workspace-verification"] if live_ok else ["live-verification"],
-            manual_next_action=(
-                "Run bridge status to verify the active session and workspace before treating Bridge as ready."
-                if live_ok
-                else "Inspect and obtain a fresh live-verification approval."
-            ),
-            state_fingerprint=str(payload["state_fingerprint"]),
-        )
-        sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-        return 0 if live_ok else 2
     if action == "verify-live":
-        status, classification, remaining, action = (
+        status, classification, remaining, next_action = (
             "manual",
             "live-verification-requires-separate-approval",
             ["live-verification"],
             "Approve the exact listed live-verification operation after configuration and authentication are verified.",
         )
     elif action == "authenticate":
-        status, classification, remaining, action = (
+        status, classification, remaining, next_action = (
             "partial",
             "authentication-pending",
             ["authentication", "session-workspace-verification", "live-verification"],
             "Approve this exact native login operation; it does not configure the target host.",
         )
     else:
-        status, classification, remaining, action = (
+        status, classification, remaining, next_action = (
             "partial",
             "configuration-pending" if operations else "static-ready",
             _remaining(operations, state, requested["live"]),
@@ -1556,26 +1550,25 @@ def main(argv: list[str] | None = None) -> int:
                 else "Launch authentication separately."
             ),
         )
-    output = _base_result(
-        status=status,
-        current_host=args.current_host,
-        target=target,
-        direction=_direction(args.current_host, target),
-        requested=requested,
-        scope=scope,
-        workspace=workspace,
-        approval_digest=digest,
-        operations=operations,
-        classification=classification,
-        authentication="inference-unverified" if requested["live"] == "skip" else _authentication_label(state),
-        verification_level=_verification_level(state),
-        remaining=remaining,
-        manual_next_action=action,
-        limits=["Static inspection cannot prove a fresh host session, MCP workspace binding, or live inference."],
-        state_fingerprint=str(payload["state_fingerprint"]),
+    return _emit(
+        _Terminal(
+            resolved.result(
+                status=status,
+                approval_digest=digest,
+                operations=operations,
+                classification=classification,
+                authentication="inference-unverified" if requested["live"] == "skip" else _authentication_label(state),
+                verification_level=_verification_level(state),
+                remaining=remaining,
+                manual_next_action=next_action,
+                limits=[
+                    "Static inspection cannot prove a fresh host session, MCP workspace binding, or live inference."
+                ],
+                state_fingerprint=str(payload["state_fingerprint"]),
+            ),
+            0 if status == "partial" else 2,
+        )
     )
-    sys.stdout.write(json.dumps(output, sort_keys=True) + "\n")
-    return 0 if status == "partial" else 2
 
 
 if __name__ == "__main__":

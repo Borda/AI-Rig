@@ -374,24 +374,24 @@ def _live_baseline(branch: str, last_tag: str, endpoint: str, git: str) -> tuple
     return marker_digest, tag_sha, baseline
 
 
-def cmd_receipt(args: argparse.Namespace) -> int:
-    """Bind the selected notes range to current source and exact draft bytes."""
+def _read_range_and_draft(range_file: str, draft_path: str) -> tuple[str, str, bytes] | str:
+    """Read and validate the completed notes range file and its exact draft bytes."""
     try:
-        lines = Path(args.range_file).read_text(encoding="utf-8").splitlines()
-        draft_bytes = Path(args.draft).read_bytes()
+        lines = Path(range_file).read_text(encoding="utf-8").splitlines()
+        draft_bytes = Path(draft_path).read_bytes()
         if len(lines) != 1 or lines[0].count("..") != 1 or "..." in lines[0] or not draft_bytes:
             raise ValueError("invalid completed notes range or draft")
         start, end = lines[0].split("..")
         if not start or not end:
             raise ValueError("invalid completed notes range")
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Error: {error}", file=sys.stderr)
-        return 1
-    git = which("git")
-    if git is None:
-        print("Error: git unavailable for release marker receipt", file=sys.stderr)
-        return 1
-    branch = subprocess.run(  # noqa: S603
+        return str(error)
+    return start, end, draft_bytes
+
+
+def _resolve_head_and_endpoint(git: str, branch: str, end: str) -> tuple[str, str] | str:
+    """Resolve HEAD and the completed-range endpoint, requiring the current attached branch."""
+    branch_proc = subprocess.run(  # noqa: S603
         [git, "symbolic-ref", "--quiet", "--short", "HEAD"], capture_output=True, text=True, check=False, timeout=5
     )
     head = subprocess.run(  # noqa: S603
@@ -404,18 +404,35 @@ def cmd_receipt(args: argparse.Namespace) -> int:
         check=False,
         timeout=5,
     )
-    if branch.returncode or branch.stdout.strip() != args.branch or head.returncode or endpoint.returncode:
-        print("Error: completed notes source is unavailable or on another branch", file=sys.stderr)
-        return 1
+    if branch_proc.returncode or branch_proc.stdout.strip() != branch or head.returncode or endpoint.returncode:
+        return "completed notes source is unavailable or on another branch"
     if not _is_valid_commit(endpoint.stdout.strip()):
-        print("Error: completed notes endpoint is not on HEAD", file=sys.stderr)
+        return "completed notes endpoint is not on HEAD"
+    return head.stdout.strip(), endpoint.stdout.strip()
+
+
+def cmd_receipt(args: argparse.Namespace) -> int:
+    """Bind the selected notes range to current source and exact draft bytes."""
+    read = _read_range_and_draft(args.range_file, args.draft)
+    if isinstance(read, str):
+        print(f"Error: {read}", file=sys.stderr)
         return 1
-    start_sha = _range_start_on_endpoint(git, start, endpoint.stdout.strip())
+    start, end, draft_bytes = read
+    git = which("git")
+    if git is None:
+        print("Error: git unavailable for release marker receipt", file=sys.stderr)
+        return 1
+    resolved = _resolve_head_and_endpoint(git, args.branch, end)
+    if isinstance(resolved, str):
+        print(f"Error: {resolved}", file=sys.stderr)
+        return 1
+    head, endpoint = resolved
+    start_sha = _range_start_on_endpoint(git, start, endpoint)
     if start_sha is None:
         print("Error: completed notes start is not an ancestor of endpoint", file=sys.stderr)
         return 1
     try:
-        marker_digest, tag_sha, baseline = _live_baseline(args.branch, args.last_tag, endpoint.stdout.strip(), git)
+        marker_digest, tag_sha, baseline = _live_baseline(args.branch, args.last_tag, endpoint, git)
         if baseline and _range_start_on_endpoint(git, start_sha, baseline) is None:
             raise ValueError("completed notes range skips the current baseline")
     except (OSError, UnicodeError, ValueError) as error:
@@ -423,9 +440,9 @@ def cmd_receipt(args: argparse.Namespace) -> int:
         return 1
     receipt = {
         "branch": args.branch,
-        "range": f"{start_sha}..{endpoint.stdout.strip()}",
-        "head": head.stdout.strip(),
-        "endpoint": endpoint.stdout.strip(),
+        "range": f"{start_sha}..{endpoint}",
+        "head": head,
+        "endpoint": endpoint,
         "draft_sha256": hashlib.sha256(draft_bytes).hexdigest(),
         "last_tag": args.last_tag,
         "tag_sha": tag_sha,
@@ -440,51 +457,39 @@ def cmd_receipt(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_write(args: argparse.Namespace) -> int:
-    """Persist only an endpoint bound to a completed range and unchanged draft.
-
-    Args:
-        args: Namespace with ``branch``, ``sha``, receipt, draft, and ``marker_dir``.
-
-    Returns:
-        Zero on success; one for detached/mismatched branches or unsafe paths.
-    """
-    if not args.receipt or not args.draft:
-        print("Error: release marker write requires completed notes receipt and draft", file=sys.stderr)
-        return 1
+def _load_and_validate_receipt(
+    receipt_path: str, draft_path: str, sha: str, branch: str
+) -> tuple[dict, bytes, str, str] | str:
+    """Load, parse, and cross-check the completed-notes receipt against draft bytes and marker sha."""
     try:
-        receipt = json.loads(Path(args.receipt).read_text(encoding="utf-8"))
-        draft_bytes = Path(args.draft).read_bytes()
-        if not isinstance(receipt, dict) or not draft_bytes or not _SHA_RE.fullmatch(args.sha):
+        receipt = json.loads(Path(receipt_path).read_text(encoding="utf-8"))
+        draft_bytes = Path(draft_path).read_bytes()
+        if not isinstance(receipt, dict) or not draft_bytes or not _SHA_RE.fullmatch(sha):
             raise ValueError("invalid completed notes receipt or draft")
         completed_range = receipt.get("range")
         if not isinstance(completed_range, str) or completed_range.count("..") != 1 or "..." in completed_range:
             raise ValueError("invalid completed notes range")
         start, end = completed_range.split("..")
-        if not start or not end or receipt.get("branch") != args.branch:
+        if not start or not end or receipt.get("branch") != branch:
             raise ValueError("invalid completed notes branch or range")
-        if (
-            receipt.get("endpoint") != args.sha
-            or receipt.get("draft_sha256") != hashlib.sha256(draft_bytes).hexdigest()
-        ):
+        if receipt.get("endpoint") != sha or receipt.get("draft_sha256") != hashlib.sha256(draft_bytes).hexdigest():
             raise ValueError("completed notes receipt does not match marker or draft")
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as error:
-        print(f"Error: {error}", file=sys.stderr)
-        return 1
-    git = which("git")
-    if git is None:
-        print("Error: git unavailable for release marker write", file=sys.stderr)
-        return 1
-    branch = subprocess.run(  # noqa: S603
+        return str(error)
+    return receipt, draft_bytes, start, end
+
+
+def _verify_marker_matches_head(git: str, branch: str, receipt: dict, end: str, sha: str) -> str | None:
+    """Confirm the attached branch, HEAD, and completed-range endpoint agree with the marker sha."""
+    branch_proc = subprocess.run(  # noqa: S603
         [git, "symbolic-ref", "--quiet", "--short", "HEAD"],
         capture_output=True,
         text=True,
         check=False,
         timeout=5,
     )
-    if branch.returncode != 0 or branch.stdout.strip() != args.branch:
-        print("Error: release marker requires the current attached branch", file=sys.stderr)
-        return 1
+    if branch_proc.returncode != 0 or branch_proc.stdout.strip() != branch:
+        return "release marker requires the current attached branch"
     head = subprocess.run(  # noqa: S603
         [git, "rev-parse", "--verify", "HEAD^{commit}"], capture_output=True, text=True, check=False, timeout=5
     )
@@ -499,20 +504,23 @@ def cmd_write(args: argparse.Namespace) -> int:
         head.returncode != 0
         or head.stdout.strip() != receipt.get("head")
         or endpoint.returncode != 0
-        or endpoint.stdout.strip() != args.sha
-        or not _is_valid_commit(args.sha)
+        or endpoint.stdout.strip() != sha
+        or not _is_valid_commit(sha)
     ):
-        print("Error: marker SHA is not the completed range endpoint on HEAD", file=sys.stderr)
-        return 1
-    if _range_start_on_endpoint(git, start, args.sha) is None:
-        print("Error: completed notes start is not an ancestor of endpoint", file=sys.stderr)
-        return 1
+        return "marker SHA is not the completed range endpoint on HEAD"
+    return None
+
+
+def _verify_baseline_unchanged(
+    branch: str, receipt: dict, start: str, sha: str, args_last_tag: str, git: str
+) -> str | None:
+    """Re-derive the live baseline and confirm it still matches the stored receipt."""
     try:
         if not {"last_tag", "tag_sha", "saved_marker_sha256", "baseline"}.issubset(receipt):
             raise ValueError("completed notes receipt lacks baseline evidence")
-        marker_digest, tag_sha, baseline = _live_baseline(args.branch, receipt["last_tag"], args.sha, git)
+        marker_digest, tag_sha, baseline = _live_baseline(branch, receipt["last_tag"], sha, git)
         if (
-            receipt["last_tag"] != args.last_tag
+            receipt["last_tag"] != args_last_tag
             or receipt["tag_sha"] != tag_sha
             or receipt["saved_marker_sha256"] != marker_digest
             or receipt["baseline"] != baseline
@@ -520,33 +528,66 @@ def cmd_write(args: argparse.Namespace) -> int:
         ):
             raise ValueError("completed notes baseline changed or range skips it")
     except (OSError, UnicodeError, ValueError) as error:
-        print(f"Error: {error}", file=sys.stderr)
-        return 1
-    path = _marker_path(args.branch, args.marker_dir)
+        return str(error)
+    return None
+
+
+def _write_marker_atomic(path: Path, sha: str) -> str | None:
+    """Reject a symlinked marker path, then atomically persist sha as the marker."""
     if any(component.is_symlink() for component in (path, *path.parents)):
-        print("Error: release marker path must not traverse a symlink", file=sys.stderr)
-        return 1
+        return "release marker path must not traverse a symlink"
     path.parent.mkdir(parents=True, exist_ok=True)
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
     try:
         with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8", newline="\n") as marker:
-            marker.write(args.sha.strip() + "\n")
+            marker.write(sha.strip() + "\n")
     except OSError as exc:
-        print(f"Error: release marker write failed: {exc}", file=sys.stderr)
+        return f"release marker write failed: {exc}"
+    return None
+
+
+def cmd_write(args: argparse.Namespace) -> int:
+    """Persist only an endpoint bound to a completed range and unchanged draft.
+
+    Args:
+        args: Namespace with ``branch``, ``sha``, receipt, draft, and ``marker_dir``.
+
+    Returns:
+        Zero on success; one for detached/mismatched branches or unsafe paths.
+    """
+    if not args.receipt or not args.draft:
+        print("Error: release marker write requires completed notes receipt and draft", file=sys.stderr)
+        return 1
+    loaded = _load_and_validate_receipt(args.receipt, args.draft, args.sha, args.branch)
+    if isinstance(loaded, str):
+        print(f"Error: {loaded}", file=sys.stderr)
+        return 1
+    receipt, _draft_bytes, start, end = loaded
+    git = which("git")
+    if git is None:
+        print("Error: git unavailable for release marker write", file=sys.stderr)
+        return 1
+    head_error = _verify_marker_matches_head(git, args.branch, receipt, end, args.sha)
+    if head_error is not None:
+        print(f"Error: {head_error}", file=sys.stderr)
+        return 1
+    if _range_start_on_endpoint(git, start, args.sha) is None:
+        print("Error: completed notes start is not an ancestor of endpoint", file=sys.stderr)
+        return 1
+    baseline_error = _verify_baseline_unchanged(args.branch, receipt, start, args.sha, args.last_tag, git)
+    if baseline_error is not None:
+        print(f"Error: {baseline_error}", file=sys.stderr)
+        return 1
+    path = _marker_path(args.branch, args.marker_dir)
+    write_error = _write_marker_atomic(path, args.sha)
+    if write_error is not None:
+        print(f"Error: {write_error}", file=sys.stderr)
         return 1
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Parse arguments and dispatch to the requested subcommand.
-
-    Args:
-        argv: Optional argument list (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        Exit code (always 0; argparse exits 2 on bad/missing args).
-    """
-    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the release-marker CLI parser and its five subcommands."""
     parser = argparse.ArgumentParser(
         prog="release_append_marker.py",
         description="Persist and resolve the /oss:release notes --append baseline marker.",
@@ -581,16 +622,37 @@ def main(argv: list[str] | None = None) -> int:
     p_guard = sub.add_parser("guard", help="Refuse ambiguous or pending branch state before any notes write.")
     p_guard.add_argument("--branch", required=True)
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def _check_marker_guards(branch: str, marker_dir: str | None) -> str | None:
+    """Refuse ambiguous legacy state or a pending publication journal for the branch."""
     try:
-        refuse_legacy(Path.cwd(), args.branch)
-        _refuse_linked_marker(args.branch, getattr(args, "marker_dir", None))
-        base = Path(args.marker_dir) if getattr(args, "marker_dir", None) else Path(".temp")
-        journal = base / "release-state-v2" / branch_state_key(args.branch) / "journal.json"
+        refuse_legacy(Path.cwd(), branch)
+        _refuse_linked_marker(branch, marker_dir)
+        base = Path(marker_dir) if marker_dir else Path(".temp")
+        journal = base / "release-state-v2" / branch_state_key(branch) / "journal.json"
         if journal.exists() or journal.is_symlink():
             raise ValueError("pending append publication; recover before using marker")
     except ValueError as error:
-        print(f"Error: {error}", file=sys.stderr)
+        return str(error)
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to the requested subcommand.
+
+    Args:
+        argv: Optional argument list (defaults to ``sys.argv[1:]``).
+
+    Returns:
+        Exit code (always 0; argparse exits 2 on bad/missing args).
+    """
+    sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
+    args = _build_parser().parse_args(argv)
+    guard_error = _check_marker_guards(args.branch, getattr(args, "marker_dir", None))
+    if guard_error is not None:
+        print(f"Error: {guard_error}", file=sys.stderr)
         return 1
     if args.command == "guard":
         return 0

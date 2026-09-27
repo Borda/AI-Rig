@@ -30,6 +30,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +38,51 @@ DEFAULT_MAX_AGE_HOURS = 24
 DEFAULT_PLUGIN_ROOT = "plugins/codemap"
 
 
-def project_smoke_result(raw: str) -> dict[str, Any]:
+@dataclass(frozen=True)
+class SmokeResult:
+    """Caller-facing outcome of one index smoke check.
+
+    Dataclass (not TypedDict): named construction and attribute access;
+    converted to a dict by :meth:`to_dict` at the JSON-emission boundary.
+
+    ``ok`` and ``stale`` stay tri-state: the upstream script may omit either
+    key, and ``None`` records "upstream did not say" rather than collapsing
+    that into ``False``, which :func:`derive_exit_code` treats as a failure.
+
+    Attributes:
+        ok: Whether the index validated, or ``None`` when upstream omitted it.
+        stale: Whether the index exceeded its max age, or ``None`` when omitted.
+        age_hours: Index age in hours, or ``None`` when unavailable.
+        error: Bounded failure message; ``None`` on success paths.
+
+    Examples:
+        >>> SmokeResult(ok=True, stale=False, age_hours=1.5).to_dict()
+        {'ok': True, 'stale': False, 'age_hours': 1.5}
+    """
+
+    ok: bool | None
+    stale: bool | None
+    age_hours: float | None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the emitted-JSON projection, omitting ``error`` when unset.
+
+        Returns:
+            A dict with ``ok``, ``stale``, ``age_hours``, plus ``error`` only
+            when this result carries one.
+
+        Examples:
+            >>> SmokeResult(ok=False, stale=False, age_hours=None, error="boom").to_dict()
+            {'ok': False, 'stale': False, 'age_hours': None, 'error': 'boom'}
+        """
+        out: dict[str, Any] = {"ok": self.ok, "stale": self.stale, "age_hours": self.age_hours}
+        if self.error is not None:
+            out["error"] = self.error
+        return out
+
+
+def project_smoke_result(raw: str) -> SmokeResult:
     """Project a raw smoke-test JSON line down to the caller-facing subset.
 
     Only ``ok``, ``stale``, ``age_hours`` are forwarded by default; the
@@ -49,51 +94,48 @@ def project_smoke_result(raw: str) -> dict[str, Any]:
             or whitespace-only input is treated as a "no output" failure.
 
     Returns:
-        A dict shaped ``{"ok": bool, "stale": bool, "age_hours": float|None}``
-        plus an optional ``"error"`` key on failure paths.
+        A :class:`SmokeResult`; its ``error`` field is set on every failure path.
 
     Examples:
-        >>> project_smoke_result('{"ok": true, "stale": false, "age_hours": 1.5, "path": "/x"}')
+        >>> project_smoke_result('{"ok": true, "stale": false, "age_hours": 1.5, "path": "/x"}').to_dict()
         {'ok': True, 'stale': False, 'age_hours': 1.5}
-        >>> project_smoke_result('{"ok": false, "stale": false, "age_hours": null, "error": "boom"}')
+        >>> project_smoke_result('{"ok": false, "stale": false, "age_hours": null, "error": "boom"}').to_dict()
         {'ok': False, 'stale': False, 'age_hours': None, 'error': 'boom'}
-        >>> project_smoke_result('')
-        {'ok': False, 'stale': False, 'age_hours': None, 'error': 'smoke_test_index.py produced no output'}
-        >>> project_smoke_result('not-json')['ok']
+        >>> project_smoke_result('').error
+        'smoke_test_index.py produced no output'
+        >>> project_smoke_result('not-json').ok
         False
     """
     if not raw or not raw.strip():
-        return {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": "smoke_test_index.py produced no output",
-        }
+        return SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error="smoke_test_index.py produced no output",
+        )
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        return {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": f"smoke_test_index.py emitted invalid JSON: {exc}",
-        }
+        return SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error=f"smoke_test_index.py emitted invalid JSON: {exc}",
+        )
     if not isinstance(data, dict):
-        return {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": "smoke_test_index.py emitted non-object JSON",
-        }
-    out: dict[str, Any] = {
-        "ok": bool(data.get("ok")) if data.get("ok") is not None else None,
-        "stale": bool(data.get("stale")) if data.get("stale") is not None else None,
-        "age_hours": data.get("age_hours"),
-    }
+        return SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error="smoke_test_index.py emitted non-object JSON",
+        )
     error_val = data.get("error")
-    if error_val is not None:
-        out["error"] = _sanitize_error(error_val)
-    return out
+    return SmokeResult(
+        ok=bool(data.get("ok")) if data.get("ok") is not None else None,
+        stale=bool(data.get("stale")) if data.get("stale") is not None else None,
+        age_hours=data.get("age_hours"),
+        error=_sanitize_error(error_val) if error_val is not None else None,
+    )
 
 
 def _sanitize_error(raw_error: Any) -> str:
@@ -120,7 +162,7 @@ def _sanitize_error(raw_error: Any) -> str:
     return str(raw_error)[:256].encode("ascii", errors="replace").decode("ascii")
 
 
-def derive_exit_code(projected: dict[str, Any]) -> int:
+def derive_exit_code(projected: SmokeResult) -> int:
     """Return 0 only when ``ok is True`` and ``stale is False``; otherwise 1.
 
     Args:
@@ -130,14 +172,14 @@ def derive_exit_code(projected: dict[str, Any]) -> int:
         ``0`` for ok+fresh; ``1`` for any failure or staleness.
 
     Examples:
-        >>> derive_exit_code({"ok": True, "stale": False, "age_hours": 0.1})
+        >>> derive_exit_code(SmokeResult(ok=True, stale=False, age_hours=0.1))
         0
-        >>> derive_exit_code({"ok": True, "stale": True, "age_hours": 999.0})
+        >>> derive_exit_code(SmokeResult(ok=True, stale=True, age_hours=999.0))
         1
-        >>> derive_exit_code({"ok": False, "stale": False, "age_hours": None, "error": "x"})
+        >>> derive_exit_code(SmokeResult(ok=False, stale=False, age_hours=None, error="x"))
         1
     """
-    return 0 if projected.get("ok") is True and projected.get("stale") is False else 1
+    return 0 if projected.ok is True and projected.stale is False else 1
 
 
 def _expected_script_roots(plugin_root: Path) -> tuple[Path, ...]:
@@ -201,7 +243,7 @@ def run_smoke(
     smoke_script: Path,
     index_path: str,
     max_age_hours: int,
-) -> dict[str, Any]:
+) -> SmokeResult:
     """Invoke ``smoke_test_index.py`` and return its projected result.
 
     The upstream script returns exit code 0 (ok+fresh) or 1 (invalid/stale);
@@ -214,8 +256,8 @@ def run_smoke(
         max_age_hours: Value passed through as ``--max-age-hours``.
 
     Returns:
-        Projected dict from :func:`project_smoke_result` (always well-formed,
-        with an ``error`` key on failure).
+        Projected :class:`SmokeResult` from :func:`project_smoke_result`
+        (always well-formed, with ``error`` set on failure).
     """
     try:
         completed = subprocess.run(
@@ -233,12 +275,12 @@ def run_smoke(
             timeout=15,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": f"failed to invoke smoke_test_index.py: {exc}",
-        }
+        return SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error=f"failed to invoke smoke_test_index.py: {exc}",
+        )
     return project_smoke_result(completed.stdout)
 
 
@@ -304,29 +346,29 @@ def main(argv: list[str] | None = None) -> int:
     # Validate ``--index-path`` before forwarding to subprocess (CWE-22 guard)
     path_ok, path_err = _validate_index_path(args.index_path)
     if not path_ok:
-        projected: dict[str, Any] = {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": _sanitize_error(path_err),
-        }
-        sys.stdout.write(json.dumps(projected, separators=(",", ":")) + "\n")
+        projected = SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error=_sanitize_error(path_err),
+        )
+        sys.stdout.write(json.dumps(projected.to_dict(), separators=(",", ":")) + "\n")
         return 1
 
     try:
         smoke_script = _resolve_smoke_script()
     except (ValueError, FileNotFoundError) as exc:
-        projected = {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": _sanitize_error(f"could not resolve smoke_test_index.py: {exc}"),
-        }
-        sys.stdout.write(json.dumps(projected, separators=(",", ":")) + "\n")
+        projected = SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error=_sanitize_error(f"could not resolve smoke_test_index.py: {exc}"),
+        )
+        sys.stdout.write(json.dumps(projected.to_dict(), separators=(",", ":")) + "\n")
         return derive_exit_code(projected)
 
     projected = run_smoke(smoke_script, args.index_path, args.max_age_hours)
-    sys.stdout.write(json.dumps(projected, separators=(",", ":")) + "\n")
+    sys.stdout.write(json.dumps(projected.to_dict(), separators=(",", ":")) + "\n")
     return derive_exit_code(projected)
 
 

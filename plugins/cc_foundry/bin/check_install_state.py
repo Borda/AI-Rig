@@ -202,6 +202,7 @@ def check_links(home: Path) -> int:
 
 
 def main() -> int:
+    """Validate post-install state under ~/.claude for /foundry:audit."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", choices=("I1", "I2", "I3"), required=True)
     parser.add_argument("--home", default=str(Path.home()))

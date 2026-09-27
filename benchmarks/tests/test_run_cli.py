@@ -32,6 +32,13 @@ import pytest
 
 from _launcher_capability import _raw_codemap_launchers_are_runnable
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_query import cold as query_cold
+from _bench_query import report as query_report
+from _bench_query import suites as query_suites
+from _bench_query import tasks as query_tasks
+
 REPO_ROOT = Path(__file__).parent.parent.parent
 PYTORCH_LIGHTNING_REPO = Path(os.environ.get("PL_REPO_PATH", str(REPO_ROOT / ".sandbox" / "pytorch-lightning")))
 PYTORCH_LIGHTNING_INDEXES = (
@@ -263,7 +270,7 @@ class TestLoadTasks:
 
     def test_load_tasks_with_nonexistent_file_raises(self, script_run_cli: Any, tmp_path: Path) -> None:
         """TASKS_FILE pointing at a missing file raises FileNotFoundError."""
-        with patch.object(script_run_cli, "TASKS_FILE", tmp_path / "missing.json"):
+        with patch.object(query_tasks, "TASKS_FILE", tmp_path / "missing.json"):
             with pytest.raises(FileNotFoundError):
                 script_run_cli.load_tasks()
 
@@ -271,7 +278,7 @@ class TestLoadTasks:
         """TASKS_FILE containing invalid JSON raises json.JSONDecodeError."""
         bad = tmp_path / "bad.json"
         bad.write_text("{not valid json", encoding="utf-8")
-        with patch.object(script_run_cli, "TASKS_FILE", bad):
+        with patch.object(query_tasks, "TASKS_FILE", bad):
             with pytest.raises(json.JSONDecodeError):
                 script_run_cli.load_tasks()
 
@@ -313,13 +320,13 @@ class TestLoadOssTasks:
 
     def test_load_oss_tasks_returns_list(self, script_run_cli: Any, oss_tasks_file: Path) -> None:
         """load_oss_tasks returns a list when the file contains a flat list."""
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", oss_tasks_file):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", oss_tasks_file):
             result = script_run_cli.load_oss_tasks()
         assert isinstance(result, list)
 
     def test_load_oss_tasks_absent_file_returns_empty(self, script_run_cli: Any, tmp_path: Path) -> None:
         """load_oss_tasks returns [] when OSS_TASKS_FILE does not exist."""
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", tmp_path / "missing.json"):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", tmp_path / "missing.json"):
             result = script_run_cli.load_oss_tasks()
         assert result == []
 
@@ -333,20 +340,20 @@ class TestLoadOssTasks:
             type_filter: One of the documented task type values.
             oss_tasks_file: Path to fixture tasks file.
         """
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", oss_tasks_file):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", oss_tasks_file):
             result = script_run_cli.load_oss_tasks(type_filter=type_filter)
         assert len(result) >= 1
         assert all(t.get("type") == type_filter for t in result)
 
     def test_load_oss_tasks_unknown_type_returns_empty(self, script_run_cli: Any, oss_tasks_file: Path) -> None:
         """type_filter with an unknown value produces an empty list."""
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", oss_tasks_file):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", oss_tasks_file):
             result = script_run_cli.load_oss_tasks(type_filter="does_not_exist")
         assert result == []
 
     def test_load_oss_tasks_no_filter_includes_all_types(self, script_run_cli: Any, oss_tasks_file: Path) -> None:
         """Unfiltered load returns all tasks across types."""
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", oss_tasks_file):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", oss_tasks_file):
             all_tasks = script_run_cli.load_oss_tasks()
         types = {t.get("type") for t in all_tasks}
         assert "symbol_extraction" in types
@@ -354,7 +361,7 @@ class TestLoadOssTasks:
 
     def test_load_oss_tasks_result_dicts_have_id_field(self, script_run_cli: Any, oss_tasks_file: Path) -> None:
         """Every returned dict has a non-empty 'id' field."""
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", oss_tasks_file):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", oss_tasks_file):
             tasks = script_run_cli.load_oss_tasks()
         for t in tasks:
             assert t.get("id"), f"Task missing 'id': {t}"
@@ -368,7 +375,7 @@ class TestLoadOssTasks:
         flat = [{"id": "X-01", "type": "code_quality"}]
         f = tmp_path / "flat.json"
         f.write_text(json.dumps(flat), encoding="utf-8")
-        with patch.object(script_run_cli, "OSS_TASKS_FILE", f):
+        with patch.object(query_tasks, "OSS_TASKS_FILE", f):
             result = script_run_cli.load_oss_tasks()
         assert result == flat
 
@@ -769,7 +776,7 @@ class TestRunScanQuery:
         fake_result.returncode = 0
         fake_result.stdout = json.dumps(payload)
 
-        with patch.object(script_run_cli, "_run", return_value=fake_result):
+        with patch.object(query_cold, "_run", return_value=fake_result):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["rdeps", "foo"],
@@ -784,7 +791,7 @@ class TestRunScanQuery:
         fake_result.returncode = 1
         fake_result.stdout = ""
 
-        with patch.object(script_run_cli, "_run", return_value=fake_result):
+        with patch.object(query_cold, "_run", return_value=fake_result):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["rdeps", "missing"],
@@ -799,7 +806,7 @@ class TestRunScanQuery:
         fake_result.returncode = 0
         fake_result.stdout = "not json at all"
 
-        with patch.object(script_run_cli, "_run", return_value=fake_result):
+        with patch.object(query_cold, "_run", return_value=fake_result):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["central", "--top", "5"],
@@ -810,7 +817,7 @@ class TestRunScanQuery:
 
     def test_returns_none_on_timeout(self, script_run_cli: Any, tmp_path: Path) -> None:
         """Handle a command timeout without raising an exception."""
-        with patch.object(script_run_cli, "_run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=30)):
+        with patch.object(query_cold, "_run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=30)):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["central"],
@@ -821,7 +828,7 @@ class TestRunScanQuery:
 
     def test_returns_none_on_os_error(self, script_run_cli: Any, tmp_path: Path) -> None:
         """Handle an unavailable command binary without raising an exception."""
-        with patch.object(script_run_cli, "_run", side_effect=OSError("file not found")):
+        with patch.object(query_cold, "_run", side_effect=OSError("file not found")):
             result = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["rdeps", "foo"],
@@ -844,7 +851,7 @@ class TestRunScanQuery:
             captured.append(cmd)
             return fake_result
 
-        with patch.object(script_run_cli, "_run", side_effect=_capture_run):
+        with patch.object(query_cold, "_run", side_effect=_capture_run):
             script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["rdeps", "foo.bar"],
@@ -870,7 +877,7 @@ class TestRunScanQuery:
             captured.append(cmd)
             return fake_result
 
-        with patch.object(script_run_cli, "_run", side_effect=_capture):
+        with patch.object(query_cold, "_run", side_effect=_capture):
             script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path),
                 ["deps", "some.module"],
@@ -896,7 +903,7 @@ class TestRunScanQuery:
             captured.append((cmd, kwargs))
             return fake_result
 
-        with patch.object(script_run_cli, "_run", side_effect=_capture):
+        with patch.object(query_cold, "_run", side_effect=_capture):
             script_run_cli.run_scan_query(scan_query_bin, ["rdeps", "pkg.mod"], index_path, tmp_path)
 
         assert captured == [
@@ -919,7 +926,7 @@ class TestRunScanQuery:
         self, script_run_cli: Any, tmp_path: Path, side_effect: Exception, expected_error: str
     ) -> None:
         """Result wrapper preserves failure reasons that run_scan_query collapses to None."""
-        with patch.object(script_run_cli, "_run", side_effect=side_effect):
+        with patch.object(query_cold, "_run", side_effect=side_effect):
             result = script_run_cli.run_scan_query_result(
                 self._fake_bin(tmp_path),
                 ["rdeps", "foo"],
@@ -1328,9 +1335,9 @@ def test_latency_index_build_restores_prebuilt_index_bytes(
         return subprocess.CompletedProcess([], 0, "", "")
 
     with (
-        patch.object(script_run_cli, "load_tasks", return_value=[task]),
-        patch.object(script_run_cli, "time_command", return_value=timing),
-        patch.object(script_run_cli, "time_commands", return_value=timing),
+        patch.object(query_suites, "load_tasks", return_value=[task]),
+        patch.object(query_suites, "time_command", return_value=timing),
+        patch.object(query_suites, "time_commands", return_value=timing),
         patch.object(script_run_cli.subprocess, "run", side_effect=_mutate_index),
     ):
         script_run_cli.run_measure_latency(
@@ -1665,7 +1672,7 @@ class TestWriteReportFile:
             Path(path).write_text("report", encoding="utf-8")
             rendered["path"] = Path(path)
 
-        monkeypatch.setattr(script_run_cli, "render_report", _fake_render)
+        monkeypatch.setattr(query_report, "render_report", _fake_render)
         returned = script_run_cli.write_report_file([], tmp_path, tmp_path / "i.json")
         assert Path(returned) == rendered["path"]
         assert Path(returned).exists()
@@ -1681,7 +1688,7 @@ class TestWriteReportFile:
             """Write a minimal report at the requested output path."""
             Path(path).write_text("report", encoding="utf-8")
 
-        monkeypatch.setattr(script_run_cli, "render_report", _fake_render)
+        monkeypatch.setattr(query_report, "render_report", _fake_render)
         first = script_run_cli.write_report_file([], tmp_path, tmp_path / "i.json")
         second = script_run_cli.write_report_file([], tmp_path, tmp_path / "i.json")
         assert first != second
@@ -1726,7 +1733,7 @@ class TestRunScanQueryResult:
         fake = MagicMock()
         fake.returncode = 0
         fake.stdout = json.dumps({"imported_by": []})
-        with patch.object(script_run_cli, "_run", return_value=fake):
+        with patch.object(query_cold, "_run", return_value=fake):
             res = script_run_cli.run_scan_query_result(
                 self._fake_bin(tmp_path), ["rdeps", "x"], tmp_path / "i.json", tmp_path
             )
@@ -1740,7 +1747,7 @@ class TestRunScanQueryResult:
         fake.returncode = 2
         fake.stdout = ""
         fake.stderr = "module not found: foo\n"
-        with patch.object(script_run_cli, "_run", return_value=fake):
+        with patch.object(query_cold, "_run", return_value=fake):
             res = script_run_cli.run_scan_query_result(
                 self._fake_bin(tmp_path), ["rdeps", "foo"], tmp_path / "i.json", tmp_path
             )
@@ -1750,7 +1757,7 @@ class TestRunScanQueryResult:
 
     def test_timeout_carries_error(self, script_run_cli: Any, tmp_path: Path) -> None:
         """A subprocess timeout yields ok=False with a timeout error reason."""
-        with patch.object(script_run_cli, "_run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=30)):
+        with patch.object(query_cold, "_run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=30)):
             res = script_run_cli.run_scan_query_result(
                 self._fake_bin(tmp_path), ["central"], tmp_path / "i.json", tmp_path
             )
@@ -1763,7 +1770,7 @@ class TestRunScanQueryResult:
         fake.returncode = 1
         fake.stdout = ""
         fake.stderr = "boom"
-        with patch.object(script_run_cli, "_run", return_value=fake):
+        with patch.object(query_cold, "_run", return_value=fake):
             data = script_run_cli.run_scan_query(
                 self._fake_bin(tmp_path), ["rdeps", "x"], tmp_path / "i.json", tmp_path
             )
@@ -1775,7 +1782,7 @@ class TestRunScanQueryResult:
         fake.returncode = 1
         fake.stdout = ""
         fake.stderr = "no such module"
-        with patch.object(script_run_cli, "_run", return_value=fake):
+        with patch.object(query_cold, "_run", return_value=fake):
             importers, err = script_run_cli.codemap_rdeps_result(
                 self._fake_bin(tmp_path), tmp_path / "i.json", tmp_path, "foo"
             )
@@ -1850,7 +1857,7 @@ class TestAccuracyErrorHandling:
     def test_errored_task_not_scored_as_pass(self, script_run_cli: Any, tmp_path: Path) -> None:
         """A scan-query error marks the task errored and fails A1 (no precision=1.0 pass)."""
         task = self._task(script_run_cli)
-        with patch.object(script_run_cli, "codemap_rdeps_result", return_value=(set(), "exit 1: boom")):
+        with patch.object(query_suites, "codemap_rdeps_result", return_value=(set(), "exit 1: boom")):
             rows = script_run_cli._score_accuracy_tasks([task], tmp_path / "sq", tmp_path / "i.json", tmp_path)
         assert rows[0]["errored"] is True
         a1 = script_run_cli._a1_scenario(rows)
@@ -1880,8 +1887,8 @@ class TestA2VacuousEmpty:
             }
         )
         with (
-            patch.object(script_run_cli, "codemap_rdeps_result", return_value=(set(), None)),
-            patch.object(script_run_cli, "grep_importers_boundary", return_value=set()),
+            patch.object(query_suites, "codemap_rdeps_result", return_value=(set(), None)),
+            patch.object(query_suites, "grep_importers_boundary", return_value=set()),
         ):
             rows = script_run_cli._score_accuracy_tasks([task], tmp_path / "sq", tmp_path / "i.json", tmp_path)
         assert rows[0]["codemap_count"] == 0
@@ -2130,7 +2137,7 @@ class TestTimingCensoring:
     def test_failed_runs_are_discarded_and_counted(self, script_run_cli: Any, monkeypatch: pytest.MonkeyPatch) -> None:
         """A command that fails instantly otherwise records an excellent latency."""
         monkeypatch.setattr(
-            script_run_cli, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr="boom")
+            query_cold, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=1, stdout="", stderr="boom")
         )
 
         stats = script_run_cli.time_command(["false"], n=3)
@@ -2151,7 +2158,7 @@ class TestTimingCensoring:
             """Raise a subprocess timeout without launching the requested command."""
             raise subprocess.TimeoutExpired(["sleep"], 30)
 
-        monkeypatch.setattr(script_run_cli, "_run", _timeout)
+        monkeypatch.setattr(query_cold, "_run", _timeout)
 
         stats = script_run_cli.time_command(["sleep", "60"], n=3)
 
@@ -2165,7 +2172,7 @@ class TestTimingCensoring:
     ) -> None:
         """The ordinary path is unchanged."""
         monkeypatch.setattr(
-            script_run_cli, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
+            query_cold, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
         )
 
         stats = script_run_cli.time_command(["true"], n=4)
@@ -2182,7 +2189,7 @@ class TestTimingCensoring:
         codes = iter([0, 1, 0])
 
         monkeypatch.setattr(
-            script_run_cli,
+            query_cold,
             "_run",
             lambda *_args, **_kwargs: SimpleNamespace(returncode=next(codes), stdout="", stderr=""),
         )
@@ -2197,7 +2204,7 @@ class TestTimingCensoring:
     ) -> None:
         """The same rule applies to the cold-grep sequence timer."""
         monkeypatch.setattr(
-            script_run_cli, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=2, stdout="", stderr="")
+            query_cold, "_run", lambda *_args, **_kwargs: SimpleNamespace(returncode=2, stdout="", stderr="")
         )
 
         stats = script_run_cli.time_commands([["a"], ["b"]], n=2)
@@ -2212,12 +2219,15 @@ class TestTimingCensoring:
 
 
 def _load_cli_without_rich(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """Import the CLI runner afresh with ``rich`` made unimportable.
+    """Import the runner's console module afresh with ``rich`` made unimportable.
 
-    Blocking the package in ``sys.modules`` is what makes the runner's guarded import fail the way a
-    host without rich installed makes it fail, and ``monkeypatch`` restores the entry afterwards.
-    The module is loaded under a throwaway name so the session-scoped ``script_run_cli`` fixture,
-    which every other test shares, keeps its own rich-enabled instance.
+    Blocking the package in ``sys.modules`` is what makes the guarded import fail the way a host
+    without rich installed makes it fail, and ``monkeypatch`` restores the entry afterwards. The
+    target is ``_bench_query/output.py`` rather than the ``run-codemap-cli.py`` shim: re-executing
+    the shim would re-bind its re-exports from the package modules already cached in
+    ``sys.modules``, so the rich-enabled console would survive the block and the guard would never
+    be exercised. The module is loaded under a throwaway name so the session-scoped
+    ``script_run_cli`` fixture, which every other test shares, keeps its rich-enabled instance.
 
     Args:
         monkeypatch: Fixture used to block the import and restore it at teardown.
@@ -2230,8 +2240,8 @@ def _load_cli_without_rich(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.syspath_prepend(str(REPO_ROOT / "benchmarks"))
     monkeypatch.setitem(sys.modules, "rich", None)
     monkeypatch.setitem(sys.modules, "rich.console", None)
-    name = "run_cli_without_rich"
-    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "benchmarks" / "run-codemap-cli.py")
+    name = "bench_query_output_without_rich"
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / "benchmarks" / "_bench_query" / "output.py")
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, name, module)
     spec.loader.exec_module(module)

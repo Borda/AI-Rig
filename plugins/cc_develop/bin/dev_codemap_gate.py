@@ -128,6 +128,7 @@ def _write_line(path: Path, value: str) -> None:
 
 
 def main(argv: list[str]) -> int:
+    """Normalize CODEMAP_ENABLED for one of the six develop skills."""
     skill = argv[1] if len(argv) > 1 else ""
     bin_dir = Path(__file__).resolve().parent
     in_file, out_file = _resolve_paths(skill, _tmp_dir(), _csid())

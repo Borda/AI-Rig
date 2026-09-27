@@ -150,6 +150,6 @@ def test_runtime_proof_fails_when_launcher_mode_stripped(tmp_path: Path) -> None
 
     result = _probe_runtime.runtime_proof(installed, tmp_path / "work", [source], [_REPO_ROOT, source])
 
-    assert result["checks"]["launcher_executable"] is False
-    assert result["checks"]["doctor_ok"] is False
-    assert result["ok"] is False
+    assert result.checks["launcher_executable"] is False
+    assert result.checks["doctor_ok"] is False
+    assert result.ok is False

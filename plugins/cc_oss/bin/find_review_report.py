@@ -100,6 +100,33 @@ def newest_report_for_pr(pr_number: str, root: Path | None = None) -> Path | Non
     return _legacy_report_for_pr(pr_number, base)
 
 
+def _parse_header_fields(lines: list[str]) -> dict[str, str] | None:
+    """Parse a report's leading ``---``-delimited header into a fields dict.
+
+    Args:
+        lines: The report's lines, already split but not yet validated as a header.
+
+    Returns:
+        The parsed ``key: value`` fields, or ``None`` when the header is missing, unterminated,
+        carries a malformed or duplicate key, or lacks one of the required fields.
+    """
+    if not lines or lines[0].strip() != "---":
+        return None
+    try:
+        end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
+    except StopIteration:
+        return None
+    fields: dict[str, str] = {}
+    for line in lines[1:end]:
+        key, separator, value = line.partition(":")
+        if not separator or key.strip() in fields:
+            return None
+        fields[key.strip()] = value.strip()
+    if not all(fields.get(key) for key in ("Title", "PR", "Gate", "Outcome", "Summary")):
+        return None
+    return fields
+
+
 def gate_line(report: Path) -> str:
     """Return the decision only from a complete, unambiguous report header.
 
@@ -113,19 +140,8 @@ def gate_line(report: Path) -> str:
         lines = report.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return ""
-    if not lines or lines[0].strip() != "---":
-        return ""
-    try:
-        end = next(index for index, line in enumerate(lines[1:], 1) if line.strip() == "---")
-    except StopIteration:
-        return ""
-    fields: dict[str, str] = {}
-    for line in lines[1:end]:
-        key, separator, value = line.partition(":")
-        if not separator or key.strip() in fields:
-            return ""
-        fields[key.strip()] = value.strip()
-    if not all(fields.get(key) for key in ("Title", "PR", "Gate", "Outcome", "Summary")):
+    fields = _parse_header_fields(lines)
+    if fields is None:
         return ""
     outcome = _VERDICT_SYMBOL_RE.sub("", fields["Outcome"])
     if fields["Gate"].startswith("REJECT_"):
@@ -206,6 +222,49 @@ def _write_path_out(path_out: str, report: Path | None) -> bool:
     return True
 
 
+def _evaluate_gate(report: Path, pr_number: str, timeout: int, path_out: str) -> int:
+    """Check the report's gate line and, on a rejection, whether the head has since moved.
+
+    Args:
+        report: Path to the resolved review report.
+        pr_number: PR number without the leading ``#``.
+        timeout: Maximum subprocess wait in seconds.
+        path_out: Destination for the resolved report path, forwarded to ``_write_path_out``.
+
+    Returns:
+        Exit code — 0 when resolve may proceed, 1 when the report boundary is blocked.
+    """
+    line = gate_line(report)
+    if re.fullmatch(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?", line) is None:
+        _write_path_out(path_out, None)
+        print(f"⛔ BLOCKED — incomplete-review-report: {report}; finish or rerun /oss:review before resolve")
+        return 1
+    if not _write_path_out(path_out, report):
+        return 1
+    if "REJECT_" not in line:
+        print(f"[gate] {line or 'no Gate: field'} ({report}) — no restriction")
+        return 0
+
+    recorded = reject_sha(line)
+    current = current_head_sha(pr_number, timeout) if pr_number else ""
+    # `recorded` may be an abbreviated SHA (_SHA_RE accepts 7-40 hex chars) while `current` is
+    # always the full head SHA from `gh pr view --json headRefOid` — a prefix match is required,
+    # never string equality (policy-sibling: review/SKILL.md's own reject-gate comment states the
+    # same rule). String equality would read every abbreviated recorded SHA as "head moved" even
+    # when it did not, failing the reject gate open.
+    if recorded and current and not current.startswith(recorded):
+        print(
+            f"⚠ PR #{pr_number} rejected ({line}), head moved {recorded}→{current} — state changed, proceeding. "
+            f"Re-run /oss:review {pr_number} after to confirm the ground is gone."
+        )
+        return 0
+    print(
+        f"⛔ BLOCKED — PR #{pr_number} rejected ({line}), head unchanged (or unverifiable) — premise problem, "
+        f"resolve can't fix it. Address the ground, then /oss:review {pr_number} again."
+    )
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
@@ -253,35 +312,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[gate] no review report names PR #{pr_number} — no restriction")
         return 0
 
-    line = gate_line(report)
-    if re.fullmatch(r"Gate: (?:PASS|BLOCK)(?:\s+.*)?|Gate: REJECT_[A-Z]+(?:\s+.*)?", line) is None:
-        _write_path_out(args.path_out, None)
-        print(f"⛔ BLOCKED — incomplete-review-report: {report}; finish or rerun /oss:review before resolve")
-        return 1
-    if not _write_path_out(args.path_out, report):
-        return 1
-    if "REJECT_" not in line:
-        print(f"[gate] {line or 'no Gate: field'} ({report}) — no restriction")
-        return 0
-
-    recorded = reject_sha(line)
-    current = current_head_sha(pr_number, args.timeout) if pr_number else ""
-    # `recorded` may be an abbreviated SHA (_SHA_RE accepts 7-40 hex chars) while `current` is
-    # always the full head SHA from `gh pr view --json headRefOid` — a prefix match is required,
-    # never string equality (policy-sibling: review/SKILL.md's own reject-gate comment states the
-    # same rule). String equality would read every abbreviated recorded SHA as "head moved" even
-    # when it did not, failing the reject gate open.
-    if recorded and current and not current.startswith(recorded):
-        print(
-            f"⚠ PR #{pr_number} rejected ({line}), head moved {recorded}→{current} — state changed, proceeding. "
-            f"Re-run /oss:review {pr_number} after to confirm the ground is gone."
-        )
-        return 0
-    print(
-        f"⛔ BLOCKED — PR #{pr_number} rejected ({line}), head unchanged (or unverifiable) — premise problem, "
-        f"resolve can't fix it. Address the ground, then /oss:review {pr_number} again."
-    )
-    return 1
+    return _evaluate_gate(report, pr_number, args.timeout, args.path_out)
 
 
 if __name__ == "__main__":

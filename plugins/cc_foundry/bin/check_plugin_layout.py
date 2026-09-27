@@ -270,6 +270,7 @@ def check_setup_skill(plugin_dir: Path, claude_dir: Path) -> int:
 
 
 def main() -> int:
+    """Validate a plugin's on-disk layout for /foundry:audit Check 8."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--plugin-dir", default="plugins/cc_foundry")
     parser.add_argument("--claude-dir", default=".claude")

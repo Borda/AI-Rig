@@ -180,6 +180,52 @@ def _register_cleanup_path(tmp: Path, csid: str, fortify_dir: str, variant_name:
         handle.write(worktree + "\n")
 
 
+def _resolve_pending_variant(fortify_dir: str, index: int) -> tuple[str, int] | int:
+    """Name the variant at ``index``, or return the exit code that ends this step.
+
+    Returns ``(variant_name, total)`` when a variant is ready to run. Returns ``0`` once the cursor has passed the last
+    variant (the loop is done), or ``1`` for an out-of-bounds ``fortify_dir`` or an unreadable variant name.
+    """
+    if _validate_fortify_dir(fortify_dir) is None:
+        print(
+            f"! BLOCKED — fortify_dir outside allowed roots (project root, .experiments/, "
+            f"~/.claude/projects, tempdir): {fortify_dir}"
+        )
+        return 1
+
+    variants = Path(fortify_dir) / "variants.jsonl"
+    total = _count_lines(variants)
+    if index > total:
+        print(f"FORTIFY_LOOP_DONE=1 — all {total} variants processed; proceed to post-loop delta computation")
+        return 0
+
+    raw_name = read_variant_name(variants, index)
+    if not raw_name or raw_name == "null":
+        # No invented fallback — a synthesized name would collapse every iteration onto one worktree.
+        print(f"! BLOCKED — variants.jsonl line {index} has no readable .variant_name; check F3 output. Halting F4.")
+        return 1
+
+    return normalise_variant_name(raw_name), total
+
+
+def _advance_if_terminal(fortify_dir: str, bare_name: str, idx_sentinel: Path, index: int) -> int | None:
+    """Skip a variant already recorded terminal, advancing the cursor past it.
+
+    Returns ``None`` when the variant still needs running, ``0`` after skipping it on a resume, or ``1`` when the cursor
+    could not be advanced.
+    """
+    if not is_already_terminal(Path(fortify_dir) / "results.jsonl", bare_name):
+        return None
+    try:
+        idx_sentinel.write_text(f"{index + 1}\n", encoding="utf-8", newline="\n")
+    except OSError as exc:
+        print(f"fortify_next_variant: cannot advance cursor: {exc}", file=sys.stderr)
+        return 1
+    print(f"→ {bare_name} already terminal (non-timeout) in results.jsonl — skipping (resume)")
+    print("FORTIFY_SKIP_VARIANT=1")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Advance the variant cursor and emit the marker the fortify loop branches on.
 
@@ -206,24 +252,11 @@ def main(argv: list[str] | None = None) -> int:
         index = 1
 
     fortify_dir = args.fortify_dir
-    if _validate_fortify_dir(fortify_dir) is None:
-        print(
-            f"! BLOCKED — fortify_dir outside allowed roots (project root, .experiments/, "
-            f"~/.claude/projects, tempdir): {fortify_dir}"
-        )
-        return 1
-    total = _count_lines(Path(fortify_dir) / "variants.jsonl")
-    if index > total:
-        print(f"FORTIFY_LOOP_DONE=1 — all {total} variants processed; proceed to post-loop delta computation")
-        return 0
+    outcome = _resolve_pending_variant(fortify_dir, index)
+    if isinstance(outcome, int):
+        return outcome
+    variant_name, total = outcome
 
-    raw_name = read_variant_name(Path(fortify_dir) / "variants.jsonl", index)
-    if not raw_name or raw_name == "null":
-        # No invented fallback — a synthesized name would collapse every iteration onto one worktree.
-        print(f"! BLOCKED — variants.jsonl line {index} has no readable .variant_name; check F3 output. Halting F4.")
-        return 1
-
-    variant_name = normalise_variant_name(raw_name)
     bare_name = variant_name[len("variant-") :]
     try:
         (tmp / f"fortify-variant-name-{csid}").write_text(variant_name + "\n", encoding="utf-8", newline="\n")
@@ -231,15 +264,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"fortify_next_variant: cannot write variant-name sentinel: {exc}", file=sys.stderr)
         return 1
 
-    if is_already_terminal(Path(fortify_dir) / "results.jsonl", bare_name):
-        try:
-            idx_sentinel.write_text(f"{index + 1}\n", encoding="utf-8", newline="\n")
-        except OSError as exc:
-            print(f"fortify_next_variant: cannot advance cursor: {exc}", file=sys.stderr)
-            return 1
-        print(f"→ {bare_name} already terminal (non-timeout) in results.jsonl — skipping (resume)")
-        print("FORTIFY_SKIP_VARIANT=1")
-        return 0
+    skip_code = _advance_if_terminal(fortify_dir, bare_name, idx_sentinel, index)
+    if skip_code is not None:
+        return skip_code
 
     try:
         _register_cleanup_path(tmp, csid, fortify_dir, variant_name)

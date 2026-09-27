@@ -52,7 +52,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 # Keep the installed skill helper importable when pytest loads this validator by file path.
@@ -2585,6 +2585,429 @@ def _validate_challenge_manifest_preflight(
     _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
+# ``NamedTuple``, not ``@dataclass``: callers load this validator by file path without registering it in
+# ``sys.modules``, and under ``from __future__ import annotations`` every field annotation reaches
+# ``dataclasses._is_type``, which dereferences ``sys.modules[cls.__module__]`` and raises on the missing entry.
+class _ReviewEnvironment(NamedTuple):
+    """Ambient run locations a review validation needs to resolve recorded evidence."""
+
+    codex_home: Path
+    parent_thread_id: str
+    project_root: Path
+
+
+class _SpecialistEvidence(NamedTuple):
+    """Validated specialist manifest state shared by the later review-decision checks."""
+
+    triggered_roles: set[str]
+    manifest: dict[str, Any]
+    routing: dict[str, Any]
+    passes: list[dict[str, Any]]
+    by_role: dict[str, Any]
+    runtime_summary: dict[str, Any]
+
+
+def _require_pr_artifacts(out_dir: Path, result: dict[str, Any]) -> None:
+    """Confirm every PR artifact the review contract requires is present on disk."""
+    required_pr_artifacts = (
+        "pr.json",
+        "pr-routing.json",
+        "target-branch.json",
+        "local-checkout.json",
+        "comments.json",
+        "reviews.json",
+        "review-threads.json",
+        "unresolved-review-threads.json",
+        "online-review-summary.json",
+        "remote-selection.json",
+        "diff.patch",
+    )
+    if result.get("schema_version") in {2, 3}:
+        required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
+    for filename in required_pr_artifacts:
+        if not (out_dir / filename).exists():
+            raise SystemExit(f"missing-pr-artifact:{filename}")
+
+
+def _validate_pr_routing_identity(routing: dict[str, Any], remote_selection: dict[str, Any]) -> None:
+    """Check PR routing names an authoritative open-PR base that matches the selected remote."""
+    if routing.get("base_identity_source") != "pr_url":
+        raise SystemExit("pr-routing-base-identity-not-authoritative")
+    if routing.get("pr_state") != "OPEN":
+        raise SystemExit("pr-state-not-open-for-merge-review")
+    expected_identity = remote_selection.get("expected")
+    if not isinstance(expected_identity, dict):
+        raise SystemExit("pr-remote-selection-expected-missing")
+    if expected_identity.get("host") != routing.get("base_host"):
+        raise SystemExit("pr-remote-selection-host-mismatch")
+    if expected_identity.get("repository") != routing.get("base_repo"):
+        raise SystemExit("pr-remote-selection-repository-mismatch")
+    if routing.get("local_checkout_required") is not True:
+        raise SystemExit("pr-routing-local-checkout-not-required")
+    if "--force" in str(routing.get("local_checkout_command", "")):
+        raise SystemExit("pr-routing-force-checkout-forbidden")
+    if "force_policy" not in routing:
+        raise SystemExit("pr-routing-force-policy-missing")
+
+
+def _validate_current_pr_checkout_receipt(routing: dict[str, Any], checkout: dict[str, Any]) -> None:
+    """Match the recorded checkout receipt against the command its declared method implies."""
+    # Older receipts omit the method; current collectors record the operation actually performed.
+    review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
+    checkout_commands = {
+        None: f"git checkout --detach {routing.get('head_oid')}",
+        "gh-pr-checkout": f"gh pr checkout {routing.get('pr_url')}",
+        "git-detached-review-fallback": f"git checkout --detach {routing.get('head_oid')}",
+        "git-detached-review-worktree": f"git worktree add --detach {review_worktree} {routing.get('head_oid')}",
+        "already-at-head": "not-run: already at expected PR head",
+    }
+    method = routing.get("checkout_method")
+    expected_checkout = checkout_commands.get(method) if isinstance(method, (str, type(None))) else None
+    receipt_command = checkout.get("command")
+    valid_receipt_command = receipt_command == expected_checkout or (
+        method == "git-detached-review-worktree" and receipt_command == "not-run: existing exact clean review worktree"
+    )
+    if (
+        expected_checkout is None
+        or routing.get("local_checkout_command") != expected_checkout
+        or not valid_receipt_command
+        or checkout.get("checkout_method") != method
+        or routing.get("checkout_mode") != (None if method is None else "review")
+        or checkout.get("checkout_mode") != routing.get("checkout_mode")
+    ):
+        raise SystemExit("pr-routing-checkout-command-invalid")
+
+
+def _validate_legacy_pr_checkout_command(routing: dict[str, Any], remote_selection: dict[str, Any]) -> None:
+    """Match a pre-schema-2 routing record against the checkout command its transport implies."""
+    expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
+    if routing.get("pr_metadata_transport") == "public-https-fallback":
+        expected_checkout = (
+            f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/{routing.get('pr_number')}/head"
+        )
+    if routing.get("local_checkout_command") != expected_checkout:
+        raise SystemExit("pr-routing-checkout-command-invalid")
+
+
+def _validate_pr_target_branch(
+    target_branch: dict[str, Any],
+    remote_selection: dict[str, Any],
+    routing: dict[str, Any],
+) -> None:
+    """Check the fetched target branch matches the selected remote and the PR's base commit."""
+    if target_branch.get("status") != "fetched":
+        raise SystemExit("pr-target-branch-not-fetched")
+    if target_branch.get("remote") != remote_selection.get("remote"):
+        raise SystemExit("pr-target-branch-remote-mismatch")
+    if target_branch.get("remote_url") != remote_selection.get("remote_url"):
+        raise SystemExit("pr-target-branch-remote-url-mismatch")
+    expected_base = target_branch.get("expected_base_oid")
+    local_base = target_branch.get("local_head")
+    if not expected_base or expected_base != routing.get("base_oid"):
+        raise SystemExit("pr-target-branch-expected-oid-missing")
+    base_matches = local_base == expected_base
+    base_is_ancestor = target_branch.get("expected_base_is_ancestor") is True
+    expected_relation = "matches-pr-metadata" if base_matches else "advanced" if base_is_ancestor else "diverged"
+    if (
+        not local_base
+        or target_branch.get("base_matches_pr_metadata") is not base_matches
+        or target_branch.get("base_relation") != expected_relation
+        or not base_is_ancestor
+    ):
+        raise SystemExit("pr-target-branch-oid-mismatch")
+
+
+def _validate_pr_local_checkout_state(checkout: dict[str, Any], routing: dict[str, Any]) -> None:
+    """Check the local checkout receipt is unforced and pinned to the PR head commit."""
+    if checkout.get("status") != "checked-out":
+        raise SystemExit("pr-local-checkout-not-checked-out")
+    if checkout.get("pr_url") != routing.get("pr_url"):
+        raise SystemExit("pr-local-checkout-url-mismatch")
+    if "--force" in str(checkout.get("command", "")):
+        raise SystemExit("pr-local-checkout-force-forbidden")
+    if "force_policy" not in checkout:
+        raise SystemExit("pr-local-checkout-force-policy-missing")
+    if checkout.get("head_matches_pr") is not True:
+        raise SystemExit("pr-local-checkout-head-mismatch")
+    if not checkout.get("expected_head") or checkout.get("expected_head") != routing.get("head_oid"):
+        raise SystemExit("pr-local-checkout-expected-head-missing")
+    if checkout.get("local_head") != checkout.get("expected_head"):
+        raise SystemExit("pr-local-checkout-oid-mismatch")
+
+
+def _validate_pr_diff_provenance(checkout: dict[str, Any], routing: dict[str, Any]) -> None:
+    """Check the recorded diff came from the verified local checkout at the PR's own commit range."""
+    if routing.get("checkout_method") == "git-detached-review-worktree":
+        review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
+        expected_diff_command = (
+            f"git -C {review_worktree} diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+        )
+    else:
+        expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
+    if (
+        checkout.get("diff_source") != "verified-local-checkout"
+        or checkout.get("diff_base_oid") != routing.get("base_oid")
+        or checkout.get("diff_head_oid") != routing.get("head_oid")
+        or checkout.get("diff_command") != expected_diff_command
+    ):
+        raise SystemExit("pr-local-diff-provenance-invalid")
+
+
+def _validate_unavailable_review_threads(
+    out_dir: Path,
+    thread_error: Any,
+    metadata: dict[str, Any],
+    notes_text: str,
+) -> None:
+    """Check the recorded evidence and documented gaps when review threads were unavailable."""
+    error_path = out_dir / "review-threads-error.txt"
+    if not isinstance(thread_error, str) or not error_path.is_file():
+        raise SystemExit("pr-review-thread-error-missing")
+    if error_path.read_text(encoding="utf-8").strip() != thread_error:
+        raise SystemExit("pr-review-thread-error-mismatch")
+    if _load_json_list(out_dir / "review-threads.json") or _load_json_list(out_dir / "unresolved-review-threads.json"):
+        raise SystemExit("pr-review-thread-unavailable-must-be-empty")
+    confidence_gaps = metadata.get("confidence_gaps")
+    if not isinstance(confidence_gaps, list) or PR_THREAD_CONFIDENCE_GAP not in confidence_gaps:
+        raise SystemExit("pr-review-thread-confidence-gap-missing")
+    if "review-thread" not in notes_text.casefold() or "unavailable" not in notes_text.casefold():
+        raise SystemExit("pr-review-thread-triage-gap-missing")
+
+
+def _validate_pr_review_threads(
+    out_dir: Path,
+    online_summary: dict[str, Any],
+    metadata: dict[str, Any],
+    notes_text: str,
+) -> None:
+    """Reconcile recorded review-thread status against its error evidence and triage notes."""
+    thread_status = online_summary.get("review_threads_status")
+    thread_error = online_summary.get("review_threads_error")
+    if thread_status == "available":
+        if thread_error is not None or (out_dir / "review-threads-error.txt").exists():
+            raise SystemExit("pr-review-thread-status-contradiction")
+    elif thread_status == "unavailable":
+        _validate_unavailable_review_threads(out_dir, thread_error, metadata, notes_text)
+    else:
+        raise SystemExit("pr-review-thread-status-invalid")
+
+
+def _validate_pr_review_scope(
+    out_dir: Path,
+    result: dict[str, Any],
+    metadata: dict[str, Any],
+    notes_path: Path,
+) -> None:
+    """Validate the PR-scope artifact set behind a review: routing, checkout, diff, and threads."""
+    notes_text = notes_path.read_text(encoding="utf-8")
+    if "Online Review Triage" not in notes_text:
+        raise SystemExit("missing-pr-online-review-triage")
+    _require_pr_artifacts(out_dir, result)
+    routing = _load_json(out_dir / "pr-routing.json")
+    pr_payload = _load_json(out_dir / "pr.json")
+    remote_selection = _load_json(out_dir / "remote-selection.json")
+    target_branch = _load_json(out_dir / "target-branch.json")
+    checkout = _load_json(out_dir / "local-checkout.json")
+    online_summary = _load_json(out_dir / "online-review-summary.json")
+    fallback_gap = _validate_pr_fallback_confidence(online_summary, result, metadata)
+    if fallback_gap is not None and fallback_gap not in notes_text:
+        raise SystemExit("pr-public-fallback-confidence-gap-not-documented")
+    if not isinstance(pr_payload.get("body"), str):
+        raise SystemExit("pr-description-missing")
+    _validate_pr_routing_identity(routing, remote_selection)
+    if result.get("schema_version") in {2, 3}:
+        _validate_current_pr_checkout_receipt(routing, checkout)
+    else:
+        _validate_legacy_pr_checkout_command(routing, remote_selection)
+    _validate_pr_target_branch(target_branch, remote_selection, routing)
+    _validate_pr_local_checkout_state(checkout, routing)
+    _validate_pr_diff_provenance(checkout, routing)
+    if result.get("schema_version") in {2, 3}:
+        _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
+    _validate_pr_review_threads(out_dir, online_summary, metadata, notes_text)
+    if (out_dir / "head-files").exists():
+        raise SystemExit("pr-raw-head-file-snapshots-forbidden")
+
+
+def _validate_runtime_summary_metadata(
+    metadata: dict[str, Any],
+    manifest: dict[str, Any],
+    runtime_summary: dict[str, Any],
+) -> None:
+    """Cross-check result metadata against the execution mode the runtime evidence recorded."""
+    if runtime_summary:
+        for key, expected in (
+            ("execution_mode", runtime_summary.get("actual_mode")),
+            ("execution_evidence_level", runtime_summary.get("evidence_level")),
+            ("write_parallel_eligible", False),
+        ):
+            if metadata.get(key) != expected:
+                raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
+        if manifest.get("schema_version") == 5:
+            if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
+                raise SystemExit("metadata-execution-observed-controls-mismatch")
+    if metadata.get("review_run_id") != manifest.get("review_run_id"):
+        raise SystemExit("metadata-review-run-id-mismatch")
+    if metadata.get("review_input_sha256") != manifest.get("review_input_sha256"):
+        raise SystemExit("metadata-review-input-hash-mismatch")
+
+
+def _validate_specialist_manifest(
+    out_dir: Path,
+    result: dict[str, Any],
+    result_path: Path,
+    metadata: dict[str, Any],
+    risk_tier: str,
+    env: _ReviewEnvironment,
+) -> _SpecialistEvidence:
+    """Validate routing, the specialist manifest, and the recorded review runtime evidence."""
+    triggered_roles = _validate_routing(out_dir, risk_tier)
+    manifest_path = _resolve_path(out_dir, metadata.get("specialist_manifest"))
+    manifest = _load_json(manifest_path)
+    if result.get("schema_version") == 3 and manifest.get("schema_version") == 2:
+        raise SystemExit("current-review-specialist-manifest-schema")
+    routing = _load_json(out_dir / "review-routing.json")
+    if manifest.get("sol_selection") != routing.get("sol_selection"):
+        raise SystemExit("manifest-sol-selection-routing-mismatch")
+    passes = _manifest_passes(manifest)
+    retained_role_cards = result.get("schema_version") == 3 and result_path.name == "result.json"
+    by_role = _validate_manifest_entries(
+        out_dir,
+        manifest,
+        passes,
+        triggered_roles,
+        env.codex_home,
+        env.parent_thread_id,
+        env.project_root,
+        require_assessment=result.get("schema_version") != 2,
+        retained_role_cards=retained_role_cards,
+        require_role_card_receipts=result.get("schema_version") == 3,
+    )
+    runtime_summary = (
+        _validate_review_runtime(
+            out_dir,
+            manifest,
+            passes,
+            env.codex_home,
+            env.parent_thread_id,
+            require_assessment=result.get("schema_version") != 2,
+            roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
+        )
+        if manifest.get("schema_version") in {3, 4, 5}
+        else {}
+    )
+    _validate_runtime_summary_metadata(metadata, manifest, runtime_summary)
+    return _SpecialistEvidence(
+        triggered_roles=triggered_roles,
+        manifest=manifest,
+        routing=routing,
+        passes=passes,
+        by_role=by_role,
+        runtime_summary=runtime_summary,
+    )
+
+
+def _validate_specialist_pass_metadata(metadata: dict[str, Any], by_role: dict[str, Any]) -> None:
+    """Reconcile the declared specialist passes against the manifest entries actually validated."""
+    metadata_passes = metadata.get("specialist_passes")
+    if not isinstance(metadata_passes, list):
+        raise SystemExit("metadata-missing-specialist-passes")
+    metadata_by_role = {}
+    for index, item in enumerate(metadata_passes):
+        if not isinstance(item, dict):
+            raise SystemExit(f"metadata-specialist-pass-not-object:{index}")
+        role = item.get("role")
+        if not isinstance(role, str):
+            raise SystemExit(f"metadata-specialist-pass-missing-role:{index}")
+        metadata_by_role[role] = item
+    if set(metadata_by_role) != set(by_role):
+        raise SystemExit("metadata-specialist-pass-role-mismatch")
+    for role, item in by_role.items():
+        metadata_item = metadata_by_role[role]
+        for key in (
+            "axis",
+            "trigger",
+            "mode",
+            "role_card_sha256",
+            "output_path",
+            "confidence",
+            "blocking_findings",
+            "attempts",
+            "selected_attempt",
+        ):
+            if metadata_item.get(key) != item.get(key):
+                raise SystemExit(f"metadata-specialist-pass-mismatch:{role}:{key}")
+
+
+def _validate_inspection_independence(
+    out_dir: Path,
+    evidence: _SpecialistEvidence,
+    metadata: dict[str, Any],
+    status: str,
+    env: _ReviewEnvironment,
+) -> tuple[bool, bool]:
+    """Check the schema-5 inspection plan's independence requirement against recorded evidence."""
+    triggered_required = REQUIRED_ROLES & evidence.triggered_roles
+    _, _, independence_required, requirement_evidence = _validate_inspection_plan(
+        out_dir, evidence.manifest, env.parent_thread_id
+    )
+    routing_requirement = evidence.routing.get("independent_review_required")
+    if routing_requirement is not independence_required:
+        raise SystemExit("routing-inspection-independence-required-mismatch")
+    if evidence.routing.get("independence_requirement_evidence") != requirement_evidence:
+        raise SystemExit("routing-inspection-independence-evidence-mismatch")
+    required_independent = bool(evidence.runtime_summary.get("independence_satisfied"))
+    if metadata.get("independence_requirement_evidence") != requirement_evidence:
+        raise SystemExit("metadata-independence-requirement-evidence-mismatch")
+    if independence_required and status == "pass" and not required_independent:
+        raise SystemExit("independent-review-required-for-pass:" + ",".join(sorted(triggered_required)))
+    return independence_required, required_independent
+
+
+def _validate_legacy_independence(
+    evidence: _SpecialistEvidence,
+    status: str,
+    risk_tier: str,
+) -> tuple[bool, bool]:
+    """Derive the pre-schema-5 independence requirement from the triggered required roles."""
+    triggered_required = REQUIRED_ROLES & evidence.triggered_roles
+    substituted_roles = sorted(role for role in triggered_required if evidence.by_role[role]["mode"] == "substituted")
+    independence_required = bool(triggered_required)
+    required_independent = independence_required and all(
+        evidence.by_role[role]["mode"] in {"spawned", "app-server"} for role in triggered_required
+    )
+    if risk_tier in INDEPENDENT_PASS_TIERS and status == "pass" and not required_independent:
+        raise SystemExit("independent-review-required-for-pass:" + ",".join(substituted_roles))
+    return independence_required, required_independent
+
+
+def _validate_independence_requirement(
+    out_dir: Path,
+    evidence: _SpecialistEvidence,
+    metadata: dict[str, Any],
+    status: str,
+    risk_tier: str,
+    env: _ReviewEnvironment,
+) -> None:
+    """Check the review's independence requirement and the metadata that claims it was satisfied."""
+    if evidence.manifest.get("schema_version") == 5:
+        independence_required, required_independent = _validate_inspection_independence(
+            out_dir, evidence, metadata, status, env
+        )
+    else:
+        independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
+
+    fanout_substituted = any(item["mode"] == "substituted" for item in evidence.passes)
+    if metadata.get("fanout_substituted") is not fanout_substituted:
+        raise SystemExit("metadata-fanout-substituted-mismatch")
+
+    independence_satisfied = bool(required_independent)
+    if metadata.get("independence_satisfied") is not independence_satisfied:
+        raise SystemExit("metadata-independence-satisfied-mismatch")
+    if metadata.get("independence_required") is not independence_required:
+        raise SystemExit("metadata-independence-required-mismatch")
+
+
 def _validate_result(
     out_dir: Path,
     result_path: Path,
@@ -2593,6 +3016,7 @@ def _validate_result(
     project_root: Path,
 ) -> None:
     """Validate a complete review decision against routing, independent evidence, and gates."""
+    env = _ReviewEnvironment(codex_home=codex_home, parent_thread_id=parent_thread_id, project_root=project_root)
     result = _load_json(result_path)
     status = result.get("status")
     if status not in {"pass", "fail", "timeout"}:
@@ -2631,280 +3055,13 @@ def _validate_result(
     _validate_confidence_gaps(result, metadata)
     _validate_confidence_recovery(result, metadata)
     if scope == "pr":
-        notes_text = notes_path.read_text(encoding="utf-8")
-        if "Online Review Triage" not in notes_text:
-            raise SystemExit("missing-pr-online-review-triage")
-        required_pr_artifacts = (
-            "pr.json",
-            "pr-routing.json",
-            "target-branch.json",
-            "local-checkout.json",
-            "comments.json",
-            "reviews.json",
-            "review-threads.json",
-            "unresolved-review-threads.json",
-            "online-review-summary.json",
-            "remote-selection.json",
-            "diff.patch",
-        )
-        if result.get("schema_version") in {2, 3}:
-            required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
-        for filename in required_pr_artifacts:
-            if not (out_dir / filename).exists():
-                raise SystemExit(f"missing-pr-artifact:{filename}")
-        routing = _load_json(out_dir / "pr-routing.json")
-        pr_payload = _load_json(out_dir / "pr.json")
-        remote_selection = _load_json(out_dir / "remote-selection.json")
-        target_branch = _load_json(out_dir / "target-branch.json")
-        checkout = _load_json(out_dir / "local-checkout.json")
-        online_summary = _load_json(out_dir / "online-review-summary.json")
-        fallback_gap = _validate_pr_fallback_confidence(online_summary, result, metadata)
-        if fallback_gap is not None and fallback_gap not in notes_text:
-            raise SystemExit("pr-public-fallback-confidence-gap-not-documented")
-        if not isinstance(pr_payload.get("body"), str):
-            raise SystemExit("pr-description-missing")
-        if routing.get("base_identity_source") != "pr_url":
-            raise SystemExit("pr-routing-base-identity-not-authoritative")
-        if routing.get("pr_state") != "OPEN":
-            raise SystemExit("pr-state-not-open-for-merge-review")
-        expected_identity = remote_selection.get("expected")
-        if not isinstance(expected_identity, dict):
-            raise SystemExit("pr-remote-selection-expected-missing")
-        if expected_identity.get("host") != routing.get("base_host"):
-            raise SystemExit("pr-remote-selection-host-mismatch")
-        if expected_identity.get("repository") != routing.get("base_repo"):
-            raise SystemExit("pr-remote-selection-repository-mismatch")
-        if routing.get("local_checkout_required") is not True:
-            raise SystemExit("pr-routing-local-checkout-not-required")
-        if "--force" in str(routing.get("local_checkout_command", "")):
-            raise SystemExit("pr-routing-force-checkout-forbidden")
-        if "force_policy" not in routing:
-            raise SystemExit("pr-routing-force-policy-missing")
-        if result.get("schema_version") in {2, 3}:
-            # Older receipts omit the method; current collectors record the operation actually performed.
-            review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
-            checkout_commands = {
-                None: f"git checkout --detach {routing.get('head_oid')}",
-                "gh-pr-checkout": f"gh pr checkout {routing.get('pr_url')}",
-                "git-detached-review-fallback": f"git checkout --detach {routing.get('head_oid')}",
-                "git-detached-review-worktree": f"git worktree add --detach {review_worktree} {routing.get('head_oid')}",
-                "already-at-head": "not-run: already at expected PR head",
-            }
-            method = routing.get("checkout_method")
-            expected_checkout = checkout_commands.get(method) if isinstance(method, (str, type(None))) else None
-            receipt_command = checkout.get("command")
-            valid_receipt_command = receipt_command == expected_checkout or (
-                method == "git-detached-review-worktree"
-                and receipt_command == "not-run: existing exact clean review worktree"
-            )
-            if (
-                expected_checkout is None
-                or routing.get("local_checkout_command") != expected_checkout
-                or not valid_receipt_command
-                or checkout.get("checkout_method") != method
-                or routing.get("checkout_mode") != (None if method is None else "review")
-                or checkout.get("checkout_mode") != routing.get("checkout_mode")
-            ):
-                raise SystemExit("pr-routing-checkout-command-invalid")
-        else:
-            expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
-            if routing.get("pr_metadata_transport") == "public-https-fallback":
-                expected_checkout = (
-                    f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
-                    f"{routing.get('pr_number')}/head"
-                )
-            if routing.get("local_checkout_command") != expected_checkout:
-                raise SystemExit("pr-routing-checkout-command-invalid")
-        if target_branch.get("status") != "fetched":
-            raise SystemExit("pr-target-branch-not-fetched")
-        if target_branch.get("remote") != remote_selection.get("remote"):
-            raise SystemExit("pr-target-branch-remote-mismatch")
-        if target_branch.get("remote_url") != remote_selection.get("remote_url"):
-            raise SystemExit("pr-target-branch-remote-url-mismatch")
-        expected_base = target_branch.get("expected_base_oid")
-        local_base = target_branch.get("local_head")
-        if not expected_base or expected_base != routing.get("base_oid"):
-            raise SystemExit("pr-target-branch-expected-oid-missing")
-        base_matches = local_base == expected_base
-        base_is_ancestor = target_branch.get("expected_base_is_ancestor") is True
-        expected_relation = "matches-pr-metadata" if base_matches else "advanced" if base_is_ancestor else "diverged"
-        if (
-            not local_base
-            or target_branch.get("base_matches_pr_metadata") is not base_matches
-            or target_branch.get("base_relation") != expected_relation
-            or not base_is_ancestor
-        ):
-            raise SystemExit("pr-target-branch-oid-mismatch")
-        if checkout.get("status") != "checked-out":
-            raise SystemExit("pr-local-checkout-not-checked-out")
-        if checkout.get("pr_url") != routing.get("pr_url"):
-            raise SystemExit("pr-local-checkout-url-mismatch")
-        if "--force" in str(checkout.get("command", "")):
-            raise SystemExit("pr-local-checkout-force-forbidden")
-        if "force_policy" not in checkout:
-            raise SystemExit("pr-local-checkout-force-policy-missing")
-        if checkout.get("head_matches_pr") is not True:
-            raise SystemExit("pr-local-checkout-head-mismatch")
-        if not checkout.get("expected_head") or checkout.get("expected_head") != routing.get("head_oid"):
-            raise SystemExit("pr-local-checkout-expected-head-missing")
-        if checkout.get("local_head") != checkout.get("expected_head"):
-            raise SystemExit("pr-local-checkout-oid-mismatch")
-        if routing.get("checkout_method") == "git-detached-review-worktree":
-            review_worktree = Path(checkout["worktree"]) if isinstance(checkout.get("worktree"), str) else None
-            expected_diff_command = (
-                f"git -C {review_worktree} diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
-            )
-        else:
-            expected_diff_command = f"git diff --binary {routing.get('base_oid')}...{routing.get('head_oid')} --"
-        if (
-            checkout.get("diff_source") != "verified-local-checkout"
-            or checkout.get("diff_base_oid") != routing.get("base_oid")
-            or checkout.get("diff_head_oid") != routing.get("head_oid")
-            or checkout.get("diff_command") != expected_diff_command
-        ):
-            raise SystemExit("pr-local-diff-provenance-invalid")
-        if result.get("schema_version") in {2, 3}:
-            _validate_verified_pr_source(out_dir, routing, target_branch, checkout)
-        thread_status = online_summary.get("review_threads_status")
-        thread_error = online_summary.get("review_threads_error")
-        if thread_status == "available":
-            if thread_error is not None or (out_dir / "review-threads-error.txt").exists():
-                raise SystemExit("pr-review-thread-status-contradiction")
-        elif thread_status == "unavailable":
-            error_path = out_dir / "review-threads-error.txt"
-            if not isinstance(thread_error, str) or not error_path.is_file():
-                raise SystemExit("pr-review-thread-error-missing")
-            if error_path.read_text(encoding="utf-8").strip() != thread_error:
-                raise SystemExit("pr-review-thread-error-mismatch")
-            if _load_json_list(out_dir / "review-threads.json") or _load_json_list(
-                out_dir / "unresolved-review-threads.json"
-            ):
-                raise SystemExit("pr-review-thread-unavailable-must-be-empty")
-            confidence_gaps = metadata.get("confidence_gaps")
-            if not isinstance(confidence_gaps, list) or PR_THREAD_CONFIDENCE_GAP not in confidence_gaps:
-                raise SystemExit("pr-review-thread-confidence-gap-missing")
-            if "review-thread" not in notes_text.casefold() or "unavailable" not in notes_text.casefold():
-                raise SystemExit("pr-review-thread-triage-gap-missing")
-        else:
-            raise SystemExit("pr-review-thread-status-invalid")
-        if (out_dir / "head-files").exists():
-            raise SystemExit("pr-raw-head-file-snapshots-forbidden")
+        _validate_pr_review_scope(out_dir, result, metadata, notes_path)
 
-    triggered_roles = _validate_routing(out_dir, risk_tier)
-    manifest_path = _resolve_path(out_dir, metadata.get("specialist_manifest"))
-    manifest = _load_json(manifest_path)
-    if result.get("schema_version") == 3 and manifest.get("schema_version") == 2:
-        raise SystemExit("current-review-specialist-manifest-schema")
-    routing = _load_json(out_dir / "review-routing.json")
-    if manifest.get("sol_selection") != routing.get("sol_selection"):
-        raise SystemExit("manifest-sol-selection-routing-mismatch")
-    passes = _manifest_passes(manifest)
-    retained_role_cards = result.get("schema_version") == 3 and result_path.name == "result.json"
-    by_role = _validate_manifest_entries(
-        out_dir,
-        manifest,
-        passes,
-        triggered_roles,
-        codex_home,
-        parent_thread_id,
-        project_root,
-        require_assessment=result.get("schema_version") != 2,
-        retained_role_cards=retained_role_cards,
-        require_role_card_receipts=result.get("schema_version") == 3,
-    )
-    runtime_summary = (
-        _validate_review_runtime(
-            out_dir,
-            manifest,
-            passes,
-            codex_home,
-            parent_thread_id,
-            require_assessment=result.get("schema_version") != 2,
-            roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
-        )
-        if manifest.get("schema_version") in {3, 4, 5}
-        else {}
-    )
-    if runtime_summary:
-        for key, expected in (
-            ("execution_mode", runtime_summary.get("actual_mode")),
-            ("execution_evidence_level", runtime_summary.get("evidence_level")),
-            ("write_parallel_eligible", False),
-        ):
-            if metadata.get(key) != expected:
-                raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") == 5:
-            if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
-                raise SystemExit("metadata-execution-observed-controls-mismatch")
-    if metadata.get("review_run_id") != manifest.get("review_run_id"):
-        raise SystemExit("metadata-review-run-id-mismatch")
-    if metadata.get("review_input_sha256") != manifest.get("review_input_sha256"):
-        raise SystemExit("metadata-review-input-hash-mismatch")
-
-    metadata_passes = metadata.get("specialist_passes")
-    if not isinstance(metadata_passes, list):
-        raise SystemExit("metadata-missing-specialist-passes")
-    metadata_by_role = {}
-    for index, item in enumerate(metadata_passes):
-        if not isinstance(item, dict):
-            raise SystemExit(f"metadata-specialist-pass-not-object:{index}")
-        role = item.get("role")
-        if not isinstance(role, str):
-            raise SystemExit(f"metadata-specialist-pass-missing-role:{index}")
-        metadata_by_role[role] = item
-    if set(metadata_by_role) != set(by_role):
-        raise SystemExit("metadata-specialist-pass-role-mismatch")
-    for role, item in by_role.items():
-        metadata_item = metadata_by_role[role]
-        for key in (
-            "axis",
-            "trigger",
-            "mode",
-            "role_card_sha256",
-            "output_path",
-            "confidence",
-            "blocking_findings",
-            "attempts",
-            "selected_attempt",
-        ):
-            if metadata_item.get(key) != item.get(key):
-                raise SystemExit(f"metadata-specialist-pass-mismatch:{role}:{key}")
+    evidence = _validate_specialist_manifest(out_dir, result, result_path, metadata, risk_tier, env)
+    _validate_specialist_pass_metadata(metadata, evidence.by_role)
     if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
-        _validate_reviewer_assessments(out_dir, metadata, by_role)
-
-    triggered_required = REQUIRED_ROLES & triggered_roles
-    substituted_roles = sorted(role for role in triggered_required if by_role[role]["mode"] == "substituted")
-    if manifest.get("schema_version") == 5:
-        _, _, independence_required, requirement_evidence = _validate_inspection_plan(
-            out_dir, manifest, parent_thread_id
-        )
-        routing_requirement = routing.get("independent_review_required")
-        if routing_requirement is not independence_required:
-            raise SystemExit("routing-inspection-independence-required-mismatch")
-        if routing.get("independence_requirement_evidence") != requirement_evidence:
-            raise SystemExit("routing-inspection-independence-evidence-mismatch")
-        required_independent = bool(runtime_summary.get("independence_satisfied"))
-        if metadata.get("independence_requirement_evidence") != requirement_evidence:
-            raise SystemExit("metadata-independence-requirement-evidence-mismatch")
-        if independence_required and status == "pass" and not required_independent:
-            raise SystemExit("independent-review-required-for-pass:" + ",".join(sorted(triggered_required)))
-    else:
-        independence_required = bool(triggered_required)
-        required_independent = independence_required and all(
-            by_role[role]["mode"] in {"spawned", "app-server"} for role in triggered_required
-        )
-        if risk_tier in INDEPENDENT_PASS_TIERS and status == "pass" and not required_independent:
-            raise SystemExit("independent-review-required-for-pass:" + ",".join(substituted_roles))
-
-    fanout_substituted = any(item["mode"] == "substituted" for item in passes)
-    if metadata.get("fanout_substituted") is not fanout_substituted:
-        raise SystemExit("metadata-fanout-substituted-mismatch")
-
-    independence_satisfied = bool(required_independent)
-    if metadata.get("independence_satisfied") is not independence_satisfied:
-        raise SystemExit("metadata-independence-satisfied-mismatch")
-    if metadata.get("independence_required") is not independence_required:
-        raise SystemExit("metadata-independence-required-mismatch")
+        _validate_reviewer_assessments(out_dir, metadata, evidence.by_role)
+    _validate_independence_requirement(out_dir, evidence, metadata, status, risk_tier, env)
 
 
 def main() -> int:

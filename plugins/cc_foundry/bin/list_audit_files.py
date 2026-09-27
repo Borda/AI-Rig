@@ -75,6 +75,7 @@ def report(files: list[Path], root: Path) -> None:
 
 
 def main() -> int:
+    """Inventory the config files /foundry:audit covers, with block counts."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--local", action="store_true", help="sweep the plugin source tree")
     parser.add_argument("--root", default="plugins", help="plugins root for --local")

@@ -206,6 +206,7 @@ def check_mode_shadows(root: Path, *, local: bool) -> None:
 
 
 def main() -> int:
+    """Run structural contract checks over skill Markdown for /foundry:audit."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", choices=("23b", "32f"), required=True)
     parser.add_argument("--root", default="plugins", help="scope root for the scan")

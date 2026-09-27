@@ -52,7 +52,7 @@ def _provider_only_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
     """Provide a provider-only repository with native CLI discovery disabled."""
     root = _provider_only_root(tmp_path)
     monkeypatch.chdir(root)
-    monkeypatch.setattr(integration, "_native_json_probe", lambda argv: None)
+    monkeypatch.setattr(integration.native, "_native_json_probe", lambda argv: None)
     return root
 
 

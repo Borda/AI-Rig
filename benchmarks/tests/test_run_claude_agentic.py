@@ -29,6 +29,12 @@ sys.path.insert(0, str(BENCHMARKS_DIR))
 
 from _bench_common.presentation import BENCHMARK_OUTPUT_WIDTH  # noqa: E402
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_claude.agentic import cli as agentic_cli  # noqa: E402
+from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
+from _bench_claude.agentic import runner as agentic_runner  # noqa: E402
+
 AGENTIC_SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-agentic.json"
 CLAUDE_RUNNER_PATH = BENCHMARKS_DIR / "run-claude-agentic.py"
 PARITY_MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "provider-parity-methodology.json"
@@ -365,9 +371,9 @@ class TestProviderParityTaskIntegration:
         tasks = [script_run_agentic.Task(id=f"BA-{number:02d}", type="fix", prompt="p") for number in range(1, 17)]
 
         with (
-            patch.object(script_run_agentic, "load_tasks_with_provenance", return_value=tasks),
-            patch.object(script_run_agentic, "find_index", return_value=tmp_index),
-            patch.object(script_run_agentic, "_validate_parity_runtime"),
+            patch.object(agentic_cli, "load_tasks_with_provenance", return_value=tasks),
+            patch.object(agentic_cli, "find_index", return_value=tmp_index),
+            patch.object(agentic_cli, "_validate_parity_runtime"),
         ):
             script_run_agentic.main(repo_path=tmp_path, run_all=True, dry_run=True)
 
@@ -418,9 +424,9 @@ class TestProviderParityTaskIntegration:
         expected_runs = len(AGENTIC_TASK_IDS) * len(AGENTIC_ARMS) * len(script_run_agentic.MODELS) * 2
 
         with (
-            patch.object(script_run_agentic, "load_tasks_with_provenance", return_value=tasks),
-            patch.object(script_run_agentic, "find_index", return_value=tmp_index),
-            patch.object(script_run_agentic, "_validate_parity_runtime"),
+            patch.object(agentic_cli, "load_tasks_with_provenance", return_value=tasks),
+            patch.object(agentic_cli, "find_index", return_value=tmp_index),
+            patch.object(agentic_cli, "_validate_parity_runtime"),
         ):
             with pytest.raises(SystemExit, match="scope.*SHA|SHA.*scope"):
                 script_run_agentic.main(repo_path=tmp_path, run_all=True, repeat=2, dry_run=True)
@@ -526,7 +532,7 @@ class TestProviderParityTaskIntegration:
 
         with (
             patch.object(script_run_agentic.ModelRunner, "run", return_value=native_result),
-            patch.object(script_run_agentic, "score_answer", wraps=script_run_agentic.score_answer) as score_answer,
+            patch.object(agentic_cli, "score_answer", wraps=script_run_agentic.score_answer) as score_answer,
         ):
             result = benchmark._run_single(
                 task,
@@ -921,7 +927,7 @@ class TestProviderParityTaskIntegration:
                 """Return a fixed prompt envelope for the fixture runner."""
                 return "fixture envelope"
 
-        with patch.object(script_run_agentic, "ModelRunner", FixtureRunner):
+        with patch.object(agentic_cli, "ModelRunner", FixtureRunner):
             benchmark._run_single(
                 task,
                 "haiku",
@@ -3518,7 +3524,7 @@ class TestSubprocessEnv:
         directory before checking the arm, contradicting A's absent-tool control.
         """
         monkeypatch.setattr(
-            script_run_agentic,
+            agentic_runner,
             "codemap_bin_on_path",
             lambda env: env.update(PATH=f"/sentinel/codemap-bin:{env.get('PATH', '')}") or env,
         )
@@ -3533,7 +3539,7 @@ class TestSubprocessEnv:
     ) -> None:
         """Codemap treatments receive the benchmark-injected launcher path."""
         monkeypatch.setattr(
-            script_run_agentic,
+            agentic_runner,
             "codemap_bin_on_path",
             lambda env, plugin_root: env.update(PATH=f"{plugin_root}/bin:{env.get('PATH', '')}") or env,
         )
@@ -4129,7 +4135,7 @@ def test_stage_transport_enables_native_edits_only_for_executable_workspaces(
         commands.append(cmd)
         return SimpleNamespace(error=None, stderr="", returncode=0, exc_timeout=False, elapsed_s=0.1)
 
-    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    monkeypatch.setattr(agentic_runner, "stream_claude", _stream)
     runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
 
     runner.run_stage_events(
@@ -4175,7 +4181,7 @@ def test_stage_transport_denies_benchmark_evidence_to_filetools_and_bash(
         return SimpleNamespace(error=None, stderr="", returncode=0, exc_timeout=False, elapsed_s=0.1)
 
     monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evidence_root)]))
-    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    monkeypatch.setattr(agentic_runner, "stream_claude", _stream)
     runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
 
     runner.run_stage_events(
@@ -4238,7 +4244,7 @@ def test_stage_transport_stages_runtime_outside_denied_evidence(
 
     monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(evidence_root)]))
     monkeypatch.setattr(script_run_agentic.ModelRunner, "_codemap_plugin_dir", lambda: str(fixture))
-    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    monkeypatch.setattr(agentic_runner, "stream_claude", _stream)
     _mock_codemap_python_probe(monkeypatch, script_run_agentic)
     runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
 
@@ -4294,7 +4300,7 @@ def test_stage_transport_fails_before_launch_for_a_missing_evidence_root(
         raise AssertionError("missing evidence root must stop before transport")
 
     monkeypatch.setenv("BENCHMARK_EVIDENCE_ROOTS", json.dumps([str(missing_root)]))
-    monkeypatch.setattr(script_run_agentic, "stream_claude", _stream)
+    monkeypatch.setattr(agentic_runner, "stream_claude", _stream)
     runner = script_run_agentic.ModelRunner("haiku", script_run_agentic.MODELS["haiku"], tmp_path, timeout=1)
 
     with pytest.raises(ValueError, match="benchmark evidence root is unavailable"):
@@ -4345,7 +4351,7 @@ def test_change_impact_runtime_validates_only_in_dry_run(
         """Record no-model native preflight coordinates without invoking the local launcher."""
         preflight_coordinates.append((source, evidence))
 
-    monkeypatch.setattr(script_run_agentic, "_native_change_impact_preflight", _preflight)
+    monkeypatch.setattr(agentic_paid, "_native_change_impact_preflight", _preflight)
 
     with script_run_agentic.impact_runtime(
         model="sonnet",
@@ -4539,7 +4545,7 @@ def test_change_impact_cli_delegates_approved_runtime_coordinate(
         """Capture the shared stage contract without resolving scope or launching Claude."""
         observed.update(kwargs)
 
-    monkeypatch.setattr(script_run_agentic, "run_change_impact_stage", _stage)
+    monkeypatch.setattr(agentic_cli, "run_change_impact_stage", _stage)
     run_dir = tmp_path / "new-run"
     script_run_agentic.main(
         study="change-impact",
@@ -4575,7 +4581,7 @@ def test_change_impact_cli_rejects_unknown_model_before_shared_stage(
         nonlocal launched
         launched = True
 
-    monkeypatch.setattr(script_run_agentic, "run_change_impact_stage", _stage)
+    monkeypatch.setattr(agentic_cli, "run_change_impact_stage", _stage)
     with pytest.raises(SystemExit, match="change-impact model"):
         script_run_agentic.main(study="change-impact", model="not-a-model")
     assert not launched

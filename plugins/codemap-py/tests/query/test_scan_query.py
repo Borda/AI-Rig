@@ -1122,7 +1122,7 @@ class TestFindIndex:
         idx.parent.mkdir(parents=True)
         idx.write_text("{}")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod, "_get_git_root_cached", lambda: None)
+        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: None)
         result = _find_index()
         assert result == idx
 
@@ -1132,7 +1132,7 @@ class TestFindIndex:
         idx.parent.mkdir(parents=True)
         idx.write_text("{}")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod, "_get_git_root_cached", lambda: None)
+        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: None)
         result = _find_index()
         assert result == idx
 
@@ -1145,7 +1145,7 @@ class TestFindIndex:
         codemap_idx.write_text("{}")
         scan_idx.write_text("{}")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod, "_get_git_root_cached", lambda: None)
+        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: None)
         result = _find_index()
         assert result == codemap_idx
 
@@ -1159,7 +1159,7 @@ class TestFindIndex:
         override.mkdir()
         (override / f"{tmp_path.name}.json").write_text("{}")
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod, "_get_git_root_cached", lambda: tmp_path)
+        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: tmp_path)
         monkeypatch.setenv("CODEMAP_INDEX_DIR", str(override))
         result = _find_index()
         assert result == override / f"{tmp_path.name}.json"
@@ -1168,7 +1168,7 @@ class TestFindIndex:
         """Override path is returned even before the writer publishes, so the error surfaces at the writer's path."""
         override = tmp_path / "custom-index-dir"
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr(_scan_query_mod, "_get_git_root_cached", lambda: tmp_path)
+        monkeypatch.setattr(_scan_query_mod.index_io, "_get_git_root_cached", lambda: tmp_path)
         monkeypatch.setenv("CODEMAP_INDEX_DIR", str(override))
         result = _find_index()
         assert result == override / f"{tmp_path.name}.json"
@@ -2181,13 +2181,13 @@ class TestDeadSymbols:
     @pytest.fixture(autouse=True)
     def _reset_caches(self):
         """Reset module-level caches before every test so each index is parsed fresh."""
-        _scan_query_mod._symbol_map_cache = None
-        _scan_query_mod._rev_graph_cache = None
-        _scan_query_mod._coverage_cache = None
+        _scan_query_mod.index_io._symbol_map_cache = None
+        _scan_query_mod.index_io._rev_graph_cache = None
+        _scan_query_mod.coverage._coverage_cache = None
         yield
-        _scan_query_mod._symbol_map_cache = None
-        _scan_query_mod._rev_graph_cache = None
-        _scan_query_mod._coverage_cache = None
+        _scan_query_mod.index_io._symbol_map_cache = None
+        _scan_query_mod.index_io._rev_graph_cache = None
+        _scan_query_mod.coverage._coverage_cache = None
 
     def _run_dead_symbols(self, capsys, index: dict, ns) -> dict:
         """Invoke ``cmd_dead_symbols`` and return the parsed JSON payload from stdout."""

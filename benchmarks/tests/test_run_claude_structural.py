@@ -45,6 +45,13 @@ from _bench_common.presentation import (  # noqa: E402
     LEGEND_OPEN_RULE,
 )
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_claude.structural import cli as bench_cli  # noqa: E402
+from _bench_claude.structural import config as bench_config  # noqa: E402
+from _bench_claude.structural import report as bench_report  # noqa: E402
+from _bench_claude.structural import tasks as bench_tasks  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Helpers shared across test classes
 # ---------------------------------------------------------------------------
@@ -177,7 +184,7 @@ class TestProviderParityIntegration:
             calls.append((revision, provider, model, task_id, repetition, reasoning_effort))
             return expected[task_id]
 
-        monkeypatch.setattr(script_run_bench, "deterministic_arm_order", _order)
+        monkeypatch.setattr(bench_config, "deterministic_arm_order", _order)
 
         observed = script_run_bench._arm_orders_by_task(
             tasks,
@@ -522,7 +529,7 @@ class TestProviderParityIntegration:
             treatment_adherence=True,
         )
         serialized = script_run_bench.asdict(run)
-        monkeypatch.setattr(script_run_bench, "RESULTS_DIR", tmp_path)
+        monkeypatch.setattr(bench_report, "RESULTS_DIR", tmp_path)
         saved = script_run_bench._save_results([run], "haiku")
 
         persisted = json.loads(saved.read_text(encoding="utf-8"))
@@ -576,12 +583,12 @@ class TestProviderParityIntegration:
         )
         runtime_inputs: list[tuple[Path, Path]] = []
         monkeypatch.setattr(
-            script_run_bench,
+            bench_cli,
             "_validate_primary_runtime",
             lambda repo_path, index, *_relocation: runtime_inputs.append((repo_path, index)),
         )
         expected_order = ("C_strict", "A_plain", "B_auto")
-        monkeypatch.setattr(script_run_bench, "deterministic_arm_order", lambda *_args, **_kwargs: expected_order)
+        monkeypatch.setattr(bench_config, "deterministic_arm_order", lambda *_args, **_kwargs: expected_order)
 
         script_run_bench.main(
             repo_path=tmp_path,
@@ -614,8 +621,8 @@ class TestProviderParityIntegration:
         """
         index_path = tmp_path / "index.json"
         index_path.write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(script_run_bench, "_validate_primary_runtime", lambda *_args: None)
-        monkeypatch.setattr(script_run_bench, "BenchRunner", lambda **_kwargs: None)
+        monkeypatch.setattr(bench_cli, "_validate_primary_runtime", lambda *_args: None)
+        monkeypatch.setattr(bench_cli, "BenchRunner", lambda **_kwargs: None)
 
         class ProgressReached(RuntimeError):
             """Stop the no-model test once the header and legend have been emitted."""
@@ -626,7 +633,7 @@ class TestProviderParityIntegration:
             """Fail the run at progress construction, after the header block is printed."""
             raise ProgressReached
 
-        monkeypatch.setattr(script_run_bench, "make_progress", _stop_before_the_first_cell)
+        monkeypatch.setattr(bench_cli, "make_progress", _stop_before_the_first_cell)
 
         with pytest.raises(ProgressReached):
             script_run_bench.main(repo_path=tmp_path, index_path=index_path, tasks=["FN-02"], arm="all")
@@ -677,7 +684,7 @@ class TestProviderParityIntegration:
         """Canonical cells use 600 seconds unless explicitly overridden; legacy policy is unchanged."""
         index_path = tmp_path / "index.json"
         index_path.write_text("{}", encoding="utf-8")
-        monkeypatch.setattr(script_run_bench, "_validate_primary_runtime", lambda *_args: None)
+        monkeypatch.setattr(bench_cli, "_validate_primary_runtime", lambda *_args: None)
         observed: dict[str, int] = {}
 
         class RunnerReached(RuntimeError):
@@ -690,7 +697,7 @@ class TestProviderParityIntegration:
             observed["timeout"] = kwargs["timeout"]
             raise RunnerReached
 
-        monkeypatch.setattr(script_run_bench, "BenchRunner", _capture_runner)
+        monkeypatch.setattr(bench_cli, "BenchRunner", _capture_runner)
 
         with pytest.raises(RunnerReached):
             script_run_bench.main(
@@ -3504,7 +3511,7 @@ class TestRelocatedIndexAdmission:
         by the relocation is what proves the graph is still the frozen one.
         """
         repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        monkeypatch.setattr(script_run_bench, "_PARITY_MANIFEST", manifest)
+        monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
 
         script_run_bench._validate_primary_runtime(repo, index_path, relocation)
 
@@ -3519,7 +3526,7 @@ class TestRelocatedIndexAdmission:
         would let an unrelated graph enter the run under the locked manifest's authority.
         """
         repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        monkeypatch.setattr(script_run_bench, "_PARITY_MANIFEST", manifest)
+        monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
         relocation["frozen_index_sha256"] = "0" * 64
 
         with pytest.raises(ValueError, match="wrong frozen source"):
@@ -3534,7 +3541,7 @@ class TestRelocatedIndexAdmission:
         run would attest to is no longer the index the model actually reads.
         """
         repo, index_path, manifest, relocation = _relocated_worktree_index(tmp_path)
-        monkeypatch.setattr(script_run_bench, "_PARITY_MANIFEST", manifest)
+        monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
         relocation["derived_index_sha256"] = "1" * 64
 
         with pytest.raises(ValueError, match="changed after relocation"):
@@ -3549,7 +3556,7 @@ class TestRelocatedIndexAdmission:
         original byte-identity gate must reject it exactly as before.
         """
         repo, index_path, manifest, _relocation = _relocated_worktree_index(tmp_path)
-        monkeypatch.setattr(script_run_bench, "_PARITY_MANIFEST", manifest)
+        monkeypatch.setattr(bench_tasks, "_PARITY_MANIFEST", manifest)
 
         with pytest.raises(ValueError, match="canonical run requires the locked index bytes"):
             script_run_bench._validate_primary_runtime(repo, index_path)

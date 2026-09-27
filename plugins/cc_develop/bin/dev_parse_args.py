@@ -60,6 +60,7 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -218,6 +219,65 @@ def _extract_value_flag(flag: str, args: str) -> tuple[str | None, str]:
     return None, args
 
 
+def _token_pattern(flag: str) -> re.Pattern[str]:
+    """Build the whole-token matcher for ``--<flag>``, so ``--team`` never matches ``--teamx``."""
+    return re.compile(r"(?<!\S)" + re.escape(f"--{flag}") + r"(?![A-Za-z0-9_-])")
+
+
+def _extract_bool_flag(spec: FlagSpec, clean: str, present_value: str) -> tuple[str, str]:
+    """Resolve a presence-only flag to ``present_value`` when it appears, else its default.
+
+    Shared by BOOL and NEG_BOOL, which differ only in what presence means.
+    """
+    pattern = _token_pattern(spec.flag)
+    if not pattern.search(clean):
+        return spec.default, clean
+    return present_value, pattern.sub("", clean)
+
+
+def _extract_codemap_flag(spec: FlagSpec, clean: str) -> tuple[str, str]:
+    """Resolve the paired ``--codemap`` / ``--no-codemap`` flags to one mode.
+
+    Double-condition guard: ``--no-codemap`` wins; ``--codemap`` only sets strict
+    when ``--no-codemap`` absent.
+    """
+    no_pattern = re.compile(r"(?<!\S)--no-codemap(?![A-Za-z0-9_-])")
+    yes_pattern = re.compile(r"(?<!\S)--codemap(?![A-Za-z0-9_-])")
+    if no_pattern.search(clean) is not None:
+        return "off", yes_pattern.sub("", no_pattern.sub("", clean))
+    if yes_pattern.search(clean) is not None:
+        return "strict", yes_pattern.sub("", clean)
+    return spec.default, clean
+
+
+def _extract_int_flag(spec: FlagSpec, clean: str) -> tuple[str, str]:
+    """Resolve a value flag that must parse as an integer, exiting 2 when it does not."""
+    val, clean = _extract_value_flag(spec.flag, clean)
+    if val is None:
+        return spec.default, clean
+    try:
+        int(val)
+    except ValueError:
+        print(f"dev_parse_args: --{spec.flag} expects integer, got '{val}'", file=sys.stderr)
+        sys.exit(2)
+    return val, clean
+
+
+def _extract_str_flag(spec: FlagSpec, clean: str) -> tuple[str, str]:
+    """Resolve a value flag taking any string."""
+    val, clean = _extract_value_flag(spec.flag, clean)
+    return val if val is not None else spec.default, clean
+
+
+_FLAG_HANDLERS: dict[SpecType, Callable[[FlagSpec, str], tuple[str, str]]] = {
+    SpecType.BOOL: lambda spec, clean: _extract_bool_flag(spec, clean, "true"),
+    SpecType.NEG_BOOL: lambda spec, clean: _extract_bool_flag(spec, clean, "false"),
+    SpecType.CODEMAP: _extract_codemap_flag,
+    SpecType.INT: _extract_int_flag,
+    SpecType.STR: _extract_str_flag,
+}
+
+
 def extract_flags(arguments: str, specs: list[FlagSpec]) -> tuple[dict[str, str], str]:
     """Extract all declared flags from arguments string.
 
@@ -239,59 +299,10 @@ def extract_flags(arguments: str, specs: list[FlagSpec]) -> tuple[dict[str, str]
     clean = arguments
 
     for spec in specs:
-        if spec.kind == SpecType.BOOL:
-            token = f"--{spec.flag}"
-            token_pattern = re.compile(r"(?<!\S)" + re.escape(token) + r"(?![A-Za-z0-9_-])")
-            if token_pattern.search(clean):
-                result[spec.var] = "true"
-                clean = token_pattern.sub("", clean)
-            else:
-                result[spec.var] = spec.default
-
-        elif spec.kind == SpecType.NEG_BOOL:
-            token = f"--{spec.flag}"
-            token_pattern = re.compile(r"(?<!\S)" + re.escape(token) + r"(?![A-Za-z0-9_-])")
-            if token_pattern.search(clean):
-                result[spec.var] = "false"
-                clean = token_pattern.sub("", clean)
-            else:
-                result[spec.var] = spec.default
-
-        elif spec.kind == SpecType.CODEMAP:
-            # Double-condition guard: ``--no-codemap`` wins; ``--codemap`` only sets strict
-            # when ``--no-codemap`` absent.
-            no_pattern = re.compile(r"(?<!\S)--no-codemap(?![A-Za-z0-9_-])")
-            yes_pattern = re.compile(r"(?<!\S)--codemap(?![A-Za-z0-9_-])")
-            has_no = no_pattern.search(clean) is not None
-            has_yes = yes_pattern.search(clean) is not None
-            if has_no:
-                result[spec.var] = "off"
-                clean = no_pattern.sub("", clean)
-                clean = yes_pattern.sub("", clean)
-            elif has_yes:
-                result[spec.var] = "strict"
-                clean = yes_pattern.sub("", clean)
-            else:
-                result[spec.var] = spec.default
-
-        elif spec.kind == SpecType.INT:
-            val, clean = _extract_value_flag(spec.flag, clean)
-            if val is not None:
-                try:
-                    int(val)
-                except ValueError:
-                    print(
-                        f"dev_parse_args: --{spec.flag} expects integer, got '{val}'",
-                        file=sys.stderr,
-                    )
-                    sys.exit(2)
-                result[spec.var] = val
-            else:
-                result[spec.var] = spec.default
-
-        elif spec.kind == SpecType.STR:
-            val, clean = _extract_value_flag(spec.flag, clean)
-            result[spec.var] = val if val is not None else spec.default
+        handler = _FLAG_HANDLERS.get(spec.kind)
+        if handler is None:
+            continue
+        result[spec.var], clean = handler(spec, clean)
 
     # Normalise whitespace in clean args
     clean = " ".join(clean.split())

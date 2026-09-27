@@ -611,6 +611,107 @@ def find_in_installed(
 # ---------------------------------------------------------------------------
 
 
+def _resolve_target_plugin(ref: PathRef) -> str:
+    """Name the plugin a reference points *into*, which is not always its source plugin.
+
+    For cross-plugin refs, the target plugin is embedded in the resolved path (e.g.
+    ``plugins/cc_foundry/skills/_shared/foo.md`` → ``"foundry"``), not the source plugin. ``ref.resolved_local`` is
+    always relative to the project root (PathRef contract) while the caller's ``plugins_dir`` is always absolute —
+    ``relative_to()`` between a relative and an absolute path always raises ValueError, so that comparison silently fell
+    back to ``ref.plugin`` (the SOURCE plugin) for every cross-plugin reference, masking real cache-drift findings under
+    the wrong plugin's cache. Locate the ``"plugins"`` segment directly instead — works regardless of which path form
+    either side is in. The path segment is the ``cc_``-prefixed folder; strip it for the installed/cache side
+    (``active_install_paths`` keys, cache dirs, :func:`find_in_installed`), while the caller's local-existence test uses
+    the ``cc_`` folder form.
+    """
+    resolved_parts = Path(ref.resolved_local).parts
+    try:
+        target_folder = resolved_parts[resolved_parts.index("plugins") + 1]
+    except (ValueError, IndexError):
+        target_folder = ref.plugin
+    return _folder_to_name(target_folder)
+
+
+def _check_ref_installed_state(
+    ref: PathRef,
+    target_plugin: str,
+    cache_dir: Path,
+    active_install_paths: dict[str, Path] | None,
+) -> R1Finding | None:
+    """Compare one reference's local and installed resolution, if they disagree.
+
+    Returns ``None`` when local and installed agree — both present, or both absent behind an unknown variable — which is
+    the no-finding case.
+    """
+    local_exists = Path(ref.resolved_local).exists()
+    if active_install_paths is not None:
+        not_installed = target_plugin not in active_install_paths
+    else:
+        not_installed = len(get_installed_versions(cache_dir, target_plugin)) == 0
+
+    if not_installed:
+        # Cannot verify installed state — info only, not a failure
+        return R1Finding(
+            severity=Severity.INFO,
+            source_file=ref.source_file,
+            raw_expr=ref.raw_expr,
+            resolved_local=ref.resolved_local,
+            exists_locally=local_exists,
+            installed_versions=[],
+            exists_installed=False,
+            message=(
+                f"R1-INFO: {ref.source_file} — `{ref.raw_expr}` "
+                f"→ plugin '{target_plugin}' not installed; cannot verify installed state"
+            ),
+        )
+
+    installed_found, checked_paths = find_in_installed(
+        ref.resolved_local, target_plugin, cache_dir, active_install_paths
+    )
+
+    if local_exists and not installed_found:
+        # WARN, not FAIL: the installed cache is machine-local mutable state whose
+        # contents depend on when the user last synced and on what has been pushed to
+        # the marketplace remote. A newly added shared file is legitimately local-only
+        # until its commit ships, so failing here would block the very commit that
+        # releases the file (commit -> push -> sync is the only way to populate the
+        # cache). Pre-commit must assert facts about the source tree, which is what the
+        # local-existence checks and R3 do; cache drift is advisory only.
+        return R1Finding(
+            severity=Severity.WARN,
+            source_file=ref.source_file,
+            raw_expr=ref.raw_expr,
+            resolved_local=ref.resolved_local,
+            exists_locally=True,
+            installed_versions=checked_paths,
+            exists_installed=False,
+            message=(
+                f"R1-WARN: {ref.source_file} — `{ref.raw_expr}` "
+                f"resolves to `{ref.resolved_local}` (exists locally) "
+                f"but absent from installed cache — users on the released version lack it\n"
+                f"  fix: none needed if the file is newly added and not yet released; "
+                f"otherwise verify it is included in the plugin manifest"
+            ),
+        )
+    if not local_exists and installed_found:
+        return R1Finding(
+            severity=Severity.WARN,
+            source_file=ref.source_file,
+            raw_expr=ref.raw_expr,
+            resolved_local=ref.resolved_local,
+            exists_locally=False,
+            installed_versions=checked_paths,
+            exists_installed=True,
+            message=(
+                f"R1-WARN: {ref.source_file} — `{ref.raw_expr}` "
+                f"resolves to `{ref.resolved_local}` (missing locally) "
+                f"but present in installed cache — stale install; will break after plugin update\n"
+                f"  fix: restore file locally or remove the reference"
+            ),
+        )
+    return None
+
+
 def run_computed_path_duality(
     plugins_dir: Path,
     cache_dir: Path,
@@ -640,100 +741,10 @@ def run_computed_path_duality(
             md_files.extend(plugin_dir.glob(pattern))
 
         for md_file in sorted(md_files):
-            refs = extract_path_refs(md_file, plugin, plugins_dir)
-            for ref in refs:
-                local_exists = Path(ref.resolved_local).exists()
-                # For cross-plugin refs, the target plugin is embedded in the resolved path
-                # (e.g. plugins/cc_foundry/skills/_shared/foo.md → "foundry"), not the source plugin.
-                # `ref.resolved_local` is always relative to the project root (PathRef contract)
-                # while `plugins_dir` here is `Path(args.plugins_dir).resolve()` (always absolute)
-                # — relative_to() between a relative and an absolute path always raises ValueError,
-                # so that comparison silently fell back to `ref.plugin` (the SOURCE plugin) for
-                # every cross-plugin reference, masking real cache-drift findings under the wrong
-                # plugin's cache. Locate the "plugins" segment directly instead — works regardless
-                # of which path form either side is in. The path segment is the cc_-prefixed folder;
-                # strip it for the installed/cache side (active_install_paths keys, cache dirs,
-                # find_in_installed) while local_exists above already used the cc_ folder form.
-                resolved_parts = Path(ref.resolved_local).parts
-                try:
-                    target_folder = resolved_parts[resolved_parts.index("plugins") + 1]
-                except (ValueError, IndexError):
-                    target_folder = ref.plugin
-                target_plugin = _folder_to_name(target_folder)
-                # Determine if plugin is installed at all.
-                if active_install_paths is not None:
-                    not_installed = target_plugin not in active_install_paths
-                else:
-                    not_installed = len(get_installed_versions(cache_dir, target_plugin)) == 0
-
-                if not_installed:
-                    # Cannot verify installed state — info only, not a failure
-                    findings.append(
-                        R1Finding(
-                            severity=Severity.INFO,
-                            source_file=ref.source_file,
-                            raw_expr=ref.raw_expr,
-                            resolved_local=ref.resolved_local,
-                            exists_locally=local_exists,
-                            installed_versions=[],
-                            exists_installed=False,
-                            message=(
-                                f"R1-INFO: {ref.source_file} — `{ref.raw_expr}` "
-                                f"→ plugin '{target_plugin}' not installed; cannot verify installed state"
-                            ),
-                        )
-                    )
-                    continue
-
-                installed_found, checked_paths = find_in_installed(
-                    ref.resolved_local, target_plugin, cache_dir, active_install_paths
-                )
-
-                if local_exists and not installed_found:
-                    # WARN, not FAIL: the installed cache is machine-local mutable state whose
-                    # contents depend on when the user last synced and on what has been pushed to
-                    # the marketplace remote. A newly added shared file is legitimately local-only
-                    # until its commit ships, so failing here would block the very commit that
-                    # releases the file (commit -> push -> sync is the only way to populate the
-                    # cache). Pre-commit must assert facts about the source tree, which is what the
-                    # local-existence checks above and R3 do; cache drift is advisory only.
-                    findings.append(
-                        R1Finding(
-                            severity=Severity.WARN,
-                            source_file=ref.source_file,
-                            raw_expr=ref.raw_expr,
-                            resolved_local=ref.resolved_local,
-                            exists_locally=True,
-                            installed_versions=checked_paths,
-                            exists_installed=False,
-                            message=(
-                                f"R1-WARN: {ref.source_file} — `{ref.raw_expr}` "
-                                f"resolves to `{ref.resolved_local}` (exists locally) "
-                                f"but absent from installed cache — users on the released version lack it\n"
-                                f"  fix: none needed if the file is newly added and not yet released; "
-                                f"otherwise verify it is included in the plugin manifest"
-                            ),
-                        )
-                    )
-                elif not local_exists and installed_found:
-                    findings.append(
-                        R1Finding(
-                            severity=Severity.WARN,
-                            source_file=ref.source_file,
-                            raw_expr=ref.raw_expr,
-                            resolved_local=ref.resolved_local,
-                            exists_locally=False,
-                            installed_versions=checked_paths,
-                            exists_installed=True,
-                            message=(
-                                f"R1-WARN: {ref.source_file} — `{ref.raw_expr}` "
-                                f"resolves to `{ref.resolved_local}` (missing locally) "
-                                f"but present in installed cache — stale install; will break after plugin update\n"
-                                f"  fix: restore file locally or remove the reference"
-                            ),
-                        )
-                    )
-                # Both exist or both absent with unknown-var — no finding
+            for ref in extract_path_refs(md_file, plugin, plugins_dir):
+                finding = _check_ref_installed_state(ref, _resolve_target_plugin(ref), cache_dir, active_install_paths)
+                if finding is not None:
+                    findings.append(finding)
 
     return findings
 
@@ -862,6 +873,80 @@ def run_orphan_risk_detection(plugins_dir: Path) -> list[R2Finding]:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_bin_ref_local(bin_plugin: str, script_name: str, plugins_dir: Path) -> Path | None:
+    """Locate where a referenced bin/ script would live, or ``None`` when it is not real dispatch.
+
+    A reference into a plugin dir that does not exist is an illustrative placeholder (e.g.
+    ``plugins/myplugin/bin/resolve.py`` in an authoring guide), not real dispatch — a "missing bin" failure is
+    meaningless for a non-plugin. ``bin_plugin`` is the bare NAME; the on-disk folder is ``cc_``-prefixed.
+    """
+    plugin_folder = _name_to_folder(plugins_dir, bin_plugin)
+    if plugin_folder is None:
+        return None
+    return plugin_folder / "bin" / script_name
+
+
+def _build_r3_finding(
+    source_file: str,
+    bin_plugin: str,
+    script_name: str,
+    *,
+    explicit_plugin: bool,
+    local_path: Path,
+    cache_dir: Path,
+    active_install_paths: dict[str, Path] | None,
+) -> R3Finding | None:
+    """Judge one bin/ reference, returning ``None`` when it resolves everywhere checkable."""
+    if not local_path.exists():
+        # Bare ${CLAUDE_PLUGIN_ROOT}/bin/ form (no :-plugin fallback) is used in
+        # documentation guides as a generic placeholder — downgrade to WARN to avoid
+        # false failures on example snippets.  Explicit :-form refs are real dispatch.
+        severity = Severity.FAIL if explicit_plugin else Severity.WARN
+        label = "R3-FAIL" if explicit_plugin else "R3-WARN"
+        return R3Finding(
+            severity=severity,
+            source_file=source_file,
+            script_name=script_name,
+            plugin=bin_plugin,
+            local_path=str(local_path),
+            exists_locally=False,
+            exists_installed=False,
+            message=(
+                f"{label}: {source_file} — references `{script_name}` in "
+                f"{bin_plugin}/bin/ but file is missing locally: {local_path}\n"
+                f"  fix: create {local_path} or remove the reference"
+            ),
+        )
+
+    if active_install_paths is not None:
+        not_installed = bin_plugin not in active_install_paths
+    else:
+        not_installed = len(get_installed_versions(cache_dir, bin_plugin)) == 0
+    if not_installed:
+        # Can't check installed state
+        return None
+
+    installed_rel = f"plugins/{bin_plugin}/bin/{script_name}"
+    installed_found, _ = find_in_installed(installed_rel, bin_plugin, cache_dir, active_install_paths)
+    if installed_found:
+        return None
+    return R3Finding(
+        severity=Severity.WARN,
+        source_file=source_file,
+        script_name=script_name,
+        plugin=bin_plugin,
+        local_path=str(local_path),
+        exists_locally=True,
+        exists_installed=False,
+        message=(
+            f"R3-WARN: {source_file} — references `{script_name}` in "
+            f"{bin_plugin}/bin/ (exists locally) but absent from installed cache\n"
+            f"  detail: users running installed plugin version will get broken dispatch\n"
+            f"  fix: run `claude plugin install {bin_plugin}@borda-ai-rig` to sync"
+        ),
+    )
+
+
 def run_bin_ref_integrity(
     plugins_dir: Path,
     cache_dir: Path,
@@ -902,71 +987,21 @@ def run_bin_ref_integrity(
                     continue
                 seen.add(key)
 
-                # A reference into a plugin dir that does not exist is an illustrative
-                # placeholder (e.g. `plugins/myplugin/bin/resolve.py` in an authoring guide),
-                # not real dispatch — a "missing bin" failure is meaningless for a non-plugin.
-                # `bin_plugin` is the bare NAME; the on-disk folder is cc_-prefixed.
-                plugin_folder = _name_to_folder(plugins_dir, bin_plugin)
-                if plugin_folder is None:
+                local_path = _resolve_bin_ref_local(bin_plugin, script_name, plugins_dir)
+                if local_path is None:
                     continue
 
-                local_path = plugin_folder / "bin" / script_name
-                local_exists = local_path.exists()
-
-                if active_install_paths is not None:
-                    not_installed = bin_plugin not in active_install_paths
-                else:
-                    not_installed = len(get_installed_versions(cache_dir, bin_plugin)) == 0
-
-                if not local_exists:
-                    # Bare ${CLAUDE_PLUGIN_ROOT}/bin/ form (no :-plugin fallback) is used in
-                    # documentation guides as a generic placeholder — downgrade to WARN to avoid
-                    # false failures on example snippets.  Explicit :-form refs are real dispatch.
-                    severity = Severity.FAIL if explicit_plugin else Severity.WARN
-                    label = "R3-FAIL" if explicit_plugin else "R3-WARN"
-                    findings.append(
-                        R3Finding(
-                            severity=severity,
-                            source_file=source_file,
-                            script_name=script_name,
-                            plugin=bin_plugin,
-                            local_path=str(local_path),
-                            exists_locally=False,
-                            exists_installed=False,
-                            message=(
-                                f"{label}: {source_file} — references `{script_name}` in "
-                                f"{bin_plugin}/bin/ but file is missing locally: {local_path}\n"
-                                f"  fix: create {local_path} or remove the reference"
-                            ),
-                        )
-                    )
-                    continue
-
-                if not_installed:
-                    # Can't check installed state
-                    continue
-
-                installed_rel = f"plugins/{bin_plugin}/bin/{script_name}"
-                installed_found, _ = find_in_installed(installed_rel, bin_plugin, cache_dir, active_install_paths)
-
-                if not installed_found:
-                    findings.append(
-                        R3Finding(
-                            severity=Severity.WARN,
-                            source_file=source_file,
-                            script_name=script_name,
-                            plugin=bin_plugin,
-                            local_path=str(local_path),
-                            exists_locally=True,
-                            exists_installed=False,
-                            message=(
-                                f"R3-WARN: {source_file} — references `{script_name}` in "
-                                f"{bin_plugin}/bin/ (exists locally) but absent from installed cache\n"
-                                f"  detail: users running installed plugin version will get broken dispatch\n"
-                                f"  fix: run `claude plugin install {bin_plugin}@borda-ai-rig` to sync"
-                            ),
-                        )
-                    )
+                finding = _build_r3_finding(
+                    source_file,
+                    bin_plugin,
+                    script_name,
+                    explicit_plugin=explicit_plugin,
+                    local_path=local_path,
+                    cache_dir=cache_dir,
+                    active_install_paths=active_install_paths,
+                )
+                if finding is not None:
+                    findings.append(finding)
 
     return findings
 
@@ -974,6 +1009,45 @@ def run_bin_ref_integrity(
 # ---------------------------------------------------------------------------
 # Output formatting
 # ---------------------------------------------------------------------------
+
+
+def _format_r1_section(results: CheckResults) -> tuple[list[str], int]:
+    """Render the R1 computed-path block, and whether it failed."""
+    fails = [f for f in results.r1 if f.severity == Severity.FAIL]
+    warns = [f for f in results.r1 if f.severity == Severity.WARN]
+    infos = [f for f in results.r1 if f.severity == Severity.INFO]
+    lines = ["=== Check R1: Computed path resolution (local + installed duality) ==="]
+    if fails or warns:
+        lines += [f.message for f in fails + warns]
+    else:
+        lines.append("✓: Check R1 — all computed path references resolve correctly at local + installed")
+    if infos:
+        lines.append(f"  ({len(infos)} reference(s) skipped — plugin not installed locally)")
+    return lines, 1 if fails else 0
+
+
+def _format_r2_section(results: CheckResults) -> list[str]:
+    """Render the R2 orphan-risk block.
+
+    R2 is a structural safety warning, not a hard failure, so it contributes no exit code.
+    """
+    lines = ["=== Check R2: Grep-visible referencing (orphan-risk detection) ==="]
+    if results.r2:
+        return lines + [f.message for f in results.r2]
+    lines.append("✓: Check R2 — all indirect-load .md files have grep-visible basename references")
+    return lines
+
+
+def _format_r3_section(results: CheckResults) -> tuple[list[str], int]:
+    """Render the R3 bin/-existence block, and whether it failed."""
+    fails = [f for f in results.r3 if f.severity == Severity.FAIL]
+    warns = [f for f in results.r3 if f.severity == Severity.WARN]
+    lines = ["=== Check R3: bin/ script existence (local + installed) ==="]
+    if fails or warns:
+        lines += [f.message for f in fails + warns]
+    else:
+        lines.append("✓: Check R3 — all bin/ script references resolve at local + installed")
+    return lines, 1 if fails else 0
 
 
 def format_results(results: CheckResults, active_checks: set[str]) -> tuple[str, int]:
@@ -990,43 +1064,17 @@ def format_results(results: CheckResults, active_checks: set[str]) -> tuple[str,
     exit_code = 0
 
     if "R1" in active_checks:
-        r1_fails = [f for f in results.r1 if f.severity == Severity.FAIL]
-        r1_warns = [f for f in results.r1 if f.severity == Severity.WARN]
-        r1_infos = [f for f in results.r1 if f.severity == Severity.INFO]
-        lines.append("=== Check R1: Computed path resolution (local + installed duality) ===")
-        if r1_fails or r1_warns:
-            for f in r1_fails + r1_warns:
-                lines.append(f.message)
-            if r1_fails:
-                exit_code = 1
-        else:
-            fail_count = len(r1_fails)
-            warn_count = len(r1_warns)
-            if fail_count == 0 and warn_count == 0:
-                lines.append("✓: Check R1 — all computed path references resolve correctly at local + installed")
-        if r1_infos:
-            lines.append(f"  ({len(r1_infos)} reference(s) skipped — plugin not installed locally)")
+        section, failed = _format_r1_section(results)
+        lines += section
+        exit_code |= failed
 
     if "R2" in active_checks:
-        lines.append("=== Check R2: Grep-visible referencing (orphan-risk detection) ===")
-        if results.r2:
-            for f in results.r2:
-                lines.append(f.message)
-            # R2 is a structural safety warning, not a hard failure
-        else:
-            lines.append("✓: Check R2 — all indirect-load .md files have grep-visible basename references")
+        lines += _format_r2_section(results)
 
     if "R3" in active_checks:
-        r3_fails = [f for f in results.r3 if f.severity == Severity.FAIL]
-        r3_warns = [f for f in results.r3 if f.severity == Severity.WARN]
-        lines.append("=== Check R3: bin/ script existence (local + installed) ===")
-        if r3_fails or r3_warns:
-            for f in r3_fails + r3_warns:
-                lines.append(f.message)
-            if r3_fails:
-                exit_code = 1
-        else:
-            lines.append("✓: Check R3 — all bin/ script references resolve at local + installed")
+        section, failed = _format_r3_section(results)
+        lines += section
+        exit_code |= failed
 
     # Summary counts
     total_fail = sum(1 for f in results.r1 if f.severity == Severity.FAIL) + len(

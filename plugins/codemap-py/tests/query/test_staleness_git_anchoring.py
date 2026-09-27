@@ -201,10 +201,10 @@ def _reset_query_caches(monkeypatch: pytest.MonkeyPatch) -> None:
     ``query`` caches git root, exclusions, blob SHAs, and the coverage block for the lifetime of one CLI invocation;
     inside a single pytest process those would otherwise leak between tests.
     """
-    monkeypatch.setattr(query, "_file_shas_cache", None)
-    monkeypatch.setattr(query, "_coverage_cache", None)
-    monkeypatch.setattr(query, "_git_root_cache", None)
-    monkeypatch.setattr(query, "_git_root_resolved", False)
+    monkeypatch.setattr(query.index_io, "_file_shas_cache", None)
+    monkeypatch.setattr(query.coverage, "_coverage_cache", None)
+    monkeypatch.setattr(query.index_io, "_git_root_cache", None)
+    monkeypatch.setattr(query.index_io, "_git_root_resolved", False)
 
 
 class TestGitRootAnchoring:
@@ -260,7 +260,7 @@ class TestFileShaMemoization:
             calls.append(list(cmd))
             return ""
 
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
         query._get_current_file_shas()
@@ -277,7 +277,7 @@ class TestFileShaMemoization:
             seen["cwd"] = kwargs.get("cwd")
             return ""
 
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
         assert seen["cmd"][:4] == ["git", "ls-files", "-s", "--"]
@@ -295,7 +295,7 @@ class TestGitFailureIsUndetermined:
             """Raise the injected failure from the tracked-blob lookup."""
             raise exc
 
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "check_output", _raise)
 
     @pytest.mark.parametrize(
@@ -319,7 +319,7 @@ class TestGitFailureIsUndetermined:
 
     def test_absent_repository_is_not_an_error(self, reset_query_caches, monkeypatch, capsys) -> None:
         """Outside a repository there is no git failure to report — the path stays quiet."""
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: None)
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
         resolved = query._current_file_shas()
         assert resolved.status == query._SHAS_NO_REPO
         assert capsys.readouterr().err == ""
@@ -327,22 +327,22 @@ class TestGitFailureIsUndetermined:
     def test_coverage_marks_staleness_undetermined(self, reset_query_caches, monkeypatch) -> None:
         """The coverage block carries the undetermined flag instead of a bare stale=False."""
         self._fail_git(monkeypatch, FileNotFoundError("git"))
-        monkeypatch.setattr(query, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         assert base["stale_undetermined"] is True
 
     def test_undetermined_staleness_vetoes_completeness(self, reset_query_caches, monkeypatch) -> None:
         """An unmeasurable index cannot yield a complete answer."""
         self._fail_git(monkeypatch, FileNotFoundError("git"))
-        monkeypatch.setattr(query, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         verdict = query._query_complete(base, command="central", module_status=None, module_name=None)
         assert verdict == (False, "stale_undetermined")
 
     def test_absent_repository_keeps_the_legacy_block(self, reset_query_caches, monkeypatch) -> None:
         """Without a repository the coverage block gains no new key (non-git trees unchanged)."""
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: None)
-        monkeypatch.setattr(query, "_untracked_py_files", lambda: [])
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: None)
+        monkeypatch.setattr(query.index_io, "_untracked_py_files", lambda: [])
         base = query._coverage({"modules": [], "file_shas": {"a.py": "deadbeef"}})
         assert "stale_undetermined" not in base
 
@@ -364,7 +364,7 @@ class TestWriterReaderFileSetParity:
             seen.extend(cmd)
             return ""
 
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "check_output", _fake_check_output)
         query._get_current_file_shas()
         assert seen[seen.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
@@ -378,7 +378,7 @@ class TestWriterReaderFileSetParity:
             seen.extend(cmd)
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
-        monkeypatch.setattr(query, "_get_git_root_cached", lambda: Path("/repo"))
+        monkeypatch.setattr(query.index_io, "_get_git_root_cached", lambda: Path("/repo"))
         monkeypatch.setattr(query.subprocess, "run", _fake_run)
         query.check_staleness("2020-01-01T00:00:00+00:00")
         assert seen[seen.index("--") + 1 :] == list(query._INDEXED_PATHSPEC)
@@ -390,8 +390,8 @@ class TestWriterReaderFileSetParity:
         claimed currency it did not have.
         """
         monkeypatch.chdir(dated_repo)
-        monkeypatch.setattr(query, "_git_root_cache", dated_repo)
-        monkeypatch.setattr(query, "_git_root_resolved", True)
+        monkeypatch.setattr(query.index_io, "_git_root_cache", dated_repo)
+        monkeypatch.setattr(query.index_io, "_git_root_resolved", True)
         assert query.check_staleness(_BETWEEN_COMMITS) is True
 
     def test_window_after_every_commit_reports_fresh(self, dated_repo, monkeypatch) -> None:
@@ -400,8 +400,8 @@ class TestWriterReaderFileSetParity:
         Without this, the assertion above could pass merely because the window also swept in the earlier ``.py`` commit.
         """
         monkeypatch.chdir(dated_repo)
-        monkeypatch.setattr(query, "_git_root_cache", dated_repo)
-        monkeypatch.setattr(query, "_git_root_resolved", True)
+        monkeypatch.setattr(query.index_io, "_git_root_cache", dated_repo)
+        monkeypatch.setattr(query.index_io, "_git_root_resolved", True)
         assert query.check_staleness(_AFTER_ALL_COMMITS) is False
 
 
@@ -428,7 +428,8 @@ class TestIndexSizeCapAgreement:
 
     def test_no_helper_caps_below_the_engine(self) -> None:
         """No helper refuses an index the engine would serve."""
-        plugin_root = Path(query.__file__).resolve().parents[2]
+        # parents[3]: query is a package, so __file__ is query/__init__.py.
+        plugin_root = Path(query.__file__).resolve().parents[3]
         below = [
             f"{rel}={value}"
             for rel, const in self._HELPER_CAPS

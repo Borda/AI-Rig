@@ -16,6 +16,7 @@ directory, so it remains valid after the plugin is installed outside this repo.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import hashlib
 import json
 import math
@@ -110,20 +111,30 @@ def tool_definitions() -> list[dict[str, Any]]:
     ]
 
 
-def handle_message(message: dict[str, Any], *, trusted_workspace: Path | None = None) -> dict[str, Any] | None:
-    """Handle one JSON-RPC request or notification and return its response."""
-    # JSON-RPC 2.0 forbids responding to a notification, so id-lessness must
-    # short-circuit before any validation can produce an error response.
-    notification = "id" not in message
+# Methods whose result depends on nothing but the server itself. Each entry stays a callable so a method that reads
+# the installed schemas does that work only when it is actually called.
+# A conforming client sends ``notifications/initialized`` without an id; a malformed id-bearing variant is
+# acknowledged here instead of being left hanging.
+_SELF_CONTAINED_METHODS: dict[str, Callable[[], dict[str, Any]]] = {
+    "notifications/initialized": dict,
+    "initialize": lambda: {
+        "protocolVersion": MCP_PROTOCOL_VERSION,
+        "capabilities": {"tools": {}},
+        "serverInfo": {"name": "bridge", "version": BRIDGE_VERSION},
+    },
+    "tools/list": lambda: {"tools": tool_definitions()},
+}
+
+
+def _invalid_request_error(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the JSON-RPC error for a malformed id-bearing request, or ``None`` when its shape is usable."""
     if message.get("jsonrpc") != "2.0":
-        return None if notification else _error(None, -32600, "invalid request: jsonrpc must be 2.0")
+        return _error(None, -32600, "invalid request: jsonrpc must be 2.0")
     method = message.get("method")
     if not isinstance(method, str) or not method:
-        return None if notification else _error(None, -32600, "invalid request: method must be a non-empty string")
+        return _error(None, -32600, "invalid request: method must be a non-empty string")
     if "params" in message and not isinstance(message["params"], (dict, list)):
-        return None if notification else _error(None, -32600, "invalid request: params must be an object or array")
-    if notification:
-        return None
+        return _error(None, -32600, "invalid request: params must be an object or array")
     request_id = message["id"]
     if (
         isinstance(request_id, bool)
@@ -132,21 +143,23 @@ def handle_message(message: dict[str, Any], *, trusted_workspace: Path | None = 
         and not math.isfinite(request_id)
     ):
         return _error(None, -32600, "invalid request: id must be a string, number, or null")
-    if method == "notifications/initialized":
-        # A conforming client sends this without an id; acknowledge a
-        # malformed id-bearing variant instead of leaving the request hanging.
-        return _result(request_id, {})
-    if method == "initialize":
-        return _result(
-            request_id,
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "bridge", "version": BRIDGE_VERSION},
-            },
-        )
-    if method == "tools/list":
-        return _result(request_id, {"tools": tool_definitions()})
+    return None
+
+
+def handle_message(message: dict[str, Any], *, trusted_workspace: Path | None = None) -> dict[str, Any] | None:
+    """Handle one JSON-RPC request or notification and return its response."""
+    # JSON-RPC 2.0 forbids responding to a notification, so id-lessness short-circuits before any validation or
+    # dispatch: an id-less message can never produce a response, valid or not.
+    if "id" not in message:
+        return None
+    invalid = _invalid_request_error(message)
+    if invalid is not None:
+        return invalid
+    request_id = message["id"]
+    method = str(message["method"])
+    self_contained = _SELF_CONTAINED_METHODS.get(method)
+    if self_contained is not None:
+        return _result(request_id, self_contained())
     if method == "tools/call":
         return _call_tool(request_id, message.get("params"), trusted_workspace or Path.cwd())
     return _error(request_id, -32601, f"method not found: {method}")

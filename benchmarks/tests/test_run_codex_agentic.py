@@ -18,6 +18,11 @@ from _launcher_capability import _private_filesystem_available
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
+# The structural runner is a re-export shim over a package; its seams are reached through
+# the defining module, so patching the shim would leave those bindings untouched.
+from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
+from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
+
 from _bench_common.presentation import LEGEND_CLOSE_RULE, LEGEND_OPEN_RULE  # noqa: E402
 
 #: Task ids read from the shipped suite rather than counted out here, so adding a task to the suite changes the
@@ -866,8 +871,8 @@ def test_agentic_first_strict_admission_failure_keeps_identity_evidence_after_cl
         raise RuntimeError("fixture plugin identity mismatch")
 
     monkeypatch.setattr(agentic, "AGENTIC_ARMS", ("C_strict",))
-    monkeypatch.setattr(agentic._structural, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(agentic._structural, "_install_codemap_plugin", _fail_after_staging)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_install_codemap_plugin", _fail_after_staging)
 
     with pytest.raises(RuntimeError, match="fixture plugin identity mismatch"):
         runner.create_input_snapshot(

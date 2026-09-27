@@ -1005,19 +1005,28 @@ def _review_worktree_checkout(
     return checkout_evidence
 
 
-def _checkout(
-    run: RunCommand,
-    timeout: int,
-    output: Path,
-    payload: dict[str, Any],
-    routing: dict[str, Any],
-    selector: Path,
-    *,
-    checkout_mode: str,
-) -> dict[str, Any]:
-    """Fetch verified target/head refs and prepare mode-specific local PR source."""
+class _HeadFetchRequest(NamedTuple):
+    """One PR-head fetch: which ref to pull, what it must equal, and how to label the record."""
+
+    remote_name: str
+    source_ref: str
+    head_ref: str
+    head_oid: str
+    source_policy: str
+    error_prefix: str
+
+
+class _CheckoutResult(NamedTuple):
+    """How the local PR checkout was performed and whether ``gh pr checkout`` had to be recovered."""
+
+    command: str
+    method: str
+    gh_failure: dict[str, Any] | None
+
+
+def _require_checkout_identity(routing: dict[str, Any], checkout_mode: str) -> None:
+    """Confirm routing carries the identity fields this checkout mode needs before any fetch."""
     url = routing.get("pr_url")
-    number = routing.get("pr_number")
     base_ref = routing.get("base_ref")
     base_oid = routing.get("base_oid")
     head_ref = routing.get("head_ref")
@@ -1028,6 +1037,16 @@ def _checkout(
         raise CollectionError("remediation-requires-open-pr")
     if checkout_mode == "remediate" and (not isinstance(head_ref, str) or not head_ref or head_ref.startswith("-")):
         raise CollectionError("missing-remediation-head-branch")
+
+
+def _resolve_checkout_remote(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    selector: Path,
+    url: Any,
+) -> tuple[str, str]:
+    """Select the git remote matching the PR base and record the selection evidence."""
     remote = _selector(run, timeout, selector, url, identity_only=False)
     remote_name = remote.get("remote")
     remote_url = remote.get("remote_url")
@@ -1036,7 +1055,20 @@ def _checkout(
     _write_json(output / "remote-selection.json", remote)
     (output / "remote-selection-error.txt").write_bytes(b"")
     (output / "remote.txt").write_text(f"{remote_name} {remote_url}\n", encoding="utf-8")
+    return remote_name, remote_url
 
+
+def _fetch_and_verify_target_branch(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    remote_name: str,
+    remote_url: str,
+) -> None:
+    """Refresh the PR's target branch and reject a base that diverged from the PR metadata."""
+    base_ref = routing.get("base_ref")
+    base_oid = routing.get("base_oid")
     base_local = _fetch_exact_ref(run, timeout, remote_name, base_ref, "target-branch-fetch")
     base_matches = base_local == base_oid
     base_is_ancestor = base_matches or _git_is_ancestor(run, timeout, base_oid, base_local)
@@ -1059,188 +1091,205 @@ def _checkout(
     if routing.get("pr_state") == "OPEN" and not base_is_ancestor:
         raise CollectionError(f"target-branch-diverged:{base_local}:{base_oid}")
 
-    use_pull_ref = routing.get("pr_metadata_transport") == "public-https-fallback" and isinstance(number, int)
-    if use_pull_ref:
+
+def _fetch_pr_head_ref(run: RunCommand, timeout: int, output: Path, request: _HeadFetchRequest) -> None:
+    """Fetch one PR head ref, record the receipt, and reject an OID that disagrees with metadata."""
+    head_local = _fetch_exact_ref(
+        run, timeout, request.remote_name, request.source_ref, f"{request.error_prefix}-fetch"
+    )
+    head = {
+        "status": "fetched",
+        "remote": request.remote_name,
+        "head_ref": request.head_ref,
+        "remote_ref": "FETCH_HEAD",
+        "source_ref": request.source_ref,
+        "local_head": head_local,
+        "expected_head_oid": request.head_oid,
+        "head_matches_pr_metadata": head_local == request.head_oid,
+        "command": f"git fetch --no-tags --refmap= {request.remote_name} {request.source_ref}",
+        "source_policy": request.source_policy,
+    }
+    _write_json(output / "pr-head-fetch.json", head)
+    if head_local != request.head_oid:
+        raise CollectionError(f"{request.error_prefix}-oid-mismatch:{head_local}:{request.head_oid}")
+
+
+def _select_and_fetch_pr_head(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    remote_name: str,
+) -> None:
+    """Pick the PR head source this transport allows, then fetch and verify it."""
+    number = routing.get("pr_number")
+    head_ref = routing.get("head_ref")
+    head_oid = routing.get("head_oid")
+    if routing.get("pr_metadata_transport") == "public-https-fallback" and isinstance(number, int):
         source_ref = f"refs/pull/{number}/head"
-        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, "public-pr-head-fetch")
-        head = {
-            "status": "fetched",
-            "remote": remote_name,
-            "head_ref": source_ref,
-            "remote_ref": "FETCH_HEAD",
-            "source_ref": source_ref,
-            "local_head": head_local,
-            "expected_head_oid": head_oid,
-            "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
-            "source_policy": "public fallback verifies GitHub's pull ref against REST metadata before detached local checkout",
-        }
-        _write_json(output / "pr-head-fetch.json", head)
-        if head_local != head_oid:
-            raise CollectionError(f"public-pr-head-oid-mismatch:{head_local}:{head_oid}")
+        request = _HeadFetchRequest(
+            remote_name=remote_name,
+            source_ref=source_ref,
+            head_ref=source_ref,
+            head_oid=head_oid,
+            source_policy="public fallback verifies GitHub's pull ref against REST metadata before detached local checkout",
+            error_prefix="public-pr-head",
+        )
     elif (
         routing.get("same_repo") is True
         and routing.get("pr_state") == "OPEN"
         and isinstance(head_ref, str)
         and head_ref
     ):
-        source_ref = head_ref
-        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, "pr-head-fetch")
-        head = {
-            "status": "fetched",
-            "remote": remote_name,
-            "head_ref": head_ref,
-            "remote_ref": "FETCH_HEAD",
-            "source_ref": source_ref,
-            "local_head": head_local,
-            "expected_head_oid": head_oid,
-            "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
-            "source_policy": "PR branch is refreshed before local checkout and conflict analysis",
-        }
-        _write_json(output / "pr-head-fetch.json", head)
-        if head_local != head_oid:
-            raise CollectionError(f"pr-head-oid-mismatch:{head_local}:{head_oid}")
+        request = _HeadFetchRequest(
+            remote_name=remote_name,
+            source_ref=head_ref,
+            head_ref=head_ref,
+            head_oid=head_oid,
+            source_policy="PR branch is refreshed before local checkout and conflict analysis",
+            error_prefix="pr-head",
+        )
     elif isinstance(number, int):
         # Fork commits may be absent locally; fetch before inspecting checkout overlap, not during checkout.
         source_ref = f"refs/pull/{number}/head"
         historical = routing.get("pr_state") != "OPEN"
-        head_label = "historical-pr-head" if historical else "pr-head"
-        head_local = _fetch_exact_ref(run, timeout, remote_name, source_ref, f"{head_label}-fetch")
-        head = {
-            "status": "fetched",
-            "remote": remote_name,
-            "head_ref": source_ref,
-            "remote_ref": "FETCH_HEAD",
-            "source_ref": source_ref,
-            "local_head": head_local,
-            "expected_head_oid": head_oid,
-            "head_matches_pr_metadata": head_local == head_oid,
-            "command": f"git fetch --no-tags --refmap= {remote_name} {source_ref}",
-            "source_policy": "PR head is refreshed from GitHub's pull ref and verified against metadata before checkout preflight",
-        }
-        _write_json(output / "pr-head-fetch.json", head)
-        if head_local != head_oid:
-            raise CollectionError(f"{head_label}-oid-mismatch:{head_local}:{head_oid}")
+        request = _HeadFetchRequest(
+            remote_name=remote_name,
+            source_ref=source_ref,
+            head_ref=source_ref,
+            head_oid=head_oid,
+            source_policy="PR head is refreshed from GitHub's pull ref and verified against metadata before checkout preflight",
+            error_prefix="historical-pr-head" if historical else "pr-head",
+        )
     else:
         raise CollectionError("missing-pr-checkout-identity")
+    _fetch_pr_head_ref(run, timeout, output, request)
 
-    if checkout_mode == "review":
-        return _review_worktree_checkout(run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid)
 
-    current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
-    _worktree_preflight(
+def _remediation_tracking_branch_checkout(
+    run: RunCommand,
+    timeout: int,
+    routing: dict[str, Any],
+    remote_name: str,
+    error: CollectionError,
+) -> list[str]:
+    """Point the remote-tracking ref at the PR head and return the branch-checkout command."""
+    head_ref = routing.get("head_ref")
+    head_oid = routing.get("head_oid")
+    tracking_ref = f"refs/remotes/{remote_name}/{head_ref}"
+    existing_tracking_head = _git_optional_ref(run, timeout, tracking_ref, "remediation-existing-tracking-branch")
+    if existing_tracking_head is not None and not _git_is_ancestor(run, timeout, existing_tracking_head, head_oid):
+        raise CollectionError("remediation-tracking-branch-diverged", diagnostics=error.diagnostics)
+    _run(
         run,
+        ["git", "update-ref", tracking_ref, head_oid, existing_tracking_head or "0" * 40],
         timeout,
-        output,
-        phase="before-checkout",
-        current_head=current_head,
-        base_oid=base_oid,
-        head_oid=head_oid,
+        "remediation-head-tracking-ref",
     )
-    gh_checkout_argv = ["gh", "pr", "checkout", url]
-    routing["checkout_mode"] = checkout_mode
-    routing["local_checkout_command"] = " ".join(gh_checkout_argv)
-    _write_json(output / "pr-routing.json", routing)
-    checkout_command = "not-run: already at expected PR head"
-    checkout_method = "already-at-head"
+    tracking_head = (
+        _run(run, ["git", "rev-parse", tracking_ref], timeout, "remediation-head-tracking-ref-verify").decode().strip()
+    )
+    if tracking_head != head_oid:
+        raise CollectionError("remediation-head-tracking-ref-mismatch", diagnostics=error.diagnostics)
+    return ["git", "checkout", "--track", "-b", head_ref, f"{remote_name}/{head_ref}"]
+
+
+def _remediation_branch_fallback(
+    run: RunCommand,
+    timeout: int,
+    routing: dict[str, Any],
+    remote_name: str,
+    error: CollectionError,
+) -> list[str]:
+    """Recover a same-repo remediation checkout onto the PR's own branch after ``gh`` failed."""
+    head_ref = routing.get("head_ref")
+    head_oid = routing.get("head_oid")
+    branch_ref = f"refs/heads/{head_ref}"
+    _run(run, ["git", "check-ref-format", branch_ref], timeout, "remediation-head-branch-format")
+    local_branch_head = _git_optional_ref(run, timeout, branch_ref, "remediation-existing-branch")
+    if local_branch_head is not None:
+        if local_branch_head != head_oid:
+            raise CollectionError("remediation-existing-branch-not-at-pr-head", diagnostics=error.diagnostics)
+        return ["git", "checkout", "--no-guess", head_ref]
+    return _remediation_tracking_branch_checkout(run, timeout, routing, remote_name, error)
+
+
+def _gh_checkout_with_fallback(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    payload: dict[str, Any],
+    remote_name: str,
+    gh_checkout_argv: list[str],
+) -> _CheckoutResult:
+    """Run ``gh pr checkout`` and, for a same-repo PR, recover onto its branch when that fails."""
+    base_oid = routing.get("base_oid")
+    head_oid = routing.get("head_oid")
+    # Checkout may alter the worktree before returning an error; retain conservative state first.
+    _write_json(
+        output / "checkout-state.json",
+        {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
+    )
     gh_checkout_failure: dict[str, Any] | None = None
-    needs_checkout = current_head != head_oid or checkout_mode == "remediate"
-    if needs_checkout:
-        # Checkout may alter the worktree before returning an error; retain conservative state first.
-        _write_json(
-            output / "checkout-state.json",
-            {"status": "checkout-command-started", "local_state": "changed-or-unknown"},
-        )
-        try:
-            _run(run, gh_checkout_argv, timeout, "local-pr-checkout")
-            checkout_command = " ".join(gh_checkout_argv)
-            checkout_method = "gh-pr-checkout"
-        except CollectionError as error:
-            gh_checkout_failure = {
-                "command": " ".join(gh_checkout_argv),
-                "code": str(error),
-                "diagnostics": error.diagnostics,
-            }
-            _write_json(
-                output / "checkout-state.json",
-                {
-                    "status": "gh-checkout-failed-recovery-assessment-started",
-                    "local_state": "changed-or-unknown",
-                    "gh_checkout_failure": gh_checkout_failure,
-                },
-            )
-            post_gh_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-gh-checkout-head").decode().strip()
-            _worktree_preflight(
-                run,
-                timeout,
-                output,
-                phase="after-checkout",
-                current_head=post_gh_head,
-                base_oid=base_oid,
-                head_oid=head_oid,
-            )
-            if routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
-                raise CollectionError(
-                    "remediation-gh-checkout-recovery-required", diagnostics=error.diagnostics
-                ) from error
-            else:
-                branch_ref = f"refs/heads/{head_ref}"
-                _run(run, ["git", "check-ref-format", branch_ref], timeout, "remediation-head-branch-format")
-                local_branch_head = _git_optional_ref(run, timeout, branch_ref, "remediation-existing-branch")
-                if local_branch_head is not None:
-                    if local_branch_head != head_oid:
-                        raise CollectionError(
-                            "remediation-existing-branch-not-at-pr-head", diagnostics=error.diagnostics
-                        )
-                    fallback_argv = ["git", "checkout", "--no-guess", head_ref]
-                else:
-                    tracking_ref = f"refs/remotes/{remote_name}/{head_ref}"
-                    existing_tracking_head = _git_optional_ref(
-                        run,
-                        timeout,
-                        tracking_ref,
-                        "remediation-existing-tracking-branch",
-                    )
-                    if existing_tracking_head is not None and not _git_is_ancestor(
-                        run,
-                        timeout,
-                        existing_tracking_head,
-                        head_oid,
-                    ):
-                        raise CollectionError("remediation-tracking-branch-diverged", diagnostics=error.diagnostics)
-                    _run(
-                        run,
-                        ["git", "update-ref", tracking_ref, head_oid, existing_tracking_head or "0" * 40],
-                        timeout,
-                        "remediation-head-tracking-ref",
-                    )
-                    tracking_head = (
-                        _run(
-                            run,
-                            ["git", "rev-parse", tracking_ref],
-                            timeout,
-                            "remediation-head-tracking-ref-verify",
-                        )
-                        .decode()
-                        .strip()
-                    )
-                    if tracking_head != head_oid:
-                        raise CollectionError("remediation-head-tracking-ref-mismatch", diagnostics=error.diagnostics)
-                    fallback_argv = ["git", "checkout", "--track", "-b", head_ref, f"{remote_name}/{head_ref}"]
-                _run(run, fallback_argv, timeout, "remediation-original-branch-checkout")
-                checkout_command = " ".join(fallback_argv)
-                checkout_method = "git-original-branch-fallback"
+    try:
+        _run(run, gh_checkout_argv, timeout, "local-pr-checkout")
+        checkout_command = " ".join(gh_checkout_argv)
+        checkout_method = "gh-pr-checkout"
+    except CollectionError as error:
+        gh_checkout_failure = {
+            "command": " ".join(gh_checkout_argv),
+            "code": str(error),
+            "diagnostics": error.diagnostics,
+        }
         _write_json(
             output / "checkout-state.json",
             {
-                "status": "checkout-command-succeeded-unverified",
+                "status": "gh-checkout-failed-recovery-assessment-started",
                 "local_state": "changed-or-unknown",
                 "gh_checkout_failure": gh_checkout_failure,
             },
         )
-    routing["local_checkout_command"] = checkout_command
-    routing["checkout_method"] = checkout_method
+        post_gh_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "post-gh-checkout-head").decode().strip()
+        _worktree_preflight(
+            run,
+            timeout,
+            output,
+            phase="after-checkout",
+            current_head=post_gh_head,
+            base_oid=base_oid,
+            head_oid=head_oid,
+        )
+        if routing.get("same_repo") is not True or payload.get("isCrossRepository") is not False:
+            raise CollectionError("remediation-gh-checkout-recovery-required", diagnostics=error.diagnostics) from error
+        fallback_argv = _remediation_branch_fallback(run, timeout, routing, remote_name, error)
+        _run(run, fallback_argv, timeout, "remediation-original-branch-checkout")
+        checkout_command = " ".join(fallback_argv)
+        checkout_method = "git-original-branch-fallback"
+    _write_json(
+        output / "checkout-state.json",
+        {
+            "status": "checkout-command-succeeded-unverified",
+            "local_state": "changed-or-unknown",
+            "gh_checkout_failure": gh_checkout_failure,
+        },
+    )
+    return _CheckoutResult(command=checkout_command, method=checkout_method, gh_failure=gh_checkout_failure)
+
+
+def _finalize_checkout_evidence(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    routing: dict[str, Any],
+    checkout_mode: str,
+    result: _CheckoutResult,
+) -> dict[str, Any]:
+    """Read back the worktree state, verify it is at the PR head, and write checkout evidence."""
+    base_oid = routing.get("base_oid")
+    head_oid = routing.get("head_oid")
+    routing["local_checkout_command"] = result.command
+    routing["checkout_method"] = result.method
     _write_json(output / "pr-routing.json", routing)
     branch = _run(run, ["git", "branch", "--show-current"], timeout, "checkout-branch").decode().strip()
     worktree = _run(run, ["git", "rev-parse", "--show-toplevel"], timeout, "checkout-worktree").decode().strip()
@@ -1248,17 +1297,17 @@ def _checkout(
     matches = local_head == head_oid
     checkout_evidence = {
         "status": "checked-out",
-        "pr_number": number,
-        "pr_url": url,
+        "pr_number": routing.get("pr_number"),
+        "pr_url": routing.get("pr_url"),
         "local_branch": branch,
         "worktree": Path(worktree).resolve().as_posix(),
         "local_head": local_head,
         "expected_head": head_oid,
         "head_matches_pr": matches,
         "checkout_mode": checkout_mode,
-        "checkout_method": checkout_method,
-        "command": checkout_command,
-        "gh_checkout_failure": gh_checkout_failure,
+        "checkout_method": result.method,
+        "command": result.command,
+        "gh_checkout_failure": result.gh_failure,
         "target_branch_artifact": "target-branch.json",
         "pr_head_fetch_artifact": "pr-head-fetch.json",
         "diff_source": "verified-local-checkout",
@@ -1288,10 +1337,57 @@ def _checkout(
             "status": "checkout-verified",
             "local_state": "exact-pr-head",
             "local_head": local_head,
-            "gh_checkout_failure": gh_checkout_failure,
+            "gh_checkout_failure": result.gh_failure,
         },
     )
     return checkout_evidence
+
+
+def _checkout(
+    run: RunCommand,
+    timeout: int,
+    output: Path,
+    payload: dict[str, Any],
+    routing: dict[str, Any],
+    selector: Path,
+    *,
+    checkout_mode: str,
+) -> dict[str, Any]:
+    """Fetch verified target/head refs and prepare mode-specific local PR source."""
+    _require_checkout_identity(routing, checkout_mode)
+    url = routing.get("pr_url")
+    base_oid = routing.get("base_oid")
+    head_oid = routing.get("head_oid")
+    remote_name, remote_url = _resolve_checkout_remote(run, timeout, output, selector, url)
+    _fetch_and_verify_target_branch(run, timeout, output, routing, remote_name, remote_url)
+    _select_and_fetch_pr_head(run, timeout, output, routing, remote_name)
+
+    if checkout_mode == "review":
+        return _review_worktree_checkout(run, timeout, output, routing, base_oid=base_oid, head_oid=head_oid)
+
+    current_head = _run(run, ["git", "rev-parse", "HEAD"], timeout, "pre-checkout-head").decode().strip()
+    _worktree_preflight(
+        run,
+        timeout,
+        output,
+        phase="before-checkout",
+        current_head=current_head,
+        base_oid=base_oid,
+        head_oid=head_oid,
+    )
+    gh_checkout_argv = ["gh", "pr", "checkout", url]
+    routing["checkout_mode"] = checkout_mode
+    routing["local_checkout_command"] = " ".join(gh_checkout_argv)
+    _write_json(output / "pr-routing.json", routing)
+    result = _CheckoutResult(
+        command="not-run: already at expected PR head",
+        method="already-at-head",
+        gh_failure=None,
+    )
+    needs_checkout = current_head != head_oid or checkout_mode == "remediate"
+    if needs_checkout:
+        result = _gh_checkout_with_fallback(run, timeout, output, routing, payload, remote_name, gh_checkout_argv)
+    return _finalize_checkout_evidence(run, timeout, output, routing, checkout_mode, result)
 
 
 def _clear_collector_artifacts(output: Path) -> None:

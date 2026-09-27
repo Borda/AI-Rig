@@ -93,6 +93,26 @@ class SessionStats:
         return max(0, self.wall_ms - bucketed)
 
 
+@dataclass(slots=True)
+class TimingAccumulators:
+    """The mutable structures one aggregation run folds every timing row into.
+
+    Bundled so row-level helpers take a single accumulator instead of four
+    positional collections that are only ever mutated in place and always passed
+    on together.
+
+    Examples:
+        >>> acc = TimingAccumulators(pairs=[])
+        >>> acc.sessions, acc.skill_events, acc.counters
+        ({}, [], {'warnings': 0})
+    """
+
+    pairs: list[dict]
+    sessions: dict[str, SessionStats] = field(default_factory=dict)
+    skill_events: list[dict] = field(default_factory=list)
+    counters: dict[str, int] = field(default_factory=lambda: {"warnings": 0})
+
+
 def parse_since(spec: str) -> float:
     """Parse a ``Nu`` duration spec into seconds (``s|m|h|d`` suffix).
 
@@ -366,50 +386,84 @@ def resolve_agent_ms(row: dict, pairs: list[dict]) -> int:
     return best_ms
 
 
-def _accumulate_row(
-    row: dict,
-    pairs: list[dict],
-    sessions: dict[str, SessionStats],
-    skill_events: list[dict],
-    cutoff: float,
-    session_filter: str | None,
-    top_n: int,
-    counters: dict[str, int],
-) -> None:
-    """Fold one timing row into the running totals."""
+def _record_bucket_time(stats: SessionStats, bucket: str, ms: int) -> None:
+    """Add one call's duration to the session total its bucket names.
+
+    An unrecognized bucket contributes to no total, which leaves the time in the
+    session's reasoning residual.
+
+    Examples:
+        >>> s = SessionStats(session_id="s1")
+        >>> _record_bucket_time(s, "skill", 250)
+        >>> s.skill_ms
+        250
+    """
+    if bucket == "local":
+        stats.local_ms += ms
+    elif bucket == "agent":
+        stats.agent_ms += ms
+    elif bucket == "skill":
+        stats.skill_ms += ms
+    elif bucket == "idle":
+        stats.idle_ms += ms
+
+
+def _row_in_scope(row: dict, cutoff: float, session_filter: str | None) -> tuple[str, str, float] | None:
+    """Identify a timing row this run should count, as ``(session_id, raw_ts, ts)``.
+
+    Returns ``None`` for a row missing either identifier, belonging to another
+    session when one is selected, or older than the cutoff.
+
+    Examples:
+        >>> _row_in_scope({"session_id": "s1", "ts": "2030-01-01T00:00:00Z"}, 0.0, None)
+        ('s1', '2030-01-01T00:00:00Z', 1893456000.0)
+        >>> _row_in_scope({"session_id": "s1", "ts": "2030-01-01T00:00:00Z"}, 0.0, "other") is None
+        True
+        >>> _row_in_scope({"ts": "2030-01-01T00:00:00Z"}, 0.0, None) is None
+        True
+    """
     sid = row.get("session_id")
     ts_raw = row.get("ts")
     if not sid or not ts_raw:
-        return
+        return None
     if session_filter and sid != session_filter:
-        return
+        return None
     ts = parse_ts(ts_raw)
     if ts < cutoff:
+        return None
+    return sid, ts_raw, ts
+
+
+def _accumulate_row(
+    row: dict,
+    cutoff: float,
+    session_filter: str | None,
+    top_n: int,
+    acc: TimingAccumulators,
+) -> None:
+    """Fold one timing row into the running totals."""
+    scoped = _row_in_scope(row, cutoff, session_filter)
+    if scoped is None:
         return
+    sid, ts_raw, ts = scoped
     tool = row.get("tool") or "?"
     raw_ms = int(row.get("duration_ms") or 0)
     if tool in _AGENT_TOOLS:
-        ms = resolve_agent_ms(row, pairs)
+        ms = resolve_agent_ms(row, acc.pairs)
     else:
         ms = clip_duration(tool, raw_ms)
     if tool == "Bash" and raw_ms > _BASH_CLIP_MS:
-        counters["warnings"] = counters.get("warnings", 0) + 1
+        acc.counters["warnings"] = acc.counters.get("warnings", 0) + 1
     bucket = classify_bucket(tool)
-    s = sessions.setdefault(sid, SessionStats(session_id=sid))
+    s = acc.sessions.setdefault(sid, SessionStats(session_id=sid))
     s.first_ts = min(s.first_ts, ts - ms / 1000)
     s.last_ts = max(s.last_ts, ts)
-    if bucket == "local":
-        s.local_ms += ms
-    elif bucket == "agent":
-        s.agent_ms += ms
-    elif bucket == "skill":
-        s.skill_ms += ms
+    _record_bucket_time(s, bucket, ms)
+    if bucket == "skill":
         name = extract_skill_name(row.get("args"))
         if name:
             s.skill_names.append(name)
-            skill_events.append({"session": sid, "skill": name, "ms": ms, "ts": ts})
-    elif bucket == "idle":
-        s.idle_ms += ms
+            acc.skill_events.append({"session": sid, "skill": name, "ms": ms, "ts": ts})
     args_snippet = (row.get("args") or "")[:80]
     s.top_calls.append((ms, tool, args_snippet, ts_raw))
     s.top_calls.sort(key=lambda t: -t[0])
@@ -449,13 +503,10 @@ def aggregate_sessions(
         >>> ss["s1"].local_ms
         100
     """
-    pairs = build_invocation_pairs(invocations_path)
-    sessions: dict[str, SessionStats] = {}
-    skill_events: list[dict] = []
-    counters = {"warnings": 0}
+    acc = TimingAccumulators(pairs=build_invocation_pairs(invocations_path))
     for row in iter_jsonl(timings_path):
-        _accumulate_row(row, pairs, sessions, skill_events, cutoff, session_filter, top_n, counters)
-    return sessions, skill_events, counters["warnings"]
+        _accumulate_row(row, cutoff, session_filter, top_n, acc)
+    return acc.sessions, acc.skill_events, acc.counters["warnings"]
 
 
 def _fmt_hms(ms: int) -> str:

@@ -54,6 +54,49 @@ def _read_jsonl(path: str) -> list[dict]:
     return [json.loads(line) for line in lines if line.strip()]
 
 
+def _index_commits_by_id(commits: list[dict]) -> dict[str, dict]:
+    """Index commit-ledger rows by their ``item_id`` string, rejecting duplicates.
+
+    Args:
+        commits: Decoded ``phase2-commits.jsonl`` rows — each ``{"item_id", "sha", "group"}``.
+
+    Returns:
+        Mapping of ``item_id`` (stringified) to its commit row.
+
+    Raises:
+        ValueError: A row is missing ``item_id``/``sha``, or two rows share the same ``item_id``.
+    """
+    by_id: dict[str, dict] = {}
+    for c in commits:
+        if "item_id" not in c or "sha" not in c:
+            raise ValueError(f"commits row missing item_id/sha: {c!r}")
+        cid = str(c["item_id"])
+        if cid in by_id:
+            raise ValueError(f"duplicate item_id in commits ledger: {cid!r}")
+        by_id[cid] = c
+    return by_id
+
+
+def _index_item_files(action_items: list[dict]) -> dict[str, str]:
+    """Index action-item rows by id, resolving each to its ``file`` field.
+
+    Args:
+        action_items: Decoded ``action-items.jsonl`` rows — each carries ``"id"`` and ``"file"``.
+
+    Returns:
+        Mapping of item id (stringified) to its file path (empty string when absent).
+
+    Raises:
+        ValueError: A row is missing ``id``.
+    """
+    item_file: dict[str, str] = {}
+    for a in action_items:
+        if "id" not in a:
+            raise ValueError(f"action-items row missing id: {a!r}")
+        item_file[str(a["id"])] = a.get("file", "")
+    return item_file
+
+
 def build_plan(
     commits: list[dict],
     action_items: list[dict],
@@ -100,19 +143,8 @@ def build_plan(
             ...
         ValueError: duplicate item_id in commits ledger: '1'
     """
-    by_id: dict[str, dict] = {}
-    for c in commits:
-        if "item_id" not in c or "sha" not in c:
-            raise ValueError(f"commits row missing item_id/sha: {c!r}")
-        cid = str(c["item_id"])
-        if cid in by_id:
-            raise ValueError(f"duplicate item_id in commits ledger: {cid!r}")
-        by_id[cid] = c
-    item_file: dict[str, str] = {}
-    for a in action_items:
-        if "id" not in a:
-            raise ValueError(f"action-items row missing id: {a!r}")
-        item_file[str(a["id"])] = a.get("file", "")
+    by_id = _index_commits_by_id(commits)
+    item_file = _index_item_files(action_items)
     plan = []
     seen: set[str] = set()
     for item_id in priority_order:
@@ -125,6 +157,24 @@ def build_plan(
         module = file_module.get(item_file.get(item_id, ""), "")
         plan.append({"item_id": item_id, "sha": commit["sha"], "group": commit.get("group", ""), "module": module})
     return plan
+
+
+def _load_plan_inputs(commits_path: str, action_items_path: str) -> tuple[list[dict], list[dict]] | str:
+    """Read the two JSONL inputs, folding any read/parse failure into a single error string.
+
+    Args:
+        commits_path: Path to ``phase2-commits.jsonl``.
+        action_items_path: Path to ``action-items.jsonl``.
+
+    Returns:
+        ``(commits, action_items)`` on success, or an error string on failure.
+    """
+    try:
+        commits = _read_jsonl(commits_path) if Path(commits_path).is_file() else []
+        action_items = _read_jsonl(action_items_path) if Path(action_items_path).is_file() else []
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"build_merge_plan: failed to read input: {exc}"
+    return commits, action_items
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -151,12 +201,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--codemap-maps", default=None, help="Optional path to codemap-maps.json")
     args = parser.parse_args(argv)
 
-    try:
-        commits = _read_jsonl(args.commits) if Path(args.commits).is_file() else []
-        action_items = _read_jsonl(args.action_items) if Path(args.action_items).is_file() else []
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"build_merge_plan: failed to read input: {exc}", file=sys.stderr)
+    result = _load_plan_inputs(args.commits, args.action_items)
+    if isinstance(result, str):
+        print(result, file=sys.stderr)
         return 1
+    commits, action_items = result
 
     # --codemap-maps is optional and best-effort: Structural prep creates it unconditionally and
     # re-empties it to 0 bytes on any codemap-py query failure, so an empty-but-present file is the

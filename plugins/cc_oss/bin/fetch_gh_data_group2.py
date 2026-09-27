@@ -31,6 +31,7 @@ import json
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from shutil import which
 
@@ -43,6 +44,23 @@ _BRANCH_RE = re.compile(r"^[a-zA-Z0-9._/-]+$")
 # the ``workflow_files`` record. Mirrors the original shell pipeline's
 # ``head -2`` and keeps the response payload bounded.
 _WORKFLOW_FETCH_CAP = 2
+
+
+@dataclass(frozen=True)
+class FetchContext:
+    """Bundles the per-run values every Group 2 fetcher needs.
+
+    Attributes:
+        gh: Absolute path to the ``gh`` binary.
+        owner_repo: ``"<owner>/<repo>"`` slug for API paths.
+        data_file: Output JSONL path; records appended one per line.
+        timeout: Per-``gh``-call subprocess timeout in seconds.
+    """
+
+    gh: str
+    owner_repo: str
+    data_file: Path
+    timeout: int
 
 
 def _resolve(cmd: str) -> str:
@@ -144,46 +162,46 @@ def _append_record(data_file: Path, record: dict[str, object]) -> None:
         fh.write("\n")
 
 
-def _fetch_readme(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
+def _fetch_readme(ctx: FetchContext) -> None:
     """Fetch repo README and append ``readme_content`` record on success."""
-    rc, raw = _gh_call(gh, f"repos/{owner_repo}/readme", ".content", timeout)
+    rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/readme", ".content", ctx.timeout)
     if rc != 0 or not raw:
         return
     text = _decode_b64(raw)
     if not text:
         print("[fetch_gh_data_group2] WARN: README base64 decode failed", file=sys.stderr)
         return
-    _append_record(data_file, {"type": "readme_content", "data": text})
+    _append_record(ctx.data_file, {"type": "readme_content", "data": text})
 
 
-def _fetch_contributing(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
+def _fetch_contributing(ctx: FetchContext) -> None:
     """Fetch root CONTRIBUTING.md and append ``contributing_text`` record on success."""
-    rc, raw = _gh_call(gh, f"repos/{owner_repo}/contents/CONTRIBUTING.md", ".content", timeout)
+    rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/CONTRIBUTING.md", ".content", ctx.timeout)
     if rc != 0 or not raw:
         return
     text = _decode_b64(raw)
     if not text:
         print("[fetch_gh_data_group2] WARN: CONTRIBUTING.md base64 decode failed", file=sys.stderr)
         return
-    _append_record(data_file, {"type": "contributing_text", "data": text})
+    _append_record(ctx.data_file, {"type": "contributing_text", "data": text})
 
 
-def _fetch_github_dir(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
+def _fetch_github_dir(ctx: FetchContext) -> None:
     """Fetch ``.github/`` listing and append ``github_dir`` record on success."""
-    rc, stdout = _gh_call(gh, f"repos/{owner_repo}/contents/.github", "[.[] | .name]", timeout)
+    rc, stdout = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/.github", "[.[] | .name]", ctx.timeout)
     if rc != 0 or not stdout:
         return
     try:
         names = json.loads(stdout)
     except json.JSONDecodeError:
         return
-    _append_record(data_file, {"type": "github_dir", "data": names})
+    _append_record(ctx.data_file, {"type": "github_dir", "data": names})
 
 
-def _fetch_codeowners(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
+def _fetch_codeowners(ctx: FetchContext) -> None:
     """Fetch CODEOWNERS (try ``.github/`` then root) and append ``codeowners_text`` on success."""
     for path in (".github/CODEOWNERS", "CODEOWNERS"):
-        rc, raw = _gh_call(gh, f"repos/{owner_repo}/contents/{path}", ".content", timeout)
+        rc, raw = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/{path}", ".content", ctx.timeout)
         if rc != 0 or not raw:
             continue
         text = _decode_b64(raw)
@@ -193,13 +211,13 @@ def _fetch_codeowners(gh: str, owner_repo: str, data_file: Path, timeout: int) -
                 file=sys.stderr,
             )
             continue
-        _append_record(data_file, {"type": "codeowners_text", "data": text, "source": path})
+        _append_record(ctx.data_file, {"type": "codeowners_text", "data": text, "source": path})
         return
 
 
-def _fetch_branch_protection(gh: str, owner_repo: str, default_branch: str, data_file: Path, timeout: int) -> None:
+def _fetch_branch_protection(ctx: FetchContext, default_branch: str) -> None:
     """Fetch default-branch protection settings; append ``branch_protection`` record on success."""
-    rc, stdout = _gh_call(gh, f"repos/{owner_repo}/branches/{default_branch}/protection", None, timeout)
+    rc, stdout = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/branches/{default_branch}/protection", None, ctx.timeout)
     if rc != 0 or not stdout:
         return
     try:
@@ -207,33 +225,31 @@ def _fetch_branch_protection(gh: str, owner_repo: str, default_branch: str, data
     except json.JSONDecodeError:
         return
     _append_record(
-        data_file,
+        ctx.data_file,
         {"type": "branch_protection", "branch": default_branch, "data": payload},
     )
 
 
-def _fetch_workflows(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
-    """List ``.github/workflows/`` and append both directory + concatenated content records."""
-    rc, stdout = _gh_call(gh, f"repos/{owner_repo}/contents/.github/workflows", "[.[] | .name]", timeout)
-    if rc != 0 or not stdout:
-        return
-    try:
-        names = json.loads(stdout)
-    except json.JSONDecodeError:
-        return
-    if not isinstance(names, list) or not names:
-        return
-    _append_record(data_file, {"type": "workflows_list", "data": names})
+def _fetch_workflow_contents(ctx: FetchContext, names: list[object]) -> list[str]:
+    """Fetch and decode the content of each capped workflow file name.
 
+    Args:
+        ctx: Shared fetch context (gh path, owner/repo, data file, timeout).
+        names: Workflow file names as returned by the directory listing.
+
+    Returns:
+        ``"--- workflow: <name> ---\\n<text>"`` pieces for every name whose
+        content was fetched and decoded successfully.
+    """
     pieces: list[str] = []
     for name in names[:_WORKFLOW_FETCH_CAP]:
         if not isinstance(name, str) or not name:
             continue
         rc, raw = _gh_call(
-            gh,
-            f"repos/{owner_repo}/contents/.github/workflows/{name}",
+            ctx.gh,
+            f"repos/{ctx.owner_repo}/contents/.github/workflows/{name}",
             ".content",
-            timeout,
+            ctx.timeout,
         )
         if rc != 0 or not raw:
             continue
@@ -245,23 +261,40 @@ def _fetch_workflows(gh: str, owner_repo: str, data_file: Path, timeout: int) ->
             )
             continue
         pieces.append(f"--- workflow: {name} ---\n{text}")
+    return pieces
+
+
+def _fetch_workflows(ctx: FetchContext) -> None:
+    """List ``.github/workflows/`` and append both directory + concatenated content records."""
+    rc, stdout = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/.github/workflows", "[.[] | .name]", ctx.timeout)
+    if rc != 0 or not stdout:
+        return
+    try:
+        names = json.loads(stdout)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(names, list) or not names:
+        return
+    _append_record(ctx.data_file, {"type": "workflows_list", "data": names})
+
+    pieces = _fetch_workflow_contents(ctx, names)
     if pieces:
         _append_record(
-            data_file,
+            ctx.data_file,
             {"type": "workflow_files", "data": "\n".join(pieces)},
         )
 
 
-def _fetch_dependabot(gh: str, owner_repo: str, data_file: Path, timeout: int) -> None:
+def _fetch_dependabot(ctx: FetchContext) -> None:
     """Fetch ``.github/dependabot.yml`` metadata; append ``dependabot_config`` record on success."""
-    rc, stdout = _gh_call(gh, f"repos/{owner_repo}/contents/.github/dependabot.yml", None, timeout)
+    rc, stdout = _gh_call(ctx.gh, f"repos/{ctx.owner_repo}/contents/.github/dependabot.yml", None, ctx.timeout)
     if rc != 0 or not stdout:
         return
     try:
         payload = json.loads(stdout)
     except json.JSONDecodeError:
         return
-    _append_record(data_file, {"type": "dependabot_config", "data": payload})
+    _append_record(ctx.data_file, {"type": "dependabot_config", "data": payload})
 
 
 def _validate_args(owner: str, repo: str, default_branch: str, data_file: str) -> str | None:
@@ -359,15 +392,15 @@ def main(argv: list[str] | None = None) -> int:
 
     owner_repo = f"{args.owner}/{args.repo}"
     gh = _resolve("gh")
-    timeout = args.timeout
+    ctx = FetchContext(gh=gh, owner_repo=owner_repo, data_file=data_file, timeout=args.timeout)
 
-    _fetch_readme(gh, owner_repo, data_file, timeout)
-    _fetch_contributing(gh, owner_repo, data_file, timeout)
-    _fetch_github_dir(gh, owner_repo, data_file, timeout)
-    _fetch_codeowners(gh, owner_repo, data_file, timeout)
-    _fetch_branch_protection(gh, owner_repo, args.default_branch, data_file, timeout)
-    _fetch_workflows(gh, owner_repo, data_file, timeout)
-    _fetch_dependabot(gh, owner_repo, data_file, timeout)
+    _fetch_readme(ctx)
+    _fetch_contributing(ctx)
+    _fetch_github_dir(ctx)
+    _fetch_codeowners(ctx)
+    _fetch_branch_protection(ctx, args.default_branch)
+    _fetch_workflows(ctx)
+    _fetch_dependabot(ctx)
 
     print(f"[fetch_gh_data_group2] appended records → {data_file}", file=sys.stderr)
     return 0

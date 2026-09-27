@@ -49,7 +49,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, NamedTuple
 
 # Preserve sibling-helper imports when callers load this executable by file path.
 SHARED_DIRECTORY = Path(__file__).resolve().parent
@@ -1591,19 +1591,33 @@ def _validate_code_remediate_production_lifecycle(
         raise SystemExit("code-remediate-production-lifecycle-containment-mismatch")
 
 
-def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -> None:
-    """Validate bounded work buckets, ownership, and parallel approval metadata."""
-    resolution_scope = metadata.get("resolution_scope")
-    if not isinstance(resolution_scope, dict):
-        raise SystemExit("code-remediate-missing-resolution-scope-metadata")
-    selected_indexes = resolution_scope.get("selected_indexes")
-    if not isinstance(selected_indexes, list) or not all(isinstance(item, int) for item in selected_indexes):
-        raise SystemExit("code-remediate-invalid-selected-indexes")
+# ``NamedTuple``, not ``@dataclass``: callers load this validator by file path without registering it in
+# ``sys.modules``, and under ``from __future__ import annotations`` every field annotation reaches
+# ``dataclasses._is_type``, which dereferences ``sys.modules[cls.__module__]`` and raises on the missing entry.
+class _WorkplanApproval(NamedTuple):
+    """Parallel-approval fields declared by the resolution workplan metadata."""
 
-    workplan = metadata.get("resolution_workplan")
-    if not isinstance(workplan, dict):
-        raise SystemExit("code-remediate-missing-resolution-workplan")
+    status: str
+    source: str
+    response: str
+    bucket_plan_sha256: str
+    approved_plan_sha256: str | None
 
+
+class _WorkBucketObservations(NamedTuple):
+    """Counts and identifiers accumulated while validating the declared work buckets."""
+
+    indexes: list[int]
+    parent_groups: int
+    specialist_groups: int
+    singleton_specialist_groups: int
+    verifier_groups: int
+    parallel_bucket_count: int
+    bucket_ids: set[str]
+
+
+def _validate_workplan_scalar_fields(workplan: dict[str, Any]) -> None:
+    """Check the workplan's group counters, execution mode, and approval-state scalars."""
     for key in (
         "groups_total",
         "parent_owned_groups",
@@ -1617,23 +1631,19 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
 
     if workplan.get("max_items_per_bucket") != 5:
         raise SystemExit("code-remediate-invalid-resolution-workplan:max_items_per_bucket")
-    execution_mode = workplan.get("execution_mode")
-    if execution_mode not in {"parent-owned", "sequential-specialists", "parallel-specialists"}:
+    if workplan.get("execution_mode") not in {"parent-owned", "sequential-specialists", "parallel-specialists"}:
         raise SystemExit("code-remediate-invalid-resolution-workplan:execution_mode")
     for key in ("parallel_eligible", "parallel_approval_required", "parallel_prompt_presented"):
         if not isinstance(workplan.get(key), bool):
             raise SystemExit(f"code-remediate-invalid-resolution-workplan:{key}")
-    approval_status = workplan.get("parallel_approval_status")
-    if approval_status not in {"not-required", "approved", "parent-only"}:
+    if workplan.get("parallel_approval_status") not in {"not-required", "approved", "parent-only"}:
         raise SystemExit("code-remediate-invalid-resolution-workplan:parallel_approval_status")
-    approval_source = workplan.get("parallel_approval_source")
-    if approval_source not in {"not-required", "explicit-input", "user-prompt"}:
+    if workplan.get("parallel_approval_source") not in {"not-required", "explicit-input", "user-prompt"}:
         raise SystemExit("code-remediate-invalid-resolution-workplan:parallel_approval_source")
 
-    work_buckets = workplan.get("work_buckets")
-    if not isinstance(work_buckets, list):
-        raise SystemExit("code-remediate-invalid-resolution-workplan:work_buckets")
 
+def _validate_workplan_paths_and_digests(workplan: dict[str, Any]) -> _WorkplanApproval:
+    """Check the declared artifact paths and digests, returning the parallel-approval fields."""
     workplan_path_value = workplan.get("workplan_path")
     if not isinstance(workplan_path_value, str) or not workplan_path_value.strip():
         raise SystemExit("code-remediate-invalid-resolution-workplan:workplan_path")
@@ -1655,35 +1665,70 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
         not isinstance(approved_plan_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", approved_plan_sha256) is None
     ):
         raise SystemExit("code-remediate-approved-plan-digest-invalid")
+    return _WorkplanApproval(
+        status=workplan["parallel_approval_status"],
+        source=workplan["parallel_approval_source"],
+        response=approval_response,
+        bucket_plan_sha256=bucket_plan_sha256,
+        approved_plan_sha256=approved_plan_sha256,
+    )
+
+
+def _validate_workplan_shape(metadata: dict[str, Any]) -> tuple[dict[str, Any], list[int], _WorkplanApproval]:
+    """Check resolution-scope and workplan metadata shape before any bucket is inspected."""
+    resolution_scope = metadata.get("resolution_scope")
+    if not isinstance(resolution_scope, dict):
+        raise SystemExit("code-remediate-missing-resolution-scope-metadata")
+    selected_indexes = resolution_scope.get("selected_indexes")
+    if not isinstance(selected_indexes, list) or not all(isinstance(item, int) for item in selected_indexes):
+        raise SystemExit("code-remediate-invalid-selected-indexes")
+
+    workplan = metadata.get("resolution_workplan")
+    if not isinstance(workplan, dict):
+        raise SystemExit("code-remediate-missing-resolution-workplan")
+
+    _validate_workplan_scalar_fields(workplan)
+
+    if not isinstance(workplan.get("work_buckets"), list):
+        raise SystemExit("code-remediate-invalid-resolution-workplan:work_buckets")
+
+    approval = _validate_workplan_paths_and_digests(workplan)
 
     if len(selected_indexes) != len(set(selected_indexes)):
         raise SystemExit("code-remediate-selected-indexes-not-unique")
+    return workplan, selected_indexes, approval
 
-    if not selected_indexes:
-        if work_buckets or workplan["groups_total"] != 0:
-            raise SystemExit("code-remediate-empty-selection-has-work-buckets")
-        return
 
+def _validate_workplan_evidence_files(
+    out_dir: Path,
+    workplan: dict[str, Any],
+    approval: _WorkplanApproval,
+) -> dict[str, Any]:
+    """Match the on-disk bucket plan and approval record against the declared metadata."""
     bucket_plan_path = out_dir / "work-bucket-plan.json"
     approval_path = out_dir / "parallel-approval.json"
     bucket_plan = _load_json(bucket_plan_path)
-    approval = _load_json(approval_path)
-    if bucket_plan.get("work_buckets") != work_buckets:
+    approval_record = _load_json(approval_path)
+    if bucket_plan.get("work_buckets") != workplan["work_buckets"]:
         raise SystemExit("code-remediate-work-bucket-plan-content-mismatch")
     if bucket_plan.get("schema_version") not in {1, 2}:
         raise SystemExit("code-remediate-work-bucket-plan-content-mismatch")
     observed_plan_sha256 = hashlib.sha256(bucket_plan_path.read_bytes()).hexdigest()
-    if bucket_plan_sha256 != observed_plan_sha256:
+    if approval.bucket_plan_sha256 != observed_plan_sha256:
         raise SystemExit("code-remediate-work-bucket-plan-digest-mismatch")
     expected_approval = {
-        "plan_sha256": bucket_plan_sha256,
+        "plan_sha256": approval.bucket_plan_sha256,
         "prompt_presented": workplan["parallel_prompt_presented"],
-        "response": approval_response,
-        "source": approval_source,
+        "response": approval.response,
+        "source": approval.source,
     }
-    if approval != expected_approval:
+    if approval_record != expected_approval:
         raise SystemExit("code-remediate-parallel-approval-evidence-mismatch")
+    return bucket_plan
 
+
+def _validate_workplan_aggregate_counts(workplan: dict[str, Any], work_buckets: list[Any]) -> None:
+    """Cross-check the workplan's declared group counters against the bucket list length."""
     if workplan["groups_total"] <= 0:
         raise SystemExit("code-remediate-selected-items-without-workplan-groups")
     if workplan["unassigned_selected_items"] != 0:
@@ -1695,6 +1740,87 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
     if workplan["groups_total"] != len(work_buckets):
         raise SystemExit("code-remediate-work-bucket-count-mismatch")
 
+
+def _validate_work_bucket_fields(bucket: Any, position: int, bucket_ids: set[str]) -> list[int]:
+    """Check one bucket's scalar fields and index list, returning its selected indexes."""
+    if not isinstance(bucket, dict):
+        raise SystemExit(f"code-remediate-work-bucket-not-object:{position}")
+    for key in ("bucket_id", "owner", "verifier", "context_pack_path", "execution_mode"):
+        value = bucket.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise SystemExit(f"code-remediate-work-bucket-invalid-{key}:{position}")
+    bucket_id = bucket["bucket_id"]
+    if bucket_id in bucket_ids:
+        raise SystemExit("code-remediate-work-bucket-id-duplicate")
+    bucket_ids.add(bucket_id)
+    if bucket["owner"] not in CODE_REMEDIATE_WORK_BUCKET_OWNERS:
+        raise SystemExit(f"code-remediate-work-bucket-owner-unsupported:{position}")
+    if bucket["verifier"] not in CODE_REMEDIATE_WORK_BUCKET_VERIFIERS:
+        raise SystemExit(f"code-remediate-work-bucket-verifier-unsupported:{position}")
+    bucket_indexes = bucket.get("selected_indexes")
+    if not isinstance(bucket_indexes, list) or not all(isinstance(item, int) for item in bucket_indexes):
+        raise SystemExit(f"code-remediate-work-bucket-invalid-selected-indexes:{position}")
+    if not bucket_indexes:
+        raise SystemExit(f"code-remediate-work-bucket-empty:{position}")
+    if len(bucket_indexes) > 5:
+        raise SystemExit("code-remediate-work-bucket-too-large")
+    if len(bucket_indexes) != len(set(bucket_indexes)):
+        raise SystemExit("code-remediate-work-bucket-duplicate-index")
+    return bucket_indexes
+
+
+def _validate_bucket_owned_paths_and_mode(bucket: dict[str, Any], position: int) -> tuple[list[str], str]:
+    """Check one bucket's owned-path list and execution mode, returning both."""
+    owned_paths = bucket.get("owned_paths")
+    if (
+        not isinstance(owned_paths, list)
+        or not owned_paths
+        or not all(isinstance(path, str) and path.strip() for path in owned_paths)
+    ):
+        raise SystemExit(f"code-remediate-work-bucket-invalid-owned-paths:{position}")
+    bucket_mode = bucket["execution_mode"]
+    if bucket_mode not in {"parent", "sequential", "parallel"}:
+        raise SystemExit(f"code-remediate-work-bucket-invalid-execution-mode:{position}")
+    return owned_paths, bucket_mode
+
+
+def _validate_specialist_context_pack(bucket: dict[str, Any], out_dir: Path) -> None:
+    """Confirm a specialist bucket's context pack exists inside the run directory."""
+    context_path = Path(bucket["context_pack_path"])
+    resolved_context_path = context_path if context_path.is_absolute() else out_dir / context_path
+    try:
+        resolved_context_path.resolve().relative_to(out_dir.resolve())
+    except ValueError as error:
+        raise SystemExit("code-remediate-specialist-context-outside-run-directory") from error
+    if not resolved_context_path.is_file():
+        raise SystemExit("code-remediate-specialist-context-pack-missing")
+
+
+def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths: set[str]) -> None:
+    """Reject unsafe or overlapping owned paths for one parallel bucket."""
+    bucket_owned_paths: set[str] = set()
+    for path in owned_paths:
+        raw_path = path.replace("\\", "/").strip()
+        if raw_path.startswith("/") or any(part == ".." for part in raw_path.split("/")):
+            raise SystemExit("code-remediate-parallel-owned-path-invalid")
+        if any(character in raw_path for character in "*?[]"):
+            raise SystemExit("code-remediate-parallel-owned-path-pattern-forbidden")
+        normalized_path = PurePosixPath(raw_path).as_posix().removeprefix("./").rstrip("/").casefold()
+        if not normalized_path or normalized_path == "." or normalized_path in bucket_owned_paths:
+            raise SystemExit("code-remediate-parallel-owned-path-invalid")
+        bucket_owned_paths.add(normalized_path)
+        if any(
+            normalized_path == existing
+            or normalized_path.startswith(f"{existing}/")
+            or existing.startswith(f"{normalized_path}/")
+            for existing in parallel_owned_paths
+        ):
+            raise SystemExit("code-remediate-parallel-ownership-overlap")
+        parallel_owned_paths.add(normalized_path)
+
+
+def _validate_work_buckets(work_buckets: list[Any], out_dir: Path) -> _WorkBucketObservations:
+    """Validate every declared work bucket and accumulate the observed ownership counts."""
     observed_indexes: list[int] = []
     observed_parent_groups = 0
     observed_specialist_groups = 0
@@ -1704,41 +1830,10 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
     parallel_bucket_count = 0
     bucket_ids: set[str] = set()
     for position, bucket in enumerate(work_buckets):
-        if not isinstance(bucket, dict):
-            raise SystemExit(f"code-remediate-work-bucket-not-object:{position}")
-        for key in ("bucket_id", "owner", "verifier", "context_pack_path", "execution_mode"):
-            value = bucket.get(key)
-            if not isinstance(value, str) or not value.strip():
-                raise SystemExit(f"code-remediate-work-bucket-invalid-{key}:{position}")
-        bucket_id = bucket["bucket_id"]
-        if bucket_id in bucket_ids:
-            raise SystemExit("code-remediate-work-bucket-id-duplicate")
-        bucket_ids.add(bucket_id)
-        if bucket["owner"] not in CODE_REMEDIATE_WORK_BUCKET_OWNERS:
-            raise SystemExit(f"code-remediate-work-bucket-owner-unsupported:{position}")
-        if bucket["verifier"] not in CODE_REMEDIATE_WORK_BUCKET_VERIFIERS:
-            raise SystemExit(f"code-remediate-work-bucket-verifier-unsupported:{position}")
-        bucket_indexes = bucket.get("selected_indexes")
-        if not isinstance(bucket_indexes, list) or not all(isinstance(item, int) for item in bucket_indexes):
-            raise SystemExit(f"code-remediate-work-bucket-invalid-selected-indexes:{position}")
-        if not bucket_indexes:
-            raise SystemExit(f"code-remediate-work-bucket-empty:{position}")
-        if len(bucket_indexes) > 5:
-            raise SystemExit("code-remediate-work-bucket-too-large")
-        if len(bucket_indexes) != len(set(bucket_indexes)):
-            raise SystemExit("code-remediate-work-bucket-duplicate-index")
+        bucket_indexes = _validate_work_bucket_fields(bucket, position, bucket_ids)
         observed_indexes.extend(bucket_indexes)
 
-        owned_paths = bucket.get("owned_paths")
-        if (
-            not isinstance(owned_paths, list)
-            or not owned_paths
-            or not all(isinstance(path, str) and path.strip() for path in owned_paths)
-        ):
-            raise SystemExit(f"code-remediate-work-bucket-invalid-owned-paths:{position}")
-        bucket_mode = bucket["execution_mode"]
-        if bucket_mode not in {"parent", "sequential", "parallel"}:
-            raise SystemExit(f"code-remediate-work-bucket-invalid-execution-mode:{position}")
+        owned_paths, bucket_mode = _validate_bucket_owned_paths_and_mode(bucket, position)
         if bucket["owner"] == "parent":
             if bucket_mode != "parent":
                 raise SystemExit("code-remediate-parent-work-bucket-mode-invalid")
@@ -1752,94 +1847,123 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
                 rationale = bucket.get("singleton_rationale")
                 if not isinstance(rationale, str) or not rationale.strip():
                     raise SystemExit("code-remediate-singleton-specialist-rationale-missing")
-            context_path = Path(bucket["context_pack_path"])
-            resolved_context_path = context_path if context_path.is_absolute() else out_dir / context_path
-            try:
-                resolved_context_path.resolve().relative_to(out_dir.resolve())
-            except ValueError as error:
-                raise SystemExit("code-remediate-specialist-context-outside-run-directory") from error
-            if not resolved_context_path.is_file():
-                raise SystemExit("code-remediate-specialist-context-pack-missing")
+            _validate_specialist_context_pack(bucket, out_dir)
         if bucket["verifier"] != "none":
             observed_verifier_groups += 1
         if bucket_mode == "parallel":
             parallel_bucket_count += 1
-            bucket_owned_paths: set[str] = set()
-            for path in owned_paths:
-                raw_path = path.replace("\\", "/").strip()
-                if raw_path.startswith("/") or any(part == ".." for part in raw_path.split("/")):
-                    raise SystemExit("code-remediate-parallel-owned-path-invalid")
-                if any(character in raw_path for character in "*?[]"):
-                    raise SystemExit("code-remediate-parallel-owned-path-pattern-forbidden")
-                normalized_path = PurePosixPath(raw_path).as_posix().removeprefix("./").rstrip("/").casefold()
-                if not normalized_path or normalized_path == "." or normalized_path in bucket_owned_paths:
-                    raise SystemExit("code-remediate-parallel-owned-path-invalid")
-                bucket_owned_paths.add(normalized_path)
-                if any(
-                    normalized_path == existing
-                    or normalized_path.startswith(f"{existing}/")
-                    or existing.startswith(f"{normalized_path}/")
-                    for existing in parallel_owned_paths
-                ):
-                    raise SystemExit("code-remediate-parallel-ownership-overlap")
-                parallel_owned_paths.add(normalized_path)
+            _validate_parallel_bucket_paths(owned_paths, parallel_owned_paths)
 
-    if sorted(observed_indexes) != sorted(selected_indexes) or len(observed_indexes) != len(set(observed_indexes)):
+    return _WorkBucketObservations(
+        indexes=observed_indexes,
+        parent_groups=observed_parent_groups,
+        specialist_groups=observed_specialist_groups,
+        singleton_specialist_groups=singleton_specialist_groups,
+        verifier_groups=observed_verifier_groups,
+        parallel_bucket_count=parallel_bucket_count,
+        bucket_ids=bucket_ids,
+    )
+
+
+def _validate_workplan_coverage_counts(
+    workplan: dict[str, Any],
+    work_buckets: list[Any],
+    selected_indexes: list[int],
+    observed: _WorkBucketObservations,
+) -> None:
+    """Reconcile observed bucket coverage and ownership counts against the declared workplan."""
+    if sorted(observed.indexes) != sorted(selected_indexes) or len(observed.indexes) != len(set(observed.indexes)):
         raise SystemExit("code-remediate-work-bucket-coverage-mismatch")
     if len(selected_indexes) <= 5 and len(work_buckets) != 1:
         raise SystemExit("code-remediate-low-volume-fanout")
     if (
         len(selected_indexes) > 1
         and len(work_buckets) == len(selected_indexes)
-        and singleton_specialist_groups == len(work_buckets)
+        and observed.singleton_specialist_groups == len(work_buckets)
     ):
         raise SystemExit("code-remediate-one-specialist-per-finding")
-    if observed_parent_groups != workplan["parent_owned_groups"]:
+    if observed.parent_groups != workplan["parent_owned_groups"]:
         raise SystemExit("code-remediate-workplan-parent-count-mismatch")
-    if observed_specialist_groups != workplan["specialist_owned_groups"]:
+    if observed.specialist_groups != workplan["specialist_owned_groups"]:
         raise SystemExit("code-remediate-workplan-specialist-count-mismatch")
-    if observed_verifier_groups != workplan["verifier_groups"]:
+    if observed.verifier_groups != workplan["verifier_groups"]:
         raise SystemExit("code-remediate-workplan-verifier-count-mismatch")
 
+
+def _validate_parallel_specialists_approval(
+    workplan: dict[str, Any],
+    approval: _WorkplanApproval,
+    observed: _WorkBucketObservations,
+) -> None:
+    """Check approval evidence for a plan that dispatches parallel specialists."""
+    if observed.parallel_bucket_count < 2 or not workplan["parallel_eligible"]:
+        raise SystemExit("code-remediate-parallel-plan-not-eligible")
+    if not workplan["parallel_approval_required"]:
+        raise SystemExit("code-remediate-parallel-approval-not-required")
+    if approval.status != "approved":
+        raise SystemExit("code-remediate-parallel-approval-missing")
+    if approval.source not in {"explicit-input", "user-prompt"}:
+        raise SystemExit("code-remediate-parallel-approval-source-missing")
+    if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
+        raise SystemExit("code-remediate-parallel-prompt-not-presented")
+    if approval.response != "approve" or approval.approved_plan_sha256 != approval.bucket_plan_sha256:
+        raise SystemExit("code-remediate-parallel-approved-plan-not-bound")
+
+
+def _validate_eligible_fanout_approval(workplan: dict[str, Any], approval: _WorkplanApproval) -> None:
+    """Check the parent-only approval record for a fanout-eligible plan that stayed sequential."""
+    if not workplan["parallel_approval_required"] or approval.status != "parent-only":
+        raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
+    if approval.source not in {"explicit-input", "user-prompt"}:
+        raise SystemExit("code-remediate-eligible-fanout-approval-source-missing")
+    if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
+        raise SystemExit("code-remediate-eligible-fanout-prompt-not-presented")
+    if approval.response != "parent-only" or approval.approved_plan_sha256 is not None:
+        raise SystemExit("code-remediate-parent-only-response-invalid")
+
+
+def _validate_unneeded_parallel_approval(workplan: dict[str, Any], approval: _WorkplanApproval) -> None:
+    """Reject approval evidence recorded for a plan that never became fanout-eligible."""
+    if workplan["parallel_approval_required"] or approval.status != "not-required":
+        raise SystemExit("code-remediate-unneeded-parallel-approval")
+    if approval.source != "not-required" or workplan["parallel_prompt_presented"]:
+        raise SystemExit("code-remediate-unneeded-parallel-approval-source")
+    if approval.response != "not-required" or approval.approved_plan_sha256 is not None:
+        raise SystemExit("code-remediate-unneeded-parallel-approval-response")
+
+
+def _validate_workplan_execution_mode_approval(
+    workplan: dict[str, Any],
+    approval: _WorkplanApproval,
+    observed: _WorkBucketObservations,
+) -> None:
+    """Route approval validation by execution mode and check mode/ownership consistency."""
+    execution_mode = workplan["execution_mode"]
     if execution_mode == "parallel-specialists":
-        if parallel_bucket_count < 2 or not workplan["parallel_eligible"]:
-            raise SystemExit("code-remediate-parallel-plan-not-eligible")
-        if not workplan["parallel_approval_required"]:
-            raise SystemExit("code-remediate-parallel-approval-not-required")
-        if approval_status != "approved":
-            raise SystemExit("code-remediate-parallel-approval-missing")
-        if approval_source not in {"explicit-input", "user-prompt"}:
-            raise SystemExit("code-remediate-parallel-approval-source-missing")
-        if approval_source == "user-prompt" and not workplan["parallel_prompt_presented"]:
-            raise SystemExit("code-remediate-parallel-prompt-not-presented")
-        if approval_response != "approve" or approved_plan_sha256 != bucket_plan_sha256:
-            raise SystemExit("code-remediate-parallel-approved-plan-not-bound")
-    elif parallel_bucket_count:
+        _validate_parallel_specialists_approval(workplan, approval, observed)
+    elif observed.parallel_bucket_count:
         raise SystemExit("code-remediate-parallel-bucket-mode-mismatch")
     elif workplan["parallel_eligible"]:
-        if not workplan["parallel_approval_required"] or approval_status != "parent-only":
-            raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
-        if approval_source not in {"explicit-input", "user-prompt"}:
-            raise SystemExit("code-remediate-eligible-fanout-approval-source-missing")
-        if approval_source == "user-prompt" and not workplan["parallel_prompt_presented"]:
-            raise SystemExit("code-remediate-eligible-fanout-prompt-not-presented")
-        if approval_response != "parent-only" or approved_plan_sha256 is not None:
-            raise SystemExit("code-remediate-parent-only-response-invalid")
+        _validate_eligible_fanout_approval(workplan, approval)
     else:
-        if workplan["parallel_approval_required"] or approval_status != "not-required":
-            raise SystemExit("code-remediate-unneeded-parallel-approval")
-        if approval_source != "not-required" or workplan["parallel_prompt_presented"]:
-            raise SystemExit("code-remediate-unneeded-parallel-approval-source")
-        if approval_response != "not-required" or approved_plan_sha256 is not None:
-            raise SystemExit("code-remediate-unneeded-parallel-approval-response")
+        _validate_unneeded_parallel_approval(workplan, approval)
 
-    if execution_mode == "parent-owned" and observed_specialist_groups:
+    if execution_mode == "parent-owned" and observed.specialist_groups:
         raise SystemExit("code-remediate-parent-owned-plan-has-specialists")
-    if execution_mode == "sequential-specialists" and observed_specialist_groups == 0:
+    if execution_mode == "sequential-specialists" and observed.specialist_groups == 0:
         raise SystemExit("code-remediate-sequential-plan-has-no-specialists")
 
+
+def _validate_workplan_document(
+    out_dir: Path,
+    workplan: dict[str, Any],
+    approval: _WorkplanApproval,
+    observed: _WorkBucketObservations,
+    bucket_plan: dict[str, Any],
+) -> None:
+    """Check the rendered resolution workplan document against the validated plan metadata."""
     workplan_path = out_dir / "resolution-workplan.md"
-    declared_path = Path(workplan_path_value)
+    declared_path = Path(workplan["workplan_path"])
     if declared_path.name != "resolution-workplan.md":
         raise SystemExit("code-remediate-workplan-path-name-invalid")
     _require_file_sections(
@@ -1851,15 +1975,33 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
     for required_text in ("owner", "verifier", "context", "closure", "approval"):
         if required_text not in workplan_text:
             raise SystemExit(f"code-remediate-workplan-missing-{required_text}")
-    if bucket_plan_sha256 not in workplan_text or approval_response not in workplan_text:
+    if approval.bucket_plan_sha256 not in workplan_text or approval.response not in workplan_text:
         raise SystemExit("code-remediate-workplan-approval-binding-missing")
-    for bucket_id in bucket_ids:
+    for bucket_id in observed.bucket_ids:
         if bucket_id.casefold() not in workplan_text:
             raise SystemExit("code-remediate-workplan-bucket-id-missing")
-    if execution_mode == "parallel-specialists":
+    if workplan["execution_mode"] == "parallel-specialists":
         if bucket_plan.get("schema_version") != 2 or bucket_plan.get("consumer") != "code-remediate":
             raise SystemExit("code-remediate-production-lifecycle-required")
-        _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, bucket_plan_sha256)
+        _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, approval.bucket_plan_sha256)
+
+
+def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -> None:
+    """Validate bounded work buckets, ownership, and parallel approval metadata."""
+    workplan, selected_indexes, approval = _validate_workplan_shape(metadata)
+    work_buckets = workplan["work_buckets"]
+
+    if not selected_indexes:
+        if work_buckets or workplan["groups_total"] != 0:
+            raise SystemExit("code-remediate-empty-selection-has-work-buckets")
+        return
+
+    bucket_plan = _validate_workplan_evidence_files(out_dir, workplan, approval)
+    _validate_workplan_aggregate_counts(workplan, work_buckets)
+    observed = _validate_work_buckets(work_buckets, out_dir)
+    _validate_workplan_coverage_counts(workplan, work_buckets, selected_indexes, observed)
+    _validate_workplan_execution_mode_approval(workplan, approval, observed)
+    _validate_workplan_document(out_dir, workplan, approval, observed, bucket_plan)
 
 
 def _count_out_of_scope_items(action_text: str) -> int:
@@ -2981,34 +3123,187 @@ def _validate_release_draft(text: str) -> None:
         raise SystemExit("release-draft-comparison-missing")
 
 
-def validate(skill: str, out_dir: Path, result_path: Path) -> None:
-    """Validate shared workflow evidence and the selected skill's completion contract."""
-    result = _load_json(result_path)
-    _require_result_shape(result)
-    _validate_confidence_gaps(result, skill)
-    gates = _validate_gates(out_dir)
-    _validate_code_review_unavailable_gates(result, gates, skill)
-    _reconcile_result_with_gates(result, gates)
-    current_contract = (
-        result_path.name == "result.candidate.json"
-        or skill == "challenge-resolve"
-        or (skill == "code-review" and result.get("schema_version") == 3)
+def _require_code_remediate_pr_artifacts(pr_dir: Path, result: dict[str, Any]) -> None:
+    """Confirm every PR artifact the remediation contract requires is present on disk."""
+    required_pr_artifacts = (
+        "pr.json",
+        "pr-routing.json",
+        "remote-selection.json",
+        "target-branch.json",
+        "local-checkout.json",
+        "comments.json",
+        "reviews.json",
+        "review-threads.json",
+        "unresolved-review-threads.json",
+        "online-review-summary.json",
+        "merge-base.txt",
+        "merge-tree.txt",
+        "merge-resolution.json",
     )
-    _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)
+    if result.get("schema_version") in {2, 3}:
+        required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
+    for filename in required_pr_artifacts:
+        if not (pr_dir / filename).exists():
+            raise SystemExit(f"missing-code-remediate-pr-artifact:{filename}")
 
+
+def _validate_code_remediate_pr_routing(
+    routing: dict[str, Any],
+    remote_selection: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Check routing metadata forbids forced checkout and names the expected checkout command."""
+    if routing.get("local_checkout_required") is not True:
+        raise SystemExit("code-remediate-pr-routing-local-checkout-not-required")
+    if "--force" in str(routing.get("local_checkout_command", "")):
+        raise SystemExit("code-remediate-pr-routing-force-checkout-forbidden")
+    if "force_policy" not in routing:
+        raise SystemExit("code-remediate-pr-routing-force-policy-missing")
+    if result.get("schema_version") not in {2, 3}:
+        expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
+        if routing.get("pr_metadata_transport") == "public-https-fallback":
+            expected_checkout = (
+                f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
+                f"{routing.get('pr_number')}/head"
+            )
+        if routing.get("local_checkout_command") != expected_checkout:
+            raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
+
+
+def _validate_code_remediate_pr_checkout_state(checkout: dict[str, Any]) -> None:
+    """Check the recorded local checkout is unforced and pinned to the PR head."""
+    if checkout.get("status") != "checked-out":
+        raise SystemExit("code-remediate-pr-local-checkout-not-checked-out")
+    if "--force" in str(checkout.get("command", "")):
+        raise SystemExit("code-remediate-pr-local-checkout-force-forbidden")
+    if "force_policy" not in checkout:
+        raise SystemExit("code-remediate-pr-local-checkout-force-policy-missing")
+    if checkout.get("head_matches_pr") is not True:
+        raise SystemExit("code-remediate-pr-local-checkout-head-mismatch")
+
+
+def _validate_code_remediate_unavailable_threads(
+    pr_dir: Path,
+    out_dir: Path,
+    thread_error: Any,
+    metadata: dict[str, Any],
+) -> None:
+    """Check the recorded evidence and documented gaps when review threads were unavailable."""
+    error_path = pr_dir / "review-threads-error.txt"
+    if not isinstance(thread_error, str) or not error_path.is_file():
+        raise SystemExit("code-remediate-pr-review-thread-error-missing")
+    if error_path.read_text(encoding="utf-8").strip() != thread_error:
+        raise SystemExit("code-remediate-pr-review-thread-error-mismatch")
+    if _load_json_list(pr_dir / "review-threads.json") or _load_json_list(pr_dir / "unresolved-review-threads.json"):
+        raise SystemExit("code-remediate-pr-review-thread-unavailable-must-be-empty")
+    confidence_gaps = metadata.get("confidence_gaps")
+    if not isinstance(confidence_gaps, list) or PR_THREAD_CONFIDENCE_GAP not in confidence_gaps:
+        raise SystemExit("code-remediate-pr-review-thread-confidence-gap-missing")
+    action_items = (out_dir / "action-items.md").read_text(encoding="utf-8").casefold()
+    if "review-thread" not in action_items or "unavailable" not in action_items:
+        raise SystemExit("code-remediate-pr-review-thread-triage-gap-missing")
+
+
+def _validate_code_remediate_pr_review_threads(
+    pr_dir: Path,
+    out_dir: Path,
+    online_summary: dict[str, Any],
+    metadata: dict[str, Any],
+) -> None:
+    """Reconcile recorded review-thread status against its error evidence and triage notes."""
+    thread_status = online_summary.get("review_threads_status")
+    thread_error = online_summary.get("review_threads_error")
+    if thread_status == "available":
+        if thread_error is not None or (pr_dir / "review-threads-error.txt").exists():
+            raise SystemExit("code-remediate-pr-review-thread-status-contradiction")
+    elif thread_status == "unavailable":
+        _validate_code_remediate_unavailable_threads(pr_dir, out_dir, thread_error, metadata)
+    else:
+        raise SystemExit("code-remediate-pr-review-thread-status-invalid")
+
+
+def _validate_code_remediate_pr_triage_notes(pr_dir: Path, out_dir: Path) -> None:
+    """Check the merge-prestage sections and the triage statuses recorded in action items."""
+    if (pr_dir / "head-files").exists():
+        raise SystemExit("code-remediate-pr-raw-head-file-snapshots-forbidden")
+    _require_file_sections(
+        out_dir / "merge-prestage.md",
+        [
+            "PR And Target Refresh",
+            "Clean PR Implementation Context",
+            "Target Branch Context",
+            "Conflict Risk",
+            "Resolution Strategy",
+            "Merge Execution",
+        ],
+    )
+    action_text = (out_dir / "action-items.md").read_text(encoding="utf-8").lower()
+    required = (
+        "valid",
+        "resolved",
+        "duplicate",
+        "stale",
+        "out-of-scope",
+        "already-fixed",
+        "already-applied",
+        "needs-clarification",
+    )
+    if not any(status in action_text for status in required):
+        raise SystemExit("code-remediate-pr-triage-status-missing")
+
+
+def _validate_code_remediate_pr_artifacts(result: dict[str, Any], metadata: dict[str, Any], out_dir: Path) -> None:
+    """Validate the PR-mode artifact set ``collect_pr`` produces for a remediation run."""
+    pr_dir = out_dir / "pr"
+    if metadata.get("mode") != "pr" and not pr_dir.exists():
+        return
+    _require_code_remediate_pr_artifacts(pr_dir, result)
+    routing = _load_json(pr_dir / "pr-routing.json")
+    pr_payload = _load_json(pr_dir / "pr.json")
+    remote_selection = _load_json(pr_dir / "remote-selection.json")
+    target_branch = _load_json(pr_dir / "target-branch.json")
+    checkout = _load_json(pr_dir / "local-checkout.json")
+    online_summary = _load_json(pr_dir / "online-review-summary.json")
+    _validate_pr_fallback_confidence(online_summary, result, metadata)
+    if not isinstance(pr_payload.get("body"), str):
+        raise SystemExit("code-remediate-pr-description-missing")
+    _validate_code_remediate_pr_routing(routing, remote_selection, result)
+    if target_branch.get("status") != "fetched":
+        raise SystemExit("code-remediate-pr-target-branch-not-fetched")
+    _validate_code_remediate_pr_checkout_state(checkout)
+    _validate_code_remediate_pr_identity(routing, remote_selection, target_branch, checkout)
+    if result.get("schema_version") in {2, 3}:
+        _validate_code_remediate_pr_source(pr_dir, routing, target_branch, checkout)
+    _validate_code_remediate_pr_review_threads(pr_dir, out_dir, online_summary, metadata)
+    _validate_code_remediate_merge_resolution(
+        metadata,
+        pr_dir,
+        target_branch,
+        routing.get("head_oid") if result.get("schema_version") in {2, 3} else None,
+    )
+    _validate_code_remediate_pr_triage_notes(pr_dir, out_dir)
+
+
+def _is_chunked_coordinator(skill: str, result: dict[str, Any]) -> bool:
+    """Report whether this result is a chunked challenge-resolve coordinator run."""
+    scope = result["metadata"].get("challenge_scope") if skill == "challenge-resolve" else None
+    return (
+        skill == "challenge-resolve"
+        and result["metadata"].get("challenge_table_contract_version") == 1
+        and isinstance(scope, dict)
+        and scope.get("mode") == "chunked"
+    )
+
+
+def _validate_required_artifacts(skill: str, out_dir: Path, result: dict[str, Any]) -> None:
+    """Check every report section and JSONL artifact the selected skill's contract requires."""
     requirement = SKILL_REQUIREMENTS.get(skill)
     if requirement is None:
         raise SystemExit(f"unsupported-skill:{skill}")
     files = requirement.get("files", {})
     if not isinstance(files, dict):
         raise SystemExit(f"invalid-requirement:{skill}")
-    scope = result["metadata"].get("challenge_scope") if skill == "challenge-resolve" else None
-    chunked_coordinator = (
-        skill == "challenge-resolve"
-        and result["metadata"].get("challenge_table_contract_version") == 1
-        and isinstance(scope, dict)
-        and scope.get("mode") == "chunked"
-    )
+    chunked_coordinator = _is_chunked_coordinator(skill, result)
     for filename, sections in files.items():
         if chunked_coordinator and filename == "loop-ledger.json":
             continue
@@ -3025,6 +3320,46 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
         raise SystemExit(f"invalid-jsonl-requirement:{skill}")
     for filename in jsonl_files:
         _validate_jsonl(out_dir / str(filename))
+
+
+def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path) -> None:
+    """Run the code-remediate contract checks over scope, workplan, tables, and PR evidence."""
+    metadata = result.get("metadata", {})
+    if not isinstance(metadata, dict):
+        raise SystemExit("code-remediate-missing-metadata")
+    resolution_scope = metadata.get("resolution_scope")
+    if not isinstance(resolution_scope, dict):
+        raise SystemExit("code-remediate-missing-resolution-scope-metadata")
+    _validate_code_remediate_scope_selection(metadata, out_dir)
+    _validate_code_remediate_workplan(metadata, out_dir)
+    _validate_code_remediate_out_of_scope_confirmation(metadata, out_dir)
+    _validate_code_remediate_report_intake(result, out_dir)
+    _validate_code_remediate_final_resolution_table(metadata, out_dir)
+    _validate_code_remediate_pr_relevance(metadata, out_dir)
+    _validate_code_remediate_unresolved_summary(metadata, out_dir)
+    scope_text = (out_dir / "resolution-scope.md").read_text(encoding="utf-8").lower()
+    for required_text in ("selectable", "selected", "deferred"):
+        if required_text not in scope_text:
+            raise SystemExit(f"code-remediate-scope-missing-{required_text}")
+    _validate_code_remediate_pr_artifacts(result, metadata, out_dir)
+
+
+def validate(skill: str, out_dir: Path, result_path: Path) -> None:
+    """Validate shared workflow evidence and the selected skill's completion contract."""
+    result = _load_json(result_path)
+    _require_result_shape(result)
+    _validate_confidence_gaps(result, skill)
+    gates = _validate_gates(out_dir)
+    _validate_code_review_unavailable_gates(result, gates, skill)
+    _reconcile_result_with_gates(result, gates)
+    current_contract = (
+        result_path.name == "result.candidate.json"
+        or skill == "challenge-resolve"
+        or (skill == "code-review" and result.get("schema_version") == 3)
+    )
+    _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)
+
+    _validate_required_artifacts(skill, out_dir, result)
     _validate_confidence_recovery(result, skill)
     if skill == "release":
         _validate_release_communication(result, out_dir, gates)
@@ -3037,137 +3372,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
             current_result=True,
         )
     if skill == "code-remediate":
-        metadata = result.get("metadata", {})
-        if not isinstance(metadata, dict):
-            raise SystemExit("code-remediate-missing-metadata")
-        resolution_scope = metadata.get("resolution_scope")
-        if not isinstance(resolution_scope, dict):
-            raise SystemExit("code-remediate-missing-resolution-scope-metadata")
-        _validate_code_remediate_scope_selection(metadata, out_dir)
-        _validate_code_remediate_workplan(metadata, out_dir)
-        _validate_code_remediate_out_of_scope_confirmation(metadata, out_dir)
-        _validate_code_remediate_report_intake(result, out_dir)
-        _validate_code_remediate_final_resolution_table(metadata, out_dir)
-        _validate_code_remediate_pr_relevance(metadata, out_dir)
-        _validate_code_remediate_unresolved_summary(metadata, out_dir)
-        scope_text = (out_dir / "resolution-scope.md").read_text(encoding="utf-8").lower()
-        for required_text in ("selectable", "selected", "deferred"):
-            if required_text not in scope_text:
-                raise SystemExit(f"code-remediate-scope-missing-{required_text}")
-        pr_dir = out_dir / "pr"
-        if metadata.get("mode") == "pr" or pr_dir.exists():
-            required_pr_artifacts = (
-                "pr.json",
-                "pr-routing.json",
-                "remote-selection.json",
-                "target-branch.json",
-                "local-checkout.json",
-                "comments.json",
-                "reviews.json",
-                "review-threads.json",
-                "unresolved-review-threads.json",
-                "online-review-summary.json",
-                "merge-base.txt",
-                "merge-tree.txt",
-                "merge-resolution.json",
-            )
-            if result.get("schema_version") in {2, 3}:
-                required_pr_artifacts += ("pr-head-fetch.json", "worktree-preflight.json")
-            for filename in required_pr_artifacts:
-                if not (pr_dir / filename).exists():
-                    raise SystemExit(f"missing-code-remediate-pr-artifact:{filename}")
-            routing = _load_json(pr_dir / "pr-routing.json")
-            pr_payload = _load_json(pr_dir / "pr.json")
-            remote_selection = _load_json(pr_dir / "remote-selection.json")
-            target_branch = _load_json(pr_dir / "target-branch.json")
-            checkout = _load_json(pr_dir / "local-checkout.json")
-            online_summary = _load_json(pr_dir / "online-review-summary.json")
-            _validate_pr_fallback_confidence(online_summary, result, metadata)
-            if not isinstance(pr_payload.get("body"), str):
-                raise SystemExit("code-remediate-pr-description-missing")
-            if routing.get("local_checkout_required") is not True:
-                raise SystemExit("code-remediate-pr-routing-local-checkout-not-required")
-            if "--force" in str(routing.get("local_checkout_command", "")):
-                raise SystemExit("code-remediate-pr-routing-force-checkout-forbidden")
-            if "force_policy" not in routing:
-                raise SystemExit("code-remediate-pr-routing-force-policy-missing")
-            if result.get("schema_version") not in {2, 3}:
-                expected_checkout = f"gh pr checkout {routing.get('pr_number')}"
-                if routing.get("pr_metadata_transport") == "public-https-fallback":
-                    expected_checkout = (
-                        f"git checkout --detach refs/remotes/{remote_selection.get('remote')}/pull/"
-                        f"{routing.get('pr_number')}/head"
-                    )
-                if routing.get("local_checkout_command") != expected_checkout:
-                    raise SystemExit("code-remediate-pr-routing-checkout-command-invalid")
-            if target_branch.get("status") != "fetched":
-                raise SystemExit("code-remediate-pr-target-branch-not-fetched")
-            if checkout.get("status") != "checked-out":
-                raise SystemExit("code-remediate-pr-local-checkout-not-checked-out")
-            if "--force" in str(checkout.get("command", "")):
-                raise SystemExit("code-remediate-pr-local-checkout-force-forbidden")
-            if "force_policy" not in checkout:
-                raise SystemExit("code-remediate-pr-local-checkout-force-policy-missing")
-            if checkout.get("head_matches_pr") is not True:
-                raise SystemExit("code-remediate-pr-local-checkout-head-mismatch")
-            _validate_code_remediate_pr_identity(routing, remote_selection, target_branch, checkout)
-            if result.get("schema_version") in {2, 3}:
-                _validate_code_remediate_pr_source(pr_dir, routing, target_branch, checkout)
-            thread_status = online_summary.get("review_threads_status")
-            thread_error = online_summary.get("review_threads_error")
-            if thread_status == "available":
-                if thread_error is not None or (pr_dir / "review-threads-error.txt").exists():
-                    raise SystemExit("code-remediate-pr-review-thread-status-contradiction")
-            elif thread_status == "unavailable":
-                error_path = pr_dir / "review-threads-error.txt"
-                if not isinstance(thread_error, str) or not error_path.is_file():
-                    raise SystemExit("code-remediate-pr-review-thread-error-missing")
-                if error_path.read_text(encoding="utf-8").strip() != thread_error:
-                    raise SystemExit("code-remediate-pr-review-thread-error-mismatch")
-                if _load_json_list(pr_dir / "review-threads.json") or _load_json_list(
-                    pr_dir / "unresolved-review-threads.json"
-                ):
-                    raise SystemExit("code-remediate-pr-review-thread-unavailable-must-be-empty")
-                confidence_gaps = metadata.get("confidence_gaps")
-                if not isinstance(confidence_gaps, list) or PR_THREAD_CONFIDENCE_GAP not in confidence_gaps:
-                    raise SystemExit("code-remediate-pr-review-thread-confidence-gap-missing")
-                action_items = (out_dir / "action-items.md").read_text(encoding="utf-8").casefold()
-                if "review-thread" not in action_items or "unavailable" not in action_items:
-                    raise SystemExit("code-remediate-pr-review-thread-triage-gap-missing")
-            else:
-                raise SystemExit("code-remediate-pr-review-thread-status-invalid")
-            _validate_code_remediate_merge_resolution(
-                metadata,
-                pr_dir,
-                target_branch,
-                routing.get("head_oid") if result.get("schema_version") in {2, 3} else None,
-            )
-            if (pr_dir / "head-files").exists():
-                raise SystemExit("code-remediate-pr-raw-head-file-snapshots-forbidden")
-            _require_file_sections(
-                out_dir / "merge-prestage.md",
-                [
-                    "PR And Target Refresh",
-                    "Clean PR Implementation Context",
-                    "Target Branch Context",
-                    "Conflict Risk",
-                    "Resolution Strategy",
-                    "Merge Execution",
-                ],
-            )
-            action_text = (out_dir / "action-items.md").read_text(encoding="utf-8").lower()
-            required = (
-                "valid",
-                "resolved",
-                "duplicate",
-                "stale",
-                "out-of-scope",
-                "already-fixed",
-                "already-applied",
-                "needs-clarification",
-            )
-            if not any(status in action_text for status in required):
-                raise SystemExit("code-remediate-pr-triage-status-missing")
+        _validate_code_remediate_skill(result, out_dir)
 
 
 def main() -> int:

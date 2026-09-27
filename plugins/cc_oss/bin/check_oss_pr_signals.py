@@ -374,6 +374,32 @@ def collect_signals(
     )
 
 
+def _load_diff_file(path: str, max_size: int) -> tuple[str, str | None]:
+    """Read a ``--diff-file`` snapshot, guarding against oversized or unreadable files.
+
+    An unreadable or oversized snapshot is non-fatal — this branch is designed to
+    degrade to the ``gh`` subprocess path (see module docstring), not abort the run.
+
+    Args:
+        path: ``--diff-file`` path (must be non-empty — caller checks first).
+        max_size: Maximum allowed file size in bytes.
+
+    Returns:
+        ``(diff_text, warning)`` — ``diff_text`` is ``""`` when the file is too large
+        or unreadable; ``warning`` is the fully-formatted stderr message to print in
+        that case, or ``None`` when the file was read successfully.
+    """
+    try:
+        diff_path = Path(path)
+        size = diff_path.stat().st_size
+        if size > max_size:
+            return "", f"check_oss_pr_signals: --diff-file too large ({size} bytes) — falling back to gh"
+        return diff_path.read_text(encoding="utf-8"), None
+    except OSError as exc:
+        # Unreadable snapshot is non-fatal — fall back to the gh subprocess path.
+        return "", f"check_oss_pr_signals: --diff-file unreadable ({exc}); falling back to gh"
+
+
 def main(argv: list[str] | None = None) -> int:
     """Collect pull-request signals and return the process status.
 
@@ -432,19 +458,9 @@ def main(argv: list[str] | None = None) -> int:
 
     diff_text = ""
     if args.diff_file:
-        try:
-            diff_path = Path(args.diff_file)
-            size = diff_path.stat().st_size
-            if size > _MAX_DIFF_FILE_SIZE:
-                print(
-                    f"check_oss_pr_signals: --diff-file too large ({size} bytes) — falling back to gh",
-                    file=sys.stderr,
-                )
-            else:
-                diff_text = diff_path.read_text(encoding="utf-8")
-        except OSError as exc:
-            # Unreadable snapshot is non-fatal — fall back to the gh subprocess path.
-            print(f"check_oss_pr_signals: --diff-file unreadable ({exc}); falling back to gh", file=sys.stderr)
+        diff_text, warning = _load_diff_file(args.diff_file, _MAX_DIFF_FILE_SIZE)
+        if warning:
+            print(warning, file=sys.stderr)
 
     signals = collect_signals(
         clean_args=args.clean_args,

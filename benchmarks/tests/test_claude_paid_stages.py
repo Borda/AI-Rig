@@ -16,6 +16,11 @@ BENCHMARKS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BENCHMARKS))
 
 from _bench_common import paid_lifecycle  # noqa: E402
+from _bench_common.artifact_hashing import runner_sha256  # noqa: E402
+
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched.
+from _bench_claude.agentic import paid as agentic_paid  # noqa: E402
 
 
 def _readcrop_row() -> dict[str, Any]:
@@ -117,11 +122,11 @@ def test_paid_readcrop_requires_fresh_directory_and_matching_scope_token_before_
     dispatched: list[dict[str, Any]] = []
     index_path = tmp_path / "index.json"
     index_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(script_run_agentic, "load_claude_readcrop_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(script_run_agentic, "resolve_readcrop_scope", lambda *_args: scope)
-    monkeypatch.setattr(script_run_agentic, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(script_run_agentic, "find_index", lambda _repo, index: Path(index))
-    monkeypatch.setattr(script_run_agentic, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
+    monkeypatch.setattr(agentic_paid, "load_claude_readcrop_tasks", lambda *_args: loaded)
+    monkeypatch.setattr(agentic_paid, "resolve_readcrop_scope", lambda *_args: scope)
+    monkeypatch.setattr(agentic_paid, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
+    monkeypatch.setattr(agentic_paid, "find_index", lambda _repo, index: Path(index))
+    monkeypatch.setattr(agentic_paid, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
 
     with pytest.raises(ValueError, match=r"received: stale") as stale:
         script_run_agentic.main(
@@ -200,8 +205,8 @@ def test_paid_scope_hashes_the_path_launcher_used_by_headless_claude(
         path = plugin / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(relative, encoding="utf-8")
-    monkeypatch.setattr(script_run_agentic, "_validate_parity_runtime", lambda *_args: None)
-    monkeypatch.setattr(script_run_agentic, "_repository_fingerprint", lambda _path: "fixture-commit")
+    monkeypatch.setattr(agentic_paid, "_validate_parity_runtime", lambda *_args: None)
+    monkeypatch.setattr(agentic_paid, "_repository_fingerprint", lambda _path: "fixture-commit")
     monkeypatch.setattr(script_run_agentic.ModelRunner, "_codemap_plugin_dir", staticmethod(lambda: str(plugin)))
 
     scope = script_run_agentic._resolve_claude_paid_scope(
@@ -235,11 +240,11 @@ def test_paid_patch_scope_and_snapshot_close_over_shared_runtime_bytes(
     contract = SimpleNamespace(task_id="PT-01", baseline_commit="a" * 40, provider_binding=lambda: {})
     loaded = [{"task": {"id": "PT-01"}, "contract": contract}]
     coordinates = {"PT-01": {"baseline_commit": "a" * 40, "index_sha256": "b" * 64, "raw_index_sha256": "b" * 64}}
-    monkeypatch.setattr(script_run_agentic, "_validate_parity_runtime", lambda *_args: None)
-    monkeypatch.setattr(script_run_agentic, "_repository_fingerprint", lambda _path: "fixture-commit")
+    monkeypatch.setattr(agentic_paid, "_validate_parity_runtime", lambda *_args: None)
+    monkeypatch.setattr(agentic_paid, "_repository_fingerprint", lambda _path: "fixture-commit")
     monkeypatch.setattr(script_run_agentic.ModelRunner, "_codemap_plugin_dir", staticmethod(lambda: str(plugin)))
-    monkeypatch.setattr(script_run_agentic, "load_claude_patch_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(script_run_agentic, "validate_patch_index_bundle", lambda *_args: coordinates)
+    monkeypatch.setattr(agentic_paid, "load_claude_patch_tasks", lambda *_args: loaded)
+    monkeypatch.setattr(agentic_paid, "validate_patch_index_bundle", lambda *_args: coordinates)
 
     scope = script_run_agentic._resolve_claude_paid_scope(
         base_scope={
@@ -255,16 +260,30 @@ def test_paid_patch_scope_and_snapshot_close_over_shared_runtime_bytes(
     )
     files = script_run_agentic._patch_snapshot_files()
 
-    assert set(files) == {
-        "claude-runner.py",
-        "paid-lifecycle.py",
-        "edit-patch-contracts.py",
-        "mutation-isolation.py",
-        "patch-index-locks.json",
+    package_dir = BENCHMARKS / "_bench_claude" / "agentic"
+    expected_package_entries = {
+        f"claude-runner/{module.relative_to(package_dir).as_posix()}"
+        for module in package_dir.rglob("*.py")
+        if "__pycache__" not in module.parts
     }
+    assert expected_package_entries, "the agentic runner package must contribute snapshot entries"
+    assert (
+        set(files)
+        == {
+            "claude-runner.py",
+            "paid-lifecycle.py",
+            "edit-patch-contracts.py",
+            "mutation-isolation.py",
+            "patch-index-locks.json",
+        }
+        | expected_package_entries
+    )
     assert scope["patch_test_runtime"]["invocation"] == "absolute pytest executable"
     hashes = scope["implementation_sha256"]
-    assert hashes["claude_runner"] == script_run_agentic._sha256_file(files["claude-runner.py"])
+    # The entrypoint is a re-export shim, so its own bytes prove nothing about the code that ran;
+    # the recorded identity covers the shim together with every module of its package.
+    assert hashes["claude_runner"] == runner_sha256(files["claude-runner.py"], package_dir)
+    assert hashes["claude_runner"] != script_run_agentic._sha256_file(files["claude-runner.py"])
     assert hashes["paid_lifecycle"] == script_run_agentic._sha256_file(files["paid-lifecycle.py"])
     assert hashes["edit_patch_contracts"] == script_run_agentic._sha256_file(files["edit-patch-contracts.py"])
     assert hashes["mutation_isolation"] == script_run_agentic._sha256_file(files["mutation-isolation.py"])
@@ -288,11 +307,11 @@ def test_paid_fix_multi_dispatches_the_shared_executable_contract_once(
     dispatched: list[dict[str, Any]] = []
     index_path = tmp_path / "index.json"
     index_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(script_run_agentic, "load_claude_fix_multi_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(script_run_agentic, "resolve_claude_fix_multi_scope", lambda *_args: scope)
-    monkeypatch.setattr(script_run_agentic, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(script_run_agentic, "find_index", lambda _repo, index: Path(index))
-    monkeypatch.setattr(script_run_agentic, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
+    monkeypatch.setattr(agentic_paid, "load_claude_fix_multi_tasks", lambda *_args: loaded)
+    monkeypatch.setattr(agentic_paid, "resolve_claude_fix_multi_scope", lambda *_args: scope)
+    monkeypatch.setattr(agentic_paid, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
+    monkeypatch.setattr(agentic_paid, "find_index", lambda _repo, index: Path(index))
+    monkeypatch.setattr(agentic_paid, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
 
     script_run_agentic.main(
         repo_path=tmp_path,
@@ -327,11 +346,11 @@ def test_paid_patch_dispatches_the_shared_executable_contract_once(
     dispatched: list[dict[str, Any]] = []
     index_path = tmp_path / "index.json"
     index_path.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(script_run_agentic, "load_claude_patch_tasks", lambda *_args: loaded)
-    monkeypatch.setattr(script_run_agentic, "resolve_claude_patch_scope", lambda *_args: scope)
-    monkeypatch.setattr(script_run_agentic, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
-    monkeypatch.setattr(script_run_agentic, "find_index", lambda _repo, index: Path(index))
-    monkeypatch.setattr(script_run_agentic, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
+    monkeypatch.setattr(agentic_paid, "load_claude_patch_tasks", lambda *_args: loaded)
+    monkeypatch.setattr(agentic_paid, "resolve_claude_patch_scope", lambda *_args: scope)
+    monkeypatch.setattr(agentic_paid, "_resolve_claude_paid_scope", lambda **_kwargs: scope)
+    monkeypatch.setattr(agentic_paid, "find_index", lambda _repo, index: Path(index))
+    monkeypatch.setattr(agentic_paid, "run_claude_paid_stage", lambda **kwargs: dispatched.append(kwargs))
 
     script_run_agentic.main(
         repo_path=tmp_path,
@@ -541,9 +560,9 @@ def test_paid_readcrop_fake_stream_persists_native_events_and_null_tool_usage(
             """Return synthetic native events and elapsed time without starting Claude."""
             return native_events, 0.25, None
 
-    monkeypatch.setattr(script_run_agentic, "ModelRunner", FakeRunner)
-    monkeypatch.setattr(script_run_agentic, "_claude_readcrop_workspace", _workspace)
-    monkeypatch.setattr(script_run_agentic, "_source_pair_unchanged", lambda *_args: True)
+    monkeypatch.setattr(agentic_paid, "ModelRunner", FakeRunner)
+    monkeypatch.setattr(agentic_paid, "_claude_readcrop_workspace", _workspace)
+    monkeypatch.setattr(agentic_paid, "_source_pair_unchanged", lambda *_args: True)
 
     run_dir = tmp_path / "run"
     script_run_agentic.run_claude_paid_stage(
@@ -625,9 +644,9 @@ def test_paid_claude_rows_forward_to_the_shared_rich_renderer(
                 None,
             )
 
-    monkeypatch.setattr(script_run_agentic, "ModelRunner", FakeRunner)
-    monkeypatch.setattr(script_run_agentic, "_claude_readcrop_workspace", _workspace)
-    monkeypatch.setattr(script_run_agentic, "_source_pair_unchanged", lambda *_args: True)
+    monkeypatch.setattr(agentic_paid, "ModelRunner", FakeRunner)
+    monkeypatch.setattr(agentic_paid, "_claude_readcrop_workspace", _workspace)
+    monkeypatch.setattr(agentic_paid, "_source_pair_unchanged", lambda *_args: True)
     monkeypatch.setattr(
         script_run_agentic.presentation,
         "print_arm_row",
@@ -917,10 +936,10 @@ def test_paid_executable_stage_preserves_canonical_diff_oracle_and_workspace_cle
             events.append({"type": "result", "subtype": "success", "usage": {"input_tokens": 12, "output_tokens": 3}})
             return events, 0.25, None
 
-    monkeypatch.setattr(script_run_agentic, "ModelRunner", FakeRunner)
-    monkeypatch.setattr(script_run_agentic, "create_executable_agent_workspace", _create_workspace)
-    monkeypatch.setattr(script_run_agentic, executor_name, _execute)
-    monkeypatch.setattr(script_run_agentic, "_source_pair_unchanged", lambda *_args: True)
+    monkeypatch.setattr(agentic_paid, "ModelRunner", FakeRunner)
+    monkeypatch.setattr(agentic_paid, "create_executable_agent_workspace", _create_workspace)
+    monkeypatch.setattr(agentic_paid, executor_name, _execute)
+    monkeypatch.setattr(agentic_paid, "_source_pair_unchanged", lambda *_args: True)
 
     run_dir = tmp_path / "run"
     script_run_agentic.run_claude_paid_stage(

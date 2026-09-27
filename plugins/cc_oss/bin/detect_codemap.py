@@ -140,26 +140,17 @@ def _resolve_proj(proj_override: str | None, root: Path) -> str:
     return proj_override or root.name
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point.
+def _parse_args(args: list[str]) -> tuple[dict, str | None]:
+    """Parse the manual argv flags into a fields dict, validating ``--proj``.
 
     Args:
-        argv: Argument list (defaults to sys.argv[1:]).
+        args: Argument list to parse (``-h``/``--help`` already handled by the caller).
 
     Returns:
-        Exit code.
+        ``(fields, None)`` on success, or ``(fields, error_message)`` when ``--proj``
+        contains a path separator or is ``.``/``..``. ``fields`` keys: ``prefix``,
+        ``force_off``, ``strict``, ``arguments``, ``proj_override``, ``idx_dir``.
     """
-    args = list(sys.argv[1:] if argv is None else argv)
-
-    # Honour only ``-h/--help`` via argparse; every other flag flows through the manual
-    # loop below, which ignores unknowns and keeps the legacy exit-2-on-missing-prefix
-    # contract (argparse's native errors would change both behaviors).
-    if args in (["-h"], ["--help"]):
-        argparse.ArgumentParser(
-            prog="detect_codemap.py",
-            description="Detect codemap plugin availability, index presence, and currency.",
-        ).parse_args(["-h"])
-
     prefix: str | None = None
     force_off = False
     strict = False
@@ -196,22 +187,39 @@ def main(argv: list[str] | None = None) -> int:
         else:
             i += 1
 
+    fields = {
+        "prefix": prefix,
+        "force_off": force_off,
+        "strict": strict,
+        "arguments": arguments,
+        "proj_override": proj_override,
+        "idx_dir": idx_dir,
+    }
+
     if proj_override and ("/" in proj_override or "\\" in proj_override or proj_override in {".", ".."}):
-        print(f"detect_codemap: --proj must be a bare project name, not a path: {proj_override!r}", file=sys.stderr)
-        return 2
+        return fields, f"detect_codemap: --proj must be a bare project name, not a path: {proj_override!r}"
 
-    if not prefix:
-        print(
-            'Usage: detect_codemap.py --prefix <name> [--force-off] [--strict] [--arguments "$ARGUMENTS"]',
-            file=sys.stderr,
-        )
-        return 2
+    return fields, None
 
-    # Derive the two modes from the skill's raw argument text, so the caller passes one argv
-    # slot instead of interpolating $ARGUMENTS into shell tests. shlex, not str.split: a
-    # plain split leaves `--keep "use --codemap later"` looking like a --codemap request,
-    # because the quotes stay attached to their neighbours instead of grouping the value.
-    # An explicit --force-off/--strict still wins; this only adds.
+
+def _apply_arguments_flags(arguments: str | None, force_off: bool, strict: bool) -> tuple[bool, bool]:
+    """Derive ``--no-codemap``/``--codemap`` from the skill's raw ``--arguments`` blob.
+
+    Lets the caller hand over one argv slot instead of interpolating ``$ARGUMENTS``
+    into shell tests, where an embedded quote breaks the block at parse time. shlex,
+    not ``str.split``: a plain split leaves ``--keep "use --codemap later"`` looking
+    like a ``--codemap`` request, because the quotes stay attached to their
+    neighbours instead of grouping the value. An explicit ``--force-off``/``--strict``
+    still wins; this only adds.
+
+    Args:
+        arguments: Raw skill argument text, or ``None`` when ``--arguments`` wasn't passed.
+        force_off: Current ``force_off`` value.
+        strict: Current ``strict`` value.
+
+    Returns:
+        Updated ``(force_off, strict)`` — unchanged when ``arguments`` is ``None``.
+    """
     if arguments is not None:
         try:
             tokens = shlex.split(arguments)
@@ -223,6 +231,92 @@ def main(argv: list[str] | None = None) -> int:
             force_off = True
         elif "--codemap" in tokens:
             strict = True
+    return force_off, strict
+
+
+def _check_index_availability(
+    scan_query_available: bool, index_found: bool, strict: bool, proj: str, index_path: Path
+) -> int | None:
+    """Handle the not-available/not-found branch when the index isn't usable yet.
+
+    Args:
+        scan_query_available: Whether ``codemap-py`` itself is on PATH.
+        index_found: Whether the project's index JSON file exists.
+        strict: Whether ``--strict``/``--codemap`` was requested.
+        proj: Resolved project name (for messages).
+        index_path: Resolved index file path (for messages).
+
+    Returns:
+        ``1`` when strict mode should fail (error already printed to stderr), ``0``
+        when the caller should write the no-index state and return 0, or ``None``
+        when the index is usable and the caller should proceed to the currency check.
+    """
+    if scan_query_available and index_found:
+        return None
+
+    if strict:
+        if not scan_query_available:
+            print(
+                "! --codemap passed but codemap plugin not installed.\n"
+                "  Install: claude plugin install codemap-py@borda-ai-rig",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"! --codemap passed but no index found for project '{proj}'.\n"
+                "  Build index: /codemap-py:scan-codebase (requires codemap-py plugin)",
+                file=sys.stderr,
+            )
+        return 1
+
+    if scan_query_available and not index_found:
+        print(
+            f"⚠ codemap-py: no index for project '{proj}' at {index_path}\n"
+            "  Run /codemap-py:scan-codebase to build it, then re-run this skill.",
+        )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point.
+
+    Args:
+        argv: Argument list (defaults to sys.argv[1:]).
+
+    Returns:
+        Exit code.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+
+    # Honour only ``-h/--help`` via argparse; every other flag flows through the manual
+    # loop below, which ignores unknowns and keeps the legacy exit-2-on-missing-prefix
+    # contract (argparse's native errors would change both behaviors).
+    if args in (["-h"], ["--help"]):
+        argparse.ArgumentParser(
+            prog="detect_codemap.py",
+            description="Detect codemap plugin availability, index presence, and currency.",
+        ).parse_args(["-h"])
+
+    fields, err = _parse_args(args)
+    if err:
+        print(err, file=sys.stderr)
+        return 2
+
+    prefix: str | None = fields["prefix"]
+    force_off: bool = fields["force_off"]
+    strict: bool = fields["strict"]
+    arguments: str | None = fields["arguments"]
+    proj_override: str | None = fields["proj_override"]
+    idx_dir: str | None = fields["idx_dir"]
+
+    if not prefix:
+        print(
+            'Usage: detect_codemap.py --prefix <name> [--force-off] [--strict] [--arguments "$ARGUMENTS"]',
+            file=sys.stderr,
+        )
+        return 2
+
+    force_off, strict = _apply_arguments_flags(arguments, force_off, strict)
 
     csid = os.environ.get("CSID") or os.environ.get("CLAUDE_CODE_SESSION_ID") or "shared"
     tmpdir = os.environ.get("TMPDIR") or tempfile.gettempdir()
@@ -249,29 +343,12 @@ def main(argv: list[str] | None = None) -> int:
     # gate and every downstream query would then fail against an unreadable index.
     index_found = index_path.is_file()
 
-    if not scan_query_available or not index_found:
-        if strict:
-            if not scan_query_available:
-                print(
-                    "! --codemap passed but codemap plugin not installed.\n"
-                    "  Install: claude plugin install codemap-py@borda-ai-rig",
-                    file=sys.stderr,
-                )
-            else:
-                print(
-                    f"! --codemap passed but no index found for project '{proj}'.\n"
-                    "  Build index: /codemap-py:scan-codebase (requires codemap-py plugin)",
-                    file=sys.stderr,
-                )
-            return 1
-        if scan_query_available and not index_found:
-            print(
-                f"⚠ codemap-py: no index for project '{proj}' at {index_path}\n"
-                "  Run /codemap-py:scan-codebase to build it, then re-run this skill.",
-            )
-        currency_file.write_text("no_index\n")
-        out_file.write_text("false\n")
-        return 0
+    rc = _check_index_availability(scan_query_available, index_found, strict, proj, index_path)
+    if rc is not None:
+        if rc == 0:
+            currency_file.write_text("no_index\n")
+            out_file.write_text("false\n")
+        return rc
 
     currency, currency_reason = _check_currency(index_path)
     currency_file.write_text(f"{currency}\n")

@@ -16,6 +16,15 @@ from benchmarks._bench_common import provider_parity_contracts as core
 
 
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
+
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched. Inside the package every seam
+# below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex.structural import arms as codex_arms  # noqa: E402
+from _bench_codex.structural import manifest as codex_manifest  # noqa: E402
+from _bench_codex.structural import runner as codex_structural_runner  # noqa: E402
+from _bench_codex.structural import tasks as codex_tasks  # noqa: E402
+
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
 SUITE_PATH = BENCHMARKS_DIR / "suites" / "tasks-bench.json"
 MANIFEST_PATH = BENCHMARKS_DIR / "manifests" / "codex-integration.json"
@@ -1828,10 +1837,10 @@ def test_main_threads_an_explicit_manifest_path_into_task_loading_and_ordering(
             """Report fixture-controlled Codemap availability for a treatment arm."""
             return {"codemap_available": False}
 
-    monkeypatch.setattr(script_run_codex, "load_tasks_with_provenance", _load_tasks)
-    monkeypatch.setattr(script_run_codex, "_read_manifest_revision", lambda path: str(path))
-    monkeypatch.setattr(script_run_codex, "deterministic_arm_order", _order)
-    monkeypatch.setattr(script_run_codex, "CodexRunner", FixtureRunner)
+    monkeypatch.setattr(codex_tasks, "load_tasks_with_provenance", _load_tasks)
+    monkeypatch.setattr(codex_manifest, "_read_manifest_revision", lambda path: str(path))
+    monkeypatch.setattr(codex_arms, "deterministic_arm_order", _order)
+    monkeypatch.setattr(codex_structural_runner, "CodexRunner", FixtureRunner)
 
     script_run_codex.main(
         repo_path=tmp_path,

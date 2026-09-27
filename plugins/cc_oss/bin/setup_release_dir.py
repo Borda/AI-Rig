@@ -106,6 +106,98 @@ def _validate_path_arg(raw: str, label: str) -> Path:
     raise ValueError(f"{label} resolves outside project root, ~/.claude, and temp dir: {raw!r} → {resolved.as_posix()}")
 
 
+def _validate_release_paths(positional: list[str]) -> tuple[Path, Path, Path] | str:
+    """Validate the release_dir/changelog_file positional args.
+
+    Args:
+        positional: The two positional args, ``[release_dir, changelog_file]``.
+
+    Returns:
+        ``(release_dir, link_path, resolved_target)`` on success — the resolved
+        changelog target the CHANGELOG.md symlink must point to, already validated
+        against every allowed-roots/project-root/collision guard. On failure,
+        an error message string (``changelog_file`` itself is not returned since
+        no caller needs it after validation).
+    """
+    try:
+        release_dir = _validate_path_arg(positional[0], "release_dir")
+        changelog_file = _validate_path_arg(positional[1], "changelog_file")
+        if any(component.is_symlink() for component in (release_dir, *release_dir.parents)):
+            raise ValueError("release_dir must not traverse a symlink")
+        if not changelog_file.name.startswith("CHANGELOG"):
+            raise ValueError("changelog_file must have a CHANGELOG name")
+        if any(component.is_symlink() for component in (changelog_file, *changelog_file.parents)):
+            raise ValueError("changelog_file must not traverse a symlink")
+        if changelog_file.exists() and not changelog_file.is_file():
+            raise ValueError("changelog_file must be a regular file")
+        resolved_target = changelog_file.resolve()
+        if not any(_is_within(resolved_target, root) for root in _allowed_abs_roots()):
+            raise ValueError(f"resolved changelog target outside allowed roots: {resolved_target.as_posix()}")
+        # Release sources belong to the project that owns the version directory, even in temporary test projects.
+        project_root = release_dir.parent.parent if release_dir.parent.name == "releases" else release_dir.parent
+        if not _is_within(resolved_target, project_root.resolve()):
+            raise ValueError("changelog_file must be inside the release project")
+        link_path = release_dir / "CHANGELOG.md"
+        if changelog_file.parent.resolve() / changelog_file.name == release_dir.resolve() / "CHANGELOG.md":
+            raise ValueError("changelog_file must not be the release changelog link")
+        if link_path.exists() and not link_path.is_symlink():
+            raise ValueError("release CHANGELOG.md exists and is not a symlink")
+    except ValueError as exc:
+        return f"setup_release_dir: {exc}"
+    return release_dir, link_path, resolved_target
+
+
+def _check_artifacts_not_symlinked(release_dir: Path) -> str | None:
+    """Check every artifact and its ``.bak`` sibling are not symlinks.
+
+    Validates the complete artifact set before relinking the changelog or making
+    any backup.
+
+    Args:
+        release_dir: Release directory to check.
+
+    Returns:
+        An error message on the first symlinked artifact or backup found, else ``None``.
+    """
+    for name in _ARTIFACTS:
+        target = release_dir / name
+        if target.is_symlink():
+            return f"setup_release_dir: artifact source must not be a symlink: {target}"
+        backup = release_dir / f"{name}.bak"
+        if backup.is_symlink():
+            return f"setup_release_dir: backup destination must not be a symlink: {backup}"
+    return None
+
+
+def _relink_and_backup(release_dir: Path, link_path: Path, resolved_target: Path) -> None:
+    """Create ``release_dir``, relink CHANGELOG.md, and back up existing artifacts.
+
+    Args:
+        release_dir: Release directory (created if missing).
+        link_path: Path of the CHANGELOG.md symlink inside ``release_dir``.
+        resolved_target: Resolved target the symlink should point to.
+    """
+    release_dir.mkdir(parents=True, exist_ok=True)
+
+    if link_path.is_symlink():
+        link_path.unlink()
+    link_path.symlink_to(resolved_target)
+
+    for name in _ARTIFACTS:
+        target = release_dir / name
+        if target.is_file():
+            # Replace the directory entry atomically so a changed link or hardlink cannot redirect the copy.
+            fd, temporary_name = tempfile.mkstemp(prefix=f".{name}.bak-", dir=release_dir)
+            os.close(fd)
+            temporary = Path(temporary_name)
+            try:
+                shutil.copy2(target, temporary)
+                os.replace(temporary, release_dir / f"{name}.bak")
+            finally:
+                temporary.unlink(missing_ok=True)
+            print(f"⚠ {target} exists — backed up to {name}.bak before overwrite")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``setup_release_dir.sh`` behaviour.
 
@@ -139,66 +231,21 @@ def main(argv: list[str] | None = None) -> int:
         print("setup_release_dir: changelog_file required", file=sys.stderr)
         return 1
 
-    try:
-        release_dir = _validate_path_arg(positional[0], "release_dir")
-        changelog_file = _validate_path_arg(positional[1], "changelog_file")
-        if any(component.is_symlink() for component in (release_dir, *release_dir.parents)):
-            raise ValueError("release_dir must not traverse a symlink")
-        if not changelog_file.name.startswith("CHANGELOG"):
-            raise ValueError("changelog_file must have a CHANGELOG name")
-        if any(component.is_symlink() for component in (changelog_file, *changelog_file.parents)):
-            raise ValueError("changelog_file must not traverse a symlink")
-        if changelog_file.exists() and not changelog_file.is_file():
-            raise ValueError("changelog_file must be a regular file")
-        resolved_target = changelog_file.resolve()
-        if not any(_is_within(resolved_target, root) for root in _allowed_abs_roots()):
-            raise ValueError(f"resolved changelog target outside allowed roots: {resolved_target.as_posix()}")
-        # Release sources belong to the project that owns the version directory, even in temporary test projects.
-        project_root = release_dir.parent.parent if release_dir.parent.name == "releases" else release_dir.parent
-        if not _is_within(resolved_target, project_root.resolve()):
-            raise ValueError("changelog_file must be inside the release project")
-        link_path = release_dir / "CHANGELOG.md"
-        if changelog_file.parent.resolve() / changelog_file.name == release_dir.resolve() / "CHANGELOG.md":
-            raise ValueError("changelog_file must not be the release changelog link")
-        if link_path.exists() and not link_path.is_symlink():
-            raise ValueError("release CHANGELOG.md exists and is not a symlink")
-    except ValueError as exc:
-        print(f"setup_release_dir: {exc}", file=sys.stderr)
+    result = _validate_release_paths(positional)
+    if isinstance(result, str):
+        print(result, file=sys.stderr)
         return 1
+    release_dir, link_path, resolved_target = result
 
-    # Validate the complete artifact set before relinking the changelog or making any backup.
-    for name in _ARTIFACTS:
-        target = release_dir / name
-        if target.is_symlink():
-            print(f"setup_release_dir: artifact source must not be a symlink: {target}", file=sys.stderr)
-            return 1
-        backup = release_dir / f"{name}.bak"
-        if backup.is_symlink():
-            print(f"setup_release_dir: backup destination must not be a symlink: {backup}", file=sys.stderr)
-            return 1
+    artifact_err = _check_artifacts_not_symlinked(release_dir)
+    if artifact_err:
+        print(artifact_err, file=sys.stderr)
+        return 1
 
     if args_ns.validate_only:
         return 0
 
-    release_dir.mkdir(parents=True, exist_ok=True)
-
-    if link_path.is_symlink():
-        link_path.unlink()
-    link_path.symlink_to(resolved_target)
-
-    for name in _ARTIFACTS:
-        target = release_dir / name
-        if target.is_file():
-            # Replace the directory entry atomically so a changed link or hardlink cannot redirect the copy.
-            fd, temporary_name = tempfile.mkstemp(prefix=f".{name}.bak-", dir=release_dir)
-            os.close(fd)
-            temporary = Path(temporary_name)
-            try:
-                shutil.copy2(target, temporary)
-                os.replace(temporary, release_dir / f"{name}.bak")
-            finally:
-                temporary.unlink(missing_ok=True)
-            print(f"⚠ {target} exists — backed up to {name}.bak before overwrite")
+    _relink_and_backup(release_dir, link_path, resolved_target)
 
     return 0
 

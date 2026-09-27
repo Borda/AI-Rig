@@ -67,7 +67,7 @@ from copy import deepcopy
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Any
+from typing import Any, NamedTuple
 
 
 SCHEMA_VERSION = 1
@@ -486,9 +486,31 @@ def _validate_write_approval(manifest: dict[str, Any], has_writes: bool) -> None
     _validate_exact_write_approval(evidence, manifest.get("plan_sha256"))
 
 
-def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, roles_dir: Path) -> dict[str, object]:
-    """Validate schema-v1 execution evidence and derive its acceptance summary."""
-    payload = _object(manifest, "manifest")
+class _ManifestScan(NamedTuple):
+    """Cross-stage uniqueness and ownership state accumulated while scanning a manifest."""
+
+    seen_nodes: set[str]
+    seen_waves: set[str]
+    seen_contexts: set[Path]
+    seen_outputs: set[Path]
+    owned_paths_by_node: dict[str, list[str]]
+    resource_locks_by_node: dict[str, list[str]]
+    write_node_ids: set[str]
+
+
+class _NodeRecord(NamedTuple):
+    """One validated execution node and the lifecycle events its evidence proved."""
+
+    node_id: str
+    node: dict[str, Any]
+    substantive: bool
+    start: int | None
+    terminal: int | None
+    join: int | None
+
+
+def _validate_manifest_header(payload: dict[str, Any]) -> tuple[str, int]:
+    """Check manifest schema, run identity, claimed mode, and concurrency limit."""
     if payload.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported-schema-version")
     _text(payload.get("run_id"), "run-id")
@@ -501,109 +523,131 @@ def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, r
     limit = payload.get("configured_limit")
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 4:
         raise ValueError("configured-limit-invalid")
-    stages_value = payload.get("stages")
-    if not isinstance(stages_value, list) or not stages_value:
-        raise ValueError("stages-required")
-    stages = [_object(item, "stage") for item in stages_value]
-    stage_order = _topological_stage_ids(stages)
-    by_stage = {_text(stage.get("stage_id"), "stage-id"): stage for stage in stages}
+    return claimed_mode, limit
+
+
+def _validate_stage_barriers(stage_order: list[str], by_stage: dict[str, dict[str, Any]]) -> None:
+    """Require each stage to declare its predecessor as a dependency, forming a barrier chain."""
     for previous_stage, stage_id in zip(stage_order, stage_order[1:], strict=False):
         if previous_stage not in _string_list(by_stage[stage_id].get("depends_on"), "stage-depends-on"):
             raise ValueError(f"stage-barrier-required:{stage_id}")
 
-    seen_nodes: set[str] = set()
-    seen_waves: set[str] = set()
-    seen_contexts: set[Path] = set()
-    seen_outputs: set[Path] = set()
-    completed_by_stage: dict[str, list[tuple[str, int, int]]] = {}
-    joins_by_stage: dict[str, list[int]] = {}
-    owned_paths_by_node: dict[str, list[str]] = {}
-    resource_locks_by_node: dict[str, list[str]] = {}
-    acceptance_blocked = False
-    write_node_ids: set[str] = set()
-    for stage_id in stage_order:
-        stage = by_stage[stage_id]
-        wave_id = _text(stage.get("wave_id"), "wave-id")
-        if wave_id in seen_waves:
-            raise ValueError(f"wave-id-duplicate:{wave_id}")
-        seen_waves.add(wave_id)
-        nodes_value = stage.get("nodes")
-        if not isinstance(nodes_value, list) or not nodes_value:
-            raise ValueError(f"stage-nodes-required:{stage_id}")
-        if len(nodes_value) > limit:
-            raise ValueError(f"configured-limit-exceeded:{stage_id}")
-        nodes = [_object(item, "node") for item in nodes_value]
-        node_records: list[tuple[str, dict[str, Any], bool, int | None, int | None, int | None]] = []
-        for node in nodes:
-            node_id = _text(node.get("node_id"), "node-id")
-            if node_id in seen_nodes:
-                raise ValueError(f"node-id-duplicate:{node_id}")
-            seen_nodes.add(node_id)
-            role_id = _text(node.get("role_id"), "role-id")
-            role_path = _relative_path(roles_dir, f"{role_id}/ROLE.md", "role-card", node_id)
-            _sha256(role_path, "role-card", node_id, node.get("role_card_sha256"))
-            context_path = _relative_path(run_dir, node.get("context_path"), "context", node_id)
-            if context_path in seen_contexts:
-                raise ValueError(f"context-path-duplicate:{node_id}")
-            seen_contexts.add(context_path)
-            _sha256(context_path, "context", node_id, node.get("context_sha256"))
-            context_text = context_path.read_text(encoding="utf-8")
-            if any(pattern.search(context_text) for pattern in _SECRET_PATTERNS):
-                raise ValueError(f"context-sensitive-material:{node_id}")
-            owned_paths_by_node[node_id] = _validate_controls(node, node_id)
-            resource_locks_by_node[node_id] = _validate_resource_locks(node.get("resource_locks"), node_id)
-            if node.get("mutation") == "write":
-                write_node_ids.add(node_id)
-            substantive, start, terminal = _validate_attempts(node, node_id, run_dir)
-            join_value = node.get("join_event")
-            if terminal is None:
-                acceptance_blocked = True
-                if join_value is not None:
-                    raise ValueError(f"cancel-requested-joined:{node_id}")
-                node_records.append((node_id, node, substantive, start, terminal, None))
-                continue
-            if join_value is None:
-                acceptance_blocked = True
-                node_records.append((node_id, node, substantive, start, terminal, None))
-                continue
-            join = _event(join_value, "join-event", node_id)
-            if join <= terminal:
-                raise ValueError(f"join-before-terminal:{node_id}")
-            if substantive:
-                output_path = _relative_path(run_dir, node["attempts"][-1].get("output_path"), "output", node_id)
-                if output_path in seen_outputs:
-                    raise ValueError(f"output-path-duplicate:{node_id}")
-                seen_outputs.add(output_path)
-            else:
-                acceptance_blocked = True
-            node_records.append((node_id, node, substantive, start, terminal, join))
 
-        for dependency in _string_list(stage.get("depends_on"), "stage-depends-on"):
-            dependency_joins = joins_by_stage.get(dependency, [])
-            if len(dependency_joins) != len(by_stage[dependency].get("nodes", [])):
-                raise ValueError(f"stage-dependency-unjoined:{stage_id}")
-            for _, _, _, start, _, _ in node_records:
-                if start is not None and any(start <= join for join in dependency_joins):
-                    raise ValueError(f"stage-start-before-dependency-join:{stage_id}")
+def _validate_node_identity(node: dict[str, Any], scan: _ManifestScan, run_dir: Path, roles_dir: Path) -> str:
+    """Check one node's unique id, role card, and non-sensitive context pack."""
+    node_id = _text(node.get("node_id"), "node-id")
+    if node_id in scan.seen_nodes:
+        raise ValueError(f"node-id-duplicate:{node_id}")
+    scan.seen_nodes.add(node_id)
+    role_id = _text(node.get("role_id"), "role-id")
+    role_path = _relative_path(roles_dir, f"{role_id}/ROLE.md", "role-card", node_id)
+    _sha256(role_path, "role-card", node_id, node.get("role_card_sha256"))
+    context_path = _relative_path(run_dir, node.get("context_path"), "context", node_id)
+    if context_path in scan.seen_contexts:
+        raise ValueError(f"context-path-duplicate:{node_id}")
+    scan.seen_contexts.add(context_path)
+    _sha256(context_path, "context", node_id, node.get("context_sha256"))
+    context_text = context_path.read_text(encoding="utf-8")
+    if any(pattern.search(context_text) for pattern in _SECRET_PATTERNS):
+        raise ValueError(f"context-sensitive-material:{node_id}")
+    return node_id
 
-        write_nodes = [node_id for node_id, node, _, _, _, _ in node_records if node.get("mutation") == "write"]
-        for index, left_id in enumerate(write_nodes):
-            left_paths = owned_paths_by_node[left_id]
-            left_locks = set(resource_locks_by_node[left_id])
-            for right_id in write_nodes[index + 1 :]:
-                right_paths = owned_paths_by_node[right_id]
-                if any(_paths_overlap(left, right) for left in left_paths for right in right_paths):
-                    raise ValueError(f"write-ownership-overlap:{left_id}:{right_id}")
-                if left_locks.intersection(resource_locks_by_node[right_id]):
-                    raise ValueError(f"resource-lock-overlap:{left_id}:{right_id}")
 
-        completed_by_stage[stage_id] = [
-            (node_id, start, terminal)
-            for node_id, _, substantive, start, terminal, join in node_records
-            if substantive and start is not None and terminal is not None and join is not None
-        ]
-        joins_by_stage[stage_id] = [join for _, _, _, _, _, join in node_records if join is not None]
+def _validate_node_lifecycle(
+    node: dict[str, Any],
+    node_id: str,
+    scan: _ManifestScan,
+    run_dir: Path,
+) -> _NodeRecord:
+    """Validate one node's attempt lifecycle and return its start, terminal, and join events."""
+    substantive, start, terminal = _validate_attempts(node, node_id, run_dir)
+    join_value = node.get("join_event")
+    if terminal is None:
+        if join_value is not None:
+            raise ValueError(f"cancel-requested-joined:{node_id}")
+        return _NodeRecord(node_id, node, substantive, start, terminal, None)
+    if join_value is None:
+        return _NodeRecord(node_id, node, substantive, start, terminal, None)
+    join = _event(join_value, "join-event", node_id)
+    if join <= terminal:
+        raise ValueError(f"join-before-terminal:{node_id}")
+    if substantive:
+        output_path = _relative_path(run_dir, node["attempts"][-1].get("output_path"), "output", node_id)
+        if output_path in scan.seen_outputs:
+            raise ValueError(f"output-path-duplicate:{node_id}")
+        scan.seen_outputs.add(output_path)
+    return _NodeRecord(node_id, node, substantive, start, terminal, join)
 
+
+def _validate_stage_nodes(
+    stage_id: str,
+    stage: dict[str, Any],
+    limit: int,
+    scan: _ManifestScan,
+    run_dir: Path,
+    roles_dir: Path,
+) -> list[_NodeRecord]:
+    """Validate one stage's wave identity and every node it declares."""
+    wave_id = _text(stage.get("wave_id"), "wave-id")
+    if wave_id in scan.seen_waves:
+        raise ValueError(f"wave-id-duplicate:{wave_id}")
+    scan.seen_waves.add(wave_id)
+    nodes_value = stage.get("nodes")
+    if not isinstance(nodes_value, list) or not nodes_value:
+        raise ValueError(f"stage-nodes-required:{stage_id}")
+    if len(nodes_value) > limit:
+        raise ValueError(f"configured-limit-exceeded:{stage_id}")
+    node_records: list[_NodeRecord] = []
+    for node in [_object(item, "node") for item in nodes_value]:
+        node_id = _validate_node_identity(node, scan, run_dir, roles_dir)
+        scan.owned_paths_by_node[node_id] = _validate_controls(node, node_id)
+        scan.resource_locks_by_node[node_id] = _validate_resource_locks(node.get("resource_locks"), node_id)
+        if node.get("mutation") == "write":
+            scan.write_node_ids.add(node_id)
+        node_records.append(_validate_node_lifecycle(node, node_id, scan, run_dir))
+    return node_records
+
+
+def _validate_stage_dependency_ordering(
+    stage_id: str,
+    stage: dict[str, Any],
+    by_stage: dict[str, dict[str, Any]],
+    joins_by_stage: dict[str, list[int]],
+    node_records: list[_NodeRecord],
+) -> None:
+    """Require every dependency stage to have fully joined before this stage's nodes started."""
+    for dependency in _string_list(stage.get("depends_on"), "stage-depends-on"):
+        dependency_joins = joins_by_stage.get(dependency, [])
+        if len(dependency_joins) != len(by_stage[dependency].get("nodes", [])):
+            raise ValueError(f"stage-dependency-unjoined:{stage_id}")
+        for record in node_records:
+            if record.start is not None and any(record.start <= join for join in dependency_joins):
+                raise ValueError(f"stage-start-before-dependency-join:{stage_id}")
+
+
+def _validate_write_ownership_and_locks(node_records: list[_NodeRecord], scan: _ManifestScan) -> None:
+    """Reject any pair of writing nodes in one stage that share an owned path or resource lock."""
+    write_nodes = [record.node_id for record in node_records if record.node.get("mutation") == "write"]
+    for index, left_id in enumerate(write_nodes):
+        left_paths = scan.owned_paths_by_node[left_id]
+        left_locks = set(scan.resource_locks_by_node[left_id])
+        for right_id in write_nodes[index + 1 :]:
+            right_paths = scan.owned_paths_by_node[right_id]
+            if any(_paths_overlap(left, right) for left in left_paths for right in right_paths):
+                raise ValueError(f"write-ownership-overlap:{left_id}:{right_id}")
+            if left_locks.intersection(scan.resource_locks_by_node[right_id]):
+                raise ValueError(f"resource-lock-overlap:{left_id}:{right_id}")
+
+
+def _summarize_manifest_acceptance(
+    payload: dict[str, Any],
+    stage_order: list[str],
+    completed_by_stage: dict[str, list[tuple[str, int, int]]],
+    scan: _ManifestScan,
+    claimed_mode: str,
+    acceptance_blocked: bool,
+) -> dict[str, object]:
+    """Derive the observed execution mode and integration order, rejecting a false parallel claim."""
     overlapping_pairs = [
         (left[0], right[0])
         for stage_intervals in completed_by_stage.values()
@@ -615,7 +659,7 @@ def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, r
     actual_mode = (
         "parallel" if overlapping_pairs else ("independent-spawned" if len(substantive_intervals) > 1 else "serial")
     )
-    _validate_write_approval(payload, bool(write_node_ids))
+    _validate_write_approval(payload, bool(scan.write_node_ids))
     if claimed_mode == "parallel" and actual_mode != "parallel":
         raise ValueError("false-parallel-claim")
     integration_order = [
@@ -628,6 +672,54 @@ def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, r
         "actual_mode": actual_mode,
         "integration_order": integration_order,
     }
+
+
+def validate_execution_manifest(manifest: dict[str, object], *, run_dir: Path, roles_dir: Path) -> dict[str, object]:
+    """Validate schema-v1 execution evidence and derive its acceptance summary."""
+    payload = _object(manifest, "manifest")
+    claimed_mode, limit = _validate_manifest_header(payload)
+    stages_value = payload.get("stages")
+    if not isinstance(stages_value, list) or not stages_value:
+        raise ValueError("stages-required")
+    stages = [_object(item, "stage") for item in stages_value]
+    stage_order = _topological_stage_ids(stages)
+    by_stage = {_text(stage.get("stage_id"), "stage-id"): stage for stage in stages}
+    _validate_stage_barriers(stage_order, by_stage)
+
+    scan = _ManifestScan(
+        seen_nodes=set(),
+        seen_waves=set(),
+        seen_contexts=set(),
+        seen_outputs=set(),
+        owned_paths_by_node={},
+        resource_locks_by_node={},
+        write_node_ids=set(),
+    )
+    completed_by_stage: dict[str, list[tuple[str, int, int]]] = {}
+    joins_by_stage: dict[str, list[int]] = {}
+    acceptance_blocked = False
+    for stage_id in stage_order:
+        stage = by_stage[stage_id]
+        node_records = _validate_stage_nodes(stage_id, stage, limit, scan, run_dir, roles_dir)
+        acceptance_blocked = acceptance_blocked or any(
+            record.join is None or not record.substantive for record in node_records
+        )
+        _validate_stage_dependency_ordering(stage_id, stage, by_stage, joins_by_stage, node_records)
+        _validate_write_ownership_and_locks(node_records, scan)
+
+        completed_by_stage[stage_id] = [
+            (record.node_id, record.start, record.terminal)
+            for record in node_records
+            if record.substantive
+            and record.start is not None
+            and record.terminal is not None
+            and record.join is not None
+        ]
+        joins_by_stage[stage_id] = [record.join for record in node_records if record.join is not None]
+
+    return _summarize_manifest_acceptance(
+        payload, stage_order, completed_by_stage, scan, claimed_mode, acceptance_blocked
+    )
 
 
 def _runtime_rows(path: Path, label: str) -> list[dict[str, Any]]:

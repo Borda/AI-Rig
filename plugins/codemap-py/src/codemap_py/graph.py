@@ -676,6 +676,125 @@ def _collect_symbol_alias_limitations(modules: list[dict]) -> list[dict[str, str
     ]
 
 
+@dataclass(frozen=True)
+class _ReferenceCounts:
+    """Reverse-reference tallies collected in one pass over every module entry.
+
+    Attributes:
+        rdep_counts: Module name -> count of modules importing it.
+        rcall_counts: Module name -> count of resolved inbound call edges.
+        fn_test_caller: ``module::symbol`` -> count of calls from test modules.
+        mock_per_symbol: ``module::symbol`` -> set of test files mocking it.
+    """
+
+    rdep_counts: dict[str, int]
+    rcall_counts: dict[str, int]
+    fn_test_caller: dict[str, int]
+    mock_per_symbol: dict[str, set[str]]
+
+
+def _collect_reference_counts(
+    modules: list[dict],
+    aliases: dict[str, str],
+    canonical_symbols: dict[str, str],
+) -> _ReferenceCounts:
+    """Tally every reverse reference the metrics pass needs, without mutating *modules*.
+
+    Args:
+        modules: list of module entry dicts, read only.
+        aliases: ``bare_name -> full_dotted_name`` map applied to import names.
+        canonical_symbols: ``alias_qname -> canonical_qname`` map applied to call targets.
+
+    Returns:
+        The four tallies as a :class:`_ReferenceCounts`.
+    """
+    counts = _ReferenceCounts(rdep_counts={}, rcall_counts={}, fn_test_caller={}, mock_per_symbol={})
+    for m in modules:
+        for imp in m.get("direct_imports", []):
+            resolved = aliases.get(imp, imp)
+            counts.rdep_counts[resolved] = counts.rdep_counts.get(resolved, 0) + 1
+        caller_is_test = bool(m.get("is_test"))
+        for sym in m.get("symbols", []):
+            for edge in sym.get("calls", []):
+                if edge["resolution"] != "import":
+                    continue
+                target = canonical_symbols.get(edge["target"], edge["target"])
+                target_module = target.split("::")[0]
+                counts.rcall_counts[target_module] = counts.rcall_counts.get(target_module, 0) + 1
+                if caller_is_test:
+                    counts.fn_test_caller[target] = counts.fn_test_caller.get(target, 0) + 1
+        # mock_patches: only present on test modules; map each unique (target, file) once.
+        for entry in m.get("mock_patches", []) or []:
+            target = entry.get("target")
+            file_ = entry.get("file")
+            if not target or not file_:
+                continue
+            counts.mock_per_symbol.setdefault(target, set()).add(file_)
+    return counts
+
+
+def _stamp_reference_counts(modules: list[dict], counts: _ReferenceCounts) -> None:
+    """Write the collected tallies onto each ok module entry and its symbols, in place."""
+    for m in modules:
+        if m.get("status") != "ok":
+            continue
+        m["rdep_count"] = counts.rdep_counts.get(m["name"], 0)
+        m["rcall_count"] = counts.rcall_counts.get(m["name"], 0)
+        m["dep_count"] = len(m.get("direct_imports", []))
+        # Per-module mock_rdep_count: total distinct test files mocking any symbol in this module.
+        mod_files: set[str] = set()
+        mod_prefix = f"{m['name']}::"
+        for target, files in counts.mock_per_symbol.items():
+            if target.startswith(mod_prefix):
+                mod_files.update(files)
+        m["mock_rdep_count"] = len(mod_files)
+        # Per-symbol: stamp fn_rdep_test_count and mock_rdep_count on each symbol dict.
+        for sym in m.get("symbols", []):
+            full_qname = f"{m['name']}::{sym['qualified_name']}"
+            sym["fn_rdep_test_count"] = counts.fn_test_caller.get(full_qname, 0)
+            sym["mock_rdep_count"] = len(counts.mock_per_symbol.get(full_qname, set()))
+
+
+def _stamp_import_groups(modules: list[dict], aliases: dict[str, str]) -> None:
+    """Classify each ok module's direct imports into stdlib/third_party/internal, in place.
+
+    Bare aliases from conftest.py ``sys.path`` shims count as internal prefixes (v5.1).
+    """
+    indexed_names = {m["name"] for m in modules if m.get("status") == "ok"}
+    internal_prefixes = _build_internal_prefix_set(indexed_names) | set(aliases.keys())
+    for m in modules:
+        if m.get("status") != "ok":
+            continue
+        m["import_groups"] = classify_imports(m.get("direct_imports", []), internal_prefixes)
+
+
+def _stamp_dynamic_rdeps(modules: list[dict]) -> None:
+    """Cross-reference dynamic-import literals against known modules, stamping in place."""
+    all_module_names = {m["name"] for m in modules if m.get("status") == "ok"}
+    dynamic_rdeps: dict[str, list[dict]] = {}
+    for m in modules:
+        caller_name = m.get("name", "")
+        caller_path = m.get("path", "")
+        for entry in m.get("dynamic_imports", []):
+            literal: str = entry["literal"]
+            # Match exact module name; avoid matching sub-paths of a shorter module name twice.
+            if literal in all_module_names:
+                matched: str | None = literal
+            else:
+                # literal may be a sub-path like "pkg.sub.mod" — attribute to the longest prefix match.
+                matched = next(
+                    (n for n in sorted(all_module_names, key=len, reverse=True) if literal.startswith(n + ".")), None
+                )
+            if matched:
+                dynamic_rdeps.setdefault(matched, []).append(
+                    {"importer": caller_name, "path": caller_path, "line": entry["line"], "literal": literal}
+                )
+    for m in modules:
+        name = m.get("name", "")
+        if name in dynamic_rdeps:
+            m["dynamic_imported_by"] = dynamic_rdeps[name]
+
+
 def _recompute_metrics(
     modules: list[dict],
     module_aliases: dict[str, str] | None = None,
@@ -696,86 +815,10 @@ def _recompute_metrics(
         symbol_aliases: optional static ``alias_qname -> canonical_qname`` map.
     """
     aliases = module_aliases or {}
-    canonical_symbols = symbol_aliases or {}
-    rdep_counts: dict[str, int] = {}
-    rcall_counts: dict[str, int] = {}
-    # fn_rdep_test_count: per fully-qualified target ("module::symbol") -> count of test callers.
-    fn_test_caller_counts: dict[str, int] = {}
-    # mock_rdep_count: per fully-qualified target -> count of distinct test files mocking it.
-    mock_per_symbol: dict[str, set[str]] = {}
-    for m in modules:
-        for imp in m.get("direct_imports", []):
-            resolved = aliases.get(imp, imp)
-            rdep_counts[resolved] = rdep_counts.get(resolved, 0) + 1
-        caller_is_test = bool(m.get("is_test"))
-        for sym in m.get("symbols", []):
-            for edge in sym.get("calls", []):
-                if edge["resolution"] != "import":
-                    continue
-                target = canonical_symbols.get(edge["target"], edge["target"])
-                target_module = target.split("::")[0]
-                rcall_counts[target_module] = rcall_counts.get(target_module, 0) + 1
-                if caller_is_test:
-                    fn_test_caller_counts[target] = fn_test_caller_counts.get(target, 0) + 1
-        # mock_patches: only present on test modules; map each unique (target, file) once.
-        for entry in m.get("mock_patches", []) or []:
-            target = entry.get("target")
-            file_ = entry.get("file")
-            if not target or not file_:
-                continue
-            mock_per_symbol.setdefault(target, set()).add(file_)
-    for m in modules:
-        if m.get("status") == "ok":
-            m["rdep_count"] = rdep_counts.get(m["name"], 0)
-            m["rcall_count"] = rcall_counts.get(m["name"], 0)
-            m["dep_count"] = len(m.get("direct_imports", []))
-            # Per-module mock_rdep_count: total distinct test files mocking any symbol in this module.
-            mod_files: set[str] = set()
-            mod_prefix = f"{m['name']}::"
-            for target, files in mock_per_symbol.items():
-                if target.startswith(mod_prefix):
-                    mod_files.update(files)
-            m["mock_rdep_count"] = len(mod_files)
-            # Per-symbol: stamp fn_rdep_test_count and mock_rdep_count on each symbol dict.
-            for sym in m.get("symbols", []):
-                full_qname = f"{m['name']}::{sym['qualified_name']}"
-                sym["fn_rdep_test_count"] = fn_test_caller_counts.get(full_qname, 0)
-                sym["mock_rdep_count"] = len(mock_per_symbol.get(full_qname, set()))
-    # Phase 1.5: classify each module's direct imports into stdlib/third_party/internal (v4.3).
-    # v5.1: bare aliases from conftest.py sys.path shims also count as internal prefixes.
-    indexed_names = {m["name"] for m in modules if m.get("status") == "ok"}
-    internal_prefixes = _build_internal_prefix_set(indexed_names) | set(aliases.keys())
-    for m in modules:
-        if m.get("status") != "ok":
-            continue
-        m["import_groups"] = classify_imports(m.get("direct_imports", []), internal_prefixes)
-
-    # Phase 2: dynamic_imported_by — cross-reference dynamic_imports literals against known modules.
-    all_module_names = {m["name"] for m in modules if m.get("status") == "ok"}
-    dynamic_rdeps: dict[str, list[dict]] = {}
-    for m in modules:
-        caller_name = m.get("name", "")
-        caller_path = m.get("path", "")
-        for entry in m.get("dynamic_imports", []):
-            literal: str = entry["literal"]
-            # Match exact module name; avoid matching sub-paths of a shorter module name twice.
-            if literal in all_module_names:
-                dynamic_rdeps.setdefault(literal, []).append(
-                    {"importer": caller_name, "path": caller_path, "line": entry["line"], "literal": literal}
-                )
-            else:
-                # literal may be a sub-path like "pkg.sub.mod" — attribute to the longest prefix match.
-                matched = next(
-                    (n for n in sorted(all_module_names, key=len, reverse=True) if literal.startswith(n + ".")), None
-                )
-                if matched:
-                    dynamic_rdeps.setdefault(matched, []).append(
-                        {"importer": caller_name, "path": caller_path, "line": entry["line"], "literal": literal}
-                    )
-    for m in modules:
-        name = m.get("name", "")
-        if name in dynamic_rdeps:
-            m["dynamic_imported_by"] = dynamic_rdeps[name]
+    counts = _collect_reference_counts(modules, aliases, symbol_aliases or {})
+    _stamp_reference_counts(modules, counts)
+    _stamp_import_groups(modules, aliases)
+    _stamp_dynamic_rdeps(modules)
 
 
 def _collect_doc_xrefs(root: Path) -> list[dict]:
@@ -1183,19 +1226,9 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
     # Phase 4 (v4.5): collect xrefs from .rst and docs/**/*.md and build reverse index.
     doc_xrefs = _collect_doc_xrefs(root)
     sphinx_xref_count = _build_sphinx_xref_count(modules, doc_xrefs)
-    # Phase 5 (v5.2): subprocess call edges — needs complete module list to resolve script paths.
-    _attach_subprocess_calls(modules, root)
-    subprocess_rdep_count = _build_subprocess_rdep_count(modules)
-    # Phase 6 (v5.3): pytest fixture dependency graph — needs complete module list for
-    # conftest aggregation; runs after metrics so is_test stays consistent.
-    _attach_fixture_graph(modules, root)
-    fixture_rdep_count = _build_fixture_rdep_count(modules)
-    # Phase 7 (v5.4): optional coverage integration. Failures inside _read_coverage_data
-    # produce a stderr warning and a None return — the rest of the index still builds.
-    if coverage_path is not None:
-        coverage_data = _read_coverage_data(coverage_path)
-        if coverage_data is not None:
-            _attach_coverage(modules, root, coverage_data)
+    # Phases 5-7 (v5.2-v5.4): subprocess edges, fixture graph, coverage — all need the
+    # complete module list; fixtures run after metrics so is_test stays consistent.
+    subprocess_rdep_count, fixture_rdep_count = _attach_whole_index_phases(modules, root, coverage_path)
 
     file_shas = get_file_hashes(root, exclusions)
     _maybe_stamp_coverage_mtime(file_shas, coverage_path)
@@ -1222,6 +1255,39 @@ def scan(root: Path, coverage_path: Path | None = None) -> dict:
     }
     _apply_stub_keys(index, shadowed_stubs, casefold_collisions)
     return index
+
+
+def _attach_whole_index_phases(
+    modules: list[dict],
+    root: Path,
+    coverage_path: Path | None,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Run the phases that need the complete module list, then return their reverse counts.
+
+    Subprocess caller resolution, conftest fixture visibility, and coverage annotation
+    are all project-wide: none can be invalidated per file, so a full and an incremental
+    scan run them identically over their final module set.
+
+    Args:
+        modules: complete module list, annotated in place.
+        root: project root the modules were scanned from.
+        coverage_path: optional ``.coverage`` file; ``None`` skips coverage annotation,
+            leaving any annotations carried over from a previous index untouched.
+
+    Returns:
+        ``(subprocess_rdep_count, fixture_rdep_count)``.
+    """
+    _attach_subprocess_calls(modules, root)
+    subprocess_rdep_count = _build_subprocess_rdep_count(modules)
+    _attach_fixture_graph(modules, root)
+    fixture_rdep_count = _build_fixture_rdep_count(modules)
+    # Failures inside _read_coverage_data produce a stderr warning and a None return —
+    # the rest of the index still builds.
+    if coverage_path is not None:
+        coverage_data = _read_coverage_data(coverage_path)
+        if coverage_data is not None:
+            _attach_coverage(modules, root, coverage_data)
+    return subprocess_rdep_count, fixture_rdep_count
 
 
 def _apply_stub_keys(index: dict, shadowed_stubs: list[str], casefold_collisions: list[dict]) -> None:
@@ -1319,20 +1385,11 @@ def incremental_scan(root: Path, old_index: dict, coverage_path: Path | None = N
     # to invalidate per-file (RST/MD files have no module entry to update).
     doc_xrefs = _collect_doc_xrefs(root)
     sphinx_xref_count = _build_sphinx_xref_count(modules, doc_xrefs)
-    # v5.2: rebuild subprocess edges over the merged module set — caller resolution
-    # depends on the complete module list, so per-file invalidation is unsafe.
-    _attach_subprocess_calls(modules, root)
-    subprocess_rdep_count = _build_subprocess_rdep_count(modules)
-    # v5.3: rebuild fixture graph over the merged module set — conftest visibility
-    # is project-wide so per-file invalidation cannot preserve the override hierarchy.
-    _attach_fixture_graph(modules, root)
-    fixture_rdep_count = _build_fixture_rdep_count(modules)
-    # v5.4: re-annotate coverage if a coverage file is still in scope. Skip silently
-    # otherwise so prior coverage annotations carried over via {**old_index, ...} survive.
-    if coverage_path is not None:
-        coverage_data = _read_coverage_data(coverage_path)
-        if coverage_data is not None:
-            _attach_coverage(modules, root, coverage_data)
+    # Rebuild the whole-index phases over the merged module set: subprocess caller
+    # resolution and conftest fixture visibility are project-wide, so per-file
+    # invalidation cannot preserve them. Coverage is skipped silently without a
+    # coverage file so annotations carried over via {**old_index, ...} survive.
+    subprocess_rdep_count, fixture_rdep_count = _attach_whole_index_phases(modules, root, coverage_path)
 
     index = {
         **old_index,

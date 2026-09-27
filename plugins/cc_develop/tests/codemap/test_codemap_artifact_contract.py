@@ -22,6 +22,11 @@ _DOC = _DEVELOP / "skills" / "_shared" / "codemap-context.md"
 _IMPL = _DEVELOP.parent / "cc_oss" / "bin" / "codemap_cache.py"
 _HAS_OSS_IMPLEMENTATION = _IMPL.is_file()
 
+# Reasons reach the verdict from three return shapes: a bare string from a per-check helper,
+# that string leading a tuple, and the final ``True, "fresh"``. The variable-carrying
+# ``return False, reason`` in the verdict itself is deliberately not matched.
+_REASON_RE = re.compile(r'return (?:(?:False|True), )?"([a-z_]+)"')
+
 
 @pytest.fixture(name="doc_text", scope="module")
 def _doc_text() -> str:
@@ -65,7 +70,7 @@ def test_documented_verdict_reasons_all_exist(doc_text: str, impl_text: str) -> 
     """Every reason string the doc advertises must be one the implementation can return."""
     rule = doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
     documented = set(re.findall(r"`(fresh|[a-z_]+_mismatch|index_rebuilt)`", rule))
-    implemented = set(re.findall(r'return (?:False|True), "([a-z_]+)"', impl_text))
+    implemented = set(_REASON_RE.findall(impl_text))
     assert documented, "no verdict reasons documented"
     assert documented <= implemented, f"documented but unreachable: {sorted(documented - implemented)}"
 
@@ -74,6 +79,6 @@ def test_documented_verdict_reasons_all_exist(doc_text: str, impl_text: str) -> 
 def test_no_reason_left_undocumented(doc_text: str, impl_text: str) -> None:
     """A consumer branching on verdicts needs the full set, not a subset."""
     rule = doc_text.split("**Freshness rule**", 1)[1].split("\n\n", 1)[0]
-    implemented = set(re.findall(r'return (?:False|True), "([a-z_]+)"', impl_text))
+    implemented = set(_REASON_RE.findall(impl_text))
     missing = {r for r in implemented if f"`{r}`" not in rule}
     assert not missing, f"implementation returns undocumented verdicts: {sorted(missing)}"

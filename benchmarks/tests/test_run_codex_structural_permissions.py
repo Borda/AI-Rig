@@ -25,6 +25,12 @@ from _launcher_capability import _private_filesystem_available
 BENCHMARKS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BENCHMARKS_DIR))
 
+# Patch seams live in the package modules the runner shim re-exports from: patching the shim
+# would leave each package module's own global binding untouched. Inside the package every seam
+# below is reached through its defining module, so this is the single place to patch it.
+from _bench_codex.structural import diff_impact as codex_diff_impact  # noqa: E402
+from _bench_codex.structural import provisioning as codex_provisioning  # noqa: E402
+
 from _bench_common import mutation_isolation  # noqa: E402
 
 SCRIPT_PATH = BENCHMARKS_DIR / "run-codex-structural.py"
@@ -527,11 +533,11 @@ def test_prepare_verified_home_passes_writable_workspace_to_permission_verifier(
         """Record permission-verification arguments without running the real host probe."""
         observed.update(kwargs)
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "prepare_arm_home", _prepare)
-    monkeypatch.setattr(script_run_codex, "_write_permission_config", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", _verify_permission)
-    monkeypatch.setattr(script_run_codex, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "prepare_arm_home", _prepare)
+    monkeypatch.setattr(codex_provisioning, "_write_permission_config", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", _verify_permission)
+    monkeypatch.setattr(codex_provisioning, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
 
     home = runner._prepare_verified_home("A_plain", writable_workspace=workspace, denied_workspace=source)
     try:
@@ -624,17 +630,17 @@ def test_skill_home_preserves_plugin_registration_when_permissions_are_applied(
         home.codex_rig_manifest_sha256 = "rig-sha"
         return True
 
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_provisioning,
         "_verify_locked_codemap_python",
         lambda **_kwargs: "/opt/homebrew/bin/python3.11",
     )
-    monkeypatch.setattr(script_run_codex, "_install_codemap_plugin", _install_plugins)
-    monkeypatch.setattr(script_run_codex, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_admit_installed_skill_pair", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_installed_plugin_pair", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_install_codemap_plugin", _install_plugins)
+    monkeypatch.setattr(codex_provisioning, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_admit_installed_skill_pair", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_installed_plugin_pair", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
     runner = script_run_codex.CodexRunner(
         "fixture-model",
         repo_path,
@@ -724,16 +730,16 @@ def test_verified_home_overrides_treatment_python_and_removes_it_from_plain(
     index_path.parent.mkdir(parents=True)
     index_path.write_text("{}", encoding="utf-8")
     monkeypatch.setenv("CODEMAP_PYTHON", "/caller/selected/python")
-    monkeypatch.setattr(script_run_codex, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_permission_profile", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_diff_impact, "_validate_locked_runtime", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_permission_profile", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_plain_plugin_absent", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        script_run_codex,
+        codex_provisioning,
         "_verify_locked_codemap_python",
         lambda **_kwargs: "/opt/homebrew/bin/python3.11",
     )
-    monkeypatch.setattr(script_run_codex, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(script_run_codex, "_admit_staged_direct_cli", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_verify_treatment_artifact_locks", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(codex_provisioning, "_admit_staged_direct_cli", lambda *_args, **_kwargs: None)
     launcher = _make_direct_runtime_bundle(tmp_path)
     runner = script_run_codex.CodexRunner(
         "fixture-model",
@@ -883,8 +889,8 @@ def test_structural_snapshot_cleans_a_shared_treatment_coordination_root_once(
     runner.index_path = tmp_path / "index.json"
     runner.auth_source = None
     monkeypatch.setattr(runner, "_prepare_verified_home", lambda arm: Home(arm))
-    monkeypatch.setattr(script_run_codex, "_write_input_snapshot", lambda *_args, **_kwargs: {"ok": True})
-    monkeypatch.setattr(script_run_codex, "_cleanup_coordination_root", _cleanup)
+    monkeypatch.setattr(codex_provisioning, "_write_input_snapshot", lambda *_args, **_kwargs: {"ok": True})
+    monkeypatch.setattr(codex_provisioning, "_cleanup_coordination_root", _cleanup)
 
     assert runner.create_input_snapshot(
         tmp_path / "run",

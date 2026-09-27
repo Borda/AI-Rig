@@ -69,6 +69,7 @@ def _fetch(bin_dir: Path, args: str, repo_name: str) -> tuple[str, int]:
 
 
 def main(argv: list[str]) -> int:
+    """Fetch a GitHub issue and cache it for debug/feature/fix."""
     skill = argv[1] if len(argv) > 1 else ""
     if skill not in _KNOWN_SKILLS:
         print(

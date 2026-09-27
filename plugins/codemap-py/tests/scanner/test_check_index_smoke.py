@@ -19,6 +19,7 @@ import pytest
 
 import check_index_smoke  # noqa: E402 — bin/ on sys.path via conftest.py
 from check_index_smoke import (  # noqa: E402
+    SmokeResult,
     derive_exit_code,
     main,
     project_smoke_result,
@@ -73,7 +74,18 @@ class TestProjectSmokeResult:
         out = project_smoke_result(
             json.dumps({"ok": True, "stale": False, "age_hours": 1.5, "path": "/x"}),
         )
-        assert out == {"ok": True, "stale": False, "age_hours": 1.5}
+        assert out == SmokeResult(ok=True, stale=False, age_hours=1.5)
+
+    def test_success_path_omits_error_key_from_payload(self) -> None:
+        """The emitted-JSON projection must not carry an ``error`` key on success.
+
+        Shell callers branch on key presence, so a always-present ``error: null`` would read as a failure to any caller
+        testing for the key rather than its value.
+        """
+        out = project_smoke_result(
+            json.dumps({"ok": True, "stale": False, "age_hours": 1.5, "path": "/x"}),
+        )
+        assert out.to_dict() == {"ok": True, "stale": False, "age_hours": 1.5}
 
     def test_error_field_is_preserved(self) -> None:
         """Failed result must keep the upstream ``error`` message intact."""
@@ -82,35 +94,46 @@ class TestProjectSmokeResult:
                 {"ok": False, "stale": False, "age_hours": None, "error": "index file not found"},
             ),
         )
-        assert out == {
-            "ok": False,
-            "stale": False,
-            "age_hours": None,
-            "error": "index file not found",
-        }
+        assert out == SmokeResult(
+            ok=False,
+            stale=False,
+            age_hours=None,
+            error="index file not found",
+        )
 
     @pytest.mark.parametrize("raw", ["", "   \n"])
     def test_empty_input_returns_no_output_error(self, raw: str) -> None:
         """Empty / whitespace-only stdin must yield the canonical no-output error."""
         out = project_smoke_result(raw)
-        assert out["ok"] is False
-        assert out["stale"] is False
-        assert out["age_hours"] is None
-        assert out["error"] == "smoke_test_index.py produced no output"
+        assert out.ok is False
+        assert out.stale is False
+        assert out.age_hours is None
+        assert out.error == "smoke_test_index.py produced no output"
 
     def test_invalid_json_returns_error_payload(self) -> None:
         """Malformed JSON must yield ok=false with a parse-error message."""
         out = project_smoke_result("not-json{")
-        assert out["ok"] is False
-        assert out["stale"] is False
-        assert out["age_hours"] is None
-        assert "invalid JSON" in out["error"]
+        assert out.ok is False
+        assert out.stale is False
+        assert out.age_hours is None
+        assert "invalid JSON" in out.error
 
     def test_non_object_json_returns_error_payload(self) -> None:
         """List or scalar top-level JSON must be rejected."""
         out = project_smoke_result(json.dumps([1, 2, 3]))
-        assert out["ok"] is False
-        assert "non-object" in out["error"]
+        assert out.ok is False
+        assert "non-object" in out.error
+
+    def test_absent_upstream_keys_stay_none(self) -> None:
+        """Upstream omitting ``ok``/``stale`` must record ``None``, not ``False``.
+
+        The tri-state distinguishes "upstream said false" from "upstream said nothing"; collapsing it would let a silent
+        upstream regression read as a definite verdict.
+        """
+        out = project_smoke_result(json.dumps({"age_hours": 3.0}))
+        assert out.ok is None
+        assert out.stale is None
+        assert out.age_hours == 3.0
 
 
 class TestDeriveExitCode:
@@ -119,13 +142,14 @@ class TestDeriveExitCode:
     @pytest.mark.parametrize(
         ("projected", "expected"),
         [
-            pytest.param({"ok": True, "stale": False, "age_hours": 0.1}, 0, id="ok_fresh"),
-            pytest.param({"ok": True, "stale": True, "age_hours": 999.0}, 1, id="ok_stale"),
-            pytest.param({"ok": False, "stale": False, "age_hours": None, "error": "x"}, 1, id="failed"),
-            pytest.param({"ok": False, "stale": True, "age_hours": None, "error": "x"}, 1, id="failed_stale"),
+            pytest.param(SmokeResult(ok=True, stale=False, age_hours=0.1), 0, id="ok_fresh"),
+            pytest.param(SmokeResult(ok=True, stale=True, age_hours=999.0), 1, id="ok_stale"),
+            pytest.param(SmokeResult(ok=False, stale=False, age_hours=None, error="x"), 1, id="failed"),
+            pytest.param(SmokeResult(ok=False, stale=True, age_hours=None, error="x"), 1, id="failed_stale"),
+            pytest.param(SmokeResult(ok=None, stale=None, age_hours=None), 1, id="undetermined"),
         ],
     )
-    def test_exit_code_matches_contract(self, projected: dict[str, Any], expected: int) -> None:
+    def test_exit_code_matches_contract(self, projected: SmokeResult, expected: int) -> None:
         """Truth table from the legacy bash script must be preserved."""
         assert derive_exit_code(projected) == expected
 

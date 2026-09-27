@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "0b7b53f7087e8079b24d6d9c7db59014587ad0ad848fd72c74630744850a716a"
+      "sha256": "63c7237d3efba0a2b2e931f0f49c5dfdcd32358199fc06974af4403f8a45f24a"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "3ca077b1d3c4e9da9a1b5498faeebaf122c4eabd9f44ef4a0e523ec0942c8d70"
+      "sha256": "503b1b0992b01f4c99d7ff2fe48ede5cfadd44f88588340141817a18cffb42c7"
     },
     {
       "mode": "0644",
@@ -223,12 +223,12 @@
     {
       "mode": "0755",
       "path": "runtime/calibration/run.py",
-      "sha256": "30485d0533e0ebcde8dd0b7398ffe71a117b47be529fe742fdbf2af50408cac5"
+      "sha256": "e8449e4735d12cf0de6f4ac0edc9e156738431a3c78b6a042fcd23eb8babc2f2"
     },
     {
       "mode": "0755",
       "path": "runtime/calibration/run_live_ab.py",
-      "sha256": "dc6f6439e0f93a051cbf8c4b934f88cd2cecd10a575af0192e58eb92cb42e90d"
+      "sha256": "c70c1d85916d797b5865c512e5a90d192db23942046306fda776de6fce4842a8"
     },
     {
       "mode": "0755",
@@ -343,7 +343,7 @@
     {
       "mode": "0644",
       "path": "shared/app_server_review.py",
-      "sha256": "731c8db5db49813aa7d837e7ddf9ba2bb2c25ce78bba2b7f0d0fa209b695b46f"
+      "sha256": "0be02cf51894ccd4fb1a7d6c61fe384b8abee60f7b3e11f10a20d3f22a207956"
     },
     {
       "mode": "0644",
@@ -378,7 +378,7 @@
     {
       "mode": "0755",
       "path": "shared/collect_pr.py",
-      "sha256": "cf9611f020fdfa36e2cb25474356e23f3a82970eeb30d84d3825be05307e1d20"
+      "sha256": "90cac8222b646865257c031f245d385dfe1d2c7225ece019750a191542051ddf"
     },
     {
       "mode": "0644",
@@ -428,7 +428,7 @@
     {
       "mode": "0644",
       "path": "shared/parallel_execution.py",
-      "sha256": "17f4e3a58715f8eddd0c49edc5e71116db33d83712d29eec423157f8f2468649"
+      "sha256": "301a43b67bc89cade6a6685ae03365dfefb07d9ced7f4fcc9e9f2918851e2509"
     },
     {
       "mode": "0644",
@@ -478,7 +478,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "688dda90aafd4dc48aed3700c1db6e03e8677b6b6482f7ac16de36d884c814f8"
+      "sha256": "c3899e824ad513fd7b8954910296e7e7160a8a611ce272ec33b2313135e45fea"
     },
     {
       "mode": "0755",
@@ -588,7 +588,7 @@
     {
       "mode": "0755",
       "path": "skills/code-review/validate_artifacts.py",
-      "sha256": "1a3ba652e6e1602fbb3abfa4971ce1738abd1a0e55876ac7e40ea17f8fb5ea30"
+      "sha256": "864716dc24144b5697c057b11b9aecec8d1d5fb203fc99943e43068fbf1c2e73"
     },
     {
       "mode": "0644",
@@ -1378,5 +1378,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.25.1"
+  "version": "0.25.2"
 }

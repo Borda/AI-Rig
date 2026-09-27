@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.7
+
+- Split the four `bin/` scripts (`bridge_call.py`, `bridge_diagnose.py`, `bridge_mcp.py`, `bridge_setup.py`) into smaller functions and improved docstrings for readability; no behavior change. The configure-vs-authenticate/verify-live lock-failure payload asymmetry is preserved byte-exact and flagged inline at each call site as a maintainer decision point still open.
+
 ## 0.5.6
 
 - Fixed 27 audit findings (agent/skill cross-references, doc drift, tool-grant gaps); full test suite 292/292 passing. See `.reports/audit/2026-09-22T22-18-03Z/fix-summary-bridge.md` for full detail.

@@ -4,6 +4,11 @@
 
 - Keep the legacy workspace migration regex stable under Ruff and docformatter; restore single-quoted TOML migration.
 
+## 0.25.2
+
+- Split the largest artifact-validation, App Server review, PR collection, and parallel-execution functions into named single-concern helpers. Validation order, error codes, and evidence records are unchanged.
+- Carry the rejected-event diagnostic on `ReviewRouteError` itself instead of a caller-local variable, so failure evidence still records why an App Server event was refused after the event loop moved into its own helper.
+
 ## 0.25.1
 
 - Migrate a sole root `sandbox_mode = "workspace-write"` to `default_permissions = ":workspace"` during GitHub-read profile setup, with a byte-exact backup and reversible clear; retain fail-closed checks for other legacy sandbox settings.

@@ -199,6 +199,40 @@ def validate(data: dict | None, label: str, root: Path) -> str:
     return path
 
 
+def _resolve_changelog_sentinel(envelope_a: dict | None, root: Path) -> str:
+    """Validate envelope A's optional ``changelog_file`` and write or clear its sentinel.
+
+    A rejected value degrades non-fatally: the sentinel is optional and ``modes/prepare.md``
+    re-derives it via search, so the run continues with a warning rather than failing.
+
+    Args:
+        envelope_a: Decoded changelog-audit envelope, or ``None``.
+        root: Directory the named file must resolve inside.
+
+    Returns:
+        The written ``changelog_file`` value, or an empty string when it was rejected or absent.
+    """
+    changelog_file = field(envelope_a, "changelog_file", "")
+    changelog_file_ok = (
+        bool(changelog_file)
+        and _within_root(Path(changelog_file), root)
+        and Path(changelog_file).name.upper().startswith("CHANGELOG")
+    )
+    if changelog_file_ok:
+        _write_sentinel("release-changelog-file", changelog_file)
+        return changelog_file
+    if _DRY_RUN:
+        print("[dry-run] would remove release-changelog-file")
+    else:
+        _sentinel_path("release-changelog-file").unlink(missing_ok=True)
+    if changelog_file:
+        print(
+            f"[release] ⚠ changelog_file rejected (outside {root} or not a CHANGELOG file): "
+            f"{changelog_file} — sentinel not written, falling back to CHANGELOG search"
+        )
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point.
 
@@ -233,24 +267,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _write_sentinel("release-changelog-audit", changelog_audit_file)
     _write_sentinel("release-contributors", contributors_file)
-    changelog_file = field(envelope_a, "changelog_file", "")
-    changelog_file_ok = (
-        bool(changelog_file)
-        and _within_root(Path(changelog_file), root)
-        and Path(changelog_file).name.upper().startswith("CHANGELOG")
-    )
-    if changelog_file_ok:
-        _write_sentinel("release-changelog-file", changelog_file)
-    else:
-        if _DRY_RUN:
-            print("[dry-run] would remove release-changelog-file")
-        else:
-            _sentinel_path("release-changelog-file").unlink(missing_ok=True)
-        if changelog_file:
-            print(
-                f"[release] ⚠ changelog_file rejected (outside {root} or not a CHANGELOG file): "
-                f"{changelog_file} — sentinel not written, falling back to CHANGELOG search"
-            )
+    _resolve_changelog_sentinel(envelope_a, root)
 
     added = field(envelope_a, "added", "0")
     flagged = field(envelope_a, "flagged", "0")

@@ -1511,9 +1511,50 @@ def selftest_select_git_remote(run: CalibrationRun, selftest_dir: Path) -> None:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:select-git-remote")
 
 
+@dataclass(slots=True)
+class LiveAbContractFixture:
+    """Calibration inputs every live A/B contract scenario after the paid guards reads.
+
+    Loaded once because the scenarios must observe the same case, task, and route-policy payloads: the snapshot scenario
+    freezes them to disk and the scoring scenarios assert against rows derived from the same objects.
+    """
+
+    live_dir: Path
+    cases_payload: dict[str, Any]
+    cases: dict[str, Any]
+    tasks_payload: dict[str, Any]
+    policy_payload: dict[str, Any]
+    tasks: dict[str, Any]
+    policy: dict[str, Any]
+    snapshot_roles: set[str]
+
+
 def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
-    """Verify paid-run planning, meaningful tool fixtures, and mixed-scope scoring."""
+    """Verify paid-run planning, meaningful tool fixtures, and mixed-scope scoring.
+
+    The scenarios below run in order and stop at the first one that fails. Each assumes the state the previous one
+    established -- a correct plan, a runner that refuses to bill, a frozen input snapshot -- so continuing past a
+    failure would report cascading noise instead of the original fault. The runner-safety scan is the exception: it
+    reads source text only, so a failure there is recorded and the behavioral scenarios still run.
+    """
     live_dir = selftest_dir / "live-ab"
+    selftest_live_ab_contract_runner_safety(run)
+    if not selftest_live_ab_contract_plan(run, live_dir):
+        return
+    if not selftest_live_ab_contract_paid_guards(run, live_dir):
+        return
+    fixture = _live_ab_contract_fixture(run, live_dir)
+    if not selftest_live_ab_contract_input_snapshot(run, fixture):
+        return
+    selftest_live_ab_contract_scoring(run, fixture, selftest_live_ab_contract_observation_rows(run, fixture))
+
+
+def selftest_live_ab_contract_runner_safety(run: CalibrationRun) -> None:
+    """Check the live runner's source for the guards that keep an unattended paid run safe.
+
+    These are source-text assertions, not behavioral ones: the paid path cannot be exercised offline. A failure is
+    recorded without stopping the remaining scenarios, since nothing downstream depends on this scan.
+    """
     runner_text = read_text(run.paths.live_ab_runner)
     for forbidden_or_required, should_exist in (
         ('"uniqueItems"', False),
@@ -1529,6 +1570,13 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
                 "shared-script-selftests",
                 f"selftest-failed:live-ab-runner-safety:{forbidden_or_required}",
             )
+
+
+def selftest_live_ab_contract_plan(run: CalibrationRun, live_dir: Path) -> bool:
+    """Verify the unconfirmed run only plans: correct paid-call budget, no output directory.
+
+    Returns ``False`` once a failure is recorded, which stops the remaining live A/B scenarios.
+    """
     plan = run_command(
         [
             sys.executable,
@@ -1562,11 +1610,19 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
         or len(scopes) != 3
     ):
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-plan")
-        return
+        return False
     if (live_dir / "planned-run").exists():
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-plan-created-output")
-        return
+        return False
+    return True
 
+
+def selftest_live_ab_contract_paid_guards(run: CalibrationRun, live_dir: Path) -> bool:
+    """Verify the runner refuses to bill in CI and under API-key auth, writing nothing either way.
+
+    Both guards must fail closed: a non-zero exit, the specific refusal on stderr, and no output directory left
+    behind. Returns ``False`` once a failure is recorded, which stops the remaining live A/B scenarios.
+    """
     paid_args = [
         sys.executable,
         run.paths.live_ab_runner,
@@ -1604,8 +1660,12 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
         or api_out.exists()
     ):
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-api-key-paid-guard")
-        return
+        return False
+    return True
 
+
+def _live_ab_contract_fixture(run: CalibrationRun, live_dir: Path) -> LiveAbContractFixture:
+    """Load the calibration case, task, and route-policy inputs the remaining scenarios share."""
     cases_payload = json.loads(run.paths.behavioral_cases.read_text(encoding="utf-8"))
     cases = {case["id"]: case for case in cases_payload["cases"]}
     tasks_payload = json.loads(run.paths.live_ab_tasks.read_text(encoding="utf-8"))
@@ -1613,7 +1673,27 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
     tasks = tasks_payload["routes"]
     policy = policy_payload["routes"]
     snapshot_roles = {task["role"] for route_tasks in tasks.values() for task in route_tasks}
-    snapshot_source = live_dir / "snapshot-source"
+    return LiveAbContractFixture(
+        live_dir=live_dir,
+        cases_payload=cases_payload,
+        cases=cases,
+        tasks_payload=tasks_payload,
+        policy_payload=policy_payload,
+        tasks=tasks,
+        policy=policy,
+        snapshot_roles=snapshot_roles,
+    )
+
+
+def selftest_live_ab_contract_input_snapshot(run: CalibrationRun, fixture: LiveAbContractFixture) -> bool:
+    """Verify the input snapshot is a frozen copy, not a live view of the project files.
+
+    Mutates a role instruction after the snapshot is taken and requires the snapshotted context to stay unchanged;
+    scoring a long-running campaign against drifting inputs would otherwise be unreproducible. Returns ``False`` once a
+    failure is recorded, which stops the remaining live A/B scenarios.
+    """
+    snapshot_roles = fixture.snapshot_roles
+    snapshot_source = fixture.live_dir / "snapshot-source"
     if run.paths.layout == "plugin":
         for role in snapshot_roles:
             source = role_file(run, role)
@@ -1638,10 +1718,10 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
     live_runner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(live_runner)
     snapshot_root = live_runner._write_input_snapshot(
-        live_dir / "snapshot-run",
-        cases_payload,
-        tasks_payload,
-        policy_payload,
+        fixture.live_dir / "snapshot-run",
+        fixture.cases_payload,
+        fixture.tasks_payload,
+        fixture.policy_payload,
         snapshot_source,
         snapshot_roles,
         run.paths.layout,
@@ -1654,24 +1734,37 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
         else snapshot_source / ".codex" / "agents" / f"{snapshot_role}.toml"
     )
     source_role.write_text("changed after snapshot\n", encoding="utf-8")
-    manifest = json.loads((live_dir / "snapshot-run" / "inputs" / "manifest.json").read_text(encoding="utf-8"))
+    manifest = json.loads((fixture.live_dir / "snapshot-run" / "inputs" / "manifest.json").read_text(encoding="utf-8"))
     if (
         role_context(snapshot_root, snapshot_role, run.paths.layout) != snapshotted_context
         or manifest.get("roles") != sorted(snapshot_roles)
         or manifest.get("score_inputs", {}).get("root") != "inputs/root"
     ):
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-input-snapshot")
-        return
+        return False
+    return True
+
+
+def selftest_live_ab_contract_observation_rows(
+    run: CalibrationRun, fixture: LiveAbContractFixture
+) -> list[dict[str, Any]]:
+    """Assemble synthetic observation rows, proving each tool-use fixture is a meaningful gate first.
+
+    Running every tool-use fixture through its own gate is the non-vacuity check: a fixture whose gate already
+    passes would make the tool-use route score well without the model doing anything, so a passing gate here is
+    recorded as a failure. The rows returned mirror what a real campaign would emit, which is what the scoring
+    scenarios then probe for substitution resistance.
+    """
     observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     rows: list[dict[str, Any]] = []
-    for route_id, route in sorted(policy.items()):
+    for route_id, route in sorted(fixture.policy.items()):
         for campaign_index in (1, 2):
             campaign_id = f"selftest:c{campaign_index}"
-            for index, task in enumerate(tasks[route_id], start=1):
-                case = cases[task["case_id"]]
+            for index, task in enumerate(fixture.tasks[route_id], start=1):
+                case = fixture.cases[task["case_id"]]
                 evidence_scope = task.get("evidence_scope", "classification")
                 if evidence_scope == "tool-use" and campaign_index == 1:
-                    fixture_dir = live_dir / "fixtures" / route_id
+                    fixture_dir = fixture.live_dir / "fixtures" / route_id
                     fixture_dir.mkdir(parents=True, exist_ok=True)
                     for relative, content in task["fixture_files"].items():
                         destination = fixture_dir / relative
@@ -1684,7 +1777,7 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
                 expected_prompt_sha = prompt_sha256(
                     build_prompt(
                         case,
-                        candidate_findings(case["id"], cases),
+                        candidate_findings(case["id"], fixture.cases),
                         task,
                         role_context(run.paths.asset_root, task["role"], run.paths.layout),
                     )
@@ -1729,7 +1822,20 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
                             "pricing_ref": "normalized-token-v1:uncached+0.1*cached+4*output",
                         }
                     )
-    observations = live_dir / "observations.jsonl"
+    return rows
+
+
+def selftest_live_ab_contract_scoring(
+    run: CalibrationRun, fixture: LiveAbContractFixture, rows: list[dict[str, Any]]
+) -> None:
+    """Score the synthetic observations, then confirm the scorer rejects four kinds of substituted evidence.
+
+    The first run must succeed on mixed classification and tool-use scope. Each later run replays the same rows with one
+    binding degraded -- tool-use scope dropped, a campaign removed, a task's role swapped, or the prompt and task-
+    contract digests replaced -- and the scorer is required to reject every one. A scorer that accepts any of them would
+    let unattributable evidence into a route acceptance decision.
+    """
+    observations = fixture.live_dir / "observations.jsonl"
     observations.parent.mkdir(parents=True, exist_ok=True)
     fixture_rows = run.paths.behavioral_observations.read_text(encoding="utf-8")
     observations.write_text(fixture_rows + "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
@@ -1750,68 +1856,99 @@ def selftest_live_ab_contract(run: CalibrationRun, selftest_dir: Path) -> None:
         run.paths.layout,
         "--require-live-routes",
         "--out",
-        live_dir / "scored.json",
+        fixture.live_dir / "scored.json",
     ]
     scored = run_command(scorer_args)
     if scored.returncode != 0:
         run.fail_and_leak("shared-script-selftests", "selftest-failed:live-ab-mixed-scope-score")
         return
-    classification_only = live_dir / "classification-only.jsonl"
+    classification_only = fixture.live_dir / "classification-only.jsonl"
     classification_only.write_text(
         fixture_rows + "".join(json.dumps({**row, "evidence_scope": "classification"}) + "\n" for row in rows),
         encoding="utf-8",
     )
     scorer_args[scorer_args.index(observations)] = classification_only
-    scorer_args[-1] = live_dir / "classification-only-scored.json"
+    scorer_args[-1] = fixture.live_dir / "classification-only-scored.json"
     if run_command(scorer_args).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:live-ab-missing-tool-scope")
-    single_campaign = live_dir / "single-campaign.jsonl"
+    single_campaign = fixture.live_dir / "single-campaign.jsonl"
     single_campaign.write_text(
         fixture_rows + "".join(json.dumps(row) + "\n" for row in rows if row["campaign_id"].endswith(":c1")),
         encoding="utf-8",
     )
     scorer_args[scorer_args.index(classification_only)] = single_campaign
-    scorer_args[-1] = live_dir / "single-campaign-scored.json"
+    scorer_args[-1] = fixture.live_dir / "single-campaign-scored.json"
     if run_command(scorer_args).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:live-ab-single-campaign")
-    substituted_tasks = live_dir / "substituted-tasks.jsonl"
+    substituted_tasks = fixture.live_dir / "substituted-tasks.jsonl"
     substituted_tasks.write_text(
         fixture_rows
         + "".join(
             json.dumps({**row, "role": "qa-specialist"}) + "\n"
-            if row["route_id"] == "luna-support-high" and row["case_id"] == tasks["luna-support-high"][0]["case_id"]
+            if row["route_id"] == "luna-support-high"
+            and row["case_id"] == fixture.tasks["luna-support-high"][0]["case_id"]
             else json.dumps(row) + "\n"
             for row in rows
         ),
         encoding="utf-8",
     )
     scorer_args[scorer_args.index(single_campaign)] = substituted_tasks
-    scorer_args[-1] = live_dir / "substituted-tasks-scored.json"
+    scorer_args[-1] = fixture.live_dir / "substituted-tasks-scored.json"
     if run_command(scorer_args).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:live-ab-task-substitution")
-    arbitrary_prompts = live_dir / "arbitrary-prompts.jsonl"
+    arbitrary_prompts = fixture.live_dir / "arbitrary-prompts.jsonl"
     arbitrary_prompts.write_text(
         fixture_rows + "".join(json.dumps({**row, "prompt_sha256": "f" * 64}) + "\n" for row in rows),
         encoding="utf-8",
     )
     scorer_args[scorer_args.index(substituted_tasks)] = arbitrary_prompts
-    scorer_args[-1] = live_dir / "arbitrary-prompts-scored.json"
+    scorer_args[-1] = fixture.live_dir / "arbitrary-prompts-scored.json"
     if run_command(scorer_args).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:live-ab-prompt-substitution")
-    arbitrary_contracts = live_dir / "arbitrary-task-contracts.jsonl"
+    arbitrary_contracts = fixture.live_dir / "arbitrary-task-contracts.jsonl"
     arbitrary_contracts.write_text(
         fixture_rows + "".join(json.dumps({**row, "task_contract_sha256": "e" * 64}) + "\n" for row in rows),
         encoding="utf-8",
     )
     scorer_args[scorer_args.index(arbitrary_prompts)] = arbitrary_contracts
-    scorer_args[-1] = live_dir / "arbitrary-task-contracts-scored.json"
+    scorer_args[-1] = fixture.live_dir / "arbitrary-task-contracts-scored.json"
     if run_command(scorer_args).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:live-ab-task-contract-substitution")
 
 
-def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
-    """Exercise rollout-bound review validation and TRIVIAL semantic routing."""
-    out = selftest_dir / "review-validator"
+@dataclass(slots=True)
+class ReviewValidatorFixture:
+    """Synthetic rollout evidence the review-validator selftest validates against.
+
+    Groups the identifiers and digests that bind a parent session, its spawned specialist, and that specialist's
+    recorded output together. The validator under test rejects any artifact whose bindings disagree, so the selftest
+    needs every one of these values on hand to construct both the passing case and the deliberate violations.
+    """
+
+    codex_home: Path
+    review_input_sha: str
+    role_card_sha: str
+    context: Path
+    context_sha: str
+    agent_path: str
+    output: Path
+    output_sha: str
+    parent_id: str
+    child_id: str
+    turn_id: str
+    event_id: str
+    spawn_call_id: str
+    child_rows: list[dict[str, Any]]
+    child_rollout: Path
+
+
+def _build_review_validator_rollout(run: CalibrationRun, out: Path) -> ReviewValidatorFixture:
+    """Write the synthetic diff, role context, rollout sessions, and routing the review validator reads.
+
+    Produces a coherent parent/child session pair on disk: the parent records a ``spawn_agent`` call and the join
+    message, the child records its thread settings and completion. Both carry the same agent path, model, and output
+    digest, which is the binding the validator checks.
+    """
     specialists = out / "specialists"
     codex_home = out / "codex-home"
     sessions = codex_home / "sessions"
@@ -1966,6 +2103,105 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     ]
     child_rollout = sessions / f"rollout-{child_id}.jsonl"
     child_rollout.write_text("".join(json.dumps(row) + "\n" for row in child_rows), encoding="utf-8")
+    return ReviewValidatorFixture(
+        codex_home=codex_home,
+        review_input_sha=review_input_sha,
+        role_card_sha=role_card_sha,
+        context=context,
+        context_sha=context_sha,
+        agent_path=agent_path,
+        output=output,
+        output_sha=output_sha,
+        parent_id=parent_id,
+        child_id=child_id,
+        turn_id=turn_id,
+        event_id=event_id,
+        spawn_call_id=spawn_call_id,
+        child_rows=child_rows,
+        child_rollout=child_rollout,
+    )
+
+
+def _build_review_validator_result(
+    fixture: ReviewValidatorFixture,
+    out: Path,
+    manifest_path: Path,
+    specialist_pass: dict[str, Any],
+) -> tuple[dict[str, Any], Path]:
+    """Write the review notes and the passing ``result.json`` the validator is pointed at.
+
+    The returned metadata is the same object embedded in the written result, so a caller that mutates it for a negative
+    case only has to rewrite the file.
+    """
+    sections = (
+        "Decision Summary",
+        "Scope",
+        "Risk Tier",
+        "Files Inspected",
+        "Specialist Passes",
+        "Specialist Manifest",
+        "Findings",
+        "No-Finding Residual Risks",
+        "Confidence Gaps",
+        "Confidence Calibration",
+    )
+    (out / "review-notes.md").write_text(
+        "# Review\n\n" + "\n\n".join(f"## {section}\n\nSynthetic evidence." for section in sections) + "\n",
+        encoding="utf-8",
+    )
+    metadata = {
+        "scope": "working-tree",
+        "risk_tier": "TRIVIAL",
+        "review_decision": {"recommendation": "accept-as-is", "summary": "Clean.", "rationale": "Synthetic pass."},
+        "confidence_gaps": ["synthetic fixture does not inspect production code"],
+        "confidence_gap_closures": [
+            {
+                "gap": "synthetic fixture does not inspect production code",
+                "status": "unresolved",
+                "rationale": "This selftest validates provenance and routing only",
+            }
+        ],
+        "confidence_recovery": {
+            "initial_confidence": 0.9,
+            "final_confidence": 0.95,
+            "status": "fair",
+            "evidence": ["synthetic rollout-shaped fixture"],
+            "recovery_actions": ["validated parent, child, model, context, and output bindings"],
+            "remaining_limits": ["encrypted task plaintext cannot be inspected"],
+        },
+        "specialist_manifest": str(manifest_path),
+        "specialist_passes": [specialist_pass],
+        "review_run_id": "selftest-review",
+        "review_input_sha256": fixture.review_input_sha,
+        "fanout_substituted": False,
+        "independence_satisfied": True,
+        "independence_required": True,
+        "execution_mode": "serial",
+        "execution_evidence_level": "portable-read-restricted",
+        "write_parallel_eligible": False,
+    }
+    result_path = out / "result.json"
+    result_path.write_text(
+        json.dumps(
+            {
+                "status": "pass",
+                "checks_failed": [],
+                "confidence": 0.95,
+                "findings": {"critical": 0, "high": 0, "medium": 0, "low": 0},
+                "metadata": metadata,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return metadata, result_path
+
+
+def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
+    """Exercise rollout-bound review validation and TRIVIAL semantic routing."""
+    out = selftest_dir / "review-validator"
+    fixture = _build_review_validator_rollout(run, out)
 
     signals = {
         key: key == "behavior_change"
@@ -2004,28 +2240,28 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     }
     (out / "review-routing.json").write_text(json.dumps(routing, indent=2) + "\n", encoding="utf-8")
     attempt = {
-        "agent_path": agent_path,
-        "agent_thread_id": child_id,
+        "agent_path": fixture.agent_path,
+        "agent_thread_id": fixture.child_id,
         "attempt": 1,
-        "context_path": str(context),
-        "context_sha256": context_sha,
+        "context_path": str(fixture.context),
+        "context_sha256": fixture.context_sha,
         "effort": "medium",
-        "event_id": event_id,
+        "event_id": fixture.event_id,
         "model": DEFAULT_MODEL,
-        "output_path": str(output),
-        "output_sha256": output_sha,
+        "output_path": str(fixture.output),
+        "output_sha256": fixture.output_sha,
         "status": "completed",
-        "turn_id": turn_id,
+        "turn_id": fixture.turn_id,
     }
     specialist_pass = {
         "role": "qa-specialist",
-        "role_card_sha256": role_card_sha,
+        "role_card_sha256": fixture.role_card_sha,
         "axis": "tests",
         "mode": "spawned",
         "trigger": "behavior_change",
         "confidence": 0.95,
         "blocking_findings": 0,
-        "output_path": str(output),
+        "output_path": str(fixture.output),
         "attempts": [attempt],
         "selected_attempt": 1,
     }
@@ -2090,9 +2326,9 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
                     {
                         "node_id": "qa-specialist",
                         "role_id": "qa-specialist",
-                        "role_card_sha256": role_card_sha,
+                        "role_card_sha256": fixture.role_card_sha,
                         "context_path": "specialists/qa-specialist-context.md",
-                        "context_sha256": context_sha,
+                        "context_sha256": fixture.context_sha,
                         "mutation": "read-only",
                         "owned_paths": [],
                         "resource_locks": [],
@@ -2103,14 +2339,14 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
                                 "attempt": 1,
                                 "status": "completed",
                                 "error_type": None,
-                                "agent_path": agent_path,
-                                "agent_thread_id": child_id,
-                                "spawn_call_id": spawn_call_id,
-                                "turn_id": turn_id,
-                                "start_event": {"event_id": event_id, "sequence": 1},
-                                "terminal_event": {"event_id": turn_id, "sequence": 2},
+                                "agent_path": fixture.agent_path,
+                                "agent_thread_id": fixture.child_id,
+                                "spawn_call_id": fixture.spawn_call_id,
+                                "turn_id": fixture.turn_id,
+                                "start_event": {"event_id": fixture.event_id, "sequence": 1},
+                                "terminal_event": {"event_id": fixture.turn_id, "sequence": 2},
                                 "output_path": "specialists/qa-specialist.md",
-                                "output_sha256": output_sha,
+                                "output_sha256": fixture.output_sha,
                             }
                         ],
                         "selected_attempt": 1,
@@ -2127,8 +2363,8 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     manifest = {
         "schema_version": 3,
         "review_run_id": "selftest-review",
-        "parent_thread_id": parent_id,
-        "review_input_sha256": review_input_sha,
+        "parent_thread_id": fixture.parent_id,
+        "review_input_sha256": fixture.review_input_sha,
         "runtime_execution": {
             "manifest_path": execution_manifest.name,
             "manifest_sha256": hashlib.sha256(execution_manifest.read_bytes()).hexdigest(),
@@ -2138,68 +2374,7 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     }
     manifest_path = out / "specialist-manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    sections = (
-        "Decision Summary",
-        "Scope",
-        "Risk Tier",
-        "Files Inspected",
-        "Specialist Passes",
-        "Specialist Manifest",
-        "Findings",
-        "No-Finding Residual Risks",
-        "Confidence Gaps",
-        "Confidence Calibration",
-    )
-    (out / "review-notes.md").write_text(
-        "# Review\n\n" + "\n\n".join(f"## {section}\n\nSynthetic evidence." for section in sections) + "\n",
-        encoding="utf-8",
-    )
-    metadata = {
-        "scope": "working-tree",
-        "risk_tier": "TRIVIAL",
-        "review_decision": {"recommendation": "accept-as-is", "summary": "Clean.", "rationale": "Synthetic pass."},
-        "confidence_gaps": ["synthetic fixture does not inspect production code"],
-        "confidence_gap_closures": [
-            {
-                "gap": "synthetic fixture does not inspect production code",
-                "status": "unresolved",
-                "rationale": "This selftest validates provenance and routing only",
-            }
-        ],
-        "confidence_recovery": {
-            "initial_confidence": 0.9,
-            "final_confidence": 0.95,
-            "status": "fair",
-            "evidence": ["synthetic rollout-shaped fixture"],
-            "recovery_actions": ["validated parent, child, model, context, and output bindings"],
-            "remaining_limits": ["encrypted task plaintext cannot be inspected"],
-        },
-        "specialist_manifest": str(manifest_path),
-        "specialist_passes": [specialist_pass],
-        "review_run_id": "selftest-review",
-        "review_input_sha256": review_input_sha,
-        "fanout_substituted": False,
-        "independence_satisfied": True,
-        "independence_required": True,
-        "execution_mode": "serial",
-        "execution_evidence_level": "portable-read-restricted",
-        "write_parallel_eligible": False,
-    }
-    result_path = out / "result.json"
-    result_path.write_text(
-        json.dumps(
-            {
-                "status": "pass",
-                "checks_failed": [],
-                "confidence": 0.95,
-                "findings": {"critical": 0, "high": 0, "medium": 0, "low": 0},
-                "metadata": metadata,
-            },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    metadata, result_path = _build_review_validator_result(fixture, out, manifest_path, specialist_pass)
     command: list[str | Path] = [
         sys.executable,
         run.paths.code_review_validate_artifacts,
@@ -2208,11 +2383,11 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
         "--result",
         result_path,
         "--codex-home",
-        codex_home,
+        fixture.codex_home,
         "--project-root",
         run.paths.root,
         "--parent-thread-id",
-        parent_id,
+        fixture.parent_id,
     ]
     if run_command(command).returncode != 0:
         run.fail_and_leak("shared-script-selftests", "selftest-failed:review-validator-positive")
@@ -2221,17 +2396,17 @@ def selftest_review_validator(run: CalibrationRun, selftest_dir: Path) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     if run_command(command).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:review-validator-context-binding")
-    manifest["passes"][0]["attempts"][0]["agent_path"] = agent_path
+    manifest["passes"][0]["attempts"][0]["agent_path"] = fixture.agent_path
     manifest["passes"][0]["attempts"][0]["model"] = SUPPORT_MODEL
-    child_rows[2]["payload"]["model"] = SUPPORT_MODEL
+    fixture.child_rows[2]["payload"]["model"] = SUPPORT_MODEL
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    child_rollout.write_text("".join(json.dumps(row) + "\n" for row in child_rows), encoding="utf-8")
+    fixture.child_rollout.write_text("".join(json.dumps(row) + "\n" for row in fixture.child_rows), encoding="utf-8")
     if run_command(command).returncode == 0:
         run.fail_and_leak("shared-script-selftests", "selftest-fail-open:review-validator-role-model")
     manifest["passes"][0]["attempts"][0]["model"] = DEFAULT_MODEL
-    child_rows[2]["payload"]["model"] = DEFAULT_MODEL
+    fixture.child_rows[2]["payload"]["model"] = DEFAULT_MODEL
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    child_rollout.write_text("".join(json.dumps(row) + "\n" for row in child_rows), encoding="utf-8")
+    fixture.child_rollout.write_text("".join(json.dumps(row) + "\n" for row in fixture.child_rows), encoding="utf-8")
     metadata["review_decision"] = {
         "recommendation": "needs-more-work",
         "summary": "Coverage evidence is missing.",

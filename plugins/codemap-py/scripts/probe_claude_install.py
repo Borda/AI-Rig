@@ -48,6 +48,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 _THIS = Path(__file__).resolve()
@@ -58,6 +59,7 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from _probe_runtime import (  # noqa: E402  (needs the scripts path insert above)
+    RuntimeProof,
     build_from_checkout,
     runtime_proof,
     stage_disposable_source,
@@ -112,7 +114,54 @@ def _package_roster(installed_path: Path) -> list[str] | None:
     return sorted(roster) if isinstance(roster, list) else None
 
 
-def verify_claude_install(installed_path: Path) -> dict:
+@dataclass(frozen=True)
+class ClaudeInstallReport:
+    """Static verification result for one installed Claude plugin tree.
+
+    Dataclass (not TypedDict): named construction and attribute access;
+    converted to a dict by :meth:`to_dict` at the JSON-emission boundary.
+
+    Attributes:
+        ok: Whether every check in ``checks`` passed.
+        checks: Per-check verdicts keyed by check name.
+        issues: Human-readable reasons for each failed check.
+        skill_dirs: Installed ``claude-skills/`` dirs holding a ``SKILL.md``.
+        roster: Claude roster from the installed ``package-manifest.json``, or ``None`` if absent.
+        manifest: Identity fields echoed from ``.claude-plugin/plugin.json``.
+
+    Examples:
+        >>> ClaudeInstallReport(ok=False, checks={}, issues=[], skill_dirs=[], roster=None, manifest={}).ok
+        False
+    """
+
+    ok: bool
+    checks: dict[str, bool]
+    issues: list[str]
+    skill_dirs: list[str]
+    roster: list[str] | None
+    manifest: dict
+
+    def to_dict(self) -> dict:
+        """Return the JSON-envelope projection of this report.
+
+        Returns:
+            A dict with ``ok``, ``checks``, ``issues``, ``skill_dirs``, ``roster``, ``manifest``.
+
+        Examples:
+            >>> sorted(ClaudeInstallReport(True, {}, [], [], None, {}).to_dict())
+            ['checks', 'issues', 'manifest', 'ok', 'roster', 'skill_dirs']
+        """
+        return {
+            "ok": self.ok,
+            "checks": self.checks,
+            "issues": self.issues,
+            "skill_dirs": self.skill_dirs,
+            "roster": self.roster,
+            "manifest": self.manifest,
+        }
+
+
+def verify_claude_install(installed_path: Path) -> ClaudeInstallReport:
     """Statically check the installed Claude plugin bytes; return a checks/issues report.
 
     Verifies the manifest identity, that the ``claude-skills/`` skill set (dirs holding a
@@ -121,7 +170,7 @@ def verify_claude_install(installed_path: Path) -> dict:
     directory.
 
     Examples:
-        >>> verify_claude_install(Path("/nonexistent"))["ok"]
+        >>> verify_claude_install(Path("/nonexistent")).ok
         False
     """
     checks: dict[str, bool] = {}
@@ -162,18 +211,18 @@ def verify_claude_install(installed_path: Path) -> dict:
     if not checks["codex_skills_not_registered"]:
         issues.append(f"codex-skills registered as claude skills source: {names!r}")
 
-    return {
-        "ok": all(checks.values()),
-        "checks": checks,
-        "issues": issues,
-        "skill_dirs": skill_dirs,
-        "roster": roster,
-        "manifest": {
+    return ClaudeInstallReport(
+        ok=all(checks.values()),
+        checks=checks,
+        issues=issues,
+        skill_dirs=skill_dirs,
+        roster=roster,
+        manifest={
             "name": manifest.get("name"),
             "version": manifest.get("version"),
             "skills": manifest.get("skills"),
         },
-    }
+    )
 
 
 def _claude_version() -> str | None:
@@ -261,16 +310,16 @@ def run_probe() -> dict:
         verification = verify_claude_install(installed_path)
         runtime = (
             runtime_proof(installed_path, workdir, [src_root], [_REPO_ROOT, src_root])
-            if verification["ok"]
-            else {"ok": False, "checks": {}, "detail": {"skipped": "static verification failed"}}
+            if verification.ok
+            else RuntimeProof(ok=False, checks={}, detail={"skipped": "static verification failed"})
         )
-        verification["runtime_ok"] = runtime["ok"]
+        verification_payload = {**verification.to_dict(), "runtime_ok": runtime.ok}
         return {
             **result,
-            "status": "ok" if verification["ok"] and runtime["ok"] else "verification-failed",
+            "status": "ok" if verification.ok and runtime.ok else "verification-failed",
             "installed_path": str(installed_path),
-            "verification": verification,
-            "runtime": runtime,
+            "verification": verification_payload,
+            "runtime": runtime.to_dict(),
         }
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

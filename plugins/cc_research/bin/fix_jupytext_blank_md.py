@@ -49,6 +49,7 @@ def fix_text(text: str) -> tuple[str, int]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Fix blank markdown cells so they stay truly empty in jupytext percent format."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument(
