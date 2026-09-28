@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.0
+
+- Recover a user-reported dismissed Codex question at its frozen decision checkpoint; use a final plain-chat question when no native control remains suitable and avoid the dismissed control in the same host until delivery is verified again.
+- Add `shared/notebook-style.md`, the canonical notebook-authoring standard (cell granularity, markdown narrative depth, plot framing, magics, fail-fast main path) for every notebook this rig produces, propagated byte-identical into `cc_foundry`, `cc_research`, and `cc_oss`. The kaggle skill's `references/style-rules.md` now carries only the Kaggle-only delta on top of it (was style-rules rule 08).
+
 ## 0.25.3
 
 - Require a verified blocker before refusing an explicitly requested reversible local action; reuse existing authorization.

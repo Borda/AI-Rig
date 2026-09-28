@@ -172,6 +172,20 @@
       "target": "code-remediate"
     },
     {
+      "expected_findings": [],
+      "id": "code-remediate-dismissed-question-recovery",
+      "prompt": "A remediation scope ledger was shown, and an async question call was accepted. The user reports that a later assistant response dismissed the question before they could select anything. Sync is unavailable for this required decision, and the observed async control cannot keep this question available. The agent records the dismissal, retains the original frozen inventory and pending decision, then asks the still-missing scope question once in its final plain-chat response with complete index/range/severity syntax. It treats that async transport as unsuitable for later required questions in the same host until delivery is verified again. It does not repeat the ledger, recollect the PR, infer consent, or append another status message. Assess this recovery.",
+      "target": "code-remediate"
+    },
+    {
+      "expected_findings": [
+        "dismissed-question-treated-as-delivered"
+      ],
+      "id": "code-remediate-dismissed-question-abandoned",
+      "prompt": "A remediation scope ledger was shown, and an async question call was accepted. The user reports that a later assistant response dismissed the question before they could select anything. The agent treats tool acceptance as delivery, says the question remains pending, and ends with another status handoff without asking the missing question through any usable channel. Assess the missing recovery; the frozen inventory and decision remain pending, and the user has no way to answer.",
+      "target": "code-remediate"
+    },
+    {
       "expected_findings": [
         "review-completion-before-promotion",
         "applicable-gate-failure-skipped"

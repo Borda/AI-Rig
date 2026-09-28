@@ -368,7 +368,7 @@ Generates a Kaggle competition notebook as a Jupytext `# %%` Python script. It g
 
 Supported options are `--type classification|regression|segmentation|detection|tabular`, `--eda-only`, `--inference-only`, `--offline-setup`, `--resume <path>`, and `--keep "<items>"`. `--eda-only` is always online and omits training; `--inference-only` is offline, uses the frozen-package pattern, and writes an `-inference.py` suffix; `--offline-setup` adds frozen package setup and is ignored for EDA-only mode.
 
-Generated notebooks use small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
+Generated notebooks follow the repo-wide notebook standard (`skills/_shared/notebook-style.md`, propagated from `codex-rig/shared/notebook-style.md`) plus a small Kaggle-only delta in `skills/kaggle/modes/style-rules.md`: small single-purpose cells, a why for each meaningful cell, visual EDA, leakage-safe evaluation, PTL plus torchmetrics for DNN training, and separate checkpoint load/inference. Credentials are not written to the notebook. Output is `.experiments/kaggle/<competition-name>.py` or the inference suffix. An opt-in Step 4 gate can additionally distill notebook helpers into a tested `src/` package.
 
 ### `/research:setup`
 

@@ -3376,6 +3376,10 @@
       "kind": "command",
       "src": "agents/web-explorer.md:222"
     },
+    "a367dbf263ccc16f1cdd2ee9f6ec23c872533748d8e8bf630d3e01922dd6135a": {
+      "kind": "block",
+      "src": "rules/notebooks.md:22"
+    },
     "a38d55c36cdf9352ec5d94c39e72221e9b3ac23887c716090553a082333f3179": {
       "kind": "command",
       "src": "skills/audit/templates/checks-skills.md:946"
@@ -5161,6 +5165,6 @@
       "src": "skills/investigate/SKILL.md:97"
     }
   },
-  "plugin": "cc_foundry@0.60.0",
+  "plugin": "cc_foundry@0.61.0",
   "schema": 1
 }

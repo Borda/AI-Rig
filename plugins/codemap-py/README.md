@@ -4,6 +4,8 @@ Codex questions use synchronous `request_user_input` for required or flow-changi
 
 Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
 
+A user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again.
+
 codemap-py builds a local, static index of a Python project so maintainers can answer "what imports this?", "what calls this function?", "which tests are likely affected?", and "where is the highest coupling?" before changing code. It is useful when a task has unresolved structural scope; a fully localized edit with no such question should skip it.
 
 The package ships the same six skills for Claude Code and Codex: scan the project, query the index, find affected tests, rename references, inspect integration, and debrief Claude telemetry. The runtime adapters share the capability contract but keep their host-specific invocation and path rules.

@@ -488,7 +488,7 @@ Range notation: `v1->v2` (e.g. `v1.2->v2.0`). Omit range → defaults to `last-t
 | `--append`    | Rerun the full pipeline scoped to newly-landed commits; integrate results into existing artifacts instead of a full regenerate (see below)                                                                                                                                  |
 | `prepare`     | Full pipeline: audit → project `CHANGELOG.md` entry plus `HIGHLIGHTS.md`, `MIGRATION.md`, `SUMMARY.md`, `DRAFT.md`, `demo.py`, and `waived-changes.md` under `releases/<version>/`                                                                                          |
 | `audit`       | Readiness checklist: tests green, changelog present, version bumped, no uncommitted changes, doc proportionality for newly added features, no blocking upstream `/oss:review` verdict on file, changelog scope check , Codex adversarial pass (if `codex` plugin installed) |
-| `demo`        | Story-telling jupytext notebook (`demo.py`) highlighting most significant contributions                                                                                                                                                                                     |
+| `demo`        | Story-telling jupytext notebook (`demo.py`) highlighting most significant contributions, following the repo-wide notebook standard in `skills/_shared/notebook-style.md`                                                                                                    |
 
 **What each mode does:**
 

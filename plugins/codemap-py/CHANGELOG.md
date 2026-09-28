@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.9
+
+- Recover a user-reported dismissed Codex question without losing its pending decision or reusing the unsuitable control in the same host.
+
 ## 0.39.8
 
 - Keep Codex decisions pending when an accepted async question renders as text; use a truthful typed-answer fallback without repeating the question.

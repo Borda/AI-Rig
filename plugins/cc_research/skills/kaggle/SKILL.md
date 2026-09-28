@@ -248,17 +248,20 @@ echo "Mode: $MODE · Output: $OUTFILE"
 cat "$COMPOSITION_FILE"  # timeout: 5000
 ```
 
-Select the exact `$MODE` row from `composition.md` (loaded above), cat each named contract once, left to right, plus `style-rules.md` once:
+Select the exact `$MODE` row from `composition.md` (loaded above), cat the shared notebook standard, then each named contract once left to right, plus `style-rules.md` once:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r MODE < "${TMPDIR:-/tmp}/kaggle-mode-${CSID}" 2>/dev/null || MODE="full"
 _KAGGLE_MODES="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/kaggle/modes"
+_KAGGLE_SHARED="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills/_shared"
 case "$MODE" in
   full) _CONTRACTS="foundation.md eda.md training.md inference.md submission.md" ;;
   eda-only) _CONTRACTS="foundation.md eda.md" ;;
   inference-only) _CONTRACTS="foundation.md inference.md submission.md" ;;
 esac
+echo "=== notebook-style.md ==="
+cat "$_KAGGLE_SHARED/notebook-style.md"
 for _c in $_CONTRACTS style-rules.md; do
     echo "=== $_c ==="
     cat "$_KAGGLE_MODES/$_c"
@@ -321,7 +324,7 @@ After agent completes:
 1. Read first 30 lines of generated file to verify `# %%` structure
 2. Count cell markers: `grep -c "^# %%" .experiments/kaggle/<name>.py`
 3. Resolve the current row from `composition.md`; verify every listed section is present and no unlisted section was generated
-4. Mechanically check for bare `#` heading-spacer lines (style-rules.md rule 13) — prose compliance alone proved insufficient in practice; auto-fix rather than trust the generating pass
+4. Mechanically check for bare `#` heading-spacer lines (`_shared/notebook-style.md` §Markdown blank lines) — prose compliance alone proved insufficient in practice; auto-fix rather than trust the generating pass
 
 ```bash
 # Re-derive OUTFILE from flags persisted in Step 1 (bash state lost between steps)
@@ -336,7 +339,7 @@ echo "=== Cell count ==="; grep -c "^# %%" "$OUTFILE"  # timeout: 5000
 echo "=== Sections ===";   grep "^# %% \[markdown\]" "$OUTFILE"  # timeout: 5000
 echo "=== File size ===";  wc -l "$OUTFILE"  # timeout: 5000
 
-echo "=== Bare '#' heading-spacer check (rule 13) ==="
+echo "=== Bare '#' heading-spacer check (notebook-style.md) ==="
 python3 "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/fix_jupytext_blank_md.py" "$OUTFILE"  # timeout: 5000
 ```
 

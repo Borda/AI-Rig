@@ -91,6 +91,10 @@ Docstring conventions live in `foundry:rules/python-code.md` §Docstring Style �
 
 Use `foundry:rules/_full/adversarial-loop.md` before every independent review → authorized-fix cycle. Its scope, ledger, three-round limit including initial `W_0`, independent final snapshot, weights (`security 20 · critical 10 · high 6 · medium 4 · low 2 · nit 1`), stop rules, and remediation contract are mandatory. Never close an unreviewed fix; open structural findings, repeated open signatures, unavailable independent coverage, or stale final snapshots stop a clean claim; open `security` or `critical` findings also forbid completion and commit. Every stop with open findings names the residue, evidence, score series, and concrete decision required. `AGENTS.md` links the Codex source-tree entrypoint; Foundry ships this local copy for Claude. No repo-specific addition.
 
+## Notebook Authoring
+
+Cell granularity, markdown narrative depth, plot framing, shell magics, and docstring placement live in `foundry:rules/notebooks.md`, full body `foundry:rules/_full/notebook-style.md` — applies to every notebook (`.ipynb`) and Jupytext `# %%` percent-format `.py` script created or edited, not only kaggle output. `AGENTS.md` §Notebook Authoring links the same canonical `plugins/codex-rig/shared/notebook-style.md` for Codex. No repo-specific addition.
+
 ## Markdown Policy
 
 Never hard-wrap prose in any Markdown file. Keep each prose paragraph on one physical line; preserve intentional structural breaks in headings, lists, tables, blockquotes, links, HTML `<details>` blocks, fenced code. Do not blindly unwrap or reflow a whole file; edit only the intended prose and retain its surrounding structure.

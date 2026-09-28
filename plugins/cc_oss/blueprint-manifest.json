@@ -2346,7 +2346,7 @@
     },
     "5d67eb9cac0a4dbf7570e11dad179b1b6176f8351a159addd040fddd8764025a": {
       "kind": "block",
-      "src": "skills/release/modes/demo.md:103"
+      "src": "skills/release/modes/demo.md:108"
     },
     "5df405b7c9f152c7e0a98cce0b4a5be820275a99ce11c913b452888acd25c073": {
       "kind": "command",
@@ -3503,6 +3503,10 @@
     "88f33c8effc8a0a04465de594c8711be2efb05040d5846c471da05bc3c62bd02": {
       "kind": "command",
       "src": "skills/analyse/SKILL.md:60"
+    },
+    "8942aba8e040c2f79cbb3f6474a6f00be672ae048bebc76306cefb1411b6fd55": {
+      "kind": "block",
+      "src": "skills/release/modes/demo.md:54"
     },
     "89495a5b708821a16b97a28da6bd80d0120cb3aa5d131560ae36ac7d4516d8fd": {
       "kind": "block",
@@ -6537,6 +6541,6 @@
       "src": "skills/resolve/SKILL.md:132"
     }
   },
-  "plugin": "cc_oss@0.40.3",
+  "plugin": "cc_oss@0.40.4",
   "schema": 1
 }

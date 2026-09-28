@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "8fa2a0a088ca9bf451ff1f80260fe31ff578dabd9d204711ffa4c1dbf851005e"
+      "sha256": "ab06c5f66c89c325d3f088947505a4811bb713b5a806609120c15f47acdfbcbe"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "f68e5c4e06bc6375de6964d4bfc0bbc13aa535e538a98cc6086d3da741049caf"
+      "sha256": "58b8148e17392599f6d83a15024bea1e0dc67f7c33c8606b701206467a2dc203"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "401cb8ceef3494bd1034b1bb35bb5dd4172d8a40153e3d0d3db73d01a0184f23"
+      "sha256": "a1ce476e7dc6bf20113c3c2f6083d722acd8c1e8e7cac29b1f9ac69547c40412"
     },
     {
       "mode": "0644",
@@ -163,12 +163,12 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "aa4aae3af6fbc23b71fdc3a6b165ece5e84efc85ce2b56144093b8bc31a6262b"
+      "sha256": "9a3cf47fc29f47b5d781f02ffe322710d13edea70d74898d0451888d5e4bdd10"
     },
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-observations.jsonl",
-      "sha256": "37290ef6dbdc273bd53e4a11fd0eb07aff1a0f8f9915e0b41266bd7883187c58"
+      "sha256": "57be395bae141605a70c7d358a1115f6f786f3afd64a87a0ce9fb7e1915a7d2e"
     },
     {
       "mode": "0644",
@@ -363,12 +363,12 @@
     {
       "mode": "0644",
       "path": "shared/codex-user-questions-details.md",
-      "sha256": "16585d2f98164544f0df972f6c8774c7cf4728b01ed69c43ffa477918b49dd98"
+      "sha256": "14001d46a8c76962622461edb64650a3265c878e3a9ba172c586945765e2d302"
     },
     {
       "mode": "0644",
       "path": "shared/codex-user-questions.md",
-      "sha256": "248ae3a45cb1dd7356c1ef8e360b5aee40c70b24eb73a92ed2b7d187466e2c9d"
+      "sha256": "e7cc906eae8672b9df6e0eb87959fede7a0d581d329dcccb29d6dcc4956471c6"
     },
     {
       "mode": "0755",
@@ -424,6 +424,11 @@
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
       "sha256": "69152b62039386348a16ea464fd9ea0b0fbf2dcae7bf2cd48bca98e1e0d09e27"
+    },
+    {
+      "mode": "0644",
+      "path": "shared/notebook-style.md",
+      "sha256": "e7f128128525e5f9e54a436b2c880573049ee77a131d53732d709cf6a942df67"
     },
     {
       "mode": "0644",
@@ -553,7 +558,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "8bea46df27f5eabe20803ac371a40ed4fb673fe9a92e91d4b247f7a77c86dc93"
+      "sha256": "280cbec7f853c38693fa4e88c1d246f91ab7b604e667e56236cfee09edf398ef"
     },
     {
       "mode": "0644",
@@ -613,12 +618,12 @@
     {
       "mode": "0644",
       "path": "skills/kaggle/SKILL.md",
-      "sha256": "82978c92b263e21988312d4a94e1bb81678e1083107ae5801045d764eb60b4a6"
+      "sha256": "cc22e597b1e66cfcaf0a727f22d08fe7404872a0609fdb99822f53efad12082a"
     },
     {
       "mode": "0644",
       "path": "skills/kaggle/references/composition.md",
-      "sha256": "4e9f7b7bd58914c165ba1b80822b871f50f066b97c609555ca80cb24d18e576c"
+      "sha256": "b96168c0db77281f9ec582a1c864ce50525f03a212f032c0ec2c468c7fe89ff8"
     },
     {
       "mode": "0644",
@@ -643,7 +648,7 @@
     {
       "mode": "0644",
       "path": "skills/kaggle/references/style-rules.md",
-      "sha256": "baad93622d36e9145dc64fa7c2ff9ae37c9edbe2214a0f06ea8989ddbd6d10c3"
+      "sha256": "c259c586c79c704ea5ae2dee859e3b0bb7c6d03de8e1a26772346a87bba54dff"
     },
     {
       "mode": "0644",
@@ -943,7 +948,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_code_remediate_session_review_contract.py",
-      "sha256": "d8b3014e9171e2e194a8fa149f68081e3ab102eb54f4f24c54627f1508ae3356"
+      "sha256": "71bf2b9618eb7c77f9e695543f33e04b99c6c54add086407a6f70ef67547f417"
     },
     {
       "mode": "0644",
@@ -1113,7 +1118,7 @@
     {
       "mode": "0644",
       "path": "tests/test_codex_user_questions.py",
-      "sha256": "ceb89daa6727c48024450a7f873de36b2a369ccddbb8d938d54000bcfdcd87cb"
+      "sha256": "b4fd4de1e993317812fbfb670370796b20fe467f724016e399b0fb3c855bfae5"
     },
     {
       "mode": "0644",
@@ -1378,5 +1383,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.25.3"
+  "version": "0.26.0"
 }

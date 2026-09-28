@@ -237,6 +237,16 @@ MANIFEST: list[dict[str, object]] = [
         ],
     },
     {
+        # Same rationale as adversarial-loop.md above: Codex owns the canonical
+        # source, every consuming plugin ships a byte-identical local copy.
+        "canonical": "plugins/codex-rig/shared/notebook-style.md",
+        "copies": [
+            "plugins/cc_foundry/rules/_full/notebook-style.md",
+            "plugins/cc_research/skills/_shared/notebook-style.md",
+            "plugins/cc_oss/skills/_shared/notebook-style.md",
+        ],
+    },
+    {
         "canonical": "plugins/cc_foundry/skills/_shared/codex-prepass.md",
         "copies": [
             "plugins/cc_develop/skills/_shared/codex-prepass.md",

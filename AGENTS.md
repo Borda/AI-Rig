@@ -81,6 +81,10 @@ Use the canonical procedure in [plugins/codex-rig/shared/adversarial-loop.md](pl
 
 Do not fork the implementing conversation for review or treat a local fix as closed before later independent verification. An open structural finding, the same open signature in consecutive reviews, unavailable independent coverage, or stale final snapshot stops a clean claim; an open `security` or `critical` finding also forbids completion and commit. Stop on plateau, non-convergence, or the round cap with open findings. Every such stop reports only completed-round scores (for example `W_0 → W_1 → W_2`), or `not-run` when no review completed, plus per-tier residue and evidence, then asks for the concrete missing decision; a clean loop still requires the owning workflow’s remaining gates.
 
+## Notebook Authoring
+
+Use the canonical standard in [plugins/codex-rig/shared/notebook-style.md](plugins/codex-rig/shared/notebook-style.md) before writing or editing any notebook — a Jupyter `.ipynb`, or a Jupytext `# %%` percent-format `.py` script destined to become one. It covers cell granularity, markdown narrative depth, plot framing, shell magics, and docstring placement; apply it in full regardless of which skill or task produced the notebook.
+
 ## Markdown Policy
 
 - Never hard-wrap prose in any Markdown file.

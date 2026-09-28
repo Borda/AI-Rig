@@ -34,8 +34,8 @@ class TestFixText:
     def test_clears_any_hash_only_spacer(self, spacer: str) -> None:
         """Any run of ``#`` with only whitespace after it counts as a spacer.
 
-        style-rules.md rule 13 covers not just a bare ``#`` but any hash-only line, since ``##`` alone renders as an
-        empty H2 just as ``#`` renders as an empty H1.
+        notebook-style.md's Markdown blank lines anchor covers not just a bare ``#`` but any hash-only line, since
+        ``##`` alone renders as an empty H2 just as ``#`` renders as an empty H1.
         """
         text = f"# %% [markdown]\n# Para one.\n{spacer}\n# Para two.\n"
         _fixed, count = gate.fix_text(text)

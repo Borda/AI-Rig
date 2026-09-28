@@ -157,6 +157,8 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert "An async return or empty sync result leaves selection pending" in scope_contract
     assert "Async acceptance does not prove a selectable form appeared" in scope_contract
     assert "never say a scope control is visible" in scope_contract
+    assert "dismissed after a later assistant action" in scope_contract
+    assert "recover at the same frozen selection checkpoint" in scope_contract
     assert "collapsed output" in scope_contract
 
 

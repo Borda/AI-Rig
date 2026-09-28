@@ -49,7 +49,13 @@ For each headline feature, read actual diff or changed source file to understand
 3. **Ask user**: invoke `AskUserQuestion` with `## Demo attempts` log (and Codex outcome if attempted), asking user to either provide real-world assets or explicitly approve synthetic demo.
 4. **Synthetic demo only on explicit approval**: proceed with synthetic/fabricated demo content only if step 3 `AskUserQuestion` response explicitly authorises it.
 
-Write Python script in jupytext percent format. Structure in order:
+Write Python script in jupytext percent format, following the repo-wide notebook standard:
+
+```bash
+cat "$_OSS_SHARED/notebook-style.md"  # timeout: 5000
+```
+
+Structure in order:
 
 1. **Jupytext header** — prepend verbatim as first block of generated script:
 
@@ -90,12 +96,11 @@ Write Python script in jupytext percent format. Structure in order:
    - `## <N+1>. Next steps` header
    - Bullet list: docs link, changelog link (GitHub compare URL), migration guide link if breaking changes, links to prior release demos; use `<placeholder-url>` format — never invent real URLs
 
-Content rules:
+Demo-only content rules (on top of `notebook-style.md` above — its compact-docstring and narrative-depth anchors still apply):
 
 - All code must be syntactically valid Python
 - Placeholder URLs use `<repo-url>`, `<docs-url>` — never invent real URLs
 - Narrative cells explain WHY, not just what — write for developer who hasn't seen release
-- No class docstrings or multi-line comment blocks in demo code cells; inline `# comments` only
 - Breaking changes get both `> **Breaking change:**` callout in title cell AND comparison cell in relevant section
 
 ### Phase 3: Write output

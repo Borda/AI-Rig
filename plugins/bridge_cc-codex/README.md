@@ -4,11 +4,13 @@ Codex questions use synchronous `request_user_input` for required or flow-changi
 
 Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
 
+A user-reported dismissed question leaves its decision pending. The root checks another suitable control, then asks once in its final plain-chat response if no control remains usable; the dismissed transport stays unsuitable for later required questions in that host until delivery is verified again.
+
 `bridge_CC-Codex` lets Claude Code and OpenAI Codex hand one another bounded implementation, advice, and review requests. Its normalized plugin identifier is `bridge`. It is one repository with two independently installable host integrations: the Claude Code half calls the `codex` CLI, and the Codex half calls Claude through the bridge's host-launched MCP server.
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.5.8`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.5.9`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 

@@ -1,16 +1,6 @@
-<!-- file: style-rules.md — applied by composition.md -->
+<!-- file: style-rules.md — applied by composition.md, on top of ../../../shared/notebook-style.md -->
 
-Apply ALL of these in generated script:
+Apply `../../../shared/notebook-style.md` (repo-wide notebook standard) to every generated script first, then these Kaggle-only additions:
 
-01. **Every section `# %% [markdown]` header: explain what, why, how it advances goal**: after `## Section Name` write 2–4 sentences: (a) what stage does, (b) why this approach chosen over alternatives, (c) how it contributes to competition objective (metric, leaderboard, submission quality). Notebook is public educational resource — write for reader seeing competition first time. Bare `## Title` headings with no explanation forbidden.
-02. **Shell commands — `# ! cmd` inline, `%%bash` for multi-line blocks**: single shell command mixed into a Python cell → `# ! cmd` (valid Python syntax, visible as comment in Jupyter). Cell of 2+ consecutive shell commands (installs, `nvidia-smi` + `ls -lh` + `df -h` chains) → dedicate whole cell to `%%bash` cell magic as first line, no Python statements in that cell — simpler than repeating `# !` per line. `%matplotlib inline` verbatim — never `get_ipython().run_line_magic(...)`. Linter rejects `%`/`%%` magic → allowlist `%%bash`/`%matplotlib` in linter config; never avoid the magic
-03. `# ==============================` between logical blocks within cell (not every line — only major breaks)
-04. `_=` to suppress matplotlib/pandas return values: `_= df["col"].plot(...)`
-05. **Every plot: axis labels + grid + legend when multiple series**: always call `plt.xlabel("...")`, `plt.ylabel("...")`, `plt.grid(True)` after any plot; chart with multiple lines/bars/hues → add `plt.legend()` or pass `legend=True`; seaborn facets use `g.set_axis_labels("x label", "y label")`
-06. No `if __name__ == '__main__':` guards
-07. No argparse, no dataclasses for config
-08. **Blank lines — empty lines only**: in Markdown/text cells, blank lines must contain no characters. Never emit `#` alone or `# ` on blank line; Kaggle renders either as empty H1. In code cells, use real empty line rather than blank comment line.
-09. **`display()` over `print()` for pandas objects**: use `display(df.head())`, `display(df.dtypes)`, `display(metrics.dropna(axis=1, how="all").head())`; `print()` for scalars and status strings only. Pattern for Markdown/text: `# Last sentence.` → empty line → `# Next paragraph.`
-10. **No doctests in ipy scripts**: doctests belong in package modules, not notebook scripts — `# %% [markdown]` cell above function cell IS explanation; never duplicate as doctest
-11. **Compact docstrings — never omit**: always include one-line docstring; never omit — narrative lives in `# %% [markdown]` cell immediately above function cell; full Google-style docstrings with `Args:`, `Returns:`, `Example:` blocks apply only after distillation to `src/` utils package
-12. **Main path must fail fast**: never put `try`/`except`, `if`/`else`, conditional expressions, or silent fallbacks around required data loads, samples, charts, lenses, training, inference, or submission validation. Assert required preconditions directly before action; let unexpected errors halt execution. Branch only for task-specific processing selected from grounded evidence, not to make required notebook step optional.
+1. **Narrative frames the competition, not a generic goal**: where `notebook-style.md`'s narrative-depth anchor asks "how it advances the notebook's stated goal", state that goal in Kaggle terms in every section — target metric, leaderboard placement, submission quality — not a generic ML objective.
+2. **Submission-format lens**: the lens cell that follows submission-file generation must confirm the file matches the competition's exact `sample_submission.csv` schema (column names, row count, dtypes) before the notebook ends — never assume the schema from memory, read it from grounded evidence.

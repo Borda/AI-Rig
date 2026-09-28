@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""fix_jupytext_blank_md.py — correction gate for style-rules.md rule 13.
+"""fix_jupytext_blank_md.py — correction gate for notebook-style.md §Markdown blank lines.
 
 jupytext percent-format markdown cells (``# %% [markdown]``) prefix every
 source line with ``# ``. A blank line in the original markdown must stay a
