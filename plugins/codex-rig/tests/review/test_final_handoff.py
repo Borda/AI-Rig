@@ -717,20 +717,76 @@ def test_environment_limited_commit_preserves_failed_result_without_opening_othe
         "user_deferred_items": 0,
         "unresolved_reason_groups": [{"reason": "environment-blocked", "owner": "environment"}],
     }
-    open_items = [{"resolution_status": "unresolved", "resolved_how": "Blocked: docs environment unavailable."}]
+    open_items = [
+        {
+            "item_type": "review-gate",
+            "resolution_status": "unresolved",
+            "resolved_how": "Blocked: docs environment unavailable.",
+        }
+    ]
 
-    assert validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    assert validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
     assert result["status"] == "fail"
     assert open_items[0]["resolution_status"] == "unresolved"
 
     result["checks_failed"] = ["tests"]
-    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
     result["checks_failed"] = []
     unresolved["unresolved_reason_groups"][0]["reason"] = "process-gate"
-    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
     unresolved["unresolved_reason_groups"][0]["reason"] = "environment-blocked"
     open_items[0]["resolved_how"] = "Deferred: user request."
-    assert not validator._environment_limited_commit(result, handoff, unresolved, open_items)
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
+    open_items[0]["resolved_how"] = "Blocked: docs environment unavailable."
+    open_items[0]["item_type"] = "code"
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
+
+
+def test_explicit_commit_accepts_only_open_independent_review_obligations() -> None:
+    """Allow a requested local commit while retaining an open independent review."""
+    validator = _load_shared_validator()
+    result = {"status": "fail", "checks_failed": [], "findings": {"critical": 0}}
+    handoff = _handoff_payload()
+    unresolved = {
+        "selected_items_unresolved": 1,
+        "environment_blocked_items": 0,
+        "all_local_actionable_items_closed": True,
+        "local_actionable_items_unresolved": 0,
+        "process_gate_items_unresolved": 1,
+        "external_owner_items": 1,
+        "user_deferred_items": 0,
+        "unresolved_reason_groups": [{"reason": "independent-review", "owner": "external-reviewer"}],
+    }
+    open_items = [
+        {
+            "item_type": "confidence-gap",
+            "resolution_status": "unresolved",
+            "resolved_how": "Blocked: independent review unavailable.",
+        }
+    ]
+
+    assert validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
+    assert result["status"] == "fail"
+    assert open_items[0]["resolution_status"] == "unresolved"
+
+    unresolved["unresolved_reason_groups"][0]["reason"] = "process-gate"
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
+    unresolved["unresolved_reason_groups"][0]["reason"] = "independent-review"
+    result["findings"]["critical"] = 1
+    assert not validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
+
+    result["findings"]["critical"] = 0
+    unresolved["selected_items_unresolved"] = 2
+    unresolved["environment_blocked_items"] = 1
+    unresolved["unresolved_reason_groups"].append({"reason": "environment-blocked", "owner": "environment"})
+    open_items.append(
+        {
+            "item_type": "review-gate",
+            "resolution_status": "unresolved",
+            "resolved_how": "Blocked: docs environment unavailable.",
+        }
+    )
+    assert validator._explicit_commit_with_external_limit(result, handoff, unresolved, open_items)
 
 
 def test_declined_commit_does_not_claim_verification_readiness() -> None:

@@ -221,29 +221,32 @@ ______________________________________________________________________
 
 **Flags**:
 
-| Flag                  | Description                                                                                                                                                                                                                    |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--issue <N>`         | Fetch issue `<N>` as the feature request; numeric positional arguments are also recognized as issue references                                                                                                                 |
-| `--repo <owner/repo>` | Route issue fetch to upstream repo. Use when working in fork and issue on original repo (e.g. `--repo owner/my-project`).                                                                                                      |
-| `--plan <path>`       | Read classification, scope, approach from existing plan file                                                                                                                                                                   |
-| `--team`              | Spawn parallel `foundry:sw-engineer` + `foundry:qa-specialist` + `foundry:doc-scribe` teammates. Use when feature spans 3+ modules, changes public API, or touches auth/payment/data scope                                     |
-| `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`. |
-| `--no-codemap`        | Disable codemap even if available                                                                                                                                                                                              |
-| `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                            |
-| `--accept-no-plan`    | Skip inline plan generation for medium/large scope (trust own scoping)                                                                                                                                                         |
-| `--no-challenge`      | Skip challenger adversarial gate                                                                                                                                                                                               |
-| `--challenge`         | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                      |
-| `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                      |
+| Flag                  | Description                                                                                                                                                                                                                             |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--issue <N>`         | Fetch issue `<N>` as the feature request; numeric positional arguments are also recognized as issue references                                                                                                                          |
+| `--repo <owner/repo>` | Route issue fetch to upstream repo. Use when working in fork and issue on original repo (e.g. `--repo owner/my-project`).                                                                                                               |
+| `--plan <path>`       | Read classification, scope, approach from existing plan file                                                                                                                                                                            |
+| `--team`              | Spawn parallel `foundry:sw-engineer` + `foundry:qa-specialist` + `foundry:doc-scribe` teammates. Use when feature spans 3+ modules, changes public API, or touches auth/payment/data scope                                              |
+| `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`.          |
+| `--no-batch`          | Default on, opt out with this flag. TDD loop groups non-overlapping tests/edits into fewer runs instead of one run per piece of functionality; bisects per-edit on batch failure to preserve attribution. Scoped to Step 3's loop only. |
+| `--no-codemap`        | Disable codemap even if available                                                                                                                                                                                                       |
+| `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                                     |
+| `--accept-no-plan`    | Skip inline plan generation for medium/large scope (trust own scoping)                                                                                                                                                                  |
+| `--no-challenge`      | Skip challenger adversarial gate                                                                                                                                                                                                        |
+| `--challenge`         | Force challenger gate even on small change auto-skip would otherwise skip                                                                                                                                                               |
+| `--keep "<items>"`    | Append items to compaction contract preserve field — keeps key context if auto-compaction fires mid-skill                                                                                                                               |
 
 **Workflow**:
 
 1. **Scope analysis** (`foundry:sw-engineer`): existing patterns, reuse opportunities, affected files, compatibility concerns. GitHub issue number given → fetches full issue + comments (upstream if `--repo`).
 2. **Source verification** (conditional): feature calls external library API → detects installed version from `pyproject.toml`, fetches official docs via WebFetch, cites relevant passage in code comments.
 3. **Demo use-case**: crystallises API contract as inline doctest (simple functions) or example script (complex features with setup). Demo must fail against current code before proceeding. Gate enforced via exit code — not output text.
-4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass one at a time, full suite after each change to catch regressions.
+4. **TDD implementation loop** (`foundry:sw-engineer`): tests pass in non-overlapping groups by default (`--no-batch` for one run per piece of functionality), redundant full-directory re-runs dropped once a prior cycle already proved the whole suite green.
 5. **Review and close gaps**: 5-axis quality scan (correctness, readability, architecture, security, performance) → fix loop, max 3 cycles.
 6. **Documentation** (`foundry:doc-scribe`): updates docstrings and README content when the implementation changes a public API; a separate changelog step is used only when the project has a changelog convention.
-7. **Quality stack**: available ruff/mypy checks → full test suite → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+7. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available, probed against the detected runner) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+
+**! BREAKING (report format)** — the quality stack folds `--doctest-modules` into the main suite run when a clean-collection check passes; `Doctests:` in the Final Report is now `pass` / `fail` / `not-merged` (was a plain pass/fail line). Flaky-test retry now re-runs only the specific failing node-ids (was a blind whole-directory re-run); a failure reproducing only under parallel execution is reported as a likely test-isolation bug, not marked flaky.
 
 **Realistic example**:
 
@@ -294,7 +297,7 @@ ______________________________________________________________________
 2. **Reproduce the bug** (`foundry:qa-specialist`): writes regression test failing on unfixed code. Gate: test must exit non-zero before proceeding.
 3. **Apply the fix** (`foundry:sw-engineer`): minimal change — only what makes regression test pass.
 4. **Review and close gaps**: 5-axis quality scan → fix loop, max 3 cycles. Adjacent bugs documented as observations, handled in separate session — never fixed same pass.
-5. **Quality stack**: available ruff/mypy checks → full test suite → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+5. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
 
 **Realistic example**:
 
@@ -340,6 +343,7 @@ ______________________________________________________________________
 | `--plan <path>`       | Read scope and approach from existing plan file                                                                                                                                                                                |
 | `--team`              | Spawn `foundry:sw-engineer` (refactoring) + `foundry:qa-specialist` (characterization tests) parallel. Use when target is directory or spans multiple modules                                                                  |
 | `--worktree`          | Run the whole skill in an isolated git worktree (`.claude/worktrees/`) on a new branch — you review + merge (never auto-merged). Codemap index is per-worktree, so parallel runs never race one index. Composes with `--team`. |
+| `--no-batch`          | Default on, opt out with this flag. Step 4 groups non-overlapping focused changes into fewer test runs instead of one run per change; bisects per-edit on batch failure to preserve attribution.                               |
 | `--no-codemap`        | Disable codemap even if available                                                                                                                                                                                              |
 | `--codemap`           | Require Codemap and an index; stop when unavailable                                                                                                                                                                            |
 | `--accept-no-plan`    | Skip inline plan generation for medium/large scope                                                                                                                                                                             |
@@ -352,9 +356,9 @@ ______________________________________________________________________
 1. **Scope and understand** (`foundry:sw-engineer`): reads target code, maps public API surface, identifies complexity hotspots + coupling. Codemap for blast-radius when available. Scope gate: target spans 3+ modules, 5+ files, or any public-API rename → asks narrow or proceed.
 2. **Audit test coverage**: classifies each public function covered / partially covered / uncovered. No `pytest-cov` installed → falls back to "all uncovered" conservatively.
 3. **Add characterization tests** (`foundry:qa-specialist`): every uncovered/partial public API gets tests asserting *current* behavior (not desired). Gate: all characterization tests must pass on unmodified code before proceeding.
-4. **Refactor with safety net**: one focused change per cycle, tests after each. Safety break: max 5 change-test cycles per inner session; max 10 total across all outer review cycles.
+4. **Refactor with safety net**: focused changes run in non-overlapping groups by default (`--no-batch` for one focused change per cycle), tests after each. Safety break: max 5 change-test cycles per inner session (edits, not cycles, unless `--no-batch` is set); max 10 total across all outer review cycles.
 5. **Review and close gaps**: behavior preservation, goal achievement, no new smells, no unintended API surface changes. Max 3 outer review cycles.
-6. **Quality stack**: available ruff/mypy checks → full test suite → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
+6. **Quality stack**: available ruff/mypy checks → full test suite (parallel via pytest-xdist when available) → optional Codemap blast-radius check → optional Codex pre-pass → progressive review loop.
 
 **Refactoring categories skill handles**:
 

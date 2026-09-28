@@ -34,6 +34,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
     [
         "request_user_input",
         "request_user_input_async",
+        "Tool acceptance does not prove a selectable form was rendered.",
         "Synchronous unavailability alone never justifies plain chat.",
         "A failed control call is not a submitted question or an answer.",
         "Do not replay already-delivered report context",

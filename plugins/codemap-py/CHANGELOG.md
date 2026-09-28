@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.8
+
+- Keep Codex decisions pending when an accepted async question renders as text; use a truthful typed-answer fallback without repeating the question.
+
 ## 0.39.7
 
 - Internal restructuring only; no CLI, output or behavior change. `scanner.py`, `query.py` and `integration.py` each become a package of focused modules (`scanner/` by AST-extraction responsibility, `query/` by verb family over a shared index/coverage/output layer, `integration/` by integration mode). Each package's `__init__.py` re-exports the full surface of the module it replaces — including that module's own imports — so every existing `from codemap_py.<mod> import ...` and `<mod>.<attr>` access keeps working.

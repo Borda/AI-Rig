@@ -404,13 +404,13 @@ printf "=== Check 30a: Pipe exit code capture ===\n"
 find "$_ROOT" -path "*/skills/*" -name "*.md" -exec grep -Hn '| tail\b\|| head\b' {} + 2>/dev/null |
   grep -v 'PIPESTATUS\|pipefail\|#.*tail\|#.*head' |
   grep -v '^Binary' &&
-printf "  hint: use \${PIPESTATUS[0]} or set -o pipefail; \$? captures tail/head exit (always 0)\n" || true
+printf "  hint: set -o pipefail; \$? then captures the real upstream exit, not tail/head's (always 0) — PIPESTATUS is bash-only, absent under zsh\n" || true
 printf "✓: Check 30a scan complete\n"  # timeout: 5000
 ```
 
 Severity: **critical** — gate commands appear to pass on genuine failure; `$?` after `cmd | tail -N` = tail's exit code (0), not cmd's.
 
-Fix pattern: `cmd 2>&1 | tail -N; EXIT=${PIPESTATUS[0]}`
+Fix pattern: `set -o pipefail; cmd 2>&1 | tail -N; EXIT=$?` — never `${PIPESTATUS[0]}`, absent under zsh (Claude Code's Bash tool login shell on macOS).
 
 ### 30b — SKIP variable guard missing
 
@@ -431,7 +431,7 @@ printf "✓: Check 30b scan complete\n"  # timeout: 5000
 
 Severity: **critical** — `SKIP_RUFF=1` set by tool detection, but `$RUNNER ruff check` runs unconditionally; detection is cosmetic.
 
-Fix pattern: `[ "${SKIP_RUFF:-0}" -ne 1 ] && $RUNNER ruff check ...`
+Fix pattern: `[ "${SKIP_RUFF:-0}" -ne 1 ] && eval "$RUNNER ruff check ..."` — `eval`, not a bare `$RUNNER` prefix: a multi-token runner ("uv run") does not word-split under zsh (Claude Code's Bash tool login shell on macOS).
 
 ### 30c — Agent filename convention mismatch (model reasoning)
 

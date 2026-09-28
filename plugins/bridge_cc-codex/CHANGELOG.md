@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.8
+
+- Keep Codex decisions pending when an accepted async question renders as text; use a truthful typed-answer fallback without repeating the question.
+
 ## 0.5.7
 
 - Split the four `bin/` scripts (`bridge_call.py`, `bridge_diagnose.py`, `bridge_mcp.py`, `bridge_setup.py`) into smaller functions and improved docstrings for readability; no behavior change. The configure-vs-authenticate/verify-live lock-failure payload asymmetry is preserved byte-exact and flagged inline at each call site as a maintainer decision point still open.

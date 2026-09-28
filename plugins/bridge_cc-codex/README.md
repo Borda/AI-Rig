@@ -1,6 +1,6 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
-Codex questions use synchronous `request_user_input` for required or flow-changing decisions only when the active host permits that purpose and every feasible choice fits. Otherwise invoke permitted `request_user_input_async`, including required decisions without independent work, and keep dependent actions pending. Optional questions prefer permitted async, falling back to permitted sync when async is unavailable or unsuitable. Plain chat is reserved for questions neither native control can support. Option-based questions put one evidence-backed choice first with `(Recommended)` in its label; the suffix maps to the unchanged canonical answer and never grants consent. Conversational approvals use Approve/Deny; exact-digest protocols and runtime permissions remain separate. Silence, preselection, stale or duplicate replies never authorize action. All Codex entrypoints load their plugin-local guidance; no sibling plugin or global setup is required. [Codex CLI 0.154.0](https://learn.chatgpt.com/docs/changelog) introduced inline selectable asynchronous TUI questions, but version alone does not establish tool availability. Older/headless hosts retain plain-chat or unresolved-input fallback; no plugin-wide minimum or automatic upgrade is added. Claude-specific question behavior is unchanged.
+Codex questions use synchronous `request_user_input` for required or flow-changing decisions only when the active host permits that purpose and every feasible choice fits. Otherwise invoke permitted `request_user_input_async`, including required decisions without independent work, and keep dependent actions pending. Optional questions prefer permitted async, falling back to permitted sync when async is unavailable or unsuitable. Plain chat is used when no permitted control can render the needed form. Tool acceptance alone does not prove a selectable form appeared; text-rendered async questions stay pending for typed answers without a duplicate prompt. Option-based questions put one evidence-backed choice first with `(Recommended)` in its label; the suffix maps to the unchanged canonical answer and never grants consent. Conversational approvals use Approve/Deny; exact-digest protocols and runtime permissions remain separate. Silence, preselection, stale or duplicate replies never authorize action. All Codex entrypoints load their plugin-local guidance; no sibling plugin or global setup is required. [Codex CLI 0.154.0](https://learn.chatgpt.com/docs/changelog) introduced inline selectable asynchronous TUI questions, but version alone does not establish tool availability. Older/headless hosts retain plain-chat or unresolved-input fallback; no plugin-wide minimum or automatic upgrade is added. Claude-specific question behavior is unchanged.
 
 Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
 
@@ -8,7 +8,7 @@ Rejected question calls resume at the pending decision without replaying deliver
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.5.6`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.5.8`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -213,7 +213,7 @@ Session continuation is also limited to Claude Code → Codex `implement`:
 
 ## 📦 Install for Codex
 
-> Codex questions use a [short shared guide](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/rules/codex-user-questions.md), shipped locally by this plugin. The root asks with permitted native controls, meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host.
+> Codex questions use a [short shared guide](https://github.com/Borda/AI-Rig/blob/main/plugins/bridge_cc-codex/rules/codex-user-questions.md), shipped locally by this plugin. The root uses a permitted question route with meaningful presets and built-in custom input; children hand decisions back to the root. Detailed approval/recovery rules load only when needed. Host restrictions still apply; this does not override a plain-text-only host.
 
 Register the repository marketplace and add the Codex plugin:
 

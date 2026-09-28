@@ -498,7 +498,7 @@
       "Deferred:",
       "Verified without code changes:",
       "Blocked:",
-      "Environment-only exception",
+      "External-obligation exception",
       "## Explicit Commit Request",
       "## Remaining Verification",
       "controlling rule",

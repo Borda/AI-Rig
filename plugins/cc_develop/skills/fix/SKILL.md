@@ -215,7 +215,7 @@ TEST_PATH=""   # REPLACE with the resolved failing test file/node before running
 if [ -z "$PYTEST_CMD" ] || [ -z "$TEST_PATH" ]; then
     echo "! Cannot run reproduction: PYTEST_CMD or TEST_PATH unresolved — resolve TEST_PATH from \$ARGUMENTS/issue before running"
 else
-    $PYTEST_CMD --tb=long "$TEST_PATH" -v >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1; PYTEST_EXIT=$?; tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"
+    eval "$PYTEST_CMD --tb=long \"\$TEST_PATH\" -v" >"${TMPDIR:-/tmp}/pytest-out.txt-${CSID}" 2>&1; PYTEST_EXIT=$?; tail -40 "${TMPDIR:-/tmp}/pytest-out.txt-${CSID}"; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"
 fi
 ```
 
@@ -401,11 +401,11 @@ Both tests must **fail** against current code before proceeding. Check exit code
 
 ```bash
 # timeout: 600000
-$PYTEST_CMD --tb=short tests/integration/<test_file>::test_<bug>_user_flow -v
+eval "$PYTEST_CMD --tb=short tests/integration/<test_file>::test_<bug>_user_flow -v"
 GATE_P1=$?
 [ $GATE_P1 -eq 0 ] && echo "GATE FAIL (Path 1): test passed — bug not captured" || echo "GATE OK (Path 1): failed as expected (exit $GATE_P1)"
 
-$PYTEST_CMD --tb=short <unit_test_file>::test_<bug>_unit -v
+eval "$PYTEST_CMD --tb=short <unit_test_file>::test_<bug>_unit -v"
 GATE_P2=$?
 [ $GATE_P2 -eq 0 ] && echo "GATE FAIL (Path 2): test passed — bug not captured" || echo "GATE OK (Path 2): failed as expected (exit $GATE_P2)"
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -429,7 +429,8 @@ fi
 **Outcome B gate** (weak test fixed path): after fixing existing test, run it to confirm it now fails:
 
 ```bash
-$PYTEST_CMD --tb=long <existing_test_file>::<existing_test_name> -v 2>&1 | tail -30; GATE_EXIT=${PIPESTATUS[0]}  # timeout: 30000
+set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+eval "$PYTEST_CMD --tb=long <existing_test_file>::<existing_test_name> -v" 2>&1 | tail -30; GATE_EXIT=$?  # timeout: 30000
 [ $GATE_EXIT -eq 0 ] && echo "GATE FAIL: fixed test still passes — weak test not corrected; revisit" || echo "GATE OK: fixed test fails as expected (exit $GATE_EXIT)"
 ```
 
@@ -480,7 +481,7 @@ Make minimal change to fix root cause:
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <test_file>::<test_name> -v
+   eval "$PYTEST_CMD --tb=short <test_file>::<test_name> -v"
    ```
 
 3. Run affected tests (prefer targeted over full suite):
@@ -523,7 +524,7 @@ Make minimal change to fix root cause:
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <test_dir> -v
+   eval "$PYTEST_CMD --tb=short <test_dir> -v"
    ```
 
    **If `<test_dir>` does not exist or has no tests beyond regression test**: run only regression test (already verified in Step 2). Note in Final Report: "No pre-existing test suite found — regression test is sole verification."
@@ -564,7 +565,14 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 2. Every gap found → implement fix immediately — tighten patch, remove collateral edits, adjust test. Return to Step 3 for gap requiring re-examined fix approach.
 
-3. Re-run test suite:
+3. Re-run affected tests (prefer targeted over full suite — the quality stack's own wide gate later covers the whole directory once, after this loop closes):
+
+   ```bash
+   codemap-py query test-impact "<changed_module>" 2>/dev/null
+   ```
+
+   - Non-empty `pytest_cmd` → `python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <test-impact target>; PYTEST_EXIT=$?; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"`
+   - Empty or `codemap-py query` absent → full suite fallback:
 
    ```bash
    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/run_pytest_short.py" "$PYTEST_CMD" <test_dir>; PYTEST_EXIT=$?; [ $PYTEST_EXIT -ne 0 ] && echo "PYTEST FAILED (exit $PYTEST_EXIT)"  # timeout: 600000

@@ -150,11 +150,13 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert scope_contract.count("Which findings should I remediate?") == 1
     assert "one user-visible assistant message containing" in scope_contract
     assert "the exact unabridged `resolution-scope.md` content" in scope_contract
-    assert "Then follow User Questions to ask once in a permitted native control" in scope_contract
+    assert "Then follow User Questions to ask once through a permitted question route" in scope_contract
     assert "only plain-chat fallback appends the question and choices" in scope_contract
     assert "Do not repeat the question/options in both prose and a native control" in scope_contract
     assert "immutable item/source inventory" in scope_contract
     assert "An async return or empty sync result leaves selection pending" in scope_contract
+    assert "Async acceptance does not prove a selectable form appeared" in scope_contract
+    assert "never say a scope control is visible" in scope_contract
     assert "collapsed output" in scope_contract
 
 

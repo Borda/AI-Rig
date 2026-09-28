@@ -255,8 +255,14 @@ IFS= read -r TEST_PATH  < "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}" 2>/dev/n
 if [ -z "$PYTEST_CMD" ]; then
     echo "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); an empty command would exit 127 and be misread as a reproduced bug"
 else
-    $PYTEST_CMD --tb=long ${TEST_PATH} -v 2>&1 | tail -60
-    GATE_EXIT=${PIPESTATUS[0]}
+    # $PYTEST_CMD is a multi-token runner ("uv run pytest") — a bare prefix does not word-split
+    # under zsh, so this routes through eval. TEST_PATH stays quoted *inside* the eval string only
+    # when non-empty, so an empty value still collapses to no argument (not an empty-string one).
+    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+    _TP_ARG=""
+    [ -n "$TEST_PATH" ] && _TP_ARG="\"\$TEST_PATH\""
+    eval "$PYTEST_CMD --tb=long $_TP_ARG -v" 2>&1 | tail -60
+    GATE_EXIT=$?
     echo "$GATE_EXIT" > "${TMPDIR:-/tmp}/dev-gate-exit-${CSID}"
     if [ "$GATE_EXIT" -ne 0 ]; then
         echo "Bug reproduced — tests fail. Proceed to fix."
@@ -300,8 +306,14 @@ echo "$TEST_PATH" > "${TMPDIR:-/tmp}/dev-debug-test-path-${CSID}"  # persist —
 if [ -z "$PYTEST_CMD" ]; then
     echo "! PYTEST_CMD unresolved — re-run §Project Detection (runner-detection.md); an empty command would exit 127 and be misread as a reproduced bug"
 else
-    $PYTEST_CMD --tb=long ${TEST_PATH} -v 2>&1 | tail -60
-    GATE_EXIT=${PIPESTATUS[0]}
+    # $PYTEST_CMD is a multi-token runner ("uv run pytest") — a bare prefix does not word-split
+    # under zsh, so this routes through eval. TEST_PATH stays quoted *inside* the eval string only
+    # when non-empty, so an empty value still collapses to no argument (not an empty-string one).
+    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+    _TP_ARG=""
+    [ -n "$TEST_PATH" ] && _TP_ARG="\"\$TEST_PATH\""
+    eval "$PYTEST_CMD --tb=long $_TP_ARG -v" 2>&1 | tail -60
+    GATE_EXIT=$?
     echo "$GATE_EXIT" > "${TMPDIR:-/tmp}/dev-gate-exit-${CSID}"
     if [ "$GATE_EXIT" -ne 0 ]; then
         echo "Bug reproduced — tests fail. Proceed to fix."

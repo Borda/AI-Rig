@@ -43,6 +43,17 @@ def _bash_block_after(dispatch: str, heading: str) -> str:
     return dispatch[start : dispatch.index("```", start)]
 
 
+def _bash_block_containing(dispatch: str, marker: str) -> str:
+    """Return the executable Bash block whose own body contains a unique marker.
+
+    Unlike `_bash_block_after`, the marker sits inside the fence (a `#`-comment on a compaction boundary), not in the
+    prose heading above it.
+    """
+    pos = dispatch.index(marker)
+    start = dispatch.rindex("```bash", 0, pos) + len("```bash\n")
+    return dispatch[start : dispatch.index("```", start)]
+
+
 @pytest.mark.skipif(_BASH is None, reason="Resolve Step 1 and thread intelligence use Bash")
 @pytest.mark.parametrize(
     ("agent_flag", "expected_agent"),
@@ -435,6 +446,47 @@ def test_c1_brief_requires_clean_git_state(tmp_path: Path, dirty: bool) -> None:
     )
     assert (result.returncode == 0) is not dirty
     assert (impl_dir / "c1-brief-1.md").exists() is not dirty
+
+
+@pytest.mark.skipif(_BASH is None, reason="Phase1/Phase2 contract refresh uses Bash")
+def test_phase1_to_phase2_boundary_refreshes_contract(tmp_path: Path) -> None:
+    """A compaction between Phase 1 and Phase 2 must resume mid-dispatch, not at Step 3d.
+
+    Regression for the incident where the only refresh before this one was Step 3d's item-selection gate, and the next
+    was after the whole Phase 2 implementation loop — a compaction anywhere across Phase 1's challenge agents or Phase
+    2's worktree-held implementation re-asked an already-answered item-selection gate on resume.
+    """
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    block = _bash_block_containing(dispatch, "boundary1: Phase 1 challenge done")
+
+    session = "resolve-boundary1-test"
+    impl_dir = tmp_path / "impl"
+    impl_dir.mkdir()
+    (tmp_path / f"resolve-pr-number-{session}").write_text("1542\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [_BASH, "-c", block],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    contract = (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
+    assert "- skill: oss:resolve · phase: Phase 2 dispatch (after Phase 1 challenge verdicts)" in contract
+    assert "pr=1542" in contract
+    assert f"impl-dir={_bash_path(impl_dir)}" in contract
+    assert "challenge-log.txt" in contract
+    assert "item-tasks.tsv" in contract
+    assert "never re-issue Step 3d" in contract
 
 
 def test_deprecation_filter_reads_tagged_blob_and_keeps_uncertain_history(tmp_path: Path) -> None:

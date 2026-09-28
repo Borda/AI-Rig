@@ -280,7 +280,10 @@ Tier 2  Parallel review dimensions
         that may be explained by context the agent lacked as questions
         Before the final follow-up gate the skill refreshes its compaction
         contract and prints a `/compact` hint — a long wait can be spent
-        compacted; resolve later reads the report file, not the transcript
+        compacted; resolve later reads the report file, not the transcript.
+        If `/oss:resolve` for this same PR is already running in the session,
+        the gate is skipped (its own contract is left alone) and the
+        suggestion is printed as plain text instead
         Without foundry, requested agents use general-purpose fallbacks
 
         Scope examples:

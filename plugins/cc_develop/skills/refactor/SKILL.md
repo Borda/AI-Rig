@@ -1,7 +1,7 @@
 ---
 name: refactor
 description: 'Test-first refactoring — audit coverage, add characterization tests, apply changes with safety net, run quality stack and review loop. TRIGGER when: user wants to restructure existing Python code without changing behaviour; phrases: "refactor X", "clean up Y", "extract Z", "restructure this module", "improve code quality". SKIP when: bug fixes (use `/develop:fix`); new features (use `/develop:feature`); mixed refactor+feature — run `/develop:refactor` first, then `/develop:feature`; non-Python projects.'
-argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--keep "<items>"]
+argument-hint: <target file or directory> <goal> [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--codemap] [--no-codemap] [--accept-no-plan] [--team] [--worktree] [--no-batch] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, EnterWorktree, ExitWorktree
 disable-model-invocation: true
@@ -112,7 +112,7 @@ Downstream blocks read back, e.g. `IFS= read -r TEAM_MODE < "${TMPDIR:-/tmp}/dev
 
 **Codemap flag parsing** — no separate step: `dev_parse_args.py` above already resolves `--codemap`/`--no-codemap` into `dev-refactor-codemap-${CSID}`, the skill-specific file `dev_codemap_gate.py` reads (same as feature/fix/debug) — stale values from a prior run of another skill can't leak in.
 
-**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after all supported flags extracted, scan `$ARGUMENTS` for remaining `--<token>` tokens not in the supported list below. Found → print `` ! Unknown flag(s): `--<token>`. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--codemap`, `--no-codemap`, `--accept-no-plan`, `--repo`, `--keep`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -134,6 +134,15 @@ cat "$_DEV_SHARED/worktree-isolation.md"
 ```
 
 `WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree. Remember the branch for §Exit at Final Report.
+
+**Batch mode flag** — default on, `--no-batch` opts out. Groups non-overlapping change-test edits into fewer test runs; see `_shared/batch-mode.md` §Batch mode for the non-overlap predicate, per-edit snapshot/bisect design, and cap accounting:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-refactor-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
+```
+
+Re-read `BATCH_ENABLED` at the top of Step 4 (bash state does not persist across Bash() calls) — used only there.
 
 **Codemap auto-detection** — run after flag parsing. Behaviour differs by mode: `strict` (user explicitly passed `--codemap`) hard-fails when codemap unavailable; `auto` and `off` soft-degrade to `false` (don't abort skill):
 
@@ -269,17 +278,17 @@ Use Glob tool (pattern `**/test_*.py` or `**/*_test.py`), then Grep tool (patter
 ```bash
 # timeout: 600000
 # ONE collection pass feeds head-5 sanity print, cov-plugin probe, and module grep — three separate --co runs re-collect the whole suite each time
-_CO_OUT=$($PYTEST_CMD --co -q --cov=. 2>&1)
+_CO_OUT=$(eval "$PYTEST_CMD --co -q --cov=." 2>&1)  # eval: $PYTEST_CMD ("uv run pytest") doesn't word-split bare under zsh
 SKIP_COV=0
 if echo "$_CO_OUT" | grep -q "ModuleNotFoundError\|No module named.*cov\|unrecognized arguments.*--cov"; then
     echo "⚠ coverage tool not found — coverage gate skipped"
     SKIP_COV=1
-    _CO_OUT=$($PYTEST_CMD --co -q 2>&1)   # cov-less re-collect — the probe run errored before listing tests
+    _CO_OUT=$(eval "$PYTEST_CMD --co -q" 2>&1)   # cov-less re-collect — the probe run errored before listing tests
 fi
 echo "$_CO_OUT" | head -5
 echo "$_CO_OUT" | grep -i "<module_name>" || echo "No tests found for <module_name>"
 
-[ "${SKIP_COV}" -eq 0 ] && { $PYTEST_CMD --cov=<target_module> -q --cov-report=term-missing || true; }
+[ "${SKIP_COV}" -eq 0 ] && { eval "$PYTEST_CMD --cov=<target_module> -q --cov-report=term-missing" || true; }
 ```
 
 `SKIP_COV=1` → skip coverage classification entirely — don't classify any function as UNCOVERED; note "coverage tool absent — coverage audit skipped" in audit output. **Step 3 qa-specialist spawn behavior when `SKIP_COV=1`**: spawn qa-specialist with all public functions listed as `coverage: unknown`, instructed to write characterization tests for every public function (can't prioritize uncovered functions when coverage unknown — test all for safety net). Proceed to Step 3 with unknown coverage state.
@@ -348,7 +357,7 @@ Spawn with context:
 ```bash
 # timeout: 600000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-$PYTEST_CMD <test_file> -v; GATE_EXIT=$?
+eval "$PYTEST_CMD <test_file> -v"; GATE_EXIT=$?
 echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-gate-exit-${CSID}
 ```
 
@@ -370,7 +379,22 @@ fi
 
 ## Step 4: Refactor with safety net
 
-For each change:
+**Batch mode gate** — re-read `BATCH_ENABLED` (bash state does not persist across Bash() calls):
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-refactor-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
+if [ "$BATCH_ENABLED" = "true" ]; then
+    echo "refactor" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"  # batch-mode.md's own fences read this back — never a literal <skill> placeholder
+    IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+    [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+    cat "$_DEV_SHARED/batch-mode.md"
+fi
+```
+
+`BATCH_ENABLED=true` (default) → follow the loaded §Batch mode procedure (refactor context) for this loop instead of running steps 1-4 below once per change — group non-overlapping focused changes into a batch, one test run per batch, bisect on failure. Scope stays this loop only; Step 5's review loop keeps its own unbatched per-cycle re-run. `BATCH_ENABLED=false` (`--no-batch`) → continue below unchanged.
+
+For each change (or, in batch mode, per non-overlapping batch member):
 
 1. One focused change (single responsibility per edit)
 2. Run affected tests (prefer targeted over full characterization suite):
@@ -381,7 +405,7 @@ For each change:
    - Empty or unavailable → full suite:
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <test_files> -v
+   eval "$PYTEST_CMD --tb=short <test_files> -v"
    ```
 3. Tests pass: proceed to next change
 4. Tests fail: revert, try different approach
@@ -398,15 +422,22 @@ echo 5    > ${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}
 echo 1800 > ${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}
 ```
 
-At each inner iteration start, read back, increment, check:
+At each inner iteration start, read back, increment, check. `BATCH_ENABLED=true` counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
 
 ```bash
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r INNER_CYCLE < "${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}" 2>/dev/null || INNER_CYCLE="0"
 IFS= read -r START_TIME < "${TMPDIR:-/tmp}/dev-start-time-${CSID}" 2>/dev/null || START_TIME=$(date +%s)
-INNER_CYCLE=$((INNER_CYCLE+1))
+# BATCH_SIZE is written once by batch-mode.md when a batch closes, consumed here, then reset to
+# "1" in this same read-and-reset step (round-5 F5/F8) — an `rm -f`-based separate clear fence
+# relied on a later prose step running, which a MAX_INNER_CYCLES/wall-cap/abort exit skips,
+# leaving a stale non-1 value to double-count the next cycle; this reset can't be skipped, since
+# it happens in the same fence as the read that would otherwise be under-consumed.
+IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-refactor-batch-size-${CSID}" 2>/dev/null || BATCH_SIZE=""
+INNER_CYCLE=$((INNER_CYCLE + ${BATCH_SIZE:-1}))
 echo "$INNER_CYCLE" > ${TMPDIR:-/tmp}/dev-inner-cycle-${CSID}
+echo "1" > "${TMPDIR:-/tmp}/dev-refactor-batch-size-${CSID}"
 IFS= read -r MAX_INNER_CYCLES < "${TMPDIR:-/tmp}/dev-max-inner-cycles-${CSID}" 2>/dev/null || MAX_INNER_CYCLES=5
 IFS= read -r MAX_WALL_SECONDS < "${TMPDIR:-/tmp}/dev-max-wall-seconds-${CSID}" 2>/dev/null || MAX_WALL_SECONDS=1800
 if [ "$INNER_CYCLE" -gt $MAX_INNER_CYCLES ]; then
@@ -457,8 +488,9 @@ Full review of refactored code. **Loop** — review -> targeted refactoring (ret
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <test_files> -v 2>&1 | tail -20
-   GATE_EXIT=${PIPESTATUS[0]}
+   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+   eval "$PYTEST_CMD --tb=short <test_files> -v" 2>&1 | tail -20
+   GATE_EXIT=$?
    ```
 
 4. **Objective convergence check**: findings this cycle identical to previous (same locations, same issues) → declare convergence, exit — further cycles won't resolve; surface to user.

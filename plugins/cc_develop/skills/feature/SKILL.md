@@ -1,7 +1,7 @@
 ---
 name: feature
 description: 'TDD-first feature development — crystallise API as a demo test, drive implementation to pass it, run quality stack and progressive review loop. TRIGGER when: user asks to build new functionality, add a capability, or implement a feature in a Python project; phrases: "add X", "implement Y", "build Z feature", "create a new module for". SKIP when: bug fixes (use `/develop:fix`); refactoring without new behaviour (use `/develop:refactor`); non-Python projects; `.claude/` config changes (use `/foundry:manage`).'
-argument-hint: <goal> [--issue <N>] [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--no-codemap] [--codemap] [--team] [--worktree] [--accept-no-plan] [--keep "<items>"]
+argument-hint: <goal> [--issue <N>] [--repo <owner/repo>] [--plan <path>] [--no-challenge] [--challenge] [--no-codemap] [--codemap] [--team] [--worktree] [--no-batch] [--accept-no-plan] [--keep "<items>"]
 effort: xhigh
 allowed-tools: Read, Write, Edit, Bash, Grep, Glob, Agent, Skill, TaskList, TaskCreate, TaskUpdate, AskUserQuestion, WebFetch, EnterWorktree, ExitWorktree
 disable-model-invocation: true
@@ -146,7 +146,7 @@ If `ISSUE_REF` non-empty and issue fetch succeeded: include issue title, body, l
 2. Check local divergences: run `git log --oneline -10`, grep for symbols mentioned in issue; identify where local codebase differs structurally from what issue assumes
 3. Produce adaptation plan: upstream intent → local implementation using local conventions, existing abstractions, current code structure — never assume upstream approach ports directly
 
-**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: print `` ! Unknown flag(s): `--<token>`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
+**Unsupported flag check** — after ALL supported flags extracted (including `--issue` from block above), scan `$ARGUMENTS` for remaining `--<token>` tokens not in supported list. Do NOT include `--issue` in "unknown" set — it is consumed in second parse block above. Supported: `--plan`, `--team`, `--worktree`, `--no-batch`, `--no-challenge`, `--challenge`, `--no-codemap`, `--codemap`, `--accept-no-plan`, `--issue`, `--repo`, `--keep`. If truly unknown token found: print `` ! Unknown flag(s): `--<token>`. `` then invoke `AskUserQuestion` — (a) **Abort** (stop, re-invoke with correct flags) · (b) **Continue ignoring** (skip unknown flags, proceed). On Abort: stop.
 
 ## Worktree isolation
 
@@ -168,6 +168,15 @@ cat "$_DEV_SHARED/worktree-isolation.md"
 ```
 
 `WORKTREE_ENABLED=true` → follow §Enter (call `EnterWorktree`, warm-start codemap). Else skip — run in main tree. Remember the branch for §Exit at Final Report.
+
+**Batch mode flag** — default on, `--no-batch` opts out. Groups non-overlapping edits into fewer test runs; see `_shared/batch-mode.md` §Batch mode for the non-overlap predicate, per-edit snapshot/bisect design, and cap accounting:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-feature-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
+```
+
+Re-read `BATCH_ENABLED` at the top of Step 3 (bash state does not persist across Bash() calls) — used only there.
 
 **Codemap auto-detection** — run after flag parsing; reads raw value, normalizes to `true`/`false`, writes normalized result so downstream blocks see post-normalization state:
 
@@ -217,7 +226,7 @@ Gather full context before writing any code:
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # CLEAN_ARGS is the blob with every declared flag and its value removed — same strip as debug
-eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,no-codemap,codemap,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
+eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/parse-skill-flags.py" --flags no-challenge,challenge,team,worktree,batch,no-codemap,codemap,accept-no-plan --value-flags issue,repo,plan "$ARGUMENTS")"  # timeout: 5000
 if [[ "$CLEAN_ARGS" =~ ^#?[0-9]+$ ]]; then
   python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/dev_issue_fetch_wrap.py" feature "$ARGUMENTS"  # timeout: 6000
   ISSUE_FETCH_EXIT=$?
@@ -412,7 +421,8 @@ if [ -n "$DEMO_SCRIPT" ]; then
     echo "0" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
     echo "$DEMO_SCRIPT" > ${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}
 else
-    $PYTEST_CMD --collect-only --doctest-modules $MODULE_PATH -q 2>&1 | tail -5; COLLECT_EXIT=${PIPESTATUS[0]}
+    set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+    eval "$PYTEST_CMD --collect-only --doctest-modules \"\$MODULE_PATH\" -q" 2>&1 | tail -5; COLLECT_EXIT=$?
     if [ "$COLLECT_EXIT" -eq 5 ]; then
         echo "⚠ GATE FAIL: no demo tests collected — demo file missing or doctest malformed"
         GATE_EXIT=1
@@ -433,8 +443,9 @@ IFS= read -r COLLECT_EXIT < "${TMPDIR:-/tmp}/dev-feature-collect-exit-${CSID}" 2
 IFS= read -r GATE_EXIT < "${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}" 2>/dev/null || GATE_EXIT="1"
 IFS= read -r DEMO_SCRIPT < "${TMPDIR:-/tmp}/dev-feature-demo-script-${CSID}" 2>/dev/null || DEMO_SCRIPT=""
 # doctest form — MODULE_PATH resolved above; example-script form — DEMO_SCRIPT set, COLLECT_EXIT=5 by design
+set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
 if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
-    $PYTEST_CMD --doctest-modules $MODULE_PATH -v 2>&1 | tail -10; GATE_EXIT=${PIPESTATUS[0]}
+    eval "$PYTEST_CMD --doctest-modules \"\$MODULE_PATH\" -v" 2>&1 | tail -10; GATE_EXIT=$?
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
         echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
     else
@@ -442,7 +453,7 @@ if [ "${COLLECT_EXIT:-1}" -eq 0 ]; then
     fi
     echo "$GATE_EXIT" > ${TMPDIR:-/tmp}/dev-feature-gate-exit-${CSID}
 elif [ -n "$DEMO_SCRIPT" ]; then
-    python "$DEMO_SCRIPT" 2>&1 | tail -5; GATE_EXIT=${PIPESTATUS[0]}
+    python "$DEMO_SCRIPT" 2>&1 | tail -5; GATE_EXIT=$?
     if [ "${GATE_EXIT:-0}" -eq 0 ]; then
         echo "⚠ GATE FAIL: demo passed (exit 0) — feature may already exist; revisit Step 1"
     else
@@ -501,18 +512,45 @@ echo "0"           > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}
 echo "$(date +%s)" > ${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}
 ```
 
-Start from Step 2 demo — already failing, becomes first target. For each piece of functionality:
+**Batch mode gate** — re-read `BATCH_ENABLED` (bash state does not persist across Bash() calls):
 
-1. **Run existing suite — confirm all pass** (baseline before adding anything):
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r BATCH_ENABLED < "${TMPDIR:-/tmp}/dev-feature-no-batch-${CSID}" 2>/dev/null; [ "$BATCH_ENABLED" = "false" ] || BATCH_ENABLED=true  # timeout: 5000
+if [ "$BATCH_ENABLED" = "true" ]; then
+    echo "feature" > "${TMPDIR:-/tmp}/dev-batch-skill-${CSID}"  # batch-mode.md's own fences read this back — never a literal <skill> placeholder
+    IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""
+    [ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
+    cat "$_DEV_SHARED/batch-mode.md"
+fi
+```
+
+`BATCH_ENABLED=true` (default) → follow the loaded §Batch mode procedure (feature context) for this loop instead of running steps 1-7 below once per piece of functionality — group non-overlapping pieces into a batch, one run per batch, bisect on failure. Scope stays this loop only; the Step 4 review loop keeps its own unbatched `test-impact`-scoped re-runs. `BATCH_ENABLED=false` (`--no-batch`) → continue below unchanged.
+
+Start from Step 2 demo — already failing, becomes first target. For each piece of functionality (or, in batch mode, per non-overlapping batch member):
+
+1. **Run existing suite — confirm all pass** (baseline before adding anything). Redundant from cycle 2 on **only when the prior cycle's step 6 already ran full-dir**; when it ran `test-impact`-scoped instead, that scoped run never proved the whole directory green, so the full baseline still runs:
 
    ```bash
-   # timeout: 600000
-   # --ignore assumes new test is a discrete file; appended-to-existing-file case needs pytest node-ID deselection instead
-   $PYTEST_CMD --tb=short <target_test_dir> -v --ignore=<new_test_file> 2>&1 | tail -20
-   GATE_EXIT=${PIPESTATUS[0]}
+   # timeout: 600000 — read-back merged into this fence (round-5 M9 file-scope extension): a
+   # separate read-only fence above left TDD_CYCLE/LAST_CYCLE_FULL_DIR unassigned here, since
+   # Bash() state doesn't survive a fence boundary — the exact H3/N9 shape, caught by extending
+   # M9's scope from _shared files to feature/SKILL.md itself.
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
+   IFS= read -r LAST_CYCLE_FULL_DIR < "${TMPDIR:-/tmp}/dev-feature-last-full-dir-${CSID}" 2>/dev/null || LAST_CYCLE_FULL_DIR="false"
+   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+   if [ "$TDD_CYCLE" -eq 0 ] || [ "$LAST_CYCLE_FULL_DIR" != "true" ]; then
+       # --ignore assumes new test is a discrete file; appended-to-existing-file case needs pytest node-ID deselection instead
+       eval "$PYTEST_CMD --tb=short <target_test_dir> -v --ignore=<new_test_file>" 2>&1 | tail -20
+       GATE_EXIT=$?
+   else
+       echo "→ baseline already proven full-dir by the prior cycle's step 6 — skipping redundant re-run"
+       GATE_EXIT=0
+   fi
    ```
 
-   `<new_test_file>` is the test this cycle is about to add (first iteration: the Step 2 demo — no `--ignore` needed). Excluding it is the point: this run establishes the pre-change baseline, and the new red test must not count against it.
+   `<new_test_file>` is the test this cycle is about to add (first iteration: the Step 2 demo — no `--ignore` needed). Excluding it is the point when this run executes: it establishes the pre-change baseline, and the new red test must not count against it.
 
 2. **Target demo or write next focused test** — first iteration uses Step 2 demo directly; subsequent iterations add one new test per piece of new behaviour
 
@@ -520,9 +558,10 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --doctest-modules <module>.py -v --tb=short 2>&1 | tail -10
-   GATE_EXIT=${PIPESTATUS[0]}
-   $PYTEST_CMD --tb=short <test_file>::<test_name> -v
+   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+   eval "$PYTEST_CMD --doctest-modules <module>.py -v --tb=short" 2>&1 | tail -10
+   GATE_EXIT=$?
+   eval "$PYTEST_CMD --tb=short <test_file>::<test_name> -v"
    python examples/demo_<feature>.py 2>&1 | tail -5
    ```
 
@@ -535,20 +574,46 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 
 6. **Run affected tests** (prefer targeted over full suite):
 
-   **Test impact (codemap-py)** — identify minimal test set first:
-
-   ```bash
-   codemap-py query test-impact "<changed_module>" 2>/dev/null
-   ```
-
-   - Non-empty `pytest_cmd` → run those tests first; surface `not_covered` caveat if present
-   - Empty or `codemap-py query` absent → fall back to full suite below
-
-   **Full suite fallback**:
+   **Test impact (codemap-py)** — identify minimal test set first; decision, run, and persist stay in one fence so `LAST_CYCLE_FULL_DIR` is never read back empty by cycle 1's baseline check:
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <target_test_dir> -v
+   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+   _TI_JSON=$(codemap-py query test-impact "<changed_module>" 2>/dev/null)
+   _TI_CMD=$(printf '%s' "$_TI_JSON" | grep -o '"pytest_cmd"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/.*"\([^"]*\)"$/\1/')
+   # codemap-py's own pytest_cmd field is literally "pytest " + space-joined file paths — a bare
+   # "pytest" guess, never the repo's real $PYTEST_CMD, and repo-derived content. Never eval it
+   # directly: strip its "pytest " prefix to recover the file-list operand. It is a *list*, not a
+   # single value — quoting the whole thing as one eval operand (the template every other data
+   # operand in this file uses) collapses multiple files into one bogus path and pytest exits 4
+   # "file or directory not found" on the normal multi-file case. Split on spaces (tr, not a zsh
+   # parameter substitution — ${VAR// /$'\n'} was tried and empirically inserts the literal 4-char
+   # text $'\n' under zsh instead of a real newline) and re-quote each path as its own operand,
+   # same escape logic as Retry A. Command substitution, not a heredoc, feeds the loop — a heredoc
+   # inside this list-item-indented fence breaks markdown fence parsing (confirmed) and also drops
+   # per-command coverage from the blueprint-permission manifest.
+   _TI_FILES="${_TI_CMD#pytest }"
+   if [ -n "$_TI_FILES" ] && [ "$_TI_FILES" != "$_TI_CMD" ]; then
+       LAST_CYCLE_FULL_DIR=false
+       _TI_FILES_NL=$(printf '%s' "$_TI_FILES" | tr ' ' '\n')
+       _TI_ARGS=$(printf '%s\n' "$_TI_FILES_NL" | while IFS= read -r _f; do
+           [ -z "$_f" ] && continue
+           _esc="${_f//\\/\\\\}"
+           _esc="${_esc//\"/\\\"}"
+           _esc="${_esc//\$/\\\$}"
+           _esc="${_esc//\`/\\\`}"
+           printf ' "%s"' "$_esc"
+       done)
+       eval "$PYTEST_CMD --tb=short -v$_TI_ARGS" 2>&1 | tail -20
+       GATE_EXIT=$?
+       printf '%s' "$_TI_JSON" | grep -q '"not_covered"' && echo "⚠ not_covered — some changed code has no mapped test"
+   else
+       LAST_CYCLE_FULL_DIR=true
+       eval "$PYTEST_CMD --tb=short <target_test_dir> -v" 2>&1 | tail -20
+       GATE_EXIT=$?
+   fi
+   echo "$LAST_CYCLE_FULL_DIR" > "${TMPDIR:-/tmp}/dev-feature-last-full-dir-${CSID}"
    ```
 
 7. Regressions appear → fix before moving on — never carry forward broken suite
@@ -569,16 +634,23 @@ _PRESERVE="dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, 
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "TDD loop in progress (Step 3)" "$_DEV_DIR" "$_PRESERVE" "re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."  # timeout: 5000
 ```
 
-At each cycle start, read back, increment, check — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here:
+At each cycle start, read back, increment, check — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here. `BATCH_ENABLED=true` counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
 
 ```bash
 # timeout: 3000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
 IFS= read -r TDD_START < "${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}" 2>/dev/null || TDD_START=$(date +%s)
-TDD_CYCLE=$((TDD_CYCLE+1))
+# BATCH_SIZE is written once by batch-mode.md when a batch closes, consumed here, then reset to
+# "1" in this same read-and-reset step (round-5 F5/F8) — an `rm -f`-based separate clear fence
+# relied on a later prose step running, which a MAX_INNER_CYCLES/wall-cap/abort exit skips,
+# leaving a stale non-1 value to double-count the next cycle; this reset can't be skipped, since
+# it happens in the same fence as the read that would otherwise be under-consumed.
+IFS= read -r BATCH_SIZE < "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}" 2>/dev/null || BATCH_SIZE=""
+TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))
 echo "$TDD_CYCLE" > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}
-MAX_INNER_CYCLES=5  # returns from Step 4 to Step 3 count as a cycle too
+echo "1" > "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}"
+MAX_INNER_CYCLES=5  # returns from Step 4 to Step 3 count as edits too (1 each, batch or not)
 [ "$TDD_CYCLE" -gt $MAX_INNER_CYCLES ] && echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stop TDD loop; surface state to user"
 [ $(( $(date +%s) - TDD_START )) -ge 1800 ] && echo "⚠ wall-time cap reached (30 min) — stop TDD loop; surface state to user"
 ```
@@ -622,12 +694,20 @@ Use scan to prioritize which criteria below get deepest scrutiny.
 
 2. Every gap found → implement fix immediately — add missing tests, remove dead code, revert out-of-scope edits. Return to Step 3 for substantive implementation gap needing new TDD cycle.
 
-3. Re-run full suite to confirm nothing regressed:
+3. Re-run affected tests to confirm nothing regressed (prefer targeted over full suite — the quality stack's own wide gate in Step 5 already covers the whole directory once, after this loop closes):
+
+   ```bash
+   codemap-py query test-impact "<changed_module>" 2>/dev/null
+   ```
+
+   - Non-empty `pytest_cmd` → run those tests
+   - Empty or `codemap-py query` absent → full suite fallback:
 
    ```bash
    # timeout: 600000
-   $PYTEST_CMD --tb=short <target_test_dir> -v 2>&1 | tail -20
-   GATE_EXIT=${PIPESTATUS[0]}
+   set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+   eval "$PYTEST_CMD --tb=short <target_test_dir> -v" 2>&1 | tail -20
+   GATE_EXIT=$?
    ```
 
    > **Objective convergence check**: findings in this cycle identical to previous cycle (same locations, same issues) → declare convergence, exit loop — further cycles won't resolve; surface to user.
@@ -661,8 +741,9 @@ Agent must Read each affected source file before writing docstrings — never wr
 
 ```bash
 # timeout: 600000
-$PYTEST_CMD --doctest-modules <target_module> -v 2>&1 | tail -20
-GATE_EXIT=${PIPESTATUS[0]}
+set -o pipefail  # PIPESTATUS is bash-only, absent under zsh (Claude Code's Bash tool login shell on macOS)
+eval "$PYTEST_CMD --doctest-modules <target_module> -v" 2>&1 | tail -20
+GATE_EXIT=$?
 ```
 
 ```bash

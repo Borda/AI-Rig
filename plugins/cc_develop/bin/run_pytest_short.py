@@ -8,14 +8,15 @@ every runner ``runner-detection.md`` can emit.
 Captures combined stdout+stderr, then prints the last ``tail_n`` lines (default 20).
 Bad/non-integer ``tail_n`` silently falls back to 20.
 
-The three positional arguments carry pytest node-id tokens and runner strings with embedded
-spaces; they are sliced directly from ``argv`` rather than matched by argparse, which is present
-only to supply ``-h/--help``. This keeps the allowlist-rejection contract (exit 2), the
-target-containment guard (exit 1), and the silent ``tail_n`` fallback exactly as the legacy
-bash script defined them.
+``pytest_cmd`` and ``target`` are sliced directly from ``argv`` rather than matched by
+argparse, which is present only to supply ``-h/--help`` — both carry embedded spaces or
+``::`` node-id tokens argparse would otherwise split. ``--tail-n`` is a named flag, extracted
+from anywhere in argv before positional slicing. This keeps the allowlist-rejection contract
+(exit 2), the target-containment guard (exit 1), and the silent ``tail_n`` fallback exactly as
+the legacy bash script defined them.
 
 Usage:
-    run_pytest_short.py [pytest_cmd] [target] [tail_n]
+    run_pytest_short.py [pytest_cmd] [target] [--tail-n N]
 
 Exit codes:
     0 — pytest passed.
@@ -118,6 +119,29 @@ def _parse_tail_n(raw: str) -> int:
     return n if n >= 0 else _DEFAULT_TAIL_N
 
 
+def _extract_named_flags(args: list[str]) -> tuple[list[str], str]:
+    """Pull ``--tail-n VALUE`` out of argv.
+
+    Args:
+        args: Raw argument list, flags and positionals interleaved in any order.
+
+    Returns:
+        Tuple of (remaining positional args in original order, raw tail_n string or ``""`` if absent).
+    """
+    positional: list[str] = []
+    tail_n_raw = ""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--tail-n" and i + 1 < len(args):
+            tail_n_raw = args[i + 1]
+            i += 2
+            continue
+        positional.append(arg)
+        i += 1
+    return positional, tail_n_raw
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point — mirrors ``run-pytest-short.sh`` behaviour.
 
@@ -132,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")  # type: ignore[union-attr]
     args = list(sys.argv[1:] if argv is None else argv)
 
-    # argparse supplies only -h/--help; the positional pytest_cmd/target/tail_n carry spaces and
+    # argparse supplies only -h/--help; the positional pytest_cmd/target carry spaces and
     # ``::`` node-id tokens that must be sliced directly, never matched by argparse.
     if args and args[0] in {"-h", "--help"}:
         parser = argparse.ArgumentParser(
@@ -144,21 +168,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         parser.add_argument("target", nargs="?", default=".", help="Test path or node id (default: current directory).")
         parser.add_argument(
-            "tail_n",
-            nargs="?",
+            "--tail-n",
+            dest="tail_n",
             default=str(_DEFAULT_TAIL_N),
             help=f"Number of trailing output lines to print (default: {_DEFAULT_TAIL_N}).",
         )
         parser.parse_args(args)  # exits 0 after printing help
 
-    pytest_cmd = args[0] if len(args) >= 1 else "pytest"
-    target = args[1] if len(args) >= 2 else "."
-    tail_n = _parse_tail_n(args[2] if len(args) >= 3 else "")
+    positional, tail_n_raw = _extract_named_flags(args)
+    pytest_cmd = positional[0] if len(positional) >= 1 else "pytest"
+    target = positional[1] if len(positional) >= 2 else "."
+    tail_n = _parse_tail_n(tail_n_raw)
 
     if pytest_cmd not in _PYTEST_ALLOWLIST:
         print(f"run-pytest-short: rejected unsafe PYTEST_CMD: {pytest_cmd}", file=sys.stderr)
         return 2
 
+    targets = [target]
     _validate_target_in_cwd(target)
 
     parts = shlex.split(pytest_cmd)
@@ -167,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     # Read incrementally with a byte cap so adversarial test output cannot exhaust memory
     # before tail_n truncation is applied.
     proc = subprocess.Popen(  # noqa: S603 — allowlisted cmd + resolved binary, no shell.
-        [*parts, "--tb=short", target, "-v"],
+        [*parts, "--tb=short", *targets, "-v"],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

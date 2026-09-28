@@ -500,6 +500,21 @@ esac
 
 Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`.
 
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# boundary1: Phase 1 challenge done, before Phase 2 dispatch (compaction-contract.md §Lifecycle) —
+# Phase 1 runs parallel challenge agents (minutes) and Phase 2 holds worktrees open longer still;
+# the prior refresh point (Step 3d, boundary0) was the only one until this run reached boundary2
+# (post-impl loop), so a compaction anywhere across both phases resumed at item selection and
+# re-asked an already-answered gate
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
+IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
+_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${_IMPL_DIR}, selected-items=${_IMPL_DIR}/selected-items.txt, challenge-log=${_IMPL_DIR}/challenge-log.txt, skipped-items=${_IMPL_DIR}/skipped-items.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv"
+[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$_IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl — never re-issue Step 3d, item selection already answered"  # timeout: 5000
+```
+
 ### Phase 2: Implementation — parallel, one worktree per specialist
 
 The codemap maps (`$IMPL_DIR/codemap-maps.json` — `file_module` + `centrality`; `$IMPL_DIR/codemap-deps.jsonl` — per-module `direct_imports`) were built in Phase 1's Structural prep, concurrently with the challenge agents, so both tiebreaks below read them with no fresh query. They cover all `SELECTED_ITEMS`; filter to survivors as needed.

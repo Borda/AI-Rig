@@ -70,9 +70,9 @@ def test_default_tail_20(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Capture
 
 
 def test_custom_tail_n(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """Print only the requested number of trailing lines."""
+    """``--tail-n`` prints only the requested number of trailing lines."""
     _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(30))
-    rc = run_pytest_short.main(["pytest", ".", "5"])
+    rc = run_pytest_short.main(["pytest", ".", "--tail-n", "5"])
     assert rc == 0
     out_lines = capsys.readouterr().out.splitlines()
     assert out_lines == [f"line-{i}" for i in range(26, 31)]
@@ -85,9 +85,9 @@ def test_bad_tail_n_falls_back_to_20(
     capsys: pytest.CaptureFixture[str],
     tail_n: str,
 ) -> None:
-    """Bad ``tail_n`` values silently use default 20."""
+    """Bad ``--tail-n`` values silently use default 20."""
     _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(25))
-    rc = run_pytest_short.main(["pytest", ".", tail_n])
+    rc = run_pytest_short.main(["pytest", ".", "--tail-n", tail_n])
     assert rc == 0
     out_lines = capsys.readouterr().out.splitlines()
     assert len(out_lines) == 20
@@ -100,7 +100,7 @@ def test_tail_n_larger_than_output(
 ) -> None:
     """Print all output when the requested tail exceeds its length."""
     _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(3))
-    rc = run_pytest_short.main(["pytest", ".", "100"])
+    rc = run_pytest_short.main(["pytest", ".", "--tail-n", "100"])
     assert rc == 0
     out_lines = capsys.readouterr().out.splitlines()
     assert out_lines == ["line-1", "line-2", "line-3"]
@@ -115,9 +115,9 @@ def test_numeric_tail_n_boundaries(
     tail_n: str,
     expected: list[str],
 ) -> None:
-    """Numeric tail values at boundaries behave explicitly."""
+    """Numeric ``--tail-n`` values at boundaries behave explicitly."""
     _patch_subprocess(monkeypatch, returncode=0, stdout=_make_lines(3))
-    rc = run_pytest_short.main(["pytest", ".", tail_n])
+    rc = run_pytest_short.main(["pytest", ".", "--tail-n", tail_n])
     assert rc == 0
     assert capsys.readouterr().out.splitlines() == expected
 
@@ -231,8 +231,22 @@ def test_output_byte_cap_truncates_buffer(monkeypatch: pytest.MonkeyPatch, capsy
     """Oversized output is capped and annotated before tailing."""
     monkeypatch.setattr(run_pytest_short, "_MAX_OUTPUT_BYTES", 10)
     _patch_subprocess(monkeypatch, returncode=0, stdout="0123456789ABCDEFGHIJ")
-    rc = run_pytest_short.main(["pytest", ".", "20"])
+    rc = run_pytest_short.main(["pytest", ".", "--tail-n", "20"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "0123456789" in out
     assert "output truncated at 10 bytes" in out
+
+
+def test_node_id_flag_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--node-id`` is gone (L6): it had zero call sites anywhere in the plugin tree.
+
+    The flaky-retry redesign shipped a different mechanism — targeted node-ids are quoted individually and passed
+    straight to ``eval "$RUNNER pytest ..."`` in ``quality-stack.md``'s Retry A, never through this wrapper. Confirmed
+    dead across two independent adversarial rounds (``grep -rn '\\-\\-node-id' plugins/`` → zero hits) before deletion.
+    """
+    recorded = _patch_subprocess(monkeypatch, returncode=0, stdout="")
+    # a target literally named "--node-id" is now an ordinary (if odd) positional, not a flag
+    run_pytest_short.main(["pytest", "tests/test_a.py::test_x"])
+    cmd = recorded[0]["cmd"]
+    assert "tests/test_a.py::test_x" in cmd

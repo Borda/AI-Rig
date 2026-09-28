@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.25.3
 
+- Require a verified blocker before refusing an explicitly requested reversible local action; reuse existing authorization.
+- Honor an explicit local remediation commit when all open selected obligations are external environment verification or independent review and canonical gates pass; retain the failed result and disclose each gap in the commit plan and message. Bind the exception to open review or confidence gate items so a mislabeled local finding cannot qualify.
+- Distinguish accepted async questions from visible choice forms; preserve typed-answer selection when a client renders the question as text and stop claiming a control is visible.
 - Keep the legacy workspace migration regex stable under Ruff and docformatter; restore single-quoted TOML migration.
 
 ## 0.25.2

@@ -923,9 +923,27 @@ Print `### Codex Delegation` only when tasks delegated — omit otherwise. Don't
 
 **Confidence block ownership**: `REPLY_MODE=true` → block in Step 8. `REPLY_MODE=false` → block in Step 7b.
 
-`REPLY_MODE=true`: proceed to Step 8 — no Confidence block here. `REPLY_MODE=false` — do NOT proceed to Step 8. Execute both sub-steps below:
+`REPLY_MODE=true`: proceed to Step 8 — no Confidence block here. `REPLY_MODE=false` — do NOT proceed to Step 8. Execute both sub-steps below.
+
+**Already-running check** — before 7a, detect whether `/oss:resolve` for this same PR is already active in this session. Read via the liveness sentinel resolve writes at its own Step 1 and clears on completion (`resolve/SKILL.md`, `${TMPDIR:-/tmp}/oss-resolve-active-${CSID}`) — never via `.temp/state/skill-contract.md`: that file is this review's *own* compaction contract, written and cleared unconditionally at this skill's own Step 0/5b/8 regardless of what else is running, so it carries no reliable cross-skill liveness signal. `AskUserQuestion` cannot be honored when resolve is already covering this PR (`quality-gates.md` §"Don't ask what you can't honor") — a real incident idled this gate 10m30s asking a question resolve had already answered by running:
+
+```bash
+# timeout: 3000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG=""
+IFS= read -r _RESOLVE_PR < "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" 2>/dev/null || _RESOLVE_PR=""
+_RESOLVE_ACTIVE=false
+[[ "$_PR_TAG" =~ ^[0-9]+$ ]] && [ "$_RESOLVE_PR" = "$_PR_TAG" ] && _RESOLVE_ACTIVE=true
+if [ "$_RESOLVE_ACTIVE" = "true" ]; then
+    echo "/oss:resolve already running in this session for PR $_PR_TAG — it already covers these findings. Step 7a gate skipped; resolve will finish and report separately."
+fi
+```
+
+`_RESOLVE_ACTIVE=true` → print that line as plain text in the reply (not just Bash stdout — tool output is not reliably shown to the user); do **not** call `AskUserQuestion`; skip straight to 7b. A no-PR review (`_PR_TAG` empty — local dir/path mode), or resolve active for a *different* PR, must never suppress the gate — the check only fires on an exact numeric PR match, so any unmatched or empty `_PR_TAG` leaves `_RESOLVE_ACTIVE=false`. `_RESOLVE_ACTIVE=false` → continue to 7a below as normal.
 
 ### 7a — Follow-up gate
+
+Skip this entire sub-step when the already-running check above set `_RESOLVE_ACTIVE=true`.
 
 This gate idles longest (measured up to 11 h on a real review). Refresh the contract right before it — boundary 2 was written before Step 6 pulled more into context — and print the hint so the user can `/compact` while deciding; a resolve follow-up then starts from the report file, not this transcript:
 
@@ -957,10 +975,20 @@ Then print this line **in the reply** (prose, not Bash stdout — tool output is
 
 ### 7b — Confidence block
 
-End with `## Confidence` block per CLAUDE.md output standards.
+End with `## Confidence` block per CLAUDE.md output standards — always, even when 7a was skipped.
 
 ```bash
-rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+# timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG=""
+IFS= read -r _RESOLVE_PR < "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" 2>/dev/null || _RESOLVE_PR=""
+# re-check fresh — never trust the already-running check's pre-idle snapshot: 7a idles up to 11h on
+# a real review, long enough for resolve to start or finish inside that window
+if [[ "$_PR_TAG" =~ ^[0-9]+$ ]] && [ "$_RESOLVE_PR" = "$_PR_TAG" ]; then
+    : # resolve is active for this PR now — never clear a contract it owns
+else
+    rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §Lifecycle)
+fi
 ```
 
 <!-- Steps 5–7 defined in Step 5 (consolidate), Step 6 (Codex delegation), Step 7 (reply gate) blocks above — numbered sequentially from Step 1; Step 4 (cross-validate) precedes them; no gap: 4→5→6→7→8 -->

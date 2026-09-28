@@ -1000,15 +1000,25 @@ def _write_remediation_candidate(
     return result_path
 
 
-def test_explicit_commit_with_environment_only_blocker_keeps_failed_remediation_result(tmp_path: Path) -> None:
-    """Validate a pending local commit without claiming the missing docs build passed."""
+@pytest.mark.parametrize(
+    ("item_type", "expected_error"),
+    [
+        pytest.param("review-gate", None, id="environment-verification-gate"),
+        pytest.param("code", "remediation-commit-result-blocked", id="code-defect-mislabeled-as-environment"),
+    ],
+)
+def test_explicit_commit_with_environment_only_blocker_keeps_failed_remediation_result(
+    tmp_path: Path, item_type: str, expected_error: str | None
+) -> None:
+    """Accept missing environment verification while rejecting an open code finding."""
     result_path = _write_remediation_candidate(
-        tmp_path, "review-gate", ("unresolved", "Blocked: complete docs environment unavailable.")
+        tmp_path, item_type, ("unresolved", "Blocked: complete docs environment unavailable.")
     )
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["status"] = "fail"
     metadata = result["metadata"]
-    metadata["review_report_intake"]["review_gate_items_selectable"] = 1
+    if item_type == "review-gate":
+        metadata["review_report_intake"]["review_gate_items_selectable"] = 1
     metadata["unresolved_summary"].update(
         selected_items_total=1,
         selected_items_unresolved=1,
@@ -1052,13 +1062,89 @@ def test_explicit_commit_with_environment_only_blocker_keeps_failed_remediation_
         metadata["final_handoff"][field] = binding[field]
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
-    VALIDATOR.validate("code-remediate", tmp_path, result_path)
-
-    (tmp_path / "commit-plan.md").write_text(
-        "## Explicit Commit Request\n\n## Remaining Verification\n", encoding="utf-8"
-    )
-    with pytest.raises(SystemExit, match="remediation-commit-plan-section-empty"):
+    if expected_error is None:
         VALIDATOR.validate("code-remediate", tmp_path, result_path)
+    else:
+        with pytest.raises(SystemExit, match=expected_error):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+    if expected_error is None:
+        (tmp_path / "commit-plan.md").write_text(
+            "## Explicit Commit Request\n\n## Remaining Verification\n", encoding="utf-8"
+        )
+        with pytest.raises(SystemExit, match="remediation-commit-plan-section-empty"):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+@pytest.mark.parametrize(
+    ("item_type", "expected_error"),
+    [
+        pytest.param("confidence-gap", None, id="independent-review-gate"),
+        pytest.param("code", "remediation-commit-result-blocked", id="code-defect-mislabeled-as-review"),
+    ],
+)
+def test_explicit_commit_with_independent_review_open_keeps_failed_result(
+    tmp_path: Path, item_type: str, expected_error: str | None
+) -> None:
+    """Accept an open review gate while rejecting an open code finding with the same summary."""
+    result_path = _write_remediation_candidate(
+        tmp_path, item_type, ("unresolved", "Blocked: independent reviewer has not inspected the change.")
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["status"] = "fail"
+    metadata = result["metadata"]
+    if item_type == "confidence-gap":
+        metadata["review_report_intake"]["review_gate_items_selectable"] = 1
+        metadata["review_report_intake"]["review_gate_items_total"] = 2
+    metadata["unresolved_summary"].update(
+        selected_items_total=1,
+        selected_items_unresolved=1,
+        process_gate_items_unresolved=1,
+        external_owner_items=1,
+        unresolved_reason_groups=[
+            {
+                "reason": "independent-review",
+                "count": 1,
+                "owner": "external-reviewer",
+                "next_action": "Review the local change independently.",
+                "evidence_path": "unresolved.txt",
+            }
+        ],
+    )
+    (tmp_path / "unresolved.txt").write_text(
+        "## Unresolved Work Summary\n\nIndependent review is open.\n\n"
+        "## Why Selected Items Remain Unresolved\n\n"
+        "| Closure class | Next owner | Attempted evidence |\n"
+        "| --- | --- | --- |\n"
+        "| independent-review | external-reviewer | no independent review receipt |\n\n"
+        "## Next Action\n\nReview the local change independently.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "commit-plan.md").write_text(
+        "## Explicit Commit Request\n\nUser requested one local commit for the verified source paths.\n\n"
+        "## Remaining Verification\n\nIndependent review remains open with the external reviewer.\n",
+        encoding="utf-8",
+    )
+    handoff_path = tmp_path / "final-handoff.json"
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    handoff["commit_disposition"] = {
+        "status": "pending",
+        "reason": "User requested a local commit with independent review disclosed as open.",
+        "evidence": "commit-plan.md",
+    }
+    handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    binding = _load_finalizer().render_files(
+        handoff_path, tmp_path / "final.md", tmp_path / "final-handoff.validation.json"
+    )
+    for field in ("handoff_sha256", "rendered_sha256"):
+        metadata["final_handoff"][field] = binding[field]
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    if expected_error is None:
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+    else:
+        with pytest.raises(SystemExit, match=expected_error):
+            VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
 
 @pytest.mark.parametrize("item_type", ["code", "review-gate"])

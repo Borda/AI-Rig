@@ -27,7 +27,7 @@
 ### Quality
 - Lint: clean / N issues fixed
 - Types: clean / N issues fixed
-- Doctests: passing
+- Doctests: pass / fail / not-merged — derived from `quality-stack.md`'s `DOCTEST_MERGED` state; `not-merged` means the runner degraded to a separate doctest pass (see Quality Stack)
 - Review: pass / N issues fixed (N cycles)
 
 ### Follow-up

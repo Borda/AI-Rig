@@ -14,6 +14,8 @@ Specialist Codemap prompts reuse only matching, successful, fresh answers, inspe
 
 > Optional integrations: `/oss:review` and `/oss:release` add release/review workflows (requires the `oss` plugin); `/develop:feature` and `/develop:fix` add implementation workflows (requires the `develop` plugin); `/research:run` and `/research:topic` add ML research workflows (requires the `research` plugin).
 
+`skills/_shared/quality-stack.md` is the canonical copy of the quality-gate stack `develop`'s feature/fix/refactor skills run at close, propagated byte-identical into `develop`'s own `_shared/` via `propagate_shared.py`. Its flaky-test retry now re-runs only the failing node-ids instead of the whole directory twice, doctests fold into the main pytest run when a collection probe confirms it's safe (report status `not-merged`/`pass`/`fail`, replacing the old binary pass/fail line), and a `pytest-xdist` capability probe runs the wide pass in parallel when available — a failure that reproduces only under that parallel pass is reported `PARALLEL_FAIL_SERIAL_PASS` (likely a test-isolation bug) rather than marked flaky. `! BREAKING`: the doctest report line's format changed to the 3-state form above.
+
 ______________________________________________________________________
 
 <details markdown="1">

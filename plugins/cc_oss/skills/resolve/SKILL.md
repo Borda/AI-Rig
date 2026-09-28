@@ -63,11 +63,13 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 > loads: compaction-contract.md
 
 - Boundary 0: before the Step 3d item-selection gate — longest idle window of the run; contract makes a mid-wait `/compact` lossless.
-- Key boundary: end of Step 8 — per-item implementation loop complete, before Step 9 lint gate. Contract overwrites on each iteration (latest state wins).
-- Second boundary: start of Step 11 — before final report write, after push.
+- Boundary 1: end of Phase 1 challenge (`action-item-dispatch.md`), before Phase 2 implementation dispatch. Closes the gap where Phase 1's parallel challenge agents and all of Phase 2's worktree-held implementation ran with no refresh, so a compaction anywhere in either phase resumed at Step 3d and re-asked an already-answered gate.
+- Boundary 2: end of Step 8 — per-item implementation loop complete, before Step 9 lint gate. Contract overwrites on each iteration (latest state wins).
+- Boundary 3: start of Step 11 — before final report write, after push.
 - Preserve at boundary 0: PR#, `IMPL_DIR`, `action-items.jsonl`, `pr-intelligence.md`, `pr-vars.sh` paths.
-- Preserve at boundary 1: PR#, implemented/remaining item state, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
-- Preserve at boundary 2: final report path, PR#, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
+- Preserve at boundary 1: PR#, `IMPL_DIR`, `challenge-log.txt`, `skipped-items.txt`, `item-tasks.tsv` paths.
+- Preserve at boundary 2: PR#, implemented/remaining item state, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
+- Preserve at boundary 3: final report path, PR#, `IMPL_DIR`, `challenge-log.txt`, `item-tasks.tsv` paths.
 - State that must survive a compaction lives in files under `$IMPL_DIR`, never only in-context: challenge verdicts (`challenge-log.txt`), item→task map (`item-tasks.tsv`), `IMPL_DIR` itself via the `resolve-impl-dir-${CSID}` sentinel written at `mktemp` time.
 
 </compaction>
@@ -213,6 +215,19 @@ fi
 . "$tmpenv"
 # sets: PR_NUMBER, PR_URL, MODE, ARGUMENTS ('#' stripped, comment-dispatch only)
 echo "${PR_NUMBER:-n/a}" > "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}"  # timeout: 3000
+# liveness sentinel — cheap same-session signal for oss:review's Step 7 already-running check;
+# never read back by this skill itself, only written here, cleared on the report/reject-gate
+# stops right below and at completion (Step 11/12) — see review/SKILL.md. Tolerated for the same
+# reason a crashed skill-contract.md is (compaction.md §Stale-contract caution), though this one
+# does NOT self-heal the same way: skill-contract.md is unconditionally rm'd at Step 0 of ANY
+# later resolve run regardless of PR, but this sentinel is only overwritten when a later run
+# reaches THIS line again — a prose-level stop before it (Step 3d skip-all, over-20 stop, an
+# internal `! BLOCKED` sentinel-loss guard) leaves it stale for the rest of the session, silently
+# suppressing oss:review's gate for that exact PR on every later invocation, not just once.
+# Deliberately not chased into every such exit path — accepted, not eliminated. `report` mode's
+# value can never numeric-match a review's PR tag by design: a no-PR resolve run must never
+# suppress any review's gate.
+case "$PR_NUMBER" in ''|n/a|*[!0-9]*) echo "report" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; *) echo "$PR_NUMBER" > "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}" ;; esac  # timeout: 3000
 : > "${TMPDIR:-/tmp}/resolve-base-ref-${CSID}"  # Step 4 or report mode must publish this run's base before Step 9
 : > "${TMPDIR:-/tmp}/resolve-pr-ref-${CSID}"  # Step 4 or local report mode must publish this run's commit reference
 ```
@@ -250,7 +265,7 @@ IFS= read -r PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null
 # re-run the PR-scoped lookup here (idempotent): the sentinel is trustworthy only if the reject gate ran THIS run for THIS PR.
 # Its exit 1 = still-rejected PR; never swallow that — a skipped gate block would otherwise resolve a rejected PR silently
 if [ -n "$PR_NUMBER" ] && [ "$PR_NUMBER" != "n/a" ]; then
-    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" || { echo "REPORT_STATUS=blocked"; exit 1; }  # timeout: 6000
+    python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --pr "$PR_NUMBER" --path-out "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }  # timeout: 6000
 fi
 IFS= read -r REPORT_FILE < "${TMPDIR:-/tmp}/resolve-report-file-${CSID}" 2>/dev/null || REPORT_FILE=""
 [ -f "$REPORT_FILE" ] || REPORT_FILE=""  # sentinel may outlive its report (TTL sweep, failed --path-out write)
@@ -266,7 +281,7 @@ case "$REPORT_FILE" in
     .reports/codex/review/*) echo "REPORT_STATUS=codex-lineage" ;;
     *)
         if [ -z "$PR_NUMBER" ] || [ "$PR_NUMBER" = "n/a" ]; then
-        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" || { echo "REPORT_STATUS=blocked"; exit 1; }  # timeout: 6000
+        python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/find_review_report.py" --report "$REPORT_FILE" || { echo "REPORT_STATUS=blocked"; rm -f "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"; exit 1; }  # timeout: 6000
         fi
         echo "REPORT_STATUS=ok" ;;
 esac
@@ -899,7 +914,7 @@ TaskUpdate(task_id=TASK_IMPL, status="completed")
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# boundary1: post-impl loop, pre-lint gate (compaction-contract.md §Lifecycle)
+# boundary2: post-impl loop, pre-lint gate (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
@@ -1014,7 +1029,7 @@ gh pr view "$PR_NUMBER" --json headRefOid,commits --jq '.commits[-3:] | .[].mess
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# boundary2: pre-final-report write (compaction-contract.md §Lifecycle)
+# boundary3: pre-final-report write (compaction-contract.md §Lifecycle)
 IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
@@ -1080,7 +1095,8 @@ echo "POST_PR_ACTION=$POST_PR_ACTION"
 The post-PR sentinel needs no cleanup — Step 1 re-initialises it to `skip` on every run, so nothing stale survives into the next invocation. Clear the compaction contract alone (its own fence: the `rm` keeps the block out of the blueprint manifest, and this exact path is allow-listed):
 
 ```bash
-rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
 ## Step 12: Comment dispatch + Codex review loop
@@ -1094,7 +1110,8 @@ cat "$_OSS_RESOLVE/modes/comment-dispatch.md"  # timeout: 5000
 Execute its steps (loaded above).
 
 ```bash
-rm -f .temp/state/skill-contract.md  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-resolve-active-${CSID}"  # skill complete (compaction-contract.md §Lifecycle)  # timeout: 5000
 ```
 
 </workflow>

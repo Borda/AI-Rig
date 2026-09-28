@@ -23,7 +23,7 @@
     {
       "mode": "0644",
       "path": ".codex-plugin/plugin.json",
-      "sha256": "63c7237d3efba0a2b2e931f0f49c5dfdcd32358199fc06974af4403f8a45f24a"
+      "sha256": "8fa2a0a088ca9bf451ff1f80260fe31ff578dabd9d204711ffa4c1dbf851005e"
     },
     {
       "mode": "0644",
@@ -33,7 +33,7 @@
     {
       "mode": "0644",
       "path": "CHANGELOG.md",
-      "sha256": "503b1b0992b01f4c99d7ff2fe48ede5cfadd44f88588340141817a18cffb42c7"
+      "sha256": "f68e5c4e06bc6375de6964d4bfc0bbc13aa535e538a98cc6086d3da741049caf"
     },
     {
       "mode": "0644",
@@ -48,7 +48,7 @@
     {
       "mode": "0644",
       "path": "README.md",
-      "sha256": "89f60f4f3bc1db5ee837999ccdd213dbe5b47861500b98603fdb175929682526"
+      "sha256": "401cb8ceef3494bd1034b1bb35bb5dd4172d8a40153e3d0d3db73d01a0184f23"
     },
     {
       "mode": "0644",
@@ -163,7 +163,7 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/behavioral-cases.json",
-      "sha256": "cd8d18fa3f1f7678cc23a7048ac0ed07b71d809cc8a881b88b8e38e9295bbe30"
+      "sha256": "aa4aae3af6fbc23b71fdc3a6b165ece5e84efc85ce2b56144093b8bc31a6262b"
     },
     {
       "mode": "0644",
@@ -173,7 +173,7 @@
     {
       "mode": "0644",
       "path": "runtime/calibration/benchmarks.json",
-      "sha256": "a099acb931c9c3de4d123c7bb9e204f2978b56fd71bf63c2b87eec439fd344d8"
+      "sha256": "d28e8dd340946f2fac46658ce217efe7bd3c75caed3c9d438f4a9b28f3170d23"
     },
     {
       "mode": "0644",
@@ -363,12 +363,12 @@
     {
       "mode": "0644",
       "path": "shared/codex-user-questions-details.md",
-      "sha256": "7bcc48c67fcdc0bcc6726e720d501c5ba5f8bc3b2422de60865931662464e85e"
+      "sha256": "16585d2f98164544f0df972f6c8774c7cf4728b01ed69c43ffa477918b49dd98"
     },
     {
       "mode": "0644",
       "path": "shared/codex-user-questions.md",
-      "sha256": "692c8f5f30209443852bcc8fd4af0926be765aade110215c0a0fe9b100af810d"
+      "sha256": "248ae3a45cb1dd7356c1ef8e360b5aee40c70b24eb73a92ed2b7d187466e2c9d"
     },
     {
       "mode": "0755",
@@ -398,7 +398,7 @@
     {
       "mode": "0644",
       "path": "shared/final-handoff-contract.md",
-      "sha256": "2c9aef23f875666fb79adee9e02c2124d932d7157a64c9cd6cd23f26ea433b22"
+      "sha256": "70322dbc7c0abbd554f906b28f39e669a9ebf55cffbd06c238ec0be65bc3b8f8"
     },
     {
       "mode": "0755",
@@ -423,7 +423,7 @@
     {
       "mode": "0644",
       "path": "shared/native-skill-contract.md",
-      "sha256": "78c971dd43866ce93d5ae6174c8b7a32b67a2a4ab5cfcf572d25146b0b718fd6"
+      "sha256": "69152b62039386348a16ea464fd9ea0b0fbf2dcae7bf2cd48bca98e1e0d09e27"
     },
     {
       "mode": "0644",
@@ -478,7 +478,7 @@
     {
       "mode": "0755",
       "path": "shared/validate-artifacts.py",
-      "sha256": "c3899e824ad513fd7b8954910296e7e7160a8a611ce272ec33b2313135e45fea"
+      "sha256": "d68461b54bf8ba064127541d74c72a2c65d6ac3af28a80f02af7d144fc49b68d"
     },
     {
       "mode": "0755",
@@ -553,7 +553,7 @@
     {
       "mode": "0644",
       "path": "skills/code-remediate/SKILL.md",
-      "sha256": "7ca074fbe39af7a4681fb7a39a5b1e76deabf442bdf083fbd1483a23e42e82f0"
+      "sha256": "8bea46df27f5eabe20803ac371a40ed4fb673fe9a92e91d4b247f7a77c86dc93"
     },
     {
       "mode": "0644",
@@ -928,7 +928,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_code_remediate_commit_contract.py",
-      "sha256": "825d03c0930914bcaac2e4ed532c6f98e82606477f80693a7164efe4b1b18ab0"
+      "sha256": "7437a1f44ea7fc276badecfeeeeb274bd1e07ac442df4ed49908b7561551022f"
     },
     {
       "mode": "0644",
@@ -943,7 +943,7 @@
     {
       "mode": "0644",
       "path": "tests/remediate/test_code_remediate_session_review_contract.py",
-      "sha256": "8bd28559401f33dec72d181142af504d3d50424a848a443996e4e57a698c9240"
+      "sha256": "d8b3014e9171e2e194a8fa149f68081e3ab102eb54f4f24c54627f1508ae3356"
     },
     {
       "mode": "0644",
@@ -1033,7 +1033,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_final_handoff.py",
-      "sha256": "2cb6fd7767928f03b956921639deac3335b5abe755e793efff0a184fe04b9c93"
+      "sha256": "303b935d62089c8b55e6296aa59631ea1c3ed5b35985e88d6cfed1fb8f792d1c"
     },
     {
       "mode": "0644",
@@ -1043,7 +1043,7 @@
     {
       "mode": "0644",
       "path": "tests/review/test_finding_presentation.py",
-      "sha256": "a81988e8813054d7e3c3552fba7bb6c49e750a4b2e15781362d7e19155260e85"
+      "sha256": "edc16f0f82c63c48aae06aa68d44463db63ddaa751041043a878868d72ee46c1"
     },
     {
       "mode": "0644",
@@ -1113,7 +1113,7 @@
     {
       "mode": "0644",
       "path": "tests/test_codex_user_questions.py",
-      "sha256": "d2bf0029cb38320b6a686786496aa6b0da0ec4835524df48aede3e3ece6c8c3e"
+      "sha256": "ceb89daa6727c48024450a7f873de36b2a369ccddbb8d938d54000bcfdcd87cb"
     },
     {
       "mode": "0644",
@@ -1378,5 +1378,5 @@
       "path": "skills/sync/SKILL.md"
     }
   ],
-  "version": "0.25.2"
+  "version": "0.25.3"
 }

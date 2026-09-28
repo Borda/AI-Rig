@@ -458,6 +458,25 @@ class TestWriteSkillFiles:
         flags = {spec.flag for spec, _legacy in SKILL_SPECS["plan"]}
         assert "worktree" not in flags
 
+    @pytest.mark.parametrize("skill", ["feature", "refactor"])
+    def test_batch_flag_absent_defaults_true(self, skill: str, tmp_path: Path):
+        """Batch-capable skills: absent ``--no-batch`` defaults the sentinel to 'true' — batch mode ships default-on."""
+        write_skill_files(skill, "do the thing", tmp_dir=tmp_path)
+        assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == "true\n"
+
+    @pytest.mark.parametrize("skill", ["feature", "refactor"])
+    def test_no_batch_flag_disables(self, skill: str, tmp_path: Path):
+        """Batch-capable skills: ``--no-batch`` persists 'false' to its per-skill sentinel (legacy=None → no legacy
+        file)."""
+        write_skill_files(skill, "--no-batch do the thing", tmp_dir=tmp_path)
+        assert (tmp_path / f"dev-{skill}-no-batch-shared").read_text() == "false\n"
+
+    @pytest.mark.parametrize("skill", ["fix", "debug", "review", "plan"])
+    def test_no_batch_not_registered_outside_feature_and_refactor(self, skill: str):
+        """Batch mode is scoped to feature Step 3 / refactor Step 4 only — no other skill registers it."""
+        flags = {spec.flag for spec, _legacy in SKILL_SPECS[skill]}
+        assert "no-batch" not in flags
+
 
 # ---------------------------------------------------------------------------
 # main() — argparse gate + both call shapes preserved
