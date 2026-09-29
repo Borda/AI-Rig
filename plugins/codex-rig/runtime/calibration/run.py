@@ -1285,6 +1285,8 @@ def check_shared_scripts(run: CalibrationRun) -> None:
         "final-handoff": run.paths.final_handoff_py,
     }
     if run.paths.layout == "plugin":
+        cli_paths["code-review-prepare"] = run.paths.skills_dir / "code-review" / "review_prepare.py"
+        cli_paths["code-review-context"] = run.paths.skills_dir / "code-review" / "review_context.py"
         cli_paths["create-run"] = run.paths.create_run
         cli_paths["remediation-branch"] = run.paths.shared_dir / "remediation_branch.py"
         cli_paths["release-evidence"] = run.paths.shared_dir / "release_evidence.py"

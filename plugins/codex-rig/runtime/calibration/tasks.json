@@ -28,7 +28,7 @@
       "goal": "Apply findings and report unresolved items",
       "id": "code-remediate-001",
       "skill": "code-remediate",
-      "success": "unresolved handling and gate status are present"
+      "success": "unresolved handling and gate status are present; independent selected writes default to plan-bound parallel execution, exact shared files reconcile at collection, and safe parent or sequential continuation records its actual mode and reason without an unnecessary approval question"
     },
     {
       "goal": "Detect configuration/workflow drift",

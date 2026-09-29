@@ -350,7 +350,7 @@ def test_low_volume_selection_stays_in_one_agent_scope(tmp_path: Path) -> None:
     }
     _write_workplan(metadata, tmp_path)
 
-    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path, current_contract=False)
 
 
 def test_ineligible_parallel_plan_accepts_user_approved_fallback(tmp_path: Path) -> None:
@@ -385,6 +385,124 @@ def test_ineligible_parallel_plan_accepts_user_approved_fallback(tmp_path: Path)
     VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
     workplan["parallel_eligible"] = True
     with pytest.raises(SystemExit, match="code-remediate-eligible-fanout-fallback-forbidden"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("execution_mode", ["parent-owned", "sequential-specialists"])
+def test_ineligible_plan_accepts_workflow_default_continuation(tmp_path: Path, execution_mode: str) -> None:
+    """Permit a truthful parent or sequential route when parallel writing is infeasible."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    workplan.update(
+        execution_mode=execution_mode,
+        parallel_approval_required=False,
+        parallel_approval_source="workflow-default",
+        parallel_approval_status="parent-only",
+        parallel_eligible=False,
+        parallel_prompt_presented=False,
+    )
+    buckets = workplan["work_buckets"]
+    assert isinstance(buckets, list)
+    if execution_mode == "parent-owned":
+        workplan.update(groups_total=2, parent_owned_groups=2, specialist_owned_groups=0)
+        for bucket in buckets:
+            bucket["owner"] = "parent"
+            bucket["execution_mode"] = "parent"
+    else:
+        for bucket in buckets:
+            bucket["execution_mode"] = "sequential"
+    _write_workplan(metadata, tmp_path)
+
+    document = tmp_path / "resolution-workplan.md"
+    document.write_text(
+        document.read_text(encoding="utf-8").replace(
+            "## Parallel Approval\n",
+            "## Parallel Approval\n\nIneligibility reason: Runtime exposes one writer slot for these buckets.\n",
+        ),
+        encoding="utf-8",
+    )
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+    workplan["parallel_eligible"] = True
+    with pytest.raises(SystemExit, match="code-remediate-eligible-fanout-fallback-forbidden"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("reason", [None, "", "   ", "none", "TBD", "<concrete reason>"])
+def test_default_fallback_requires_concrete_ineligibility_reason(tmp_path: Path, reason: str | None) -> None:
+    """Reject a reasonless or placeholder serial choice for otherwise independent buckets."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    workplan.update(
+        execution_mode="sequential-specialists",
+        parallel_approval_required=False,
+        parallel_approval_source="workflow-default",
+        parallel_approval_status="parent-only",
+        parallel_eligible=False,
+        parallel_prompt_presented=False,
+    )
+    for bucket in workplan["work_buckets"]:
+        bucket["execution_mode"] = "sequential"
+    _write_workplan(metadata, tmp_path)
+    document = tmp_path / "resolution-workplan.md"
+    if reason is not None:
+        document.write_text(
+            document.read_text(encoding="utf-8").replace(
+                "## Parallel Approval\n", f"## Parallel Approval\n\nIneligibility reason: {reason}\n"
+            ),
+            encoding="utf-8",
+        )
+    with pytest.raises(SystemExit, match="code-remediate-ineligibility-reason-missing"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("execution_mode", ["parent-owned", "sequential-specialists"])
+def test_current_fallback_rejects_historical_not_required_route(tmp_path: Path, execution_mode: str) -> None:
+    """Prevent new selected-scope work from avoiding its reason through legacy dispatch fields."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    workplan.update(
+        execution_mode=execution_mode,
+        parallel_approval_required=False,
+        parallel_approval_source="not-required",
+        parallel_approval_status="not-required",
+        parallel_eligible=False,
+        parallel_prompt_presented=False,
+    )
+    if execution_mode == "parent-owned":
+        workplan.update(parent_owned_groups=2, specialist_owned_groups=0)
+    for bucket in workplan["work_buckets"]:
+        bucket["execution_mode"] = "parent" if execution_mode == "parent-owned" else "sequential"
+        if execution_mode == "parent-owned":
+            bucket["owner"] = "parent"
+    _write_workplan(metadata, tmp_path)
+
+    with pytest.raises(SystemExit, match="code-remediate-current-fallback-dispatch-required"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path, current_contract=False)
+
+
+def test_workflow_default_fallback_rejects_presented_prompt(tmp_path: Path) -> None:
+    """Keep an actual user prompt distinct from a workflow-owned continuation."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    workplan.update(
+        execution_mode="sequential-specialists",
+        parallel_approval_required=False,
+        parallel_approval_source="workflow-default",
+        parallel_approval_status="parent-only",
+        parallel_eligible=False,
+        parallel_prompt_presented=True,
+    )
+    for bucket in workplan["work_buckets"]:
+        bucket["execution_mode"] = "sequential"
+    _write_workplan(metadata, tmp_path)
+
+    with pytest.raises(SystemExit, match="code-remediate-default-fallback-prompt-invalid"):
         VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
 
 

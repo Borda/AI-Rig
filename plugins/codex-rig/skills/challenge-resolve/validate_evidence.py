@@ -497,7 +497,7 @@ def _findings_from_report(
 
 def _selected_native_pass(manifest: dict[str, Any], review_run: Path, role: str) -> tuple[Path, str, Path]:
     """Return selected schema-five output, reviewer thread, and frozen context for one exact role."""
-    if manifest.get("schema_version") != 5:
+    if manifest.get("schema_version") not in {5, 6}:
         raise ValueError("loop-evidence-review-schema-unsupported")
     passes = manifest.get("passes")
     if not isinstance(passes, list):
@@ -581,7 +581,7 @@ def _validate_review_round(
     if (review_run / "diff.patch").read_bytes() != diff_bytes:
         raise ValueError("loop-evidence-review-diff-mismatch")
     schema = manifest.get("schema_version")
-    if schema == 5:
+    if schema in {5, 6}:
         selected_output, reviewer_identity, _ = _selected_native_pass(manifest, review_run, selected_role)
         selector = _selected_native_pass
     elif schema == 4:

@@ -67,6 +67,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
 from app_server_review import ReviewRouteError, validate_evidence as validate_app_server_evidence  # noqa: E402
 from review_routing import derive_mechanical_risk  # noqa: E402
+from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
 
 REQUIRED_SECTIONS = (
     "Decision Summary",
@@ -1830,7 +1831,7 @@ def _validate_review_runtime(
     roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
-    if manifest.get("schema_version") == 5:
+    if manifest.get("schema_version") in {5, 6}:
         return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
     if manifest.get("schema_version") == 4:
         return _validate_app_server_review(
@@ -2017,6 +2018,95 @@ def _inspection_child_called_tool(child_rows: list[dict[str, Any]]) -> bool:
     return False
 
 
+def _validate_context_read(
+    child_rows: list[dict[str, Any]],
+    plan_path: Path,
+    role: str,
+    attempt: dict[str, Any],
+    manifest: dict[str, Any],
+    context: str,
+) -> None:
+    """Require every bounded reader call and unmodified result in page order."""
+    tool_rows = [
+        row["payload"]
+        for row in child_rows
+        if row.get("type") == "response_item"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("type")
+        in {"custom_tool_call", "function_call", "custom_tool_call_output", "function_call_output"}
+    ]
+    page_count = len(context_pages(context))
+    if len(tool_rows) != 2 * page_count:
+        raise SystemExit(f"review-inspection-context-read-count-mismatch:{role}")
+    expected_commands: list[str] = []
+    expected_outputs: list[str] = []
+    for page in range(1, page_count + 1):
+        call, output = tool_rows[2 * (page - 1) : 2 * page]
+        expected_call = render_read_call(plan_path, role, attempt["attempt"], manifest["context_reader_python"], page)
+        expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
+        expected_output = render_read_output(
+            context,
+            role,
+            manifest["review_run_id"],
+            manifest["review_input_sha256"],
+            attempt["context_sha256"],
+            attempt["attempt"],
+            page,
+        )
+        if call.get("name") != "exec" or call.get("input") not in {expected_call, expected_call + "\n"}:
+            raise SystemExit(f"review-inspection-context-read-call-mismatch:{role}:{page}")
+        if output.get("call_id") != call.get("call_id") or not isinstance(call.get("call_id"), str):
+            raise SystemExit(f"review-inspection-context-read-receipt-mismatch:{role}:{page}")
+        receipt = output.get("output")
+        if (
+            not isinstance(receipt, list)
+            or len(receipt) != 2
+            or not isinstance(receipt[0], dict)
+            or receipt[0].get("type") != "input_text"
+            or not isinstance(receipt[0].get("text"), str)
+            or not receipt[0]["text"].startswith("Script completed\n")
+            or receipt[1] != {"type": "input_text", "text": expected_output}
+        ):
+            raise SystemExit(f"review-inspection-context-read-output-mismatch:{role}:{page}")
+        expected_commands.append(expected_command)
+        expected_outputs.append(expected_output)
+    commands = [
+        row["payload"]["item"]
+        for row in child_rows
+        if row.get("type") == "event_msg"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("type") == "item_completed"
+        and isinstance(row["payload"].get("item"), dict)
+        and row["payload"]["item"].get("type") == "CommandExecution"
+    ]
+    if commands:
+        if len(commands) != page_count:
+            raise SystemExit(f"review-inspection-context-command-mismatch:{role}")
+        for page, (command, expected_command, expected_output) in enumerate(
+            zip(commands, expected_commands, expected_outputs), start=1
+        ):
+            if (
+                not isinstance(command.get("command"), list)
+                or expected_command not in command["command"]
+                or command.get("exit_code") != 0
+                or command.get("stdout") != expected_output
+            ):
+                raise SystemExit(f"review-inspection-context-command-mismatch:{role}:{page}")
+    remaining = [
+        row
+        for row in child_rows
+        if not (row.get("type") == "response_item" and row.get("payload") in tool_rows)
+        and not (
+            row.get("type") == "event_msg"
+            and isinstance(row.get("payload"), dict)
+            and row["payload"].get("type") == "item_completed"
+            and row["payload"].get("item") in commands
+        )
+    ]
+    if _inspection_child_called_tool(remaining):
+        raise SystemExit(f"review-inspection-child-tool-use:{role}")
+
+
 def _joined_terminal_result(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> bool:
     """Require one parent-visible child final message matching the bound output exactly."""
     joined = 0
@@ -2083,7 +2173,10 @@ def _validate_instruction_bounded_review(
             if not context.startswith(role_card):
                 raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
             child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            if _inspection_child_called_tool(child_rows):
+            if manifest["schema_version"] == 6:
+                plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
+                _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
+            elif _inspection_child_called_tool(child_rows):
                 raise SystemExit(f"review-inspection-child-tool-use:{role}")
         attempt = item["attempts"][selected - 1]
         context = _resolve_path(out_dir, attempt["context_path"]).read_text(encoding="utf-8")
@@ -2104,9 +2197,17 @@ def _validate_instruction_bounded_review(
             if (
                 isinstance(arguments, dict)
                 and call.get("call_id") == attempt.get("spawn_call_id")
-                and arguments.get("message") == context
+                and (manifest["schema_version"] == 6 or arguments.get("message") == context)
                 and arguments.get("task_name") == Path(attempt["agent_path"]).name
                 and arguments.get("fork_turns") == "none"
+                and (
+                    manifest["schema_version"] != 6
+                    or (
+                        arguments.get("agent_type") == "default"
+                        and arguments.get("model") == attempt["model"]
+                        and arguments.get("reasoning_effort") == attempt["effort"]
+                    )
+                )
             ):
                 matching_calls.append(call)
         if len(matching_calls) != 1:
@@ -2219,6 +2320,10 @@ def _receipt_binds_child(
     parent_thread_id: str,
     attempt: dict[str, Any],
     context: str,
+    *,
+    schema_version: int = 5,
+    model: str | None = None,
+    effort: str | None = None,
 ) -> bool:
     """Bind a path-only native spawn receipt to one newly created runtime child session.
 
@@ -2251,9 +2356,17 @@ def _receipt_binds_child(
     if (
         receipt != {"task_name": agent_path}
         or not isinstance(arguments, dict)
-        or arguments.get("message") != context
+        or (schema_version != 6 and arguments.get("message") != context)
         or arguments.get("task_name") != agent_path.rsplit("/", 1)[-1]
         or arguments.get("fork_turns") != "none"
+        or (
+            schema_version == 6
+            and (
+                arguments.get("agent_type") != "default"
+                or arguments.get("model") != model
+                or arguments.get("reasoning_effort") != effort
+            )
+        )
         or called_at.tzinfo is None
         or received_at.tzinfo is None
         or called_at >= received_at
@@ -2287,7 +2400,21 @@ def _receipt_binds_child(
             matches.append(session["id"])
         except (OSError, KeyError, TypeError, ValueError, AttributeError):
             return False
-    return matches == [attempt["agent_thread_id"]]
+    if matches != [attempt["agent_thread_id"]]:
+        return False
+    if schema_version != 6:
+        return True
+    child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
+    delivered = [
+        item["encrypted_content"]
+        for row in child_rows
+        if row.get("type") == "response_item"
+        and isinstance(row.get("payload"), dict)
+        and row["payload"].get("type") == "agent_message"
+        for item in row["payload"].get("content", [])
+        if isinstance(item, dict) and isinstance(item.get("encrypted_content"), str)
+    ]
+    return len(delivered) == 1 and delivered[0] == arguments.get("message")
 
 
 def _validate_spawn_attempts(
@@ -2324,13 +2451,13 @@ def _validate_spawn_attempts(
         thread_id = attempt.get("agent_thread_id")
         event_id = attempt.get("event_id")
         agent_path = attempt.get("agent_path")
-        receipt_route = manifest.get("schema_version") == 5 and "event_id" not in attempt
+        receipt_route = manifest.get("schema_version") in {5, 6} and "event_id" not in attempt
         identities = (thread_id, agent_path) if receipt_route else (thread_id, event_id, agent_path)
         if not all(isinstance(value, str) and value for value in identities):
             raise SystemExit(f"manifest-attempt-identity-missing:{role}")
         context_path = _resolve_path(out_dir, attempt.get("context_path"))
         if context_path in used_context_paths and not (
-            manifest.get("schema_version") == 5 and context_path in role_context_paths
+            manifest.get("schema_version") in {5, 6} and context_path in role_context_paths
         ):
             raise SystemExit("manifest-reused-context-path")
         used_context_paths.add(context_path)
@@ -2353,8 +2480,25 @@ def _validate_spawn_attempts(
             and event.get("kind") == "started"
         ]
         if receipt_route:
+            sent_context = (
+                dispatch_message(
+                    _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
+                    role,
+                    attempt["attempt"],
+                    manifest["context_reader_python"],
+                )
+                if manifest["schema_version"] == 6
+                else context_path.read_text(encoding="utf-8")
+            )
             bound = _receipt_binds_child(
-                parent_rows, codex_home, manifest["parent_thread_id"], attempt, context_path.read_text(encoding="utf-8")
+                parent_rows,
+                codex_home,
+                manifest["parent_thread_id"],
+                attempt,
+                sent_context,
+                schema_version=manifest["schema_version"],
+                model=role_card["model"],
+                effort=role_card["model_reasoning_effort"],
             )
         else:
             bound = len(matches) == 1
@@ -2379,7 +2523,7 @@ def _validate_spawn_attempts(
         if session_path != agent_path:
             raise SystemExit(f"provenance-child-path-mismatch:{role}:{session_path}")
         session_role = session.get("agent_role") or spawn.get("agent_role")
-        if session_role is not None and session_role != role:
+        if session_role is not None and session_role != ("default" if manifest["schema_version"] == 6 else role):
             raise SystemExit(f"provenance-child-role-mismatch:{role}:{session_role}")
 
         if attempt.get("status") != "completed":
@@ -2450,8 +2594,17 @@ def _validate_manifest_entries(
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to unique, role-specific evidence for its declared route."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3, 4, 5}:
+    if schema_version not in {2, 3, 4, 5, 6}:
         raise SystemExit("manifest-schema-version")
+    if schema_version == 6:
+        reader = manifest.get("context_reader_python")
+        if (
+            not isinstance(reader, str)
+            or not Path(reader).is_absolute()
+            or not Path(reader).is_file()
+            or not Path(reader).name.lower().startswith("python")
+        ):
+            raise SystemExit("manifest-context-reader-python-invalid")
     for key in ("review_run_id", "parent_thread_id", "review_input_sha256"):
         if not isinstance(manifest.get(key), str) or not manifest[key]:
             raise SystemExit(f"manifest-missing-{key}")
@@ -2487,9 +2640,9 @@ def _validate_manifest_entries(
         if retained_role_cards:
             _resolve_path(out_dir, str(roles_dir / role / "ROLE.md"))
         role_card = _load_role_card(roles_dir, role)
-        if schema_version in {3, 4, 5} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
+        if schema_version in {3, 4, 5, 6} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
-        if require_role_card_receipts and schema_version in {3, 4, 5} and not retained_role_cards:
+        if require_role_card_receipts and schema_version in {3, 4, 5, 6} and not retained_role_cards:
             retained_path = _resolve_path(out_dir, f"role-cards/{role}/ROLE.md")
             if not retained_path.is_file() or _sha256(retained_path) != role_card["role_card_sha256"]:
                 raise SystemExit(f"manifest-retained-role-card-mismatch:{role}")
@@ -2497,8 +2650,8 @@ def _validate_manifest_entries(
             raise SystemExit(f"manifest-missing-axis:{role}")
         if mode not in VALID_MODES:
             raise SystemExit(f"manifest-invalid-mode:{role}:{mode!r}")
-        if (schema_version == 5 and mode not in {"inspection", "substituted"}) or (
-            schema_version != 5 and mode == "inspection"
+        if (schema_version in {5, 6} and mode not in {"inspection", "substituted"}) or (
+            schema_version not in {5, 6} and mode == "inspection"
         ):
             raise SystemExit(f"manifest-mode-schema-mismatch:{role}")
         if not isinstance(trigger, str) or not trigger.strip():
@@ -2541,7 +2694,7 @@ def _validate_manifest_entries(
             first_line = substitute_output.splitlines()[0].strip() if substitute_output else ""
             explicit_header = first_line == f"role_id: {role}"
             legacy_heading = first_line == f"{role}:" or re.fullmatch(rf"#{{1,6}}\s+{re.escape(role)}", first_line)
-            if not explicit_header and (schema_version == 5 or not legacy_heading):
+            if not explicit_header and (schema_version in {5, 6} or not legacy_heading):
                 raise SystemExit(f"manifest-substitute-output-not-role-bound:{role}")
         by_role[role] = item
 
@@ -2577,7 +2730,7 @@ def _validate_manifest_preflight(
         project_root,
         require_role_card_receipts=True,
     )
-    if manifest.get("schema_version") in {3, 4, 5}:
+    if manifest.get("schema_version") in {3, 4, 5, 6}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -2591,7 +2744,7 @@ def _validate_challenge_manifest_preflight(
     manifest = _load_json(out_dir / "specialist-manifest.json")
     passes = _manifest_passes(manifest)
     if (
-        manifest.get("schema_version") not in {4, 5}
+        manifest.get("schema_version") not in {4, 5, 6}
         or len(passes) != 1
         or passes[0].get("role") != "challenger"
         or passes[0].get("mode") not in {"app-server", "inspection"}
@@ -2867,7 +3020,7 @@ def _validate_runtime_summary_metadata(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") == 5:
+        if manifest.get("schema_version") in {5, 6}:
             if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
                 raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
@@ -2917,7 +3070,7 @@ def _validate_specialist_manifest(
             require_assessment=result.get("schema_version") != 2,
             roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
         )
-        if manifest.get("schema_version") in {3, 4, 5}
+        if manifest.get("schema_version") in {3, 4, 5, 6}
         else {}
     )
     _validate_runtime_summary_metadata(metadata, manifest, runtime_summary)
@@ -3014,14 +3167,14 @@ def _validate_independence_requirement(
     env: _ReviewEnvironment,
 ) -> None:
     """Check the review's independence requirement and the metadata that claims it was satisfied."""
-    if evidence.manifest.get("schema_version") == 5:
+    if evidence.manifest.get("schema_version") in {5, 6}:
         independence_required, required_independent = _validate_inspection_independence(
             out_dir, evidence, metadata, status, env
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
     if (
-        evidence.manifest.get("schema_version") in {3, 4, 5}
+        evidence.manifest.get("schema_version") in {3, 4, 5, 6}
         and status == "pass"
         and len(evidence.triggered_roles) >= 2
         and (

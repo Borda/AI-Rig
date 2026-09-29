@@ -52,7 +52,6 @@ def test_capture_source_snapshot_binds_worktree_contents_and_index(tmp_path: Pat
     _git(repository, "init", "-q")
     _git(repository, "config", "user.name", "Snapshot fixture")
     _git(repository, "config", "user.email", "snapshot@example.invalid")
-
     source = repository / "source"
     source.mkdir()
     base_content = f"value = 'base'{newline}"
@@ -159,6 +158,137 @@ def test_snapshot_cli_writes_canonical_json_bytes(tmp_path: Path) -> None:
     assert (
         output.read_text(encoding="utf-8") == json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=True) + "\n"
     )
+
+
+def test_local_review_output_guard_uses_real_git_ignore_rules(tmp_path: Path) -> None:
+    """Accept ignored artifact paths while rejecting visible paths before checkout."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    (repository / ".gitignore").write_text(".reports/\n", encoding="utf-8")
+    collector = _load_collector()
+
+    collector._require_ignored_inside_repository(repository, repository / ".reports" / "codex" / "review")
+    with pytest.raises(ValueError, match="must be ignored"):
+        collector._require_ignored_inside_repository(repository, repository / "visible" / "review")
+
+
+def test_capture_source_snapshot_rejects_content_change_during_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject an edited tracked file even when its name and index entry stay stable."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Snapshot fixture")
+    _git(repository, "config", "user.email", "snapshot@example.invalid")
+    source = repository / "source.py"
+    source.write_text("original\n", encoding="utf-8")
+    _git(repository, "add", "source.py")
+    _git(repository, "commit", "-qm", "fixture")
+    module = _load_collector()
+    original_record = module._source_record
+
+    def edit_after_read(root: Path, path: str) -> dict[str, object]:
+        """Change the source after its bytes have entered the candidate snapshot."""
+        record = original_record(root, path)
+        source.write_text("modified\n", encoding="utf-8")
+        return record
+
+    monkeypatch.setattr(module, "_source_record", edit_after_read)
+    with pytest.raises(RuntimeError, match="changed while capturing"):
+        module.capture_source_snapshot(repository, ["source.py"])
+
+
+def test_local_review_worktree_preserves_caller_and_mirrors_changed_bytes(tmp_path: Path) -> None:
+    """Mirror staged, unstaged, and binary untracked source without editing the caller."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-q")
+    _git(repository, "config", "user.name", "Snapshot fixture")
+    _git(repository, "config", "user.email", "snapshot@example.invalid")
+    (repository / ".gitignore").write_text(".reports/\n", encoding="utf-8")
+    staged = repository / "staged.py"
+    unstaged = repository / "unstaged.py"
+    tracked_binary = repository / "tracked.bin"
+    staged.write_bytes(b"before staged\n")
+    unstaged.write_bytes(b"before unstaged\n")
+    tracked_binary.write_bytes(b"\x00old")
+    _git(repository, "add", ".gitignore", "staged.py", "unstaged.py", "tracked.bin")
+    _git(repository, "commit", "-qm", "fixture")
+    staged.write_bytes(b"after staged\n")
+    _git(repository, "add", "staged.py")
+    unstaged.write_bytes(b"after unstaged\n")
+    tracked_binary.write_bytes(b"\x00\xffupdated")
+    (repository / "binary.bin").write_bytes(b"\x00\xffnew")
+    original_status = subprocess.check_output(
+        ["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository
+    )
+    report = repository / ".reports" / "codex" / "review"
+
+    collection = subprocess.run(
+        [
+            sys.executable,
+            str(COLLECT_DIFF),
+            "--review-worktree",
+            "--repository",
+            str(repository),
+            "--out",
+            str(report),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collection.returncode == 0, collection.stderr
+    receipt = json.loads((report / "review-worktree.json").read_text(encoding="utf-8"))
+
+    review = Path(str(receipt["review_worktree"]))
+    assert receipt["source_worktree"] == repository.resolve().as_posix()
+    assert review != repository.resolve()
+    assert (review / "staged.py").read_bytes() == b"after staged\n"
+    assert (review / "unstaged.py").read_bytes() == b"after unstaged\n"
+    assert (review / "tracked.bin").read_bytes() == b"\x00\xffupdated"
+    assert (review / "binary.bin").read_bytes() == b"\x00\xffnew"
+    assert staged.read_bytes() == b"after staged\n"
+    assert unstaged.read_bytes() == b"after unstaged\n"
+    assert tracked_binary.read_bytes() == b"\x00\xffupdated"
+    assert (
+        subprocess.check_output(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository)
+        == original_status
+    )
+    assert (report / "staged.patch").read_bytes().find(b"after staged") > 0
+    assert json.loads((report / "review-worktree.json").read_text(encoding="utf-8")) == receipt
+    collector = _load_collector()
+    collector.verify_review_worktree(report)
+    with pytest.raises(ValueError, match="path is occupied"):
+        collector.collect_review_worktree(repository, report)
+    assert (review / "binary.bin").read_bytes() == b"\x00\xffnew"
+    verification = subprocess.run(
+        [sys.executable, str(COLLECT_DIFF), "--verify-review-worktree", "--out", str(report)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verification.returncode == 0, verification.stderr
+    (review / "staged.py").write_bytes(b"changed during review\n")
+    with pytest.raises(RuntimeError, match="Review worktree source changed"):
+        collector.verify_review_worktree(report)
+    verification = subprocess.run(
+        [sys.executable, str(COLLECT_DIFF), "--verify-review-worktree", "--out", str(report)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert verification.returncode != 0
+    assert "Review worktree source changed" in verification.stderr
+    (review / "staged.py").write_bytes(b"after staged\n")
+    (review / "unexpected.py").write_text("new source\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="Review worktree status changed"):
+        collector.verify_review_worktree(report)
+    _git(review, "switch", "-c", "review-test-branch")
+    with pytest.raises(RuntimeError, match="no longer detached"):
+        collector.verify_review_worktree(report)
 
 
 @pytest.mark.parametrize("scope_path", ["/outside", "../outside", ":(top)source", "C:\\outside"])

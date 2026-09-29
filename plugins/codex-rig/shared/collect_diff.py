@@ -9,8 +9,9 @@ review or implementation decision.
 
 ## Scope
 
-It invokes read-only local Git inspection for a working tree, path, commit, or explicit source snapshot; it does not
-fetch, push, alter branches, or choose review findings. The ``path`` scope compares ``HEAD`` for one path, while
+It invokes local Git inspection for a working tree, path, commit, or explicit source snapshot; it does not fetch, push,
+alter branches, or choose review findings. Local review mode creates a detached worktree and copies changed source into
+it without editing the invoking checkout. The ``path`` scope compares ``HEAD`` for one path, while
 ``commit`` compares the requested revision and deliberately leaves ``untracked.txt`` empty. Source snapshots bind
 current bytes to explicit safe repository-relative scopes.
 
@@ -19,7 +20,8 @@ current bytes to explicit safe repository-relative scopes.
 Run ``python collect_diff.py --scope <working-tree|path|commit> --out <directory>`` with ``--target`` for ``path`` or
 ``commit`` scopes. To serialize source evidence, run ``python collect_diff.py --snapshot --repository <path>
 --scope-path <path> --out <snapshot.json>``. The diff output directory is created when needed; snapshot output is
-canonical UTF-8 JSON and cannot be an included non-ignored source path.
+canonical UTF-8 JSON and cannot be an included non-ignored source path. For local review, run ``--review-worktree
+--repository <path> --out <directory>`` and later ``--verify-review-worktree --out <directory>`` before acceptance.
 
 ## Used by
 
@@ -32,14 +34,16 @@ does not make binary semantics reviewable as text.
 
 It writes ``status.txt``, ``diff.patch``, ``files.txt``, ``diffstat.txt``, ``numstat.txt``, and ``untracked.txt`` under
 the requested output directory. Snapshot mode writes one JSON object containing repository state plus selected source
-records. Invalid diff scope or a missing required target additionally writes ``scope-error.txt`` with a stable reason
-before returning exit code ``2``.
+records. Local review mode writes ``source-snapshot.json``, ``status.txt``, ``diff.patch``, ``staged.patch``, and
+``review-worktree.json``. Invalid diff scope or a missing required target writes ``scope-error.txt`` with a stable
+reason before returning exit code ``2``.
 
 ## Failure
 
 Invalid scope/target, unsafe source scope, concurrent source-state change, or a failed local Git command exits non-zero
 and leaves the caller with no claim that evidence is complete. Git output files may already exist when a later command
-fails, so consumers must gate on the exit code rather than treating partial artifacts as a complete pack.
+fails, so consumers must gate on the exit code rather than treating partial artifacts as a complete pack. A failed
+local review mirror is retained for diagnosis; no worktree is automatically deleted.
 """
 
 from __future__ import annotations
@@ -81,6 +85,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--target", default="", help="Path or revision required by path and commit scopes.")
     parser.add_argument("--snapshot", action="store_true", help="Write a deterministic source snapshot JSON file.")
+    parser.add_argument(
+        "--review-worktree", action="store_true", help="Mirror current local review source into a detached worktree."
+    )
+    parser.add_argument(
+        "--verify-review-worktree", action="store_true", help="Verify a previously collected review worktree."
+    )
     parser.add_argument("--repository", type=Path, help="Repository root required by --snapshot.")
     parser.add_argument(
         "--scope-path",
@@ -251,7 +261,7 @@ def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[st
     """Capture explicit current source bytes and Git state for a repository scope.
 
     The returned records include tracked, untracked non-ignored, and missing tracked paths. It compares the revision,
-    index, and selected file inventory before and after reading source to reject observable concurrent changes.
+    index, selected file inventory, and selected bytes before and after reading source to reject concurrent changes.
     """
     root = _repository_root(repository)
     scopes = _normalize_scope_paths(root, scope_paths)
@@ -262,7 +272,13 @@ def capture_source_snapshot(repository: Path, scope_paths: list[str]) -> dict[st
     revision_after = _git_output(root, ("rev-parse", "--verify", "HEAD")).rstrip(b"\n")
     index_after = _git_output(root, ("ls-files", "--stage", "-z", "--", *scopes))
     inventory_after = _source_inventory(root, scopes)
-    if (revision_before, index_before, inventory_before) != (revision_after, index_after, inventory_after):
+    records_after = [_source_record(root, path) for path in _inventory_paths(inventory_after)]
+    if (revision_before, index_before, inventory_before, records) != (
+        revision_after,
+        index_after,
+        inventory_after,
+        records_after,
+    ):
         raise RuntimeError("Repository changed while capturing source snapshot")
 
     return {
@@ -282,7 +298,6 @@ def _output_is_ignored(repository: Path, relative_path: str) -> bool:
             "git",
             "-C",
             os.fspath(repository),
-            "--literal-pathspecs",
             "check-ignore",
             "-q",
             "--no-index",
@@ -329,9 +344,182 @@ def _write_source_snapshot(snapshot: dict[str, object], output: Path) -> None:
     )
 
 
+def _require_ignored_inside_repository(repository: Path, destination: Path) -> None:
+    """Keep collector artifacts from becoming new source in the invoking checkout."""
+    try:
+        relative = destination.resolve(strict=False).relative_to(repository).as_posix()
+    except ValueError:
+        return
+    if not _output_is_ignored(repository, relative):
+        raise ValueError(f"Review output inside repository must be ignored: {destination}")
+
+
+def _materialize_untracked(review: Path, snapshot: dict[str, object], paths: set[str]) -> None:
+    """Write captured non-ignored untracked entries into the detached review worktree."""
+    records = snapshot["files"]
+    assert isinstance(records, list)
+    for record in records:
+        assert isinstance(record, dict)
+        relative = record["path"]
+        if relative not in paths:
+            continue
+        destination = review / Path(*PurePosixPath(relative).parts)
+        if not destination.parent.resolve().is_relative_to(review):
+            raise RuntimeError(f"Untracked review path escapes worktree: {relative}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.parent.resolve().is_relative_to(review):
+            raise RuntimeError(f"Untracked review path escapes worktree: {relative}")
+        content = record["content"]
+        assert isinstance(content, str)
+        source = content.encode("utf-8") if record["encoding"] == "utf-8" else base64.b64decode(content)
+        if record["kind"] == "symlink":
+            destination.symlink_to(os.fsdecode(source))
+        elif record["kind"] == "file":
+            destination.write_bytes(source)
+            if record["executable"]:
+                destination.chmod(destination.stat().st_mode | stat.S_IXUSR)
+        else:
+            raise RuntimeError(f"Untracked review entry is not a file: {relative}")
+
+
+def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]:
+    """Mirror changed local source into a detached worktree and certify caller stability.
+
+    The invoking checkout remains untouched. A failure leaves the detached worktree for diagnosis rather than deleting
+    potentially modified source.
+    """
+    root = _repository_root(repository)
+    report = output.resolve(strict=False)
+    review = report.with_name(f"{report.name}-review-worktree")
+    for destination in (report, review):
+        _require_ignored_inside_repository(root, destination)
+    if review.exists() or review.is_symlink():
+        raise ValueError(f"Review worktree path is occupied: {review}")
+
+    status_before = _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all"))
+    tracked = _git_output(root, ("diff", "--name-only", "-z", "HEAD", "--"))
+    staged = _git_output(root, ("diff", "--cached", "--name-only", "-z", "HEAD", "--"))
+    untracked = _git_output(root, ("ls-files", "--others", "--exclude-standard", "-z"))
+    paths = _inventory_paths(tracked + staged + untracked)
+    if not paths:
+        raise ValueError("Local review worktree requires changed source paths")
+    snapshot = capture_source_snapshot(root, paths)
+    patch = _git_output(root, ("diff", "--binary", "HEAD", "--"))
+    staged_patch = _git_output(root, ("diff", "--cached", "--binary", "HEAD", "--"))
+    if status_before != _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all")):
+        raise RuntimeError("Repository changed while preparing local review worktree")
+    if snapshot != capture_source_snapshot(root, paths):
+        raise RuntimeError("Repository changed while preparing local review worktree")
+
+    completed = subprocess.run(
+        ["git", "-C", os.fspath(root), "worktree", "add", "--detach", os.fspath(review), str(snapshot["revision"])],
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("Git could not create detached local review worktree")
+    if patch:
+        completed = subprocess.run(
+            ["git", "-C", os.fspath(review), "apply", "--binary", "--"],
+            input=patch,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError("Git could not apply local review patch")
+    _materialize_untracked(review, snapshot, set(_inventory_paths(untracked)))
+
+    mirror = capture_source_snapshot(review, paths)
+    if mirror["revision"] != snapshot["revision"] or mirror["files"] != snapshot["files"]:
+        raise RuntimeError("Detached review worktree source differs from captured local source")
+    if patch != _git_output(review, ("diff", "--binary", "HEAD", "--")):
+        raise RuntimeError("Detached review worktree patch differs from captured local patch")
+    if status_before != _git_output(root, ("status", "--porcelain", "-z", "--untracked-files=all")):
+        raise RuntimeError("Repository changed while creating local review worktree")
+    if snapshot != capture_source_snapshot(root, paths):
+        raise RuntimeError("Repository changed while creating local review worktree")
+
+    report.mkdir(parents=True, exist_ok=True)
+    _write_source_snapshot(snapshot, report / "source-snapshot.json")
+    (report / "status.txt").write_bytes(status_before)
+    (report / "diff.patch").write_bytes(patch)
+    (report / "staged.patch").write_bytes(staged_patch)
+    receipt: dict[str, object] = {
+        "schema_version": 1,
+        "source_worktree": root.as_posix(),
+        "review_worktree": review.as_posix(),
+        "revision": snapshot["revision"],
+        "scope_paths": paths,
+        "index_sha256": snapshot["index_sha256"],
+        "diff_sha256": hashlib.sha256(patch).hexdigest(),
+        "status_sha256": hashlib.sha256(status_before).hexdigest(),
+        "review_status_sha256": hashlib.sha256(
+            _git_output(review, ("status", "--porcelain", "-z", "--untracked-files=all"))
+        ).hexdigest(),
+    }
+    (report / "review-worktree.json").write_text(
+        json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
+    )
+    return receipt
+
+
+def verify_review_worktree(output: Path) -> None:
+    """Reject source drift from the recorded detached local review worktree."""
+    report = output.resolve(strict=True)
+    receipt = json.loads((report / "review-worktree.json").read_text(encoding="utf-8"))
+    if receipt.get("schema_version") != 1:
+        raise ValueError("Unsupported review worktree receipt schema")
+    snapshot = json.loads((report / "source-snapshot.json").read_text(encoding="utf-8"))
+    review = Path(receipt["review_worktree"])
+    source = Path(receipt["source_worktree"])
+    if review.resolve() != report.with_name(f"{report.name}-review-worktree") or review.resolve() == source.resolve():
+        raise RuntimeError("Review worktree path no longer matches receipt")
+    if _repository_root(review) != review.resolve():
+        raise RuntimeError("Review worktree path is not a checkout root")
+    source_common = (source / os.fsdecode(_git_output(source, ("rev-parse", "--git-common-dir")).strip())).resolve()
+    review_common = (review / os.fsdecode(_git_output(review, ("rev-parse", "--git-common-dir")).strip())).resolve()
+    if source_common != review_common:
+        raise RuntimeError("Review worktree repository no longer matches source")
+    if _git_output(review, ("branch", "--show-current")).strip():
+        raise RuntimeError("Review worktree is no longer detached")
+    current = capture_source_snapshot(review, receipt["scope_paths"])
+    if current["revision"] != receipt["revision"] or current["files"] != snapshot["files"]:
+        raise RuntimeError("Review worktree source changed after collection")
+    status = _git_output(review, ("status", "--porcelain", "-z", "--untracked-files=all"))
+    patch = _git_output(review, ("diff", "--binary", "HEAD", "--"))
+    if hashlib.sha256(status).hexdigest() != receipt["review_status_sha256"]:
+        raise RuntimeError("Review worktree status changed after collection")
+    if hashlib.sha256(patch).hexdigest() != receipt["diff_sha256"]:
+        raise RuntimeError("Review worktree patch changed after collection")
+
+
 def main() -> int:
     """Run the command-line diff collector."""
     arguments = parse_args()
+    if arguments.verify_review_worktree:
+        if (
+            arguments.review_worktree
+            or arguments.snapshot
+            or arguments.repository
+            or arguments.target
+            or arguments.scope_path
+        ):
+            raise ValueError("--verify-review-worktree only accepts --out")
+        verify_review_worktree(arguments.out)
+        return 0
+    if arguments.review_worktree:
+        if (
+            arguments.snapshot
+            or arguments.repository is None
+            or arguments.scope != "working-tree"
+            or arguments.target
+            or arguments.scope_path
+        ):
+            raise ValueError(
+                "--review-worktree requires --repository and working-tree scope without --target or --snapshot"
+            )
+        collect_review_worktree(arguments.repository, arguments.out)
+        return 0
     if arguments.snapshot:
         if arguments.repository is None:
             raise ValueError("--snapshot requires --repository")

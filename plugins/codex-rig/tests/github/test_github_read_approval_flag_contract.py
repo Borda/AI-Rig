@@ -41,8 +41,9 @@ def test_reader_runtime_boundary_preserves_narrow_command_and_remote_write_ban()
     assert "`--out` location" in boundary
     assert "across repositories" in boundary
     assert "allowlisted local PR checkout" in boundary
+    assert "With active `github-read`, use the default sandboxed tool call" in boundary
     assert (
-        'otherwise give the required brief and request external access for the complete reader with `sandbox_permissions="require_escalated"`'
+        'Only without the active profile, give the required brief and request external access for the complete reader with `sandbox_permissions="require_escalated"`'
         in boundary
     )
     assert "An unexpected restriction or denial stops" in boundary

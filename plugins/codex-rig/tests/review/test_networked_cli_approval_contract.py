@@ -73,6 +73,25 @@ def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, he
     assert "Runtime denial stops" in skill or "runtime restriction or denial stops" in skill
 
 
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    "skill_name",
+    ["assess", "code-remediate", "code-review", "release"],
+)
+def test_active_github_profile_never_requests_escalated_helper_call(skill_name: str) -> None:
+    """Prevent an agent from turning permitted GitHub reads into approval prompts."""
+    skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
+    required = "omit `sandbox_permissions` and `justification`"
+
+    assert required in skill
+    assert required in contract
+    assert required in instructions
+    assert "session's active profile" in contract
+    assert "stored default_permissions" in contract
+
+
 def test_user_questions_expose_answers_without_weakening_authorization() -> None:
     """Keep answer formats explicit while preserving native permission boundaries."""
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
@@ -93,7 +112,8 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     assert "unrelated text grants no consent" in questions
     assert "`Authorize this local merge and commit?` with separate canonical options `Approve` and `Deny`" in skill
     assert "Generated repair questions follow the same native routing as the merge question" in skill
-    assert "Authorize parent-owned or sequential fallback for this selected scope?" in skill
+    assert "Authorize parent-owned or sequential fallback for this selected scope?" not in skill
+    assert "exactly one nonempty `Ineligibility reason: <reason>` line" in skill
 
 
 def test_shared_contract_covers_known_networked_cli_families() -> None:
@@ -158,6 +178,12 @@ def test_no_approval_cases_require_an_active_profile_in_the_current_session() ->
         prompt = cases[case_id]["prompt"]
         assert "current fresh session" in prompt
         assert "selected and loaded" in prompt
+
+    mismatch = cases["code-review-active-profile-default-mismatch-escalation"]
+    assert mismatch["target"] == "code-review"
+    assert "active_permission_profile.id=github-read" in mismatch["prompt"]
+    assert "default_permissions=:workspace" in mismatch["prompt"]
+    assert mismatch["expected_findings"] == ["github-read-runtime-escalation"]
 
 
 def test_unprofiled_github_reads_have_approval_and_denial_coverage() -> None:

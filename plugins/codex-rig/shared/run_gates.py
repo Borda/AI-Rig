@@ -25,6 +25,8 @@ commands, while retaining artifacts under ``--out``.
 For Python project tests, add ``--pytest-python <absolute-executable>``, one or more ``--pytest-import <module>``
 values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pytest and inspects imported modules in the
 same Python process; it cannot be combined with a free-form ``--tests`` command.
+Use ``--project-env <absolute-venv>`` to expose tools from a separately provisioned project environment to commands
+running in an isolated review worktree. It never creates an environment or installs a checker.
 Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
 value supplied through ``--timeout-seconds`` separately.
 
@@ -138,6 +140,9 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Absolute checkout root for all source inspections and executable gates; requires --expected-head.",
     )
+    parser.add_argument(
+        "--project-env", type=Path, help="Absolute existing project virtual environment for gate tools."
+    )
     parser.add_argument("--pytest-python", type=Path, help="Absolute Python executable for import-bound pytest tests.")
     parser.add_argument(
         "--pytest-import",
@@ -153,6 +158,19 @@ def parse_args() -> argparse.Namespace:
         if arguments.expected_head is None:
             parser.error("invalid-worktree: --expected-head is required")
         arguments.worktree = arguments.worktree.resolve()
+    if arguments.project_env is not None:
+        if arguments.worktree is None:
+            parser.error("invalid-project-env: --worktree is required")
+        scripts = arguments.project_env / ("Scripts" if sys.platform == "win32" else "bin")
+        python = scripts / ("python.exe" if sys.platform == "win32" else "python")
+        if (
+            not arguments.project_env.is_absolute()
+            or not (arguments.project_env / "pyvenv.cfg").is_file()
+            or not scripts.is_dir()
+            or not python.is_file()
+        ):
+            parser.error("invalid-project-env: expected an absolute existing virtual environment")
+        arguments.project_env = arguments.project_env.resolve()
     if arguments.pytest_python is not None:
         if arguments.worktree is None:
             parser.error("invalid-pytest-python: --worktree is required")
@@ -274,13 +292,21 @@ def terminate_process(process: subprocess.Popen[str], platform: str) -> None:
 
 
 def execute_command(
-    command: str | list[str], timeout: int, stdout_path: Path, stderr_path: Path, worktree: Path | None = None
+    command: str | list[str],
+    timeout: int,
+    stdout_path: Path,
+    stderr_path: Path,
+    worktree: Path | None = None,
+    environment: dict[str, str] | None = None,
 ) -> tuple[int, float]:
     """Execute one command with bounded runtime and captured output."""
     started = time.monotonic()
     platform = sys.platform
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if platform == "win32" else 0
     argv = command_argv(command, platform) if isinstance(command, str) else command
+    if environment is not None and platform != "win32" and isinstance(command, str):
+        # A login shell may replace PATH and hide the explicitly selected project environment.
+        argv = ["bash", "-c", command]
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
         try:
             process = subprocess.Popen(
@@ -289,6 +315,7 @@ def execute_command(
                 stderr=stderr,
                 text=True,
                 cwd=worktree,
+                env=environment,
                 start_new_session=platform != "win32",
                 creationflags=creationflags,
             )
@@ -472,6 +499,7 @@ def run_check(
     expected_head: str | None,
     worktree: Path | None = None,
     python_test: PythonTestSpec | None = None,
+    environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Run one gate or record its explicit not-applicable status."""
     paths, recorded = check_paths(gate_id, out_dir)
@@ -531,7 +559,7 @@ def run_check(
             }
 
     exit_code, duration = execute_command(
-        python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree
+        python_test_argv or command, timeout, paths["stdout"], paths["stderr"], worktree, environment
     )
     status = (
         "pass"
@@ -646,6 +674,12 @@ def main() -> int:
     if not ((arguments.worktree or Path.cwd()) / "src").is_dir() and not getattr(arguments, "types"):
         commands["types"] = "$null" if sys.platform == "win32" else ":"
         skip_reasons["types"] = skip_reasons["types"] or "no src directory or typed package target"
+    environment = None
+    if arguments.project_env is not None:
+        scripts = arguments.project_env / ("Scripts" if sys.platform == "win32" else "bin")
+        environment = os.environ.copy()
+        environment["PATH"] = os.pathsep.join((str(scripts), environment.get("PATH", "")))
+        environment["VIRTUAL_ENV"] = str(arguments.project_env)
 
     try:
         preserve_previous_attempt(output, skip_reasons)
@@ -664,6 +698,7 @@ def main() -> int:
             arguments.expected_head,
             arguments.worktree,
             arguments.python_test,
+            environment,
         )
         for gate_id in GATE_IDS
     ]
@@ -687,6 +722,8 @@ def main() -> int:
     }
     if arguments.worktree is not None:
         payload["source"] = {"worktree": arguments.worktree.as_posix(), "expected_head": arguments.expected_head}
+        if arguments.project_env is not None:
+            payload["source"]["project_env"] = arguments.project_env.as_posix()
     result_path = output / "gates.json"
     result_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(result_path)

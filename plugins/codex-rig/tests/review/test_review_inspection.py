@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -285,6 +286,243 @@ def _use_spawn_receipts(fixture: dict[str, object]) -> None:
     (fixture["run"] / "specialist-manifest.json").write_text(
         json.dumps(fixture["manifest"]), encoding="utf-8", newline="\n"
     )
+
+
+def _use_frozen_read_receipts(fixture: dict[str, object]) -> None:
+    """Model encrypted native dispatch and its one audited context read."""
+    _use_spawn_receipts(fixture)
+    fixture["manifest"]["schema_version"] = 6
+    fixture["manifest"]["context_reader_python"] = sys.executable
+    parent = fixture["sessions"] / "sessions" / "rollout-parent-thread.jsonl"
+    parent_rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
+    validator = _validator()
+    plan_path = fixture["run"] / "inspection-plan.json"
+    for item in fixture["passes"]:
+        role = item["role"]
+        attempt = item["attempts"][0]
+        ciphertext = f"encrypted-{role}"
+        call = next(
+            row
+            for row in parent_rows
+            if row["payload"].get("call_id") == attempt["spawn_call_id"]
+            and row["payload"].get("type") == "function_call"
+        )
+        args = json.loads(call["payload"]["arguments"])
+        args.update(
+            message=ciphertext, agent_type="default", model=attempt["model"], reasoning_effort=attempt["effort"]
+        )
+        call["payload"]["arguments"] = json.dumps(args)
+        child = fixture["sessions"] / "sessions" / f"rollout-{attempt['agent_thread_id']}.jsonl"
+        child_rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+        child_rows[0]["payload"]["agent_role"] = "default"
+        child_rows[0]["payload"]["source"]["subagent"]["thread_spawn"]["agent_role"] = "default"
+        context = (fixture["run"] / attempt["context_path"]).read_text(encoding="utf-8")
+        read_output = validator.render_read_output(
+            context,
+            role,
+            fixture["manifest"]["review_run_id"],
+            fixture["manifest"]["review_input_sha256"],
+            attempt["context_sha256"],
+            1,
+        )
+        child_rows.extend(
+            [
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "agent_message",
+                        "content": [{"type": "encrypted_content", "encrypted_content": ciphertext}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "call_id": f"read-{role}",
+                        "input": validator.render_read_call(plan_path, role, 1, sys.executable),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": f"read-{role}",
+                        "output": [
+                            {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+                            {"type": "input_text", "text": read_output},
+                        ],
+                    },
+                },
+            ]
+        )
+        _write_jsonl(child, child_rows)
+    _write_jsonl(parent, parent_rows)
+    (fixture["run"] / "specialist-manifest.json").write_text(
+        json.dumps(fixture["manifest"]), encoding="utf-8", newline="\n"
+    )
+
+
+def test_schema_six_binds_encrypted_dispatch_to_frozen_read(tmp_path: Path) -> None:
+    """Accept one child read even when native spawn hides the dispatch plaintext."""
+    fixture = _inspection_run(tmp_path)
+    _use_frozen_read_receipts(fixture)
+
+    _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+
+
+def test_schema_six_accepts_native_code_fence_terminal_newline(tmp_path: Path) -> None:
+    """Allow the single LF added when a child copies the printed JavaScript block."""
+    fixture = _inspection_run(tmp_path)
+    _use_frozen_read_receipts(fixture)
+    child = fixture["sessions"] / "sessions" / "rollout-child-1.jsonl"
+    rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    call = next(row for row in rows if row["payload"].get("type") == "custom_tool_call")
+    call["payload"]["input"] += "\n"
+    _write_jsonl(child, rows)
+
+    _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
+
+
+def test_context_reader_returns_verified_frozen_bytes(tmp_path: Path) -> None:
+    """Reject a changed context before a child receives any source content."""
+    fixture = _inspection_run(tmp_path)
+    reader = _module(PLUGIN_ROOT / "skills/code-review/review_context.py")
+    plan_path = fixture["run"] / "inspection-plan.json"
+    role = ROLES[0]
+    context_path = fixture["run"] / fixture["plan"]["contexts"][0]["context_path"]
+    context = context_path.read_text(encoding="utf-8")
+
+    assert reader.read_context(plan_path, role, 1) == reader.render_read_output(
+        context,
+        role,
+        fixture["plan"]["review_run_id"],
+        fixture["plan"]["review_input_sha256"],
+        fixture["plan"]["contexts"][0]["context_sha256"],
+        1,
+    )
+    context_path.write_text(context + "changed", encoding="utf-8", newline="\n")
+    with pytest.raises(ValueError, match="review-context-hash-mismatch"):
+        reader.read_context(plan_path, role, 1)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "omitted", "reordered", "truncated", "extra", "wrong-page"],
+)
+def test_schema_six_requires_every_utf8_page_in_order(tmp_path: Path, mutation: str | None) -> None:
+    """Require complete ordered context even when multibyte characters cross page limits."""
+    fixture = _inspection_run(tmp_path)
+    reader = _module(PLUGIN_ROOT / "skills/code-review/review_context.py")
+    validator = _validator()
+    plan_path = fixture["run"] / "inspection-plan.json"
+    role = ROLES[0]
+    context = "Review café 雪.\n" * 1100
+    context_hash = hashlib.sha256(context.encode("utf-8")).hexdigest()
+    attempt = {"attempt": 1, "context_sha256": context_hash}
+    manifest = {
+        "context_reader_python": sys.executable,
+        "review_run_id": fixture["plan"]["review_run_id"],
+        "review_input_sha256": fixture["plan"]["review_input_sha256"],
+    }
+    pages = reader.context_pages(context)
+    assert len(pages) > 1
+    assert "".join(pages) == context
+    assert all(len(page.encode("utf-8")) <= 8192 for page in pages)
+    context_path = fixture["run"] / fixture["plan"]["contexts"][0]["context_path"]
+    context_path.write_text(context, encoding="utf-8", newline="\n")
+    fixture["plan"]["contexts"][0]["context_sha256"] = context_hash
+    plan_path.write_text(json.dumps(fixture["plan"]), encoding="utf-8", newline="\n")
+    rows = []
+    for page in range(1, len(pages) + 1):
+        assert reader.read_context(plan_path, role, 1, page) == reader.render_read_output(
+            context, role, manifest["review_run_id"], manifest["review_input_sha256"], context_hash, 1, page
+        )
+        call_id = f"read-{page}"
+        rows.extend(
+            [
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call",
+                        "name": "exec",
+                        "call_id": call_id,
+                        "input": reader.render_read_call(plan_path, role, 1, sys.executable, page),
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "custom_tool_call_output",
+                        "call_id": call_id,
+                        "output": [
+                            {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+                            {
+                                "type": "input_text",
+                                "text": reader.render_read_output(
+                                    context,
+                                    role,
+                                    manifest["review_run_id"],
+                                    manifest["review_input_sha256"],
+                                    context_hash,
+                                    1,
+                                    page,
+                                ),
+                            },
+                        ],
+                    },
+                },
+            ]
+        )
+    if mutation == "omitted":
+        del rows[2:4]
+    elif mutation == "reordered":
+        rows[:4] = rows[2:4] + rows[:2]
+    elif mutation == "truncated":
+        rows[3]["payload"]["output"][1]["text"] = rows[3]["payload"]["output"][1]["text"][:-1]
+    elif mutation == "extra":
+        rows.extend(rows[-2:])
+    elif mutation == "wrong-page":
+        rows[2]["payload"]["input"] = reader.render_read_call(plan_path, role, 1, sys.executable, 1)
+
+    if mutation is None:
+        validator._validate_context_read(rows, plan_path, role, attempt, manifest, context)
+    else:
+        with pytest.raises(SystemExit, match="review-inspection-context-read"):
+            validator._validate_context_read(rows, plan_path, role, attempt, manifest, context)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["encrypted", "missing-call", "wrong-call", "extra-call", "missing-output", "wrong-output", "extra-output"],
+)
+def test_schema_six_rejects_broken_context_read(tmp_path: Path, mutation: str) -> None:
+    """Prevent mismatched transport, unobserved context, and added child tools."""
+    fixture = _inspection_run(tmp_path)
+    _use_frozen_read_receipts(fixture)
+    child = fixture["sessions"] / "sessions" / "rollout-child-1.jsonl"
+    rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+    encrypted = next(row for row in rows if row["payload"].get("type") == "agent_message")
+    call = next(row for row in rows if row["payload"].get("type") == "custom_tool_call")
+    output = next(row for row in rows if row["payload"].get("type") == "custom_tool_call_output")
+    if mutation == "encrypted":
+        encrypted["payload"]["content"][0]["encrypted_content"] = "different"
+    elif mutation == "missing-call":
+        rows.remove(call)
+    elif mutation == "wrong-call":
+        call["payload"]["input"] = "text('forged')"
+    elif mutation == "extra-call":
+        rows.append(call)
+    elif mutation == "missing-output":
+        rows.remove(output)
+    elif mutation == "wrong-output":
+        output["payload"]["output"][1]["text"] = "forged"
+    else:
+        rows.append(output)
+    _write_jsonl(child, rows)
+
+    with pytest.raises(SystemExit, match="provenance-parent-spawn-mismatch|review-inspection-context-read"):
+        _validator()._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 
 def test_schema_five_accepts_call_bound_spawn_receipts(tmp_path: Path) -> None:

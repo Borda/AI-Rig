@@ -392,7 +392,7 @@
       "scope-report-link-missing",
       "scope-context-not-visible",
       "scope-prompt-duplicated",
-      "parallel-approval-prompt-duplicated",
+      "parallel-fallback-not-recorded",
       "user-visible assistant message",
       "question tool owns this question",
       "higher-priority host rule instead mandates plain text",

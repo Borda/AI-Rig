@@ -69,6 +69,80 @@ def _lint_check(output: Path) -> dict[str, object]:
     return next(check for check in payload["checks"] if check["id"] == "lint")
 
 
+def test_gate_uses_explicit_project_environment_in_isolated_worktree(tmp_path: Path) -> None:
+    """Run a declared checker from the source environment against the selected review worktree."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    environment = tmp_path / "project-env"
+    environment.mkdir()
+    (environment / "pyvenv.cfg").write_text("home = fixture\n", encoding="utf-8")
+    scripts = environment / ("Scripts" if sys.platform == "win32" else "bin")
+    scripts.mkdir(parents=True)
+    (scripts / ("python.exe" if sys.platform == "win32" else "python")).write_bytes(b"placeholder")
+    marker = tmp_path / "checker-cwd.txt"
+    command = _python_command(
+        f"import os; from pathlib import Path; "
+        f"assert os.environ['PATH'].split(os.pathsep)[0] == {str(scripts)!r}; "
+        f"Path({str(marker)!r}).write_text(str(Path.cwd()), encoding='utf-8')"
+    )
+    arguments = [
+        sys.executable,
+        str(RUN_GATES),
+        "--out",
+        str(tmp_path / "gates"),
+        "--expected-head",
+        head,
+        "--worktree",
+        str(repository),
+        "--project-env",
+        str(environment),
+        "--types",
+        command,
+    ]
+    for gate_id in ("lint", "format", "tests", "review"):
+        arguments.extend((f"--skip-{gate_id}", "out of scope"))
+
+    result = subprocess.run(arguments, cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text(encoding="utf-8") == str(repository)
+    payload = json.loads((tmp_path / "gates" / "gates.json").read_text(encoding="utf-8"))
+    assert next(check for check in payload["checks"] if check["id"] == "types")["status"] == "pass"
+    assert payload["source"]["project_env"] == environment.as_posix()
+
+
+def test_missing_project_environment_is_rejected_before_gates(tmp_path: Path) -> None:
+    """Keep a missing checker environment as a prerequisite instead of silently using PATH."""
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    head = _initialize_repository(repository)
+    output = tmp_path / "gates"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(RUN_GATES),
+            "--out",
+            str(output),
+            "--expected-head",
+            head,
+            "--worktree",
+            str(repository),
+            "--project-env",
+            str(tmp_path / "missing"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "invalid-project-env" in result.stderr
+    assert not output.exists()
+
+
 @pytest.mark.parametrize(
     ("executable", "expected_prefix"),
     [

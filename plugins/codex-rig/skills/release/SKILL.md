@@ -30,6 +30,8 @@ Prepare substantial, source-grounded release communication and SemVer readiness 
 
 For allowed GitHub reads, run the direct reader under an active opted-in `github-read` profile or request runtime approval for the complete owning command. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an unexpected runtime restriction or denial stops the attempt.
 
+When `github-read` is active in this session, omit `sandbox_permissions` and `justification` on the reader call; do not give an approval brief or request escalation merely because the reader uses GitHub or `gh`. Use the ordinary-session approval path only without that active profile.
+
 ### 01: Create run directory
 
 Run `create_run.py --skill release` per `../../shared/helper-cli-contract.md`.

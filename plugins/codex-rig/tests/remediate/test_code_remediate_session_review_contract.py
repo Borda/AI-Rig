@@ -69,7 +69,9 @@ def test_work_buckets_default_to_parallel_with_guarded_overlap() -> None:
     assert "Plan parallel dispatch by default after selection" in skill
     assert "same exact repo-relative file" in skill
     assert "do not manufacture a second task" in skill
-    assert "A denial does not create runtime capacity" in skill
+    assert "Missing parallel capacity is not a reason to stop authorized work" in skill
+    assert "continue with the available parent-owned or sequential route" in skill
+    assert "without an approval prompt" in skill
     assert "approved_plan_sha256" in skill
 
 
@@ -104,7 +106,8 @@ def test_parallel_child_verification_preserves_zero_output_boundary() -> None:
     assert "Freeze only byte-identical command text that passed preflight" in skill
     assert "requires a new plan digest and dispatch record" in skill
     assert "must not delete verification output after the command" in skill
-    assert "ask for parent-owned or sequential fallback" in skill
+    assert "use an available parent-owned or sequential route" in skill
+    assert "Do not ask permission to use that fallback" in skill
 
 
 def test_parallel_preflight_does_not_require_future_implementation() -> None:
@@ -140,6 +143,27 @@ def test_parallel_details_load_only_for_a_selected_parallel_route() -> None:
         assert invariant in lifecycle
 
 
+def test_pr_preparation_parallelism_stops_at_verified_merge_barrier() -> None:
+    """Allow only read-only preparation to overlap before merge disposition is joined."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    preparation = skill.split("After successful remediation-mode collection", maxsplit=1)[1].split(
+        "Write `<run-directory>/merge-prestage.md`", maxsplit=1
+    )[0]
+
+    assert "already-collected comments, reviews, and threads" in preparation
+    assert "do not fetch the same review data again" in preparation
+    assert "immutable fetched target OID" in preparation
+    assert "Never run their fetches concurrently because each fetch changes `FETCH_HEAD`" in preparation
+    assert "never run concurrent source or Git mutations" in preparation
+    assert "The online-review arm must not read the worktree while integration may change it" in preparation
+    assert "Join the preparation before writing `action-items.md` or `resolution-scope.md`" in preparation
+    assert "present or likely conflicts require the authorization and completed merge gates below" in preparation
+    assert (
+        "A conflicted checkout or dirty path that overlaps required checkout, merge, or selected-edit paths is a stop condition"
+        in preparation
+    )
+
+
 def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     """Require full visible context before one native control or a complete prose fallback."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
@@ -162,14 +186,32 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert "collapsed output" in scope_contract
 
 
-def test_parallel_default_asks_only_for_sequential_fallback() -> None:
-    """Keep the workflow-default dispatch distinct from an explicit fallback choice."""
+def test_parallel_default_uses_workflow_selected_fallback_without_prompt() -> None:
+    """Keep eligible parallel work default and record fallback without an approval prompt."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     workplan_contract = skill.split("### 06: Build And Approve The Work Bucket Plan", maxsplit=1)[1].split(
         "### 07: Apply Fixes In Selected Scope", maxsplit=1
     )[0]
 
-    assert workplan_contract.count("Authorize parent-owned or sequential fallback for this selected scope?") == 1
+    assert "Authorize parent-owned or sequential fallback for this selected scope?" not in workplan_contract
     assert "`source=workflow-default`" in workplan_contract
     assert "`prompt_presented=false`" in workplan_contract
-    assert "An approved fallback records `response=parent-only`" in workplan_contract
+    assert (
+        "In `CODE_REMEDIATE_METADATA.resolution_workplan`, also record `parallel_eligible=false`" in workplan_contract
+    )
+    assert "`parallel_approval_required=false`" in workplan_contract
+    assert "`parallel_approval_status=parent-only`" in workplan_contract
+    assert "exactly one nonempty `Ineligibility reason: <reason>` line" in workplan_contract
+
+
+def test_parent_only_fallback_is_recorded_without_requesting_user_approval() -> None:
+    """Require a concrete, evidence-checked workflow reason for fallback without a new prompt."""
+    skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
+    quality_gates = skill.split("## Quality Gates", maxsplit=1)[1].split("## Calibration Hooks", maxsplit=1)[0]
+
+    assert "requires an approval question" in skill
+    assert "without an affirmative user choice" not in skill
+    assert "parallel-fallback-not-recorded" in skill
+    assert "workflow-default parent-owned or sequential fallback is missing" in skill
+    assert "code-remediate-parallel-fallback-invalid" in skill
+    assert "parent-only/sequential fallback recorded with its concrete ineligibility reason" in quality_gates

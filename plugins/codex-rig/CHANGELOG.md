@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.28.0
+
+- Prepare complete native reviewer waves and assemble manifests from observed runtime evidence. Deliver frozen context through bounded audited page reads per reviewer, fixing encrypted-dispatch and self-referential provenance failures while preserving historical schema-five readers and quality gates.
+
+- Isolate local review source in detached worktrees, preserve caller edits/index, and reject changed review snapshots before acceptance.
+
+- Reuse explicitly selected existing review environments and installed Codemap provider roots; fetch material referenced GitHub evidence through the audited reader instead of treating browser-cache misses as unavailable content.
+
+- Prevent unnecessary approval prompts for audited GitHub reads when `github-read` is active: all four consuming Skills omit escalation fields and the approval brief, even when the stored default is `:workspace`. Preserve ordinary-session approval and stop on host denial.
+
+- Permit independent remediation evidence preparation alongside verified-target conflict analysis, without duplicate fetches, concurrent Git mutations, or bypassing merge authorization.
+
+- Default eligible remediation buckets to isolated parallel work; continue authorized parent-owned or sequential work without a fallback approval prompt, preserve unrelated source changes, and accept source-local ignored worktree roots with path-scoped safety checks.
+
 ## 0.27.0
 
 - Preserve user-saved collector approvals with literal launchers during GitHub profile setup and removal; retain rejection of modified managed collector grants.

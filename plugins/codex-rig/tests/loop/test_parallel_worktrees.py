@@ -289,6 +289,18 @@ def _rewrite_code_remediate_plan(plan_path: Path, approval_path: Path, plan: dic
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
+def _use_source_local_worktree_root(plan_path: Path, approval_path: Path, repository: Path) -> Path:
+    """Bind a remediation plan to an ignored worktree root inside its source repository."""
+    root = repository / ".reports" / "codex" / "code-remediate-worktrees" / "fixture"
+    exclude = repository / ".git" / "info" / "exclude"
+    with exclude.open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write(".reports/codex/code-remediate-worktrees/\n")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["worktree_root"] = root.relative_to(repository.parent).as_posix()
+    _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+    return root
+
+
 def _overlapping_code_remediate_plan(workspace: Path, baseline: str) -> tuple[Path, Path, Path]:
     """Approve two isolated remediation buckets that both own one tracked file."""
     plan_path, approval_path, repository = _approved_code_remediate_plan(workspace, baseline_a=baseline)
@@ -511,6 +523,70 @@ def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_p
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
+def test_code_remediate_source_local_worktrees_preserve_unrelated_source_changes(tmp_path: Path) -> None:
+    """Apply approved edits without changing unrelated source bytes or staged index entries."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    worktree_root = _use_source_local_worktree_root(plan_path, approval_path, repository)
+    tracked = repository / ".gitattributes"
+    tracked.write_text("*.txt text\n# staged unrelated note\n", encoding="utf-8", newline="\n")
+    _git(repository, "add", ".gitattributes")
+    staged_entry = _git(repository, "ls-files", "--stage", "--", ".gitattributes").stdout
+    tracked.write_text(
+        "*.txt text\n# staged unrelated note\n# unstaged unrelated note\n", encoding="utf-8", newline="\n"
+    )
+    untracked = repository / "scratch.txt"
+    untracked.write_bytes(b"untracked user bytes\n")
+    ignored = repository / "scratch-cache.tmp"
+    with (repository / ".git" / "info" / "exclude").open("a", encoding="utf-8", newline="\n") as stream:
+        stream.write("scratch-cache.tmp\n")
+    ignored.write_bytes(b"ignored user bytes\n")
+    state_path = plan_path.parent / "production-lifecycle.json"
+
+    state = lifecycle.prepare_code_remediate_pilot(
+        plan_path=plan_path, approval_path=approval_path, workspace_root=tmp_path, state_path=state_path
+    )
+    assert worktree_root.is_dir()
+    assert all((tmp_path / str(node["worktree_path"])).is_relative_to(repository) for node in state["nodes"])
+    assert _git(repository, "check-ignore", str(worktree_root)).returncode == 0
+    for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
+        (tmp_path / str(node["worktree_path"]) / str(node["owned_paths"][0])).write_text(
+            content, encoding="utf-8", newline="\n"
+        )
+    handovers = [
+        lifecycle.create_completed_child_handover(
+            state_path=state_path, node_id=str(node["node_id"]), summary="Completed approved edit."
+        )
+        for node in state["nodes"]
+    ]
+    lifecycle.join_child_handovers(state_path=state_path, handovers=handovers)
+    for node in state["nodes"]:
+        lifecycle.collect_write_patch(state_path=state_path, node_id=str(node["node_id"]))
+    lifecycle.integrate_write_pilot(state_path=state_path)
+    tracked.write_text(
+        tracked.read_text(encoding="utf-8") + "# concurrent unrelated note\n", encoding="utf-8", newline="\n"
+    )
+    concurrent = repository / "concurrent.txt"
+    concurrent.write_bytes(b"concurrent user bytes\n")
+    lifecycle.apply_code_remediate_source(state_path=state_path)
+    cleanup = lifecycle.cleanup_code_remediate_pilot(state_path=state_path)
+
+    assert cleanup["cleanup_status"] == "removed"
+    assert cleanup["force"] is False
+    assert all(not (tmp_path / str(node["worktree_path"])).exists() for node in state["nodes"])
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "child-a\n"
+    assert (repository / "bucket-b.txt").read_text(encoding="utf-8") == "child-b\n"
+    assert tracked.read_text(encoding="utf-8") == (
+        "*.txt text\n# staged unrelated note\n# unstaged unrelated note\n# concurrent unrelated note\n"
+    )
+    assert _git(repository, "ls-files", "--stage", "--", ".gitattributes").stdout == staged_entry
+    assert untracked.read_bytes() == b"untracked user bytes\n"
+    assert ignored.read_bytes() == b"ignored user bytes\n"
+    assert concurrent.read_bytes() == b"concurrent user bytes\n"
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_accepts_digest_bound_parallel_workflow_default(tmp_path: Path) -> None:
     """Record workflow authority without claiming a per-plan approval prompt."""
     lifecycle = _load_lifecycle()
@@ -716,13 +792,21 @@ def test_code_remediate_prepare_rejects_plan_changed_after_approval(tmp_path: Pa
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
-@pytest.mark.parametrize("source_state", ["dirty", "merging"])
-def test_code_remediate_prepare_rejects_nonclean_source_before_dispatch(tmp_path: Path, source_state: str) -> None:
-    """Block child dispatch when the authoritative repository has drift or an unresolved merge."""
+@pytest.mark.parametrize("source_state", ["owned-worktree", "owned-index", "owned-rename", "merging"])
+def test_code_remediate_prepare_rejects_unsafe_source_before_dispatch(tmp_path: Path, source_state: str) -> None:
+    """Block dispatch for approved-path drift or an unresolved Git operation."""
     lifecycle = _load_lifecycle()
     plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
-    if source_state == "dirty":
+    if source_state == "owned-worktree":
         (repository / "bucket-a.txt").write_text("dirty\n", encoding="utf-8", newline="\n")
+        expected = "source-repository-dirty"
+    elif source_state == "owned-index":
+        (repository / "bucket-a.txt").write_text("staged\n", encoding="utf-8", newline="\n")
+        _git(repository, "add", "bucket-a.txt")
+        expected = "source-repository-dirty"
+    elif source_state == "owned-rename":
+        _git(repository, "mv", "bucket-a.txt", "renamed.txt")
+        expected = "owned-path-not-regular:WRITE-A"
     else:
         base_branch = _git(repository, "branch", "--show-current").stdout.strip()
         _git(repository, "checkout", "-q", "-b", "conflicting-change")
@@ -734,8 +818,9 @@ def test_code_remediate_prepare_rejects_nonclean_source_before_dispatch(tmp_path
         _git(repository, "add", "bucket-a.txt")
         _git(repository, "commit", "-q", "-m", "source change")
         assert _git(repository, "merge", "conflicting-change", check=False).returncode != 0
+        expected = "source-repository-merging"
 
-    with pytest.raises(lifecycle.PilotError, match=rf"^source-repository-{source_state}$"):
+    with pytest.raises(lifecycle.PilotError, match=rf"^{expected}$"):
         lifecycle.prepare_code_remediate_pilot(
             plan_path=plan_path,
             approval_path=approval_path,
@@ -744,6 +829,133 @@ def test_code_remediate_prepare_rejects_nonclean_source_before_dispatch(tmp_path
         )
 
     assert not (tmp_path / ".codex-rig-worktrees" / "fixture").exists()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_prepare_rejects_unrelated_unmerged_index(tmp_path: Path) -> None:
+    """Block dispatch when Git has unresolved index stages without an operation marker."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    blob = _git(repository, "rev-parse", "HEAD:bucket-a.txt").stdout.strip()
+    entries = f"100644 {blob} 1\tunrelated.txt\n100644 {blob} 2\tunrelated.txt\n"
+    # Binary stdin preserves Git's LF record delimiters on Windows.
+    subprocess.run(
+        ["git", "-C", str(repository), "update-index", "--index-info"],
+        input=entries.encode("ascii"),
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert _git(repository, "ls-files", "--unmerged").stdout == entries
+
+    with pytest.raises(lifecycle.PilotError, match="^source-repository-unmerged$"):
+        lifecycle.prepare_code_remediate_pilot(
+            plan_path=plan_path,
+            approval_path=approval_path,
+            workspace_root=tmp_path,
+            state_path=plan_path.parent / "production-lifecycle.json",
+        )
+
+    assert not (tmp_path / ".codex-rig-worktrees" / "fixture").exists()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("root_case", "expected"),
+    [
+        pytest.param("not-ignored", "worktree-root-not-ignored", id="not-ignored"),
+        pytest.param("outside-managed-prefix", "worktree-root-not-managed-sibling", id="outside-managed-prefix"),
+        pytest.param("evidence-overlap", "worktree-root-not-managed-sibling", id="evidence-overlap"),
+        pytest.param("preexisting", "worktree-root-exists", id="preexisting"),
+    ],
+)
+def test_code_remediate_prepare_rejects_unsafe_source_local_root(tmp_path: Path, root_case: str, expected: str) -> None:
+    """Reject source-local roots that can expose outputs or overwrite existing evidence."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    root = repository / ".reports" / "codex" / "code-remediate-worktrees" / "fixture"
+    if root_case != "not-ignored":
+        root = _use_source_local_worktree_root(plan_path, approval_path, repository)
+    if root_case == "not-ignored":
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        plan["worktree_root"] = root.relative_to(tmp_path).as_posix()
+        _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+    elif root_case == "outside-managed-prefix":
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        root = repository / ".reports" / "codex" / "develop-worktrees" / "fixture"
+        plan["worktree_root"] = root.relative_to(tmp_path).as_posix()
+        _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+    elif root_case == "evidence-overlap":
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        root = plan_path.parent
+        plan["worktree_root"] = root.relative_to(tmp_path).as_posix()
+        _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+    else:
+        root.mkdir(parents=True)
+        (root / "existing.txt").write_bytes(b"must survive\n")
+
+    with pytest.raises(lifecycle.PilotError, match=rf"^{expected}$"):
+        lifecycle.prepare_code_remediate_pilot(
+            plan_path=plan_path,
+            approval_path=approval_path,
+            workspace_root=tmp_path,
+            state_path=plan_path.parent / "production-lifecycle.json",
+        )
+
+    if root_case == "preexisting":
+        assert (root / "existing.txt").read_bytes() == b"must survive\n"
+    elif root_case == "evidence-overlap":
+        assert plan_path.exists()
+    else:
+        assert not root.exists()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+@pytest.mark.skipif(not SYMLINKS_SUPPORTED, reason="directory symlink capability unavailable")
+def test_code_remediate_prepare_rejects_symlinked_source_local_worktree_root(tmp_path: Path) -> None:
+    """Reject a source-local worktree parent redirected outside the source checkout."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    _use_source_local_worktree_root(plan_path, approval_path, repository)
+    outside = tmp_path / "outside-worktrees"
+    outside.mkdir()
+    (repository / ".reports" / "codex" / "code-remediate-worktrees").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(lifecycle.PilotError, match="^managed-path-symlink-forbidden$"):
+        lifecycle.prepare_code_remediate_pilot(
+            plan_path=plan_path,
+            approval_path=approval_path,
+            workspace_root=tmp_path,
+            state_path=plan_path.parent / "production-lifecycle.json",
+        )
+
+    assert not (outside / "fixture").exists()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_prepare_rejects_casefolded_source_local_root_alias(tmp_path: Path) -> None:
+    """Reject a case-altered source prefix that can name a sibling on case-sensitive hosts."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    _use_source_local_worktree_root(plan_path, approval_path, repository)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    root = f"{repository.name.upper()}/.reports/codex/code-remediate-worktrees/fixture"
+    plan["worktree_root"] = root
+    _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+
+    with pytest.raises(lifecycle.PilotError, match="^worktree-root-not-managed-sibling$"):
+        lifecycle.prepare_code_remediate_pilot(
+            plan_path=plan_path,
+            approval_path=approval_path,
+            workspace_root=tmp_path,
+            state_path=plan_path.parent / "production-lifecycle.json",
+        )
+
+    assert not (tmp_path / root).exists()
 
 
 @pytest.mark.installed_plugin
@@ -1079,8 +1291,15 @@ def test_code_remediate_cli_drives_the_supported_parent_lifecycle(
 def test_code_remediate_source_apply_failure_restores_only_known_states(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Restore exact baseline paths when a source apply fails after reaching known postimages."""
+    """Restore approved paths after apply failure without touching unrelated source changes."""
     lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    tracked = repository / ".gitattributes"
+    tracked.write_text("*.txt text\n# staged note\n", encoding="utf-8", newline="\n")
+    _git(repository, "add", ".gitattributes")
+    staged_entry = _git(repository, "ls-files", "--stage", "--", ".gitattributes").stdout
+    tracked.write_text("*.txt text\n# staged note\n# unstaged note\n", encoding="utf-8", newline="\n")
+    untracked = repository / "unrelated.txt"
+    untracked.write_bytes(b"unrelated user bytes\n")
     real_git = lifecycle._git
 
     def _fail_after_source_apply(target: Path, *arguments: str) -> str:
@@ -1099,7 +1318,11 @@ def test_code_remediate_source_apply_failure_restores_only_known_states(
     assert persisted["source_application"]["status"] == "failed-rolled-back"
     assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
     assert (repository / "bucket-b.txt").read_text(encoding="utf-8") == "baseline-b\n"
+    assert tracked.read_text(encoding="utf-8") == "*.txt text\n# staged note\n# unstaged note\n"
+    assert _git(repository, "ls-files", "--stage", "--", ".gitattributes").stdout == staged_entry
+    assert untracked.read_bytes() == b"unrelated user bytes\n"
     assert set(_git(repository, "status", "--porcelain=v1", "--untracked-files=all").stdout.splitlines()) == {
+        "MM .gitattributes",
         "?? .reports/codex/code-remediate/fixture/WRITE-A-context.md",
         "?? .reports/codex/code-remediate/fixture/WRITE-B-context.md",
         "?? .reports/codex/code-remediate/fixture/parallel-approval.json",
@@ -1109,7 +1332,88 @@ def test_code_remediate_source_apply_failure_restores_only_known_states(
         "?? .reports/codex/code-remediate/fixture/rollback.patch",
         "?? .reports/codex/code-remediate/fixture/source-application.patch",
         "?? .reports/codex/code-remediate/fixture/work-bucket-plan.json",
+        "?? unrelated.txt",
     }
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_source_preflight_preserves_new_staged_owned_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject late owned-path index drift before rollback can erase user-staged content."""
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    owned = repository / "bucket-a.txt"
+    baseline = owned.read_bytes()
+    staged = b"user staged edit\n"
+    real_persist = lifecycle._persist
+    real_git = lifecycle._git
+    restore_calls: list[tuple[str, ...]] = []
+    staged_entry: list[str] = []
+
+    def _inject_staged_edit(path: Path, payload: dict[str, object]) -> None:
+        """Model a user staging an owned file after lifecycle state becomes applying."""
+        real_persist(path, payload)
+        if payload["status"] == "source-applying":
+            owned.write_bytes(staged)
+            _git(repository, "add", "bucket-a.txt")
+            staged_entry.append(_git(repository, "ls-files", "--stage", "--", "bucket-a.txt").stdout)
+            owned.write_bytes(baseline)
+
+    def _record_restore(target: Path, *arguments: str) -> str:
+        """Observe whether a failed preflight invokes a destructive source restore."""
+        if target == repository and arguments[:1] == ("restore",):
+            restore_calls.append(arguments)
+        return real_git(target, *arguments)
+
+    monkeypatch.setattr(lifecycle, "_persist", _inject_staged_edit)
+    monkeypatch.setattr(lifecycle, "_git", _record_restore)
+
+    with pytest.raises(lifecycle.PilotError, match="^source-repository-dirty$"):
+        lifecycle.apply_code_remediate_source(state_path=state_path)
+
+    assert len(staged_entry) == 1
+    assert _git(repository, "ls-files", "--stage", "--", "bucket-a.txt").stdout == staged_entry[0], (
+        "late user-staged index entry was erased"
+    )
+    assert owned.read_bytes() == baseline
+    assert restore_calls == [], "preflight rejection invoked source restore"
+    assert (repository / "bucket-b.txt").read_bytes() == b"baseline-b\n"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["source_application"]["status"] == "failed"
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_source_preflight_check_failure_records_terminal_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep unchanged source and terminal evidence when Git rejects patch preflight."""
+    lifecycle, state_path, _, repository = _prepare_integrated_code_remediate(tmp_path)
+    baseline = {path: (repository / path).read_bytes() for path in ("bucket-a.txt", "bucket-b.txt")}
+    index = _git(repository, "ls-files", "--stage", "--", "bucket-a.txt", "bucket-b.txt").stdout
+    real_git = lifecycle._git
+    source_mutations: list[tuple[str, ...]] = []
+
+    def _reject_apply_preflight(target: Path, *arguments: str) -> str:
+        """Reject only the source patch preflight and record forbidden mutations."""
+        if target == repository and arguments[:2] == ("apply", "--check"):
+            raise lifecycle.PilotError("simulated-source-preflight-check-failure")
+        if target == repository and arguments[:1] in {("apply",), ("restore",)}:
+            source_mutations.append(arguments)
+        return real_git(target, *arguments)
+
+    monkeypatch.setattr(lifecycle, "_git", _reject_apply_preflight)
+    with pytest.raises(lifecycle.PilotError, match="^simulated-source-preflight-check-failure$"):
+        lifecycle.apply_code_remediate_source(state_path=state_path)
+
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert persisted["status"] == "failed"
+    assert persisted["source_application"]["status"] == "failed"
+    assert {path: (repository / path).read_bytes() for path in baseline} == baseline
+    assert _git(repository, "ls-files", "--stage", "--", "bucket-a.txt", "bucket-b.txt").stdout == index
+    assert source_mutations == []
 
 
 @pytest.mark.installed_plugin

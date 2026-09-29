@@ -1981,15 +1981,25 @@ def _validate_parallel_specialists_approval(
 
 
 def _validate_sequential_fallback_approval(workplan: dict[str, Any], approval: _WorkplanApproval) -> None:
-    """Require user authorization before a selected scope uses sequential fallback."""
-    if not workplan["parallel_approval_required"] or approval.status != "parent-only":
+    """Bind an ineligible parent or sequential route to its dispatch source."""
+    if approval.status != "parent-only":
+        raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
+    if approval.source == "not-required":
         raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
     if workplan["parallel_eligible"]:
         raise SystemExit("code-remediate-eligible-fanout-fallback-forbidden")
-    if approval.source not in {"explicit-input", "user-prompt"}:
+    if approval.source == "workflow-default":
+        if workplan["parallel_approval_required"]:
+            raise SystemExit("code-remediate-default-fallback-approval-invalid")
+        if workplan["parallel_prompt_presented"]:
+            raise SystemExit("code-remediate-default-fallback-prompt-invalid")
+    elif approval.source in {"explicit-input", "user-prompt"}:
+        if not workplan["parallel_approval_required"]:
+            raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
+        if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
+            raise SystemExit("code-remediate-eligible-fanout-prompt-not-presented")
+    else:
         raise SystemExit("code-remediate-eligible-fanout-approval-source-missing")
-    if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
-        raise SystemExit("code-remediate-eligible-fanout-prompt-not-presented")
     if approval.response != "parent-only" or approval.approved_plan_sha256 is not None:
         raise SystemExit("code-remediate-parent-only-response-invalid")
 
@@ -2051,6 +2061,18 @@ def _validate_workplan_document(
             raise SystemExit(f"code-remediate-workplan-missing-{required_text}")
     if approval.bucket_plan_sha256 not in workplan_text or approval.response not in workplan_text:
         raise SystemExit("code-remediate-workplan-approval-binding-missing")
+    if approval.source == "workflow-default" and approval.response == "parent-only":
+        approval_section = re.search(
+            r"(?ms)^## Parallel Approval[ \t]*\n(.*?)(?=^## |\Z)", workplan_text, re.IGNORECASE
+        )
+        reasons = re.findall(
+            r"^Ineligibility reason:[ \t]*([^\n]*)$",
+            approval_section.group(1) if approval_section else "",
+            re.IGNORECASE | re.MULTILINE,
+        )
+        reason = reasons[0].strip() if len(reasons) == 1 else ""
+        if not reason or reason in {"none", "n/a", "tbd", "todo", "unknown"} or reason.startswith("<"):
+            raise SystemExit("code-remediate-ineligibility-reason-missing")
     for bucket_id in observed.bucket_ids:
         if bucket_id.casefold() not in workplan_text:
             raise SystemExit("code-remediate-workplan-bucket-id-missing")
@@ -2060,7 +2082,9 @@ def _validate_workplan_document(
         _validate_code_remediate_production_lifecycle(workplan, bucket_plan, out_dir, approval.bucket_plan_sha256)
 
 
-def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -> None:
+def _validate_code_remediate_workplan(
+    metadata: dict[str, Any], out_dir: Path, *, current_contract: bool = True
+) -> None:
     """Validate bounded work buckets, ownership, and parallel approval metadata."""
     workplan, selected_indexes, approval = _validate_workplan_shape(metadata)
     work_buckets = workplan["work_buckets"]
@@ -2076,6 +2100,8 @@ def _validate_code_remediate_workplan(metadata: dict[str, Any], out_dir: Path) -
     _validate_workplan_coverage_counts(workplan, work_buckets, selected_indexes, observed)
     _validate_workplan_execution_mode_approval(workplan, approval, observed)
     _validate_workplan_document(out_dir, workplan, approval, observed, bucket_plan)
+    if current_contract and approval.source == "not-required":
+        raise SystemExit("code-remediate-current-fallback-dispatch-required")
 
 
 def _count_out_of_scope_items(action_text: str) -> int:
@@ -3396,7 +3422,7 @@ def _validate_required_artifacts(skill: str, out_dir: Path, result: dict[str, An
         _validate_jsonl(out_dir / str(filename))
 
 
-def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path) -> None:
+def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path, *, current_contract: bool = True) -> None:
     """Run the code-remediate contract checks over scope, workplan, tables, and PR evidence."""
     metadata = result.get("metadata", {})
     if not isinstance(metadata, dict):
@@ -3405,7 +3431,7 @@ def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path) -> Non
     if not isinstance(resolution_scope, dict):
         raise SystemExit("code-remediate-missing-resolution-scope-metadata")
     _validate_code_remediate_scope_selection(metadata, out_dir)
-    _validate_code_remediate_workplan(metadata, out_dir)
+    _validate_code_remediate_workplan(metadata, out_dir, current_contract=current_contract)
     _validate_code_remediate_out_of_scope_confirmation(metadata, out_dir)
     _validate_code_remediate_report_intake(result, out_dir)
     _validate_code_remediate_final_resolution_table(metadata, out_dir)
@@ -3446,7 +3472,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
             current_result=True,
         )
     if skill == "code-remediate":
-        _validate_code_remediate_skill(result, out_dir)
+        _validate_code_remediate_skill(result, out_dir, current_contract=current_contract)
 
 
 def main() -> int:

@@ -57,8 +57,9 @@ def test_pr_collector_binds_canonical_target_before_runtime_approval() -> None:
     assert "canonical GitHub PR URL" in boundary
     assert "Replace the numeric target with that locally bound canonical URL" in boundary
     assert "Never pass numeric user input as the collector target after canonicalization" in boundary
+    assert "With active `github-read`, use the default sandboxed tool call" in boundary
     assert (
-        'otherwise give the required brief and request external access for the complete collector with `sandbox_permissions="require_escalated"`'
+        'Only without the active profile, give the required brief and request external access for the complete collector with `sandbox_permissions="require_escalated"`'
         in boundary
     )
     assert "An unexpected restriction or denial stops" in boundary
@@ -72,7 +73,7 @@ def test_shared_read_execution_has_no_workflow_consent_gate() -> None:
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
     execution = contract.split("## GitHub Read Execution\n", 1)[1].split("\n## ", 1)[0]
 
-    assert "opted-in `github-read` session" in execution
+    assert "When `github-read` is active, omit `sandbox_permissions` and `justification`" in execution
     assert "need no separate workflow consent" in execution
     assert "unexpected restriction or denial stops the attempt" in execution
     assert "request runtime approval for the complete owning helper" in execution

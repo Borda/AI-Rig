@@ -36,7 +36,7 @@ def _write_fake_codemap_py(bin_dir: Path, script_body: str) -> None:
     test intentionally narrows `PATH` to prove absence/isolation.
     """
     if os.name == "nt":
-        fake = bin_dir / "codemap-py.bat"
+        fake = bin_dir / "codemap-py.cmd"
         fake.write_text(f'@echo off\r\n"{sys.executable}" "{bin_dir / "codemap_py_fake.py"}" %*\r\n')
     else:
         fake = bin_dir / "codemap-py"
@@ -112,6 +112,57 @@ def test_probe_absent_when_codemap_py_not_on_path(monkeypatch: pytest.MonkeyPatc
     assert result.doctor is None
 
 
+def test_provider_root_uses_explicit_active_install_without_path_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Use a caller-selected installed provider root when its CLI is absent from PATH."""
+    provider = tmp_path / "selected-provider"
+    binary = provider / "bin"
+    binary.mkdir(parents=True)
+    _write_fake_codemap_py(binary, _fake_script(_HEALTHY_DOCTOR, 0, _CLEAN_QUERY, 0))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.delenv("CODEMAP_BIN", raising=False)
+    adapter = _load_adapter()
+
+    result = adapter.probe_codemap(provider_root=provider)
+
+    assert result.status == adapter.STATUS_AVAILABLE
+    assert result.launcher == str(binary / ("codemap-py.cmd" if os.name == "nt" else "codemap-py"))
+
+
+def test_invalid_provider_root_does_not_fall_back_to_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Preserve an invalid caller selection as evidence instead of silently using another provider."""
+    _write_fake_codemap_py(tmp_path, _fake_script(_HEALTHY_DOCTOR, 0, _CLEAN_QUERY, 0))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.delenv("CODEMAP_BIN", raising=False)
+    adapter = _load_adapter()
+
+    result = adapter.probe_codemap(provider_root=tmp_path / "missing")
+
+    assert result.status == adapter.STATUS_INCOMPATIBLE
+    assert result.launcher is None
+    assert "provider root" in result.detail
+
+
+def test_probe_cli_accepts_selected_provider_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Expose the selected provider through the CLI used by installed review skills."""
+    provider = tmp_path / "provider"
+    binary = provider / "bin"
+    binary.mkdir(parents=True)
+    _write_fake_codemap_py(binary, _fake_script(_HEALTHY_DOCTOR, 0, _CLEAN_QUERY, 0))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    adapter = _load_adapter()
+
+    exit_code = adapter.main(["probe", "--provider-root", str(provider)])
+
+    assert exit_code == 0
+    assert json.loads(capsys.readouterr().out)["launcher"] == str(
+        binary / ("codemap-py.cmd" if os.name == "nt" else "codemap-py")
+    )
+
+
 def test_probe_available_when_doctor_reports_supported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Report ``available`` once ``doctor --json`` returns a supported interpreter."""
     _write_fake_codemap_py(tmp_path, _fake_script(_HEALTHY_DOCTOR, 0, _CLEAN_QUERY, 0))
@@ -137,7 +188,7 @@ def test_explicit_codemap_bin_wins_over_path_for_probe_and_query(
     path_doctor = dict(_HEALTHY_DOCTOR, supported=False, version="path")
     _write_fake_codemap_py(explicit_bin, _fake_script(explicit_doctor, 0, _CLEAN_QUERY, 0))
     _write_fake_codemap_py(path_bin, _fake_script(path_doctor, 0, _CLEAN_QUERY, 1))
-    explicit_launcher = explicit_bin / ("codemap-py.bat" if os.name == "nt" else "codemap-py")
+    explicit_launcher = explicit_bin / ("codemap-py.cmd" if os.name == "nt" else "codemap-py")
     monkeypatch.setenv("CODEMAP_BIN", str(explicit_launcher))
     monkeypatch.setenv("PATH", str(path_bin))
     adapter = _load_adapter()
@@ -171,7 +222,7 @@ def test_invalid_explicit_codemap_bin_fails_closed(
         target_dir = tmp_path / "target"
         target_dir.mkdir()
         _write_fake_codemap_py(target_dir, _fake_script(_HEALTHY_DOCTOR, 0, _CLEAN_QUERY, 0))
-        configured.symlink_to(target_dir / ("codemap-py.bat" if os.name == "nt" else "codemap-py"))
+        configured.symlink_to(target_dir / ("codemap-py.cmd" if os.name == "nt" else "codemap-py"))
     monkeypatch.setenv("CODEMAP_BIN", str(configured))
     monkeypatch.setenv("PATH", str(path_bin))
     adapter = _load_adapter()
@@ -194,7 +245,7 @@ def test_empty_codemap_bin_falls_back_to_path(monkeypatch: pytest.MonkeyPatch, t
     context = adapter.gather_structural_context("review")
 
     assert context.status == adapter.STATUS_AVAILABLE
-    expected_launcher = str(tmp_path / ("codemap-py.bat" if os.name == "nt" else "codemap-py"))
+    expected_launcher = str(tmp_path / ("codemap-py.cmd" if os.name == "nt" else "codemap-py"))
     assert os.path.normcase(context.probe.launcher) == os.path.normcase(expected_launcher)
 
 
@@ -740,7 +791,7 @@ def test_cli_context_persists_json_to_out_path(monkeypatch: pytest.MonkeyPatch, 
     assert stdout_payload["protocol_version"] == "codemap-py.integration.v1"
     assert stdout_payload["artifact_schema_version"] == 3
     assert stdout_payload["query_kind"] == "standard"
-    expected_launcher = str(tmp_path / ("codemap-py.bat" if os.name == "nt" else "codemap-py"))
+    expected_launcher = str(tmp_path / ("codemap-py.cmd" if os.name == "nt" else "codemap-py"))
     assert os.path.normcase(stdout_payload["probe"]["launcher"]) == os.path.normcase(expected_launcher)
 
 

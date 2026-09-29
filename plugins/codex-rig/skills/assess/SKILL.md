@@ -26,6 +26,8 @@ Run evidence-first analysis: truth, risk, next action before implementation, rev
 
 For allowed GitHub reads, run the direct helper under an active opted-in `github-read` profile or request runtime approval for the complete owning command. No separate workflow consent is needed. Apply [GitHub Read Execution](../../shared/native-skill-contract.md#github-read-execution); an unexpected runtime restriction or denial stops the attempt.
 
+When `github-read` is active in this session, omit `sandbox_permissions` and `justification` on every `github_read.py` or `collect_pr.py` call; do not give an approval brief or request escalation merely because the helper uses GitHub, `gh`, or Git fetch. Use the ordinary-session approval path only without that active profile.
+
 Codex provides this selected `SKILL.md` path. Resolve `PLUGIN_ROOT` as directory two levels above containing skill directory, then use only helpers under `PLUGIN_ROOT/shared/` that are listed in `package-manifest.json`. Never guess cache version or fall back to source checkout.
 
 ### 01: Create run directory

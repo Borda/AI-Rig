@@ -922,6 +922,8 @@ def _write_remediation_candidate(
     )
     if selected_indexes:
         metadata["resolution_workplan"].update(
+            parallel_approval_status="parent-only",
+            parallel_approval_source="workflow-default",
             groups_total=1,
             parent_owned_groups=1,
             verifier_groups=1,
@@ -938,6 +940,14 @@ def _write_remediation_candidate(
             ],
         )
         _write_workplan(metadata, tmp_path)
+        workplan_path = tmp_path / "resolution-workplan.md"
+        workplan_path.write_text(
+            workplan_path.read_text(encoding="utf-8").replace(
+                "## Parallel Approval\n",
+                "## Parallel Approval\n\nIneligibility reason: One selected closure item forms one coherent bucket.\n",
+            ),
+            encoding="utf-8",
+        )
     _write_action_items(metadata, tmp_path)
     with (tmp_path / "action-items.md").open("a", encoding="utf-8", newline="\n") as stream:
         stream.write("\n## Review Report Intake\n\nTwo report items already closed.\n")

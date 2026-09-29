@@ -754,12 +754,14 @@ def _app_server_loop(
     return validator, run, tmp_path / "unused-codex-home"
 
 
-@pytest.mark.parametrize("spawn_receipts", [False, True])
-def test_validates_native_review_against_frozen_source_diff_and_output(tmp_path: Path, spawn_receipts: bool) -> None:
-    """Accept only a real Code Review schema-five route that binds all required evidence."""
+@pytest.mark.parametrize("route", ["legacy-events", "spawn-receipts", "frozen-read"])
+def test_validates_native_review_against_frozen_source_diff_and_output(tmp_path: Path, route: str) -> None:
+    """Accept current and historical native routes with complete frozen evidence."""
     validator, run, fixture = _bound_loop(tmp_path)
-    if spawn_receipts:
+    if route == "spawn-receipts":
         _module(REVIEW_TESTS / "test_review_inspection.py")._use_spawn_receipts(fixture)
+    elif route == "frozen-read":
+        _module(REVIEW_TESTS / "test_review_inspection.py")._use_frozen_read_receipts(fixture)
 
     validator.validate_loop_evidence(run, fixture["sessions"])
 

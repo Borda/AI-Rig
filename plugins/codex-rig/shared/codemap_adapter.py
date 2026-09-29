@@ -11,13 +11,15 @@ decisions can distinguish healthy context from degraded context.
 
 It calls only ``codemap-py doctor --json`` and public query commands; absence or incompatibility is non-fatal and
 callers retain local inspection. ``CODEMAP_BIN`` is accepted only when it names an absolute, non-symlink executable, and
-every subprocess is bounded by the requested timeout.
+``--provider-root`` accepts one caller-selected active install root when ``CODEMAP_BIN`` is unset. It never searches
+installation caches. Every subprocess is bounded by the requested timeout.
 
 ## Usage
 
 Run ``python codemap_adapter.py probe`` or use the adapter's ``context`` action with ``--category`` and persist the
 result once per workflow. The context form accepts an optional dotted target, ``--query-kind`` (skip, one compact fact,
-or standard), repository root, timeout, and ``--out`` path; it always prints the same JSON payload that it writes.
+or standard), repository root, timeout, ``--provider-root``, and ``--out`` path; it always prints the same JSON payload
+that it writes. The probe form also accepts ``--provider-root``.
 
 ## Used by
 
@@ -275,8 +277,8 @@ def _configured_launcher_is_valid(candidate: Path) -> bool:
     return os.access(candidate, os.X_OK)
 
 
-def _resolve_codemap_executable() -> LauncherResolution:
-    """Resolve one validated launcher, failing closed for a nonempty invalid `CODEMAP_BIN`."""
+def _resolve_codemap_executable(provider_root: Path | None = None) -> LauncherResolution:
+    """Resolve a caller-selected provider or launcher without searching install caches."""
     configured = os.environ.get("CODEMAP_BIN")
     if configured:
         candidate = Path(configured)
@@ -287,6 +289,15 @@ def _resolve_codemap_executable() -> LauncherResolution:
             STATUS_INCOMPATIBLE,
             "CODEMAP_BIN must be an absolute, non-symlink executable file",
         )
+    if provider_root is not None:
+        if not provider_root.is_absolute() or provider_root.is_symlink() or not provider_root.is_dir():
+            return LauncherResolution(
+                None, STATUS_INCOMPATIBLE, "provider root must be an absolute non-symlink directory"
+            )
+        launcher = provider_root / "bin" / ("codemap-py.cmd" if os.name == "nt" else "codemap-py")
+        if not _configured_launcher_is_valid(launcher):
+            return LauncherResolution(None, STATUS_INCOMPATIBLE, "provider root has no executable codemap-py launcher")
+        return LauncherResolution(str(launcher), STATUS_AVAILABLE, "caller-selected provider root")
     executable = shutil.which("codemap-py")
     if executable is None:
         return LauncherResolution(None, STATUS_ABSENT, "codemap-py not found on PATH")
@@ -334,14 +345,15 @@ def _probe_codemap(resolution: LauncherResolution, timeout: float) -> ProbeResul
     return ProbeResult(STATUS_AVAILABLE, "doctor healthy", resolution.launcher, doctor)
 
 
-def probe_codemap(timeout: float = _DEFAULT_TIMEOUT) -> ProbeResult:
+def probe_codemap(timeout: float = _DEFAULT_TIMEOUT, provider_root: Path | None = None) -> ProbeResult:
     """Probe `codemap-py` presence and interpreter health via the public CLI only.
 
     Examples:
         >>> probe_codemap().status in {"available", "absent", "incompatible"}
         True
     """
-    return _probe_codemap(_resolve_codemap_executable(), timeout)
+    resolution = _resolve_codemap_executable() if provider_root is None else _resolve_codemap_executable(provider_root)
+    return _probe_codemap(resolution, timeout)
 
 
 def _run_one_query(
@@ -535,6 +547,7 @@ def gather_structural_context(
     root: Path | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
     query_kind: str = "standard",
+    provider_root: Path | None = None,
 ) -> StructuralContext:
     """Record a skip, one fact query, or a category's legacy standard query batch.
 
@@ -555,7 +568,7 @@ def gather_structural_context(
             status=STATUS_SKIPPED,
             probe=probe,
         )
-    resolution = _resolve_codemap_executable()
+    resolution = _resolve_codemap_executable() if provider_root is None else _resolve_codemap_executable(provider_root)
     probe = _probe_codemap(resolution, timeout)
     queries: tuple[QueryOutcome, ...] = ()
     if probe.status == STATUS_AVAILABLE and resolution.launcher is not None:
@@ -594,6 +607,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
     probe_parser = sub.add_parser("probe", help="Probe codemap-py availability and interpreter health.")
     probe_parser.add_argument("--timeout", type=float, default=_DEFAULT_TIMEOUT)
+    probe_parser.add_argument("--provider-root", type=Path, help="Absolute active installed provider root.")
 
     context_parser = sub.add_parser("context", help="Gather one category's structural-context evidence.")
     context_parser.add_argument("--category", required=True, choices=sorted(CATEGORY_QUERIES))
@@ -607,6 +621,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     context_parser.add_argument("--root", type=Path, default=None)
     context_parser.add_argument("--out", type=Path, default=None, help="Also persist JSON to this run-artifact path.")
     context_parser.add_argument("--timeout", type=float, default=_DEFAULT_TIMEOUT)
+    context_parser.add_argument("--provider-root", type=Path, help="Absolute active installed provider root.")
 
     return parser.parse_args(argv)
 
@@ -615,7 +630,7 @@ def main(argv: list[str] | None = None) -> int:
     """Dispatch `probe`/`context`; always exits 0 — absence/incompatibility is data, not failure."""
     arguments = _parse_args(argv)
     if arguments.mode == "probe":
-        _write_output(probe_codemap(timeout=arguments.timeout).to_dict(), None)
+        _write_output(probe_codemap(timeout=arguments.timeout, provider_root=arguments.provider_root).to_dict(), None)
         return 0
     context = gather_structural_context(
         category=arguments.category,
@@ -623,6 +638,7 @@ def main(argv: list[str] | None = None) -> int:
         root=arguments.root,
         timeout=arguments.timeout,
         query_kind=arguments.query_kind,
+        provider_root=arguments.provider_root,
     )
     _write_output(context.to_dict(), arguments.out)
     return 0

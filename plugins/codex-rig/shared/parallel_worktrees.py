@@ -7,11 +7,11 @@ without promoting generic parallel writes.
 
 ## Scope
 
-Validate exact frozen plan and approval bytes, create detached sibling child worktrees, verify parent-joined handovers
+Validate exact frozen plan and approval bytes, create detached managed child worktrees, verify parent-joined handovers
 against observed Git changes, derive hash-bound patches, integrate them deterministically, apply one checked source
-bundle, and remove only successful worktrees after durable evidence exists. The module rejects source dirt, plan drift,
-child commits, untracked or undeclared paths, symlink traversal, mutable integration drift, partial joins, and ambiguous
-rollback.
+bundle, and remove only successful worktrees after durable evidence exists. The module rejects edits to approved source
+paths, plan drift, child commits, untracked or undeclared paths, symlink traversal, mutable integration drift, partial
+joins, and ambiguous rollback.
 
 ## Usage
 
@@ -229,13 +229,20 @@ def _code_remediate_source_path(workspace_root: Path, value: object, label: str)
 def _code_remediate_worktree_path(
     workspace_root: Path, source_relative: str, value: object, label: str
 ) -> tuple[str, Path]:
-    """Resolve a sibling managed worktree root without allowing source nesting."""
+    """Resolve a managed sibling or ignored source-local worktree path."""
     relative = _portable_relative(value, label)
     parts = PurePosixPath(relative).parts
     source_relative, source_path = _code_remediate_source_path(workspace_root, source_relative, "source-repository")
     source = _canonical_path(source_relative)
     candidate = _canonical_path(relative)
-    if candidate == source or candidate.startswith(f"{source}/") or parts[0] != ".codex-rig-worktrees":
+    source_parts = PurePosixPath(source_relative).parts
+    local_parts = (*source_parts, ".reports", "codex", "code-remediate-worktrees")
+    sibling = parts[0] == ".codex-rig-worktrees" and candidate != source and not candidate.startswith(f"{source}/")
+    source_local = parts[: len(local_parts)] == local_parts and len(parts) in {
+        len(local_parts) + 1,
+        len(local_parts) + 2,
+    }
+    if not sibling and not source_local:
         raise PilotError(f"{label}-not-managed-sibling")
     current = workspace_root
     for part in parts:
@@ -248,6 +255,18 @@ def _code_remediate_worktree_path(
         resolved.relative_to(workspace_root.resolve(strict=True))
     except (OSError, ValueError) as error:
         raise PilotError(f"{label}-outside-workspace") from error
+    if source_local:
+        try:
+            resolved.relative_to(source_path.resolve(strict=True))
+        except (OSError, ValueError) as error:
+            raise PilotError(f"{label}-outside-source") from error
+        source_local_relative = PurePosixPath(*parts[len(source_parts) :]).as_posix()
+        # Nested worktrees must stay invisible to the authoritative checkout's status and patch boundary.
+        try:
+            _git(source_path, "check-ignore", "--", source_local_relative)
+        except PilotError as error:
+            raise PilotError(f"{label}-not-ignored") from error
+        return relative, worktree
     try:
         resolved.relative_to(source_path.resolve(strict=True))
     except ValueError:
@@ -1053,23 +1072,40 @@ def _git_operation(repository: Path) -> str | None:
     return None
 
 
-def _require_clean_code_remediate_source(
-    repository: Path, baseline_head: str | None = None, evidence_root: str | None = None
+def _require_unchanged_code_remediate_source(
+    repository: Path, owned_paths: list[str], baseline_head: str | None = None
 ) -> None:
-    """Require a clean source except for untracked evidence in the active run root."""
+    """Reject source operations, HEAD drift, and edits overlapping approved paths."""
     operation = _git_operation(repository)
     if operation is not None:
         raise PilotError(f"source-repository-{operation}")
+    if _git_bytes(repository, "ls-files", "--unmerged", "-z"):
+        raise PilotError("source-repository-unmerged")
     if baseline_head is not None and _git(repository, "rev-parse", "HEAD") != baseline_head:
         raise PilotError("source-repository-head-drift")
-    for record in _git_bytes(repository, "status", "--porcelain=v1", "-z", "--untracked-files=all").split(b"\0"):
-        if not record:
-            continue
+    protected = {_canonical_path(path) for path in owned_paths}
+    records = _git_bytes(repository, "status", "--porcelain=v1", "-z", "--untracked-files=all").split(b"\0")
+    position = 0
+    while position < len(records) and records[position]:
+        record = records[position]
+        if len(record) < 4 or record[2:3] != b" ":
+            raise PilotError("source-repository-status-invalid")
         status = record[:2]
-        path = record[3:].decode("utf-8", errors="strict")
-        if status == b"??" and evidence_root is not None and path.startswith(f"{evidence_root}/"):
-            continue
-        raise PilotError("source-repository-dirty")
+        paths = [os.fsdecode(record[3:])]
+        # Porcelain -z emits the original name as a second record for renames and copies.
+        if b"R" in status or b"C" in status:
+            position += 1
+            if position >= len(records) or not records[position]:
+                raise PilotError("source-repository-status-invalid")
+            paths.append(os.fsdecode(records[position]))
+        for path in paths:
+            candidate = _canonical_path(path)
+            if any(
+                candidate == owned or candidate.startswith(f"{owned}/") or owned.startswith(f"{candidate}/")
+                for owned in protected
+            ):
+                raise PilotError("source-repository-dirty")
+        position += 1
 
 
 def _validate_code_remediate_approval(plan_path: Path, approval_path: Path) -> tuple[dict[str, Any], str, str]:
@@ -1266,12 +1302,12 @@ def prepare_code_remediate_pilot(
     worktree_relative, worktree_root = _code_remediate_worktree_path(
         workspace, source_relative, plan.get("worktree_root"), "worktree-root"
     )
-    _require_clean_code_remediate_source(source, evidence_root=evidence_root)
+    nodes = _code_remediate_nodes(plan, source, evidence_root)
+    _require_unchanged_code_remediate_source(source, [path for node in nodes for path in node["owned_paths"]])
     baseline_head = _git(source, "rev-parse", "HEAD")
     baseline_tree = _git(source, "rev-parse", "HEAD^{tree}")
     if plan.get("baseline_head") != baseline_head or plan.get("baseline_tree") != baseline_tree:
         raise PilotError("source-repository-baseline-mismatch")
-    nodes = _code_remediate_nodes(plan, source, evidence_root)
     for output in [*(node["output"] for node in nodes), "source-application.patch", "rollback.patch"]:
         _, output_path = _code_remediate_evidence_path(source, f"{evidence_root}/{output}", "lifecycle-output")
         if output_path.exists() or output_path.is_symlink():
@@ -1383,7 +1419,9 @@ def _code_remediate_authority(
     ):
         raise PilotError("lifecycle-state-baseline-invalid")
     if clean:
-        _require_clean_code_remediate_source(source, state["baseline_head"], state.get("evidence_root"))
+        _require_unchanged_code_remediate_source(
+            source, [path for node in nodes for path in node["owned_paths"]], state["baseline_head"]
+        )
     elif _git_operation(source) is not None:
         raise PilotError("source-repository-operation-in-progress")
     return source, nodes
@@ -1457,7 +1495,9 @@ def _join_code_remediate_child_handovers(
         node["handover"] = {key: report[key] for key in ("status", "summary", "changed_paths", "patch_sha256")}
         node["terminal_status"] = "completed"
         node["joined"] = True
-    _require_clean_code_remediate_source(source, state["baseline_head"], state.get("evidence_root"))
+    _require_unchanged_code_remediate_source(
+        source, [path for node in nodes for path in node["owned_paths"]], state["baseline_head"]
+    )
     state["joined_nodes"] = [
         {
             "node_id": node["node_id"],
@@ -1737,9 +1777,16 @@ def apply_code_remediate_source(*, state_path: Path) -> dict[str, object]:
     }
     state.update({"status": "source-applying", "source_application": application})
     _persist(state_path, state)
+    # Preflight failures have not changed approved paths, so they must never invoke rollback restoration.
     try:
-        _require_clean_code_remediate_source(source, state["baseline_head"], state.get("evidence_root"))
+        _require_unchanged_code_remediate_source(source, paths, state["baseline_head"])
         _git(source, "apply", "--check", str(patch_path))
+    except PilotError:
+        application["status"] = "failed"
+        state["status"] = "failed"
+        _persist(state_path, state)
+        raise
+    try:
         _git(source, "apply", str(patch_path))
         observed_filtered_oids = {path: _git_filtered_oid(source, path) for path in paths}
         if observed_filtered_oids != postimage_filtered_oids:
