@@ -79,6 +79,10 @@ Severity: deprecated/invalid = **high**; deprecated frontmatter field = **medium
 
 After checks complete: collect `⚠` lines, write full details to `$RUN_DIR/system-checks.md`, include only summary table in context.
 
+## Step 5: Aggregate and classify findings
+
+**Delegate aggregation** to consolidator agent to avoid flooding main context. Same block refreshes the compaction contract (Step 4 → Step 5 aggregate boundary) and resolves the two absolute paths the consolidator must read — it runs in a fresh shell, can't expand orchestrator variables, so these are interpolated as literal strings into the prompt below:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || _RUN_DIR=""
@@ -86,14 +90,6 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/audit-state-${CSID}/keep-items" 2>/dev/nul
 _PRESERVE="run-dir=$_RUN_DIR, static-findings=${TMPDIR:-/tmp}/audit-state-${CSID}/static-findings.jsonl, finding-files=$_RUN_DIR/*.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:audit" "aggregate (after parallel curator+system-checks fan-out)" "$_RUN_DIR" "$_PRESERVE" "consolidate findings → aggregate.md + summary.jsonl → Step 7 report"  # timeout: 5000
-```
-
-## Step 5: Aggregate and classify findings
-
-**Delegate aggregation** to consolidator agent to avoid flooding main context. Resolve the two absolute paths the consolidator must read — it runs in a fresh shell, can't expand orchestrator variables, so these are interpolated as literal strings into the prompt below:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r LOCAL_MODE < "${TMPDIR:-/tmp}/audit-state-${CSID}/local-mode" 2>/dev/null || LOCAL_MODE="false"
 AUDIT_TPL=$(cat "${TMPDIR:-/tmp}/audit-state-${CSID}/audit-tpl" 2>/dev/null || python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_skill_subdir.py" audit templates $( [ "$LOCAL_MODE" = true ] && echo "--local" ))
 IFS= read -r RUN_DIR < "${TMPDIR:-/tmp}/audit-state-${CSID}/run-dir" 2>/dev/null || RUN_DIR=""

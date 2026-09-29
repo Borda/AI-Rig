@@ -61,15 +61,15 @@ def test_visible_tables_use_compact_sources_without_dropping_details() -> None:
     assert "omitted_source_records_total" in skill
 
 
-def test_work_buckets_bound_parallel_remediation_overhead() -> None:
-    """Keep remediation fan-out disjoint, bounded, and user-approved."""
+def test_work_buckets_default_to_parallel_with_guarded_overlap() -> None:
+    """Keep parallel remediation bounded without forcing parent-owned small scopes."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     assert "Work Bucket Plan" in skill
     assert "at most five selected items" in skill
-    assert "non-overlapping" in skill
-    assert "five or fewer selected items" in skill
-    assert "Do not spawn one specialist per finding" in skill
-    assert "user confirms that exact digest before parallel dispatch" in skill
+    assert "Plan parallel dispatch by default after selection" in skill
+    assert "same exact repo-relative file" in skill
+    assert "do not manufacture a second task" in skill
+    assert "A denial does not create runtime capacity" in skill
     assert "approved_plan_sha256" in skill
 
 
@@ -102,9 +102,9 @@ def test_parallel_child_verification_preserves_zero_output_boundary() -> None:
     assert "exact no-cache or no-output verification commands" in skill
     assert "Before hashing the plan, preflight every exact child verification command" in skill
     assert "Freeze only byte-identical command text that passed preflight" in skill
-    assert "requires a new plan digest and approval" in skill
+    assert "requires a new plan digest and dispatch record" in skill
     assert "must not delete verification output after the command" in skill
-    assert "re-plan that bucket as parent-owned or sequential" in skill
+    assert "ask for parent-owned or sequential fallback" in skill
 
 
 def test_parallel_preflight_does_not_require_future_implementation() -> None:
@@ -116,7 +116,7 @@ def test_parallel_preflight_does_not_require_future_implementation() -> None:
     postimage = lifecycle.index("After implementation and before handover")
     assert baseline < freeze < postimage
     assert "expected baseline regression failures" in lifecycle
-    assert "Do not create planned postimages before approval" in lifecycle
+    assert "Do not create planned postimages before dispatch" in lifecycle
     assert "require exit zero on every exact approved child check" in lifecycle
     assert "must not delete verification output" in lifecycle
 
@@ -162,14 +162,14 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert "collapsed output" in scope_contract
 
 
-def test_parallel_approval_question_has_one_rendering_owner() -> None:
-    """Prevent plan approval appearing in prose and its interactive control."""
+def test_parallel_default_asks_only_for_sequential_fallback() -> None:
+    """Keep the workflow-default dispatch distinct from an explicit fallback choice."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     workplan_contract = skill.split("### 06: Build And Approve The Work Bucket Plan", maxsplit=1)[1].split(
         "### 07: Apply Fixes In Selected Scope", maxsplit=1
     )[0]
 
-    assert workplan_contract.count("Approve these parallel work buckets?") == 1
-    assert "The approval control is the sole owner of this question and its choices." in workplan_contract
-    assert "must not contain the approval question or its choices" in workplan_contract
-    assert "ask once in plain text instead of opening the control" in workplan_contract
+    assert workplan_contract.count("Authorize parent-owned or sequential fallback for this selected scope?") == 1
+    assert "`source=workflow-default`" in workplan_contract
+    assert "`prompt_presented=false`" in workplan_contract
+    assert "An approved fallback records `response=parent-only`" in workplan_contract

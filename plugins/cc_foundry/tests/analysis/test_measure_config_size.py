@@ -109,6 +109,47 @@ class TestOverhead:
         mcs.report_overhead(claude, tmp_path / "absent.md", tmp_path / "global")
         assert "⚠ WARN Check 34b" in capsys.readouterr().out
 
+    def test_user_rules_dir_counted(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Rules delivered to the user directory count toward the total.
+
+        Every plugin's setup skill symlinks its rules into `~/.claude/rules/`, and a project `.claude/` usually has no
+        `rules/` at all. Counting only the project directory reported `Rules dir total: 0 bytes` on a normal machine, so
+        the bulk of the always-loaded set never reached the Check 34a total.
+        """
+        global_dir = tmp_path / "global"
+        _write(global_dir / "rules" / "delivered.md", 4000)
+        mcs.report_overhead(tmp_path / ".claude", tmp_path / "absent.md", global_dir)
+        assert "Rules dir total:    4000 bytes" in capsys.readouterr().out
+
+    def test_user_rules_file_flagged_by_size(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A per-file threshold applies to a delivered rule, not only a project one.
+
+        The oversized rules this check exists to surface are the delivered ones; flagging only project rules left every
+        real offender unreported.
+        """
+        global_dir = tmp_path / "global"
+        _write(global_dir / "rules" / "big.md", mcs.RULES_FAIL_BYTES + 10)
+        mcs.report_overhead(tmp_path / ".claude", tmp_path / "absent.md", global_dir)
+        assert "! FAIL Check 34b" in capsys.readouterr().out
+
+    def test_symlinked_rule_counted_once(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """A project rule symlinked to a delivered one contributes its bytes once.
+
+        Counting both directories naively would double-count exactly the files the setup skills link, inflating the
+        figure the gate compares against 100 KB.
+        """
+        global_dir = tmp_path / "global"
+        target = global_dir / "rules" / "shared.md"
+        _write(target, 3000)
+        link_dir = tmp_path / ".claude" / "rules"
+        link_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            (link_dir / "shared.md").symlink_to(target)
+        except OSError:
+            pytest.skip("symlinks unavailable on this host")
+        mcs.report_overhead(tmp_path / ".claude", tmp_path / "absent.md", global_dir)
+        assert "Rules dir total:    3000 bytes" in capsys.readouterr().out
+
 
 class TestCli:
     """Covers argument handling."""

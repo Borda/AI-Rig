@@ -96,6 +96,7 @@ CLOSE_CODES = {
 ACTION_TABLE_SECTION = "Review Findings and Merge Blocks"
 ACTION_TABLE_HEADERS = ("Finding / area", "Required change", "Evidence", "Status")
 ALL_MANIFEST_ROLES = {
+    "sw-engineer",
     "qa-specialist",
     "challenger",
     "solution-architect",
@@ -478,6 +479,23 @@ def _validate_routing(out_dir: Path, risk_tier: str) -> set[str]:
         raise SystemExit("review-routing-mechanical-signals-false:" + ",".join(missing_mandatory))
 
     triggered: set[str] = set()
+    # Source paths select the primary code reviewer; test modules remain QA's review surface.
+    for filename in ("files.txt", "untracked.txt"):
+        changed_file = out_dir / filename
+        if not changed_file.exists():
+            continue
+        for raw_path in changed_file.read_text(encoding="utf-8").splitlines():
+            parts = raw_path.strip().replace("\\", "/").lower().split("/")
+            name = parts[-1]
+            if (
+                name.endswith((".py", ".pyi"))
+                and "tests" not in parts[:-1]
+                and not name.startswith(("test_", "conftest."))
+            ):
+                triggered.add("sw-engineer")
+                break
+        if "sw-engineer" in triggered:
+            break
     if risk_tier in INDEPENDENT_PASS_TIERS:
         triggered.update(REQUIRED_ROLES)
     if risk_tier in {"TRIVIAL", "LOCAL"} and any(
@@ -662,6 +680,12 @@ def _validate_reviewer_assessments(
     assessments = metadata.get("reviewer_assessments")
     if not isinstance(assessments, list) or not assessments:
         raise SystemExit("review-assessments-invalid")
+    if "sw-engineer" in passes_by_role:
+        primary = "Software engineer"
+        if passes_by_role["sw-engineer"]["mode"] == "substituted":
+            primary += " (parent substitute)"
+        if not isinstance(assessments[0], dict) or assessments[0].get("role", "").casefold() != primary.casefold():
+            raise SystemExit("review-primary-software-engineer-order")
     expected = {
         (_readable_review_role(role) + (" (parent substitute)" if item["mode"] == "substituted" else "")).casefold(): (
             role,
@@ -760,7 +784,7 @@ def _validate_review_decision(metadata: dict[str, Any], result: dict[str, Any]) 
                 if not isinstance(item, dict) or item.get("mode") != "substituted":
                     continue
                 role_id = item.get("role")
-                if not isinstance(role_id, str) or role_id not in ALL_MANIFEST_ROLES | {"sw-engineer"}:
+                if not isinstance(role_id, str) or role_id not in ALL_MANIFEST_ROLES:
                     raise SystemExit("review-substitute-role-invalid")
                 label = f"{_readable_review_role(role_id)} (parent substitute)"
                 expected_substitutes.add(label.casefold())
@@ -2996,6 +3020,16 @@ def _validate_independence_requirement(
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
+    if (
+        evidence.manifest.get("schema_version") in {3, 4, 5}
+        and status == "pass"
+        and len(evidence.triggered_roles) >= 2
+        and (
+            evidence.runtime_summary.get("actual_mode") != "parallel"
+            or any(item["mode"] not in {"inspection", "spawned", "app-server"} for item in evidence.passes)
+        )
+    ):
+        raise SystemExit("parallel-review-required-for-pass:" + ",".join(sorted(evidence.triggered_roles)))
 
     fanout_substituted = any(item["mode"] == "substituted" for item in evidence.passes)
     if metadata.get("fanout_substituted") is not fanout_substituted:

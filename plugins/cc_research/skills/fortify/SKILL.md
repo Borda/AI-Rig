@@ -467,18 +467,14 @@ rm -f "${TMPDIR:-/tmp}/fortify-variant-idx-${CSID}" "${TMPDIR:-/tmp}/fortify-pat
 git worktree prune  # timeout: 15000
 ```
 
-`prune` only drops registrations whose directory is already gone. The inverse — directory present, never removed because the accumulator entry was never written (interrupt between `worktree add` and the append) — is invisible to it and to `git worktree list`. Sweep the variant root for those:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=""
-[ -n "$_FDIR" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/heal_git_artifacts.py" worktrees --root "$_FDIR/worktrees" --managed-prefix '*' --min-age-days 1 --apply  # timeout: 30000
-```
+`prune` only drops registrations whose directory is already gone. The inverse — directory present, never removed because the accumulator entry was never written (interrupt between `worktree add` and the append) — is invisible to it and to `git worktree list`. Sweep the variant root for those, then write the boundary-2 compaction contract in the same call — no state-changing decision sits between them, so they ride one turn.
 
 > `--managed-prefix '*'` is safe **only** because `--root` is fortify's own variant directory — every child there is fortify's. Never widen it to a shared root. Variants holding uncommitted work are reported, not deleted. `--apply` is unattended here for parity with the `git worktree remove --force` above (same trees, same run) — but print the output verbatim whenever it removed anything, so the sweep is never silent.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+IFS= read -r _FDIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FDIR=""
+[ -n "$_FDIR" ] && python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/heal_git_artifacts.py" worktrees --root "$_FDIR/worktrees" --managed-prefix '*' --min-age-days 1 --apply  # timeout: 30000
 # boundary 2: F4 all variants complete (compaction-contract.md §Lifecycle)
 IFS= read -r _RUN_ID < "${TMPDIR:-/tmp}/fortify-run-id-${CSID}" 2>/dev/null || _RUN_ID=""
 IFS= read -r _FORTIFY_DIR < "${TMPDIR:-/tmp}/fortify-dir-${CSID}" 2>/dev/null || _FORTIFY_DIR=""
@@ -486,6 +482,8 @@ IFS= read -r _KEEP < "${TMPDIR:-/tmp}/fortify-keep-items-${CSID}" 2>/dev/null ||
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:fortify" "post-ablation (after F4 worktrees complete)" "${_FORTIFY_DIR}" "run-id=${_RUN_ID}, fortify-dir=${_FORTIFY_DIR}, results=${_FORTIFY_DIR}/results.jsonl${_KEEP_APPEND}" "F5 rank importance → F6 reviewer Q&A → F7 report"  # timeout: 5000
 ```
+
+> `--managed-prefix '*'` is safe **only** because `--root` is fortify's own variant directory — every child there is fortify's. Never widen it to a shared root. Variants holding uncommitted work are reported, not deleted. `--apply` is unattended here for parity with the `git worktree remove --force` above (same trees, same run) — but print the output verbatim whenever it removed anything, so the sweep is never silent.
 
 **Post-loop delta computation**:
 

@@ -11,6 +11,12 @@ The guard is deliberately *name*-level, not byte-level. The three sibling copies
 foundry's prose and reshape some sections from paragraphs into numbered lists; requiring byte identity would either
 forbid that compression or re-expand the siblings and grow every session's context. What must not differ is the *set of
 rules*. A new obligation added to one copy alone changes that set and fails here.
+
+Each sibling additionally ships a ``rules/quality-gates-delta.md``: the subset ``<plugin>:setup`` delivers in place of
+the full file once foundry's copy is already installed, so one shared body loads instead of four. The rule *set* a
+plugin states is therefore spread over two files, and every check below reads them as one text. A delta may only
+restate what its own full file already says — it is a delivery optimisation, never a place to put policy, which
+:func:`test_a_delta_states_no_rule_its_full_file_lacks` enforces.
 """
 
 from __future__ import annotations
@@ -23,6 +29,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PLUGINS = ("cc_foundry", "cc_develop", "cc_oss", "cc_research")
 RULE_NAME = "quality-gates.md"
+DELTA_NAME = "quality-gates-delta.md"
+# foundry owns the shared body, so it has nothing to defer and ships no delta.
+SATELLITES = tuple(plugin for plugin in PLUGINS if plugin != "cc_foundry")
 
 # ``Output Routing`` states the same obligations in two shapes: foundry inlines the terminal-print
 # steps into one prose paragraph, while the siblings break them into nested bullets that carry their
@@ -71,6 +80,10 @@ def _fenced_spans(text: str) -> list[tuple[int, int]]:
 def _sections(text: str) -> dict[str, str]:
     """Split a rule file into its ``## `` sections, ignoring headings inside fenced blocks.
 
+    A heading that recurs has its bodies concatenated rather than overwritten: the delta repeats
+    its full file's review-loop heading, and dropping the earlier body would silently exempt
+    every rule stated there from the parity guard.
+
     Args:
         text: Full file text.
 
@@ -80,13 +93,17 @@ def _sections(text: str) -> dict[str, str]:
     Examples:
         >>> sorted(_sections("## A\\n\\nbody a\\n\\n## B\\n\\nbody b\\n"))
         ['A', 'B']
+        >>> _sections("## A\\n\\nfirst\\n\\n## A\\n\\nsecond\\n")["A"]
+        'first\\n\\nsecond'
     """
     spans = _fenced_spans(text)
     headings = [m for m in _HEADING.finditer(text) if not any(a <= m.start() < b for a, b in spans)]
     out: dict[str, str] = {}
     for index, heading in enumerate(headings):
         end = headings[index + 1].start() if index + 1 < len(headings) else len(text)
-        out[heading.group(1).strip()] = text[heading.end() : end].strip()
+        name = heading.group(1).strip()
+        body = text[heading.end() : end].strip()
+        out[name] = f"{out[name]}\n\n{body}" if name in out else body
     return out
 
 
@@ -141,10 +158,44 @@ def _rule_files() -> dict[str, Path]:
     return {plugin: REPO_ROOT / "plugins" / plugin / "rules" / RULE_NAME for plugin in PLUGINS}
 
 
+def _delta_files() -> dict[str, Path]:
+    """Locate every satellite's ``rules/quality-gates-delta.md``.
+
+    Returns:
+        Path keyed by plugin directory name.
+    """
+    return {plugin: REPO_ROOT / "plugins" / plugin / "rules" / DELTA_NAME for plugin in SATELLITES}
+
+
+def _delivered_text(plugin: str) -> str:
+    """Everything one plugin states about quality gates: its full rule plus its delta.
+
+    Only one of the two is ever delivered, but both are the plugin's own statement of policy, so
+    the rule set it must keep in step with its siblings is the union.
+
+    Args:
+        plugin: Plugin directory name.
+
+    Returns:
+        The full rule's text, with the delta's appended when the plugin ships one.
+    """
+    text = _rule_files()[plugin].read_text(encoding="utf-8")
+    delta = _delta_files().get(plugin)
+    if delta is not None and delta.is_file():
+        text = f"{text}\n{delta.read_text(encoding='utf-8')}"
+    return text
+
+
 def test_every_plugin_ships_the_shared_rule_file() -> None:
     """The parity check below is vacuous if a copy silently disappears."""
     missing = [plugin for plugin, path in _rule_files().items() if not path.is_file()]
     assert not missing, f"missing {RULE_NAME}: {missing}"
+
+
+def test_every_satellite_ships_a_delta() -> None:
+    """A satellite losing its delta would make the delta checks below silently vacuous."""
+    missing = [plugin for plugin, path in _delta_files().items() if not path.is_file()]
+    assert not missing, f"missing {DELTA_NAME}: {missing}"
 
 
 def _shared_sections() -> dict[str, dict[str, str]]:
@@ -153,7 +204,7 @@ def _shared_sections() -> dict[str, dict[str, str]]:
     Returns:
         Mapping of section key to ``{plugin: body}``.
     """
-    per_plugin = {plugin: _sections(path.read_text(encoding="utf-8")) for plugin, path in _rule_files().items()}
+    per_plugin = {plugin: _sections(_delivered_text(plugin)) for plugin in _rule_files()}
     shared: dict[str, dict[str, str]] = {}
     for plugin, sections in per_plugin.items():
         for heading, body in sections.items():
@@ -193,3 +244,30 @@ def test_the_guard_covers_more_than_one_section() -> None:
     """Guards against a parsing regression that would silently reduce coverage to nothing."""
     covered = set(_shared_sections()) - EXEMPT_SECTIONS
     assert len(covered) >= 5, f"only {len(covered)} shared sections parsed: {sorted(covered)}"
+
+
+@pytest.mark.parametrize("plugin", SATELLITES)
+def test_a_delta_states_no_rule_its_full_file_lacks(plugin: str) -> None:
+    """A delta abbreviates delivery, so policy written only there would reach nobody on a standalone install.
+
+    Args:
+        plugin: Satellite plugin directory name.
+    """
+    full = _named_rules(_rule_files()[plugin].read_text(encoding="utf-8"))
+    delta = _named_rules(_delta_files()[plugin].read_text(encoding="utf-8"))
+    assert not delta - full, (
+        f"{plugin}/{DELTA_NAME} states rules absent from {RULE_NAME}: {sorted(delta - full)}. "
+        f"Add them to the full file first — the delta is only delivered when foundry's copy is installed."
+    )
+
+
+@pytest.mark.parametrize("plugin", SATELLITES)
+def test_a_delta_carries_its_output_routing_section_verbatim(plugin: str) -> None:
+    """Output Routing is the one section the delta must supply, so it may not drift from the full file.
+
+    Args:
+        plugin: Satellite plugin directory name.
+    """
+    full = _sections(_rule_files()[plugin].read_text(encoding="utf-8"))["Output Routing"]
+    delta = _sections(_delta_files()[plugin].read_text(encoding="utf-8"))["Output Routing"]
+    assert delta == full, f"{plugin}/{DELTA_NAME} §Output Routing differs from {RULE_NAME}; copy it across verbatim"

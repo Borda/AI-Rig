@@ -155,6 +155,31 @@ def test_setup_rejects_plugin_outside_target_home(tmp_path: Path) -> None:
     assert not target.exists()
 
 
+@pytest.mark.parametrize("launcher", ["python", "python3", "env"])
+def test_setup_preserves_user_collector_approvals(tmp_path: Path, launcher: str) -> None:
+    """Install and clear the profile without claiming single-launcher user approvals."""
+    home = tmp_path / "home"
+    root = _installed_plugin(home)
+    collector = str(root / "shared" / "collect_pr.py")
+    rules = home / "rules" / "default.rules"
+    rules.parent.mkdir()
+    patterns = [[launcher, collector], [launcher, collector, "--target", "7", "--out", "report"]]
+    original = "".join(
+        f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\r\n' for pattern in patterns
+    ).encode()
+    rules.write_bytes(original)
+
+    setup = _run(home, "--plugin-root", str(root))
+
+    assert setup.returncode == 0, setup.stderr
+    assert rules.read_bytes() == original
+    assert "[permissions.github-read]" in (home / "config.toml").read_text()
+    clear = _run(home, "--remove")
+    assert clear.returncode == 0, clear.stderr
+    assert rules.read_bytes() == original
+    assert not (home / "config.toml").exists()
+
+
 def test_windows_legacy_rule_recognition_on_every_host(monkeypatch: pytest.MonkeyPatch) -> None:
     """Recognize native Windows reader coordinates without host path conversion."""
     monkeypatch.syspath_prepend(str(SCRIPT.parent))

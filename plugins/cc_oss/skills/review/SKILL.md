@@ -70,33 +70,7 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 ## Agent Resolution
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# loads: oss-shared-resolver.md
-# loads: review-section-taxonomy.md
-# loads: compaction-contract.md
-# cold-start fallback (sets $_OSS_SHARED)
-_OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
-# --reply needs $_OSS_SHARED (Step8 shepherd-reply-protocol.md); else degrades gracefully
-if [ ! -d "$_OSS_SHARED" ]; then
-    # Step 0 parses flags properly, but this cold-start guard runs before it, so derive
-    # --reply the same way rather than substring-testing the raw argument text.
-    eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply "$ARGUMENTS")"  # timeout: 5000
-    if [ "$FLAG_REPLY" = "true" ]; then
-        echo "⛔ _OSS_SHARED resolved to '$_OSS_SHARED' but dir absent — --reply requires oss plugin shared dir; verify oss plugin installed"
-        exit 1
-    else
-        echo "⚠ _OSS_SHARED resolved to '$_OSS_SHARED' but dir absent — continuing with degraded functionality (oss skill-specific shared helpers unavailable; --reply mode will not work in this run)"
-    fi
-fi
-echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/review-oss-shared-${CSID}"  # cross-block (Check 41)
-[ -d "$_OSS_SHARED" ] && cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
-
-REVIEW_SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-}/skills/review"
-[ -d "$REVIEW_SKILL_DIR" ] || REVIEW_SKILL_DIR=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/oss/*/skills/review 2>/dev/null | head -1)
-[ -z "$REVIEW_SKILL_DIR" ] && REVIEW_SKILL_DIR="plugins/cc_oss/skills/review"
-echo "$REVIEW_SKILL_DIR" > "${TMPDIR:-/tmp}/review-skill-dir-${CSID}"  # cross-block (Check 41)
-```
+`agent-resolution.md` (loaded below) contains: foundry check + fallback table. Resolved together with `--reply`'s early flag check, `REVIEW_SKILL_DIR`, Step 0's flag parsing, and the direct-report fast-path detection — one call, no decision point sits between them.
 
 > Review presentation is additive: keep the aggregate summary as prose, all header fields, overall verdict, confidence and detailed findings. Ask each actual reviewer for a scoped integer rating and rationale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Add `Reviewers:` after `Agents:` in the report header, using readable `Role (rating)` entries; label parent substitutes and omit skipped roles. A reviewer that ran without stating a judgment is 4, never approval; a reviewer that produced no output is not rated at all — report it as a missing-reviewer limitation. Never average role ratings into the final verdict. After rendering the header table, print exactly: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.` Findings overview adds `Author` after `ID`, retaining all contributing reviewer roles after deduplication. Read the summary and overview after the header rather than treating the header alone as the complete review. Terminal gate rejections preserve existing behavior and use `Reviewers: Not assessed` when no source reviewer ran.
 
@@ -104,7 +78,7 @@ Agents: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:perf-optimizer`
 
 **`REVIEW_SKILL_DIR`** (resolved above) — substitute into every Agent spawn prompt and every `cat "$REVIEW_SKILL_DIR/..."` call below.
 
-**Task hygiene**: Call `TaskList` first. Each found task: `completed` if work done · `deleted` if orphaned · `in_progress` if genuinely continuing. TaskCreate each major phase; mark in_progress/completed throughout.
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 Create these tasks **before** starting Step 1 (in order, all at once):
 
@@ -132,8 +106,35 @@ Parse `$ARGUMENTS` flags first (via `bin/parse-skill-flags.py`, C5) — this set
 
 `CLEAN_ARGS`: `$ARGUMENTS` with matched flags removed (including `--keep "<items>"` and its quoted value), leading whitespace stripped, leading `#` stripped.
 
+Also resolves `_OSS_SHARED`/`REVIEW_SKILL_DIR` (Agent Resolution above) and direct-report fast-path mode (a review-report `.md` path passed instead of a PR number) in the same call — no decision point separates them from flag parsing:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# loads: oss-shared-resolver.md
+# loads: review-section-taxonomy.md
+# loads: compaction-contract.md
+# cold-start fallback (sets $_OSS_SHARED)
+_OSS_SHARED=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_path.py" oss skills/_shared 2>/dev/null)  # timeout: 5000
+# --reply needs $_OSS_SHARED (Step8 shepherd-reply-protocol.md); else degrades gracefully
+if [ ! -d "$_OSS_SHARED" ]; then
+    # Guard runs before the full flag parse below, so derive --reply the same way
+    # rather than substring-testing the raw argument text.
+    eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply "$ARGUMENTS")"  # timeout: 5000
+    if [ "$FLAG_REPLY" = "true" ]; then
+        echo "⛔ _OSS_SHARED resolved to '$_OSS_SHARED' but dir absent — --reply requires oss plugin shared dir; verify oss plugin installed"
+        exit 1
+    else
+        echo "⚠ _OSS_SHARED resolved to '$_OSS_SHARED' but dir absent — continuing with degraded functionality (oss skill-specific shared helpers unavailable; --reply mode will not work in this run)"
+    fi
+fi
+echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/review-oss-shared-${CSID}"  # cross-block (Check 41)
+[ -d "$_OSS_SHARED" ] && cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
+
+REVIEW_SKILL_DIR="${CLAUDE_PLUGIN_ROOT:-}/skills/review"
+[ -d "$REVIEW_SKILL_DIR" ] || REVIEW_SKILL_DIR=$(ls -td ~/.claude/plugins/cache/borda-ai-rig/oss/*/skills/review 2>/dev/null | head -1)
+[ -z "$REVIEW_SKILL_DIR" ] && REVIEW_SKILL_DIR="plugins/cc_oss/skills/review"
+echo "$REVIEW_SKILL_DIR" > "${TMPDIR:-/tmp}/review-skill-dir-${CSID}"  # cross-block (Check 41)
+
 # parses --reply/--no-challenge/--worktree/--full/--keep; codemap flags detected-only, re-derived independently below
 # shared flag/--keep parser (C5; also resolve/analyse SKILL.md)
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/parse-skill-flags.py" --flags reply,no-challenge,no-codemap,codemap,worktree,full "$ARGUMENTS")"  # timeout: 5000
@@ -154,13 +155,7 @@ rm -f .temp/state/skill-contract.md "${TMPDIR:-/tmp}/oss-review-report-dir-${CSI
 echo "$CHALLENGE_ENABLED" > "${TMPDIR:-/tmp}/oss-review-challenge-enabled-${CSID}"
 echo "$CLEAN_ARGS" > "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}"
 echo "$KEEP_ITEMS" > "${TMPDIR:-/tmp}/oss-review-keep-items-${CSID}"  # timeout: 5000
-```
 
-Then set direct-report fast-path mode (a review-report `.md` path passed instead of a PR number):
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r CLEAN_ARGS < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || CLEAN_ARGS=""
 DIRECT_PATH_MODE=false
 if [[ "$CLEAN_ARGS" == *.md ]]; then
     # reject plan files — no replies drafted from plan content
@@ -889,15 +884,6 @@ This table IS the reply header — print/omit-box handling per quality-gates.md 
 
 **Hook-enforced**: `hooks/enforce-review-header.js` blocks only this workflow's follow-up question until the current report exists and every `---` header field appears in one matching two-column table in the parent reply since the last human turn. Missing/unreadable transcript evidence blocks this transition; reprint the header, then retry. Diagnostic/recovery questions remain available; use their own question header, not `oss-review`. The existing sentinel lifetime still scopes this workflow guard; it does not prove UI rendering or report correctness.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# boundary2: post-consolidation, pre-reply (compaction-contract.md §Lifecycle)
-IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="unknown"
-IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
-IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
-```
-
 ## Step 6: Delegate implementation follow-up (optional)
 
 Identify tasks Codex can implement — meaningful code/doc work grounded in actual implementation.
@@ -906,6 +892,11 @@ Identify tasks Codex can implement — meaningful code/doc work grounded in actu
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# boundary2: post-consolidation, pre-reply (compaction-contract.md §Lifecycle)
+IFS= read -r _PR_TAG < "${TMPDIR:-/tmp}/oss-review-pr-tag-${CSID}" 2>/dev/null || _PR_TAG="unknown"
+IFS= read -r _REPORT_DIR < "${TMPDIR:-/tmp}/oss-review-report-dir-${CSID}" 2>/dev/null || _REPORT_DIR=""
+IFS= read -r _RUN_DIR < "${TMPDIR:-/tmp}/oss-review-run-dir-${CSID}" 2>/dev/null || _RUN_DIR=""
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:review" "reply (after consolidation)" "$_RUN_DIR" "final-report=$_REPORT_DIR/review-report.md, pr=$_PR_TAG" "draft contributor reply (--reply) or stop at Step 7"  # timeout: 5000
 # Reload _OSS_SHARED (Check 41: fresh shell)
 IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/review-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""
 cat "$_OSS_SHARED/codex-delegation.md"  # timeout: 5000

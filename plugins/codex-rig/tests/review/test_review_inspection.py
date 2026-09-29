@@ -536,11 +536,28 @@ def test_schema_five_keeps_required_independence_when_optional_axis_falls_back(t
     fixture = _inspection_run(tmp_path)
     fixture["passes"].append({"role": "doc-scribe", "mode": "substituted"})
 
-    summary = _validator()._validate_review_runtime(
+    validator = _validator()
+    summary = validator._validate_review_runtime(
         fixture["run"], fixture["manifest"], fixture["passes"], fixture["sessions"], "parent-thread"
     )
 
     assert summary["independence_satisfied"] is True
+    assert summary["actual_mode"] == "parallel"
+    evidence = validator._SpecialistEvidence(
+        triggered_roles={"qa-specialist", "challenger", "doc-scribe"},
+        manifest=fixture["manifest"],
+        routing=json.loads((fixture["run"] / "review-routing.json").read_text(encoding="utf-8")),
+        passes=fixture["passes"],
+        by_role={item["role"]: item for item in fixture["passes"]},
+        runtime_summary=summary,
+    )
+    env = validator._ReviewEnvironment(
+        codex_home=fixture["sessions"], parent_thread_id="parent-thread", project_root=fixture["run"]
+    )
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass:challenger,doc-scribe,qa-specialist"):
+        validator._validate_independence_requirement(
+            fixture["run"], evidence, {"independence_requirement_evidence": None}, "pass", "HIGH_RISK", env
+        )
 
 
 def test_schema_five_accepts_single_local_required_role_lineage(tmp_path: Path) -> None:
@@ -604,8 +621,8 @@ def test_inspection_distinguishes_lifecycle_from_executable_events(
             validator._validate_manifest_preflight(fixture["run"], fixture["sessions"], "parent-thread", fixture["run"])
 
 
-def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_shortfall(tmp_path: Path) -> None:
-    """Exercise final-result acceptance separately from an explicit independence requirement."""
+def test_schema_five_result_requires_parallel_review_for_multiple_roles(tmp_path: Path) -> None:
+    """Reject passing multi-role fallbacks while retaining honest failed results."""
     completion = _module(Path(__file__).with_name("test_review_completion_gate.py"))
     assessed = completion._assessed_pr.__wrapped__(tmp_path)
     fixture = _inspection_run(tmp_path, run_dir=assessed, parent_thread_id="thread")
@@ -649,6 +666,15 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
     with pytest.raises(SystemExit, match="review-assessment-role-unbound:Invented reviewer"):
         validator._validate_result(assessed, candidate_path, fixture["sessions"], "thread", assessed)
 
+    second_child = fixture["sessions"] / "sessions" / "rollout-child-2.jsonl"
+    child_rows = [json.loads(line) for line in second_child.read_text(encoding="utf-8").splitlines()]
+    child_rows[-1]["payload"].update(started_at=200, completed_at=210)
+    _write_jsonl(second_child, child_rows)
+    metadata["execution_mode"] = "independent-spawned"
+    result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass:challenger,qa-specialist"):
+        validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
+
     for item in fixture["passes"]:
         item.pop("attempts")
         item.pop("selected_attempt")
@@ -685,7 +711,12 @@ def test_schema_five_result_accepts_fallback_and_rejects_explicit_independence_s
                 )
     result_path.write_text(json.dumps(result), encoding="utf-8", newline="\n")
 
-    validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass:challenger,qa-specialist"):
+        validator._validate_result(assessed, result_path, fixture["sessions"], "thread", assessed)
+
+    env = validator._ReviewEnvironment(codex_home=fixture["sessions"], parent_thread_id="thread", project_root=assessed)
+    evidence = validator._validate_specialist_manifest(assessed, result, result_path, metadata, "HIGH_RISK", env)
+    validator._validate_independence_requirement(assessed, evidence, metadata, "fail", "HIGH_RISK", env)
 
     fixture["plan"].update(
         independent_review_required=True,

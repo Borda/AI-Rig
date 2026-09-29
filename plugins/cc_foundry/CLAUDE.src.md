@@ -55,7 +55,7 @@ Canonical helper: `_FOUNDRY_SHARED/agent-spawn-protocol.md`. Skills may tighten 
 - Multi-phase skill runs (e.g. review → resolve): after phase report file written, `/compact` before the next phase; resume from report file, not transcript
 - **Never suggest `/clear`.** Discards the prompt cache: next call re-writes full context at cache-write rate — ~12.5× the read rate — buys nothing back, since rebuilt context is the same size. Measured 2026-08-08 on a `/oss:review`: one mid-run `/clear` cost 179,545 write tokens in a single call, 46% of that session's entire cache-write spend. **`/compact` is the tool for every case** — it pays the same rebuild once, then shrinks what is re-sent on every remaining turn. Measured 2026-08-08 across 41 real compactions in 5 sessions (`bin/cost_analyzer.py`, drop-detection method — a compaction is any call whose post-call context falls below 70% of the prior call's): median context shrink 70%, median rebuild cost $0.87, median break-even **~2 turns**, worst observed 14 turns. All 41 repaid before their session ended. Break-even scales with pre-compaction context size, not a fixed dollar figure — check only in the closing turns of a session, never mid-run
 - Live context past ~40% of model's window = smell — wrap phase, persist state to file, restart lean. Current 5-family models carry 1M window (Haiku 4.5: 200K); instruction-following holds across it, so the smell is **cost**, not capability: cache-read scales linearly with live size, `autoCompactThreshold: 0.7` only fires at ~700K
-- Batch tool calls: create all tasks in ONE response (parallel calls); pair `TaskUpdate` with next substantive tool call — never emit response with only task bookkeeping
+- Batch tool calls: create all tasks in ONE response (parallel calls). Bookkeeping-only response costs a full context re-read — rule + its one exception in §Task Management ▸ In-session task tracking
 
 ## Pre-Authorized Operations
 
@@ -73,7 +73,7 @@ Operations in `settings.json` pre-approved — execute direct. Not covered → r
 
 Teams always user-invoked — this gate is scoped to the formal multi-agent Team protocol below (model tiering, TEAM_PROTOCOL.md, AgentSpeak v2); it does not apply to picking a specialist for an ordinary single-agent spawn — that's §2 Subagent Strategy, always in effect:
 
-- **Models**: lead = session model; reasoning (foundry:sw-engineer, foundry:perf-optimizer, research:scientist) = `opus`; execution (foundry:qa-specialist, foundry:doc-scribe, foundry:linting-expert, oss:cicd-steward, research:data-steward, foundry:web-explorer) = `sonnet`; max 3–5
+- **Models**: lead = session model; max 3–5 teammates. Each agent's tier is pinned in its own frontmatter and rolled up in `rules/claude-config.md` §Parallel Spawn Ceilings — read that table. Never restate the roster here: a second list drifts silently, and a roster naming 3 opus + 6 sonnet against the frontmatter's 4 opus + 3 opusplan + 9 sonnet left seven agents' tier decided by whichever copy the reader hit first
 - **Protocol**: every spawn prompt must include `Read ~/.claude/TEAM_PROTOCOL.md and use AgentSpeak v2`; preserve file paths, errors, test results, task IDs; discard verbose output
 - **Security**: `foundry:qa-specialist` auto-includes OWASP Top 10 — no separate security agent
 - **File-based handoff in teams**: teammates writing parallel analysis follow §2 file-handoff protocol — compact JSON envelope back to lead, full output to file
@@ -108,6 +108,7 @@ Expect an empty list. Store is per-session (`~/.claude/tasks/<session-key>/`); a
 
 ### In-session task tracking
 
+- **Never spend a turn on bookkeeping alone** — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call. A turn re-reads the whole live context (measured mean 221,527 tok), so a response whose only calls are task updates buys one record at the price of a full context read. Measured 2026-09-29 over 14 days: 4,303 task-tool blocks against 486 mixed responses — the pairing is what gets dropped first, and it is 5.6% of all cache-read tokens. One exception: `TaskUpdate(completed)` immediately before a long output block, which `rules/task-lifecycle.md` §TaskUpdate before long output requires to stand alone
 - **Skills with predefined workflow**: TaskCreate all steps at start — before any tool calls; keep list current
 - **Multi-step work** (3+ tool calls or 2+ distinct instructions) → TaskCreate before first tool call, including on plan-mode exit
 - On pivot → new task for new work; TaskUpdate existing if scope changed

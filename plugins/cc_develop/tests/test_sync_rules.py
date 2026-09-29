@@ -8,14 +8,27 @@ a path substring match. The ownership cases below are the guard against that.
 from __future__ import annotations
 
 import json
+import shutil
+from collections.abc import Callable
 from pathlib import Path, PureWindowsPath
 
 import pytest
 import sync_rules
-from sync_rules import SourceError, cache_lineage, dest_name, main, owns, read_link_target, sync
+from sync_rules import (
+    VARIANTS,
+    SourceError,
+    cache_lineage,
+    dest_name,
+    main,
+    owns,
+    read_link_target,
+    sync,
+)
 
 MARKETPLACE = "borda-ai-rig"
 PLUGIN = "develop"
+VARIANT = VARIANTS[0]
+BOTH_VARIANTS = {VARIANT.full: "# full gates\n", VARIANT.delta: "# delta gates\n"}
 
 
 def _make_home(tmp_path: Path) -> Path:
@@ -49,7 +62,13 @@ def _make_plugin(root: Path, name: str = PLUGIN, rules: dict[str, str] | None = 
     return root
 
 
-def _installed_root(home: Path, version: str = "0.19.0", plugin: str = PLUGIN, marketplace: str = MARKETPLACE) -> Path:
+def _installed_root(
+    home: Path,
+    version: str = "0.19.0",
+    plugin: str = PLUGIN,
+    marketplace: str = MARKETPLACE,
+    rules: dict[str, str] | None = None,
+) -> Path:
     """Create an installed-cache plugin root under ``home``.
 
     Examples:
@@ -58,7 +77,7 @@ def _installed_root(home: Path, version: str = "0.19.0", plugin: str = PLUGIN, m
         '.claude/plugins/cache/borda-ai-rig/develop/0.19.0'
     """
     root = home / ".claude" / "plugins" / "cache" / marketplace / plugin / version
-    return _make_plugin(root)
+    return _make_plugin(root, name=plugin, rules=rules)
 
 
 def _dest(home: Path, source_name: str = "quality-gates.md", plugin: str = PLUGIN) -> Path:
@@ -353,6 +372,184 @@ def test_never_touches_other_plugins_namespace(tmp_path: Path) -> None:
     sync(PLUGIN, root, home)
 
     assert other.is_symlink()
+
+
+# --- variant selection -------------------------------------------------------
+#
+# A plugin may ship the same rule twice: the full body, and a delta stating only its own
+# additions. Delivering the delta is correct exactly when the plugin owning the shared body has
+# already delivered it, which is why every case below is about *proving* that, not detecting a
+# filename. Anything unproven must fall back to the full rule — redundant beats incomplete.
+
+
+def _canonical_source(home: Path, owner: str = VARIANT.owner, version: str = "0.60.0") -> Path:
+    """Install the plugin that owns the canonical shared body and return its rule file."""
+    root = home / ".claude" / "plugins" / "cache" / MARKETPLACE / owner / version
+    _make_plugin(root, name=owner, rules={VARIANT.full: "# shared body\n"})
+    return root / "rules" / VARIANT.full
+
+
+def _deliver_canonical(home: Path, target: Path) -> Path:
+    """Link the canonical destination name at ``target``, as the owner's own setup would."""
+    link = home / ".claude" / "rules" / VARIANT.canonical
+    link.symlink_to(target)
+    return link
+
+
+def _plugin_rule_links(home: Path) -> list[str]:
+    """Names of every delivered entry carrying this plugin's prefix."""
+    return sorted(entry.name for entry in (home / ".claude" / "rules").iterdir() if entry.name.startswith("develop-"))
+
+
+def _canonical_real_file(home: Path) -> None:
+    """Write a user's own file under the canonical name — no provenance at all."""
+    (home / ".claude" / "rules" / VARIANT.canonical).write_text("mine\n", encoding="utf-8")
+
+
+def _canonical_unmanaged_link(home: Path) -> None:
+    """Link the canonical name into a tree that ships no plugin manifest."""
+    target = home / "dotfiles" / "rules" / VARIANT.full
+    target.parent.mkdir(parents=True)
+    target.write_text("# mine\n", encoding="utf-8")
+    _deliver_canonical(home, target)
+
+
+def _canonical_other_plugin_link(home: Path) -> None:
+    """Link the canonical name at another plugin's rule of the same basename."""
+    _deliver_canonical(home, _canonical_source(home, owner="oss", version="0.25.0"))
+
+
+def _canonical_dangling_link(home: Path) -> None:
+    """Link the canonical name into a version directory purged after an upgrade."""
+    _deliver_canonical(home, _canonical_source(home, version="0.59.0"))
+    shutil.rmtree(home / ".claude" / "plugins" / "cache" / MARKETPLACE / VARIANT.owner / "0.59.0")
+
+
+def _canonical_outside_rules_dir(home: Path) -> None:
+    """Link the canonical name at an owner file that is not the rule the delta abbreviates."""
+    root = _canonical_source(home).parent.parent
+    stray = root / "skills" / VARIANT.full
+    stray.parent.mkdir(parents=True)
+    stray.write_text("# not a rule\n", encoding="utf-8")
+    _deliver_canonical(home, stray)
+
+
+def test_delivers_the_full_rule_when_no_canonical_is_present(tmp_path: Path) -> None:
+    """A standalone install has no shared body to defer to, so it must ship every obligation."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+
+    result = sync(PLUGIN, root, home)
+
+    assert result.linked == ["develop-quality-gates.md"]
+    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.full
+
+
+def test_delivers_the_delta_when_the_canonical_is_owner_provided(tmp_path: Path) -> None:
+    """With the shared body already delivered, only the plugin's own additions are installed."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    _deliver_canonical(home, _canonical_source(home))
+
+    result = sync(PLUGIN, root, home)
+
+    assert result.linked == ["develop-quality-gates.md"]
+    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.delta
+
+
+def test_the_delta_is_never_delivered_under_a_name_of_its_own(tmp_path: Path) -> None:
+    """Both forms share one destination, so no run can leave two copies of the rule loaded."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    _deliver_canonical(home, _canonical_source(home))
+
+    sync(PLUGIN, root, home)
+
+    assert _plugin_rule_links(home) == ["develop-quality-gates.md"]
+
+
+def test_canonical_is_delivered_accepts_an_owner_declared_manifest(tmp_path: Path) -> None:
+    """Provenance comes from the target's own manifest, so a checkout-installed owner counts too."""
+    home = _make_home(tmp_path)
+    _deliver_canonical(home, _canonical_source(home))
+
+    assert sync_rules.canonical_is_delivered(home / ".claude" / "rules", VARIANT)
+
+
+@pytest.mark.parametrize(
+    "plant",
+    [
+        pytest.param(_canonical_real_file, id="real-file"),
+        pytest.param(_canonical_unmanaged_link, id="no-manifest"),
+        pytest.param(_canonical_other_plugin_link, id="other-plugin"),
+        pytest.param(_canonical_dangling_link, id="purged-version"),
+        pytest.param(_canonical_outside_rules_dir, id="outside-rules-dir"),
+    ],
+)
+def test_a_canonical_without_owner_provenance_keeps_the_full_rule(
+    tmp_path: Path, plant: Callable[[Path], None]
+) -> None:
+    """The canonical filename alone proves nothing; each shape here leaves the rule set incomplete."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    plant(home)
+
+    sync(PLUGIN, root, home)
+
+    assert not sync_rules.canonical_is_delivered(home / ".claude" / "rules", VARIANT)
+    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.full
+
+
+def test_installing_the_owner_later_switches_to_the_delta(tmp_path: Path) -> None:
+    """Rerunning after the owner appears must swap forms, leaving exactly one link behind."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    sync(PLUGIN, root, home)
+    _deliver_canonical(home, _canonical_source(home))
+
+    result = sync(PLUGIN, root, home)
+
+    assert result.linked == ["develop-quality-gates.md"]
+    assert _plugin_rule_links(home) == ["develop-quality-gates.md"]
+    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.delta
+
+
+def test_removing_the_owner_switches_back_to_the_full_rule(tmp_path: Path) -> None:
+    """Uninstalling the owner must restore the complete rule rather than leave the delta serving alone."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    canonical = _deliver_canonical(home, _canonical_source(home))
+    sync(PLUGIN, root, home)
+    canonical.unlink()
+
+    result = sync(PLUGIN, root, home)
+
+    assert result.linked == ["develop-quality-gates.md"]
+    assert _plugin_rule_links(home) == ["develop-quality-gates.md"]
+    assert Path(read_link_target(_dest(home))) == root / "rules" / VARIANT.full
+
+
+def test_a_stray_per_variant_link_is_pruned(tmp_path: Path) -> None:
+    """An earlier attempt that gave the delta its own destination must not keep serving it."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules=BOTH_VARIANTS)
+    stray = home / ".claude" / "rules" / dest_name(PLUGIN, VARIANT.delta)
+    stray.symlink_to(root / "rules" / VARIANT.delta)
+
+    result = sync(PLUGIN, root, home)
+
+    assert result.removed == ["develop-quality-gates-delta.md"]
+    assert _plugin_rule_links(home) == ["develop-quality-gates.md"]
+
+
+def test_a_delta_without_its_full_counterpart_aborts(tmp_path: Path) -> None:
+    """A lone delta would be delivered as the whole rule whenever the canonical is absent."""
+    home = _make_home(tmp_path)
+    root = _installed_root(home, rules={VARIANT.delta: "# delta gates\n"})
+
+    with pytest.raises(SourceError, match="ships without its full counterpart"):
+        sync(PLUGIN, root, home)
+    assert list((home / ".claude" / "rules").iterdir()) == []
 
 
 # --- source validation -------------------------------------------------------

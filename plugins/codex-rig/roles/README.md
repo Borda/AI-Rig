@@ -51,23 +51,23 @@ Role selection uses canonical [model-difficulty policy](../shared/specialist-orc
 
 ## 🤖 Role roster
 
-| Role                 | Tier | Sandbox mode    | Purpose                                                                                                 |
-| -------------------- | ---- | --------------- | ------------------------------------------------------------------------------------------------------- |
-| `solution-architect` | Sol  | read-only       | System-design specialist for architecture, public API contracts, migrations, and module boundaries.     |
-| `security-auditor`   | Sol  | read-only       | Security specialist for Python/web trust boundaries, ML supply chains, secrets, and CI/CD permissions.  |
-| `sw-engineer`        | Sol  | workspace-write | Implementation specialist for production code, bug fixes, refactors, and typed public API changes.      |
-| `qa-specialist`      | Sol  | workspace-write | Testing specialist for regression proof, risk-proportional edge coverage, and independent verification. |
-| `challenger`         | Sol  | read-only       | Adversarial reviewer for plans, architecture, migrations, releases, and non-trivial diffs.              |
-| `curator`            | Luna | workspace-write | Configuration-quality specialist for instruction hygiene, routing clarity, duplication, and drift.      |
-| `data-steward`       | Sol  | workspace-write | ML data-pipeline integrity specialist for datasets, splits, labels, transforms, and leakage prevention. |
-| `scientist`          | Sol  | workspace-write | ML research specialist for paper analysis, hypotheses, ablations, and evaluation protocols.             |
-| `squeezer`           | Sol  | read-only       | Performance specialist for throughput, latency, memory, GPU utilization, and profiling evidence.        |
-| `doc-scribe`         | Luna | workspace-write | Documentation specialist for public API docs, docstrings, README content, and changelogs.               |
-| `cicd-steward`       | Luna | workspace-write | CI/CD reliability specialist for GitHub Actions, release automation, and flaky-CI diagnosis.            |
-| `delegation-lead`    | Luna | workspace-write | Cost-aware orchestration specialist for decomposing work and consolidating specialist evidence.         |
-| `linting-expert`     | Luna | workspace-write | Static-analysis specialist for Ruff, mypy, pre-commit, and suppression hygiene.                         |
-| `oss-shepherd`       | Luna | read-only       | Open-source lifecycle specialist for issue triage, semantic versioning, and release readiness.          |
-| `web-explorer`       | Luna | read-only       | External-evidence specialist for official documentation, release notes, and version verification.       |
+| Role                 | Tier | Sandbox mode    | Purpose                                                                                                                     |
+| -------------------- | ---- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `solution-architect` | Sol  | read-only       | System-design specialist for architecture, public API contracts, migrations, and module boundaries.                         |
+| `security-auditor`   | Sol  | read-only       | Security specialist for Python/web trust boundaries, ML supply chains, secrets, and CI/CD permissions.                      |
+| `sw-engineer`        | Sol  | workspace-write | Primary production Python source reviewer; implementation specialist for code, bug fixes, refactors, and typed public APIs. |
+| `qa-specialist`      | Sol  | workspace-write | Testing specialist for regression proof, risk-proportional edge coverage, and independent verification.                     |
+| `challenger`         | Sol  | read-only       | Adversarial reviewer for plans, architecture, migrations, releases, and non-trivial diffs.                                  |
+| `curator`            | Luna | workspace-write | Configuration-quality specialist for instruction hygiene, routing clarity, duplication, and drift.                          |
+| `data-steward`       | Sol  | workspace-write | ML data-pipeline integrity specialist for datasets, splits, labels, transforms, and leakage prevention.                     |
+| `scientist`          | Sol  | workspace-write | ML research specialist for paper analysis, hypotheses, ablations, and evaluation protocols.                                 |
+| `squeezer`           | Sol  | read-only       | Performance specialist for throughput, latency, memory, GPU utilization, and profiling evidence.                            |
+| `doc-scribe`         | Luna | workspace-write | Documentation specialist for public API docs, docstrings, README content, and changelogs.                                   |
+| `cicd-steward`       | Luna | workspace-write | CI/CD reliability specialist for GitHub Actions, release automation, and flaky-CI diagnosis.                                |
+| `delegation-lead`    | Luna | workspace-write | Cost-aware orchestration specialist for decomposing work and consolidating specialist evidence.                             |
+| `linting-expert`     | Luna | workspace-write | Static-analysis specialist for Ruff, mypy, pre-commit, and suppression hygiene.                                             |
+| `oss-shepherd`       | Luna | read-only       | Open-source lifecycle specialist for issue triage, semantic versioning, and release readiness.                              |
+| `web-explorer`       | Luna | read-only       | External-evidence specialist for official documentation, release notes, and version verification.                           |
 
 ## 🤖 Role-card contract
 

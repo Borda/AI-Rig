@@ -93,3 +93,31 @@ def test_codex_prompts_do_not_force_chat_only_or_yes_no_authorization() -> None:
         text = skill.read_text(encoding="utf-8")
         assert "Codex has no `AskUserQuestion`" not in text, skill
         assert "(yes / no)" not in text, skill
+
+
+@pytest.mark.installed_plugin
+def test_async_question_uses_observed_host_schema_and_yields_without_status() -> None:
+    """Prevent rejected async payloads and status text from displacing a pending decision."""
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    assert "top-level `questions` array" in details
+    assert "do not pass either field at the top level" in details
+    assert "Inspect the active schema because another host may differ" in details
+    assert "Do not append a final or status message after an accepted async question" in details
+
+
+@pytest.mark.installed_plugin
+def test_unkeyed_reply_cannot_authorize_keyed_decision() -> None:
+    """Prevent a bare approval from executing the sole pending keyed action."""
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    assert "bare `approve` or `yes` without that key is invalid" in details
+    assert "even when it is the only pending decision" in details
+
+
+@pytest.mark.installed_plugin
+def test_short_guide_preserves_existing_question_and_consent_contract() -> None:
+    """Keep established obligations visible when the short guide is condensed."""
+    guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+    assert "Children return context, question, concrete choices, accepted custom syntax" in guide
+    assert "Preserve every required closed-choice action." in guide
+    assert "existing consent skips reconfirmation" in guide
+    assert "A reported dismissal makes that control unsuitable" in guide

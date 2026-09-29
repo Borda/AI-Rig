@@ -37,13 +37,7 @@ Turn unformed idea into branching exploration tree, then distill into spec. Idea
 
 <workflow>
 
-**Task hygiene**: load and follow the protocol below.
-
-```bash
-# loads: compaction-contract.md
-# audit-skip: resilience-replication
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
-```
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 **Task tracking**: Before Step 1, create TaskCreate entries for all 6 steps (context scan, clarifying questions, build tree, save tree, tree review, present + gate). Then print session plan to user:
 
@@ -327,12 +321,6 @@ TREE_FILE="<tree-file-path>"
 case "$TREE_FILE" in *'<'*'>'*|"") printf "! BLOCKED — tree file path not substituted\n"; exit 1;; esac
 [ -f "$TREE_FILE" ] || { printf "! BLOCKED — %s does not exist; Step 4 Write did not land\n" "$TREE_FILE"; exit 1; }
 echo "$TREE_FILE" > "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}"
-```
-
-**Gate**: do not proceed to Step 5 until file written and path confirmed.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _TREE_FILE < "${TMPDIR:-/tmp}/brainstorm-state-tree-file-${CSID}" 2>/dev/null || _TREE_FILE=""
 IFS= read -r _SIDECAR < "${TMPDIR:-/tmp}/brainstorm-state-sidecar-${CSID}" 2>/dev/null || _SIDECAR=""
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/brainstorm-state-keep-items-${CSID}" 2>/dev/null || _KEEP=""
@@ -341,6 +329,8 @@ _PRESERVE="tree-file=$_TREE_FILE"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/write_skill_contract.py" "foundry:brainstorm" "tree-review (after tree saved to disk)" "n/a" "$_PRESERVE" "curator tree review (Step 5) → approval gate (Step 6)"  # timeout: 5000
 ```
+
+**Gate**: do not proceed to Step 5 until file written, path confirmed, and contract refreshed (all three enforced in the block above — `exit 1` on either guard blocks the contract write too).
 
 **Sidecar finalise** (skip if `$SIDECAR` is empty — viewer opt-out): using Write tool, write full current JSON content (same as `$SIDECAR`) with `session_status: "complete"` to `.plans/blueprint/<final-slug>.json` (same slug as `.md` file, `.json` extension). Then also overwrite `$SIDECAR` with `session_status: "complete"`. Do NOT move or rename `$SIDECAR` — open browser tabs keep polling original timestamp-slug path.
 

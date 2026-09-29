@@ -38,6 +38,10 @@ for _ID in "$@"; do
 done
 [ -f "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" ] && IFS= read -r COMMIT_MODE < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" || COMMIT_MODE="unset"
 case "$COMMIT_MODE" in each|grouped|all|stage) ;; *) echo "! BLOCKED — COMMIT_MODE is '$COMMIT_MODE': Step 3d did not finish; stop before dispatch"; exit 1 ;; esac
+[ -f "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" ] && IFS= read -r DISPATCH_MODE < "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" || DISPATCH_MODE="auto"
+# unknown value is not blocked, unlike COMMIT_MODE: this one tunes wave width, so a lost answer degrades to the pool-capped default
+case "$DISPATCH_MODE" in auto|sequential|fine|preview) ;; *) DISPATCH_MODE=auto ;; esac
+echo "DISPATCH_MODE=$DISPATCH_MODE"  # Phase 2's split + firing rules read this line; bash state dies with this block
 printf '%s\n' "$SELECTED_ITEMS" > "$IMPL_DIR/selected-items.txt"
 CHALLENGE_LOG="$IMPL_DIR/challenge-log.txt"; : > "$CHALLENGE_LOG"  # one record per line: id=… resolution=… evidence=… suggestion=… finding=… evidence_why=… suggestion_why=… detail=… — resolution right after id, before any free-text field, so a reviewer's quoted text can never be mistaken for it (every consumer greps this by field name, never by position, so the order itself carries no other meaning); file, not shell array: survives compaction + separate Bash calls, Step 11 renders from it
 : > "$IMPL_DIR/skipped-items.txt"  # item_id<TAB>reason, one per line — Phase 2 appends (fenced block below), Phase 3 close-out consumes; initialized empty so a no-skip run still has a readable file
@@ -344,7 +348,7 @@ done < <(jq -b -r --arg id "$_BATCH_TAG" 'select(.verdict=="DONE" and .status=="
 
 When `CODEX_AVAILABLE=false` OR `ITEM_EFFORT!=medium`: skip Codex routing; use Phase 1+2 directly. If `IMPL_AGENT=bridge:implement`, this fallback uses the `change` table, not the Skill marker as an Agent type.
 
-> **Agent budget** — Phase 1's domain grouping is roster-bounded (3 challenger types, always ≤3 spawns); `comment-dispatch` batches at `BATCH_SIZE`. Phase 2's sub-group splitting is not roster-bounded the same way — see its own §Spawn wave cap below. What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call. **Work under ~73 calls total is cheaper inline — spawn nothing**, the common case for a 1–3 item PR. Merge a single-item group into the nearest domain rather than giving it its own agent. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk — so every spawn prompt must require an envelope even on exhaustion (`partial: true` plus the items finished).
+> **Agent budget** — Phase 1's domain grouping is roster-bounded (3 challenger types, always ≤3 spawns); `comment-dispatch` batches at `BATCH_SIZE`. Phase 2's sub-group splitting is not roster-bounded the same way — see its own §Spawn wave cap below. What always applies regardless of grouping: each spawn costs ~120,851 tok of fixed overhead (~73 tool-calls' worth) plus ~12.0 s/call. **Work under ~73 calls total is cheaper inline — spawn nothing**, the common case for a 1–3 item PR. Merge a single-item group into the nearest domain rather than giving it its own agent. `DISPATCH_MODE=fine` (Step 3d) overrides that single-item merge with the spawn cost stated in its own option label — an informed user choice, not a default. It does **not** override the inline threshold: a run whose whole work sits under it still runs inline, and the reply says the dispatch answer changed nothing, because no spawn happened for a width to apply to. Keep each agent near ~55 tool-calls; past ~60 they stall without returning an envelope, forcing reconstruction from disk — so every spawn prompt must require an envelope even on exhaustion (`partial: true` plus the items finished).
 
 ### Phase 1: Challenge — parallel by domain (skip when `--no-challenge`)
 
@@ -500,21 +504,6 @@ esac
 
 Items with `evidence=VALID` (appended above as `as-suggested` or `self-resolved`) form `SURVIVING_ITEMS`.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# boundary1: Phase 1 challenge done, before Phase 2 dispatch (compaction-contract.md §Lifecycle) —
-# Phase 1 runs parallel challenge agents (minutes) and Phase 2 holds worktrees open longer still;
-# the prior refresh point (Step 3d, boundary0) was the only one until this run reached boundary2
-# (post-impl loop), so a compaction anywhere across both phases resumed at item selection and
-# re-asked an already-answered gate
-IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
-IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
-IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null || _IMPL_DIR="n/a"
-_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${_IMPL_DIR}, selected-items=${_IMPL_DIR}/selected-items.txt, challenge-log=${_IMPL_DIR}/challenge-log.txt, skipped-items=${_IMPL_DIR}/skipped-items.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv"
-[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$_IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl — never re-issue Step 3d, item selection already answered"  # timeout: 5000
-```
-
 ### Phase 2: Implementation — parallel, one worktree per specialist
 
 The codemap maps (`$IMPL_DIR/codemap-maps.json` — `file_module` + `centrality`; `$IMPL_DIR/codemap-deps.jsonl` — per-module `direct_imports`) were built in Phase 1's Structural prep, concurrently with the challenge agents, so both tiebreaks below read them with no fresh query. They cover all `SELECTED_ITEMS`; filter to survivors as needed.
@@ -531,21 +520,56 @@ Group `SURVIVING_ITEMS` by real Agent type: use the `change` table when `IMPL_AG
 
 Re-derive group membership after all reassignments (file overlap + import coupling), **then** cap 5 items/group — same context ceiling the old file-affinity batching used; a specialist with more than 5 items splits into `ceil(N/5)` groups, **keeping every file's items together in the same sub-group** (never split one file's items across two sub-groups — would reintroduce the exact conflict this tiebreak exists to prevent). Each resulting sub-group is one worktree with its own `group` tag (reused in Phase 3's merge plan).
 
-**Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): the 5-item cap above bounds one specialist's own group size, not the combined sub-group count across specialist types. `foundry:sw-engineer`/`solution-architect`/`perf-optimizer` all draw from the opus pool; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` from the sonnet pool. Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (priority order, lowest item id first), waiting for each wave to return before opening the next — never one burst past the ceiling. Small/typical runs (most PRs) never approach either cap and fire as one wave, unchanged from before.
+**`DISPATCH_MODE` — user-chosen wave width** (Step 3d question; sentinel `${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}`, echoed by the boundary-1 block below). It changes how many worktrees run at once and how finely groups split, never what lands in which worktree together:
+
+| Mode | Sub-group split | Firing |
+| -- | -- | -- |
+| `auto` | ≤5 items/group as above | pool-capped waves (default, unchanged) |
+| `sequential` | ≤5 items/group as above | one worktree at a time, priority order |
+| `fine` | one item per sub-group, **except** items sharing a file or an import edge, which stay in one | pool-capped waves |
+| `preview` | resolved below before any split | resolved below |
+
+`fine` never separates two items sharing a file or an import edge — those reassignments are conflict prevention, not batching, so they outrank the request for maximum width. An unreadable or unexpected sentinel value is `auto`: this gate tunes cost, so a lost answer degrades to current behaviour rather than blocking dispatch.
+
+**Spawn wave cap** (per `claude-config.md` §Parallel Spawn Ceilings — `CAP_OPUS=5`, `CAP_SONNET=8`): the 5-item cap above bounds one specialist's own group size, not the combined sub-group count across specialist types. `foundry:sw-engineer`/`solution-architect`/`perf-optimizer` all draw from the opus pool; `foundry:qa-specialist`/`doc-scribe`/`linting-expert` from the sonnet pool. Before firing, sum this run's sub-groups per pool; a pool whose sum exceeds its cap fires in ordered waves of that many (priority order, lowest item id first), waiting for each wave to return before opening the next — never one burst past the ceiling. Small/typical runs (most PRs) never approach either cap and fire as one wave, unchanged from before. `DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool, and `fine` raises the sub-group count without raising either cap — so a fine split of 12 items still fires 8 sonnet groups per wave, not 12.
 
 Snapshot the worktree list before dispatch — Phase 3's cleanup accounts for worktrees via each group's own envelope, so a group that stalls and never returns (§Health monitoring below) never gets its path into `specialist-worktrees.txt`; this snapshot is what lets the cleanup fence tell "a worktree nothing ever reported" apart from "a worktree that was never created":
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+# boundary1: Phase 1 challenge done, before Phase 2 dispatch (compaction-contract.md §Lifecycle) —
+# Phase 1 runs parallel challenge agents (minutes) and Phase 2 holds worktrees open longer still;
+# the prior refresh point (Step 3d, boundary0) was the only one until this run reached boundary2
+# (post-impl loop), so a compaction anywhere across both phases resumed at item selection and
+# re-asked an already-answered gate
+IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/null || _PR_NUMBER="n/a"
+IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
+IFS= read -r DISPATCH_MODE < "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" 2>/dev/null || DISPATCH_MODE="auto"
+case "$DISPATCH_MODE" in auto|sequential|fine|preview) ;; *) DISPATCH_MODE=auto ;; esac  # cost knob, not a safety gate: unreadable answer keeps current behaviour
 [ -f "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" ] && IFS= read -r IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" || IMPL_DIR=""
 [ -n "$IMPL_DIR" ] || { echo "! BLOCKED — IMPL_DIR sentinel missing; prelude never ran"; exit 1; }
+echo "DISPATCH_MODE=$DISPATCH_MODE"  # bash state does not persist; the split + firing rules above read this line
+_PRESERVE="pr=${_PR_NUMBER}, impl-dir=${IMPL_DIR}, dispatch-mode=${DISPATCH_MODE}, selected-items=${IMPL_DIR}/selected-items.txt, challenge-log=${IMPL_DIR}/challenge-log.txt, skipped-items=${IMPL_DIR}/skipped-items.txt, item-tasks=${IMPL_DIR}/item-tasks.tsv"
+[ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "Phase 2 dispatch (after Phase 1 challenge verdicts)" "$IMPL_DIR" "${_PRESERVE}" "resume: re-read challenge-log.txt for verdicts + item-tasks.tsv for created tasks (report mode: item-tasks.tsv does not exist — use selected-items.txt as scope instead), continue Phase 2 implementation for items not yet in phase2-commits.jsonl — never re-issue Step 3d, item selection already answered"  # timeout: 5000
 git worktree list --porcelain | sed -n 's/^worktree //p' > "$IMPL_DIR/worktrees-before.txt"  # timeout: 5000
 ```
+
+**Group-preview gate — `DISPATCH_MODE=preview` only; every other mode skips this section entirely.** The user asked at Step 3d to see the real groups before anything spawns, which is why this is the one gate the default path never pays.
+
+1. Print the formed groups in a user-facing reply (not Bash stdout), one row per group: `specialist · item ids · files · reassignment reason if any`. Include every group; this table is the data the answer is about, so no compression mode and no communication style replaces it with a count.
+2. Print this line in the reply as well, since the gate is human idle and the contract was refreshed immediately above: `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
+3. Invoke `AskUserQuestion` (actual tool call) — "Phase 2 groups are formed. How should they run?": (a) One worktree at a time · (b) Dispatch as shown — pool-capped waves **(Recommended)** · (c) One item per worktree, shared-file items kept together · (d) Stop before dispatch.
+4. Map the answer and **run the matching Step 3d dispatch-mode block again** so the sentinel holds a width, never `preview`: (a) → `sequential` · (b) → `auto` · (c) → `fine` · unanswered → `auto`. A `preview` value surviving into Phase 3 or a post-compaction resume would re-ask a decided gate.
+5. The previewed groups were formed under the `auto` split, so a resolved width of `fine` **re-derives the sub-groups** per the mode table above before any tag is derived — the shown grouping was the question, not the commitment. Then re-run the boundary-1 block: it is idempotent here (`worktrees-before.txt` is still empty, nothing spawned), and without it `skill-contract.md` keeps `dispatch-mode=preview` while the sentinel holds a width, so a compaction inside Phase 2's multi-minute window resumes from two disagreeing sources.
+6. (d) Stop → leave every worktree unspawned, mark no item `in_progress`, and run Phase 3's cleanup block (its worktree loop is a no-op over an empty `specialist-worktrees.txt`, and it is what releases the branch mutex this run took at the prelude — skipping it leaks the lock until the healer's 30-min cap). Report the formed groups, and the Phase 2 items as pending; items already committed by C1 in `each` mode stay resolved and are reported as such. Then jump to Step 11. Never partially dispatch a stopped run.
+
+Derive `<group_tag>` per group as a short kebab-case slug naming its shared file/theme (e.g. `tflite`, `changelog`, `tests`, `core`) — the delta between groups, reused as `name="impl-<group_tag>"`, as `description`, and as prompt line 1's lead. `description` = 3–5 words naming this group's scope (files/theme touched), never echoing `name` or the shared effort/instruction boilerplate below. Compose every group's `name`/`description`/prompt-line-1 triple in one pass before firing, and confirm each prompt line 1 opens with that group's own theme, not the shared "Effort level" framing — this is a `--` fanout over one target (same PR/run) same as Phase 1's challenge dispatch, so the same pre-spawn check applies (task-lifecycle.md §Spawn slots, "When every agent shares one target"): the framing sentence below is identical across every group and belongs after the lead, never as the row's visible label.
 
 Per group, mark its items' tasks in_progress, then dispatch with worktree isolation so concurrent specialists never race on a shared working tree (no stash dance needed — dirty state in one worktree can't collide with another):
 
 ```text
-Agent(subagent_type="<specialist>", isolation="worktree", prompt="Effort level: <highest ITEM_EFFORT in group>.
+Agent(subagent_type="<specialist>", isolation="worktree", name="impl-<group_tag>", description="<3-5 words: this group's file/theme scope>", prompt="<group_tag> — <N> item(s), effort <highest ITEM_EFFORT in group>.
 Implement these action items one at a time. For each, apply the fix using best judgment
 (if suggestion was rejected in challenge, fix the underlying issue instead — see rationale/alternative below),
 then commit it individually before moving to the next item.
@@ -585,7 +609,7 @@ Return ONLY compact JSON as your FINAL message (nothing after it):
 {\"worktree\":\"<absolute path of YOUR OWN worktree, from: git rev-parse --show-toplevel>\",\"commits\":[{\"item_id\":N,\"sha\":\"<sha>\"}],\"skipped\":[{\"item_id\":N,\"reason\":\"<why no commit>\"}]}")
 ```
 
-**Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst.
+**Fire all specialist groups in the same response turn, respecting the spawn wave cap above** — this is the actual wall-clock win: N specialists implementing and committing concurrently, each isolated in its own worktree/branch; a run over either pool's cap fires wave-by-wave instead of one burst. `DISPATCH_MODE=sequential` fires one group per turn instead, each after the previous group's envelope is persisted — the user traded wall-clock for a serialized run, so never widen it back to a burst.
 
 > **Health monitoring**: parallel foreground dispatch — same rule as any multi-agent fan-out (CLAUDE.md §6). No response from a group within ~15 min → surface partial results from the groups that did return; mark the stalled group ⏱, proceed to merge-back with whatever landed; its unresolved items stay `in_progress` and get reported alongside other pending work.
 

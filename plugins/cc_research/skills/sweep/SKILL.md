@@ -146,6 +146,10 @@ Print on completion:
 sweep: plan → <output path> ✓
 ```
 
+### Step S3: Judge + refinement loop
+
+Load judge mode step definitions — `$_RESEARCH_SKILLS` from S2 is gone (fresh shell per Bash call), so re-resolve it here rather than dereferencing it bare; same call writes the boundary-1 compaction contract first — no decision sits between "program written" and "load judge", so they ride one turn:
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary 1: after S2 plan written (compaction-contract.md)
@@ -153,14 +157,6 @@ IFS= read -r _OUT < "${TMPDIR:-/tmp}/sweep-out-path-${CSID}" 2>/dev/null || _OUT
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/sweep-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _KEEP_APPEND=""; [ -n "$_KEEP" ] && _KEEP_APPEND="; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/bin/write_skill_contract.py" "research:sweep" "judge-gate (after S2 plan written)" "n/a" "program-path=${_OUT}${_KEEP_APPEND}" "S3 judge+refinement loop against ${_OUT}"  # timeout: 5000
-```
-
-### Step S3: Judge + refinement loop
-
-Load judge mode step definitions — `$_RESEARCH_SKILLS` from S2 is gone (fresh shell per Bash call), so re-resolve it here rather than dereferencing it bare:
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _RESEARCH_SHARED < "${TMPDIR:-/tmp}/research-shared-${CSID}" 2>/dev/null || _RESEARCH_SHARED=""  # warm read (Check 41)
 _RESEARCH_SKILLS="${_RESEARCH_SHARED%/_shared}"
 [ -z "$_RESEARCH_SKILLS" ] && _RESEARCH_SKILLS="${CLAUDE_PLUGIN_ROOT:-plugins/cc_research}/skills"

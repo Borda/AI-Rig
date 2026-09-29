@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.0
+
+- Preserve user-saved collector approvals with literal launchers during GitHub profile setup and removal; retain rejection of modified managed collector grants.
+
+- Require `sw-engineer` as the primary assessed reviewer for changed production Python source in Code Review. Bind its routing, retained rating, and first report position; keep tests-only review with QA and disclose parent substitutes when reviewer capacity is reached.
+
+- Add offline routing calibration for all fifteen agent roles: each role must retain one distinct related task cue in its trigger contract, with missing or overlapping routes failing the gate.
+
+- Show the complete `questions` wrapper for Codex async input, yield without a status handoff while a required answer is pending, and reject unkeyed approval for a keyed local merge decision.
+
 ## 0.26.0
 
 - Recover a user-reported dismissed Codex question at its frozen decision checkpoint; use a final plain-chat question when no native control remains suitable and avoid the dismissed control in the same host until delivery is verified again.

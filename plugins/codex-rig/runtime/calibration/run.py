@@ -89,6 +89,23 @@ AGENTS = (
     "scientist",
     "delegation-lead",
 )
+ROLE_TASK_CUES = {
+    "sw-engineer": "production `.py` or `.pyi` file changes",
+    "qa-specialist": "regression verification",
+    "squeezer": "GPU utilization",
+    "doc-scribe": "tutorials",
+    "security-auditor": "deserialization",
+    "data-steward": "class imbalance",
+    "cicd-steward": "GitHub Actions",
+    "linting-expert": "suppression comments",
+    "oss-shepherd": "contributor feedback",
+    "solution-architect": "module-boundary",
+    "web-explorer": "migration guides",
+    "curator": "instruction hygiene",
+    "challenger": "devil's advocate",
+    "scientist": "ablations",
+    "delegation-lead": "separable workstreams",
+}
 DEFAULT_MODEL = "gpt-6-sol"
 REVIEW_MODEL = "gpt-6-sol"
 CRITICAL_MODEL = "gpt-6-sol"
@@ -1056,6 +1073,29 @@ def check_shared_confidence_contracts(run: CalibrationRun) -> None:
         check_contains(run, shared_contract, "confidence_recovery", "confidence-policy")
 
 
+def validate_role_task_routing(cards: dict[str, str]) -> list[str]:
+    """Check each declared task cue has one matching specialist trigger.
+
+    This checks packaged routing instructions, not live agent selection.
+    """
+    if set(ROLE_TASK_CUES) != set(AGENTS):
+        return ["role-task-roster-mismatch"]
+    triggers = {
+        role: next((line.casefold() for line in card.splitlines() if line.startswith("- Trigger:")), "")
+        for role, card in cards.items()
+    }
+    issues: list[str] = []
+    for role, cue in ROLE_TASK_CUES.items():
+        owners = sorted(candidate for candidate, trigger in triggers.items() if cue.casefold() in trigger)
+        if not owners:
+            issues.append(f"role-task-route:{role}:missing")
+        elif role not in owners:
+            issues.append(f"role-task-route:{role}:wrong-role:{','.join(owners)}")
+        elif owners != [role]:
+            issues.append(f"role-task-route:{role}:ambiguous:{','.join(owners)}")
+    return issues
+
+
 def check_agents(run: CalibrationRun) -> None:
     """Run registration, schema, confidence, model, and effort checks for agents."""
     for agent in AGENTS:
@@ -1120,6 +1160,17 @@ def check_agents(run: CalibrationRun) -> None:
             check_contains(run, agent_file, r"\.codex/AGENTS\.md confidence contract", "confidence-policy")
         check_agent_model(run, agent, agent_file)
         check_agent_effort(run, agent, agent_file)
+    if run.paths.layout == "plugin":
+        cards = {
+            agent: role_file(run, agent).read_text(encoding="utf-8")
+            for agent in AGENTS
+            if role_file(run, agent).is_file()
+        }
+        issues = validate_role_task_routing(cards)
+        for issue in issues:
+            run.fail_and_leak("agent-task-routing", issue)
+        if not issues:
+            run.append_check(f"agent-task-routing=ok:roles={len(AGENTS)}:declared-only")
 
 
 def check_native_runtime_leaks(run: CalibrationRun) -> None:
@@ -1954,11 +2005,11 @@ def _build_review_validator_rollout(run: CalibrationRun, out: Path) -> ReviewVal
     sessions = codex_home / "sessions"
     specialists.mkdir(parents=True, exist_ok=True)
     sessions.mkdir(parents=True, exist_ok=True)
-    (out / "files.txt").write_text("src/runtime.py\n", encoding="utf-8")
+    (out / "files.txt").write_text("src/runtime.txt\n", encoding="utf-8")
     (out / "untracked.txt").write_text("", encoding="utf-8")
-    (out / "numstat.txt").write_text("5\t5\tsrc/runtime.py\n", encoding="utf-8")
+    (out / "numstat.txt").write_text("5\t5\tsrc/runtime.txt\n", encoding="utf-8")
     diff = out / "diff.patch"
-    diff.write_text("diff --git a/src/runtime.py b/src/runtime.py\n", encoding="utf-8")
+    diff.write_text("diff --git a/src/runtime.txt b/src/runtime.txt\n", encoding="utf-8")
     review_input_sha = hashlib.sha256(diff.read_bytes()).hexdigest()
     role_card = run.paths.code_review_validate_artifacts.resolve().parents[2] / "roles" / "qa-specialist" / "ROLE.md"
     role_card_sha = hashlib.sha256(role_card.read_bytes()).hexdigest()

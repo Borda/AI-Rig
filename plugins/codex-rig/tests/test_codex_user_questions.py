@@ -1,6 +1,8 @@
 """Check independently loadable Codex question guidance and its authorization boundaries."""
 
+import json
 from pathlib import Path
+import re
 
 import pytest
 
@@ -95,3 +97,28 @@ def test_codex_prompts_do_not_force_chat_only_or_yes_no_authorization() -> None:
         text = skill.read_text(encoding="utf-8")
         assert "Codex has no `AskUserQuestion`" not in text, skill
         assert "(yes / no)" not in text, skill
+
+
+def test_async_question_example_uses_the_exposed_questions_wrapper() -> None:
+    """Keep the documented async call valid after a rejected top-level title call."""
+    details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    match = re.search(r"(?m)^([ ]{2,})```json\n\1(\{[^\n]+\})\n\1```$", details)
+    assert match is not None
+    payload = json.loads(match.group(2))
+    assert set(payload) == {"questions"}
+    assert len(payload["questions"]) == 1
+    assert set(payload["questions"][0]) == {"title", "options"}
+    assert payload["questions"][0]["options"] == [
+        "example-action: Approve (Recommended)",
+        "example-action: Deny",
+    ]
+
+
+def test_keyed_merge_reply_cannot_accept_bare_approval_or_displace_control() -> None:
+    """Keep a typed bare approval from authorizing a pending local merge."""
+    guide = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
+    merge = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
+    assert "bare `approve` or `yes` without that key is invalid" in guide
+    assert "even when it is the only pending decision" in guide
+    assert "Do not append a final or status message after an accepted async question" in guide
+    assert "a bare `approve` or `yes` cannot authorize the merge" in merge

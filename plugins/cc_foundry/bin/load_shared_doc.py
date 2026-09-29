@@ -7,7 +7,7 @@ Collapses the two-line skill idiom
 
     _FS=$(python "$ROOT/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null \
         || echo "plugins/cc_foundry/skills/_shared")
-    cat "$_FS/task-hygiene.md"
+    cat "$_FS/file-handoff-protocol.md"
 
 into a single call. Resolution is **not** reimplemented here — the cascade is
 imported from :mod:`resolve_shared_path` so the two can never drift. That
@@ -77,7 +77,7 @@ def _build_parser() -> argparse.ArgumentParser:
         Configured :class:`argparse.ArgumentParser`.
 
     Examples:
-        >>> _build_parser().parse_args(["foundry", "skills/_shared", "task-hygiene.md"]).plugin
+        >>> _build_parser().parse_args(["foundry", "skills/_shared", "file-handoff-protocol.md"]).plugin
         'foundry'
     """
     parser = argparse.ArgumentParser(

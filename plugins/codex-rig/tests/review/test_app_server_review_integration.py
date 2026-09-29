@@ -48,13 +48,17 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     completion_tests = _module(Path(__file__).with_name("test_review_completion_gate.py"))
     run = completion_tests._assessed_pr.__wrapped__(tmp_path)
     evidence_tests = _module(Path(__file__).with_name("test_app_server_review.py"))
-    plan_path, evidence_path = evidence_tests.review_evidence_files(run, roles=("qa-specialist", "challenger"))
+    plan_path, evidence_path = evidence_tests.review_evidence_files(
+        run, roles=("qa-specialist", "challenger"), source_path="widget.txt"
+    )
     result_path = run / "result.json"
     result = json.loads(result_path.read_text())
     metadata = result["metadata"]
     plan = json.loads(plan_path.read_text())
     evidence = json.loads(evidence_path.read_text())
     for node in evidence["nodes"]:
+        node["started_at_ms"] = 0
+        node["finished_at_ms"] = 15
         role = node["role_id"]
         retained_card = run / "role-cards" / role / "ROLE.md"
         retained_card.parent.mkdir(parents=True, exist_ok=True)
@@ -120,7 +124,7 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
         specialist_passes=passes,
         independence_required=True,
         independence_satisfied=True,
-        execution_mode="independent-spawned",
+        execution_mode="parallel",
         execution_evidence_level="app-server-parent-observed",
         write_parallel_eligible=False,
     )
@@ -162,6 +166,26 @@ def test_high_risk_app_server_review_completes_and_is_discoverable(isolated_revi
     )
     assert lookup.returncode == 0, lookup.stderr
     assert Path(lookup.stdout.strip()) == isolated_review / "result.json"
+
+
+def test_assessed_app_server_review_rejects_serial_specialists(isolated_review: Path) -> None:
+    """Keep two independently completed but nonoverlapping reviewers from passing an assessed review."""
+    manifest = json.loads((isolated_review / "specialist-manifest.json").read_text(encoding="utf-8"))
+    evidence_path = Path(manifest["app_server_execution"]["evidence_path"])
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    evidence["nodes"][1]["started_at_ms"] = 20
+    evidence["nodes"][1]["finished_at_ms"] = 30
+    evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+    manifest["app_server_execution"]["evidence_sha256"] = hashlib.sha256(evidence_path.read_bytes()).hexdigest()
+    (isolated_review / "specialist-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    result_path = isolated_review / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["metadata"]["execution_mode"] = "independent-spawned"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass"):
+        validator._validate_result(isolated_review, result_path, isolated_review, "thread", isolated_review)
 
 
 @pytest.mark.parametrize(
@@ -355,7 +379,10 @@ def test_high_risk_review_cannot_replace_one_required_thread_with_parent_text(is
     result_path = isolated_review / "result.json"
     result = json.loads(result_path.read_text())
     result["metadata"].update(
-        specialist_passes=manifest["passes"], fanout_substituted=True, independence_satisfied=False
+        specialist_passes=manifest["passes"],
+        fanout_substituted=True,
+        independence_satisfied=False,
+        execution_mode="independent-spawned",
     )
     for assessment in result["metadata"]["reviewer_assessments"]:
         if assessment["role"] == "QA specialist":

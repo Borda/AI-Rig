@@ -131,15 +131,16 @@ def test_parent_activity_reader_normalizes_the_current_item_completed_shape() ->
     ]
 
 
-def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_path: Path) -> None:
+@pytest.mark.parametrize("source_path", ["src/widget.py", "src/widget.pyi"])
+def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_path: Path, source_path: str) -> None:
     """Keep file and line arithmetic derived from collected evidence instead of model-authored JSON."""
     validator = _load_validator()
     signals = {name: False for name in validator.ROUTING_SIGNALS}
     signals.update({"bug_fix": True, "test_or_error_path": True})
-    (tmp_path / "files.txt").write_text("src/widget.py\ntests/test_widget.py\n", encoding="utf-8")
+    (tmp_path / "files.txt").write_text(f"{source_path}\ntests/test_widget.py\n", encoding="utf-8")
     (tmp_path / "untracked.txt").write_text("", encoding="utf-8")
     (tmp_path / "numstat.txt").write_text(
-        "51\t14\tsrc/widget.py\n278\t0\ttests/test_widget.py\n",
+        f"51\t14\t{source_path}\n278\t0\ttests/test_widget.py\n",
         encoding="utf-8",
     )
     routing_path = tmp_path / "review-routing.json"
@@ -155,8 +156,11 @@ def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_pat
                     name: ["Fixture requires this signal."] if value else ["Fixture does not require this signal."]
                     for name, value in signals.items()
                 },
-                "triggered_roles": ["qa-specialist"],
-                "trigger_reasons": {"qa-specialist": ["Bug-fix and test-path evidence require QA."]},
+                "triggered_roles": ["qa-specialist", "sw-engineer"],
+                "trigger_reasons": {
+                    "qa-specialist": ["Bug-fix and test-path evidence require QA."],
+                    "sw-engineer": ["Changed Python source requires the primary code reviewer."],
+                },
             }
         ),
         encoding="utf-8",
@@ -183,7 +187,85 @@ def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_pat
     assert routing["mechanical_risk_tier"] == "LOCAL"
     assert routing["mechanical_risk_evidence"] == ["files=2", "changed_lines=343", "unknown_size_rows=0"]
     assert routing["signals"] == signals
+    assert validator._validate_routing(tmp_path, "LOCAL") == {"qa-specialist", "sw-engineer"}
+
+
+def test_test_only_python_review_does_not_trigger_software_engineer(tmp_path: Path) -> None:
+    """Leave test-only review with QA rather than claiming a production source pass."""
+    validator = _load_validator()
+    signals = {name: name == "test_or_error_path" for name in validator.ROUTING_SIGNALS}
+    (tmp_path / "files.txt").write_text("tests/test_widget.py\n", encoding="utf-8")
+    (tmp_path / "untracked.txt").write_text("", encoding="utf-8")
+    (tmp_path / "numstat.txt").write_text("1\t1\ttests/test_widget.py\n", encoding="utf-8")
+    (tmp_path / "review-routing.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "risk_tier": "LOCAL",
+                "mechanical_risk_tier": "TRIVIAL",
+                "mechanical_risk_evidence": ["files=1", "changed_lines=2", "unknown_size_rows=0"],
+                "signals": signals,
+                "signal_evidence": {name: ["Observed path evidence."] for name in signals},
+                "triggered_roles": ["qa-specialist"],
+                "trigger_reasons": {"qa-specialist": ["Changed test requires QA."]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
     assert validator._validate_routing(tmp_path, "LOCAL") == {"qa-specialist"}
+
+
+def test_review_role_roster_covers_every_applicable_specialist() -> None:
+    """Keep the executable review roster aligned with the packaged role cards."""
+    validator = _load_validator()
+    packaged_roles = {path.parent.name for path in (PLUGIN_ROOT / "roles").glob("*/ROLE.md")}
+
+    assert validator.ALL_MANIFEST_ROLES == packaged_roles - {"curator", "delegation-lead"}
+    assert set(validator.CONDITIONAL_SIGNALS) == validator.ALL_MANIFEST_ROLES - {
+        "sw-engineer",
+        "qa-specialist",
+        "challenger",
+    }
+
+
+@pytest.mark.parametrize(
+    ("role", "signal"),
+    [
+        pytest.param(role, signal, id=role)
+        for role, signal in sorted(
+            {**_load_validator().CONDITIONAL_SIGNALS, "challenger": "explicit_adversarial"}.items()
+        )
+    ],
+)
+def test_each_review_axis_routes_its_own_specialist(tmp_path: Path, role: str, signal: str) -> None:
+    """Exercise each non-Python specialist route without selecting unrelated roles."""
+    validator = _load_validator()
+    signals = {name: name == signal for name in validator.ROUTING_SIGNALS}
+    (tmp_path / "files.txt").write_text("notes.txt\n", encoding="utf-8")
+    (tmp_path / "untracked.txt").write_text("", encoding="utf-8")
+    (tmp_path / "numstat.txt").write_text("1\t1\tnotes.txt\n", encoding="utf-8")
+    routing = {
+        "schema_version": 1,
+        "risk_tier": "LOCAL",
+        "mechanical_risk_tier": "TRIVIAL",
+        "mechanical_risk_evidence": ["files=1", "changed_lines=2", "unknown_size_rows=0"],
+        "signals": signals,
+        "signal_evidence": {name: ["Observed routing evidence."] for name in signals},
+        "triggered_roles": [role],
+        "trigger_reasons": {role: [f"{signal} applies."]},
+    }
+    if role in validator.SOL_ROLES:
+        routing["sol_selection"] = {
+            role: {
+                "source": "explicit-user-selection",
+                "parent_event_id": "event-1",
+                "selection_sha256": "a" * 64,
+            }
+        }
+    (tmp_path / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+
+    assert validator._validate_routing(tmp_path, "LOCAL") == {role}
 
 
 @pytest.mark.parametrize(
@@ -218,9 +300,9 @@ def test_routing_rejects_trigger_reasons_that_are_not_nonempty_string_lists(tmp_
     """Prevent malformed reason collections from passing the routing preflight."""
     validator = _load_validator()
     signals = {name: name == "behavior_change" for name in validator.ROUTING_SIGNALS}
-    (tmp_path / "files.txt").write_text("src/widget.py\n", encoding="utf-8")
+    (tmp_path / "files.txt").write_text("src/widget.txt\n", encoding="utf-8")
     (tmp_path / "untracked.txt").write_text("", encoding="utf-8")
-    (tmp_path / "numstat.txt").write_text("1\t1\tsrc/widget.py\n", encoding="utf-8")
+    (tmp_path / "numstat.txt").write_text("1\t1\tsrc/widget.txt\n", encoding="utf-8")
     (tmp_path / "review-routing.json").write_text(
         json.dumps(
             {

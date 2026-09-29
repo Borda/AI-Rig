@@ -37,7 +37,7 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/check_install_state.py" --
 
 ## Check R1 — Computed path resolution (local + installed duality)
 
-Root cause guard for `adversarial.md` / `upgrade.md` silent-deletion bug class. Skill `.md` files construct paths via variable substitution (`$AUDIT_TPL/../modes/upgrade.md`, `$_FS/task-hygiene.md`, `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>`). Those paths exist as literal strings only if target filename is grep-visible. File existing locally but never copied to installed plugin cache silently fails for users who install plugin.
+Root cause guard for `adversarial.md` / `upgrade.md` silent-deletion bug class. Skill `.md` files construct paths via variable substitution (`$AUDIT_TPL/../modes/upgrade.md`, `$_FS/file-handoff-protocol.md`, `${CLAUDE_PLUGIN_ROOT:-plugins/<x>}/bin/<script>`). Those paths exist as literal strings only if target filename is grep-visible. File existing locally but never copied to installed plugin cache silently fails for users who install plugin.
 
 **What it checks**: for every computed-path reference in `plugins/*/skills/*/SKILL.md`, `plugins/*/skills/*/modes/*.md`, `plugins/*/agents/*.md` — verify resolved target exists both locally (`plugins/<plugin>/...`) and in installed cache (`~/.claude/plugins/cache/borda-ai-rig/<plugin>/*/<path>`). Skip if `LOCAL_MODE != true` (no plugin source tree to scan).
 

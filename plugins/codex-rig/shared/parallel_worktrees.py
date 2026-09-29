@@ -1081,9 +1081,16 @@ def _validate_code_remediate_approval(plan_path: Path, approval_path: Path) -> t
         raise PilotError("write-approval-invalid")
     if approval.get("plan_sha256") != plan_sha256:
         raise PilotError("plan-approval-digest-mismatch")
-    if approval.get("response") != "approve" or approval.get("source") not in {"explicit-input", "user-prompt"}:
+    source = approval.get("source")
+    if approval.get("response") != "approve" or source not in {
+        "explicit-input",
+        "user-prompt",
+        "workflow-default",
+    }:
         raise PilotError("write-approval-invalid")
     if not isinstance(approval.get("prompt_presented"), bool):
+        raise PilotError("write-approval-invalid")
+    if source == "workflow-default" and approval["prompt_presented"]:
         raise PilotError("write-approval-invalid")
     return plan, plan_sha256, _sha256(approval_path)
 
@@ -1095,7 +1102,7 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
         raise PilotError("plan-node-invalid")
     nodes: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    seen_paths: set[str] = set()
+    seen_paths: dict[str, str] = {}
     seen_outputs: set[str] = set()
     seen_contexts: set[str] = set()
     seen_context_paths: set[str] = set()
@@ -1143,11 +1150,17 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
         if not isinstance(owned, list) or not owned:
             raise PilotError(f"owned-path-invalid:{node_id}")
         paths: list[str] = []
+        bucket_paths: set[str] = set()
         for value in owned:
             path = _portable_relative(value, "owned-path")
             canonical = _canonical_path(path)
-            if canonical in seen_paths or any(
-                canonical.startswith(f"{existing}/") or existing.startswith(f"{canonical}/") for existing in seen_paths
+            if (
+                canonical in bucket_paths
+                or (canonical in seen_paths and seen_paths[canonical] != path)
+                or any(
+                    canonical.startswith(f"{existing}/") or existing.startswith(f"{canonical}/")
+                    for existing in seen_paths
+                )
             ):
                 raise PilotError(f"owned-path-overlap:{node_id}")
             target = repository.joinpath(*PurePosixPath(path).parts)
@@ -1157,7 +1170,8 @@ def _code_remediate_nodes(plan: dict[str, Any], repository: Path, evidence_root:
                 _git(repository, "ls-files", "--error-unmatch", "--", path)
             except PilotError as error:
                 raise PilotError(f"owned-path-not-tracked:{node_id}") from error
-            seen_paths.add(canonical)
+            seen_paths[canonical] = path
+            bucket_paths.add(canonical)
             paths.append(path)
         locks = raw.get("resource_locks")
         if not isinstance(locks, list) or any(not isinstance(lock, str) or not lock for lock in locks):
@@ -1489,7 +1503,7 @@ def _collect_code_remediate_patch(
 
 
 def _integrate_code_remediate_pilot(state_path: Path, state: dict[str, Any], workspace: Path) -> dict[str, object]:
-    """Integrate every collected schema-v2 patch in lexical bucket order."""
+    """Integrate schema-v2 patches, retaining shared-file conflicts for the parent."""
     source, _ = _code_remediate_authority(state, workspace, state_path, clean=True)
     nodes = state.get("nodes")
     if (
@@ -1508,16 +1522,34 @@ def _integrate_code_remediate_pilot(state_path: Path, state: dict[str, Any], wor
     _git(source, "worktree", "add", "--detach", str(integration), state["baseline_head"])
     state.update({"integration_worktree": integration_relative, "integration_status": "applying"})
     _persist(state_path, state)
+    applied_paths: set[str] = set()
     try:
         for node in ordered:
             _, patch_path = _code_remediate_evidence_path(source, node.get("patch_path"), "patch-path")
             if _sha256(patch_path) != node.get("patch_sha256"):
                 raise PilotError(f"patch-digest-mismatch:{node['node_id']}")
-            _git(integration, "apply", "--check", str(patch_path))
-            _git(integration, "apply", str(patch_path))
+            try:
+                _git(integration, "apply", "--check", str(patch_path))
+                _git(integration, "apply", str(patch_path))
+            except PilotError as error:
+                conflict_paths = sorted(applied_paths.intersection(node["owned_paths"]))
+                if not conflict_paths:
+                    raise
+                state.update(
+                    {
+                        "status": "integration-needs-reconciliation",
+                        "integration_status": "needs-reconciliation",
+                        "integration_failed_node": node["node_id"],
+                        "integration_conflict_paths": conflict_paths,
+                        "integration_order": [item["node_id"] for item in ordered],
+                    }
+                )
+                _persist(state_path, state)
+                raise PilotError(f"patch-integration-needs-reconciliation:{node['node_id']}") from error
+            applied_paths.update(node["owned_paths"])
         if _git_bytes(integration, "ls-files", "--others", "-z"):
             raise PilotError("integration-untracked-path-forbidden")
-        expected = sorted(path for node in ordered for path in node["owned_paths"])
+        expected = sorted({path for node in ordered for path in node["owned_paths"]})
         changed = sorted(_nul_paths(_git(integration, "diff", "--name-only", "--no-renames", "-z", "HEAD", "--")))
         if changed != expected:
             raise PilotError("integration-changed-path-mismatch")
@@ -1539,9 +1571,91 @@ def _integrate_code_remediate_pilot(state_path: Path, state: dict[str, Any], wor
         )
         _persist(state_path, state)
     except PilotError:
-        state["integration_status"] = "failed"
-        _persist(state_path, state)
+        if state["integration_status"] != "needs-reconciliation":
+            state["integration_status"] = "failed"
+            _persist(state_path, state)
         raise
+    return state
+
+
+def reconcile_code_remediate_integration(*, state_path: Path, record_path: Path) -> dict[str, object]:
+    """Verify a parent-edited integration worktree against an exact run-local resolution record."""
+    state, workspace = _read_state(state_path)
+    source, _ = _code_remediate_authority(state, workspace, state_path, clean=True)
+    if (
+        state.get("status") != "integration-needs-reconciliation"
+        or state.get("integration_status") != "needs-reconciliation"
+    ):
+        raise PilotError("integration-reconciliation-not-required")
+    _, integration = _code_remediate_worktree_path(
+        workspace, state["source_repository"], state.get("integration_worktree"), "integration-worktree"
+    )
+    record_file = _code_remediate_cli_artifact_path(state_path, record_path, "reconciliation-record")
+    record = _load_json(record_file, "reconciliation-record")
+    ordered = sorted(state["nodes"], key=lambda node: node["node_id"])
+    paths = sorted({path for node in ordered for path in node["owned_paths"]})
+    patch_hashes = {node["node_id"]: node["patch_sha256"] for node in ordered}
+    required = {
+        "baseline_head",
+        "failed_node",
+        "integration_order",
+        "paths",
+        "patch_sha256",
+        "postimage_sha256",
+        "summary",
+    }
+    if (
+        set(record) != required
+        or record["baseline_head"] != state["baseline_head"]
+        or record["failed_node"] != state["integration_failed_node"]
+        or record["integration_order"] != [node["node_id"] for node in ordered]
+        or record["paths"] != paths
+        or record["patch_sha256"] != patch_hashes
+        or not isinstance(record["summary"], str)
+        or not record["summary"].strip()
+        or len(record["summary"]) > 2_000
+    ):
+        raise PilotError("integration-reconciliation-record-invalid")
+    for node in ordered:
+        _, patch_path = _code_remediate_evidence_path(source, node["patch_path"], "patch-path")
+        if _sha256(patch_path) != patch_hashes[node["node_id"]]:
+            raise PilotError(f"patch-digest-mismatch:{node['node_id']}")
+    if _git(integration, "rev-parse", "HEAD") != state["baseline_head"]:
+        raise PilotError("integration-reconciliation-worktree-drift")
+    if _git_bytes(integration, "ls-files", "--others", "-z"):
+        raise PilotError("integration-reconciliation-untracked-path")
+    changed = sorted(_nul_paths(_git(integration, "diff", "--name-only", "--no-renames", "-z", "HEAD", "--")))
+    if changed != paths:
+        raise PilotError("integration-reconciliation-path-mismatch")
+    for node in ordered:
+        _raw_content_updates(integration, node)
+    postimages = {path: _sha256(integration.joinpath(*PurePosixPath(path).parts)) for path in paths}
+    if record["postimage_sha256"] != postimages:
+        raise PilotError("integration-reconciliation-postimage-mismatch")
+    filtered = {path: _git_filtered_oid(integration, path) for path in paths}
+    record_relative = _relative_workspace_path(state_path.parent, record_file, "reconciliation-record")
+    state.update(
+        {
+            "status": "integrated",
+            "integration_status": "structurally-verified",
+            "integration_final_sha256": postimages,
+            "integration_final_filtered_oid": filtered,
+            "integration": {
+                "status": "structurally-verified",
+                "order": [node["node_id"] for node in ordered],
+                "paths": paths,
+            },
+            "reconciliation": {
+                "status": "verified",
+                "record_path": record_relative,
+                "record_sha256": _sha256(record_file),
+                "changed_paths": changed,
+                "failed_node": state["integration_failed_node"],
+                "postimage_sha256": postimages,
+            },
+        }
+    )
+    _persist(state_path, state)
     return state
 
 
@@ -1551,12 +1665,23 @@ def apply_code_remediate_source(*, state_path: Path) -> dict[str, object]:
     source, _ = _code_remediate_authority(state, workspace, state_path, clean=True)
     if state.get("status") != "integrated" or state.get("integration_status") != "structurally-verified":
         raise PilotError("source-apply-before-integration-forbidden")
+    reconciliation = state.get("reconciliation")
+    if state.get("integration_failed_node") is not None and reconciliation is None:
+        raise PilotError("integration-reconciliation-evidence-drift")
+    if reconciliation is not None:
+        if not isinstance(reconciliation, dict) or reconciliation.get("status") != "verified":
+            raise PilotError("integration-reconciliation-evidence-drift")
+        _, record_file = _code_remediate_evidence_path(
+            source, f"{state['evidence_root']}/{reconciliation.get('record_path')}", "reconciliation-record"
+        )
+        if _sha256(record_file) != reconciliation.get("record_sha256"):
+            raise PilotError("integration-reconciliation-evidence-drift")
     _, integration = _code_remediate_worktree_path(
         workspace, state["source_repository"], state.get("integration_worktree"), "integration-worktree"
     )
     postimages = state.get("integration_final_sha256")
     postimage_filtered_oids = state.get("integration_final_filtered_oid")
-    expected_paths = sorted(path for node in state["nodes"] for path in node["owned_paths"])
+    expected_paths = sorted({path for node in state["nodes"] for path in node["owned_paths"]})
     if (
         not isinstance(postimages, dict)
         or not isinstance(postimage_filtered_oids, dict)
@@ -1755,6 +1880,9 @@ def _cli_parser() -> argparse.ArgumentParser:
     collect = commands.add_parser("collect", help="collect one parent-derived child patch")
     collect.add_argument("--state", type=Path, required=True)
     collect.add_argument("--node", required=True)
+    reconcile = commands.add_parser("reconcile", help="verify a parent-edited conflicting integration")
+    reconcile.add_argument("--state", type=Path, required=True)
+    reconcile.add_argument("--record", type=Path, required=True)
     for command, help_text in (
         ("integrate", "integrate all collected child patches"),
         ("apply-source", "apply the verified integrated source bundle"),
@@ -1788,6 +1916,8 @@ def main(argv: list[str] | None = None) -> int:
             result = collect_write_patch(state_path=args.state, node_id=args.node)
         elif args.command == "integrate":
             result = integrate_write_pilot(state_path=args.state)
+        elif args.command == "reconcile":
+            result = reconcile_code_remediate_integration(state_path=args.state, record_path=args.record)
         elif args.command == "apply-source":
             result = apply_code_remediate_source(state_path=args.state)
         else:

@@ -95,13 +95,7 @@ Domain tables per mode: see `modes/agents.md`, `modes/skills.md`, `modes/routing
 
 <workflow>
 
-**Task hygiene**: load and follow the protocol below.
-
-```bash
-# loads: compaction-contract.md
-# audit-skip: resilience-replication — duplicated; plugin cannot self-locate
-cat "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/resolve_shared_path.py" foundry skills/_shared 2>/dev/null || echo "plugins/cc_foundry/skills/_shared")/task-hygiene.md"
-```
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 **Task tracking**: create tasks at start of execution (Step 1) for each phase that will run:
 

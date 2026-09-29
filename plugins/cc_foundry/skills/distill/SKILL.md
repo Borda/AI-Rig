@@ -36,13 +36,7 @@ NOT for single-file edits or quality checks — use `/foundry:audit` for config 
 
 <workflow>
 
-**Task hygiene**: load and follow the protocol below.
-
-```bash
-# loads: compaction-contract.md
-# audit-skip: resilience-replication
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
-```
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

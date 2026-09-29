@@ -123,7 +123,7 @@ def render_rules(reader: PurePath) -> bytes:
 
 
 def strip_legacy_rules(existing: bytes, home: PurePath) -> bytes:
-    """Remove verified UI-saved reader and PR collector grants for this home's cache."""
+    """Remove canonical legacy grants while preserving single-launcher user collector approvals."""
     kept = []
     for line in existing.splitlines(keepends=True):
         body = line.rstrip(b"\r\n")
@@ -144,6 +144,11 @@ def strip_legacy_rules(existing: bytes, home: PurePath) -> bytes:
             pr_match = LEGACY_PR_RULE.fullmatch(body)
             try:
                 pattern = json.loads(pr_match.group(1)) if pr_match is not None else None
+                # Managed collector grants always use the interpreter alternatives list.
+                # A literal launcher identifies a user-saved approval outside that ownership.
+                if isinstance(pattern, list) and pattern and isinstance(pattern[0], str):
+                    kept.append(line)
+                    continue
                 if not isinstance(pattern, list) or len(pattern) != 4 or pattern[0] != ["python", "python3"]:
                     raise ValueError("not a canonical collector pattern")
                 paths = pattern[1] if isinstance(pattern[1], list) else [pattern[1]]

@@ -82,7 +82,18 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 
 ## Agent Resolution
 
+`agent-resolution.md` (loaded below) contains: foundry check + fallback table. foundry not installed → use table to substitute each `foundry:X` with `general-purpose`. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`, `foundry:challenger`.
+
+<!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:qa-specialist → general-purpose, foundry:linting-expert → general-purpose, foundry:doc-scribe → general-purpose, foundry:perf-optimizer → general-purpose, foundry:solution-architect → general-purpose, foundry:challenger → general-purpose. -->
+
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
+
+## Step 1: Pre-flight
+
+Capture caller branch first — Step 11 restore needs it even when Step 4 (`gh pr checkout`) skipped or fails mid-checkout. Init here so Step 11 restore path always defined. Preflight in `bin/resolve_preflight.py` — checks codex availability, `gh` binary + auth, syncs remote. Caches positive results under `.temp/state/preflight/` (4 h TTL). Writes `CODEX_AVAILABLE` and `GH_OK` to `${TMPDIR:-/tmp}/resolve-preflight-*-<CSID>`; status to stderr; exits non-zero only on hard failure (`gh` missing/unauthenticated, `git pull` conflict) — `gh` missing/unauthenticated aborts whole block below, flag parsing never runs. Codemap auto-detects here too (auto-on if installed; `--no-codemap` off; `--codemap` strict — stop if missing); merged into this same call since nothing between agent resolution, preflight, and codemap detection depends on a decision made in between.
+
 ```bash
+# timeout: 45000
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # loads: oss-shared-resolver.md
 # loads: review-section-taxonomy.md
@@ -93,25 +104,7 @@ _OSS_RESOLVE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_shared_
 echo "$_OSS_SHARED" > "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}"  # cross-block (Check 41)
 echo "$_OSS_RESOLVE" > "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}"
 cat "$_OSS_SHARED/agent-resolution.md"  # timeout: 5000
-```
 
-Contains: foundry check + fallback table. foundry not installed → use table to substitute each `foundry:X` with `general-purpose`. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:linting-expert`, `foundry:doc-scribe`, `foundry:perf-optimizer`, `foundry:solution-architect`, `foundry:challenger`.
-
-<!-- Inline fallback (if agent-resolution.md unreadable): foundry:sw-engineer → general-purpose, foundry:qa-specialist → general-purpose, foundry:linting-expert → general-purpose, foundry:doc-scribe → general-purpose, foundry:perf-optimizer → general-purpose, foundry:solution-architect → general-purpose, foundry:challenger → general-purpose. -->
-
-**Task hygiene**: Before creating tasks, call `TaskList`. Per task:
-
-- `completed` if done
-- `deleted` if orphaned/irrelevant
-- `in_progress` only if genuinely continuing
-
-## Step 1: Pre-flight
-
-Capture caller branch first — Step 11 restore needs it even when Step 4 (`gh pr checkout`) skipped or fails mid-checkout. Init here so Step 11 restore path always defined. Preflight in `bin/resolve_preflight.py` — checks codex availability, `gh` binary + auth, syncs remote. Caches positive results under `.temp/state/preflight/` (4 h TTL). Writes `CODEX_AVAILABLE` and `GH_OK` to `${TMPDIR:-/tmp}/resolve-preflight-*-<CSID>`; status to stderr; exits non-zero only on hard failure (`gh` missing/unauthenticated, `git pull` conflict) — `gh` missing/unauthenticated aborts whole block below, flag parsing never runs.
-
-```bash
-# timeout: 45000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 SAVED_BRANCH=$(git branch --show-current 2>/dev/null || echo "")
 echo "$SAVED_BRANCH" > "${TMPDIR:-/tmp}/resolve-saved-branch-${CSID}"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/resolve_preflight.py"
@@ -127,10 +120,7 @@ echo "${KEEP_ITEMS:-}" > "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}"  # compact
 echo "$WT_ENABLED" > "${TMPDIR:-/tmp}/oss-resolve-worktree-${CSID}"
 # stale contract, crashed prior run (compaction-contract.md §Lifecycle)
 rm -f .temp/state/skill-contract.md
-```
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # codemap: auto-on if installed; --no-codemap off; --codemap strict (stop if missing)
 # loads: detect_codemap.py — consumers: resolve/SKILL.md, review/SKILL.md
 _DETECT_CODEMAP="${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/detect_codemap.py"
@@ -139,7 +129,6 @@ python "$_DETECT_CODEMAP" --prefix resolve --arguments "$ARGUMENTS" 2>&1  # time
 [ $? -ne 0 ] && { echo "! BLOCKED — codemap strict mode requested but codemap not installed or index missing"; exit 1; }
 IFS= read -r CODEMAP_ENABLED < "${TMPDIR:-/tmp}/resolve-codemap-enabled-${CSID}" 2>/dev/null || CODEMAP_ENABLED="false"
 IFS= read -r CODEMAP_CURRENCY < "${TMPDIR:-/tmp}/resolve-codemap-currency-${CSID}" 2>/dev/null || CODEMAP_CURRENCY="off"
-IFS= read -r _OSS_SHARED < "${TMPDIR:-/tmp}/resolve-oss-shared-${CSID}" 2>/dev/null || _OSS_SHARED=""  # reload (Check 41)
 IFS= read -r CODEMAP_FORCE_OFF < "${TMPDIR:-/tmp}/resolve-codemap-forced-off-${CSID}" 2>/dev/null || CODEMAP_FORCE_OFF="false"
 [ "$CODEMAP_FORCE_OFF" = "false" ] && cat "$_OSS_SHARED/codemap-gates.md"  # timeout: 5000
 ```
@@ -202,6 +191,8 @@ echo skip > "${TMPDIR:-/tmp}/resolve-post-pr-action-${CSID}"  # Step 10 overwrit
 # `unset`, not `each`: Step 8's merge fence aborts on it, so a skipped Step 3d block fails loud instead of landing per-item commits
 echo unset > "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}"
 echo domain > "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}"
+# Step 3d overwrites; `auto` (not `unset`) because a skipped Step 3d means no Phase 2 dispatch either — nothing to widen or serialize
+echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"
 : > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # empty, not rm (danger filter): report mode skips Step 3b; a stale dir from the previous PR would feed its items into this run
 # defence-in-depth: validate VAR=value, no metachars, before sourcing — guards regression/tampered binary
 tmpenv=$(mktemp)  # timeout: 3000
@@ -448,15 +439,17 @@ Immediately before the first `AskUserQuestion`, ensure the latest assistant user
 
 | Pending | Call 1 slots | Follow-up call |
 | -- | -- | -- |
-| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 topic-group | none |
-| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | topic-group, only when commit mode = (b) |
-| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group |
-| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group |
+| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch | topic-group, only when commit mode = (b) |
+| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | Q1 dispatch · Q2 topic-group |
+| 7-9 | Q1-Q3 items (≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
+| 10-18 | Q1-Q3 items (first 9) · Q4 bulk → Call 2: Q1-Q3 items (remainder, ≤3 each) · Q4 bulk | Q1 commit-mode · Q2 topic-group · Q3 dispatch |
 | ≥19 | context-budget mode below — no item checkboxes exist | — |
 
 Checkbox mode holds at most 18 items (2 calls × 3 questions × 3 items). Decide the mode from the pending count **before** building Call 1; never widen a question past 3 items and never open a Call 3 to stretch checkbox mode further.
 
-Bulk action resolving to (d) Skip all → discard the commit-mode and topic-group answers from the same call (nothing will be committed). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
+The dispatch question is asked in **every** run, so the ≤3 row spends its last slot on it and topic-group falls back to the conditional follow-up the 4-6 row already used. Only the 4-6 band gains a round-trip it did not always pay: its follow-up now fires unconditionally, carrying dispatch plus a topic-group answer discarded unless commit mode = (b).
+
+Bulk action resolving to (d) Skip all → discard the commit-mode, topic-group, **and dispatch** answers from the same call (nothing will be committed and no specialist will be dispatched). This satisfies the distinct-menus rule below — menus stay separate questions; only the round-trips merge.
 
 **Bulk action — hard rule**: single-select, fixed options, **present in every selection call without exception** — Call 1 and Call 2 alike, positioned after that call's last item-checkbox question. A selection call without a bulk page is a defect, never a valid compression. Never put items in it. Items span ≤3 groups per call regardless of how many type categories exist.
 
@@ -486,7 +479,7 @@ Bulk-action question — multiSelect: FALSE (single-select only — user picks o
 - Any bulk answer other than "unanswered" in Call 1 → skip Call 2 entirely (scope already resolved).
 - ≥19 pending → context-budget mode below instead, decided before Call 1; never open a Call 3.
 
-**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group (3 of the 4 slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
+**≥19 pending items — context-budget mode**: no per-item checkboxes in this branch. **MANDATORY, in this order — print first, ask second:** (1) print the compressed table (type · id · summary ≤40 chars · file) with every row in an assistant user-facing reply, not Bash/tool stdout, immediately before AskUserQuestion; same non-decorative/no-compression-substitute rule as Step 3c (Output-Routing exemption applies — never divert to `.temp`); (2) then issue ONE call: Q1 bulk action · Q2 commit-mode · Q3 topic-group · Q4 dispatch (all four slots; no item checkboxes exist in this mode). Threshold is 19 because checkbox mode tops out at 18 — this branch takes the whole layout, never a partial checkbox pass.
 
 <!-- branch: main-path — commit-mode (same call in the ≤6-item merged layout; separate call 2 only in the >6-item flow; skipped only when bulk action = (d) skip) -->
 
@@ -523,7 +516,52 @@ Topic-group question — multiSelect: FALSE
 
 Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · (d) or free text → `labels` (prompt for labels at Step 8) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
 
-Persist both once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, and its after-loop grouping reads the strategy; neither survives a fence boundary or a compaction on its own.
+**Dispatch-granularity question** — placed per the slot table above, asked in every run that reaches this gate (skip only when bulk action = (d) skip-all, same discard rule as topic-group). It sets **wave width only**: specialist routing, the file-ownership tiebreak, the import-coupling merge, and the ≤5-items-per-group ceiling are correctness and stall guards, never widened or dropped by any answer.
+
+```text
+Dispatch-granularity question — multiSelect: FALSE
+"Phase 2 runs specialists in isolated worktrees. How should the work spread?"
+  (a) Auto — specialist groups, ≤5 items each, pool-capped waves (default)
+  (b) Sequential — same groups, one worktree at a time
+  (c) Fine — one worktree per item, still pool-capped (each spawn costs ~120,851 tok)
+  (d) Show the computed groups first — same three choices again once they exist
+```
+
+Set `DISPATCH_MODE`:
+
+- (a) → `auto` · (b) → `sequential` · (c) → `fine` · (d) → `preview` · unanswered → `auto` (default)
+- Groups cannot be shown here: Phase 2 forms them from `SURVIVING_ITEMS` after Phase 1's challenge verdicts, so a concrete list does not exist at Step 3d. (d) is the only path to approving real groups and costs one extra gate at the Phase 1 → Phase 2 boundary; the other three answers keep this run gate-free from here to dispatch.
+- `preview` is not a width. At that boundary `action-item-dispatch.md` prints the formed groups and re-asks (a)/(b)/(c), then the orchestrator runs the matching block below a second time to record the resolved width.
+
+`(a)` auto:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
+```
+
+`(b)` sequential:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo sequential > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
+```
+
+`(c)` fine:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo fine > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
+```
+
+`(d)` preview:
+
+```bash
+export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
+echo preview > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
+```
+
+Persist all three once the menus resolve — Step 8's merge fence passes `--commit-mode` to `merge_specialist_batch.py`, its after-loop grouping reads the strategy, and Phase 2 reads the dispatch mode; none survives a fence boundary or a compaction on its own.
 
 <!-- policy-sibling: plugins/CLAUDE.md §Blueprint Blocks (canonical), plugins/cc_foundry/agents/challenger.md, plugins/cc_oss/skills/resolve/SKILL.md (Step 3d, Step 10), plugins/cc_oss/skills/review/SKILL.md (reject gate) -->
 
@@ -585,7 +623,8 @@ Then confirm what landed — the echoed line must match the user's answer before
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _CM < "${TMPDIR:-/tmp}/resolve-commit-mode-${CSID}" 2>/dev/null || _CM="unset"
 IFS= read -r _GS < "${TMPDIR:-/tmp}/resolve-group-strategy-${CSID}" 2>/dev/null || _GS="unset"
-echo "commit-mode=$_CM group-strategy=$_GS"  # timeout: 3000
+IFS= read -r _DM < "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}" 2>/dev/null || _DM="unset"
+echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"  # timeout: 3000
 ```
 
 **Over-20 selection gate** — after bulk or checkbox resolution and before creating any item tasks, count `SELECTED_ITEMS`. When more than 20 IDs are selected, invoke `AskUserQuestion`: "More than 20 items were selected; one resolve pass can handle at most 20. What should run now?" Options: (a) Apply the first 20 selected items in the displayed severity/priority order now, then rerun for the remaining items; (b) Stop and reselect at most 20 items. For (a), set `SELECTED_ITEMS` to exactly those first 20 selected IDs, print the deferred IDs, and tell the user to rerun for the remaining items. For (b) or no answer, stop without creating tasks. Never silently trim a bulk choice, run a second batch inside this pass, or pass more than 20 IDs to Step 3e.
@@ -912,6 +951,12 @@ No confirming commit found → this item was never closed by any exit path; that
 TaskUpdate(task_id=TASK_IMPL, status="completed")
 ```
 
+## Step 9: Lint and QA gate
+
+```text
+TaskUpdate(task_id=TASK_LINT, status="in_progress")
+```
+
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 # boundary2: post-impl loop, pre-lint gate (compaction-contract.md §Lifecycle)
@@ -921,16 +966,6 @@ IFS= read -r _IMPL_DIR < "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}" 2>/dev/null 
 _PRESERVE="pr=${_PR_NUMBER}, items-implemented, impl-dir=${_IMPL_DIR}, challenge-log=${_IMPL_DIR}/challenge-log.txt, item-tasks=${_IMPL_DIR}/item-tasks.tsv; next: lint/push/report"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "lint-qa (after implementation loop)" "$_IMPL_DIR" "${_PRESERVE}" "lint/QA gate (Step 9) → push (Step 10) → final report (Step 11)"  # timeout: 5000
-```
-
-## Step 9: Lint and QA gate
-
-```text
-TaskUpdate(task_id=TASK_LINT, status="in_progress")
-```
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev/null || _OSS_RESOLVE=""  # reload (Check 41)
 cat "$_OSS_RESOLVE/modes/lint-qa-gate.md"  # timeout: 5000
 ```
@@ -1137,7 +1172,8 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
-- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
+- **DISPATCH_MODE**: `auto` (default) · `sequential` · `fine` · `preview`. Set via the dispatch-granularity question (Step 3d), asked in every run beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak, the import-coupling merge and the ≤5-items-per-group ceiling never change. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
+- **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The dispatch-granularity question rides an existing call in every band, so it adds no round-trip there; only 4-6 pending pays one, because its follow-up now fires unconditionally instead of only on grouped commits, and only `DISPATCH_MODE=preview` adds a call outside this count. The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.
 - **Discussion vs inline**: `gh pr view --comments` = discussion (`location: discussion`; no Resolve button); `gh api .../pulls/<N>/comments` = inline (`location: inline`; resolvable). `location: discussion` + `[report]` items: implement-only, no GitHub close action. Surface unresolvable rows through the Status suffix `· thread (no GH resolve)`, not a separate column.

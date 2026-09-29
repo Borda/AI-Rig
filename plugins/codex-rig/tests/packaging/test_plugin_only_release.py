@@ -1133,7 +1133,8 @@ def test_specialist_wave_joins_before_acceptance_without_expanding_fanout() -> N
     assert "joins all handoffs before acceptance" in policy
     assert "A second wave is forbidden" in policy
     assert "parent-serially or stop and re-plan with the user" in policy
-    assert "Never add fan-out, overlap ownership, bypass approval, or start dependencies" in policy
+    assert "Never add fan-out, bypass required authorization, or start dependencies" in policy
+    assert "Code-remediate alone may declare exact shared-file ownership across isolated child worktrees" in policy
     assert "equal-gate serial fallback" in policy
 
     cases = _load_json(PLUGIN_ROOT / "runtime" / "calibration" / "behavioral-cases.json")["cases"]

@@ -26,6 +26,14 @@ Every Bash call must include explicit `timeout` — **3× expected P90 duration*
 
 Per-operation-class lookup table (gh commands, git, installs, test suites, build steps): `_full/claude-config.md`.
 
+## Turn Batching — one response, every independent call
+
+A response is one billed turn, and a turn re-reads the entire live context. Measured 2026-09-29 over 14 days: mean **221,527 tok** of cache read per turn, **69.2%** of all spend. Splitting work across turns that could have shared one is therefore the most expensive habit available, and it costs the same whether the extra turn does real work or none.
+
+- **Consecutive edits to the same file go in one response** — several `Edit` calls together, never one call per turn. Measured: 180 runs of 3+ single-edit turns on one file, **513 turns collapsible**. Exception: an edit whose content depends on the previous edit's result.
+- **Independent tool calls of any kind batch** — parallel `Read`s, parallel `Grep`s, a `TaskUpdate` beside the next real call. Only a genuine data dependency justifies a second turn.
+- **Per-fix narration still applies** (`quality-gates.md` §Reporting Findings) — batching changes the turn count, never what gets stated.
+
 ## Directory Navigation Commands
 
 Never combine directory navigation with command in single Bash call — always use **two separate Bash calls**:

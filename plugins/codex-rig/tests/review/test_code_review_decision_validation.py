@@ -229,6 +229,31 @@ def test_candidate_assessments_allow_one_explicit_main_reviewer(tmp_path: Path) 
         _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
 
 
+def test_python_source_assessment_starts_with_software_engineer(tmp_path: Path) -> None:
+    """Keep the primary Python reviewer first and bind its rating to a real pass."""
+    (tmp_path / "sw.md").write_text(
+        "## Reviewer Assessment\n\nRating: 2\nRationale: A Python behavior gap remains.\n", encoding="utf-8"
+    )
+    (tmp_path / "qa.md").write_text(
+        "## Reviewer Assessment\n\nRating: 2\nRationale: A regression test is missing.\n", encoding="utf-8"
+    )
+    passes = {
+        "sw-engineer": {"role": "sw-engineer", "mode": "inspection", "output_path": "sw.md"},
+        "qa-specialist": {"role": "qa-specialist", "mode": "inspection", "output_path": "qa.md"},
+    }
+    assessments = [
+        {"role": "QA specialist", "rating": 2, "evidence": "qa.md"},
+        {"role": "Software engineer", "rating": 2, "evidence": "sw.md"},
+    ]
+    validator = _load_validator()
+
+    with pytest.raises(SystemExit, match="review-primary-software-engineer-order"):
+        validator._validate_reviewer_assessments(tmp_path, {"reviewer_assessments": assessments}, passes)
+
+    assessments.reverse()
+    validator._validate_reviewer_assessments(tmp_path, {"reviewer_assessments": assessments}, passes)
+
+
 def test_candidate_assessments_keep_parent_substitute_role_bound(tmp_path: Path) -> None:
     """A substituted pass retains its role label and own output pointer."""
     (tmp_path / "qa.md").write_text(

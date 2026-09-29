@@ -84,15 +84,38 @@ def _byte_size(path: Path) -> int:
         return 0
 
 
-def _rules_files(rules_dir: Path) -> list[Path]:
-    """Return every rules Markdown file, nested ones included.
+def _rules_files(*rules_dirs: Path) -> list[Path]:
+    """Return every rules Markdown file across the given directories, nested ones included.
 
     ``rglob`` matches the ``find .claude/rules -name '*.md'`` original. A flat glob would silently stop counting and
     stop flagging ``rules/<subdir>/*.md``.
+
+    Both the project and the user rules directory count, because a session loads both. Measuring only the project
+    directory reported ``Rules dir total: 0 bytes`` on a normal setup — every plugin delivers its rules to
+    ``~/.claude/rules/``, so the bulk of the always-loaded set was missing from the total that Check 34a gates on.
+    Entries are deduplicated by resolved target so a project rule symlinked to a delivered one counts once.
+
+    Args:
+        *rules_dirs: Candidate ``rules`` directories, in reporting order; missing ones are skipped.
+
+    Returns:
+        Markdown files, sorted, one entry per distinct resolved target.
+
+    Examples:
+        >>> _rules_files(Path("/nonexistent/rules"))
+        []
     """
-    if not rules_dir.is_dir():
-        return []
-    return sorted(p for p in rules_dir.rglob("*.md") if p.is_file())
+    seen: dict[Path, Path] = {}
+    for rules_dir in rules_dirs:
+        if not rules_dir.is_dir():
+            continue
+        for path in sorted(p for p in rules_dir.rglob("*.md") if p.is_file()):
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path
+            seen.setdefault(key, path)
+    return sorted(seen.values())
 
 
 def _dir_bytes(directory: Path, pattern: str = "*.md") -> int:
@@ -105,7 +128,7 @@ def report_overhead(claude_dir: Path, project_claude: Path, global_dir: Path) ->
     """Print always-loaded config totals and flag anything over threshold."""
     print("--- Check 34: Config token overhead ---")
     project_bytes = _byte_size(project_claude)
-    rules_files = _rules_files(claude_dir / "rules")
+    rules_files = _rules_files(claude_dir / "rules", global_dir / "rules")
     rules_bytes = sum(_byte_size(p) for p in rules_files)
     # `*.md` already covers CLAUDE.md; the shell original named it twice and
     # double-counted it into the total.

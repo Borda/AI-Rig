@@ -87,6 +87,7 @@ Role checks:
 - `model_reasoning_effort` follows the agent-effort-policy: normal parent, implementation, verification, performance, static analysis, and web evidence use `medium`; deep review, data/research method, challenge, coordination, documentation, CI/CD, OSS, curation, architecture, and security use `high`. `xhigh`/`max` require evidenced task escalation.
 - high-stakes roles use high-capability tier; bounded support may lower-cost tier. No deprecated model string in active config/TOML.
 - role has clear trigger/skip/not-for boundaries, evidence ownership, execution constraints, handover, and confidence contracts; sensitive roles retain sandbox, especially read-only security audit; packaged roles require no external runtime path variable.
+- plugin-layout calibration checks one distinct task cue in each of the fifteen shipped role-card `Trigger` lines; a missing or multiply owned cue fails `agent-task-routing`. This checks declared routing only; live task selection still needs live observations.
 
 ## Usage Notes
 

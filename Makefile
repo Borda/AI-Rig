@@ -39,10 +39,32 @@ CODEX_HOME_SYNC_SCRIPT := $(PROJECT_DIR)/scripts/sync_codex_session_policy.py
 TIMEOUT_RUNNER := $(PROJECT_DIR)/scripts/run_with_timeout.py
 EXTERNAL_PLUGIN_TIMEOUT_SECONDS ?= 120
 
+# Header hierarchy: double-line workflow, heavy section, thin stage.
+# Sections indent two spaces; stages indent four. Usage: `@$(call stage,Text); \`.
+# Rule of thumb: any section whose output runs past ~5 lines gets a banner; a
+# short section (2-3 lines) keeps a plain `echo` so the banners stay meaningful.
+# The body must stay on ONE line: GNU Make 3.81 keeps every newline inside a
+# `define`, and a multi-line value would break the recipe's `\` continuation.
+# Keep the text pure ASCII and free of commas and single quotes — macOS bash 3.2
+# pads `%-58.58s` by bytes, so a multi-byte char shifts the right border.
+WORKFLOW_RULE := ════════════════════════════════════════════════════════════
+SECTION_RULE := ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STAGE_RULE := ────────────────────────────────────────────────────────────
+define workflow
+printf '\n╔%s╗\n║ %-58.58s ║\n╚%s╝\n' '$(WORKFLOW_RULE)' '$(1)' '$(WORKFLOW_RULE)'
+endef
+define section
+printf '\n  ┏%s┓\n  ┃ %-58.58s ┃\n  ┗%s┛\n' '$(SECTION_RULE)' '$(1)' '$(SECTION_RULE)'
+endef
+define stage
+printf '\n    ┌%s┐\n    │ %-58.58s │\n    └%s┘\n' '$(STAGE_RULE)' '$(1)' '$(STAGE_RULE)'
+endef
+
 .PHONY: sync-all sync-claude sync-codex clear-all clear-claude clear-codex \
         migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace \
         update-ext-plugins register-marketplace install-claude-plugins \
         install-codex-plugins sync-codex-home-policy \
+        banner-claude banner-codex \
         prune-benchmarks prune-benchmarks-apply
 
 ## Meta targets ---------------------------------------------------------------
@@ -52,8 +74,21 @@ EXTERNAL_PLUGIN_TIMEOUT_SECONDS ?= 120
 # phases regardless of either's outcome and aggregates the failure at the end,
 # instead of a codex-phase failure silently discarding an earlier claude-phase
 # failure count (which is what sync.sh's bare `set -e` does today).
+#
+# One banner per section only. `banner-claude`/`banner-codex` are ordinary
+# prerequisites, not recipe lines, because a target's own recipe runs *after* its
+# prerequisites — the banner has to precede the stages it heads. `.NOTPARALLEL:`
+# above keeps prerequisite order left-to-right. sync-all prints its own banner and
+# then inherits the section banners from the sub-makes it invokes.
+banner-claude:
+	@$(call section,Claude sync - marketplace + plugins)
+
+banner-codex:
+	@$(call section,Codex sync - plugins + session policy)
+
 sync-all:
-	@status=0; \
+	@$(call workflow,Full sync - Claude + Codex scopes); \
+	status=0; \
 	$(MAKE) sync-claude || status=1; \
 	$(MAKE) sync-codex || status=1; \
 	if [ $$status -ne 0 ]; then \
@@ -63,14 +98,15 @@ sync-all:
 	fi; \
 	exit $$status
 
-sync-claude: migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins
+sync-claude: banner-claude migrate-marketplace uninstall-claude-plugins refresh-ext-marketplace update-ext-plugins register-marketplace install-claude-plugins
 	@echo "✓ Claude sync complete"
 
-sync-codex: install-codex-plugins sync-codex-home-policy
+sync-codex: banner-codex install-codex-plugins sync-codex-home-policy
 	@echo "✓ Codex sync complete"
 
 clear-all:
-	@status=0; \
+	@$(call workflow,Full teardown - Claude + Codex scopes); \
+	status=0; \
 	$(MAKE) clear-claude || status=1; \
 	$(MAKE) clear-codex || status=1; \
 	echo "✓ Cleared (managed plugins uninstalled; marketplace registrations + caveman left in place)"; \
@@ -79,7 +115,7 @@ clear-all:
 ## Claude-side targets ---------------------------------------------------------
 
 clear-claude:
-	@echo "Clearing Claude marketplace plugins..."; \
+	@$(call section,Claude teardown - uninstall marketplace plugins); \
 	for p in $(PLUGINS); do \
 		claude plugin uninstall "$$p@$(MARKETPLACE)" 2>/dev/null && echo "  ✓ uninstalled $$p" || echo "  – $$p not installed, skipping"; \
 	done; \
@@ -108,7 +144,7 @@ migrate-marketplace:
 	done < <(jq -r --arg path "$(PROJECT_DIR)" --arg new "$(MARKETPLACE)" 'to_entries | map(select(.value.source.path == $$path and .key != $$new)) | .[].key' "$(KNOWN_MARKETPLACES)")
 
 uninstall-claude-plugins:
-	@echo "Uninstalling existing plugins..."; \
+	@$(call stage,Uninstall existing plugins); \
 	for p in $(PLUGINS); do \
 		claude plugin uninstall "$$p@$(MARKETPLACE)" 2>/dev/null && echo "  ✓ uninstalled $$p" || echo "  – $$p not installed, skipping"; \
 	done
@@ -161,7 +197,7 @@ update-ext-plugins:
 	done
 
 register-marketplace:
-	@echo "Registering marketplace (GitHub source → versioned cache install)..."; \
+	@$(call stage,Register marketplace - GitHub source to versioned cache); \
 	LOCAL_SHA=$$(git -C "$(PROJECT_DIR)" rev-parse HEAD 2>/dev/null); \
 	REMOTE_SHA=$$(git ls-remote "$(MARKETPLACE_REMOTE)" HEAD 2>/dev/null | awk '{print $$1}'); \
 	if [ -z "$$REMOTE_SHA" ]; then \
@@ -181,7 +217,7 @@ register-marketplace:
 # shell invocation, so the bridge-purge guard (constraint 6) and the try-all-6-then-report
 # contract (constraint 3) both stay local bash state, no relay file needed.
 install-claude-plugins:
-	@echo "Installing plugins..."; \
+	@$(call stage,Install marketplace plugins); \
 	BRIDGE_INSTALLED=false; \
 	FAILED_INSTALLS=0; \
 	for p in $(PLUGINS); do \
@@ -211,7 +247,7 @@ install-claude-plugins:
 			echo "  – $$p not installed, nothing to purge"; \
 		fi; \
 	done; \
-	echo "Initializing installed plugin setup skills..."; \
+	$(call stage,Initialize installed plugin setup skills); \
 	for p in $(PLUGINS); do \
 		install_path=$$(jq -r --arg plugin "$$p@$(MARKETPLACE)" '(.plugins[$$plugin] // []) | map(select(.installPath?)) | sort_by(.installedAt // "") | last // {} | .installPath // ""' "$(INSTALLED_PLUGINS)"); \
 		if [[ -z "$$install_path" ]]; then \
@@ -265,7 +301,9 @@ install-claude-plugins:
 			continue; \
 		fi; \
 		echo "  → $$p:setup"; \
-		claude --print "/$$p:setup --approve"; \
+		claude --print --output-format text \
+			--append-system-prompt "Your output is printed directly in a plain terminal. Format all reports as plain text with short labels and indented lists. Do not use Markdown headings, emphasis markers, backticks, fenced code blocks, tables, or Markdown links. Write paths, commands, and URLs literally. Preserve all required report content." \
+			"/$$p:setup --approve"; \
 	done; \
 	if [ "$$FAILED_INSTALLS" -gt 0 ]; then \
 		echo "⚠ Done with $$FAILED_INSTALLS failed install(s) — rerun after checking network and marketplace access"; \
@@ -276,7 +314,7 @@ install-claude-plugins:
 ## Codex-side targets ----------------------------------------------------------
 
 clear-codex:
-	@echo "Clearing Codex plugins..."; \
+	@$(call section,Codex teardown - clear plugins); \
 	python3 "$(CODEX_SYNC_SCRIPT)" clear; \
 	echo "✓ Codex plugins cleared"
 
@@ -284,7 +322,8 @@ clear-codex:
 # always tracks the default branch, always cleans before reinstalling, always
 # installs the global-instructions block.
 install-codex-plugins:
-	@python3 "$(CODEX_SYNC_SCRIPT)" install
+	@$(call stage,Install Codex plugins from default branch); \
+	python3 "$(CODEX_SYNC_SCRIPT)" install
 
 sync-codex-home-policy:
 	@python3 "$(CODEX_HOME_SYNC_SCRIPT)" \

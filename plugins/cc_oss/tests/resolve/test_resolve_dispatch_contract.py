@@ -489,6 +489,121 @@ def test_phase1_to_phase2_boundary_refreshes_contract(tmp_path: Path) -> None:
     assert "never re-issue Step 3d" in contract
 
 
+def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() -> None:
+    """Step 3d must let the user set Phase 2 wave width without weakening any grouping guard.
+
+    The four widths are a closed set, so each one needs its own literal Bash block: a single block carrying a default
+    beside a substitution comment would silently record that default on every run.
+    """
+    skill = (_RESOLVE / "SKILL.md").read_text(encoding="utf-8")
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+
+    assert "Dispatch-granularity question — multiSelect: FALSE" in skill
+    for mode in ("auto", "sequential", "fine", "preview"):
+        assert f'echo {mode} > "${{TMPDIR:-/tmp}}/resolve-dispatch-mode-${{CSID}}"' in skill, mode
+    assert 'echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000' in skill
+    assert "| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch |" in skill
+    assert "| 4-6 | Q1-Q2 items (≤3 each) · Q3 bulk · Q4 commit-mode | Q1 dispatch · Q2 topic-group |" in skill
+    assert "Q1 commit-mode · Q2 topic-group · Q3 dispatch |" in skill
+    assert "Q4 dispatch (all four slots; no item checkboxes exist in this mode)" in skill
+    assert "discard the commit-mode, topic-group, **and dispatch** answers from the same call" in skill
+    assert 'echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"' in skill
+    assert "`DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool" in dispatch
+    assert "`fine` never separates two items sharing a file or an import edge" in dispatch
+    assert "**Group-preview gate — `DISPATCH_MODE=preview` only" in dispatch
+    assert "so the sentinel holds a width, never `preview`" in dispatch
+
+
+@pytest.mark.skipif(_BASH is None, reason="The Step 8 prelude is Bash")
+@pytest.mark.parametrize(
+    ("sentinel", "expected"),
+    [
+        pytest.param("auto", "auto", id="auto"),
+        pytest.param("sequential", "sequential", id="sequential"),
+        pytest.param("fine", "fine", id="fine"),
+        pytest.param("preview", "preview", id="preview"),
+        pytest.param("grouped", "auto", id="foreign-value-falls-back"),
+        pytest.param(None, "auto", id="missing-sentinel-falls-back"),
+    ],
+)
+def test_step_8_prelude_publishes_a_usable_dispatch_mode(tmp_path: Path, sentinel: str | None, expected: str) -> None:
+    """Phase 2 must always receive one of the four widths, whatever Step 3d left behind.
+
+    The width is a cost knob rather than a safety gate, unlike the commit mode validated beside it: a value this gate
+    never writes — a stale sentinel from another question, or no file at all — degrades to the current pool-capped
+    behaviour instead of blocking the dispatch.
+    """
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    session = f"resolve-width-{expected}-{sentinel or 'absent'}"
+    impl_dir = tmp_path / "implementation"
+    impl_dir.mkdir()
+    (impl_dir / "action-items.jsonl").write_text(json.dumps({"id": 1}) + "\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-agent-override-{session}").write_text("\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-commit-mode-{session}").write_text("each\n", encoding="utf-8", newline="\n")
+    if sentinel is not None:
+        (tmp_path / f"resolve-dispatch-mode-{session}").write_text(f"{sentinel}\n", encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [_BASH, "-c", _step_8_prelude(dispatch, [1])],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "ARGUMENTS": "42",
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"DISPATCH_MODE={expected}" in result.stdout
+
+
+@pytest.mark.skipif(_BASH is None, reason="The Phase 2 boundary block is Bash")
+@pytest.mark.parametrize(
+    ("sentinel", "expected"),
+    [pytest.param("fine", "fine", id="chosen-width"), pytest.param("grouped", "auto", id="foreign-value-falls-back")],
+)
+def test_phase2_boundary_records_dispatch_mode_in_contract(tmp_path: Path, sentinel: str, expected: str) -> None:
+    """A compaction inside Phase 2 must resume with the width the user chose, not the default.
+
+    Phase 2 holds worktrees open for minutes, so the contract written at this boundary is the only record of the width
+    once the sentinel's own Bash call is gone.
+    """
+    dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
+    block = _bash_block_containing(dispatch, "boundary1: Phase 1 challenge done")
+
+    session = f"resolve-boundary-width-{expected}"
+    impl_dir = tmp_path / "impl"
+    impl_dir.mkdir()
+    (tmp_path / f"resolve-impl-dir-{session}").write_text(f"{_bash_path(impl_dir)}\n", encoding="utf-8", newline="\n")
+    (tmp_path / f"resolve-dispatch-mode-{session}").write_text(f"{sentinel}\n", encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [_BASH, "-c", block],
+        cwd=tmp_path,
+        env=os.environ
+        | {
+            "CLAUDE_CODE_SESSION_ID": session,
+            "CLAUDE_PLUGIN_ROOT": str(_PLUGIN),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{Path(sys.executable).parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"DISPATCH_MODE={expected}" in result.stdout
+    assert f"dispatch-mode={expected}" in (tmp_path / ".temp/state/skill-contract.md").read_text(encoding="utf-8")
+
+
 def test_deprecation_filter_reads_tagged_blob_and_keeps_uncertain_history(tmp_path: Path) -> None:
     """A tag's commit patch is not its file content, and absent history cannot prove unreleased API."""
     intelligence = (_RESOLVE / "modes/pr-intelligence.md").read_text(encoding="utf-8")

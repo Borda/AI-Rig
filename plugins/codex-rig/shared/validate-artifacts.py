@@ -1537,6 +1537,65 @@ def _validate_code_remediate_production_lifecycle(
         "paths": expected_paths,
     }:
         raise SystemExit("code-remediate-production-lifecycle-integration-mismatch")
+    reconciliation = lifecycle.get("reconciliation")
+    failed_node = lifecycle.get("integration_failed_node")
+    conflict_paths = lifecycle.get("integration_conflict_paths")
+    if reconciliation is None:
+        if failed_node is not None or conflict_paths is not None:
+            raise SystemExit("code-remediate-production-lifecycle-reconciliation-required")
+    else:
+        error = "code-remediate-production-lifecycle-reconciliation-mismatch"
+        final_hashes = lifecycle.get("integration_final_sha256")
+        if (
+            not isinstance(reconciliation, dict)
+            or set(reconciliation)
+            != {"status", "record_path", "record_sha256", "changed_paths", "failed_node", "postimage_sha256"}
+            or reconciliation.get("status") != "verified"
+            or failed_node not in expected_nodes
+            or not isinstance(conflict_paths, list)
+            or not conflict_paths
+            or any(path not in expected_paths for path in conflict_paths)
+            or reconciliation.get("failed_node") != failed_node
+            or reconciliation.get("changed_paths") != expected_paths
+            or not isinstance(final_hashes, dict)
+            or sorted(final_hashes) != expected_paths
+            or any(
+                not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in final_hashes.values()
+            )
+            or reconciliation.get("postimage_sha256") != final_hashes
+        ):
+            raise SystemExit(error)
+        record_path = _code_remediate_run_path(out_dir, reconciliation.get("record_path"), error)
+        if (
+            record_path.is_symlink()
+            or not record_path.is_file()
+            or reconciliation.get("record_sha256") != hashlib.sha256(record_path.read_bytes()).hexdigest()
+        ):
+            raise SystemExit(error)
+        record = _load_json(record_path)
+        if (
+            set(record)
+            != {
+                "baseline_head",
+                "failed_node",
+                "integration_order",
+                "paths",
+                "patch_sha256",
+                "postimage_sha256",
+                "summary",
+            }
+            or record.get("baseline_head") != bucket_plan.get("baseline_head")
+            or record.get("failed_node") != failed_node
+            or record.get("integration_order") != expected_nodes
+            or record.get("paths") != expected_paths
+            or record.get("patch_sha256") != {node["node_id"]: node["patch_sha256"] for node in recorded_nodes}
+            or record.get("postimage_sha256") != final_hashes
+            or not isinstance(record.get("summary"), str)
+            or not record["summary"].strip()
+            or len(record["summary"]) > 2_000
+        ):
+            raise SystemExit(error)
     source = lifecycle.get("source")
     if (
         not isinstance(source, dict)
@@ -1640,7 +1699,12 @@ def _validate_workplan_scalar_fields(workplan: dict[str, Any]) -> None:
             raise SystemExit(f"code-remediate-invalid-resolution-workplan:{key}")
     if workplan.get("parallel_approval_status") not in {"not-required", "approved", "parent-only"}:
         raise SystemExit("code-remediate-invalid-resolution-workplan:parallel_approval_status")
-    if workplan.get("parallel_approval_source") not in {"not-required", "explicit-input", "user-prompt"}:
+    if workplan.get("parallel_approval_source") not in {
+        "not-required",
+        "explicit-input",
+        "user-prompt",
+        "workflow-default",
+    }:
         raise SystemExit("code-remediate-invalid-resolution-workplan:parallel_approval_source")
 
 
@@ -1798,8 +1862,8 @@ def _validate_specialist_context_pack(bucket: dict[str, Any], out_dir: Path) -> 
         raise SystemExit("code-remediate-specialist-context-pack-missing")
 
 
-def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths: set[str]) -> None:
-    """Reject unsafe or overlapping owned paths for one parallel bucket."""
+def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths: dict[str, str]) -> None:
+    """Allow exact shared files while rejecting unsafe path aliases and ancestry."""
     bucket_owned_paths: set[str] = set()
     for path in owned_paths:
         raw_path = path.replace("\\", "/").strip()
@@ -1807,18 +1871,19 @@ def _validate_parallel_bucket_paths(owned_paths: list[str], parallel_owned_paths
             raise SystemExit("code-remediate-parallel-owned-path-invalid")
         if any(character in raw_path for character in "*?[]"):
             raise SystemExit("code-remediate-parallel-owned-path-pattern-forbidden")
-        normalized_path = PurePosixPath(raw_path).as_posix().removeprefix("./").rstrip("/").casefold()
-        if not normalized_path or normalized_path == "." or normalized_path in bucket_owned_paths:
+        normalized_path = PurePosixPath(raw_path).as_posix().removeprefix("./").rstrip("/")
+        canonical_path = normalized_path.casefold()
+        if not canonical_path or canonical_path == "." or canonical_path in bucket_owned_paths:
             raise SystemExit("code-remediate-parallel-owned-path-invalid")
-        bucket_owned_paths.add(normalized_path)
+        bucket_owned_paths.add(canonical_path)
         if any(
-            normalized_path == existing
-            or normalized_path.startswith(f"{existing}/")
-            or existing.startswith(f"{normalized_path}/")
+            canonical_path.startswith(f"{existing}/") or existing.startswith(f"{canonical_path}/")
             for existing in parallel_owned_paths
         ):
             raise SystemExit("code-remediate-parallel-ownership-overlap")
-        parallel_owned_paths.add(normalized_path)
+        if canonical_path in parallel_owned_paths and parallel_owned_paths[canonical_path] != normalized_path:
+            raise SystemExit("code-remediate-parallel-ownership-overlap")
+        parallel_owned_paths[canonical_path] = normalized_path
 
 
 def _validate_work_buckets(work_buckets: list[Any], out_dir: Path) -> _WorkBucketObservations:
@@ -1828,7 +1893,7 @@ def _validate_work_buckets(work_buckets: list[Any], out_dir: Path) -> _WorkBucke
     observed_specialist_groups = 0
     singleton_specialist_groups = 0
     observed_verifier_groups = 0
-    parallel_owned_paths: set[str] = set()
+    parallel_owned_paths: dict[str, str] = {}
     parallel_bucket_count = 0
     bucket_ids: set[str] = set()
     for position, bucket in enumerate(work_buckets):
@@ -1876,12 +1941,13 @@ def _validate_workplan_coverage_counts(
     """Reconcile observed bucket coverage and ownership counts against the declared workplan."""
     if sorted(observed.indexes) != sorted(selected_indexes) or len(observed.indexes) != len(set(observed.indexes)):
         raise SystemExit("code-remediate-work-bucket-coverage-mismatch")
-    if len(selected_indexes) <= 5 and len(work_buckets) != 1:
+    if len(selected_indexes) <= 5 and len(work_buckets) != 1 and workplan["execution_mode"] != "parallel-specialists":
         raise SystemExit("code-remediate-low-volume-fanout")
     if (
         len(selected_indexes) > 1
         and len(work_buckets) == len(selected_indexes)
         and observed.singleton_specialist_groups == len(work_buckets)
+        and len({bucket["owner"] for bucket in work_buckets}) == 1
     ):
         raise SystemExit("code-remediate-one-specialist-per-finding")
     if observed.parent_groups != workplan["parent_owned_groups"]:
@@ -1904,18 +1970,22 @@ def _validate_parallel_specialists_approval(
         raise SystemExit("code-remediate-parallel-approval-not-required")
     if approval.status != "approved":
         raise SystemExit("code-remediate-parallel-approval-missing")
-    if approval.source not in {"explicit-input", "user-prompt"}:
+    if approval.source not in {"explicit-input", "user-prompt", "workflow-default"}:
         raise SystemExit("code-remediate-parallel-approval-source-missing")
     if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
         raise SystemExit("code-remediate-parallel-prompt-not-presented")
+    if approval.source == "workflow-default" and workplan["parallel_prompt_presented"]:
+        raise SystemExit("code-remediate-default-parallel-prompt-invalid")
     if approval.response != "approve" or approval.approved_plan_sha256 != approval.bucket_plan_sha256:
         raise SystemExit("code-remediate-parallel-approved-plan-not-bound")
 
 
-def _validate_eligible_fanout_approval(workplan: dict[str, Any], approval: _WorkplanApproval) -> None:
-    """Check the parent-only approval record for a fanout-eligible plan that stayed sequential."""
+def _validate_sequential_fallback_approval(workplan: dict[str, Any], approval: _WorkplanApproval) -> None:
+    """Require user authorization before a selected scope uses sequential fallback."""
     if not workplan["parallel_approval_required"] or approval.status != "parent-only":
         raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
+    if workplan["parallel_eligible"]:
+        raise SystemExit("code-remediate-eligible-fanout-fallback-forbidden")
     if approval.source not in {"explicit-input", "user-prompt"}:
         raise SystemExit("code-remediate-eligible-fanout-approval-source-missing")
     if approval.source == "user-prompt" and not workplan["parallel_prompt_presented"]:
@@ -1945,8 +2015,10 @@ def _validate_workplan_execution_mode_approval(
         _validate_parallel_specialists_approval(workplan, approval, observed)
     elif observed.parallel_bucket_count:
         raise SystemExit("code-remediate-parallel-bucket-mode-mismatch")
+    elif approval.status == "parent-only":
+        _validate_sequential_fallback_approval(workplan, approval)
     elif workplan["parallel_eligible"]:
-        _validate_eligible_fanout_approval(workplan, approval)
+        raise SystemExit("code-remediate-eligible-fanout-approval-not-recorded")
     else:
         _validate_unneeded_parallel_approval(workplan, approval)
 

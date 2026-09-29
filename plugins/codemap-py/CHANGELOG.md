@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.39.10
+
+- Match each exposed Codex question schema, including the observed async `questions` array; after an accepted required async question, yield without final/status text when no independent work remains.
+- Require the visible decision key in approval replies even when only one decision is pending; retain existing text-only and dismissed-control recovery.
+
 ## 0.39.9
 
 - Recover a user-reported dismissed Codex question without losing its pending decision or reusing the unsuitable control in the same host.

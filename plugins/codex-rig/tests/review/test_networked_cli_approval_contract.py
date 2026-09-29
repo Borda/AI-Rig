@@ -93,7 +93,7 @@ def test_user_questions_expose_answers_without_weakening_authorization() -> None
     assert "unrelated text grants no consent" in questions
     assert "`Authorize this local merge and commit?` with separate canonical options `Approve` and `Deny`" in skill
     assert "Generated repair questions follow the same native routing as the merge question" in skill
-    assert "(approve / revise / parent-only)" in skill
+    assert "Authorize parent-owned or sequential fallback for this selected scope?" in skill
 
 
 def test_shared_contract_covers_known_networked_cli_families() -> None:

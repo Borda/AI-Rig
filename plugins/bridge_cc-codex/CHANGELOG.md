@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.10
+
+- Match Codex async questions to the exposed host schema, yield without a status handoff while a required answer is pending, and reject bare approval for a keyed decision.
+- Require a keyed approval reply to carry its own key; never infer a missing key from an earlier question or message.
+
 ## 0.5.9
 
 - Recover a user-reported dismissed Codex question without losing its pending decision or reusing the unsuitable control in the same host.

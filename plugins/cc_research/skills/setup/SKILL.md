@@ -25,7 +25,7 @@ Deliver research's rules to Claude's user-level rule namespace, and its own perm
 
 **Why symlink, not copy?** Rules load at session start. A symlink serves the installed version after every upgrade; a copy silently serves stale content forever.
 
-**Why does research deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases.
+**Why does research deliver only its own rules?** Each plugin installs independently. A plugin that shipped a sibling's rules would break standalone installation and couple releases. Still true with the delta variant: `research-quality-gates.md` links either `rules/quality-gates-delta.md` (when a foundry-owned `foundry-quality-gates.md` is already delivered) or the complete `rules/quality-gates.md` (when it is not) — both sources belong to this plugin, and the delta only *points* at foundry's copy for the shared obligations rather than delivering it. Standalone install loses no rule; all four `quality-gates.md` copies loading at once was 51,274 B of context on every turn.
 
 NOT for: statusLine, `TEAM_PROTOCOL.md`, or plugin-cache purging — those are `/foundry:setup` (requires `foundry` plugin). Of `~/.claude/settings.json` only the `permissions.allow` and `permissions.deny` arrays are touched, and only additively. Writes nothing under `~/.codex/`.
 

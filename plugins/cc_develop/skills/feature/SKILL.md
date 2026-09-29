@@ -47,12 +47,7 @@ cat "$_DEV_SHARED/agent-resolution.md"
 
 Contains: foundry check + fallback table. If foundry not installed: substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:sw-engineer`, `foundry:qa-specialist`, `foundry:doc-scribe`, `foundry:linting-expert`, `foundry:challenger`.
 
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-IFS= read -r _DEV_SHARED < "${TMPDIR:-/tmp}/dev-shared-${CSID}" 2>/dev/null || _DEV_SHARED=""  # timeout: 5000
-[ -z "$_DEV_SHARED" ] && _DEV_SHARED="plugins/cc_develop/skills/_shared"
-cat "$_DEV_SHARED/task-hygiene.md"
-```
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 ## Project Detection
 
@@ -618,7 +613,7 @@ Start from Step 2 demo — already failing, becomes first target. For each piece
 
 7. Regressions appear → fix before moving on — never carry forward broken suite
 
-After each cycle, refresh compaction contract so a mid-loop compaction resumes TDD loop instead of restarting Step 2 demo:
+After each cycle, refresh compaction contract so a mid-loop compaction resumes TDD loop instead of restarting Step 2 demo, then read back cycle count/start, increment, and check caps — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here. `BATCH_ENABLED=true` counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
 
 ```bash
 # boundary-1 (Step 1) says next=Step 2 demo; skip this and mid-Step-3 compaction restarts demo — idempotent but wastes spawns+tests. checkpoint.md lists completed steps for resume.
@@ -632,13 +627,6 @@ _CHANGED=$( { git diff --name-only HEAD 2>/dev/null; git ls-files --others --exc
 _PRESERVE="dev-dir=$_DEV_DIR, changed-files=$_CHANGED, pytest-cmd=$_PYTEST_CMD, plan-file=${_PLAN_FILE:-none}, checkpoint=$_DEV_DIR/checkpoint.md"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
 python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/write_skill_contract.py" "develop:feature" "TDD loop in progress (Step 3)" "$_DEV_DIR" "$_PRESERVE" "re-run suite to see current green state, then continue TDD for remaining behaviour — do NOT restart the Step 2 demo. checkpoint.md lists completed steps."  # timeout: 5000
-```
-
-At each cycle start, read back, increment, check — stop at `MAX_INNER_CYCLES=5` or 30-min wall cap; on trip: stop loop, report what passed/failed/remains, invoke `AskUserQuestion` — (a) continue N more cycles · (b) re-scope · (c) stop here. `BATCH_ENABLED=true` counts **edits processed**, not passes through the loop: `BATCH_SIZE` is the number of non-overlapping members the just-closed batch contained (1 when batch mode is off or no batch formed — cap accounting then matches today's per-edit behavior exactly):
-
-```bash
-# timeout: 3000
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 IFS= read -r TDD_CYCLE < "${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}" 2>/dev/null || TDD_CYCLE="0"
 IFS= read -r TDD_START < "${TMPDIR:-/tmp}/dev-feature-tdd-start-${CSID}" 2>/dev/null || TDD_START=$(date +%s)
 # BATCH_SIZE is written once by batch-mode.md when a batch closes, consumed here, then reset to
@@ -651,7 +639,9 @@ TDD_CYCLE=$((TDD_CYCLE + ${BATCH_SIZE:-1}))
 echo "$TDD_CYCLE" > ${TMPDIR:-/tmp}/dev-feature-tdd-cycle-${CSID}
 echo "1" > "${TMPDIR:-/tmp}/dev-feature-batch-size-${CSID}"
 MAX_INNER_CYCLES=5  # returns from Step 4 to Step 3 count as edits too (1 each, batch or not)
-[ "$TDD_CYCLE" -gt $MAX_INNER_CYCLES ] && echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stop TDD loop; surface state to user"
+# -ge, not -gt: this fence runs at cycle END (merged into the post-cycle contract write), so the count
+# already includes the cycle just finished. -gt here would let a 6th cycle run before tripping a cap of 5.
+[ "$TDD_CYCLE" -ge $MAX_INNER_CYCLES ] && echo "⚠ MAX_INNER_CYCLES ($MAX_INNER_CYCLES) reached — stop TDD loop; surface state to user"
 [ $(( $(date +%s) - TDD_START )) -ge 1800 ] && echo "⚠ wall-time cap reached (30 min) — stop TDD loop; surface state to user"
 ```
 

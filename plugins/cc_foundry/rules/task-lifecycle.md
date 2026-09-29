@@ -12,6 +12,8 @@ paths:
 
 Sequence: `TaskUpdate(completed)` → emit output. Never the reverse.
 
+This is the **one** sanctioned bookkeeping-only response. Everywhere else, a `TaskCreate`/`TaskUpdate` rides along with the next substantive tool call — `CLAUDE.md` §Task Management ▸ In-session task tracking, with the measured turn cost. Ordering rule, not a licence.
+
 ### Frozen plan during build
 
 An approved `.plans/active/todo_*.md` or `plan_*.md` is read-only once implementation starts. Only a post-build sync step (move to `.plans/closed/results_*.md`) or explicit user-directed revision may edit it. An implementer that rewrites the spec to match what it built destroys the spec's value as an independent verification target. Build reveals the plan is wrong → stop, surface via `AskUserQuestion`; never edit the plan to fit.
@@ -69,6 +71,8 @@ The second line fails for the reason the first does, one slot over: `Review PR #
 Boilerplate (`Task tracking:`, `Compact Instructions:`, TEAM_PROTOCOL read, run-dir preamble, envelope spec) goes **after** prompt line 1 — including a preamble a template calls "prepend to every prompt". Task line still first.
 
 Slots and caps come from the live `Agent()` schema in context, not this table alone. Schema carries a field this rule omits → follow the schema, fix the rule. Never drop a field because the rule predates it.
+
+**Binds authored templates too, not just live composition.** An `Agent(...)` call documented inside a skill/mode `.md` file is itself a spawn — the same three-slot, delta-first, pre-spawn-check discipline applies to the template text an author writes, not only to a spawn composed live at execution time. A template that omits `name=`/`description=` entirely, or opens prompt line 1 with shared framing ("Effort level: …. Implement …") instead of the group's delta, reproduces this failure at every future run, silently, until read. One compliant batch spawn elsewhere in the same file does not cover a second: check each batch-spawn site in the file independently.
 
 ### After spawning: end the turn
 

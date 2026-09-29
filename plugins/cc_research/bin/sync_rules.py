@@ -21,6 +21,11 @@ Design constraints, in order of importance:
 3. **Symlinks only.** Rules must track the installed plugin version; a copy
    silently serves stale content after an upgrade. When the platform refuses
    to create a symlink the entry is reported as a failure, not copied.
+4. **One delivered file per rule.** A rule shipped in both a full and a delta
+   form (see :class:`RuleVariant`) delivers exactly one of them, always under
+   the full rule's destination name. The delta is chosen only on proof that the
+   plugin owning the shared body has already delivered it; every unprovable case
+   delivers the full rule, so a standalone install loses no obligation.
 
 Nothing outside ``<home>/.claude/rules/`` is ever created, replaced, or removed.
 In particular this tool never writes under ``~/.codex/``.
@@ -89,6 +94,41 @@ class SyncResult:
     failed: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class RuleVariant:
+    """A rule this plugin ships in two interchangeable forms.
+
+    The flat ``~/.claude/rules/`` namespace loads every delivered file into every session, and
+    several plugins each ship a rule stating the same set of obligations. Once the plugin that
+    owns the canonical body has delivered it, this plugin's own full copy is redundant — measured
+    at ~11 KB re-read on every turn — so the shorter delta form is installed instead. Both forms
+    install under the same destination name, which makes switching between them one atomic
+    relink rather than an add plus a prune.
+
+    Attributes:
+        full: Source basename stating every obligation; always deliverable on its own.
+        delta: Source basename stating only what is specific to this plugin.
+        canonical: Delivered filename that, when proven genuine, supplies the shared body.
+        owner: Manifest name the plugin providing ``canonical`` must declare.
+    """
+
+    full: str
+    delta: str
+    canonical: str
+    owner: str
+
+
+#: Rules that have a delta form. A plugin shipping no delta file is unaffected by every entry.
+VARIANTS: tuple[RuleVariant, ...] = (
+    RuleVariant(
+        full="quality-gates.md",
+        delta="quality-gates-delta.md",
+        canonical="foundry-quality-gates.md",
+        owner="foundry",
+    ),
+)
+
+
 def dest_name(plugin_name: str, source_name: str) -> str:
     """Namespaced destination filename for a source rule.
 
@@ -155,6 +195,25 @@ def _check_rule_file(rule: Path, rules_dir: Path) -> None:
         raise SourceError(f"rule escapes the plugin rules directory: {rule}")
 
 
+def _check_variants(rules: list[Path], rules_dir: Path) -> None:
+    """Assert no delta ships without the full rule it abbreviates.
+
+    A lone delta would be installed as the whole rule whenever the canonical shared body is
+    absent, silently dropping every obligation the delta leaves to that body.
+
+    Args:
+        rules: Candidate rule paths.
+        rules_dir: The plugin's ``rules/`` directory, named in the error.
+
+    Raises:
+        SourceError: When a delta's full counterpart is missing from the same directory.
+    """
+    names = {rule.name for rule in rules}
+    for variant in VARIANTS:
+        if variant.delta in names and variant.full not in names:
+            raise SourceError(f"{variant.delta} ships without its full counterpart {variant.full} in {rules_dir}")
+
+
 def validate_source(plugin_root: Path, plugin_name: str) -> list[Path]:
     """Run every source-tree check and return the rule files to install.
 
@@ -187,6 +246,7 @@ def validate_source(plugin_root: Path, plugin_name: str) -> list[Path]:
         raise SourceError(f"no *.md rules found in {rules_dir}")
     for rule in rules:
         _check_rule_file(rule, rules_dir)
+    _check_variants(rules, rules_dir)
     return rules
 
 
@@ -355,6 +415,108 @@ def read_link_target(path: Path) -> str | None:
         return None
 
 
+def canonical_is_delivered(rules_dest: Path, variant: RuleVariant) -> bool:
+    """Whether ``variant.canonical`` is an installed link to its owner's own copy of the rule.
+
+    Presence under that name is not proof. It could be a user's own file, a link left behind by a
+    plugin that is no longer installed, a link into a purged version directory, or a same-named
+    entry from another plugin entirely — none of which put the shared body into a session.
+    Provenance is therefore read from the *target's* plugin manifest, the same evidence
+    :func:`validate_source` already trusts for this plugin's own root, so an owner installed from
+    a source checkout counts and a foreign entry does not. Ownership cannot be settled with
+    :func:`owns` here: that proves a target belongs to a root the caller already holds, and this
+    plugin never learns the owner's root. Every unprovable case answers False, which installs the
+    full rule — redundant, never incomplete.
+
+    The target is resolved without ``realpath``, for the reason given in :func:`resolve_target`.
+
+    Args:
+        rules_dest: ``<home>/.claude/rules``.
+        variant: Variant pair whose canonical to look for.
+
+    Returns:
+        True iff the canonical is a symlink to an existing ``<root>/rules/<variant.full>`` whose
+        ``<root>`` declares ``variant.owner``.
+
+    Examples:
+        >>> canonical_is_delivered(Path("/nonexistent/rules"), VARIANTS[0])
+        False
+    """
+    link = rules_dest / variant.canonical
+    target = read_link_target(link)
+    if target is None:
+        return False
+    resolved = resolve_target(link, target)
+    if resolved.name != variant.full or resolved.parent.name != "rules" or not resolved.is_file():
+        return False
+    try:
+        return _manifest_name(resolved.parent.parent) == variant.owner
+    except SourceError:
+        return False
+
+
+def select_variant_source(variant: RuleVariant, sources: dict[str, Path], rules_dest: Path) -> Path:
+    """Pick which form of ``variant`` this run installs.
+
+    Args:
+        variant: Variant pair to resolve.
+        sources: Rule paths keyed by source basename.
+        rules_dest: ``<home>/.claude/rules``.
+
+    Returns:
+        The delta when this plugin ships one and the canonical shared body is proven delivered;
+        the full rule in every other case.
+
+    Examples:
+        >>> full = Path("/p/rules/quality-gates.md")
+        >>> select_variant_source(VARIANTS[0], {"quality-gates.md": full}, Path("/nope")) == full
+        True
+    """
+    delta = sources.get(variant.delta)
+    if delta is not None and canonical_is_delivered(rules_dest, variant):
+        return delta
+    return sources[variant.full]
+
+
+def plan_links(rules: list[Path], plugin_name: str, rules_dest: Path) -> list[RuleLink]:
+    """Pair each rule this run delivers with its destination.
+
+    A variant pair contributes exactly one link, named after the full rule. The delta is never
+    delivered under a name of its own, so switching forms later rewrites that one link instead of
+    depending on :func:`_prune_obsolete` to withdraw the other — a prune that a name conflict or a
+    write failure could skip, leaving the rule undelivered.
+
+    Args:
+        rules: Validated rule paths.
+        plugin_name: Owning plugin's manifest name.
+        rules_dest: ``<home>/.claude/rules``.
+
+    Returns:
+        One :class:`RuleLink` per destination, ordered by destination name.
+
+    Examples:
+        >>> rules = [Path("/p/rules/debugging.md"), Path("/p/rules/quality-gates.md")]
+        >>> [link.dest.name for link in plan_links(rules, "develop", Path("/nope"))]
+        ['develop-debugging.md', 'develop-quality-gates.md']
+    """
+    sources = {rule.name: rule for rule in rules}
+    paired = {name for variant in VARIANTS for name in (variant.full, variant.delta) if name in sources}
+    links = [
+        RuleLink(
+            source=select_variant_source(variant, sources, rules_dest),
+            dest=rules_dest / dest_name(plugin_name, variant.full),
+        )
+        for variant in VARIANTS
+        if variant.full in sources
+    ]
+    links += [
+        RuleLink(source=rule, dest=rules_dest / dest_name(plugin_name, rule.name))
+        for rule in rules
+        if rule.name not in paired
+    ]
+    return sorted(links, key=lambda link: link.dest.name)
+
+
 def _describe(dest: Path, target: str | None) -> str:
     """One-line conflict descriptor for a destination left untouched.
 
@@ -482,6 +644,9 @@ def _prune_obsolete(
 def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False, dry_run: bool = False) -> SyncResult:
     """Install this plugin's rules into ``<home>/.claude/rules/``.
 
+    Which form of a variant rule gets installed is decided from what is already delivered — see
+    :func:`plan_links` — so a rerun after the owner plugin is installed or removed switches forms.
+
     Args:
         plugin_name: Name the plugin manifest must declare.
         plugin_root: Plugin install root.
@@ -500,7 +665,7 @@ def sync(plugin_name: str, plugin_root: Path, home: Path, approve: bool = False,
     plugin_root = Path(os.path.abspath(plugin_root))
     rules = validate_source(plugin_root, plugin_name)
     rules_dest = home / ".claude" / "rules"
-    links = [RuleLink(source=rule, dest=rules_dest / dest_name(plugin_name, rule.name)) for rule in rules]
+    links = plan_links(rules, plugin_name, rules_dest)
     lineage = cache_lineage(plugin_root, home)
 
     result = SyncResult()

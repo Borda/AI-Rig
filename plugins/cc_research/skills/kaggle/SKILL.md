@@ -72,7 +72,7 @@ COMPETITORS_DIR:  resources/competitors/  # optional user-project path, not ship
 
 <workflow>
 
-**Task hygiene**: call `TaskList` first; close orphaned tasks. Create tasks per phase.
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 ## Step 1: Parse arguments and gather context
 

@@ -2249,7 +2249,7 @@ def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str
 
 
 def review_evidence_files(
-    tmp_path: Path, *, roles: tuple[str, ...] = ("challenger", "cicd-steward")
+    tmp_path: Path, *, roles: tuple[str, ...] = ("challenger", "cicd-steward"), source_path: str = "widget.py"
 ) -> tuple[Path, Path]:
     """Create a valid two-role frozen plan and bounded App Server evidence fixture."""
     contexts = tmp_path / "contexts"
@@ -2260,12 +2260,12 @@ def review_evidence_files(
         {
             "schema_version": 1,
             "repository": "/workspace/repository",
-            "scope_paths": ["widget.py"],
+            "scope_paths": [source_path],
             "revision": "a" * 40,
             "index_sha256": "b" * 64,
             "files": [
                 {
-                    "path": "widget.py",
+                    "path": source_path,
                     "kind": "file",
                     "sha256": _sha256(b"VALUE = 1\n"),
                     "executable": False,
@@ -2277,7 +2277,7 @@ def review_evidence_files(
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    diff = b"diff --git a/widget.py b/widget.py\n"
+    diff = f"diff --git a/{source_path} b/{source_path}\n".encode("utf-8")
     (tmp_path / "source.json").write_bytes(source)
     (tmp_path / "diff.patch").write_bytes(diff)
     nodes: list[dict[str, object]] = []

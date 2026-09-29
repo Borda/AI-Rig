@@ -319,7 +319,7 @@ def test_parallel_work_buckets_reject_planning_only_approval_without_runtime_lif
 
 
 def test_low_volume_selection_stays_in_one_agent_scope(tmp_path: Path) -> None:
-    """Accept five-or-fewer selected items only as one non-parallel bucket."""
+    """Keep one coherent parent bucket valid for historical low-volume work."""
     metadata = _parallel_metadata()
     metadata["resolution_scope"] = {"selected_indexes": [1, 2]}
     metadata["resolution_workplan"] = {
@@ -353,19 +353,54 @@ def test_low_volume_selection_stays_in_one_agent_scope(tmp_path: Path) -> None:
     VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
 
 
+def test_ineligible_parallel_plan_accepts_user_approved_fallback(tmp_path: Path) -> None:
+    """Accept a fallback only when the recorded plan is actually parallel-ineligible."""
+    metadata = _parallel_metadata()
+    metadata["resolution_scope"] = {"selected_indexes": [1, 2]}
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    workplan.update(
+        execution_mode="parent-owned",
+        groups_total=1,
+        parent_owned_groups=1,
+        specialist_owned_groups=0,
+        verifier_groups=1,
+        parallel_eligible=False,
+        parallel_approval_source="explicit-input",
+        parallel_approval_status="parent-only",
+    )
+    workplan["work_buckets"] = [
+        {
+            "bucket_id": "B1",
+            "selected_indexes": [1, 2],
+            "owner": "parent",
+            "verifier": "qa-specialist",
+            "context_pack_path": "resolution-workplan.md",
+            "owned_paths": ["src/feature.py"],
+            "execution_mode": "parent",
+        }
+    ]
+    _write_workplan(metadata, tmp_path)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+    workplan["parallel_eligible"] = True
+    with pytest.raises(SystemExit, match="code-remediate-eligible-fanout-fallback-forbidden"):
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
         pytest.param("too-large", "code-remediate-work-bucket-too-large", id="too-large"),
         pytest.param("duplicate-index", "code-remediate-work-bucket-coverage-mismatch", id="duplicate-index"),
-        pytest.param("low-volume-fanout", "code-remediate-low-volume-fanout", id="low-volume-fanout"),
+        pytest.param("low-volume-fanout", "code-remediate-production-lifecycle-required", id="low-volume-fanout"),
         pytest.param("missing-approval", "code-remediate-parallel-approval-missing", id="missing-approval"),
         pytest.param(
             "declined-fanout-unrecorded",
             "code-remediate-eligible-fanout-approval-not-recorded",
             id="declined-fanout-unrecorded",
         ),
-        pytest.param("overlapping-path", "code-remediate-parallel-ownership-overlap", id="overlapping-path"),
+        pytest.param("aliased-path", "code-remediate-parallel-ownership-overlap", id="aliased-path"),
         pytest.param("ancestor-path-overlap", "code-remediate-parallel-ownership-overlap", id="ancestor-path-overlap"),
         pytest.param("unsupported-owner", "code-remediate-work-bucket-owner-unsupported", id="unsupported-owner"),
         pytest.param(
@@ -409,8 +444,8 @@ def test_invalid_work_bucket_plans_fail_closed(tmp_path: Path, mutation: str, er
         workplan["parallel_approval_status"] = "parent-only"
         for bucket in buckets:
             bucket["execution_mode"] = "sequential"
-    elif mutation == "overlapping-path":
-        buckets[1]["owned_paths"] = ["src/feature.py"]
+    elif mutation == "aliased-path":
+        buckets[1]["owned_paths"] = ["SRC/feature.py"]
     elif mutation == "ancestor-path-overlap":
         buckets[0]["owned_paths"] = ["src"]
         buckets[1]["owned_paths"] = ["src/feature.py"]
@@ -456,6 +491,105 @@ def test_parallel_approval_is_bound_to_the_approved_plan_digest(tmp_path: Path) 
 
     with pytest.raises(SystemExit, match="code-remediate-parallel-approved-plan-not-bound"):
         VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+def test_default_parallel_route_still_binds_exact_plan(tmp_path: Path) -> None:
+    """Accept the workflow default without pretending it received plan-specific approval."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    workplan["parallel_approval_source"] = "workflow-default"
+    _write_completed_production_lifecycle(metadata, tmp_path)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+def test_parallel_domain_buckets_may_share_an_exact_file(tmp_path: Path) -> None:
+    """Let isolated writers share one file while requiring the parent to bind final source evidence."""
+    metadata = _parallel_metadata()
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    buckets = workplan["work_buckets"]
+    assert isinstance(buckets, list)
+    buckets[1]["owned_paths"] = ["src/feature.py"]
+    lifecycle_path = _write_completed_production_lifecycle(metadata, tmp_path)
+    lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+    lifecycle["integration"]["paths"] = ["src/feature.py"]
+    lifecycle["source"]["preimage_sha256"] = {"src/feature.py": "d" * 64}
+    lifecycle["source"]["postimage_sha256"] = {"src/feature.py": "f" * 64}
+    lifecycle["source_application"]["applied_paths"] = ["src/feature.py"]
+    lifecycle_path.write_text(json.dumps(lifecycle), encoding="utf-8")
+    _refresh_production_lifecycle_digest(metadata, lifecycle_path)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["valid", "record-drift", "postimage-drift", "missing-record", "failed-node-drift"],
+)
+def test_completed_parallel_reconciliation_binds_record_to_lifecycle(tmp_path: Path, mutation: str) -> None:
+    """Reject a collision claim unless its retained record binds the joined patches and final bytes."""
+    metadata = _parallel_metadata()
+    lifecycle_path = _write_completed_production_lifecycle(metadata, tmp_path)
+    lifecycle = json.loads(lifecycle_path.read_text(encoding="utf-8"))
+    nodes = lifecycle["nodes"]
+    paths = lifecycle["integration"]["paths"]
+    postimages = {path: "e" * 64 for path in paths}
+    record = {
+        "baseline_head": lifecycle["source"]["baseline_head"],
+        "failed_node": nodes[1]["node_id"],
+        "integration_order": [node["node_id"] for node in nodes],
+        "paths": paths,
+        "patch_sha256": {node["node_id"]: node["patch_sha256"] for node in nodes},
+        "postimage_sha256": postimages,
+        "summary": "The parent merged both child edits in the integration worktree.",
+    }
+    if mutation == "record-drift":
+        record["patch_sha256"][nodes[0]["node_id"]] = "0" * 64
+    record_path = tmp_path / "reconciliation.json"
+    if mutation != "missing-record":
+        record_path.write_text(json.dumps(record), encoding="utf-8")
+    lifecycle["integration_failed_node"] = nodes[1]["node_id"]
+    lifecycle["integration_conflict_paths"] = [paths[-1]]
+    lifecycle["integration_final_sha256"] = postimages
+    lifecycle["reconciliation"] = {
+        "status": "verified",
+        "record_path": record_path.name,
+        "record_sha256": hashlib.sha256(record_path.read_bytes()).hexdigest() if record_path.exists() else "0" * 64,
+        "changed_paths": paths,
+        "failed_node": nodes[1]["node_id"],
+        "postimage_sha256": postimages.copy(),
+    }
+    if mutation == "postimage-drift":
+        lifecycle["reconciliation"]["postimage_sha256"][paths[-1]] = "0" * 64
+    elif mutation == "failed-node-drift":
+        lifecycle["reconciliation"]["failed_node"] = nodes[0]["node_id"]
+    lifecycle_path.write_text(json.dumps(lifecycle), encoding="utf-8")
+    _refresh_production_lifecycle_digest(metadata, lifecycle_path)
+
+    if mutation == "valid":
+        VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+    else:
+        with pytest.raises(SystemExit, match="code-remediate-production-lifecycle-reconciliation"):
+            VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
+
+
+def test_two_selected_domain_items_can_run_in_parallel(tmp_path: Path) -> None:
+    """Allow two genuine role scopes without the former five-item fan-out threshold."""
+    metadata = _parallel_metadata()
+    metadata["resolution_scope"] = {"selected_indexes": [1, 2]}
+    workplan = metadata["resolution_workplan"]
+    assert isinstance(workplan, dict)
+    buckets = workplan["work_buckets"]
+    assert isinstance(buckets, list)
+    buckets[0]["selected_indexes"] = [1]
+    buckets[0]["singleton_rationale"] = "Code behavior is an independent role scope."
+    buckets[1]["selected_indexes"] = [2]
+    buckets[1]["singleton_rationale"] = "Documentation is an independent role scope."
+    _write_completed_production_lifecycle(metadata, tmp_path)
+
+    VALIDATOR._validate_code_remediate_workplan(metadata, tmp_path)
 
 
 def test_completed_parallel_remediation_accepts_matching_production_lifecycle(tmp_path: Path) -> None:

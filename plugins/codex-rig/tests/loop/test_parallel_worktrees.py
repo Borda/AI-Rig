@@ -193,7 +193,9 @@ def _approved_plan(workspace: Path) -> tuple[Path, Path, Path]:
     return plan_path, approval_path, repository
 
 
-def _approved_code_remediate_plan(workspace: Path, *, pin_lf: bool = False) -> tuple[Path, Path, Path]:
+def _approved_code_remediate_plan(
+    workspace: Path, *, pin_lf: bool = False, baseline_a: str = "baseline-a\n"
+) -> tuple[Path, Path, Path]:
     """Write one lifecycle plan, optionally pinning tracked text to LF."""
     repository = workspace / "authoritative-repository"
     repository.mkdir()
@@ -202,7 +204,7 @@ def _approved_code_remediate_plan(workspace: Path, *, pin_lf: bool = False) -> t
     _git(repository, "config", "user.email", "codex-test@example.invalid")
     text_attributes = "*.txt text eol=lf\n" if pin_lf else "*.txt text\n"
     (repository / ".gitattributes").write_text(text_attributes, encoding="utf-8", newline="\n")
-    (repository / "bucket-a.txt").write_text("baseline-a\n", encoding="utf-8", newline="\n")
+    (repository / "bucket-a.txt").write_text(baseline_a, encoding="utf-8", newline="\n")
     (repository / "bucket-b.txt").write_text("baseline-b\n", encoding="utf-8", newline="\n")
     _git(repository, "add", ".gitattributes", "bucket-a.txt", "bucket-b.txt")
     _git(
@@ -287,6 +289,15 @@ def _rewrite_code_remediate_plan(plan_path: Path, approval_path: Path, plan: dic
     approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
+def _overlapping_code_remediate_plan(workspace: Path, baseline: str) -> tuple[Path, Path, Path]:
+    """Approve two isolated remediation buckets that both own one tracked file."""
+    plan_path, approval_path, repository = _approved_code_remediate_plan(workspace, baseline_a=baseline)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    plan["work_buckets"][1]["owned_paths"] = ["bucket-a.txt"]
+    _rewrite_code_remediate_plan(plan_path, approval_path, plan)
+    return plan_path, approval_path, repository
+
+
 def _prepare(workspace: Path) -> tuple[ModuleType, Path, dict[str, object], Path]:
     """Prepare one valid pilot and return its module, state, payload, and repository."""
     lifecycle = _load_lifecycle()
@@ -337,6 +348,131 @@ def _prepare_integrated_code_remediate(
 
 @pytest.mark.installed_plugin
 @pytest.mark.integration
+def test_code_remediate_nonconflicting_overlap_integrates_once(tmp_path: Path) -> None:
+    """Combine distant edits to an approved shared file without duplicate path evidence."""
+    lifecycle = _load_lifecycle()
+    baseline_lines = [f"line-{index}\n" for index in range(30)]
+    plan_path, approval_path, repository = _overlapping_code_remediate_plan(tmp_path, "".join(baseline_lines))
+    state_path = plan_path.parent / "production-lifecycle.json"
+    state = lifecycle.prepare_code_remediate_pilot(
+        plan_path=plan_path, approval_path=approval_path, workspace_root=tmp_path, state_path=state_path
+    )
+    for node, line_index, replacement in zip(state["nodes"], (1, 28), ("from-a\n", "from-b\n"), strict=True):
+        lines = baseline_lines.copy()
+        lines[line_index] = replacement
+        (tmp_path / str(node["worktree_path"]) / "bucket-a.txt").write_text(
+            "".join(lines), encoding="utf-8", newline="\n"
+        )
+    handovers = [
+        lifecycle.create_completed_child_handover(
+            state_path=state_path, node_id=str(node["node_id"]), summary="Completed shared-file edit."
+        )
+        for node in state["nodes"]
+    ]
+    lifecycle.join_child_handovers(state_path=state_path, handovers=handovers)
+    for node in state["nodes"]:
+        lifecycle.collect_write_patch(state_path=state_path, node_id=str(node["node_id"]))
+
+    integrated = lifecycle.integrate_write_pilot(state_path=state_path)
+    expected = baseline_lines.copy()
+    expected[1] = "from-a\n"
+    expected[28] = "from-b\n"
+    assert integrated["integration"]["paths"] == ["bucket-a.txt"]
+    assert (tmp_path / str(integrated["integration_worktree"]) / "bucket-a.txt").read_text(encoding="utf-8") == "".join(
+        expected
+    )
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "".join(baseline_lines)
+    application = lifecycle.apply_code_remediate_source(state_path=state_path)
+    assert application["applied_paths"] == ["bucket-a.txt"]
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "".join(expected)
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_conflicting_overlap_requires_recorded_parent_reconciliation(tmp_path: Path) -> None:
+    """Block source apply until the parent records a verified shared-file resolution."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _overlapping_code_remediate_plan(tmp_path, "baseline-a\n")
+    # Windows hosts install Git with core.autocrlf=true, so every worktree checkout of a `text`
+    # attribute file holds CRLF while the source fixture keeps the LF bytes the test wrote. Forcing
+    # that default on every host keeps the reconciliation cleanup path below honest: a file "restored"
+    # by rewriting baseline bytes stays modified under CRLF checkout, and `git worktree remove` then
+    # fails with git-command-failed:worktree, which is how this test first broke on Windows only.
+    _git(repository, "config", "core.autocrlf", "true")
+    state_path = plan_path.parent / "production-lifecycle.json"
+    state = lifecycle.prepare_code_remediate_pilot(
+        plan_path=plan_path, approval_path=approval_path, workspace_root=tmp_path, state_path=state_path
+    )
+    for node, content in zip(state["nodes"], ("child-a\n", "child-b\n"), strict=True):
+        (tmp_path / str(node["worktree_path"]) / "bucket-a.txt").write_text(content, encoding="utf-8", newline="\n")
+    handovers = [
+        lifecycle.create_completed_child_handover(
+            state_path=state_path, node_id=str(node["node_id"]), summary="Completed shared-file edit."
+        )
+        for node in state["nodes"]
+    ]
+    lifecycle.join_child_handovers(state_path=state_path, handovers=handovers)
+    patches = {
+        str(node["node_id"]): lifecycle.collect_write_patch(state_path=state_path, node_id=str(node["node_id"]))
+        for node in state["nodes"]
+    }
+
+    with pytest.raises(lifecycle.PilotError, match="^patch-integration-needs-reconciliation:WRITE-B$"):
+        lifecycle.integrate_write_pilot(state_path=state_path)
+    failed = json.loads(state_path.read_text(encoding="utf-8"))
+    assert failed["integration_status"] == "needs-reconciliation"
+    assert failed["integration_failed_node"] == "WRITE-B"
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
+    with pytest.raises(lifecycle.PilotError, match="^source-apply-before-integration-forbidden$"):
+        lifecycle.apply_code_remediate_source(state_path=state_path)
+
+    integration = tmp_path / str(failed["integration_worktree"])
+    resolved = integration / "bucket-a.txt"
+    resolved.write_text("resolved-a-and-b\n", encoding="utf-8", newline="\n")
+    record_path = plan_path.parent / "reconciliation.json"
+    record = {
+        "baseline_head": state["baseline_head"],
+        "failed_node": "WRITE-B",
+        "integration_order": ["WRITE-A", "WRITE-B"],
+        "paths": ["bucket-a.txt"],
+        "patch_sha256": {node_id: patch["patch_sha256"] for node_id, patch in patches.items()},
+        "postimage_sha256": {"bucket-a.txt": _sha256(resolved)},
+        "summary": "Parent combined both child edits.",
+    }
+    (integration / "bucket-b.txt").write_text("unapproved\n", encoding="utf-8", newline="\n")
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-path-mismatch$"):
+        lifecycle.reconcile_code_remediate_integration(state_path=state_path, record_path=record_path)
+    # Restore through Git, never by rewriting baseline bytes: the checkout honours the repository's
+    # end-of-line conversion, so only Git can put the file back in the exact state cleanup requires.
+    # Restore through Git, never by rewriting baseline bytes: the checkout honours the repository's
+    # end-of-line conversion, so only Git can put the file back in the exact state cleanup requires.
+    _git(integration, "restore", "--", "bucket-b.txt")
+    record["postimage_sha256"]["bucket-a.txt"] = "0" * 64
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-postimage-mismatch$"):
+        lifecycle.reconcile_code_remediate_integration(state_path=state_path, record_path=record_path)
+    record["postimage_sha256"]["bucket-a.txt"] = _sha256(resolved)
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    assert lifecycle.main(["reconcile", "--state", str(state_path), "--record", str(record_path)]) == 0
+    reconciled = json.loads(state_path.read_text(encoding="utf-8"))
+    assert reconciled["reconciliation"]["record_sha256"] == _sha256(record_path)
+    assert reconciled["reconciliation"]["postimage_sha256"] == record["postimage_sha256"]
+    assert reconciled["integration_status"] == "structurally-verified"
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
+    record_path.write_text(record_path.read_text(encoding="utf-8") + "\n", encoding="utf-8", newline="\n")
+    with pytest.raises(lifecycle.PilotError, match="^integration-reconciliation-evidence-drift$"):
+        lifecycle.apply_code_remediate_source(state_path=state_path)
+    record_path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8", newline="\n")
+    application = lifecycle.apply_code_remediate_source(state_path=state_path)
+    assert application["applied_paths"] == ["bucket-a.txt"]
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "resolved-a-and-b\n"
+    assert lifecycle.cleanup_code_remediate_pilot(state_path=state_path)["cleanup_status"] == "removed"
+    assert not integration.exists()
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
 def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_path: Path) -> None:
     """Prepare detached remediation worktrees from one clean, approval-bound source baseline."""
     lifecycle = _load_lifecycle()
@@ -371,6 +507,46 @@ def test_code_remediate_prepare_accepts_clean_digest_bound_production_plan(tmp_p
         "?? .reports/codex/code-remediate/fixture/production-lifecycle.json",
         "?? .reports/codex/code-remediate/fixture/work-bucket-plan.json",
     }
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_accepts_digest_bound_parallel_workflow_default(tmp_path: Path) -> None:
+    """Record workflow authority without claiming a per-plan approval prompt."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, repository = _approved_code_remediate_plan(tmp_path)
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval.update({"source": "workflow-default", "prompt_presented": False})
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
+    state_path = plan_path.parent / "production-lifecycle.json"
+
+    state = lifecycle.prepare_code_remediate_pilot(
+        plan_path=plan_path, approval_path=approval_path, workspace_root=tmp_path, state_path=state_path
+    )
+
+    assert state["approval_sha256"] == _sha256(approval_path)
+    assert state["plan_sha256"] == approval["plan_sha256"]
+    assert len(state["nodes"]) == 2
+    assert (repository / "bucket-a.txt").read_text(encoding="utf-8") == "baseline-a\n"
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.integration
+def test_code_remediate_rejects_workflow_default_as_prompted_approval(tmp_path: Path) -> None:
+    """Keep workflow authority distinct from an exact per-plan user prompt."""
+    lifecycle = _load_lifecycle()
+    plan_path, approval_path, _ = _approved_code_remediate_plan(tmp_path)
+    approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    approval["source"] = "workflow-default"
+    approval_path.write_text(json.dumps(approval, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+    with pytest.raises(lifecycle.PilotError, match="^write-approval-invalid$"):
+        lifecycle.prepare_code_remediate_pilot(
+            plan_path=plan_path,
+            approval_path=approval_path,
+            workspace_root=tmp_path,
+            state_path=plan_path.parent / "production-lifecycle.json",
+        )
 
 
 @pytest.mark.installed_plugin

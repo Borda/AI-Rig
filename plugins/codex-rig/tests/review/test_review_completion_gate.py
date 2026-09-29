@@ -34,6 +34,9 @@ def _assessed_pr(tmp_path: Path) -> Path:
     # Reuse collector/gate construction; keep assessed behavior visible here.
     fixture = _module(Path(__file__).with_name("test_code_review_close_contract.py"))
     result_path = fixture._write_closed_artifact(run)
+    (run / "diff.patch").write_text("diff --git a/widget.txt b/widget.txt\n", encoding="utf-8", newline="\n")
+    (run / "files.txt").write_text("widget.txt\n", encoding="utf-8")
+    (run / "numstat.txt").write_text("1\t1\twidget.txt\n", encoding="utf-8")
     result = json.loads(result_path.read_text(encoding="utf-8"))
     pr_path = run / "pr.json"
     pr = json.loads(pr_path.read_text(encoding="utf-8"))
@@ -104,7 +107,7 @@ def _assessed_pr(tmp_path: Path) -> Path:
             "expected_head": head,
             "dirty_paths": [],
             "unmerged_paths": [],
-            "pr_paths": ["widget.py"],
+            "pr_paths": ["widget.txt"],
             "checkout_paths": [],
             "overlapping_paths": [],
             "overlapping_pr_paths": [],
@@ -999,6 +1002,23 @@ def test_serial_substitutes_cannot_complete_independent_review(assessed_pr: Path
         validator._validate_result(assessed_pr, assessed_pr / "result.json", assessed_pr, "thread", assessed_pr)
 
 
+def test_local_multi_role_review_cannot_pass_with_parent_substitutes(assessed_pr: Path) -> None:
+    """Require observed parallel specialists even when LOCAL risk permits independent-review substitutes."""
+    _add_substituted_broad_passes(assessed_pr, "LOCAL")
+    routing_path = assessed_pr / "review-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    routing["signals"].update(behavior_change=True, explicit_adversarial=True)
+    routing_path.write_text(json.dumps(routing), encoding="utf-8")
+    result_path = assessed_pr / "result.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["metadata"]["independence_required"] = True
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
+    with pytest.raises(SystemExit, match="parallel-review-required-for-pass"):
+        validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
+
+
 @pytest.mark.parametrize("proof", ["retained", "missing", "altered"])
 def test_promoted_review_binds_retained_role_card_after_installed_change(
     assessed_pr: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, proof: str
@@ -1027,15 +1047,16 @@ def test_promoted_review_binds_retained_role_card_after_installed_change(
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["metadata"].update(risk_tier="LOCAL", independence_required=True)
     result_path.write_text(json.dumps(result), encoding="utf-8")
+    env = validator._ReviewEnvironment(codex_home=assessed_pr, parent_thread_id="thread", project_root=assessed_pr)
     if proof != "retained":
         expected = (
             "role-card-missing:challenger" if proof == "missing" else "manifest-role-card-hash-mismatch:challenger"
         )
         with pytest.raises(SystemExit, match=expected):
-            validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
+            validator._validate_specialist_manifest(assessed_pr, result, result_path, result["metadata"], "LOCAL", env)
         return
 
-    validator._validate_result(assessed_pr, result_path, assessed_pr, "thread", assessed_pr)
+    validator._validate_specialist_manifest(assessed_pr, result, result_path, result["metadata"], "LOCAL", env)
     candidate_path = assessed_pr / "result.candidate.json"
     candidate_path.write_bytes(result_path.read_bytes())
     with pytest.raises(SystemExit, match="manifest-role-card-hash-mismatch:challenger"):

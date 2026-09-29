@@ -135,7 +135,7 @@
       "parallel_approval_path": ".reports/codex/code-remediate/<timestamp>/parallel-approval.json",
       "parallel_approval_required": false,
       "parallel_approval_response": "not-required|approve|parent-only",
-      "parallel_approval_source": "not-required|explicit-input|user-prompt",
+      "parallel_approval_source": "not-required|workflow-default|explicit-input|user-prompt",
       "parallel_approval_status": "not-required|approved|parent-only",
       "parallel_eligible": false,
       "parallel_prompt_presented": false,

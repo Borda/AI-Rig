@@ -38,17 +38,13 @@ $ARGUMENTS empty or too vague: use AskUserQuestion: "What exactly is failing or 
 
 <workflow>
 
-**Task hygiene**: load and follow the protocol below.
-
-```bash
-# loads: compaction-contract.md
-# audit-skip: resilience-replication
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/load_shared_doc.py" foundry skills/_shared task-hygiene.md  # timeout: 5000
-```
+**Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
 **Task tracking**: TaskCreate tasks for Gather, Hypothesise, Probe, Report; mark in_progress/completed as you go.
 
 ## Step 1: Parse symptom and scope
+
+One block: flag parsing, stale-ledger clear, and the run directory Step 2 needs. Run-dir creation has no dependency on the scoping below, and a second bash block would cost a whole turn — a turn re-reads the entire live context (`claude-config.md` §Turn Batching).
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -56,6 +52,10 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/extract-keep-flag.py" inve
 eval "$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/parse-skill-flags.py" --flags fast "$ARGUMENTS")"  # timeout: 5000
 ARGUMENTS="$CLEAN_ARGS"
 rm -f "${TMPDIR:-/tmp}/investigate-verdicts-${CSID}"  # stale probe ledger  # timeout: 3000
+INVESTIGATE_RUN=".temp/investigate/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+mkdir -p "$INVESTIGATE_RUN"
+echo "$INVESTIGATE_RUN" > "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"  # persist; re-read in later steps
+echo "INVESTIGATE_RUN=$INVESTIGATE_RUN"  # bash vars don't persist; read from stdout
 ```
 
 From $ARGUMENTS extract:
@@ -68,16 +68,7 @@ From $ARGUMENTS extract:
 
 ## Step 2: Gather signals
 
-**Init run directory unconditionally at start of Step 2** — `$INVESTIGATE_RUN` must be set even when Step 4 skipped (`--fast` path), so Step 6's read of `$INVESTIGATE_RUN/*-review.md` doesn't expand to `/codex-review.md` or unset reference. Step 4 creates review files only when adversarial review runs; Step 6 must guard reads with `[ -f <path> ]`.
-
-```bash
-export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-# timeout: 5000
-INVESTIGATE_RUN=".temp/investigate/$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-mkdir -p "$INVESTIGATE_RUN"
-echo "$INVESTIGATE_RUN" > "${TMPDIR:-/tmp}/investigate-run-path-${CSID}"  # persist; re-read in later steps
-echo "INVESTIGATE_RUN=$INVESTIGATE_RUN"  # bash vars don't persist; read from stdout
-```
+`$INVESTIGATE_RUN` is created in Step 1 and holds for every path, `--fast` included, so Step 6's read of `$INVESTIGATE_RUN/*-review.md` never expands to `/codex-review.md` or an unset reference. Step 4 creates review files only when adversarial review runs; Step 6 must guard reads with `[ -f <path> ]`. Re-read the path from `${TMPDIR:-/tmp}/investigate-run-path-${CSID}` in later steps — bash state does not persist.
 
 Collect evidence in parallel — do NOT form hypotheses yet. **Tool versions and PATH**:
 
