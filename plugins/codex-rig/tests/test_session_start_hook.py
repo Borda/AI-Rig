@@ -95,7 +95,6 @@ def test_default_hook_config_is_exact_and_diagnostic_only() -> None:
     assert "hooks" not in plugin
 
 
-@pytest.mark.flaky(reruns=2, reruns_delay=1, condition=sys.platform == "win32")
 def test_hook_reuses_manager_doctor_and_preserves_real_home(tmp_path: Path, isolated_plugin_root: Path) -> None:
     """Surface degraded health without creating state in the real Codex home."""
     hook_script = isolated_plugin_root / "hooks" / "session_start.py"

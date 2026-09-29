@@ -151,6 +151,8 @@ Update calibration when routing or evidence expectations change:
 
 ## Output Contract
 
+Historical `change-analysis` artifacts retain their original skill identity, use the `assess` column contract. Report-reading compatibility only; the installed skill is named `assess`.
+
 Before writing result candidate, follow `../../shared/final-handoff-contract.md`: render and bind `final-handoff.json`, `final.md`, and `final-handoff.validation.json`; after both validators and promotion pass, emit `final.md` verbatim.
 
 Use `../../shared/quality-gates.md`.

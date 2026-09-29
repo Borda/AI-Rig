@@ -45,10 +45,11 @@ import argparse
 import hashlib
 from html import escape
 import json
+import math
 import re
 import subprocess
 import sys
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, NamedTuple
 
 # Preserve sibling-helper imports when callers load this executable by file path.
@@ -1190,7 +1191,9 @@ def _validate_confidence_recovery(result: dict[str, Any], skill: str) -> None:
         raise SystemExit(f"{skill}-confidence-status-should-be-fair")
 
 
-def _validate_code_remediate_report_intake(result: dict[str, Any], out_dir: Path) -> None:
+def _validate_code_remediate_report_intake(
+    result: dict[str, Any], out_dir: Path, *, current_contract: bool = False
+) -> None:
     """Validate source-aware review report intake metadata for code-remediation artifacts."""
     metadata = result.get("metadata", {})
     if not isinstance(metadata, dict):
@@ -1233,6 +1236,8 @@ def _validate_code_remediate_report_intake(result: dict[str, Any], out_dir: Path
             raise SystemExit("code-remediate-review-intake-inventory-mismatch")
     if not requested_report:
         return
+    if current_contract:
+        _validate_code_remediate_report_coverage(metadata, out_dir)
 
     report_items_total = intake["report_items_total"]
     review_gate_items_total = intake["review_gate_items_total"]
@@ -1259,6 +1264,73 @@ def _validate_code_remediate_report_intake(result: dict[str, Any], out_dir: Path
         and "review gate" not in scope_text
     ):
         raise SystemExit("code-remediate-review-gate-scope-missing")
+
+
+def _validate_code_remediate_report_coverage(metadata: dict[str, Any], out_dir: Path) -> None:
+    """Bind report intake to the retained original findings and evidence obligations."""
+    path = out_dir / "findings-input.txt"
+    if path.is_symlink() or not path.is_file():
+        raise SystemExit("code-remediate-report-input-missing")
+    try:
+        report = _load_json(path)
+    except (ValueError, UnicodeError) as error:
+        raise SystemExit("code-remediate-report-input-invalid") from error
+    original = report.get("metadata")
+    if (
+        report.get("schema_version") != 3
+        or not isinstance(original, dict)
+        or original.get("review_status", "assessed") != "assessed"
+    ):
+        raise SystemExit("code-remediate-report-input-not-assessed")
+    items = metadata["final_resolution_table"]["items"]
+    report_sources = [source for item in items for source in item["sources"] if source["kind"] == "report"]
+    for field in ("review_findings", "operational_blockers"):
+        records = original.get(field, [])
+        if not isinstance(records, list):
+            raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("id"), str) or not record["id"].strip():
+                raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+            identity = record["id"]
+            sources = [
+                source
+                for item in items
+                for source in item["sources"]
+                if source["kind"] == "report"
+                and (
+                    source.get("finding_id") == identity
+                    or source["source_id"].partition("#")[2] == identity
+                    or item["input_item_id"] == identity
+                )
+            ]
+            if not sources:
+                raise SystemExit(f"code-remediate-report-finding-omitted:{identity}")
+            bodies = "\n".join(source["body"] for source in sources)
+            # IDs alone cannot preserve the finding's original evidence and closure contract.
+            for detail in ("title", "summary", "required_change", "closure_evidence", "evidence"):
+                value = record.get(detail, [])
+                texts = [value] if isinstance(value, str) else value
+                if not isinstance(texts, list) or any(not isinstance(text, str) for text in texts):
+                    raise SystemExit(f"code-remediate-report-input-invalid:{field}:{detail}")
+                if any(" ".join(text.split()) not in " ".join(bodies.split()) for text in texts):
+                    raise SystemExit(f"code-remediate-report-finding-detail-omitted:{identity}:{detail}")
+    decision = original.get("review_decision", {})
+    recovery = original.get("confidence_recovery", {})
+    if not isinstance(decision, dict) or not isinstance(recovery, dict):
+        raise SystemExit("code-remediate-report-input-invalid")
+    obligations = {
+        "checks_failed": report.get("checks_failed", []),
+        "follow_up": report.get("follow_up", []),
+        "confidence_gaps": original.get("confidence_gaps", []),
+        "required_next_work": decision.get("required_next_work", []),
+        "remaining_limits": recovery.get("remaining_limits", []),
+    }
+    for field, records in obligations.items():
+        if not isinstance(records, list) or any(not isinstance(text, str) or not text.strip() for text in records):
+            raise SystemExit(f"code-remediate-report-input-invalid:{field}")
+        for text in records:
+            if not any(" ".join(text.split()) in " ".join(source["body"].split()) for source in report_sources):
+                raise SystemExit(f"code-remediate-report-obligation-omitted:{field}")
 
 
 def _validate_code_remediate_scope_selection(metadata: dict[str, Any], out_dir: Path) -> None:
@@ -2520,6 +2592,17 @@ def _validate_code_remediate_unresolved_summary(metadata: dict[str, Any], out_di
 
     if counts["selected_items_resolved"] + counts["selected_items_unresolved"] != counts["selected_items_total"]:
         raise SystemExit("code-remediate-unresolved-summary-total-mismatch")
+    scope = metadata.get("resolution_scope", {})
+    if scope.get("presentation_version") in {2, 3}:
+        selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
+        selected = [item for index, item in enumerate(selectable, 1) if index in scope["selected_indexes"]]
+        open_count = sum(item["resolution_status"] in {"unresolved", "needs-clarification"} for item in selected)
+        if (
+            counts["selected_items_total"] != len(selected)
+            or counts["selected_items_unresolved"] != open_count
+            or counts["selected_items_resolved"] != len(selected) - open_count
+        ):
+            raise SystemExit("code-remediate-unresolved-selected-count-mismatch")
     if not isinstance(summary.get("all_local_actionable_items_closed"), bool):
         raise SystemExit("code-remediate-invalid-local-actionable-closed")
     if summary["all_local_actionable_items_closed"] and counts["local_actionable_items_unresolved"] > 0:
@@ -3433,15 +3516,239 @@ def _validate_code_remediate_skill(result: dict[str, Any], out_dir: Path, *, cur
     _validate_code_remediate_scope_selection(metadata, out_dir)
     _validate_code_remediate_workplan(metadata, out_dir, current_contract=current_contract)
     _validate_code_remediate_out_of_scope_confirmation(metadata, out_dir)
-    _validate_code_remediate_report_intake(result, out_dir)
+    _validate_code_remediate_report_intake(result, out_dir, current_contract=current_contract)
     _validate_code_remediate_final_resolution_table(metadata, out_dir)
     _validate_code_remediate_pr_relevance(metadata, out_dir)
     _validate_code_remediate_unresolved_summary(metadata, out_dir)
+    if result["status"] == "pass":
+        summary = metadata["unresolved_summary"]
+        selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
+        selected = [item for index, item in enumerate(selectable, 1) if index in resolution_scope["selected_indexes"]]
+        open_items = [item for item in selected if item["resolution_status"] in {"unresolved", "needs-clarification"}]
+        if (
+            summary["selected_items_unresolved"] != summary["user_deferred_items"]
+            or not summary["all_local_actionable_items_closed"]
+            or any(
+                summary[key]
+                for key in (
+                    "local_actionable_items_unresolved",
+                    "process_gate_items_unresolved",
+                    "environment_blocked_items",
+                    "external_owner_items",
+                )
+            )
+            or any(
+                item["resolution_status"] != "unresolved" or not item["resolved_how"].startswith("Deferred: ")
+                for item in open_items
+            )
+            or any(
+                group["reason"] != "user-deferred" or group["owner"] != "user"
+                for group in summary["unresolved_reason_groups"]
+            )
+        ):
+            raise SystemExit("code-remediate-pass-with-required-unresolved-work")
     scope_text = (out_dir / "resolution-scope.md").read_text(encoding="utf-8").lower()
     for required_text in ("selectable", "selected", "deferred"):
         if required_text not in scope_text:
             raise SystemExit(f"code-remediate-scope-missing-{required_text}")
     _validate_code_remediate_pr_artifacts(result, metadata, out_dir)
+
+
+def _audit_cost_artifact(out_dir: Path, record: object, field: str) -> Any:
+    """Read digest-bound audit evidence without accepting paths outside the run."""
+    if not isinstance(record, dict) or set(record) != {"path", "sha256"}:
+        raise SystemExit(f"audit-cost-invalid-evidence:{field}")
+    raw_path = record["path"]
+    if not isinstance(raw_path, str) or not raw_path or "\\" in raw_path:
+        raise SystemExit(f"audit-cost-invalid-path:{field}")
+    declared = PurePosixPath(raw_path)
+    if declared.is_absolute() or PureWindowsPath(raw_path).drive or ".." in declared.parts:
+        raise SystemExit(f"audit-cost-invalid-path:{field}")
+    path = out_dir.resolve() / declared
+    components = [out_dir.resolve().joinpath(*declared.parts[:index]) for index in range(1, len(declared.parts) + 1)]
+    if any(component.is_symlink() for component in components) or not path.is_file():
+        raise SystemExit(f"audit-cost-missing-evidence:{field}")
+    if not path.resolve().is_relative_to(out_dir.resolve()):
+        raise SystemExit(f"audit-cost-invalid-path:{field}")
+    if record["sha256"] != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise SystemExit(f"audit-cost-evidence-digest-mismatch:{field}")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, UnicodeError) as error:
+        raise SystemExit(f"audit-cost-invalid-json:{field}") from error
+
+
+def _audit_cost_number(value: object, field: str, *, positive: bool = False) -> float:
+    """Reject boolean, nonfinite, or negative cost and failure measurements."""
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise SystemExit(f"audit-cost-invalid-number:{field}")
+    if value < 0 or (positive and value == 0):
+        raise SystemExit(f"audit-cost-invalid-number:{field}")
+    return float(value)
+
+
+def _validate_audit_evidence(result: dict[str, Any], gates: dict[str, Any], out_dir: Path) -> None:
+    """Require assessed audit completion and retained proof for optimization acceptance.
+
+    Validation establishes evidence shape, digest integrity, matching identities, and declared guard outcomes. The
+    workflow owner still verifies source completeness, reviewer independence, and provider provenance.
+    """
+    if result["status"] == "pass" and not any(
+        check["id"] == "review" and check["status"] == "pass" for check in gates["checks"]
+    ):
+        raise SystemExit("audit-review-gate-required")
+    value = result["metadata"].get("value_per_token")
+    if value is None:
+        return
+    if not isinstance(value, dict) or value.get("status") not in {
+        "not-run",
+        "insufficient-evidence",
+        "rejected",
+        "accepted",
+    }:
+        raise SystemExit("audit-cost-invalid-status")
+    if value["status"] != "accepted":
+        return
+    if type(value.get("schema_version")) is not int or value["schema_version"] != 2:
+        raise SystemExit("audit-cost-acceptance-schema-required")
+    for field in ("scope_roots", "conditional_load_trace", "residual_limits"):
+        if (
+            not isinstance(value.get(field), list)
+            or not value[field]
+            or not all(isinstance(item, str) and item.strip() for item in value[field])
+        ):
+            raise SystemExit(f"audit-cost-missing-evidence:{field}")
+    for field in ("baseline_sha256", "candidate_sha256"):
+        if not isinstance(value.get(field), str) or not re.fullmatch(r"[0-9a-f]{64}", value[field]):
+            raise SystemExit(f"audit-cost-invalid-digest:{field}")
+    if value["baseline_sha256"] == value["candidate_sha256"]:
+        raise SystemExit("audit-cost-unchanged-snapshot")
+    if not isinstance(value.get("decision"), str) or not value["decision"].strip():
+        raise SystemExit("audit-cost-missing-decision")
+    measurements = value.get("static_measurements")
+    if not isinstance(measurements, list) or not measurements:
+        raise SystemExit("audit-cost-missing-measurements")
+    for measurement in measurements:
+        if not isinstance(measurement, dict) or measurement.get("source") not in {
+            "provider-native",
+            "tiktoken:o200k_base",
+        }:
+            raise SystemExit("audit-cost-token-source-required")
+        for field in ("baseline_sha256", "candidate_sha256"):
+            if measurement.get(field) != value[field]:
+                raise SystemExit("audit-cost-measurement-snapshot-mismatch")
+        for field in ("baseline_tokens", "candidate_tokens"):
+            _audit_cost_number(measurement.get(field), field, positive=True)
+    map_path = value.get("obligation_map_path")
+    if not isinstance(map_path, str) or not map_path:
+        raise SystemExit("audit-cost-missing-obligation-map")
+    obligations = _audit_cost_artifact(
+        out_dir, {"path": map_path, "sha256": value.get("obligation_map_sha256")}, "obligation-map"
+    )
+    if (
+        not isinstance(obligations, list)
+        or not obligations
+        or not all(
+            isinstance(item, dict)
+            and item.get("preserved") is True
+            and all(
+                isinstance(item.get(field), str) and item[field].strip()
+                for field in ("baseline", "candidate", "evidence")
+            )
+            for item in obligations
+        )
+    ):
+        raise SystemExit("audit-cost-obligation-map-incomplete")
+    static_gates = value.get("static_gates")
+    expected = {"package", "tests", "calibration", "contract-markers", "adversarial-review"}
+    if not isinstance(static_gates, list) or len(static_gates) != len(expected):
+        raise SystemExit("audit-cost-static-guards-required")
+    seen: set[str] = set()
+    for guard in static_gates:
+        if (
+            not isinstance(guard, dict)
+            or not isinstance(guard.get("id"), str)
+            or guard.get("id") not in expected
+            or guard["id"] in seen
+            or guard.get("status") != "pass"
+        ):
+            raise SystemExit("audit-cost-static-guard-failed")
+        seen.add(guard["id"])
+        proof = _audit_cost_artifact(out_dir, guard.get("evidence"), guard["id"])
+        if (
+            not isinstance(proof, dict)
+            or proof.get("status") != "pass"
+            or any(proof.get(field) != value[field] for field in ("baseline_sha256", "candidate_sha256"))
+        ):
+            raise SystemExit("audit-cost-static-guard-failed")
+    behavioral = _audit_cost_artifact(out_dir, value.get("behavioral_comparison"), "behavioral")
+    live = _audit_cost_artifact(out_dir, value.get("live_comparison"), "live")
+    for comparison in (behavioral, live):
+        if not isinstance(comparison, dict) or any(
+            comparison.get(field) != value[field] for field in ("baseline_sha256", "candidate_sha256")
+        ):
+            raise SystemExit("audit-cost-comparison-snapshot-mismatch")
+    critical = _audit_cost_number(behavioral.get("critical_regressions"), "critical-regressions")
+    baseline_failures = _audit_cost_number(behavioral.get("baseline_failures"), "baseline-failures")
+    candidate_failures = _audit_cost_number(behavioral.get("candidate_failures"), "candidate-failures")
+    if critical != 0 or candidate_failures > baseline_failures:
+        raise SystemExit("audit-cost-behavior-regression")
+    tasks = behavioral.get("tasks")
+    if not isinstance(tasks, list) or not tasks:
+        raise SystemExit("audit-cost-paired-tasks-required")
+    seen_tasks: set[str] = set()
+    for task in tasks:
+        if (
+            not isinstance(task, dict)
+            or not isinstance(task.get("id"), str)
+            or not task["id"].strip()
+            or task["id"] in seen_tasks
+        ):
+            raise SystemExit("audit-cost-invalid-task-identity")
+        seen_tasks.add(task["id"])
+        # Aggregate successes must not conceal worse completion or more tool/check failures on a paired task.
+        assessments = []
+        for side in ("baseline", "candidate"):
+            assessment = task.get(side)
+            if (
+                not isinstance(assessment, dict)
+                or not isinstance(assessment.get("evidence"), list)
+                or not assessment["evidence"]
+                or not all(isinstance(item, str) and item.strip() for item in assessment["evidence"])
+            ):
+                raise SystemExit("audit-cost-task-evidence-required")
+            values = {
+                field: _audit_cost_number(assessment.get(field), f"task-{side}-{field}")
+                for field in ("completion_quality", "tool_failures", "check_failures")
+            }
+            if values["completion_quality"] > 1:
+                raise SystemExit("audit-cost-invalid-completion-quality")
+            assessments.append(values)
+        baseline, candidate = assessments
+        if (
+            candidate["completion_quality"] < baseline["completion_quality"]
+            or candidate["tool_failures"] > baseline["tool_failures"]
+            or candidate["check_failures"] > baseline["check_failures"]
+        ):
+            raise SystemExit("audit-cost-task-behavior-regression")
+    identity = live.get("baseline_identity")
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != {"model", "effort", "task_contract_sha256", "prompt_sha256"}
+        or not all(isinstance(item, str) and item.strip() for item in identity.values())
+        or live.get("candidate_identity") != identity
+    ):
+        raise SystemExit("audit-cost-unmatched-live-identity")
+    if live.get("source") != "provider-native":
+        raise SystemExit("audit-cost-native-live-evidence-required")
+    for field in ("task_contract_sha256", "prompt_sha256"):
+        if not re.fullmatch(r"[0-9a-f]{64}", identity[field]):
+            raise SystemExit("audit-cost-invalid-live-identity-digest")
+    baseline_cost = _audit_cost_number(live.get("baseline_cost"), "baseline-cost", positive=True)
+    candidate_cost = _audit_cost_number(live.get("candidate_cost"), "candidate-cost", positive=True)
+    minimum = _audit_cost_number(live.get("min_cost_reduction"), "minimum-reduction", positive=True)
+    if minimum >= 1 or (baseline_cost - candidate_cost) / baseline_cost + 1e-12 < minimum:
+        raise SystemExit("audit-cost-insufficient-reduction")
 
 
 def validate(skill: str, out_dir: Path, result_path: Path) -> None:
@@ -3452,10 +3759,16 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
     gates = _validate_gates(out_dir)
     _validate_code_review_unavailable_gates(result, gates, skill)
     _reconcile_result_with_gates(result, gates)
+    if skill == "audit":
+        _validate_audit_evidence(result, gates, out_dir)
     current_contract = (
         result_path.name == "result.candidate.json"
         or skill == "challenge-resolve"
         or (skill == "code-review" and result.get("schema_version") == 3)
+        or (
+            skill == "code-remediate"
+            and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") == 3
+        )
     )
     _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)
 

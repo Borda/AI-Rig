@@ -25,6 +25,8 @@ Confidence needs objective evidence. Before user output, apply bands: `<= 0.8` u
 
 Each `run_gates.py` invocation writes `gates.json` with exactly five IDs. Entries contain `id`, `status`, `exit_code`, `duration_seconds`, `command_path`, `stdout`, `stderr`; `missing-command`, `not-applicable`, `timeout` also need reason. The three log fields record path relative to run's output directory in POSIX form (`checks/<id>.<kind>.txt`); absolute path is accepted only inside that directory. Readers accept any relative entry that resolves inside output directory, trying `--out` first, then its ancestors for runs written before this convention — never their own working directory, which is what once made same artifact valid in one directory, invalid in another. Every accepted log must resolve inside output directory. `not-applicable` passes only with explicit reason; `missing-command`/`timeout` fail. Result status/check lists reconcile with `gates.json`.
 
+For `--pytest-python` source binding, keep the project's pytest selection and parallel options. The test gate records selected test paths and declared module origins from each executing pytest process, including xdist workers. A missing or crashed worker receipt, an observed outside/untracked origin, or a declared module absent from every process cannot certify reviewed source; retain the failing or inconclusive gate evidence. A module absent in one worker remains neutral when another worker proves its tracked origin.
+
 Optional but recommended:
 
 - `recommendations`: list of concrete next improvements
@@ -98,3 +100,5 @@ Configured agents require:
 ## Behavior-Change Guardrails
 
 Codex behavior changes must also update registrations, docs, calibration in same patch. Prefer existing agent/skill unless new role/workflow has distinct triggers, acceptance criteria, measurable gates.
+
+A passing assessed `audit` result additionally requires an executed passing `review` gate. The generic runner still permits all `not-applicable` diagnostics; skill applicability checks decide whether those records can certify workflow completion.

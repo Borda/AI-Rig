@@ -540,6 +540,14 @@ def _python_import_proof(worktree: str) -> dict[str, object]:
         "runtime_interpreter": sys.executable,
         "sys_prefix": sys.prefix,
         "worktree": worktree,
+        "tests": {
+            (Path(worktree) / "tests" / "test_widgets.py").as_posix(): {
+                "origin": (Path(worktree) / "tests" / "test_widgets.py").as_posix(),
+                "tracked": True,
+                "status": "pass",
+                "reason": None,
+            }
+        },
         "modules": {
             "widgets": {
                 "origin": (Path(worktree) / "widgets" / "__init__.py").as_posix(),

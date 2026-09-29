@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Preserve frozen review context bytes across dispatch, pagination, native UTF-8 stdout, and receipt validation on Windows, including CRLF source and non-ASCII text.
+- Use portable native-shell invocation in audit acceptance tests and explicit UTF-8 artifact reads; exercise locale and newline regressions on every host.
+
+## 0.28.2
+
+- Bind native reviewer contexts to focused source from verified local, PR, or commit checkouts, including committed deletions, renamed and quoted paths, and preexisting unchanged callers; reject prose-only evidence and duplicate assessments.
+- Reject incomplete nested PR comment pages, derive routing file inventories from verified Git comparisons rather than truncated remote metadata, and reject pytest evidence selecting tests outside the reviewed checkout; retain provenance from local xdist workers for parallel source-bound tests.
+- Preserve canonical report findings and evidence obligations through remediation; reconcile selected outcome totals and forbid passing results with required work open.
+- Keep the user's primary goal fixed through auxiliary setup and report repairs; schema-two progress ledgers reject auxiliary work claimed as primary progress, count evidence-backed attempts independently of progress flags, require recorded authority for condition replacement, and bound setup recovery to one repair.
+- Reject unsupported audit optimization acceptance and successful audits without an executed review; require paired per-task completion-quality and tool/check failure guards.
+- Load only applicable final handoff supplements while preserving existing workflow obligations.
+- Diagnose overlapping unmanaged global instructions without deleting user content.
+- Surface Windows startup and analogous assertion failures directly, remove redundant CI package checks, and clarify Sol advisory-role scope.
+
 ## 0.28.1
 
 - Route audited GitHub helpers from current network and filesystem grants when the runtime omits the active profile name. Preserve destination restrictions and report/index/checkout write boundaries; failed profile lookup no longer implies disabled access across review, remediation, assessment, and release.

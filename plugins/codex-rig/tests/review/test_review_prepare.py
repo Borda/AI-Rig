@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import hashlib
+import io
 import json
 import re
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -18,14 +20,58 @@ SKILL = PLUGIN_ROOT / "skills/code-review"
 HELPER = SKILL / "review_prepare.py"
 
 
-def _review_inputs(tmp_path: Path) -> Path:
+def _review_inputs(
+    tmp_path: Path,
+    *,
+    untracked: bool = False,
+    second_file: bool = False,
+    unchanged_caller: bool = False,
+    deleted: bool = False,
+) -> Path:
     """Write semantic reviewer decisions while leaving mechanical evidence to the producer."""
     spec = importlib.util.spec_from_file_location("prepare_validator", SKILL / "validate_artifacts.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     run = tmp_path / "review"
     run.mkdir()
-    (run / "diff.patch").write_text("diff --git a/widget.py b/widget.py\n", encoding="utf-8")
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    for command in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
+        subprocess.run(["git", "-C", str(repository), *command], check=True, capture_output=True)
+    (repository / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "widget.py"], check=True, capture_output=True)
+    if second_file:
+        (repository / "other.py").write_text("other = 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repository), "add", "other.py"], check=True, capture_output=True)
+    if unchanged_caller:
+        (repository / "stable.py").write_text("caller = 5\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repository), "add", "stable.py"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "-qm", "Initial"], check=True, capture_output=True)
+    (repository / "widget.py").write_text("value = 2\n", encoding="utf-8")
+    if second_file:
+        (repository / "other.py").write_text("other = 2\n", encoding="utf-8")
+    if deleted:
+        (repository / "widget.py").unlink()
+    if untracked:
+        (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8")
+    collected = subprocess.run(
+        [
+            sys.executable,
+            str(PLUGIN_ROOT / "shared/collect_diff.py"),
+            "--review-worktree",
+            "--repository",
+            str(repository),
+            "--out",
+            str(run / "local-source"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert collected.returncode == 0, collected.stderr
+    (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
+    if untracked:
+        (run / "untracked.txt").write_text("new.txt\n", encoding="utf-8")
     roles = ["challenger", "qa-specialist"]
     routing = {
         "schema_version": 1,
@@ -43,29 +89,210 @@ def _review_inputs(tmp_path: Path) -> Path:
             + "Relevant source evidence.\n" * 300,
             encoding="utf-8",
         )
-        briefs[role] = {"axis": role, "evidence_path": f"{role}-evidence.md"}
+        briefs[role] = {"axis": role, "evidence_path": f"{role}-evidence.md", "source_paths": ["widget.py"]}
     (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
     return run
 
 
-def _prepare(run: Path) -> subprocess.CompletedProcess[str]:
+def _prepare(
+    run: Path, *, source_root: Path | None = None, expected_head: str | None = None, scope_path: str | None = None
+) -> subprocess.CompletedProcess[str]:
     """Invoke the shipped producer as an installed-path command."""
+    if source_root is None:
+        source_root = Path(
+            json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+        )
+    command = [
+        sys.executable,
+        str(HELPER),
+        "prepare",
+        "--out",
+        str(run),
+        "--run-id",
+        "bounded-review",
+        "--parent-thread-id",
+        "parent",
+        "--source-root",
+        str(source_root),
+    ]
+    if expected_head is not None:
+        command.extend(["--expected-head", expected_head])
+        base = subprocess.run(
+            ["git", "-C", str(source_root), "rev-parse", f"{expected_head}^"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        command.extend(["--expected-diff-base", base])
+    if scope_path is not None:
+        command.extend(["--scope-path", scope_path])
     return subprocess.run(
-        [
-            sys.executable,
-            str(HELPER),
-            "prepare",
-            "--out",
-            str(run),
-            "--run-id",
-            "bounded-review",
-            "--parent-thread-id",
-            "parent",
-        ],
+        command,
         capture_output=True,
         text=True,
         check=False,
     )
+
+
+def test_prepare_rejects_omitted_local_diff(tmp_path: Path) -> None:
+    """Reject a complete checkout paired with an incomplete admitted patch."""
+    run = _review_inputs(tmp_path, second_file=True)
+    root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    patch = subprocess.run(
+        ["git", "-C", root, "diff", "--binary", "HEAD", "--", "widget.py"], check=True, capture_output=True
+    ).stdout
+    (run / "diff.patch").write_bytes(patch)
+    result = _prepare(run)
+    assert result.returncode == 2
+    assert "review-source-diff-stale" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+
+def test_prepare_rejects_missing_untracked_inventory(tmp_path: Path) -> None:
+    """Keep retained untracked changes from disappearing before reviewer dispatch."""
+    run = _review_inputs(tmp_path, untracked=True)
+    (run / "untracked.txt").unlink()
+    result = _prepare(run)
+    assert result.returncode == 2
+    assert "review-source-untracked-stale" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+
+def test_prepare_accepts_declared_local_path_scope(tmp_path: Path) -> None:
+    """Allow intentional path reviews without silently dropping whole-tree evidence."""
+    run = _review_inputs(tmp_path, second_file=True, untracked=True)
+    root = json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    patch = subprocess.run(
+        ["git", "-C", root, "diff", "--binary", "HEAD", "--", "widget.py"], check=True, capture_output=True
+    ).stdout
+    (run / "diff.patch").write_bytes(patch)
+    (run / "untracked.txt").write_bytes(b"")
+    result = _prepare(run, scope_path="widget.py")
+    assert result.returncode == 0, result.stderr
+    assert (run / "dispatch.json").exists()
+
+
+def test_prepare_rejects_undelivered_changed_source(tmp_path: Path) -> None:
+    """A full patch cannot hide a changed file from every reviewer context."""
+    run = _review_inputs(tmp_path, second_file=True)
+    result = _prepare(run)
+    assert result.returncode == 2
+    assert "review-source-coverage-incomplete" in result.stderr
+    assert not (run / "dispatch.json").exists()
+
+
+@pytest.mark.parametrize("default_encoding", ["utf-8", "cp1252"])
+def test_prepare_accepts_complete_split_source_coverage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, default_encoding: str
+) -> None:
+    """Reviewers may receive disjoint source while collectively covering every change."""
+    read_text = Path.read_text
+
+    def read_with_default(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
+        """Simulate the platform default while respecting explicit artifact encodings."""
+        return read_text(path, encoding=encoding or default_encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", read_with_default)
+    run = _review_inputs(tmp_path, second_file=True)
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"] = ["other.py"]
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
+    for context in plan["contexts"]:
+        text = (run / context["context_path"]).read_text(encoding="utf-8")
+        assert ("other = 2" in text) is (context["role_id"] == "challenger")
+        assert ("value = 2" in text) is (context["role_id"] != "challenger")
+
+
+@pytest.mark.parametrize("route", ["local", "commit", "pr"])
+def test_prepare_delivers_deleted_file_comparison(tmp_path: Path, route: str) -> None:
+    """Deliver exact deletion evidence even when the reviewed tip has no file record."""
+    run = _review_inputs(tmp_path, deleted=route == "local")
+    root = Path(json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"])
+    head = None
+    if route != "local":
+        (root / "widget.py").unlink()
+        subprocess.run(["git", "-C", str(root), "add", "widget.py"], check=True, capture_output=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "Delete",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        head = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        base = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD^"], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        comparison = [f"{base}...{head}"] if route == "pr" else [base, head]
+        (run / "diff.patch").write_bytes(
+            subprocess.run(
+                ["git", "-C", str(root), "diff", "--binary", *comparison, "--"], check=True, capture_output=True
+            ).stdout
+        )
+        (run / "local-source/review-worktree.json").unlink()
+        if route == "pr":
+            (run / "local-checkout.json").write_text(
+                json.dumps(
+                    {"worktree": root.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
+                ),
+                encoding="utf-8",
+            )
+    result = _prepare(run, source_root=root, expected_head=head)
+    assert result.returncode == 0, result.stderr
+    text = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    assert "widget.py (missing, SHA-256: None)" in text
+    assert "deleted file mode" in text
+    assert "-value = 1" in text
+    assert not (root / "widget.py").exists()
+
+
+@pytest.mark.parametrize("tampered", [False, True])
+@pytest.mark.parametrize("scope_path", [None, "widget.py"])
+def test_prepare_binds_preexisting_unchanged_caller(tmp_path: Path, tampered: bool, scope_path: str | None) -> None:
+    """Admit HEAD-backed context while rejecting mutation after local collection."""
+    run = _review_inputs(tmp_path, unchanged_caller=True)
+    root = Path(json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"])
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"].append("stable.py")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    if tampered:
+        (root / "stable.py").write_text("caller = 999\n", encoding="utf-8")
+    result = _prepare(run, scope_path=scope_path)
+    if tampered:
+        assert result.returncode != 0
+        assert "changed after collection" in result.stderr
+        assert not (run / "dispatch.json").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        text = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+        assert "caller = 5\n" in text
+        assert "+value = 2" in text
+
+
+def test_prepare_rejects_undeclared_missing_context(tmp_path: Path) -> None:
+    """Missing context requires a verified deletion rather than a nonexistent brief path."""
+    run = _review_inputs(tmp_path)
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"].append("never-existed.py")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode == 2
+    assert "review-brief-source-selection-invalid:challenger" in result.stderr
+    assert not (run / "dispatch.json").exists()
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
@@ -136,12 +363,12 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
                     str(page),
                 ],
                 capture_output=True,
-                text=True,
                 check=False,
             )
             assert reader.returncode == 0, reader.stderr
+            output = reader.stdout.decode("utf-8")
             if page == 1:
-                header = reader.stdout.splitlines()[0]
+                header = output.splitlines()[0]
             read_id = f"read-{index}-{page}"
             tool_rows.extend(
                 [
@@ -161,7 +388,7 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
                             "call_id": read_id,
                             "output": [
                                 {"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
-                                {"type": "input_text", "text": reader.stdout},
+                                {"type": "input_text", "text": output},
                             ],
                         },
                     },
@@ -264,8 +491,8 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
     run = _review_inputs(tmp_path)
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
-    plan = json.loads((run / "inspection-plan.json").read_text())
-    dispatch = json.loads((run / "dispatch.json").read_text())
+    plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
+    dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
     assert dispatch["routing_sha256"] == hashlib.sha256((run / "review-routing.json").read_bytes()).hexdigest()
     assert dispatch["briefs_sha256"] == hashlib.sha256((run / "review-briefs.json").read_bytes()).hexdigest()
     assert [entry["role_id"] for entry in plan["contexts"]] == ["challenger", "qa-specialist"]
@@ -285,12 +512,249 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
 
 def test_prepare_rejects_missing_role_before_freezing_any_context(tmp_path: Path) -> None:
     run = _review_inputs(tmp_path)
-    briefs = json.loads((run / "review-briefs.json").read_text())
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs.pop("challenger")
-    (run / "review-briefs.json").write_text(json.dumps(briefs))
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
     result = _prepare(run)
     assert result.returncode != 0
     assert "review-brief-role-set-mismatch" in result.stderr
+    assert not (run / "inspection-plan.json").exists()
+
+
+def test_prepare_rejects_prose_only_source_claim_before_freezing(tmp_path: Path) -> None:
+    """A claimed inspection cannot substitute for source bytes from the collected checkout."""
+    run = _review_inputs(tmp_path)
+    (run / "challenger-evidence.md").write_text("I inspected widget.py at the frozen revision.\n", encoding="utf-8")
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"].pop("source_paths")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode != 0
+    assert "review-brief-source-selection-invalid:challenger" in result.stderr
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "specialists").exists()
+
+
+def test_prepare_includes_exact_untracked_source(tmp_path: Path) -> None:
+    """An untracked file has exact source bytes even though Git has no diff hunk for it."""
+    run = _review_inputs(tmp_path, untracked=True)
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"] = ["new.txt"]
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode == 0, result.stderr
+    context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    assert "new_value = 7\n" in context
+    assert "Untracked file: exact source bytes" in context
+    assert "value = 2\n" not in context
+
+
+@pytest.mark.parametrize("forged_diff", [False, True])
+def test_prepare_accepts_only_matching_committed_detached_source(tmp_path: Path, forged_diff: bool) -> None:
+    """Bind a committed review to the declared exact HEAD and selected source bytes."""
+    run = _review_inputs(tmp_path)
+    review = Path(
+        json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    )
+    source = review / "widget.py"
+    source.write_text("value = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(review), "add", "widget.py"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(review),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "Second",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(review), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    diff = subprocess.run(
+        ["git", "-C", str(review), "diff", "--binary", "HEAD^", "HEAD"], check=True, capture_output=True
+    ).stdout
+    if forged_diff:
+        diff = diff.replace(b"+value = 3", b"+value = 999")
+    (run / "diff.patch").write_bytes(diff)
+    (run / "local-source/review-worktree.json").unlink()
+    result = _prepare(run, source_root=review, expected_head=head)
+    if forged_diff:
+        assert result.returncode != 0
+        assert "review-source-diff-stale" in result.stderr
+        assert not (run / "inspection-plan.json").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    assert "value = 3\n" in context
+    assert "+value = 3" in context
+
+
+@pytest.mark.parametrize(
+    ("destination", "rename"),
+    [
+        pytest.param("new.py", True, id="plain-rename"),
+        pytest.param("café.py", True, id="quoted-rename"),
+        pytest.param("café.py", False, id="quoted-update"),
+    ],
+)
+def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str, rename: bool) -> None:
+    """Deliver exact source and patch bytes for renamed and quoted Git paths."""
+    run = _review_inputs(tmp_path)
+    review = Path(
+        json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    )
+    (review / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    original = "old.py" if rename else destination
+    (review / original).write_text("def renamed():\n    return 17\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(review), "add", original], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(review),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "Base",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    if rename:
+        subprocess.run(["git", "-C", str(review), "mv", original, destination], check=True, capture_output=True)
+    else:
+        (review / destination).write_text("def renamed():\n    return 18\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(review), "add", destination], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(review),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "Rename",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(review), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    patch = subprocess.run(
+        ["git", "-C", str(review), "diff", "--binary", "HEAD^", "HEAD"], check=True, capture_output=True
+    ).stdout
+    assert (b"rename to " in patch) is rename
+    (run / "diff.patch").write_bytes(patch)
+    (run / "local-source/review-worktree.json").unlink()
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    for brief in briefs.values():
+        brief["source_paths"] = [destination]
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+
+    result = _prepare(run, source_root=review, expected_head=head)
+
+    assert result.returncode == 0, result.stderr
+    context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    assert destination in context
+    assert f"return {17 if rename else 18}" in context
+    assert ("rename to " in context) is rename
+    assert (run / "dispatch.json").exists()
+
+
+def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path: Path) -> None:
+    """Resolve the retained PR receipt at its actual path and reject competing receipts."""
+    run = _review_inputs(tmp_path)
+    review = Path(
+        json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    )
+    (review / "widget.py").write_text("value = 3\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(review), "add", "widget.py"], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(review),
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-qm",
+            "Second",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    head = subprocess.run(
+        ["git", "-C", str(review), "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    base = subprocess.run(
+        ["git", "-C", str(review), "rev-parse", "HEAD^"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    diff = subprocess.run(
+        ["git", "-C", str(review), "diff", "--binary", f"{base}...{head}", "--"], check=True, capture_output=True
+    ).stdout
+    (run / "diff.patch").write_bytes(diff)
+    (run / "local-source/review-worktree.json").unlink()
+    (run / "pr").mkdir()
+    receipt = {"worktree": review.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
+    (run / "pr/local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = _prepare(run, source_root=review)
+    assert result.returncode == 0, result.stderr
+    assert "value = 3\n" in (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
+    (run / "local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = _prepare(run, source_root=review)
+    assert result.returncode != 0
+    assert "review-source-receipt-ambiguous" in result.stderr
+
+
+def test_prepare_rejects_source_drift_before_freezing(tmp_path: Path) -> None:
+    """A modified isolated checkout invalidates the retained source snapshot."""
+    run = _review_inputs(tmp_path)
+    review = Path(
+        json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
+    )
+    (review / "widget.py").write_text("value = 99\n", encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode != 0
+    assert "Review worktree source changed after collection" in result.stderr
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "specialists").exists()
+
+
+def test_prepare_rejects_unrelated_source_selection(tmp_path: Path) -> None:
+    """An unchanged selected path cannot stand alone as review evidence."""
+    run = _review_inputs(tmp_path)
+    repository = Path(
+        json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["source_worktree"]
+    )
+    (repository / "unchanged.py").write_text("stable = True\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "unchanged.py"], check=True, capture_output=True)
+    # Selection outside the collector's frozen source inventory must fail closed.
+    briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
+    briefs["challenger"]["source_paths"] = ["unchanged.py"]
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    result = _prepare(run)
+    assert result.returncode != 0
+    assert (
+        "review-brief-source-unrelated:challenger" in result.stderr
+        or "review-brief-source-selection-invalid:challenger" in result.stderr
+    )
     assert not (run / "inspection-plan.json").exists()
 
 
@@ -325,7 +789,7 @@ def test_prepare_never_overwrites_frozen_evidence_or_retains_secrets(tmp_path: P
         assert not (run / "specialists").exists()
 
 
-def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path) -> None:
+def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, text_newline_default: None) -> None:
     """Accept a completed, overlapping wave with outputs bound to child finals."""
     run, home, children = _assembly_evidence(tmp_path)
     # Native history also contains non-spawn subagents; unrelated session shapes must not abort this wave.
@@ -369,6 +833,66 @@ def test_assemble_rejects_unparseable_rating_before_promoting_manifest(tmp_path:
     assert not (run / "specialist-manifest.json").exists()
 
 
+def test_retained_rating_rejects_duplicate_reviewer_assessment(tmp_path: Path) -> None:
+    """A second assessment must not hide a conflicting rating behind the first one."""
+    spec = importlib.util.spec_from_file_location("rating_validator", SKILL / "validate_artifacts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    response = tmp_path / "response.md"
+    response.write_text(
+        "## Reviewer Assessment\n\nRating: 1\nRationale: Looks clean.\n\n"
+        "## Reviewer Assessment\n\nRating: 5/5\nRationale: Conflicting.\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit, match="review-assessment-content-invalid:challenger"):
+        module._retained_reviewer_rating(response, app_server=False, main=False, role="challenger")
+
+
+def test_pr_pass_import_proof_rejects_missing_test_origins(tmp_path: Path) -> None:
+    """A passing PR test gate must prove selected test files came from the reviewed tree."""
+    spec = importlib.util.spec_from_file_location("pr_proof_validator", SKILL / "validate_artifacts.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    worktree = tmp_path / "review-worktree"
+    worktree.mkdir()
+    origin = (worktree / "package.py").as_posix()
+    proof = {
+        "mode": "in-process-pytest",
+        "status": "pass",
+        "worktree": worktree.as_posix(),
+        "invoked_interpreter": sys.executable,
+        "runtime_interpreter": sys.executable,
+        "sys_prefix": sys.prefix,
+        "modules": {"package": {"status": "pass", "tracked": True, "reason": None, "origin": origin}},
+    }
+    with pytest.raises(SystemExit, match="pr-source-review-tests-import-proof-invalid"):
+        module._validate_pr_tests_import_proof(
+            [{"id": "tests", "status": "pass", "python_imports": proof}], worktree.as_posix()
+        )
+    selected = (worktree / "test_package.py").as_posix()
+    proof["tests"] = {selected: {"status": "pass", "tracked": True, "reason": None, "origin": selected}}
+    module._validate_pr_tests_import_proof(
+        [{"id": "tests", "status": "pass", "python_imports": proof}], worktree.as_posix()
+    )
+    proof["tests"][selected]["tracked"] = False
+    with pytest.raises(SystemExit, match="pr-source-review-tests-import-proof-invalid"):
+        module._validate_pr_tests_import_proof(
+            [{"id": "tests", "status": "pass", "python_imports": proof}], worktree.as_posix()
+        )
+    proof["tests"] = {
+        (tmp_path / "outside.py").as_posix(): {
+            "status": "pass",
+            "tracked": True,
+            "reason": None,
+            "origin": (tmp_path / "outside.py").as_posix(),
+        }
+    }
+    with pytest.raises(SystemExit, match="pr-source-review-tests-import-proof-invalid"):
+        module._validate_pr_tests_import_proof(
+            [{"id": "tests", "status": "pass", "python_imports": proof}], worktree.as_posix()
+        )
+
+
 @pytest.mark.parametrize(
     ("file_name", "expected"),
     [
@@ -404,7 +928,9 @@ def test_assemble_rejects_changed_preparation_semantics(tmp_path: Path, file_nam
         pytest.param("no-overlap", "review-wave-not-parallel", id="nonoverlapping-wave"),
     ],
 )
-def test_assemble_rejects_unbound_or_incomplete_wave(tmp_path: Path, problem: str, expected: str) -> None:
+def test_assemble_rejects_unbound_or_incomplete_wave(
+    tmp_path: Path, problem: str, expected: str, text_newline_default: None
+) -> None:
     """Reject plausible rollout tampering instead of accepting a fabricated pass."""
     run, home, children = _assembly_evidence(tmp_path)
     child = children["challenger"]
@@ -450,3 +976,49 @@ def test_assemble_rejects_unbound_or_incomplete_wave(tmp_path: Path, problem: st
     assert expected in result.stderr
     assert not (run / "specialist-manifest.json").exists()
     assert not (run / "inspection-summary.json").exists()
+
+
+@pytest.mark.parametrize(
+    "page, expected_body",
+    [pytest.param(1, b"\r\n" * 3000, id="crlf-page"), pytest.param(2, "é".encode("utf-8"), id="utf8-tail")],
+)
+def test_context_reader_preserves_native_stdout_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, page: int, expected_body: bytes
+) -> None:
+    """Dispatch and native stdout preserve frozen CRLF and Unicode across a byte boundary."""
+    content = b"\r\n" * 3000 + "é".encode("utf-8")
+    (tmp_path / "context.md").write_bytes(content)
+    plan = tmp_path / "inspection-plan.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "review_run_id": "portable-context",
+                "review_input_sha256": "a" * 64,
+                "contexts": [
+                    {
+                        "role_id": "challenger",
+                        "context_path": "context.md",
+                        "context_sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    reader = runpy.run_path(str(SKILL / "review_context.py"))
+    assert "Read all 2 frozen review context pages" in reader["dispatch_message"](plan, "challenger")
+    output = io.BytesIO()
+    native_stdout = io.TextIOWrapper(output, encoding="cp1252", newline="\r\n")
+    with monkeypatch.context() as patch:
+        patch.setattr(sys, "stdout", native_stdout)
+        patch.setattr(
+            sys,
+            "argv",
+            ["review_context.py", "--plan", str(plan), "--role", "challenger", "--attempt", "1", "--page", str(page)],
+        )
+        runpy.run_path(str(SKILL / "review_context.py"), run_name="__main__")
+        native_stdout.flush()
+    actual = output.getvalue()
+    assert actual.endswith(expected_body)
+    assert b"\r\r\n" not in actual
+    assert f"codex-review-context-page {page}/2".encode() in actual

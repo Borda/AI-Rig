@@ -11,6 +11,8 @@ See the [fixed recurrence and root-cause policy](../../shared/native-skill-contr
 
 Run linear implementation with strict gates.
 
+Keep setup and review artifacts subordinate to the user's acceptance condition under the primary-goal rules in Reasoning-Progress Escalation. Once the fix is established, write the minimal implementation and regression before another reviewer-setup cycle. One failed bounded setup repair stops that auxiliary route; continue safe authorized implementation and retain the coverage limit without claiming clean completion.
+
 When independent review findings are fixed in a cycle, read `../../shared/adversarial-loop.md` and apply its bounded convergence and stop rules. Use the `challenge-resolve` skill for an explicitly requested standalone loop; this workflow still owns its normal completion gates.
 
 ## Input Schema

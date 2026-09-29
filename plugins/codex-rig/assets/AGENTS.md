@@ -39,6 +39,9 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 ### Reasoning-progress escalation policy
 
 - Apply this policy separately to stalled workstream.
+- Keep user's primary goal and acceptance fixed. Auxiliary setup, review dispatch, report repair, and validators must serve a named unmet primary acceptance criterion or an explicit user request; omit unrelated work. A requested review/report is itself primary work.
+- Known authorized fix → implement fix + regression before another review-preparation cycle. Agent-owned reviewer/receipt failure → diagnose once, attempt one bounded repair; failed repair stops that route, not safe primary work. Never rotate reviewer names, rebuild reports repeatedly, or ask user to debug agent setup. Another supported route needs cause-avoiding evidence and permitted retry. Required coverage still gates clean completion; missing permission, prerequisite, or protected-state decision may require user.
+- Schema-2 ledger retains `primary_goal`; cycle declares `work_kind=primary|auxiliary`. Auxiliary cycle names unmet criterion in `required_for` and sets `material_progress=false`. Auxiliary validator success or new metadata never resets primary stall/recurrence counts; closure remains user's acceptance, not artifact readiness.
 - Work cycle records objective, operation/hypothesis, observed output, next decision.
 - Material progress = new falsifiable evidence, decision-changing scope/root-cause narrowing, acceptance-check status change, or user-directed decision; repeated equivalent actions, rewording, elapsed time, token count, confidence claims don't qualify.
 - Closure condition = unchanged result ending workstream: passing acceptance check, resolved decision, or user-approved scope.

@@ -163,6 +163,7 @@ query($owner: String!, $name: String!, $number: Int!) {
         nodes {
           id isResolved isOutdated path line startLine originalLine originalStartLine diffSide
           comments(first: 100) {
+            pageInfo { hasNextPage endCursor }
             nodes { id author { login } body url path position originalPosition line originalLine diffHunk createdAt updatedAt }
           }
         }
@@ -623,17 +624,32 @@ def _head_repository(payload: dict[str, Any]) -> str:
 
 def _review_threads(thread_payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Return one complete normalized review-thread page."""
+    if thread_payload.get("errors"):
+        raise CollectionError("review-thread-graphql-incomplete")
     try:
         container = thread_payload["data"]["repository"]["pullRequest"]["reviewThreads"]
-        threads = container.get("nodes") or []
+        threads = container.get("nodes")
         page_info = container.get("pageInfo") or {}
-    except (KeyError, TypeError) as error:
+    except (AttributeError, KeyError, TypeError) as error:
         raise CollectionError("invalid-json:review-threads") from error
     if not isinstance(threads, list) or not isinstance(page_info, dict):
         raise CollectionError("invalid-json:review-threads")
-    if page_info.get("hasNextPage"):
+    if page_info.get("hasNextPage") is not False:
         raise CollectionError("review-thread-pagination-incomplete")
-    return [item for item in threads if isinstance(item, dict)]
+    for thread in threads:
+        if not isinstance(thread, dict):
+            raise CollectionError("invalid-json:review-threads")
+        comments = thread.get("comments")
+        if (
+            not isinstance(comments, dict)
+            or not isinstance(comments.get("pageInfo"), dict)
+            or not isinstance(comments.get("nodes"), list)
+            or any(not isinstance(comment, dict) for comment in comments["nodes"])
+        ):
+            raise CollectionError("invalid-json:review-thread-comments")
+        if comments["pageInfo"].get("hasNextPage") is not False:
+            raise CollectionError("review-comment-pagination-incomplete")
+    return threads
 
 
 def _review_artifacts(
@@ -1519,6 +1535,15 @@ def collect_pr(
                 "local-pr-diff",
             )
             (output / "diff.patch").write_bytes(diff)
+            # The verified comparison is complete even when GitHub CLI truncates its file metadata.
+            changed = _run(
+                command_runner,
+                [*diff_prefix, "diff", "--name-only", "-z", revision_range, "--"],
+                timeout_seconds,
+                "local-pr-files",
+            )
+            names = _git_path_list(changed)
+            (output / "files.txt").write_text("".join(f"{name}\n" for name in names), encoding="utf-8")
             (output / "diffstat.txt").write_bytes(
                 _optional_command_output(
                     command_runner,

@@ -16,8 +16,11 @@ Neither phase launches agents, executes repository code, contacts GitHub, instal
 
 ## Usage
 
-Run ``review_prepare.py prepare --out RUN --run-id ID --parent-thread-id THREAD`` after writing review-routing.json and
-review-briefs.json. The briefs map each triggered role to an axis and contained evidence_path. Dispatch every generated
+Run ``review_prepare.py prepare --out RUN --run-id ID --parent-thread-id THREAD --source-root WORKTREE`` after writing
+review-routing.json and review-briefs.json. Briefs map each role to axis, contained evidence_path, and source_paths.
+Local path reviews declare ``--scope-path``; otherwise the complete local patch and untracked inventory are required.
+Committed reviews also require immutable ``--expected-head`` and ``--expected-diff-base`` object IDs. Preparation binds
+actual selected bytes and diff to the collected local/PR source or exact committed comparison. Dispatch every generated
 call before joining. Then write specialist-assessments.json, mapping each role to confidence and blocking_findings, and
 run ``review_prepare.py assemble --out RUN --codex-home HOME`` after all child final answers have been received.
 
@@ -42,9 +45,11 @@ tests exercise the CLI; validate_artifacts.py remains the independent acceptance
 from __future__ import annotations
 
 import argparse
+import codecs
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -57,6 +62,11 @@ if str(SKILL_DIRECTORY) not in sys.path:
 import review_context  # noqa: E402
 import review_routing  # noqa: E402
 import validate_artifacts as validator  # noqa: E402
+
+SHARED_DIRECTORY = SKILL_DIRECTORY.parents[1] / "shared"
+if str(SHARED_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(SHARED_DIRECTORY))
+import collect_diff  # noqa: E402
 
 
 def _json_bytes(value: object) -> bytes:
@@ -79,7 +89,151 @@ def _freeze(files: dict[Path, bytes]) -> None:
                 raise ValueError(f"review-frozen-artifact-conflict:{path.name}") from None
 
 
-def prepare(out: Path, run_id: str, parent_thread_id: str) -> dict[str, Any]:
+def _source_snapshot(
+    out: Path,
+    source_root: Path,
+    expected_head: str | None,
+    paths: list[str],
+    expected_diff_base: str | None,
+    scope_path: str | None,
+) -> tuple[dict[str, object], set[str]]:
+    """Bind selected source bytes to the collected local, PR, or committed checkout."""
+    root = source_root.resolve(strict=True)
+    local_receipt = out / "local-source" / "review-worktree.json"
+    pr_receipts = [path for path in (out / "local-checkout.json", out / "pr" / "local-checkout.json") if path.exists()]
+    if local_receipt.exists() and pr_receipts or len(pr_receipts) > 1:
+        raise ValueError("review-source-receipt-ambiguous")
+    if local_receipt.exists():
+        receipt = json.loads(local_receipt.read_text(encoding="utf-8"))
+        if receipt.get("review_worktree") != root.as_posix():
+            raise ValueError("review-source-root-mismatch")
+        collect_diff.verify_review_worktree(local_receipt.parent)
+        retained = json.loads((local_receipt.parent / "source-snapshot.json").read_text(encoding="utf-8"))
+        snapshot = collect_diff.capture_source_snapshot(root, paths)
+        records = {record["path"]: record for record in retained["files"]}
+        # Changed bytes have retained receipts; unchanged callers come from the verified HEAD-backed mirror.
+        if any(record["path"] in records and records[record["path"]] != record for record in snapshot["files"]):
+            raise ValueError("review-source-snapshot-stale")
+        collect_diff.verify_review_worktree(local_receipt.parent)
+        scopes = collect_diff._normalize_scope_paths(root, [scope_path if scope_path is not None else "."])
+        comparison = ("HEAD", "--", *scopes)
+        if collect_diff._git_output(root, ("diff", "--binary", *comparison)) != (out / "diff.patch").read_bytes():
+            raise ValueError("review-source-diff-stale")
+        changed = collect_diff._git_output(root, ("diff", "--name-only", "-z", *comparison))
+        return snapshot, {path.decode("utf-8") for path in changed.split(b"\0") if path}
+    if scope_path is not None:
+        raise ValueError("review-source-path-scope-requires-local-receipt")
+    if pr_receipts:
+        receipt = json.loads(pr_receipts[0].read_text(encoding="utf-8"))
+        head = receipt.get("expected_head")
+        if receipt.get("worktree") != root.as_posix() or not isinstance(head, str):
+            raise ValueError("review-source-root-mismatch")
+        if expected_head is not None and expected_head != head:
+            raise ValueError("review-source-head-mismatch")
+        expected_head = head
+        base = receipt.get("diff_base_oid")
+        if (
+            not isinstance(base, str)
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base) is None
+            or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", head) is None
+            or receipt.get("diff_head_oid") != head
+        ):
+            raise ValueError("review-source-receipt-invalid")
+        comparison = (f"{base}...{head}", "--")
+        collected_diff = collect_diff._git_output(root, ("diff", "--binary", *comparison))
+        if collected_diff != (out / "diff.patch").read_bytes():
+            raise ValueError("review-source-diff-stale")
+    else:
+        if expected_head is None:
+            raise ValueError("review-source-receipt-missing")
+        if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", expected_head) is None:
+            raise ValueError("review-source-head-invalid")
+        if expected_diff_base is None or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", expected_diff_base) is None:
+            raise ValueError("review-source-diff-base-required")
+        comparison = (expected_diff_base, expected_head, "--")
+        collected_diff = collect_diff._git_output(root, ("diff", "--binary", *comparison))
+        if collected_diff != (out / "diff.patch").read_bytes():
+            raise ValueError("review-source-diff-stale")
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", expected_head) is None:
+        raise ValueError("review-source-head-invalid")
+    if collect_diff._git_output(root, ("rev-parse", "HEAD")).decode("ascii").strip() != expected_head:
+        raise ValueError("review-source-head-mismatch")
+    if (
+        collect_diff._git_output(root, ("branch", "--show-current")).strip()
+        or collect_diff._git_output(root, ("status", "--porcelain", "--untracked-files=all")).strip()
+    ):
+        raise ValueError("review-source-worktree-not-clean-detached")
+    changed = collect_diff._git_output(root, ("diff", "--name-only", "-z", *comparison))
+    snapshot = collect_diff.capture_source_snapshot(root, paths)
+    deleted = {
+        path.decode("utf-8")
+        for path in collect_diff._git_output(root, ("diff", "--diff-filter=D", "--name-only", "-z", *comparison)).split(
+            b"\0"
+        )
+        if path
+    }
+    # Tip inventories omit committed deletions; only the verified comparison authorizes missing-file evidence.
+    for path in sorted(set(paths) & deleted):
+        record = collect_diff._source_record(root, path)
+        if record["kind"] != "missing":
+            raise ValueError("review-source-deletion-not-missing")
+        snapshot["files"].append(record)
+    return snapshot, {path.decode("utf-8") for path in changed.split(b"\0") if path}
+
+
+def _diff_sections(diff: bytes) -> dict[str, bytes]:
+    """Index verified Git patch sections by their destination or deleted source path."""
+
+    def decode_path(raw: bytes) -> str | None:
+        """Decode one Git path token, including C-quoted UTF-8 byte escapes."""
+        if raw.startswith(b'"') and raw.endswith(b'"'):
+            raw = codecs.escape_decode(raw[1:-1])[0]
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+
+    sections: dict[str, bytes] = {}
+    for chunk in re.findall(rb"(?ms)^diff --git .*?(?=^diff --git |\Z)", diff):
+        header = chunk.split(b"\n", 1)[0]
+        path: str | None = None
+        # Rename/copy metadata names the tip path; deletion has only an old-side file.
+        for prefix in (b"rename to ", b"copy to ", b"+++ ", b"--- "):
+            match = re.search(rb"(?m)^" + re.escape(prefix) + rb"(.+)$", chunk)
+            if match is None or match.group(1) == b"/dev/null":
+                continue
+            path = decode_path(match.group(1))
+            if path is not None and prefix == b"+++ ":
+                path = path[2:] if path.startswith("b/") else None
+            elif path is not None and prefix == b"--- ":
+                path = path[2:] if path.startswith("a/") else None
+            if path is not None:
+                break
+        if path is None:
+            # Binary and mode-only patches may contain no ---/+++ markers.
+            plain = re.fullmatch(rb"diff --git a/(.+) b/\1", header)
+            quoted = re.fullmatch(rb'diff --git ("(?:\\.|[^"\\])*") ("(?:\\.|[^"\\])*")', header)
+            if plain is not None:
+                path = decode_path(plain.group(1))
+            elif quoted is not None:
+                old = decode_path(quoted.group(1))
+                new = decode_path(quoted.group(2))
+                if old is not None and new is not None and old.startswith("a/") and new == "b/" + old[2:]:
+                    path = old[2:]
+        if path is not None:
+            sections[path] = chunk
+    return sections
+
+
+def prepare(
+    out: Path,
+    run_id: str,
+    parent_thread_id: str,
+    source_root: Path,
+    expected_head: str | None = None,
+    expected_diff_base: str | None = None,
+    scope_path: str | None = None,
+) -> dict[str, Any]:
     """Freeze all selected reviewers together and emit small, exact native dispatch arguments."""
     out = out.resolve()
     if not run_id.strip() or not parent_thread_id.strip():
@@ -96,6 +250,35 @@ def prepare(out: Path, run_id: str, parent_thread_id: str) -> dict[str, Any]:
         raise ValueError("review-wave-capacity-exceeded")
     if set(briefs) != roles:
         raise ValueError("review-brief-role-set-mismatch")
+    selections = {}
+    for role in roles:
+        brief = briefs[role]
+        if not isinstance(brief, dict) or set(brief) != {"axis", "evidence_path", "source_paths"}:
+            raise ValueError(f"review-brief-source-selection-invalid:{role}")
+        paths = brief["source_paths"]
+        if not isinstance(paths, list) or not paths or any(not isinstance(path, str) or not path for path in paths):
+            raise ValueError(f"review-brief-source-selection-invalid:{role}")
+        selections[role] = paths
+    selected = sorted({path for paths in selections.values() for path in paths})
+    snapshot, changed = _source_snapshot(out, source_root, expected_head, selected, expected_diff_base, scope_path)
+    records = {record["path"]: record for record in snapshot["files"]}
+    sections = _diff_sections((out / "diff.patch").read_bytes())
+    untracked_path = out / "untracked.txt"
+    untracked = set(untracked_path.read_text(encoding="utf-8").splitlines()) if untracked_path.exists() else set()
+    scopes = collect_diff._normalize_scope_paths(source_root.resolve(), [scope_path]) if scope_path is not None else []
+    actual_untracked = {
+        path.decode("utf-8")
+        for path in collect_diff._git_output(
+            source_root.resolve(),
+            ("ls-files", "--others", "--exclude-standard", "-z", "--", *scopes),
+        ).split(b"\0")
+        if path
+    }
+    if untracked != actual_untracked:
+        raise ValueError("review-source-untracked-stale")
+    # Every admitted change needs delivered source; unsupported patch paths fail closed rather than vanish.
+    if not changed <= sections.keys() or not (changed | untracked) <= set(selected):
+        raise ValueError("review-source-coverage-incomplete")
     plan = {
         "consumer_policy": {
             "consumer_id": "code-review",
@@ -125,11 +308,27 @@ def prepare(out: Path, run_id: str, parent_thread_id: str) -> dict[str, Any]:
     cards = {}
     for role in sorted(roles):
         brief = briefs[role]
-        if not isinstance(brief, dict) or set(brief) != {"axis", "evidence_path"} or not str(brief["axis"]).strip():
+        if not str(brief["axis"]).strip():
             raise ValueError(f"review-brief-invalid:{role}")
         source = validator._resolve_path(out, brief["evidence_path"]).read_text(encoding="utf-8")
         if not source.strip():
             raise ValueError(f"review-brief-empty:{role}")
+        if not set(selections[role]) & (sections.keys() | untracked):
+            raise ValueError(f"review-brief-source-unrelated:{role}")
+        selected_source = []
+        for path in selections[role]:
+            record = records.get(path)
+            if record is None or record["kind"] not in {"file", "missing"} or record["encoding"] != "utf-8":
+                raise ValueError(f"review-brief-source-selection-invalid:{role}")
+            selected_source.append(
+                f"### {path} ({record['kind']}, SHA-256: {record['sha256']})\n```text\n{record['content']}\n```\n"
+            )
+            if path in sections:
+                selected_source.append(f"Matching diff excerpt:\n```diff\n{sections[path].decode('utf-8')}\n```\n")
+            elif path in untracked:
+                selected_source.append(
+                    "Untracked file: exact source bytes appear above; no tracked diff hunk exists.\n"
+                )
         card_path = validator.PLUGIN_ROOT / "roles" / role / "ROLE.md"
         card = card_path.read_bytes()
         context = card + (
@@ -140,7 +339,7 @@ def prepare(out: Path, run_id: str, parent_thread_id: str) -> dict[str, Any]:
             "`## Reviewer Assessment`, then separate lines `Rating: <integer>` and `Rationale: <explanation>`. "
             "Rating scale: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. "
             "Do not use bold headings or fractions such as 5/5. Keep the response concise; do not omit findings "
-            "to meet a token target.\n\n" + source
+            "to meet a token target.\n\n" + source + "\n\n## Verified selected source\n\n" + "\n".join(selected_source)
         ).encode("utf-8")
         if len(context) > 65536:
             raise ValueError(f"review-context-capacity-exceeded:{role}:65536-bytes")
@@ -363,6 +562,10 @@ def main() -> int:
     prepare_parser.add_argument("--out", required=True, type=Path)
     prepare_parser.add_argument("--run-id", required=True)
     prepare_parser.add_argument("--parent-thread-id", required=True)
+    prepare_parser.add_argument("--source-root", required=True, type=Path)
+    prepare_parser.add_argument("--expected-head")
+    prepare_parser.add_argument("--expected-diff-base", help="Exact comparison base required for committed review.")
+    prepare_parser.add_argument("--scope-path", help="Declared repository-relative path for a local path review.")
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)
     assemble_parser.add_argument(
@@ -371,7 +574,15 @@ def main() -> int:
     args = parser.parse_args()
     try:
         if args.command == "prepare":
-            result = prepare(args.out, args.run_id, args.parent_thread_id)
+            result = prepare(
+                args.out,
+                args.run_id,
+                args.parent_thread_id,
+                args.source_root,
+                args.expected_head,
+                args.expected_diff_base,
+                args.scope_path,
+            )
             print(
                 json.dumps(
                     {

@@ -844,6 +844,19 @@ def _write_remediation_candidate(
         item.update(
             item_type=item_type, selectable=False, triage_status="already-fixed", resolution_status="already-fixed"
         )
+    (tmp_path / "findings-input.txt").write_text(
+        json.dumps(
+            {
+                "schema_version": 3,
+                "metadata": {
+                    "review_findings": [
+                        {"id": item["input_item_id"], "summary": item["sources"][0]["body"]} for item in table["items"]
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     if selected_resolution is not None:
         table["items"][0].update(
             selectable=True,
@@ -1008,6 +1021,151 @@ def _write_remediation_candidate(
     result_path.write_text(json.dumps(result), encoding="utf-8")
 
     return result_path
+
+
+def test_remediation_rejects_summary_that_drops_selected_blocked_item(tmp_path: Path) -> None:
+    """Prevent a no-commit handoff from hiding an open selected finding in zero totals."""
+    result_path = _write_remediation_candidate(
+        tmp_path, "code", ("unresolved", "Blocked: Original failure still reproduces.")
+    )
+
+    with pytest.raises(SystemExit, match="code-remediate-unresolved-selected-count-mismatch"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+def test_remediation_cannot_pass_with_accurately_reported_required_work(tmp_path: Path) -> None:
+    """Keep passing gates separate from a selected code defect that remains blocked."""
+    result_path = _write_remediation_candidate(
+        tmp_path, "code", ("unresolved", "Blocked: Original failure still reproduces.")
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result["metadata"]["unresolved_summary"].update(
+        selected_items_total=1,
+        selected_items_unresolved=1,
+        local_actionable_items_unresolved=1,
+        all_local_actionable_items_closed=False,
+        unresolved_reason_groups=[
+            {
+                "reason": "local-code-or-doc",
+                "count": 1,
+                "owner": "codex",
+                "next_action": "Fix the original failing input.",
+                "evidence_path": "closure-log.md",
+            }
+        ],
+    )
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    (tmp_path / "unresolved.txt").write_text(
+        "## Unresolved Work Summary\n\nOne required item remains.\n\n"
+        "## Why Selected Items Remain Unresolved\n\nClosure class: local-code-or-doc. "
+        "Next owner: codex. Attempted evidence: closure-log.md.\n\n"
+        "## Next Action\n\nFix the original failing input.\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="code-remediate-pass-with-required-unresolved-work"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+def test_remediation_intake_cannot_omit_a_canonical_report_finding(tmp_path: Path) -> None:
+    """Reject internally consistent intake counts that omit a finding from the copied report."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    review = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "checks_failed": [],
+        "follow_up": [],
+        "metadata": {"review_findings": [{"id": "F-missing", "severity": "high"}]},
+    }
+    (tmp_path / "findings-input.txt").write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="code-remediate-report-finding-omitted:F-missing"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+@pytest.mark.parametrize(
+    "field", ["checks_failed", "follow_up", "confidence_gaps", "required_next_work", "remaining_limits"]
+)
+def test_remediation_intake_cannot_drop_report_evidence_obligations(tmp_path: Path, field: str) -> None:
+    """Keep non-code closure obligations when the original report is explicitly requested."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    review = {
+        "schema_version": 3,
+        "artifact_path": "review/result.json",
+        "checks_failed": [],
+        "follow_up": [],
+        "metadata": {"review_findings": [], "confidence_gaps": [], "review_decision": {}},
+    }
+    obligation = "Independent numerical equivalence evidence remains required."
+    if field in {"checks_failed", "follow_up"}:
+        review[field] = [obligation]
+    elif field == "confidence_gaps":
+        review["metadata"][field] = [obligation]
+    elif field == "required_next_work":
+        review["metadata"]["review_decision"][field] = [obligation]
+    else:
+        review["metadata"]["confidence_recovery"] = {field: [obligation]}
+    (tmp_path / "findings-input.txt").write_text(json.dumps(review), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="code-remediate-report-obligation-omitted"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
+
+
+def test_remediation_report_coverage_preserves_grouped_obligations(tmp_path: Path) -> None:
+    """Allow one canonical item to retain repeated review and confidence obligations losslessly."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    metadata = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]
+    report = json.loads((tmp_path / "findings-input.txt").read_text(encoding="utf-8"))
+    body = metadata["final_resolution_table"]["items"][0]["sources"][0]["body"]
+    report.update(checks_failed=[body], follow_up=[body])
+    report["metadata"].update(
+        operational_blockers=[
+            {"id": "R2", "required_change": metadata["final_resolution_table"]["items"][1]["sources"][0]["body"]}
+        ],
+        confidence_gaps=[body],
+        confidence_recovery={"remaining_limits": [body]},
+        review_decision={"required_next_work": [body]},
+    )
+    (tmp_path / "findings-input.txt").write_text(json.dumps(report), encoding="utf-8")
+
+    VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
+
+
+def test_remediation_report_finding_id_cannot_replace_closure_details(tmp_path: Path) -> None:
+    """Keep the finding's closure contract even when its ID remains in the intake ledger."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    metadata = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]
+    path = tmp_path / "findings-input.txt"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    report["metadata"]["review_findings"][0]["closure_evidence"] = "Compare both actual downstream outcomes."
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="code-remediate-report-finding-detail-omitted:R1:closure_evidence"):
+        VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
+
+
+@pytest.mark.parametrize("field", ["title", "evidence"])
+def test_remediation_report_keeps_original_finding_details(tmp_path: Path, field: str) -> None:
+    """Retain the original finding's label and evidence instead of only its closure text."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    metadata = json.loads(result_path.read_text(encoding="utf-8"))["metadata"]
+    path = tmp_path / "findings-input.txt"
+    report = json.loads(path.read_text(encoding="utf-8"))
+    original = "The downstream state remains invalid after the reported success."
+    report["metadata"]["review_findings"][0][field] = [original] if field == "evidence" else original
+    path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(SystemExit, match=f"code-remediate-report-finding-detail-omitted:R1:{field}"):
+        VALIDATOR._validate_code_remediate_report_coverage(metadata, tmp_path)
+
+
+def test_remediation_requested_report_requires_retained_input(tmp_path: Path) -> None:
+    """Prevent report-backed remediation from completing after its original input disappeared."""
+    result_path = _write_remediation_candidate(tmp_path, "code")
+    (tmp_path / "findings-input.txt").unlink()
+
+    with pytest.raises(SystemExit, match="code-remediate-report-input-missing"):
+        VALIDATOR.validate("code-remediate", tmp_path, result_path)
 
 
 @pytest.mark.parametrize(
@@ -1325,7 +1483,11 @@ def test_all_closed_selection_passes_complete_artifact_validation(tmp_path: Path
             id="clarification-is-not-deferment",
         ),
         pytest.param(
-            "table-only", True, "commit-plan.md", "remediation-commit-closure-blocked", id="stale-zero-summary"
+            "table-only",
+            True,
+            "commit-plan.md",
+            "code-remediate-unresolved-selected-count-mismatch",
+            id="stale-zero-summary",
         ),
         pytest.param(
             "deferred-masked",

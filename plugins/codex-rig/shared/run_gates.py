@@ -23,8 +23,9 @@ gate. Add ``--expected-head <full-lowercase-sha>`` to require a matching clean G
 Add ``--worktree <absolute-path>`` with the expected head to select the exact checkout used for source inspection and
 commands, while retaining artifacts under ``--out``.
 For Python project tests, add ``--pytest-python <absolute-executable>``, one or more ``--pytest-import <module>``
-values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pytest and inspects imported modules in the
-same Python process; it cannot be combined with a free-form ``--tests`` command.
+values, and optional ``--pytest-args-json <array>``. This opt-in mode calls pytest and inspects imported modules in
+each executing process, including xdist workers, and verifies that selected test files are tracked in the worktree;
+it cannot be combined with a free-form ``--tests`` command.
 Use ``--project-env <absolute-venv>`` to expose tools from a separately provisioned project environment to commands
 running in an isolated review worktree. It never creates an environment or installs a checker.
 Commands can come from the gate flags or matching environment variables such as ``LINT_CMD``. Each gate applies the
@@ -43,7 +44,8 @@ files. Worktree-bound runs record the selected checkout at the top level and in 
 executable records include their expected head plus before/after source receipts. Records distinguish
 pass, fail, timeout, missing command, and ``not-applicable`` states, while captured output is bounded to protect
 artifact size.
-Import-bound test records contain the interpreter environment and each module's resolved, Git-tracked source origin.
+Import-bound test records contain the interpreter environment and resolved, Git-tracked origins for imported modules
+and selected tests. Parallel runs retain each worker's source proof and fail if a started worker has no valid receipt.
 
 ## Failure
 
@@ -51,8 +53,9 @@ A missing command, non-zero command result, timeout, source mismatch or dirtines
 requested gate, or unwritable artifact directory is retained as explicit gate evidence. The CLI returns ``1`` for failed
 gates, ``124`` for a timeout, and ``2`` for invalid input such as a newline in a skip reason, allowing callers to
 classify the run without parsing prose.
-An imported module outside the selected worktree or absent from its Git index fails the test gate; a module not loaded
-in the pytest process or without a file origin leaves import proof inconclusive and also fails closed.
+An imported module or selected test file outside the worktree or absent from its Git index fails the test gate; a module
+not loaded in any executing pytest process, one without a file origin, or no selected tests leaves proof inconclusive
+and fails closed. A crashed worker or missing worker receipt also fails the source proof.
 """
 
 from __future__ import annotations
@@ -365,8 +368,183 @@ def inspect_imported_module(name: str, worktree: Path) -> dict[str, Any]:
     }
 
 
+def inspect_collected_test(path: Path, worktree: Path) -> dict[str, Any]:
+    """Verify that one collected test file is tracked inside the selected checkout."""
+    origin = path.resolve()
+    try:
+        relative = origin.relative_to(worktree).as_posix()
+    except ValueError:
+        return {"origin": origin.as_posix(), "tracked": False, "status": "fail", "reason": "test-outside-worktree"}
+    try:
+        tracked = (
+            subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", relative],
+                cwd=worktree,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=SOURCE_INSPECTION_TIMEOUT_SECONDS,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        tracked = False
+    return {
+        "origin": origin.as_posix(),
+        "tracked": tracked,
+        "status": "pass" if tracked else "fail",
+        "reason": None if tracked else "test-not-tracked",
+    }
+
+
+def _aggregate_worker_proofs(
+    workers: dict[str, dict[str, Any]], expected: set[str], modules: list[str]
+) -> dict[str, Any]:
+    """Combine observed worker origins without hiding failures or missing receipts."""
+    errors = [f"worker-proof-missing:{worker}" for worker in sorted(expected - workers.keys())]
+    if not expected:
+        errors.append("worker-proof-no-nodes")
+    origins: dict[str, dict[str, Any]] = {}
+    tests: dict[str, dict[str, Any]] = {}
+    for name in modules:
+        observed = [worker["modules"][name] for worker in workers.values()]
+        loaded = [entry for entry in observed if entry["reason"] != "module-not-imported"]
+        failing = [entry for entry in loaded if entry["status"] == "fail"]
+        paths = {entry["origin"] for entry in loaded if entry["status"] == "pass"}
+        if failing:
+            origins[name] = failing[0]
+        elif len(paths) > 1:
+            origins[name] = {
+                "origin": None,
+                "tracked": False,
+                "status": "fail",
+                "reason": "conflicting-worker-origins",
+            }
+        elif loaded:
+            origins[name] = loaded[0]
+        else:
+            origins[name] = {
+                "origin": None,
+                "tracked": False,
+                "status": "inconclusive",
+                "reason": "module-not-imported",
+            }
+    for worker in workers.values():
+        for path, record in worker["tests"].items():
+            if path not in tests or record["status"] == "fail":
+                tests[path] = record
+    statuses = {entry["status"] for entry in (*origins.values(), *tests.values())}
+    if errors or "fail" in statuses:
+        status = "fail"
+    elif not tests or "inconclusive" in statuses:
+        status = "inconclusive"
+    else:
+        status = "pass"
+    return {"status": status, "modules": origins, "tests": tests, "workers": workers, "errors": errors}
+
+
+def pytest_configure(config: Any) -> None:
+    """Attach source proof to pytest controllers and workers in opt-in gate mode."""
+    raw = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
+    if raw is None:
+        return
+    # Pytest remains optional for all other gate modes and normal module imports.
+    import pytest
+
+    task = json.loads(raw)
+    worktree = Path(task["worktree"])
+    modules = task["modules"]
+
+    class SourceProof:
+        """Retain each pytest process's selected tests and actual imported module origins."""
+
+        def __init__(self) -> None:
+            """Start source collection with no assumed workers or test selections."""
+            self.paths: set[Path] = set()
+            self.expected: set[str] = set()
+            self.workers: dict[str, dict[str, Any]] = {}
+            self.errors: list[str] = []
+
+        def pytest_collection_finish(self, session: Any) -> None:
+            """Record test source paths after pytest applies its selection options."""
+            self.paths = {Path(item.path) for item in session.items}
+
+        @pytest.hookimpl(optionalhook=True)
+        def pytest_configure_node(self, node: Any) -> None:
+            """Require proof from every xdist worker the controller starts."""
+            self.expected.add(node.workerinput["workerid"])
+
+        @pytest.hookimpl(optionalhook=True)
+        def pytest_testnodedown(self, node: Any, error: object) -> None:
+            """Retain each worker receipt and classify crashes as proof failures."""
+            worker = node.workerinput["workerid"]
+            output = getattr(node, "workeroutput", None)
+            proof = output.get("codex_rig_source_proof") if isinstance(output, dict) else None
+            if error is not None:
+                self.errors.append(f"worker-failed:{worker}:{error}")
+            if not isinstance(proof, dict):
+                self.errors.append(f"worker-proof-missing:{worker}")
+                return
+            if (
+                proof.get("worktree") != worktree.as_posix()
+                or not isinstance(proof.get("modules"), dict)
+                or set(proof["modules"]) != set(modules)
+                or any(
+                    not isinstance(entry, dict) or entry.get("status") not in {"pass", "fail", "inconclusive"}
+                    for entry in proof["modules"].values()
+                )
+                or not isinstance(proof.get("tests"), dict)
+                or not proof["tests"]
+                or any(
+                    not isinstance(entry, dict) or entry.get("status") not in {"pass", "fail", "inconclusive"}
+                    for entry in proof["tests"].values()
+                )
+            ):
+                self.errors.append(f"worker-proof-invalid:{worker}")
+                return
+            self.workers[worker] = proof
+
+        def pytest_sessionfinish(self, session: Any, exitstatus: int) -> None:
+            """Publish serial or aggregated worker proof before pytest returns."""
+            origins = {name: inspect_imported_module(name, worktree) for name in modules}
+            tests = {path.resolve().as_posix(): inspect_collected_test(path, worktree) for path in self.paths}
+            statuses = {entry["status"] for entry in (*origins.values(), *tests.values())}
+            status = (
+                "fail" if "fail" in statuses else "inconclusive" if not tests or "inconclusive" in statuses else "pass"
+            )
+            process_proof = {
+                "status": status,
+                "runtime_interpreter": Path(sys.executable).absolute().as_posix(),
+                "sys_prefix": Path(sys.prefix).absolute().as_posix(),
+                "worktree": worktree.as_posix(),
+                "modules": origins,
+                "tests": tests,
+            }
+            if hasattr(config, "workeroutput"):
+                config.workeroutput["codex_rig_source_proof"] = process_proof
+                return
+            if self.expected:
+                combined = _aggregate_worker_proofs(self.workers, self.expected, modules)
+                combined["errors"].extend(self.errors)
+                if self.errors:
+                    combined["status"] = "fail"
+            else:
+                combined = {**process_proof, "workers": {}, "errors": self.errors}
+            proof = {
+                **combined,
+                "mode": "in-process-pytest",
+                "invoked_interpreter": task["invoked_interpreter"],
+                "runtime_interpreter": process_proof["runtime_interpreter"],
+                "sys_prefix": process_proof["sys_prefix"],
+                "worktree": worktree.as_posix(),
+            }
+            Path(task["proof_path"]).write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8", newline="\n")
+
+    config.pluginmanager.register(SourceProof(), "codex-rig-source-proof")
+
+
 def run_python_tests_child(arguments: list[str]) -> int:
-    """Run pytest and inspect imports inside the same interpreter and process."""
+    """Run pytest with controller and worker source proof in the selected interpreter."""
     if len(arguments) != 5:
         print("invalid-python-test-child-arguments", file=sys.stderr)
         return 2
@@ -378,21 +556,26 @@ def run_python_tests_child(arguments: list[str]) -> int:
     # Pytest is optional for all other gate modes and belongs to the selected test environment.
     import pytest
 
-    test_exit_code = int(pytest.main(pytest_arguments))
-    origins = {name: inspect_imported_module(name, worktree) for name in modules}
-    statuses = {entry["status"] for entry in origins.values()}
-    status = "fail" if "fail" in statuses else "inconclusive" if "inconclusive" in statuses else "pass"
-    proof = {
-        "mode": "in-process-pytest",
-        "status": status,
-        "invoked_interpreter": invoked_interpreter,
-        "runtime_interpreter": Path(sys.executable).absolute().as_posix(),
-        "sys_prefix": Path(sys.prefix).absolute().as_posix(),
+    task = {
         "worktree": worktree.as_posix(),
-        "modules": origins,
+        "proof_path": proof_path.as_posix(),
+        "modules": modules,
+        "invoked_interpreter": invoked_interpreter,
     }
-    proof_path.write_text(json.dumps(proof, indent=2) + "\n", encoding="utf-8", newline="\n")
-    return test_exit_code if test_exit_code else 0 if status == "pass" else 1
+    prior_task = os.environ.get("CODEX_RIG_PYTEST_SOURCE_PROOF")
+    os.environ["CODEX_RIG_PYTEST_SOURCE_PROOF"] = json.dumps(task)
+    try:
+        test_exit_code = int(pytest.main(["-p", "run_gates", *pytest_arguments]))
+    finally:
+        if prior_task is None:
+            os.environ.pop("CODEX_RIG_PYTEST_SOURCE_PROOF", None)
+        else:
+            os.environ["CODEX_RIG_PYTEST_SOURCE_PROOF"] = prior_task
+    if not proof_path.is_file():
+        print("source-bound-pytest-proof-missing", file=sys.stderr)
+        return test_exit_code or 1
+    proof = json.loads(proof_path.read_text(encoding="utf-8"))
+    return test_exit_code if test_exit_code else 0 if proof["status"] == "pass" else 1
 
 
 def check_paths(gate_id: str, out_dir: Path) -> tuple[dict[str, Path], dict[str, str]]:

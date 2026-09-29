@@ -198,6 +198,13 @@ def install_global_agents(source: Path, codex_home: Path) -> tuple[str, Path, Pa
         desired, action = block, "adopted"
     else:
         desired, action = merged_payload(existing, block)
+    unmanaged, _ = stripped_payload(desired)
+    if b"# Global Agent Instructions" in unmanaged and b"# Global Agent Instructions" in template:
+        print(
+            "global-agents-overlap: unmanaged global policy overlaps the managed template. "
+            "Review and migrate the unmanaged policy explicitly; user bytes were preserved.",
+            file=sys.stderr,
+        )
     if action == "already current":
         return action, target, None
     mode = stat.S_IMODE(target.stat().st_mode)

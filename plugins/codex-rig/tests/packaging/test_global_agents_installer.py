@@ -339,3 +339,27 @@ def test_remove_requires_no_source_argument(tmp_path: Path) -> None:
 
     assert missing_source.returncode == 2
     assert "--source is required unless --remove" in missing_source.stderr
+
+
+def test_installer_warns_on_unmanaged_global_policy_without_deleting_it(tmp_path: Path) -> None:
+    """Expose a legacy-policy collision on merge and repeat while preserving user bytes."""
+    source = tmp_path / "template.md"
+    source.write_bytes(b"# Global Agent Instructions\n\nCurrent model policy.\n")
+    codex_home = tmp_path / "home"
+    codex_home.mkdir()
+    target = codex_home / "AGENTS.md"
+    original = b"# Global Agent Instructions\n\nPRIVATE user model policy.\n"
+    target.write_bytes(original)
+    first = _run_installer(source, codex_home)
+    merged = target.read_bytes()
+    second = _run_installer(source, codex_home)
+    assert first.returncode == second.returncode == 0
+    assert merged.startswith(original)
+    assert target.read_bytes() == merged
+    for result in (first, second):
+        assert "global-agents-overlap" in result.stderr
+        assert "Review and migrate" in result.stderr
+        assert "PRIVATE" not in result.stderr
+    backups = list((codex_home / "backups" / "codex-rig").glob("*-AGENTS.md"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original

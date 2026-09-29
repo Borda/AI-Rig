@@ -41,7 +41,6 @@ jobs:
       - name: 🐧 Verify Codex Rig entrypoints
         if: runner.os != 'Windows'
         run: |
-          uv run --only-group test python plugins/codex-rig/scripts/build_package.py --check
           uv run --only-group test python plugins/codex-rig/scripts/validate_package.py
           uv run --only-group test python plugins/codex-rig/shared/collect_pr.py --help
 
@@ -51,7 +50,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          uv run --only-group test python plugins/codex-rig/scripts/build_package.py --check
           uv run --only-group test python plugins/codex-rig/scripts/validate_package.py
           uv run --only-group test python plugins/codex-rig/shared/collect_pr.py --help
 

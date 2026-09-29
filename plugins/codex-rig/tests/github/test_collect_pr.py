@@ -148,18 +148,23 @@ def _threads_payload(*, paginated: bool = False) -> dict[str, Any]:
                     "reviewThreads": {
                         "pageInfo": {"hasNextPage": paginated, "endCursor": "cursor"},
                         "nodes": [
-                            {"id": "resolved", "isResolved": True, "isOutdated": False, "comments": {"nodes": []}},
+                            {
+                                "id": "resolved",
+                                "isResolved": True,
+                                "isOutdated": False,
+                                "comments": {"pageInfo": {"hasNextPage": False}, "nodes": []},
+                            },
                             {
                                 "id": "active",
                                 "isResolved": False,
                                 "isOutdated": False,
-                                "comments": {"nodes": []},
+                                "comments": {"pageInfo": {"hasNextPage": False}, "nodes": []},
                             },
                             {
                                 "id": "outdated",
                                 "isResolved": False,
                                 "isOutdated": True,
-                                "comments": {"nodes": []},
+                                "comments": {"pageInfo": {"hasNextPage": False}, "nodes": []},
                             },
                         ],
                     }
@@ -176,6 +181,7 @@ class FakeRunner:
         self,
         *,
         paginated: bool = False,
+        nested_paginated: bool = False,
         statistics_unavailable: bool = False,
         current_base_oid: str = BASE_OID,
         recorded_base_is_ancestor: bool = True,
@@ -188,6 +194,7 @@ class FakeRunner:
         dirty_paths: list[str] | None = None,
         checkout_paths: list[str] | None = None,
         pr_paths: list[str] | None = None,
+        gh_paths: list[str] | None = None,
         unmerged_paths: list[str] | None = None,
         untracked_paths: list[str] | None = None,
         staged_paths: list[str] | None = None,
@@ -197,6 +204,7 @@ class FakeRunner:
         """Initialize configurable process and GitHub-response fixtures."""
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
         self.paginated = paginated
+        self.nested_paginated = nested_paginated
         self.statistics_unavailable = statistics_unavailable
         self.current_base_oid = current_base_oid
         self.recorded_base_is_ancestor = recorded_base_is_ancestor
@@ -209,6 +217,7 @@ class FakeRunner:
         self.dirty_paths = dirty_paths or []
         self.checkout_paths = checkout_paths or ["a.py"]
         self.pr_paths = pr_paths or ["a.py"]
+        self.gh_paths = gh_paths
         self.unmerged_paths = unmerged_paths or []
         self.untracked_paths = untracked_paths or []
         self.staged_paths = staged_paths or []
@@ -275,13 +284,19 @@ class FakeRunner:
                 return subprocess.CompletedProcess(argv, 2, stdout=b"", stderr=b"unknown remote")
             stdout = "".join(f"{url}\n" for url in self.github_remotes[remote]).encode()
         elif argv[:3] == ["gh", "pr", "view"]:
-            stdout = json.dumps(
-                _pr_payload(state=self.pr_state, cross_repository=self.cross_repository, head_ref=self.head_ref)
-            ).encode()
+            payload = _pr_payload(state=self.pr_state, cross_repository=self.cross_repository, head_ref=self.head_ref)
+            if self.gh_paths is not None:
+                payload["files"] = [{"path": path} for path in self.gh_paths]
+            stdout = json.dumps(payload).encode()
         elif argv[:3] == ["gh", "api", "graphql"]:
             if self.review_threads_failure:
                 return subprocess.CompletedProcess(argv, 1, stdout=b"", stderr=b"connection reset by peer")
-            stdout = json.dumps(_threads_payload(paginated=self.paginated)).encode()
+            threads_payload = _threads_payload(paginated=self.paginated)
+            if self.nested_paginated:
+                threads_payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"][
+                    "pageInfo"
+                ]["hasNextPage"] = True
+            stdout = json.dumps(threads_payload).encode()
         elif argv[:3] == ["gh", "pr", "diff"]:
             stdout = b"diff --git a/a.py b/a.py\n"
         elif argv[:3] == ["gh", "pr", "checkout"]:
@@ -429,6 +444,108 @@ def test_collect_pr_degrades_incomplete_review_thread_pagination(
     summary = json.loads((output / "online-review-summary.json").read_text())
     assert summary["review_threads_status"] == "unavailable"
     assert summary["review_threads_error"] == "review-thread-pagination-incomplete"
+    assert json.loads((output / "review-threads.json").read_text()) == []
+
+
+def test_collect_pr_degrades_incomplete_inline_comment_pagination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Treat a partial nested comment page as unavailable thread evidence."""
+    module = _load_collector()
+    _runner = FakeRunner(nested_paginated=True)
+    _configure_collector(monkeypatch, module, _runner)
+    output = tmp_path / "pr"
+
+    assert module.collect_pr(target="", output=output, checkout=False, timeout_seconds=5) == 0
+    summary = json.loads((output / "online-review-summary.json").read_text())
+    assert summary["review_threads_status"] == "unavailable"
+    assert summary["review_threads_error"] == "review-comment-pagination-incomplete"
+    assert json.loads((output / "review-threads.json").read_text()) == []
+    assert "pageInfo { hasNextPage endCursor }" in module.GRAPHQL_QUERY
+
+
+def test_review_threads_rejects_missing_nested_pagination_metadata() -> None:
+    """Reject a response that cannot prove whether inline comments are complete."""
+    module = _load_collector()
+    payload = _threads_payload()
+    payload["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"].pop("pageInfo")
+
+    with pytest.raises(module.CollectionError, match="invalid-json:review-thread-comments"):
+        module._review_threads(payload)
+
+
+@pytest.mark.parametrize("problem", ["errors", "missing-page-info"])
+def test_review_threads_rejects_partial_graphql_response(problem: str) -> None:
+    """Keep partial GraphQL results from being labeled complete supplemental evidence."""
+    module = _load_collector()
+    payload = _threads_payload()
+    if problem == "errors":
+        payload["errors"] = [{"message": "One requested field is unavailable."}]
+    else:
+        del payload["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"]
+    with pytest.raises(module.CollectionError):
+        module._review_threads(payload)
+
+
+@pytest.mark.parametrize("level", ["threads", "comments"])
+@pytest.mark.parametrize("problem", ["missing", "null", "object", "invalid-node"])
+def test_review_threads_rejects_incomplete_node_arrays(level: str, problem: str) -> None:
+    """Distinguish missing GraphQL evidence from genuinely empty node arrays."""
+    module = _load_collector()
+    payload = _threads_payload()
+    container = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
+    if level == "comments":
+        container = container["nodes"][0]["comments"]
+    if problem == "missing":
+        container.pop("nodes")
+    else:
+        container["nodes"] = {"null": None, "object": {}, "invalid-node": [None]}[problem]
+    with pytest.raises(module.CollectionError, match="invalid-json:review-thread"):
+        module._review_threads(payload)
+
+
+@pytest.mark.parametrize("level", ["threads", "comments"])
+def test_review_threads_accepts_explicit_empty_nodes(level: str) -> None:
+    """Preserve complete empty results as available supplemental evidence."""
+    module = _load_collector()
+    payload = _threads_payload()
+    container = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
+    expected = container["nodes"]
+    if level == "threads":
+        container["nodes"] = []
+        expected = []
+    assert module._review_threads(payload) == expected
+
+
+@pytest.mark.parametrize("level", ["threads", "comments"])
+def test_collect_pr_marks_missing_nodes_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: str
+) -> None:
+    """Propagate missing node evidence into the ordinary collector's availability summary."""
+    module = _load_collector()
+    runner = FakeRunner()
+
+    def external_response(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        """Supply a partial external GraphQL result at the subprocess boundary."""
+        result = runner(argv, **kwargs)
+        if argv[:3] == ["gh", "api", "graphql"]:
+            payload = json.loads(result.stdout)
+            container = payload["data"]["repository"]["pullRequest"]["reviewThreads"]
+            if level == "comments":
+                container = container["nodes"][0]["comments"]
+            container.pop("nodes")
+            result.stdout = json.dumps(payload).encode()
+        return result
+
+    _configure_collector(monkeypatch, module, external_response)
+    output = tmp_path / "pr"
+    assert module.collect_pr(target="17", output=output, checkout=False, timeout_seconds=5) == 0
+    summary = json.loads((output / "online-review-summary.json").read_text())
+    assert summary["review_threads_status"] == "unavailable"
+    assert summary["review_threads_error"] == (
+        "invalid-json:review-threads" if level == "threads" else "invalid-json:review-thread-comments"
+    )
+    assert summary["review_thread_count"] == 0
     assert json.loads((output / "review-threads.json").read_text()) == []
 
 
@@ -1098,6 +1215,35 @@ def test_collect_pr_checkout_writes_verified_fetch_and_checkout_artifacts(
     assert checkout["diff_source"] == "verified-local-checkout"
     assert "no --force was used" in checkout["force_policy"]
     assert all("--force" not in argument for argv, _ in _runner.calls for argument in argv)
+
+
+def test_checkout_file_inventory_uses_complete_verified_git_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Retain late workflow and spaced paths omitted from a hundred-file CLI response."""
+    module = _load_collector()
+    first_hundred = [f"src/part_{index:03d}.py" for index in range(100)]
+    late_paths = ["src/production code.py", ".github/workflows/ci-tests.yml"]
+    actual_paths = [*first_hundred, *late_paths]
+    runner = FakeRunner(gh_paths=first_hundred, pr_paths=actual_paths)
+    _configure_collector(monkeypatch, module, runner)
+    output = tmp_path / "pr"
+
+    result = module.collect_pr(target="17", output=output, checkout=True, timeout_seconds=5)
+
+    assert result == 0, (output / "pr-error.txt").read_text() if (output / "pr-error.txt").exists() else ""
+    assert (output / "files.txt").read_text(encoding="utf-8").splitlines() == sorted(actual_paths)
+    assert any(argv[-5:] == ["diff", "--name-only", "-z", f"{BASE_OID}...{HEAD_OID}", "--"] for argv, _ in runner.calls)
+    specification = importlib.util.spec_from_file_location(
+        "review_routing_complete_pr", PLUGIN_ROOT / "skills/code-review/review_routing.py"
+    )
+    assert specification is not None and specification.loader is not None
+    routing = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(routing)
+    tier, evidence, mandatory = routing.derive_mechanical_risk(output)
+    assert tier == "HIGH_RISK"
+    assert "axis_cicd_steward" in mandatory
+    assert "files=102" in evidence
 
 
 def test_collect_pr_records_target_branch_divergence_without_rejecting_verified_pr_head(

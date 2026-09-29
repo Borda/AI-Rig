@@ -16,7 +16,7 @@ Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages
 
 > Value at a glance: fifteen versioned role cards make specialist behavior portable and auditable while keeping model selection, sandbox posture, and fallback behavior explicit.
 
-> Current limits at a glance: role cards are behavioral profiles, not proof of native persistent-agent selection; Sol roles are read-only advisory paths, and new shim installation remains platform-blocked.
+> Current limits at a glance: role cards are behavioral profiles, not proof of native persistent-agent selection; the `solution-architect` and `security-auditor` roles are read-only advisory paths, and new shim installation remains platform-blocked.
 
 ## 🎚️ GPT-6 model and effort routing
 

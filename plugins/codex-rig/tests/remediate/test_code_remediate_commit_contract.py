@@ -38,7 +38,10 @@ def test_remediation_finalization_cannot_skip_commit_disposition() -> None:
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
-    shared = (PLUGIN_ROOT / "shared" / "final-handoff-contract.md").read_text(encoding="utf-8")
+    shared = "\n\n".join(
+        (PLUGIN_ROOT / "shared" / name).read_text(encoding="utf-8")
+        for name in ("final-handoff-contract.md", "final-handoff-code-remediate.md")
+    )
 
     assert "final-handoff.json.commit_disposition" in preparation
     assert "Do not promote or emit terminal output yet: continue to step 12" in preparation
@@ -54,7 +57,10 @@ def test_explicit_commit_rechecks_external_obligation_limit_and_cites_remaining_
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
     preparation = skill.split("### 11: Write And Validate Result Artifact", maxsplit=1)[1].split("### 12:")[0]
     commit = skill.split("### 12: Offer An Opt-In Commit After Verified Remediation", maxsplit=1)[1]
-    shared = (PLUGIN_ROOT / "shared" / "final-handoff-contract.md").read_text(encoding="utf-8")
+    shared = "\n\n".join(
+        (PLUGIN_ROOT / "shared" / name).read_text(encoding="utf-8")
+        for name in ("final-handoff-contract.md", "final-handoff-code-remediate.md")
+    )
     native = (PLUGIN_ROOT / "shared" / "native-skill-contract.md").read_text(encoding="utf-8")
 
     assert "External-obligation exception" in preparation

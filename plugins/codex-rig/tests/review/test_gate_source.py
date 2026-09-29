@@ -471,7 +471,12 @@ class _EditableCheckout:
     editable_path: Path
     environment: dict[str, str]
 
-    def run_tests(self, output: Path, imported_module: str = "demo_package") -> subprocess.CompletedProcess[str]:
+    def run_tests(
+        self,
+        output: Path,
+        imported_module: str = "demo_package",
+        pytest_arguments: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """Run the structured test gate from the original checkout."""
         arguments = [
             sys.executable,
@@ -487,7 +492,7 @@ class _EditableCheckout:
             "--pytest-import",
             imported_module,
             "--pytest-args-json",
-            '["-q", "-o", "addopts=", "tests/test_demo.py"]',
+            json.dumps(pytest_arguments or ["-q", "-o", "addopts=", "tests/test_demo.py"]),
         ]
         for gate_id in GATE_IDS:
             if gate_id != "tests":
@@ -504,7 +509,7 @@ def _gate_check(output: Path, gate_id: str) -> dict[str, object]:
 
 
 @pytest.fixture
-def editable_checkout(tmp_path: Path) -> _EditableCheckout:
+def editable_checkout(tmp_path: Path, request: pytest.FixtureRequest) -> _EditableCheckout:
     """Build a committed checkout with a demo package plus a detached worktree of the same commit."""
     original = tmp_path / "original"
     original.mkdir()
@@ -515,12 +520,34 @@ def editable_checkout(tmp_path: Path) -> _EditableCheckout:
     tests = original / "tests"
     tests.mkdir()
     (tests / "test_demo.py").write_text(
-        "from demo_package import VALUE\n\ndef test_value():\n    assert VALUE == 'same in both checkouts'\n",
+        "from demo_package import VALUE\n"
+        "\ndef test_value():\n"
+        "    import os\n"
+        "    from pathlib import Path\n"
+        "    if marker := os.environ.get('SOURCE_BOUND_MARKER'):\n"
+        "        Path(marker).write_text('executed', encoding='utf-8')\n"
+        "    assert VALUE == 'same in both checkouts'\n",
         encoding="utf-8",
         newline="\n",
     )
+    project_addopts = getattr(request, "param", None)
+    if project_addopts == "drop-proof":
+        (tests / "conftest.py").write_text(
+            "import pytest\n\n"
+            "@pytest.hookimpl(hookwrapper=True, trylast=True)\n"
+            "def pytest_sessionfinish(session, exitstatus):\n"
+            "    yield\n"
+            "    if hasattr(session.config, 'workeroutput'):\n"
+            "        session.config.workeroutput.pop('codex_rig_source_proof', None)\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+    elif project_addopts is not None:
+        (original / "pytest.ini").write_text(f"[pytest]\naddopts = {project_addopts}\n", encoding="utf-8", newline="\n")
     (original / ".gitignore").write_text("__pycache__/\n.pytest_cache/\n", encoding="utf-8", newline="\n")
     _git(original, "add", "src", "tests", ".gitignore")
+    if project_addopts not in (None, "drop-proof"):
+        _git(original, "add", "pytest.ini")
     _git(original, "commit", "-m", f"test package\n\n{CODEX_TRAILER}")
     expected_head = _git(original, "rev-parse", "HEAD")
     selected = tmp_path / "selected"
@@ -583,6 +610,159 @@ def test_editable_source_from_selected_worktree_passes_gate(
         "status": "pass",
         "reason": None,
     }
+    selected_test = (editable_checkout.selected / "tests" / "test_demo.py").resolve().as_posix()
+    assert check["python_imports"]["tests"][selected_test] == {
+        "origin": selected_test,
+        "tracked": True,
+        "status": "pass",
+        "reason": None,
+    }
+
+
+@pytest.mark.parametrize("editable_checkout", ["-n 2"], indirect=True)
+@pytest.mark.parametrize("parallel_source", ["cli", "project", "environment"])
+def test_parallel_source_bound_pytest_proves_worker_sources(
+    editable_checkout: _EditableCheckout, tmp_path: Path, parallel_source: str
+) -> None:
+    """Certify selected tests and imports from actual xdist workers for each option source."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    marker = tmp_path / "selected-test-ran.txt"
+    editable_checkout.environment["SOURCE_BOUND_MARKER"] = str(marker)
+    if parallel_source == "environment":
+        editable_checkout.environment["PYTEST_ADDOPTS"] = "-n 2"
+    pytest_arguments = ["-q", "tests/test_demo.py"]
+    if parallel_source != "project":
+        pytest_arguments.extend(["-o", "addopts="])
+    if parallel_source == "cli":
+        pytest_arguments.extend(["-n", "2"])
+    output = tmp_path / "parallel-gates"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+
+    assert completed.returncode == 0, completed.stderr
+    assert marker.read_text(encoding="utf-8") == "executed"
+    check = _gate_check(output, "tests")
+    assert check["status"] == "pass"
+    proof = check["python_imports"]
+    assert proof["status"] == "pass"
+    assert len(proof["workers"]) == 2
+    assert all(worker["status"] != "fail" for worker in proof["workers"].values())
+    selected_test = (editable_checkout.selected / "tests" / "test_demo.py").resolve().as_posix()
+    assert proof["tests"][selected_test]["status"] == "pass"
+    assert (
+        proof["modules"]["demo_package"]["origin"]
+        == (editable_checkout.selected / "src" / "demo_package" / "__init__.py").resolve().as_posix()
+    )
+    assert any(selected_test in worker["tests"] for worker in proof["workers"].values())
+    assert any(worker["modules"]["demo_package"]["status"] == "pass" for worker in proof["workers"].values())
+
+
+@pytest.mark.parametrize(
+    "pytest_arguments", [["-q", "-o", "addopts=", "tests/test_demo.py"], ["-q", "-n", "0", "tests/test_demo.py"]]
+)
+def test_serial_source_bound_pytest_retains_source_proof(
+    editable_checkout: _EditableCheckout, tmp_path: Path, pytest_arguments: list[str]
+) -> None:
+    """Keep serial and explicit zero-worker pytest valid with selected test execution."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    marker = tmp_path / "selected-test-ran.txt"
+    editable_checkout.environment["SOURCE_BOUND_MARKER"] = str(marker)
+    output = tmp_path / "serial-gates"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=pytest_arguments)
+
+    assert completed.returncode == 0, completed.stderr
+    assert marker.read_text(encoding="utf-8") == "executed"
+    assert _gate_check(output, "tests")["python_imports"]["status"] == "pass"
+
+
+def test_parallel_worker_wrong_editable_origin_fails_source_proof(
+    editable_checkout: _EditableCheckout, tmp_path: Path
+) -> None:
+    """A worker import from the invoking checkout cannot certify reviewed source."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.original / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    output = tmp_path / "wrong-worker-gates"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=["-q", "-n", "2", "tests/test_demo.py"])
+
+    assert completed.returncode == 1
+    check = _gate_check(output, "tests")
+    assert check["status"] == "fail"
+    proof = check["python_imports"]
+    assert len(proof["workers"]) == 2
+    assert (
+        proof["modules"]["demo_package"]["origin"]
+        == (editable_checkout.original / "src" / "demo_package" / "__init__.py").resolve().as_posix()
+    )
+    assert proof["modules"]["demo_package"]["status"] == "fail"
+
+
+def test_parallel_external_selected_test_fails_source_proof(
+    editable_checkout: _EditableCheckout, tmp_path: Path
+) -> None:
+    """Worker collection of an outside test file must fail selected-test provenance."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    external_test = editable_checkout.original / "tests" / "test_demo.py"
+    output = tmp_path / "external-worker-gates"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=["-q", "-n", "2", str(external_test)])
+
+    assert completed.returncode == 1
+    check = _gate_check(output, "tests")
+    assert check["status"] == "fail"
+    proof = check["python_imports"]
+    assert len(proof["workers"]) == 2
+    assert proof["tests"][external_test.resolve().as_posix()]["reason"] == "test-outside-worktree"
+
+
+@pytest.mark.parametrize("editable_checkout", ["drop-proof"], indirect=True)
+def test_parallel_missing_worker_receipts_fail_closed(editable_checkout: _EditableCheckout, tmp_path: Path) -> None:
+    """Reject a passing worker test whose source receipt is removed before delivery."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    output = tmp_path / "missing-worker-proof-gates"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=["-q", "-n", "2", "tests/test_demo.py"])
+
+    assert completed.returncode == 1
+    check = _gate_check(output, "tests")
+    assert check["status"] == "fail"
+    assert check["python_imports"]["status"] == "fail"
+    assert any(error.startswith("worker-proof-missing:") for error in check["python_imports"]["errors"])
+
+
+def test_external_test_file_cannot_certify_selected_worktree(
+    editable_checkout: _EditableCheckout, tmp_path: Path
+) -> None:
+    """Fail source proof when a passing test comes from outside the reviewed checkout."""
+    editable_checkout.editable_path.write_text(
+        f"{(editable_checkout.selected / 'src').as_posix()}\n", encoding="utf-8", newline="\n"
+    )
+    output = tmp_path / "external-test-gates"
+    external_test = editable_checkout.original / "tests" / "test_demo.py"
+
+    completed = editable_checkout.run_tests(output, pytest_arguments=["-q", "-o", "addopts=", str(external_test)])
+
+    assert completed.returncode == 1
+    check = _gate_check(output, "tests")
+    assert check["status"] == "fail"
+    assert check["python_imports"]["status"] == "fail"
+    assert check["python_imports"]["tests"][external_test.resolve().as_posix()] == {
+        "origin": external_test.resolve().as_posix(),
+        "tracked": False,
+        "status": "fail",
+        "reason": "test-outside-worktree",
+    }
+    assert "1 passed" in (output / str(check["stdout"])).read_text(encoding="utf-8")
 
 
 def test_unimported_declared_module_reports_inconclusive_provenance(

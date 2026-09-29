@@ -79,7 +79,9 @@ For each baseline/candidate pair, use same file set and record hashes, measureme
 
 Value Guards must record exact package/tests, behavioral and calibration results, contract-marker coverage, tool/check failures, completion quality. A live comparison must use paired tasks with same model, effort, task contract, and prompt identity; record native token/cost fields and confidence limits. Treat missing paired live evidence as `insufficient-evidence` for material behavior claim.
 
-Any candidate that removes, moves, or condenses obligations requires adversarial review of obligation map. Accept only when all hard guards pass, no critical behavior regresses, tool/check failures don't increase, normalized cost falls by `min_cost_reduction`; otherwise reject or mark insufficient evidence. A shorter candidate fails when it loses obligation, weakens guard, hides loaded-reference cost, or lacks required evidence. Value-per-token scores may rank already accepted candidates but never override hard gates.
+Any candidate that removes, moves, or condenses obligations requires adversarial review of obligation map. Before accepting, read [Audit Optimization Evidence](../../shared/audit-cost-contract.md) and retain its schema-2 evidence records. Accept only when all hard guards pass, no critical behavior regresses, tool/check failures don't increase, normalized cost falls by `min_cost_reduction`; otherwise reject or mark insufficient evidence. A shorter candidate fails when it loses obligation, weakens guard, hides loaded-reference cost, or lacks required evidence. Value-per-token scores may rank already accepted candidates but never override hard gates.
+
+A successful assessed audit requires an executed passing `review` gate; all-skipped diagnostic accounting cannot certify assessment. Nonaccepted optimization states remain valid when their limits are explicit.
 
 ### 05: Route specialists only when triggered
 
@@ -186,6 +188,6 @@ Use `../../shared/quality-gates.md`.
 
 Final chat follows shared frame with `Next steps`. `Outcome`: `accepted|rejected|insufficient-evidence`. `Results`: exactly `Item | Severity / impact | Decision | Evidence | Next action`, one row/material item. `Remaining`: owner and closure action.
 
-`AUDIT_METADATA.value_per_token` records schema version, status (`not-run|insufficient-evidence|rejected|accepted`), scope roots, baseline/candidate hashes, static measurements, conditional-load trace, obligation-map path, static gates, behavioral/live comparisons, decision, and residual limits.
+`AUDIT_METADATA.value_per_token` records schema version 2, status (`not-run|insufficient-evidence|rejected|accepted`), scope roots, baseline/candidate hashes, static measurements, conditional-load trace, obligation-map path, static gates, behavioral/live comparisons, decision, and residual limits.
 
 Minimum artifact payload template: `result-template.json`.

@@ -663,6 +663,8 @@ def _retained_reviewer_rating(path: Path, *, app_server: bool, main: bool, role:
         rationale = assessment.get("rationale") if isinstance(assessment, dict) else None
     else:
         heading = "Main Reviewer Assessment" if main else "Reviewer Assessment"
+        if len(re.findall(rf"(?m)^## {re.escape(heading)}[ \t]*$", content)) != 1:
+            raise SystemExit(f"review-assessment-content-invalid:{role}")
         section = re.search(rf"(?ms)^## {re.escape(heading)}\s*\n(?P<body>.*?)(?=^## |\Z)", content)
         body = section.group("body") if section else ""
         ratings = re.findall(r"(?m)^Rating: ([1-5])\s*$", body)
@@ -1504,6 +1506,8 @@ def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str)
         )
         or not isinstance(proof.get("modules"), dict)
         or not proof["modules"]
+        or not isinstance(proof.get("tests"), dict)
+        or not proof["tests"]
     ):
         raise SystemExit("pr-source-review-tests-import-proof-invalid")
     source_root = Path(worktree).resolve()
@@ -1518,6 +1522,18 @@ def _validate_pr_tests_import_proof(checks: list[dict[str, Any]], worktree: str)
             or not isinstance(module.get("origin"), str)
             or not Path(module["origin"]).is_absolute()
             or not Path(module["origin"]).resolve().is_relative_to(source_root)
+        ):
+            raise SystemExit("pr-source-review-tests-import-proof-invalid")
+    for name, test in proof["tests"].items():
+        if (
+            not isinstance(name, str)
+            or not Path(name).is_absolute()
+            or not isinstance(test, dict)
+            or test.get("status") != "pass"
+            or test.get("tracked") is not True
+            or test.get("reason") is not None
+            or test.get("origin") != name
+            or not Path(name).resolve().is_relative_to(source_root)
         ):
             raise SystemExit("pr-source-review-tests-import-proof-invalid")
 
@@ -2161,13 +2177,13 @@ def _validate_instruction_bounded_review(
     for item in inspections:
         role = item["role"]
         role_card_path = roles_dir / role / "ROLE.md"
-        role_card = role_card_path.read_text(encoding="utf-8")
+        role_card = role_card_path.read_bytes().decode("utf-8")
         selected = item["selected_attempt"]
         for attempt in item["attempts"]:
             context_path = _resolve_path(out_dir, attempt["context_path"])
             if context_path != frozen_contexts[role]:
                 raise SystemExit(f"review-inspection-attempt-context-mismatch:{role}")
-            context = context_path.read_text(encoding="utf-8")
+            context = context_path.read_bytes().decode("utf-8")
             if any(pattern.search(context) for pattern in _SECRET_PATTERNS):
                 raise SystemExit(f"review-inspection-context-sensitive-material:{role}")
             if not context.startswith(role_card):
@@ -2179,7 +2195,7 @@ def _validate_instruction_bounded_review(
             elif _inspection_child_called_tool(child_rows):
                 raise SystemExit(f"review-inspection-child-tool-use:{role}")
         attempt = item["attempts"][selected - 1]
-        context = _resolve_path(out_dir, attempt["context_path"]).read_text(encoding="utf-8")
+        context = _resolve_path(out_dir, attempt["context_path"]).read_bytes().decode("utf-8")
         spawn_calls = [
             row["payload"]
             for row in parent_rows
@@ -2488,7 +2504,7 @@ def _validate_spawn_attempts(
                     manifest["context_reader_python"],
                 )
                 if manifest["schema_version"] == 6
-                else context_path.read_text(encoding="utf-8")
+                else context_path.read_bytes().decode("utf-8")
             )
             bound = _receipt_binds_child(
                 parent_rows,

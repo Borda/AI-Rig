@@ -21,8 +21,9 @@ with ``--plan``, ``--role``, ``--attempt``, and a page number under the same int
 
 ## Outputs
 
-Standard output is the provenance header and page position followed by one UTF-8-safe context slice. The parent
-validator checks all child calls and returned text against the same frozen plan and recorded SHA-256 digest.
+Standard output contains exact UTF-8 bytes: the provenance header and page position followed by one context slice,
+without locale-dependent encoding or newline translation. The parent validator checks all child calls and returned text
+against the same frozen plan and recorded SHA-256 digest.
 
 ## Failure
 
@@ -124,7 +125,7 @@ def dispatch_message(plan_path: Path, role: str, attempt: int = 1, python_execut
     entries = [entry for entry in plan["contexts"] if entry.get("role_id") == role]
     if len(entries) != 1:
         raise ValueError("review-context-role-count")
-    context = (plan_path.parent / entries[0]["context_path"]).read_text(encoding="utf-8")
+    context = (plan_path.parent / entries[0]["context_path"]).read_bytes().decode("utf-8")
     count = len(context_pages(context))
     first_call = render_read_call(plan_path, role, attempt, python_executable)
     later_pages = (
@@ -164,7 +165,7 @@ def read_context(plan_path: Path, role: str, attempt: int, page: int = 1) -> str
 
 
 def main() -> None:
-    """Print one verified frozen context for the native child tool response."""
+    """Emit one verified frozen context as exact UTF-8 bytes on every host."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--role", required=True)
@@ -172,7 +173,7 @@ def main() -> None:
     parser.add_argument("--page", type=int, default=1)
     args = parser.parse_args()
     try:
-        sys.stdout.write(read_context(args.plan, args.role, args.attempt, args.page))
+        sys.stdout.buffer.write(read_context(args.plan, args.role, args.attempt, args.page).encode("utf-8"))
     except (KeyError, OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError) as error:
         parser.exit(1, f"review-context-read-failed:{error}\n")
 
