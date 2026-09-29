@@ -21,9 +21,7 @@ def test_github_workflows_use_opted_in_profile_without_flag(skill: str) -> None:
 
     assert "--approve-gh" not in content
     assert "approve_gh" not in content
-    assert (
-        "active opted-in `github-read` profile or request runtime approval for the complete owning command" in content
-    )
+    assert "current effective" in content
     assert "native-skill-contract.md#github-read-execution" in content
 
 
@@ -57,9 +55,12 @@ def test_pr_collector_binds_canonical_target_before_runtime_approval() -> None:
     assert "canonical GitHub PR URL" in boundary
     assert "Replace the numeric target with that locally bound canonical URL" in boundary
     assert "Never pass numeric user input as the collector target after canonicalization" in boundary
-    assert "With active `github-read`, use the default sandboxed tool call" in boundary
     assert (
-        'Only without the active profile, give the required brief and request external access for the complete collector with `sandbox_permissions="require_escalated"`'
+        "When GitHub Read Execution establishes network and path grants, use the default sandboxed tool call"
+        in boundary
+    )
+    assert (
+        'Only when required capability is unavailable and runtime policy permits approval, give the required brief and request external access for the complete collector with `sandbox_permissions="require_escalated"`'
         in boundary
     )
     assert "An unexpected restriction or denial stops" in boundary
@@ -73,10 +74,14 @@ def test_shared_read_execution_has_no_workflow_consent_gate() -> None:
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
     execution = contract.split("## GitHub Read Execution\n", 1)[1].split("\n## ", 1)[0]
 
-    assert "When `github-read` is active, omit `sandbox_permissions` and `justification`" in execution
+    assert (
+        "With network access enabled and required paths writable, omit `sandbox_permissions` and `justification`"
+        in execution
+    )
     assert "need no separate workflow consent" in execution
     assert "unexpected restriction or denial stops the attempt" in execution
-    assert "request runtime approval for the complete owning helper" in execution
-    assert "Local-only work does not trigger GitHub access" in execution
-    assert "remote mutation" in execution
+    assert "If a required capability is explicitly disabled or a required write is outside allowed roots" in execution
+    assert "use the existing owning-command approval boundary only if runtime policy permits" in execution
+    assert "Local-only work stays local" in execution
+    assert "remote mutation" in execution.lower()
     assert "--approve-gh" not in execution

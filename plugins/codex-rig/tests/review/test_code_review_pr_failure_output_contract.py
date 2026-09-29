@@ -58,12 +58,12 @@ def test_terminal_pr_collection_failure_is_review_unavailable_not_merge_decision
 
 
 @pytest.mark.installed_plugin
-def test_pr_review_uses_active_profile_before_terminal_network_failure() -> None:
-    """Keep PR collection inside the installed profile before an unavailable result."""
+def test_pr_review_uses_effective_grants_before_terminal_network_failure() -> None:
+    """Use current permissions for PR collection before an unavailable result."""
     skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
 
     assert (
-        "Run the direct owning collector under an active opted-in `github-read` profile or with runtime approval"
+        "Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval"
         in skill
     )
     assert "An unexpected runtime restriction or denial stops the collection attempt" in skill
@@ -72,12 +72,12 @@ def test_pr_review_uses_active_profile_before_terminal_network_failure() -> None
 
 
 @pytest.mark.installed_plugin
-def test_pr_remediation_uses_active_profile_before_terminal_network_failure() -> None:
+def test_pr_remediation_uses_effective_grants_before_terminal_network_failure() -> None:
     """Keep PR remediation from escalating its collector's allowed reads."""
     skill = CODE_REMEDIATE_SKILL.read_text(encoding="utf-8")
 
     assert (
-        "Run the direct owning collector under an active opted-in `github-read` profile or with runtime approval"
+        "Run the direct owning collector under current effective grants per GitHub Read Execution or with runtime approval"
         in skill
     )
     assert "An unexpected runtime restriction or denial stops" in skill

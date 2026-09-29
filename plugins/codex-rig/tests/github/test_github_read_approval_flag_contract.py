@@ -24,7 +24,7 @@ def test_reader_workflow_has_no_approval_flag_or_consent_prompt(skill_path: Path
 
     assert "approve_gh" not in schema
     assert "--approve-gh" not in skill
-    assert "active opted-in `github-read` profile or request runtime approval for the complete owning command" in skill
+    assert "current effective" in skill
     assert "native-skill-contract.md#github-read-execution" in skill
     assert "native-skill-contract.md#github-reader-runtime-boundary" in skill
     assert "Local-only" in skill
@@ -41,15 +41,30 @@ def test_reader_runtime_boundary_preserves_narrow_command_and_remote_write_ban()
     assert "`--out` location" in boundary
     assert "across repositories" in boundary
     assert "allowlisted local PR checkout" in boundary
-    assert "With active `github-read`, use the default sandboxed tool call" in boundary
     assert (
-        'Only without the active profile, give the required brief and request external access for the complete reader with `sandbox_permissions="require_escalated"`'
+        "When GitHub Read Execution establishes network and path grants, use the default sandboxed tool call"
+        in boundary
+    )
+    assert (
+        'Only when required capability is unavailable and runtime policy permits approval, give the required brief and request external access for the complete reader with `sandbox_permissions="require_escalated"`'
         in boundary
     )
     assert "An unexpected restriction or denial stops" in boundary
     assert "remote publication or other remote mutation" in boundary
     assert "Do not wrap this command in `rtk`" in boundary
     assert "--approve-gh" not in boundary
+
+
+@pytest.mark.installed_plugin
+def test_reader_checkout_checks_git_and_destination_write_grants() -> None:
+    """Prevent a permitted reader output path from masking checkout write needs."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    execution = contract.split("## GitHub Read Execution\n", 1)[1].split("\n## ", 1)[0]
+
+    assert (
+        "For `github_read.py` commands that perform local checkout, also verify the repository `.git` and checkout destination are writable."
+        in execution
+    )
 
 
 @pytest.mark.installed_plugin

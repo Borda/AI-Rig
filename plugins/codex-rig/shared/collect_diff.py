@@ -354,27 +354,31 @@ def _require_ignored_inside_repository(repository: Path, destination: Path) -> N
         raise ValueError(f"Review output inside repository must be ignored: {destination}")
 
 
-def _materialize_untracked(review: Path, snapshot: dict[str, object], paths: set[str]) -> None:
-    """Write captured non-ignored untracked entries into the detached review worktree."""
+def _materialize_source(review: Path, snapshot: dict[str, object], untracked_paths: set[str]) -> None:
+    """Restore captured file bytes and untracked entries after Git applies the local patch."""
     records = snapshot["files"]
     assert isinstance(records, list)
     for record in records:
         assert isinstance(record, dict)
         relative = record["path"]
-        if relative not in paths:
+        # Git may convert tracked line endings; the snapshot must retain the caller's raw bytes.
+        # Tracked symlinks and deletions remain Git's responsibility and are verified afterward.
+        if relative not in untracked_paths and record["kind"] != "file":
             continue
         destination = review / Path(*PurePosixPath(relative).parts)
         if not destination.parent.resolve().is_relative_to(review):
-            raise RuntimeError(f"Untracked review path escapes worktree: {relative}")
+            raise RuntimeError(f"Review source path escapes worktree: {relative}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.parent.resolve().is_relative_to(review):
-            raise RuntimeError(f"Untracked review path escapes worktree: {relative}")
+            raise RuntimeError(f"Review source path escapes worktree: {relative}")
         content = record["content"]
         assert isinstance(content, str)
         source = content.encode("utf-8") if record["encoding"] == "utf-8" else base64.b64decode(content)
         if record["kind"] == "symlink":
             destination.symlink_to(os.fsdecode(source))
         elif record["kind"] == "file":
+            if destination.is_symlink():
+                raise RuntimeError(f"Review source file became a symlink: {relative}")
             destination.write_bytes(source)
             if record["executable"]:
                 destination.chmod(destination.stat().st_mode | stat.S_IXUSR)
@@ -427,7 +431,7 @@ def collect_review_worktree(repository: Path, output: Path) -> dict[str, object]
         )
         if completed.returncode != 0:
             raise RuntimeError("Git could not apply local review patch")
-    _materialize_untracked(review, snapshot, set(_inventory_paths(untracked)))
+    _materialize_source(review, snapshot, set(_inventory_paths(untracked)))
 
     mirror = capture_source_snapshot(review, paths)
     if mirror["revision"] != snapshot["revision"] or mirror["files"] != snapshot["files"]:

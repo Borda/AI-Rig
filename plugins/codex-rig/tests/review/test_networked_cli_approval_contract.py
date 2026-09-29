@@ -68,7 +68,7 @@ def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, he
     skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
 
     assert helper in skill
-    assert "active opted-in `github-read` profile or request runtime approval for the complete owning command" in skill
+    assert "current effective" in skill
     assert "native-skill-contract.md#github-read-execution" in skill
     assert "Runtime denial stops" in skill or "runtime restriction or denial stops" in skill
 
@@ -78,17 +78,19 @@ def test_github_reads_use_profile_or_owning_command_approval(skill_name: str, he
     "skill_name",
     ["assess", "code-remediate", "code-review", "release"],
 )
-def test_active_github_profile_never_requests_escalated_helper_call(skill_name: str) -> None:
+def test_effective_github_grants_never_request_escalated_helper_call(skill_name: str) -> None:
     """Prevent an agent from turning permitted GitHub reads into approval prompts."""
     skill = (PLUGIN_ROOT / "skills" / skill_name / "SKILL.md").read_text(encoding="utf-8")
     contract = SHARED_CONTRACT.read_text(encoding="utf-8")
     instructions = GLOBAL_INSTRUCTIONS.read_text(encoding="utf-8")
     required = "omit `sandbox_permissions` and `justification`"
 
-    assert required in skill
+    assert "current effective" in skill
     assert required in contract
     assert required in instructions
-    assert "session's active profile" in contract
+    assert "current session's effective network and filesystem permissions" in contract
+    assert "Missing profile identity is not missing network permission" in contract
+    assert "A failed or unsupported lookup is not evidence that access is disabled" in contract
     assert "stored default_permissions" in contract
 
 
@@ -128,7 +130,7 @@ def test_shared_contract_covers_known_networked_cli_families() -> None:
         assert marker in contract
     assert "GitHub reads through `github_read.py` and PR collection through `collect_pr.py`" in contract
     assert (
-        "follow [GitHub Read Execution](#github-read-execution) under the selected session profile or an approved owning-command boundary"
+        "Apply GitHub Read Execution to current effective grants or runtime approval for the complete owning collector"
         in contract
     )
     assert "marketplace add/upgrade" in contract
@@ -167,8 +169,8 @@ def test_github_profile_has_behavioral_coverage() -> None:
 
 
 @pytest.mark.installed_plugin
-def test_no_approval_cases_require_an_active_profile_in_the_current_session() -> None:
-    """Reject fixture prompts that mistake installed profile availability for selection."""
+def test_no_approval_cases_use_effective_current_session_grants() -> None:
+    """Reject fixture prompts that mistake stored defaults or hidden labels for denial."""
     cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
 
     for case_id in (
@@ -184,6 +186,51 @@ def test_no_approval_cases_require_an_active_profile_in_the_current_session() ->
     assert "active_permission_profile.id=github-read" in mismatch["prompt"]
     assert "default_permissions=:workspace" in mismatch["prompt"]
     assert mismatch["expected_findings"] == ["github-read-runtime-escalation"]
+
+    for case_id in (
+        "code-review-unlabeled-network-collector-escalation",
+        "assess-failed-profile-lookup-reader-escalation",
+        "code-remediate-unlabeled-network-collector-escalation",
+        "release-unlabeled-network-reader-escalation",
+    ):
+        case = cases[case_id]
+        assert "network access is enabled" in case["prompt"]
+        assert "writable" in case["prompt"]
+        assert "require_escalated" in case["prompt"]
+        assert case["expected_findings"] == ["github-read-runtime-escalation"]
+
+
+@pytest.mark.installed_plugin
+def test_effective_grants_keep_destination_and_write_boundaries() -> None:
+    """Require independent network and filesystem checks before a default helper call."""
+    contract = SHARED_CONTRACT.read_text(encoding="utf-8")
+    execution = contract.split("## GitHub Read Execution\n", 1)[1].split("\n## ", 1)[0]
+
+    assert "network access is enabled" in execution
+    assert "denied GitHub destination blocks that request" in execution
+    assert "reader's output location" in execution
+    assert "repository `.git`" in execution
+    assert "review-worktree or attached-checkout destination" in execution
+    assert "shared string prefix does not establish path containment" in execution
+    assert "omit `sandbox_permissions` and `justification`" in execution
+    assert "Do not run `codex execpolicy list`" in execution
+    assert "If required capability evidence is genuinely unavailable" in execution
+
+
+def test_permission_boundary_cases_cover_denied_and_unwritable_paths() -> None:
+    """Keep denied destinations and missing write grants out of the no-approval route."""
+    cases = {case["id"]: case for case in json.loads(BEHAVIORAL_CASES.read_text(encoding="utf-8"))["cases"]}
+
+    for case_id, target, marker in (
+        ("code-review-github-destination-denied", "code-review", "github.com"),
+        ("code-review-collector-git-unwritable", "code-review", "`.git`"),
+        ("assess-reader-output-unwritable", "assess", "--out"),
+        ("assess-reader-local-checkout-git-unwritable", "assess", "`.git`"),
+    ):
+        case = cases[case_id]
+        assert case["target"] == target
+        assert marker in case["prompt"]
+        assert case["expected_findings"] == []
 
 
 def test_unprofiled_github_reads_have_approval_and_denial_coverage() -> None:

@@ -200,26 +200,36 @@ def test_capture_source_snapshot_rejects_content_change_during_capture(
         module.capture_source_snapshot(repository, ["source.py"])
 
 
-def test_local_review_worktree_preserves_caller_and_mirrors_changed_bytes(tmp_path: Path) -> None:
-    """Mirror staged, unstaged, and binary untracked source without editing the caller."""
+@pytest.mark.parametrize("autocrlf", ["false", "true", "input"])
+@pytest.mark.parametrize("newline", [pytest.param(b"\n", id="lf"), pytest.param(b"\r\n", id="crlf")])
+def test_local_review_worktree_preserves_caller_and_mirrors_changed_bytes(
+    tmp_path: Path, autocrlf: str, newline: bytes
+) -> None:
+    """Preserve caller and mirrored bytes even when Git normalizes tracked line endings."""
     repository = tmp_path / "repository"
     repository.mkdir()
     _git(repository, "init", "-q")
     _git(repository, "config", "user.name", "Snapshot fixture")
     _git(repository, "config", "user.email", "snapshot@example.invalid")
+    _git(repository, "config", "core.autocrlf", autocrlf)
     (repository / ".gitignore").write_text(".reports/\n", encoding="utf-8")
     staged = repository / "staged.py"
     unstaged = repository / "unstaged.py"
     tracked_binary = repository / "tracked.bin"
+    removed = repository / "removed.py"
     staged.write_bytes(b"before staged\n")
     unstaged.write_bytes(b"before unstaged\n")
     tracked_binary.write_bytes(b"\x00old")
-    _git(repository, "add", ".gitignore", "staged.py", "unstaged.py", "tracked.bin")
+    removed.write_bytes(b"removed source\n")
+    _git(repository, "add", ".gitignore", "staged.py", "unstaged.py", "tracked.bin", "removed.py")
     _git(repository, "commit", "-qm", "fixture")
-    staged.write_bytes(b"after staged\n")
+    staged_bytes = b"after staged" + newline
+    unstaged_bytes = b"after unstaged" + newline
+    staged.write_bytes(staged_bytes)
     _git(repository, "add", "staged.py")
-    unstaged.write_bytes(b"after unstaged\n")
+    unstaged.write_bytes(unstaged_bytes)
     tracked_binary.write_bytes(b"\x00\xffupdated")
+    removed.unlink()
     (repository / "binary.bin").write_bytes(b"\x00\xffnew")
     original_status = subprocess.check_output(
         ["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository
@@ -246,12 +256,14 @@ def test_local_review_worktree_preserves_caller_and_mirrors_changed_bytes(tmp_pa
     review = Path(str(receipt["review_worktree"]))
     assert receipt["source_worktree"] == repository.resolve().as_posix()
     assert review != repository.resolve()
-    assert (review / "staged.py").read_bytes() == b"after staged\n"
-    assert (review / "unstaged.py").read_bytes() == b"after unstaged\n"
+    assert (review / "staged.py").read_bytes() == staged_bytes
+    assert (review / "unstaged.py").read_bytes() == unstaged_bytes
     assert (review / "tracked.bin").read_bytes() == b"\x00\xffupdated"
     assert (review / "binary.bin").read_bytes() == b"\x00\xffnew"
-    assert staged.read_bytes() == b"after staged\n"
-    assert unstaged.read_bytes() == b"after unstaged\n"
+    assert not (review / "removed.py").exists()
+    assert not removed.exists()
+    assert staged.read_bytes() == staged_bytes
+    assert unstaged.read_bytes() == unstaged_bytes
     assert tracked_binary.read_bytes() == b"\x00\xffupdated"
     assert (
         subprocess.check_output(["git", "status", "--porcelain", "-z", "--untracked-files=all"], cwd=repository)
@@ -282,7 +294,7 @@ def test_local_review_worktree_preserves_caller_and_mirrors_changed_bytes(tmp_pa
     )
     assert verification.returncode != 0
     assert "Review worktree source changed" in verification.stderr
-    (review / "staged.py").write_bytes(b"after staged\n")
+    (review / "staged.py").write_bytes(staged_bytes)
     (review / "unexpected.py").write_text("new source\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="Review worktree status changed"):
         collector.verify_review_worktree(report)
