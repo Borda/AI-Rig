@@ -60,6 +60,8 @@ echo "ARGUMENTS_FINAL=$ARGUMENTS"
 
 > **Note**: `PROJECT_FLAG` does not persist across Bash calls. Read its value from stdout line `PROJECT_FLAG=true/false`, carry as model-context reference. When `true`, mode must run interactive picker before operating.
 
+<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Step 1: Inventory existing agents and skills
 
 Use Glob tool to enumerate agents and skills across all sources — project-local AND plugin-namespaced — avoids false-gap findings when candidate already exists in plugin:

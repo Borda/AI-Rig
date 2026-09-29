@@ -55,6 +55,8 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 <!-- Agent resolution: see _OSS_SHARED/agent-resolution.md -->
 
+<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 ```bash

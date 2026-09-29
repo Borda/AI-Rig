@@ -499,7 +499,7 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
     dispatch = (_RESOLVE / "modes/action-item-dispatch.md").read_text(encoding="utf-8")
 
     assert "Dispatch-granularity question — multiSelect: FALSE" in skill
-    for mode in ("auto", "sequential", "fine", "preview"):
+    for mode in ("auto", "sequential", "per-specialist", "preview"):
         assert f'echo {mode} > "${{TMPDIR:-/tmp}}/resolve-dispatch-mode-${{CSID}}"' in skill, mode
     assert 'echo auto > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000' in skill
     assert "| ≤3 | Q1 items · Q2 bulk · Q3 commit-mode · Q4 dispatch |" in skill
@@ -509,7 +509,7 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
     assert "discard the commit-mode, topic-group, **and dispatch** answers from the same call" in skill
     assert 'echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"' in skill
     assert "`DISPATCH_MODE=sequential` narrows every wave to **one** group regardless of pool" in dispatch
-    assert "`fine` never separates two items sharing a file or an import edge" in dispatch
+    assert "`per-specialist` skips only the ≤5 split" in dispatch
     assert "**Group-preview gate — `DISPATCH_MODE=preview` only" in dispatch
     assert "so the sentinel holds a width, never `preview`" in dispatch
 
@@ -520,7 +520,7 @@ def test_dispatch_granularity_question_offers_every_width_and_a_group_preview() 
     [
         pytest.param("auto", "auto", id="auto"),
         pytest.param("sequential", "sequential", id="sequential"),
-        pytest.param("fine", "fine", id="fine"),
+        pytest.param("per-specialist", "per-specialist", id="per-specialist"),
         pytest.param("preview", "preview", id="preview"),
         pytest.param("grouped", "auto", id="foreign-value-falls-back"),
         pytest.param(None, "auto", id="missing-sentinel-falls-back"),
@@ -567,7 +567,10 @@ def test_step_8_prelude_publishes_a_usable_dispatch_mode(tmp_path: Path, sentine
 @pytest.mark.skipif(_BASH is None, reason="The Phase 2 boundary block is Bash")
 @pytest.mark.parametrize(
     ("sentinel", "expected"),
-    [pytest.param("fine", "fine", id="chosen-width"), pytest.param("grouped", "auto", id="foreign-value-falls-back")],
+    [
+        pytest.param("per-specialist", "per-specialist", id="chosen-width"),
+        pytest.param("grouped", "auto", id="foreign-value-falls-back"),
+    ],
 )
 def test_phase2_boundary_records_dispatch_mode_in_contract(tmp_path: Path, sentinel: str, expected: str) -> None:
     """A compaction inside Phase 2 must resume with the width the user chose, not the default.

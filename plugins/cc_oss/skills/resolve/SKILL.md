@@ -88,6 +88,27 @@ CHALLENGE_POLL_S=90      # tightened from CLAUDE.md §6 default 300s
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
+<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
+## Run structure — text order is not execution order
+
+Two blocking user gates cut this workflow into three **runs**. Within a run, work that shares no data dependency is dispatched in the same response turn so it overlaps instead of queueing. Sections below stay in step-number order for reading; the run marker on each heading says when it actually executes.
+
+| Run | Executes | Ends at |
+| -- | -- | -- |
+| 1 | Step 1 · 2 · 3a · 3b ‖ **Step 4 + Step 5** · 3c · **Steps 6–7a** ‖ gate | Step 3d selection gate |
+| 2 | Step 7b join · 3e · 8 · 9 | Step 10 push gate |
+| 3 | Step 10 push · 11 · 12 | workflow end |
+
+Two overlaps, both free — each rides an idle window the orchestrator already had:
+
+- **Step 4 + Step 5 beside the Step 3b intel agent.** Checkout and the `--no-commit` merge need only `PR_NUMBER`, never any intelligence output, so they run in the same turn that spawns `INTEL_AGENT` instead of waiting for its envelope.
+- **Steps 6–7a beside the Step 3d gate.** Conflict resolution does not depend on which items the user selects — Step 4 already mandates it at zero selected items — so the per-file agents are dispatched in the same turn as the selection question and work through the ~15 min of human idle.
+
+One dependency forbids a wider overlap: **Step 6a consumes the contribution motivation that `INTEL_AGENT` synthesizes** (`pr-intelligence.md`: PR body is stated intent, thread is the authoritative record). Steps 6–7 therefore cannot start before that envelope returns, and never fall back to a git-log-only lens.
+
+Degenerate cases, all reducing to the old serial order with no special handling: `report` mode with no PR# skips Steps 4–7 entirely; zero conflicted files means Step 5 commits the merge itself and Steps 6–7 plus the join are no-ops; `--worktree` enters the worktree inside Step 4, so an `INTEL_AGENT` spawned moments earlier keeps writing to the absolute `IMPL_DIR` it was handed.
+
 ## Step 1: Pre-flight
 
 Capture caller branch first — Step 11 restore needs it even when Step 4 (`gh pr checkout`) skipped or fails mid-checkout. Init here so Step 11 restore path always defined. Preflight in `bin/resolve_preflight.py` — checks codex availability, `gh` binary + auth, syncs remote. Caches positive results under `.temp/state/preflight/` (4 h TTL). Writes `CODEX_AVAILABLE` and `GH_OK` to `${TMPDIR:-/tmp}/resolve-preflight-*-<CSID>`; status to stderr; exits non-zero only on hard failure (`gh` missing/unauthenticated, `git pull` conflict) — `gh` missing/unauthenticated aborts whole block below, flag parsing never runs. Codemap auto-detects here too (auto-on if installed; `--no-codemap` off; `--codemap` strict — stop if missing); merged into this same call since nothing between agent resolution, preflight, and codemap detection depends on a decision made in between.
@@ -298,7 +319,7 @@ Branch on the printed `REPORT_STATUS` — read it from stdout, never assume it:
 
 Offer (a) only in `pr + report` — bare `report` has no second source, so its menu is (b)/(c). Selected (a) → print `⚠ no report findings merged — GitHub comments only` and continue in pr mode. Selected (b) → print `→ Run /oss:review <PR#>, then re-invoke /oss:resolve <PR#> report`, and stop. **Never invoke `Skill(skill="oss:review", …)` here** — `oss:review` ends its own run in a Step 7a `AskUserQuestion` asking the user what to do next, so there is no structural "return" to resume this block on: the whole nested multi-agent fan-out would run only to leave the resume instruction sitting in context, unenforceable across the exact kind of compaction this fix exists to survive. Print the command and let the user re-invoke `/oss:resolve` themselves — the same pattern `oss:review`'s own Step 7a already uses. Selected (c) → stop.
 
-## Step 1b: Create all workflow tasks upfront
+### Create all workflow tasks upfront
 
 After `PR_NUMBER` and `MODE` resolved above, create all major-step tasks now. Store each returned `task_id` for step-level `TaskUpdate` calls. Conditional tasks: include condition in subject brackets; cancel via `TaskUpdate(status="deleted")` at skip point — never leave conditional tasks pending.
 
@@ -344,6 +365,10 @@ cat "$_OSS_RESOLVE/modes/pr-intelligence.md"  # timeout: 5000
 ```
 
 Execute its steps (loaded above). Substitute `<_OSS_SHARED>` in the Agent() prompt with the literal value printed above.
+
+**Overlap — do not end the turn on the `INTEL_AGENT` spawn.** `Agent()` runs in the background, and Step 4 and Step 5 need nothing it produces. In the same response that dispatches it, continue straight into **Step 4** (checkout) and **Step 5** (merge `--no-commit`, conflict detection, 5a tasks), then end the turn. Resume here at Step 3c when the envelope arrives, with the merge state and conflict task table already decided. Skip the jump only in `report` mode with no PR#, where there is no branch to check out. This is dispatch-then-work, never the forbidden waiting turn: no `sleep`, no poll loop, no no-op call held open (`task-lifecycle.md` §After spawning).
+
+A `>20 conflicted files` abort inside Step 5 now fires while `INTEL_AGENT` is still running. Stop as that gate says; the envelope lands unread and is discarded with the run.
 
 ## Step 3c: Merge report findings (pr + report mode only)
 
@@ -416,6 +441,8 @@ Pending items = ACTION_ITEMS where type ≠ `[done]` and type ≠ `[info]`. Zero
 
 Sort all pending items by severity descending (most impactful first).
 
+**Overlap — dispatch Steps 6–7a before asking.** Conflicted files and their tasks are already known (Step 5 ran in this run), and the `INTEL_AGENT` motivation Step 6a needs has just arrived, so the per-file resolution agents are dispatched **in this same response, before the `AskUserQuestion` call**. They work through the idle window below instead of after it. Their result is collected at the Step 7b join that opens Run 2. Nothing here is wasted whatever the user picks: conflict resolution is mandatory even at zero selected items. No conflicted files → nothing to dispatch; proceed straight to the gate.
+
 Longest idle window of the run sits here (median ~15 min, measured up to 16 h) — long enough for the prompt cache to expire, so the next turn rewrites the whole context at write rate. Persist a resume contract first, then print the hint so the user can `/compact` while waiting (skill can't trigger compaction itself):
 
 ```bash
@@ -426,7 +453,7 @@ IFS= read -r _PR_NUMBER < "${TMPDIR:-/tmp}/resolve-pr-number-${CSID}" 2>/dev/nul
 IFS= read -r _KEEP < "${TMPDIR:-/tmp}/resolve-keep-items-${CSID}" 2>/dev/null || _KEEP=""
 _PRESERVE="pr=$_PR_NUMBER, impl-dir=$_IMPL_DIR, intel=$_IMPL_DIR/pr-intelligence.md, items=$_IMPL_DIR/action-items.jsonl, vars=$_IMPL_DIR/pr-vars.sh"
 [ -n "$_KEEP" ] && _PRESERVE="$_PRESERVE; user-keep: $_KEEP"
-python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion"  # timeout: 5000
+python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_oss}/bin/write_skill_contract.py" "oss:resolve" "item selection (Step 3d gate)" "$_IMPL_DIR" "$_PRESERVE" "resume: re-read action-items.jsonl + pr-intelligence.md, re-issue Step 3d AskUserQuestion; Steps 6-7a agents may be in flight — re-check git diff --name-only --diff-filter=U at the Step 7b join before Step 8"  # timeout: 5000
 ```
 
 Then print this line **in the reply** (prose, not Bash stdout — tool output is not reliably shown to the user): `` Long wait? `/compact` now — state persisted in <IMPL_DIR>, resume lossless. ``
@@ -516,21 +543,21 @@ Topic-group question — multiSelect: FALSE
 
 Set `GROUP_STRATEGY`: (a) → `domain` · (b) → `file` · (c) → `specialist` · (d) or free text → `labels` (prompt for labels at Step 8) · unanswered → `domain` (default). `COMMIT_MODE` ≠ `grouped` → discard; `GROUP_STRATEGY` unused.
 
-**Dispatch-granularity question** — placed per the slot table above, asked in every run that reaches this gate (skip only when bulk action = (d) skip-all, same discard rule as topic-group). It sets **wave width only**: specialist routing, the file-ownership tiebreak, the import-coupling merge, and the ≤5-items-per-group ceiling are correctness and stall guards, never widened or dropped by any answer.
+**Dispatch-granularity question** — placed per the slot table above, asked in every run that reaches this gate (skip only when bulk action = (d) skip-all, same discard rule as topic-group). It sets **wave width and sub-group size only**: specialist routing, the file-ownership tiebreak, and the import-coupling merge are correctness guards, never widened or dropped by any answer. The ≤5-items-per-group split is width, so `(c)` does drop it — deliberately, at the stall risk its own label states.
 
 ```text
 Dispatch-granularity question — multiSelect: FALSE
 "Phase 2 runs specialists in isolated worktrees. How should the work spread?"
-  (a) Auto — specialist groups, ≤5 items each, pool-capped waves (default)
+  (a) Auto — one worktree per specialist, split at ≤5 items, pool-capped waves (default)
   (b) Sequential — same groups, one worktree at a time
-  (c) Fine — one worktree per item, still pool-capped (each spawn costs ~120,851 tok)
-  (d) Show the computed groups first — same three choices again once they exist
+  (c) Per specialist — one worktree per specialist, no ≤5 split (⚠ >~10 items in one worktree can stall)
+  (d) Custom — show the computed groups first, then choose from these
 ```
 
 Set `DISPATCH_MODE`:
 
-- (a) → `auto` · (b) → `sequential` · (c) → `fine` · (d) → `preview` · unanswered → `auto` (default)
-- Groups cannot be shown here: Phase 2 forms them from `SURVIVING_ITEMS` after Phase 1's challenge verdicts, so a concrete list does not exist at Step 3d. (d) is the only path to approving real groups and costs one extra gate at the Phase 1 → Phase 2 boundary; the other three answers keep this run gate-free from here to dispatch.
+- (a) → `auto` · (b) → `sequential` · (c) → `per-specialist` · (d) → `preview` · unanswered → `auto` (default)
+- Groups cannot be shown here: Phase 2 forms them from `SURVIVING_ITEMS` after Phase 1's challenge verdicts, so a concrete list does not exist at Step 3d. (d) Custom is the only path to approving real groups and costs one extra gate at the Phase 1 → Phase 2 boundary; the other three answers keep this run gate-free from here to dispatch.
 - `preview` is not a width. At that boundary `action-item-dispatch.md` prints the formed groups and re-asks (a)/(b)/(c), then the orchestrator runs the matching block below a second time to record the resolved width.
 
 `(a)` auto:
@@ -547,14 +574,14 @@ export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
 echo sequential > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
 ```
 
-`(c)` fine:
+`(c)` per specialist:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
-echo fine > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
+echo per-specialist > "${TMPDIR:-/tmp}/resolve-dispatch-mode-${CSID}"  # timeout: 3000
 ```
 
-`(d)` preview:
+`(d)` custom — records `preview`, the internal value the boundary gate keys on:
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
@@ -633,9 +660,19 @@ echo "commit-mode=$_CM group-strategy=$_GS dispatch-mode=$_DM"  # timeout: 3000
 TaskUpdate(task_id=TASK_SELECT, status="completed")
 ```
 
+## Step 7b join: collect conflict resolutions — opens Run 2
+
+First work of Run 2, before any item task is created. The Steps 6–7a agents dispatched beside the gate have been running through it; collect them now (`### 7b: Verify and complete merge` in `conflict-resolution.md`): confirm `git diff --name-only --diff-filter=U` is empty, no residual conflict markers remain staged, mark each conflict task `completed`, and commit the merge. A group that returned nothing is `timed_out` — surface it with ⏱ and stop before Step 8 rather than implementing on an unmerged tree.
+
+Nothing dispatched (no conflicted files, or `report` mode with no PR#) → no-op, continue to Step 3e.
+
+```text
+TaskUpdate(task_id=TASK_CONFLICT, status="completed")
+```
+
 ## Step 3e: Create tasks for selected items
 
-`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 4 when a PR# was found, otherwise to Step 8. `pr` and `pr+report` create per-item tasks below.
+`report` mode skips Step 3e, whether or not the report header names a PR. Step 3a already persisted its action items, and Step 8's report-mode task handling expects no `item-tasks.tsv`. Continue to Step 8 — Steps 4–7 already ran back in Run 1 when a PR# was found, and are skipped entirely when none was. `pr` and `pr+report` create per-item tasks below.
 
 > Step 2 gather task already marked `completed` at top of Step 3d.
 
@@ -667,6 +704,8 @@ printf '%s\t%s\n' "$_ITEM_ID" "$_TASK_ID" >> "$IMPL_DIR/item-tasks.tsv"  # timeo
 **Applies to `pr` and `pr+report` modes only** — these run Step 3b (which initialises `IMPL_DIR`) and Step 3e. `report` mode skips both steps and has no per-item tasks; Step 3a initialises `IMPL_DIR` instead.
 
 ## Step 4: Checkout PR branch
+
+> **Run 1** — entered from Step 3b's overlap directive, in the same turn that spawned `INTEL_AGENT`, not after Step 3e. Needs only `PR_NUMBER`.
 
 **Worktree isolation (opt-in `--worktree`)** — run FIRST, before `gh` check + checkout below, so checkout, Phase-2 specialist worktrees, cherry-picks, and push all happen off an isolated worktree and caller's main tree/branch never change. Skip when `WT_ENABLED != true` or `MODE = report` with no PR#.
 
@@ -793,6 +832,8 @@ TaskUpdate(task_id=TASK_CHECKOUT, status="completed")
 
 <!-- Steps 5–7 defined in conflict-resolution.md — see that file for sub-step numbering -->
 
+> **Split across two dispatch points, one loaded file.** Step 5 runs in Run 1 immediately after Step 4, beside the intel agent. Steps 6–7a are dispatched in Run 1's gate turn (Step 3d overlap directive); 7b is collected at the Step 7b join that opens Run 2. Load the file once here and execute the parts at their own points — re-`cat` it only if a compaction dropped it from context.
+
 ```text
 TaskUpdate(task_id=TASK_CONFLICT, status="in_progress")
 ```
@@ -803,11 +844,7 @@ IFS= read -r _OSS_RESOLVE < "${TMPDIR:-/tmp}/resolve-oss-resolve-${CSID}" 2>/dev
 cat "$_OSS_RESOLVE/modes/conflict-resolution.md"  # timeout: 5000
 ```
 
-Execute its steps (loaded above).
-
-```text
-TaskUpdate(task_id=TASK_CONFLICT, status="completed")
-```
+Execute its steps (loaded above) at their dispatch points. `TASK_CONFLICT` flips to `completed` at the Step 7b join, not here.
 
 ## Step 8: Implement action items
 
@@ -1172,7 +1209,7 @@ Non-calibratable — `disable-model-invocation: true` means skill dispatches to 
 - **Two-phase challenge**: evidence = problem exists?; suggestion = fix quality?; evidence reject → skip; suggestion reject → self-resolved via `alternative` field; all in `CHALLENGE_LOG` + Step 11 report.
 - **COMMIT_MODE**: `each` (default); `all`; `stage` (⚠ branch restore skipped); `grouped` (falls back to `each` when labels skipped). Set via the commit-mode menu (Step 3d) — placement per the Step 3d slot table — skipped/discarded only when the bulk action = (d) skip-all. Distinct MENU from the bulk action (item scope vs commit strategy); item scope never implies commit mode; menus may share a call, never options.
 - **GROUP_STRATEGY**: `domain` (default) · `file` · `specialist` · `labels`. Set via the topic-group question (Step 3d), asked beside the commit-mode menu. Read only when `COMMIT_MODE=grouped`; only `labels` triggers the Step 8 free-text label prompt, the rest group without another user round-trip.
-- **DISPATCH_MODE**: `auto` (default) · `sequential` · `fine` · `preview`. Set via the dispatch-granularity question (Step 3d), asked in every run beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak, the import-coupling merge and the ≤5-items-per-group ceiling never change. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
+- **DISPATCH_MODE**: `auto` (default) · `sequential` · `per-specialist` · `preview` (the "Custom" label). Set via the dispatch-granularity question (Step 3d), asked in every run beside the commit-mode or topic-group menu. Read by Phase 2 for sub-group splitting and wave width only — specialist routing, the file-ownership tiebreak and the import-coupling merge never change; `per-specialist` drops the ≤5 split, the one width guard a width answer may touch. Distinct from `GROUP_STRATEGY=specialist`, which is a commit-grouping strategy on its own sentinel. `preview` defers the width to one extra gate at the Phase 1 → Phase 2 boundary, where the formed groups are printed first; that gate resolves it to one of the other three.
 - **AskUserQuestion usage**: the normal action-item path, after successful source resolution and without diagnostic or conflict recovery, takes at most 5 calls (10-18 pending: two checkbox pages + commit-mode follow-up + labels question + push-auth/post-pr). The dispatch-granularity question rides an existing call in every band, so it adds no round-trip there; only 4-6 pending pays one, because its follow-up now fires unconditionally instead of only on grouped commits, and only `DISPATCH_MODE=preview` adds a call outside this count. The same path is 4 calls without the optional grouped-labels question. Other paths can add questions for unsupported flags, missing reports, conflicts, or unresolved item status; they are outside this normal-path count. Push authorization and the post-PR browser action share one call at Step 10 (two questions); Step 11 reads the stored answer and asks nothing.
 - **`--agent <name>`**: bare name auto-prefixed `foundry:`; must be an implementation agent (not curator); omit the bridge trailer when another agent is selected.
 - **Thread resolution via GraphQL** — `isResolved` on `PullRequestReviewThread` (GraphQL only); REST doesn't expose it. `RESOLVED_THREAD_IDS` = root comment `databaseId`; GraphQL failure → `[]`.

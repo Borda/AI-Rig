@@ -6,7 +6,11 @@
 
 <!-- Output: conflicts resolved or NO_CONFLICTS_FOUND=true set -->
 
+> **Three dispatch points, not one pass** (SKILL.md §Run structure). Step 5 runs in Run 1 right after Step 4, in the turn that spawned `INTEL_AGENT` — it needs only the checked-out branch. Steps 6–7a run later in Run 1, dispatched in the same turn as the Step 3d selection question, because Step 6a needs the motivation that agent synthesized. Step 7b is collected at the join opening Run 2, before any item task exists. Execute each part when its point is reached; never run all three back to back.
+
 ## Step 5: Conflict detection
+
+> Run 1, beside the intel agent.
 
 ```bash
 # MERGE_HEAD sentinel — git status --porcelain does not expose in-progress merge reliably
@@ -60,13 +64,13 @@ Store returned task ID alongside each file path as `conflict_task_id`. Print con
 
 > **Invariant**: all conflict tasks `completed` before Step 8. Upfront creation keeps each conflict scoped, independently reversible.
 
-No conflicts → complete merge, skip to Step 8:
+No conflicts → complete merge here:
 
 ```bash
 git commit --no-edit # timeout: 6000
 ```
 
-Report clean merge, skip Steps 6–7, continue Step 8.
+Report clean merge. Steps 6–7 and the Step 7b join become no-ops — mark `TASK_CONFLICT` `completed` now and return to Run 1 (await the `INTEL_AGENT` envelope, then Step 3c).
 
 ⛔ More than 20 conflicted files → abort and stop:
 
@@ -82,9 +86,11 @@ Report count + file list; `AskUserQuestion` with options:
 
 ## Step 6: Distill conflict context
 
+> Run 1, dispatched in the Step 3d gate turn — after `INTEL_AGENT` returns, before the `AskUserQuestion` call. Runs through the user's idle window.
+
 ### 6a: Source-branch intent
 
-Use Step 3b motivation as primary lens. Additionally:
+Use Step 3b motivation as primary lens — the 2–3 sentence synthesis `INTEL_AGENT` wrote, where thread consensus outranks the PR body. This is the dependency that keeps Steps 6–7 out of the earlier overlap; never substitute a git-log-only reading of intent for it. Additionally:
 
 ```bash
 MERGE_BASE=$(git merge-base "origin/$BASE_REF" "$HEAD_REF") # timeout: 3000
@@ -144,7 +150,11 @@ Return ONLY a compact JSON envelope — no prose, no explanation:
 
 > **Health monitoring**: spawn runs in background — spawn, end turn, resume on completion notification; no filler call, no "waiting" line, no sleep. Nothing after ~15 min → surface partial results ⏱, proceed with staged files.
 
+> **Turn placement**: this spawn is followed in the same response by Step 3d's `AskUserQuestion`, not by an ended turn — the selection question is substantive work, so the no-filler rule above is satisfied. The completion notification and the user's answer arrive independently; whichever lands second opens the join below.
+
 ### 7b: Verify and complete merge
+
+> Run 2's first work — the Step 7b join, after both the agent envelope and the user's Step 3d answer are in hand, before Step 3e creates any item task.
 
 Parse JSON from sw-engineer. Check `resolved == staged` — mismatch = file resolved but not staged → surface before proceeding.
 

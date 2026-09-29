@@ -192,6 +192,19 @@ No plugin dependency system in Claude Code — never propose "install `foo` as p
 - Changed agent model tier → update README **Model** line + agent-relationships tiering paragraph + `curator.md` antipatterns table if agent appears there
 - Significant behaviour change (new phase, changed default, removed option) → note it in README; breaking → mark `! BREAKING` in the change description
 
+## ARCH.md Sync — skill execution diagrams
+
+A multi-agent or multi-gate skill may ship `ARCH.md` beside its `SKILL.md`: an ASCII diagram of the runs, blocking gates, agent fan-out and any work that overlaps. It is **documentation, never a contract** — the skill never loads it, so it costs nothing at invocation and carries no authority.
+
+- **`SKILL.md` and `modes/*.md` win on any disagreement.** An `ARCH.md` that contradicts them is a defect in `ARCH.md`, never a licence to change behaviour to match the picture.
+- **Update it in the same commit** as any change to step order, gate placement, agent fan-out, spawn width, or what runs beside what. A stale diagram is worse than none — a reader trusts it precisely because it is short.
+- Every `ARCH.md` opens with that non-normative banner and the update obligation, so the rule travels with the file.
+- Each `SKILL.md` with a sidecar carries one HTML comment before its first heading pointing at it, so an editor meets the obligation at the point of edit.
+- Diagrams claim an overlap only where the skill genuinely dispatches work in one response turn. Never document aspirational parallelism.
+- **Format is a block schema, not a step list.** Named blocks flow top to bottom; `FAN n` marks where work splits into lanes dispatched together, `JOIN` where they are collected. A block names what it contains, never its step number — step numbering and per-step detail belong in `SKILL.md` and add nothing at this level. **`FAN` means concurrent, never merely plural**: a split into mutually exclusive paths, where exactly one ever runs, is a branch and is drawn as one, since labelling it `FAN` would sell exclusive dispatch as parallel work. `▣` marks an `Agent()` spawn only — a `Skill()` call is named inline, and batched tool calls such as parallel `Read`s are in-block detail; neither is a fan. Sections after the schema: fan/join table (lanes, what bounds width, where they join), gates table, mode branches where topology genuinely differs, degenerate cases. A short step-anchor table may close the file for navigation only.
+- Not covered by §Shared File Authoring Rule (that governs `modes/`, `templates/`, `_shared/`); a skill-root `ARCH.md` needs no consumer reference and no orphan-check header beyond its own `<!-- file: -->` line.
+- Optional per skill. Add one where runs, gates and fan-out are hard to hold in the head; skip it for a linear single-agent skill, where it would only duplicate the step list.
+
 ## Versioning
 
 Apply the repository Version Continuity rule to serialized artifact schemas separately from this plugin SemVer gate; compare each schema family with its own committed `HEAD` baseline before handoff.

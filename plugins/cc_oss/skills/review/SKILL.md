@@ -68,6 +68,8 @@ EXTENSION=300          # one +5 min extension if output file explains delay
 
 <!-- Agent resolution: see _OSS_SHARED/agent-resolution.md -->
 
+<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 `agent-resolution.md` (loaded below) contains: foundry check + fallback table. Resolved together with `--reply`'s early flag check, `REVIEW_SKILL_DIR`, Step 0's flag parsing, and the direct-report fast-path detection — one call, no decision point sits between them.

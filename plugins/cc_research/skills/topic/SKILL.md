@@ -37,6 +37,8 @@ NOT for deep single-paper analysis or experiment design — use `research:scient
 
 <!-- Agent resolution: see _RESEARCH_SHARED/agent-resolution.md -->
 
+<!-- ARCH.md beside this file diagrams the runs, gates and parallel fan-out. Documentation only, never loaded — update it in the same commit as any change to step order, gate placement, or agent fan-out. -->
+
 ## Agent Resolution
 
 **Agent resolution**: load and follow the protocol below. Contains: foundry check + fallback table. Foundry not installed → substitute each `foundry:X` with `general-purpose` per table. Agents this skill uses: `foundry:web-explorer`, `foundry:solution-architect`.
