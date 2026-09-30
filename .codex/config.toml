@@ -2,8 +2,8 @@
 # OpenAI Codex CLI — project config (Rust CLI v0.105+, TOML only)
 # `config_file` paths are relative to this file
 
-model                              = "gpt-6-sol"
-review_model                       = "gpt-6-sol"
+model                              = "gpt-6.1-sol"
+review_model                       = "gpt-6.1-sol"
 model_reasoning_effort             = "medium"
 model_reasoning_summary            = "auto"
 approval_policy                    = "on-request"

@@ -15,7 +15,7 @@ Helper option schemas live in `--help`, not skills. In plugin, derive `PLUGIN_RO
 - `python PLUGIN_ROOT/runtime/calibration/run_live_ab.py --help`
 - `python PLUGIN_ROOT/runtime/calibration/score_behavioral.py --help`
 - `python PLUGIN_ROOT/shared/find-review-report.py --help`
-- `python PLUGIN_ROOT/shared/app_server_review.py --help` — explicit paid review route; `--check-host` verifies setup without model turn, not review completion
+- `python PLUGIN_ROOT/shared/local_reviewer_wave.py --help` — explicit paid review route; `--check-host` verifies setup without model turn, not review completion
 - `python PLUGIN_ROOT/shared/select-git-remote.py --help`
 - `python PLUGIN_ROOT/shared/write-result.py --help`
 - `python PLUGIN_ROOT/shared/final_handoff.py --help`
@@ -40,7 +40,7 @@ Also run each skill-specific local CLI's `--help`. Never copy full flags/templat
 - prior skill-specific validator
 - extra artifacts and pass/fail rules
 
-Helper JSON and stable stderr codes are machine evidence, not user-facing answers. On any helper failure, owning workflow first explains failed operation in plain English, inspects its retained diagnostics, reports observed cause or explicitly unknown detail. Then retain exact code and evidence, state what safe work continues, name next action, owner, resume condition. Includes collection, report lookup, manifest/preflight validation, App Server waves, live calibration, shim diagnostics, escalation-ledger validation. Diagnose within existing authority before asking for action; never invent cause, expose raw sensitive output, rerun paid or deterministically failed operations unchanged, or turn helper's rejected result into acceptance.
+Helper JSON and stable stderr codes are machine evidence, not user-facing answers. On any helper failure, owning workflow first explains failed operation in plain English, inspects its retained diagnostics, reports observed cause or explicitly unknown detail. Then retain exact code and evidence, state what safe work continues, name next action, owner, resume condition. Includes collection, report lookup, manifest/preflight validation, local reviewer waves, live calibration, shim diagnostics, escalation-ledger validation. Diagnose within existing authority before asking for action; never invent cause, expose raw sensitive output, rerun paid or deterministically failed operations unchanged, or turn helper's rejected result into acceptance.
 
 Result lifecycle:
 

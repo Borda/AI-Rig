@@ -68,6 +68,8 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 import collect_diff  # noqa: E402
 
+MAX_REVIEW_CONTEXT_BYTES = 262144
+
 
 def _json_bytes(value: object) -> bytes:
     """Encode stable JSON bytes independently of host newline conventions."""
@@ -341,8 +343,9 @@ def prepare(
             "Do not use bold headings or fractions such as 5/5. Keep the response concise; do not omit findings "
             "to meet a token target.\n\n" + source + "\n\n## Verified selected source\n\n" + "\n".join(selected_source)
         ).encode("utf-8")
-        if len(context) > 65536:
-            raise ValueError(f"review-context-capacity-exceeded:{role}:65536-bytes")
+        # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
+        if len(context) > MAX_REVIEW_CONTEXT_BYTES:
+            raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")
         if any(pattern.search(context.decode("utf-8")) for pattern in validator._SECRET_PATTERNS):
             raise ValueError(f"review-context-sensitive-material:{role}")
         context_path = f"specialists/{role}-context.md"
@@ -464,7 +467,7 @@ def _observed_pass(
         raise ValueError(f"review-output-sensitive-material:{role}")
     output_path = f"specialists/{role}.md"
     _freeze({out / output_path: (message + "\n").encode("utf-8")})
-    validator._retained_reviewer_rating(out / output_path, app_server=False, main=False, role=role)
+    validator._retained_reviewer_rating(out / output_path, local_reviewer_wave=False, main=False, role=role)
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
         "attempt": 1,

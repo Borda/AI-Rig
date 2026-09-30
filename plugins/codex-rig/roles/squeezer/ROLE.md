@@ -1,7 +1,7 @@
 ---
 role_id: squeezer
 name: codex-rig-squeezer
-model: gpt-6-sol
+model: gpt-6.1-sol
 model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: read-only

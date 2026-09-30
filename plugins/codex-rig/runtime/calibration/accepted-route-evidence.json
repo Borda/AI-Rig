@@ -1,18 +1,18 @@
 {
   "accepted_at": "2026-07-11",
   "active_assignment_basis": {
-    "decided_at": "2026-09-22",
+    "decided_at": "2026-09-30",
     "decision": "explicit-user-rollover",
     "gpt6_quality_cost_evidence": "pending-paired-evaluation"
   },
   "active_assignments": {
     "deep_review": {
       "activation": "explicit-effort-override",
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "high"
     },
     "parent": {
-      "model": "gpt-6-sol",
+      "model": "gpt-6.1-sol",
       "reasoning_effort": "medium"
     },
     "roles": {
@@ -29,7 +29,7 @@
           "web-explorer"
         ]
       },
-      "gpt-6-sol": {
+      "gpt-6.1-sol": {
         "high": [
           "challenger",
           "data-steward",

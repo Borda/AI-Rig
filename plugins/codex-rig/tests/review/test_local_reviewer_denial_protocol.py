@@ -1,4 +1,4 @@
-"""Synthetic acceptance tests for fail-closed App Server command denial."""
+"""Synthetic acceptance tests for fail-closed local reviewer wave command denial."""
 
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-import app_server_denial_probe as denial_probe
+import local_reviewer_denial_probe as denial_probe
 from _platform import DIRECTORY_SYMLINKS_AVAILABLE
-from app_server_denial_probe import (
+from local_reviewer_denial_probe import (
     APPROVAL_METHOD,
     COMPLETED_METHOD,
     FILE_APPROVAL_METHOD,
@@ -248,7 +248,7 @@ def test_grouped_network_approval_without_command_identity_fails_closed(tmp_path
 
 
 def test_approval_rejects_a_server_prompt_that_does_not_offer_decline(tmp_path: Path) -> None:
-    """Never send a decision outside the choices advertised by App Server."""
+    """Never send a decision outside the choices advertised by local reviewer wave."""
     output_path = tmp_path / "collector-output"
     transcript = _success_transcript(tmp_path, output_path)
     transcript[0]["params"]["availableDecisions"] = ["accept"]
@@ -582,7 +582,7 @@ def test_file_change_approval_or_item_fails_closed_as_post_denial_write_fallback
 
 
 class FakeProcess:
-    """Expose fixed App Server stdio while recording the live client's outbound frames."""
+    """Expose fixed local reviewer wave stdio while recording the live client's outbound frames."""
 
     def __init__(self, messages: list[dict[str, object]]) -> None:
         """Initialize deterministic stdio streams for protocol tests."""
@@ -612,7 +612,7 @@ class SlowReader(io.StringIO):
 
 
 def test_posix_cleanup_checks_process_group_after_parent_exit(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prevent an exited group leader from hiding a surviving App Server child."""
+    """Prevent an exited group leader from hiding a surviving local reviewer wave child."""
     fake = FakeProcess([])
     group_states = iter((True, False, False))
     signals: list[tuple[int, int]] = []
@@ -703,7 +703,7 @@ def test_posix_cleanup_converts_signal_permission_error_to_protocol_failure(
 
 
 def _installed_plugin(tmp_path: Path) -> tuple[Path, Path]:
-    """Create an exact minimal installed-package identity for the mocked App Server run."""
+    """Create an exact minimal installed-package identity for the mocked local reviewer wave run."""
     codex_home = tmp_path / "codex-home"
     plugin_root = codex_home / "plugins" / "codex-rig" / "0.8.0"
     skill_path = plugin_root / "skills" / "code-review" / "SKILL.md"

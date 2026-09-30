@@ -8,20 +8,20 @@ import re
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 ROLES = REPOSITORY_ROOT / "plugins" / "codex-rig" / "roles"
 EXPECTED = {
-    "challenger": ("gpt-6-sol", "high"),
+    "challenger": ("gpt-6.1-sol", "high"),
     "cicd-steward": ("gpt-6-luna", "high"),
     "curator": ("gpt-6-luna", "high"),
-    "data-steward": ("gpt-6-sol", "high"),
+    "data-steward": ("gpt-6.1-sol", "high"),
     "delegation-lead": ("gpt-6-luna", "high"),
     "doc-scribe": ("gpt-6-luna", "high"),
     "linting-expert": ("gpt-6-luna", "medium"),
     "oss-shepherd": ("gpt-6-luna", "high"),
-    "qa-specialist": ("gpt-6-sol", "medium"),
-    "scientist": ("gpt-6-sol", "high"),
-    "security-auditor": ("gpt-6-sol", "high"),
-    "solution-architect": ("gpt-6-sol", "high"),
-    "squeezer": ("gpt-6-sol", "medium"),
-    "sw-engineer": ("gpt-6-sol", "medium"),
+    "qa-specialist": ("gpt-6.1-sol", "medium"),
+    "scientist": ("gpt-6.1-sol", "high"),
+    "security-auditor": ("gpt-6.1-sol", "high"),
+    "solution-architect": ("gpt-6.1-sol", "high"),
+    "squeezer": ("gpt-6.1-sol", "medium"),
+    "sw-engineer": ("gpt-6.1-sol", "medium"),
     "web-explorer": ("gpt-6-luna", "medium"),
 }
 
@@ -38,8 +38,8 @@ def test_gpt6_role_model_and_effort_map() -> None:
 def test_gpt6_parent_and_review_model_defaults() -> None:
     """Use Sol medium as the normal parent while retaining a Sol review model."""
     config = (REPOSITORY_ROOT / ".codex" / "config.toml").read_text(encoding="utf-8")
-    assert re.search(r'^model\s*=\s*"gpt-6-sol"$', config, re.MULTILINE)
-    assert re.search(r'^review_model\s*=\s*"gpt-6-sol"$', config, re.MULTILINE)
+    assert re.search(r'^model\s*=\s*"gpt-6\.1-sol"$', config, re.MULTILINE)
+    assert re.search(r'^review_model\s*=\s*"gpt-6\.1-sol"$', config, re.MULTILINE)
     assert re.search(r'^model_reasoning_effort\s*=\s*"medium"$', config, re.MULTILINE)
 
 
@@ -59,9 +59,9 @@ def test_active_assignment_record_covers_roles_and_direct_routes() -> None:
     }
     assert actual == EXPECTED
     assert sum(len(roles) for efforts in active["roles"].values() for roles in efforts.values()) == len(EXPECTED)
-    assert active["parent"] == {"model": "gpt-6-sol", "reasoning_effort": "medium"}
+    assert active["parent"] == {"model": "gpt-6.1-sol", "reasoning_effort": "medium"}
     assert active["deep_review"] == {
-        "model": "gpt-6-sol",
+        "model": "gpt-6.1-sol",
         "reasoning_effort": "high",
         "activation": "explicit-effort-override",
     }

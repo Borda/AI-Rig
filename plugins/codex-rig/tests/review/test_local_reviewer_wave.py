@@ -1,4 +1,4 @@
-"""Exercise the bounded App Server review evidence adapter."""
+"""Exercise the bounded local reviewer wave evidence adapter."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def _adapter() -> ModuleType:
     global _ADAPTER
     if _ADAPTER is not None:
         return _ADAPTER
-    path = PLUGIN_ROOT / "shared" / "app_server_review.py"
-    spec = importlib.util.spec_from_file_location("app_server_review", path)
+    path = PLUGIN_ROOT / "shared" / "local_reviewer_wave.py"
+    spec = importlib.util.spec_from_file_location("local_reviewer_wave", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -246,7 +246,7 @@ def _launches_for_plan(
     first = [_response(1, {}), _response(2, _effective_config(disabled=False))]
     second = [_response(1, {}), _response(2, _effective_config(disabled=True))]
     input_completions: list[dict[str, object]] = []
-    # App Server may notify lifecycle state while the matching request is pending.
+    # local reviewer wave may notify lifecycle state while the matching request is pending.
     second.append({"jsonrpc": "2.0", "method": "thread/started", "params": {}})
     for index, node in enumerate(plan["nodes"], start=3):
         second.append(_response(index, _thread_result(index - 3, node["model"], node["reasoning_effort"])))
@@ -561,7 +561,7 @@ def test_large_context_evidence_requires_exact_preload_binding(
 def test_check_host_rejects_context_larger_than_two_mebibytes_before_process_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reject a one-byte context overage before spawning an App Server process."""
+    """Reject a one-byte context overage before spawning a local reviewer process."""
     adapter = _adapter()
     plan_path, _ = review_evidence_files(tmp_path)
     _replace_context_to_size(plan_path, 0, adapter.MAX_CONTEXT_BYTES + 1)
@@ -576,7 +576,7 @@ def test_check_host_rejects_context_larger_than_two_mebibytes_before_process_lau
 def test_check_host_rejects_invalid_utf8_context_before_process_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reject malformed context text distinctly before any App Server process starts."""
+    """Reject malformed context text distinctly before any local reviewer wave process starts."""
     plan_path, _ = review_evidence_files(tmp_path)
     _replace_context_bytes(plan_path, 0, b"\xff")
     factory = _fake_public_processes(monkeypatch, [])
@@ -2251,7 +2251,7 @@ def _replace_context_to_size(plan_path: Path, role_index: int, size: int) -> str
 def review_evidence_files(
     tmp_path: Path, *, roles: tuple[str, ...] = ("challenger", "cicd-steward"), source_path: str = "widget.py"
 ) -> tuple[Path, Path]:
-    """Create a valid two-role frozen plan and bounded App Server evidence fixture."""
+    """Create a valid two-role frozen plan and bounded local reviewer wave evidence fixture."""
     contexts = tmp_path / "contexts"
     outputs = tmp_path / "outputs"
     contexts.mkdir()
@@ -2491,7 +2491,7 @@ def test_retained_output_rejects_malformed_optional_assessment(tmp_path: Path) -
         _adapter().validate_evidence(plan_path, evidence_path, CANONICAL_ROLES)
 
 
-def test_app_server_rejects_explicit_selection_advisors(tmp_path: Path) -> None:
+def test_local_reviewer_rejects_explicit_selection_advisors(tmp_path: Path) -> None:
     """Keep architecture and security advisors outside automatic review dispatch."""
     plan_path, evidence_path = review_evidence_files(tmp_path, roles=("security-auditor",))
 

@@ -20,14 +20,14 @@ Each subdirectory under `roles/` holds one `ROLE.md` — role card that packages
 
 ## 🎚️ GPT-6 model and effort routing
 
-Every role runs on `gpt-6-sol` or `gpt-6-luna` with independently assigned `medium` or `high` reasoning effort. All fifteen roles share `approval_policy: on-request` and `fallback_modes: [shim, built-in-injected, inline]`; sandbox mode remains role-specific. Astra has no standing route.
+Every role runs on `gpt-6.1-sol` or `gpt-6-luna` with independently assigned `medium` or `high` reasoning effort. All fifteen roles share `approval_policy: on-request` and `fallback_modes: [shim, built-in-injected, inline]`; sandbox mode remains role-specific. Astra has no standing route.
 
-| Model        | Effort   | Roles                                                                               |
-| ------------ | -------- | ----------------------------------------------------------------------------------- |
-| `gpt-6-sol`  | `medium` | `sw-engineer`, `qa-specialist`, `squeezer`                                          |
-| `gpt-6-sol`  | `high`   | `challenger`, `data-steward`, `scientist`, `security-auditor`, `solution-architect` |
-| `gpt-6-luna` | `medium` | `linting-expert`, `web-explorer`                                                    |
-| `gpt-6-luna` | `high`   | `cicd-steward`, `curator`, `delegation-lead`, `doc-scribe`, `oss-shepherd`          |
+| Model         | Effort   | Roles                                                                               |
+| ------------- | -------- | ----------------------------------------------------------------------------------- |
+| `gpt-6.1-sol` | `medium` | `sw-engineer`, `qa-specialist`, `squeezer`                                          |
+| `gpt-6.1-sol` | `high`   | `challenger`, `data-steward`, `scientist`, `security-auditor`, `solution-architect` |
+| `gpt-6-luna`  | `medium` | `linting-expert`, `web-explorer`                                                    |
+| `gpt-6-luna`  | `high`   | `cicd-steward`, `curator`, `delegation-lead`, `doc-scribe`, `oss-shepherd`          |
 
 ### Rationale
 
@@ -82,7 +82,7 @@ Every `roles/<role_id>/ROLE.md` follows one fixed schema, and `runtime/calibrati
 | ------------------------ | --------------------------------------------------------------- |
 | `role_id`                | Must match containing directory name.                           |
 | `name`                   | Must be `codex-rig-<role_id>`.                                  |
-| `model`                  | `gpt-6-sol` or `gpt-6-luna` — see routing table above.          |
+| `model`                  | `gpt-6.1-sol` or `gpt-6-luna` — see routing table above.        |
 | `model_reasoning_effort` | `medium` or `high` per role.                                    |
 | `approval_policy`        | `on-request` for every role.                                    |
 | `sandbox_mode`           | `read-only` or `workspace-write`.                               |

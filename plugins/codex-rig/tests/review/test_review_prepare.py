@@ -758,13 +758,25 @@ def test_prepare_rejects_unrelated_source_selection(tmp_path: Path) -> None:
     assert not (run / "inspection-plan.json").exists()
 
 
-def test_prepare_rejects_oversized_context_before_freezing_wave(tmp_path: Path) -> None:
-    """Keep a reviewer brief above the native read limit out of the frozen wave."""
+def test_prepare_pages_context_larger_than_old_limit(tmp_path: Path) -> None:
+    """Admit a complete large context through the bounded native page reader."""
     run = _review_inputs(tmp_path)
     (run / "challenger-evidence.md").write_text("bounded evidence\n" * 5000, encoding="utf-8")
     result = _prepare(run)
+    assert result.returncode == 0, result.stderr
+    context = (run / "specialists/challenger-context.md").read_bytes()
+    assert len(context) > 65536
+    assert context.count(b"bounded evidence\n") == 5000
+    assert (run / "inspection-plan.json").exists()
+
+
+def test_prepare_rejects_oversized_context_before_freezing_wave(tmp_path: Path) -> None:
+    """Keep a context above the bounded native read ceiling out of the frozen wave."""
+    run = _review_inputs(tmp_path)
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 18000, encoding="utf-8")
+    result = _prepare(run)
     assert result.returncode != 0
-    assert "review-context-capacity-exceeded:challenger:65536-bytes" in result.stderr
+    assert "review-context-capacity-exceeded:challenger:262144-bytes" in result.stderr
     assert not (run / "inspection-plan.json").exists()
     assert not (run / "specialists").exists()
 
@@ -845,7 +857,7 @@ def test_retained_rating_rejects_duplicate_reviewer_assessment(tmp_path: Path) -
         encoding="utf-8",
     )
     with pytest.raises(SystemExit, match="review-assessment-content-invalid:challenger"):
-        module._retained_reviewer_rating(response, app_server=False, main=False, role="challenger")
+        module._retained_reviewer_rating(response, local_reviewer_wave=False, main=False, role="challenger")
 
 
 def test_pr_pass_import_proof_rejects_missing_test_origins(tmp_path: Path) -> None:

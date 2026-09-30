@@ -13,7 +13,7 @@ every reported finding.
 Read only ``loop-ledger.json``, ``loop-evidence.json``, retained source and supporting snapshots, and completed review
 runs below one challenge-resolve run. The validator delegates route, role, child-lineage, and output checks to Code
 Review's existing manifest-only validator; it creates no reviewer, modifies no artifact, and makes no network call. It
-supports schema-five native inspection and schema-four App Server evidence because both retain an actual reviewer thread
+supports native schema-five and local reviewer wave schema-four evidence because both retain a reviewer thread
 identifier and frozen context bytes. Loop evidence schema one remains readable with its historical request-coverage
 limit; current schema two binds task criteria, declared unchanged callers or consumers, continuation lineage,
 machine-readable reviewer-stated coverage, and an explicit parent mapping for every reviewer signature. Loop evidence
@@ -520,7 +520,7 @@ def _selected_native_pass(manifest: dict[str, Any], review_run: Path, role: str)
     )
 
 
-def _selected_app_server_pass(manifest: dict[str, Any], review_run: Path, role: str) -> tuple[Path, str, Path]:
+def _selected_local_reviewer_pass(manifest: dict[str, Any], review_run: Path, role: str) -> tuple[Path, str, Path]:
     """Return selected schema-four output, observed thread, and frozen context for one exact role."""
     if manifest.get("schema_version") != 4:
         raise ValueError("loop-evidence-review-schema-unsupported")
@@ -585,8 +585,8 @@ def _validate_review_round(
         selected_output, reviewer_identity, _ = _selected_native_pass(manifest, review_run, selected_role)
         selector = _selected_native_pass
     elif schema == 4:
-        selected_output, reviewer_identity, _ = _selected_app_server_pass(manifest, review_run, selected_role)
-        selector = _selected_app_server_pass
+        selected_output, reviewer_identity, _ = _selected_local_reviewer_pass(manifest, review_run, selected_role)
+        selector = _selected_local_reviewer_pass
     else:
         raise ValueError("loop-evidence-review-schema-unsupported")
     if reviewer_identity == author:

@@ -55,7 +55,7 @@ def _write_role(roles_dir: Path, role_id: str) -> str:
                 "---",
                 f"role_id: {role_id}",
                 f"name: codex-rig-{role_id}",
-                "model: gpt-6-sol",
+                "model: gpt-6.1-sol",
                 f"model_reasoning_effort: {effort}",
                 "approval_policy: on-request",
                 "sandbox_mode: read-only",
@@ -335,7 +335,7 @@ def _runtime_fixture(
                     "payload": {
                         "type": "thread_settings_applied",
                         "thread_settings": {
-                            "model": "gpt-6-sol",
+                            "model": "gpt-6.1-sol",
                             "reasoning_effort": effort,
                             "approval_policy": "on-request",
                             "permission_profile": {
@@ -352,7 +352,7 @@ def _runtime_fixture(
                     "type": "turn_context",
                     "payload": {
                         "turn_id": turn_id,
-                        "model": "gpt-6-sol",
+                        "model": "gpt-6.1-sol",
                         "effort": effort,
                         "approval_policy": "on-request",
                         "sandbox_policy": {"type": "read-only"},

@@ -1,8 +1,8 @@
-"""Validate Codex App Server command-denial transcripts and isolated live probes.
+"""Validate Codex local reviewer wave command-denial transcripts and isolated live probes.
 
-Purpose: provide a small, standard-library-only negative-conformance oracle for the Codex App Server command approval
+Purpose: provide a standard-library-only negative-conformance oracle for local reviewer command approval
 protocol. Synthetic transcript validation is the repeatable release gate. Explicit ``--live`` and ``--live-matrix``
-modes start only the operator-selected local App Server binary with operator-provided temporary boundaries and an exact
+modes start only the operator-selected Codex binary with temporary boundaries and an exact
 installed plugin identity.
 
 Scope: the validator binds one `item/commandExecution/requestApproval` callback to an exact disposable collector
@@ -13,7 +13,8 @@ output/fallback/duplicate/correlation drift; and requires a later local recovery
 matrix adds text-only and installed-skill-input controls before denial, with distinct roots and first-failure stop
 behavior.
 
-Usage: run `python app_server_denial_probe.py --transcript transcript.jsonl --thread-id ... --turn-id ... --item-id ...
+Usage: run `python local_reviewer_denial_probe.py --transcript transcript.jsonl --thread-id ... --turn-id ...
+--item-id ...
 --cwd ... --output-path ... --command ...` for local JSON Lines. The separately authorized single-scenario form adds
 `--live`, an independently recorded package-manifest digest, and explicit disposable arguments. The matrix form uses
 `--live-matrix matrix.json`, whose three prepared entries must be ordered `text-control`, `skill-control`, then
@@ -33,7 +34,7 @@ host temporary root, passes the inherited environment only as an opaque input to
 tree on every exit path, and writes bounded sanitized success or failure evidence atomically only after cleanup was
 attempted. A cleanup failure remains a failing artifact and can never publish a pass.
 
-Used by: `test_app_server_denial_protocol.py` is the deterministic release gate and mocks the live stdio exchange. A
+Used by: `test_local_reviewer_denial_protocol.py` is the deterministic release gate and mocks the live stdio exchange. A
 human/operator invokes ``--live`` only after separately authorizing the account/model cost boundary. This module never
 changes the production Codex home, workspace, network policy, rules, plugin cache, or credentials.
 """
@@ -603,7 +604,7 @@ def _signal_process_group(process_group_id: int, sent_signal: signal.Signals) ->
 
 
 def terminate_process(process: subprocess.Popen[str], platform: str | None = None) -> None:
-    """Terminate and prove cleanup of one App Server process boundary."""
+    """Terminate and prove cleanup of one local reviewer wave process boundary."""
     active_platform = sys.platform if platform is None else platform
     if active_platform == "win32":
         completed = subprocess.run(
@@ -801,7 +802,7 @@ def _validate_live_config(config: LiveProbeConfig) -> None:
 
 
 class _JsonRpcStdio:
-    """Read local App Server JSON-RPC without retaining stderr or untrusted payloads."""
+    """Read local reviewer wave JSON-RPC without retaining stderr or untrusted payloads."""
 
     def __init__(
         self,
@@ -919,7 +920,7 @@ class _JsonRpcStdio:
             return _mapping(message.get("result"), f"{method}-result")
 
     def events(self) -> Iterable[Mapping[str, object]]:
-        """Yield pending notifications first, then local App Server messages until stopped."""
+        """Yield pending notifications first, then local reviewer wave messages until stopped."""
         while self.pending:
             yield self.pending.pop(0)
         while True:
@@ -978,7 +979,7 @@ def _turn_completed(
 
 
 def _safe_turn_error_category(turn: Mapping[str, object]) -> str:
-    """Return only a schema-owned App Server error category from one terminal turn.
+    """Return only a schema-owned local reviewer wave error category from one terminal turn.
 
     Example:
         >>> _safe_turn_error_category({})
@@ -1317,7 +1318,7 @@ def run_live_probe(
     config: LiveProbeConfig,
     popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
 ) -> Path:
-    """Run one operator-authorized, disposable App Server denial probe over local stdio.
+    """Run one operator-authorized, disposable local reviewer wave denial probe over local stdio.
 
     This function is intentionally not called by tests or CI. Its caller supplies every mutable boundary, including an
     operator-prepared isolated `CODEX_HOME`, and bears the separate model/account authorization. Path isolation and
@@ -1575,7 +1576,7 @@ def _configs_from_matrix_manifest(manifest_path: Path) -> tuple[LiveProbeConfig,
 
 def _parse_arguments(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse either a local synthetic transcript or explicit disposable live probe."""
-    parser = argparse.ArgumentParser(description="Fail-closed Codex App Server denial transcript validator")
+    parser = argparse.ArgumentParser(description="Fail-closed Codex local reviewer wave denial transcript validator")
     parser.add_argument("--live", action="store_true", help="Run the separately authorized disposable stdio probe")
     parser.add_argument(
         "--live-matrix",

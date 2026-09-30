@@ -1,7 +1,7 @@
 ---
 role_id: sw-engineer
 name: codex-rig-sw-engineer
-model: gpt-6-sol
+model: gpt-6.1-sol
 model_reasoning_effort: medium
 approval_policy: on-request
 sandbox_mode: workspace-write

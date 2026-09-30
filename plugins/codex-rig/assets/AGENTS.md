@@ -68,10 +68,10 @@ Apply this policy to every same or plausibly shared obstacle, incl. one appearin
 
 ## Runtime Effort Policy
 
-- Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
+- Normal parent, implementation, verification, data, performance, research, and adversarial roles use `gpt-6.1-sol`; parent, implementation, verification, and performance start at `medium`, while data, research, and adversarial challenge use `high`.
 - Delegation, documentation, CI/CD, web evidence, OSS triage, static analysis, and curation use `gpt-6-luna`; static analysis and web evidence start at `medium`, the others at `high`.
 - Final behavior-changing and executable acceptance decisions stay with the Sol parent/session.
-- `security-auditor` and `solution-architect` use `gpt-6-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
+- `security-auditor` and `solution-architect` use `gpt-6.1-sol` at `high`, only after explicit user request or agent selection; both remain read-only advisory passes.
 - Historical GPT-5.6 routing evidence remains archived, not proof of GPT-6 quality or cost. Astra has no standing role assignment.
 
 Reasoning effort is role-specific. Reserve `xhigh`/`max` for explicit task-level escalation after representative evidence shows the assigned effort insufficient. Codex has no separate review-effort config key; `/review` inherits session `medium` unless the invocation explicitly sets `model_reasoning_effort="high"`.

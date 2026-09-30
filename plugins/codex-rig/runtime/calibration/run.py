@@ -106,9 +106,9 @@ ROLE_TASK_CUES = {
     "scientist": "ablations",
     "delegation-lead": "separable workstreams",
 }
-DEFAULT_MODEL = "gpt-6-sol"
-REVIEW_MODEL = "gpt-6-sol"
-CRITICAL_MODEL = "gpt-6-sol"
+DEFAULT_MODEL = "gpt-6.1-sol"
+REVIEW_MODEL = "gpt-6.1-sol"
+CRITICAL_MODEL = "gpt-6.1-sol"
 SUPPORT_MODEL = "gpt-6-luna"
 SUPPORTED_ACTIVE_MODELS = {DEFAULT_MODEL, CRITICAL_MODEL, SUPPORT_MODEL}
 LUNA_MODEL_AGENTS = {
@@ -538,7 +538,7 @@ def check_accepted_route_evidence(run: CalibrationRun) -> None:
         ):
             raise ValueError("active parent or deep-review assignment mismatch")
         if payload.get("active_assignment_basis") != {
-            "decided_at": "2026-09-22",
+            "decided_at": "2026-09-30",
             "decision": "explicit-user-rollover",
             "gpt6_quality_cost_evidence": "pending-paired-evaluation",
         }:

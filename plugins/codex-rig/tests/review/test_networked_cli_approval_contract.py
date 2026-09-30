@@ -269,7 +269,7 @@ def test_profile_calibration_keeps_collection_failure_and_current_parent_route()
     assert "collection as incomplete" in clean
     assert "scope question" not in clean
     assert "gpt-6-luna" in patterns
-    assert "gpt-6-sol" in patterns
+    assert "gpt-6.1-sol" in patterns
     assert all("gpt-5.6" not in pattern for pattern in patterns)
     for case_id in ("explicit-sol-automatic-route-rejected", "explicit-sol-advisory-boundary"):
         case = cases[case_id]

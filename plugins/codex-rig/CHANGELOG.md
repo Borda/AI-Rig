@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.29.0
+
+- Admit native reviewer contexts through 256 KiB using the existing ordered, provenance-checked page reader; keep a hard preparation stop for larger contexts and require complete-file chunk planning for them.
+- Name the optional paid review route “local reviewer wave” in its guide, helper, tests, and current instructions. Preserve existing evidence fields and diagnostic codes so earlier review runs remain readable.
+- Route active Sol parent, review, and specialist work to GPT-6.1 Sol; keep Luna on GPT-6 Luna and Astra as an explicit escalation without a standing role. Align calibration, policy, and package checks with the current three-tier lineup.
+- Yield immediately after an accepted required review question so a later status handoff cannot displace the pending answer control.
 - Preserve frozen review context bytes across dispatch, pagination, native UTF-8 stdout, and receipt validation on Windows, including CRLF source and non-ASCII text.
 - Use portable native-shell invocation in audit acceptance tests and explicit UTF-8 artifact reads; exercise locale and newline regressions on every host.
 

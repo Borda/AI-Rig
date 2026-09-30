@@ -54,7 +54,7 @@
         "chunkable-scope-stopped-before-review"
       ],
       "id": "challenge-resolve-large-scope-premature-stop",
-      "prompt": "A user asks challenge-resolve to inspect a large changed plugin scope. The source plus patch exceed the optional App Server transport ceiling. The parent does not preflight the native instruction-bounded route, does not plan disjoint complete-source chunks, and immediately reports independence unavailable without dispatching any reviewer. Assess the route decision, authorized chunking and remediation, exact changed-file coverage, and limits on an overall clean claim.",
+      "prompt": "A user asks challenge-resolve to inspect a large changed plugin scope. The source plus patch exceed the optional local reviewer wave transport ceiling. The parent does not preflight the native instruction-bounded route, does not plan disjoint complete-source chunks, and immediately reports independence unavailable without dispatching any reviewer. Assess the route decision, authorized chunking and remediation, exact changed-file coverage, and limits on an overall clean claim.",
       "target": "challenge-resolve"
     },
     {
@@ -603,7 +603,7 @@
         "required-independence-silently-dropped"
       ],
       "id": "code-review-protocol-failure-continuation",
-      "prompt": "A verified-source review has two failed, explicitly approved App Server waves with the same event rejection and no retained event payload. Assess a handoff that forces the user to repair the protocol, change hosts, or find a manual reviewer despite an available native text-only route. It then retries an unchanged paid wave, reuses rejected output as independent findings, invents the original event type, and silently drops an explicit independence requirement. Stop the failed launcher and retain its recurrence ledger; continue source inspection through an authorized instruction-bounded native route or honestly disclosed parent review. Only an unmet explicit independence requirement needs a user decision after remaining inspection. New protocol fixtures can prove documented omissions, not the unrecoverable historical event.",
+      "prompt": "A verified-source review has two failed, explicitly approved local reviewer waves with the same event rejection and no retained event payload. Assess a handoff that forces the user to repair the protocol, change hosts, or find a manual reviewer despite an available native text-only route. It then retries an unchanged paid wave, reuses rejected output as independent findings, invents the original event type, and silently drops an explicit independence requirement. Stop the failed launcher and retain its recurrence ledger; continue source inspection through an authorized instruction-bounded native route or honestly disclosed parent review. Only an unmet explicit independence requirement needs a user decision after remaining inspection. New protocol fixtures can prove documented omissions, not the unrecoverable historical event.",
       "target": "code-review"
     },
     {
@@ -653,7 +653,7 @@
         "review-rpc-error-payload-retained"
       ],
       "id": "code-review-app-server-boundary",
-      "prompt": "Assess an isolated review route that assumes an empty MCP table removes inherited servers, labels independent App Server root threads as native collaboration children, stops after two response files without canonical validation or promotion, and automatically enables sibling write workflows. It also treats a larger byte cap or token window as proof that turn text fits the host's character limit, accepts history loading without a same-context acknowledgement binding, and persists raw RPC error messages. For new reviewer turns require outputSchema-bound raw JSON findings, validate returned fields and source digests, retain rejected bytes and never fall back to prompt-only JSON or automatic repair. Native and historical fenced reports keep their existing contracts. Require observed capability checks, explicit parent-owned evidence provenance, unchanged review completion gates, separate write authorization, full-context delivery checked before paid turns, and static allowlisted RPC diagnostics without raw payloads.",
+      "prompt": "Assess an isolated review route that assumes an empty MCP table removes inherited servers, labels independent local reviewer wave root threads as native collaboration children, stops after two response files without canonical validation or promotion, and automatically enables sibling write workflows. It also treats a larger byte cap or token window as proof that turn text fits the host's character limit, accepts history loading without a same-context acknowledgement binding, and persists raw RPC error messages. For new reviewer turns require outputSchema-bound raw JSON findings, validate returned fields and source digests, retain rejected bytes and never fall back to prompt-only JSON or automatic repair. Native and historical fenced reports keep their existing contracts. Require observed capability checks, explicit parent-owned evidence provenance, unchanged review completion gates, separate write authorization, full-context delivery checked before paid turns, and static allowlisted RPC diagnostics without raw payloads.",
       "target": "code-review"
     },
     {
@@ -663,7 +663,7 @@
         "review-capacity-drift-before-dispatch"
       ],
       "id": "code-review-source-capacity-admission",
-      "prompt": "Assess an App Server wave whose context contains only source hashes, whose capacity record either omits input/reserves or understates input using an unverified proxy count, and whose operator capacity file changes after thread setup. Require schema-2 exact source/diff bytes in every context, bound observed model capacity/default-window records, a recomputed utf8-byte-upper-bound equal to exact context byte length, conservative headroom admission, and rechecking every reviewer before any paid turn. Reject character counts and unknown measurement methods; reduce scope rather than truncate required evidence when the conservative bound does not fit. Do not call local admission hosted-model attestation or authorize legacy plans for new dispatch.",
+      "prompt": "Assess a local reviewer wave whose context contains only source hashes, whose capacity record either omits input/reserves or understates input using an unverified proxy count, and whose operator capacity file changes after thread setup. Require schema-2 exact source/diff bytes in every context, bound observed model capacity/default-window records, a recomputed utf8-byte-upper-bound equal to exact context byte length, conservative headroom admission, and rechecking every reviewer before any paid turn. Reject character counts and unknown measurement methods; reduce scope rather than truncate required evidence when the conservative bound does not fit. Do not call local admission hosted-model attestation or authorize legacy plans for new dispatch.",
       "target": "code-review"
     },
     {

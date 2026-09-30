@@ -1,9 +1,9 @@
-"""Run and validate a deliberately narrow, opt-in App Server review route.
+"""Run and validate a deliberately narrow, opt-in local reviewer wave.
 
 ## Purpose
 
-Start independent, ephemeral read-only App Server threads only after a parent has frozen a small code-review plan, then
-retain a bounded evidence record that binds role cards, contexts, and final responses. The route exists because the
+Start independent, ephemeral read-only reviewer sessions after a parent freezes a small code-review plan, then retain a
+bounded evidence record that binds role cards, contexts, and final responses. The route exists because the
 native launcher cannot presently attest the mandatory reviewer controls; it is not a general agent runner, write
 adapter, scheduler, or provenance replacement.
 
@@ -18,7 +18,7 @@ credentials, plugin state, or a parent result artifact.
 
 ## Usage
 
-An explicitly authorized operator runs ``python app_server_review.py --plan frozen-plan.json --out new-output-
+An explicitly authorized operator runs ``python local_reviewer_wave.py --plan frozen-plan.json --out new-output-
 directory``. Unit tests exercise the pure ``validate_evidence`` boundary and mocked protocol helpers; ordinary test
 execution must never invoke a model or network operation.
 
@@ -644,7 +644,7 @@ def _resolve_node_role(node: dict[str, object], roles_dir: Path, role_ids: set[s
     role_path = roles_dir / role_id / "ROLE.md"
     role_bytes = _read_bytes(role_path, "role-card")
     model, effort = _role_settings(role_bytes)
-    if model not in {"gpt-6-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
+    if model not in {"gpt-6.1-sol", "gpt-6-luna"} or role_id in {"security-auditor", "solution-architect"}:
         raise ReviewRouteError("plan-role-model-unsupported")
     if node.get("model") != model or node.get("reasoning_effort") != effort:
         raise ReviewRouteError("plan-role-settings-mismatch")
@@ -877,7 +877,7 @@ def _validate_capabilities(value: object) -> dict[str, bool]:
 
 
 def _controls(value: object, node: Mapping[str, object]) -> dict[str, object]:
-    """Verify the exact observed App Server controls for one independent thread."""
+    """Verify the exact observed local reviewer wave controls for one independent thread."""
     controls = dict(_mapping(value, "evidence-observed-controls"))
     expected = {
         "sandbox": {"type": "readOnly", "networkAccess": False},
@@ -898,7 +898,7 @@ def validate_evidence(
     require_dispatch: bool = False,
     require_assessment: bool = True,
 ) -> dict[str, object]:
-    """Bind completed App Server evidence to its frozen plan and installed role cards.
+    """Bind completed local reviewer wave evidence to its frozen plan and installed role cards.
 
     The returned summary is intentionally conservative: it never claims native lineage, credential isolation, or write
     eligibility. ``parallel`` is returned only when the adapter retained overlapping substantive node intervals.
@@ -1008,7 +1008,7 @@ class _JsonRpcStdio:
     """Exchange bounded JSON-RPC frames without retaining server stderr or raw logs."""
 
     def __init__(self, process: subprocess.Popen[str], deadline: float) -> None:
-        """Attach a single bounded reader to an App Server stdio process."""
+        """Attach a single bounded reader to a local reviewer wave stdio process."""
         if process.stdin is None or process.stdout is None:
             raise ReviewRouteError("app-server-stdio-unavailable")
         self._process = process
@@ -1248,7 +1248,7 @@ def _terminate(process: subprocess.Popen[str]) -> None:
 
 
 def _server_command(codex: Path, disabled_servers: list[str]) -> list[str]:
-    """Build invocation-only App Server restrictions without changing host configuration."""
+    """Build invocation-only local reviewer wave restrictions without changing host configuration."""
     command = [str(codex), "app-server", "--stdio"]
     overrides = (
         'sandbox_mode="read-only"',
@@ -1298,7 +1298,7 @@ def _codex_version(codex: Path, cwd: Path) -> str:
 
 
 def _start_server(command: list[str], cwd: Path, deadline: float) -> tuple[subprocess.Popen[str], _JsonRpcStdio]:
-    """Start one local App Server with inherited opaque authentication and no stderr capture."""
+    """Start one local reviewer wave with inherited opaque authentication and no stderr capture."""
     creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) if sys.platform == "win32" else 0
     process = subprocess.Popen(
         command,
@@ -1832,7 +1832,7 @@ def _handle_review_event(
     plan: dict[str, object],
     nodes: list[dict[str, object]],
 ) -> None:
-    """Route one App Server stream event to its reviewer after rejecting anything off-protocol."""
+    """Route one local reviewer wave stream event to its reviewer after rejecting anything off-protocol."""
     method = message.get("method")
     if "id" in message:
         raise ReviewRouteError("app-server-server-request-rejected")
@@ -1988,7 +1988,7 @@ def _finalize_review_evidence(
 
 
 def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds: float) -> Path:
-    """Run one explicitly authorized App Server review wave and write bounded local evidence."""
+    """Run one explicitly authorized local reviewer wave and write bounded local evidence."""
     _require_review_timeout(timeout_seconds)
     roles_dir = Path(__file__).resolve().parents[1] / "roles"
     frozen_plan = _read_bytes(plan_path, "plan")
@@ -2076,7 +2076,9 @@ def run_review(plan_path: Path, output_root: Path, codex: Path, timeout_seconds:
 
 def main() -> int:
     """Parse the explicit operator CLI and run one bounded review route."""
-    parser = argparse.ArgumentParser(description="Run an explicitly authorized bounded App Server code review.")
+    parser = argparse.ArgumentParser(
+        description="Run an explicitly authorized bounded local reviewer wave code review."
+    )
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--out", type=Path)
     parser.add_argument("--codex", type=Path, default=Path("codex"))

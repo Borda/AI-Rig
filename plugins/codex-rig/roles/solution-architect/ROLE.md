@@ -1,7 +1,7 @@
 ---
 role_id: solution-architect
 name: codex-rig-solution-architect
-model: gpt-6-sol
+model: gpt-6.1-sol
 model_reasoning_effort: high
 approval_policy: on-request
 sandbox_mode: read-only

@@ -122,3 +122,14 @@ def test_keyed_merge_reply_cannot_accept_bare_approval_or_displace_control() -> 
     assert "even when it is the only pending decision" in guide
     assert "Do not append a final or status message after an accepted async question" in guide
     assert "a bare `approve` or `yes` cannot authorize the merge" in merge
+
+
+@pytest.mark.installed_plugin
+def test_review_recovery_yields_before_blocked_handoff() -> None:
+    """Keep a pending review answer available after the native question opens."""
+    review = (PLUGIN_ROOT / "skills/code-review/SKILL.md").read_text(encoding="utf-8")
+    checkpoint = review.split("Completion checkpoint:", 1)[1].split("### Reviewer validation recovery", 1)[0]
+
+    assert "If a required async question is accepted, yield immediately" in checkpoint
+    assert "Do not sleep, poll, or send a final or status handoff" in checkpoint
+    assert checkpoint.index("yield immediately") < checkpoint.index("Otherwise state `Review handoff blocked`")

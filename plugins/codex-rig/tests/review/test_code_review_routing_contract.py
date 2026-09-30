@@ -332,7 +332,7 @@ def test_packaged_role_card_supplies_runtime_contract_without_source_agent_confi
 
     assert contract == {
         "approval_policy": "on-request",
-        "model": "gpt-6-sol",
+        "model": "gpt-6.1-sol",
         "model_reasoning_effort": "medium",
         "role_card_sha256": hashlib.sha256(role_card.read_bytes()).hexdigest(),
         "role_id": "qa-specialist",

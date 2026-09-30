@@ -365,7 +365,7 @@ def test_candidate_rejects_reviewer_without_rationale(tmp_path: Path) -> None:
         _load_validator()._validate_reviewer_assessments(tmp_path, metadata, passes)
 
 
-def test_candidate_binds_app_server_rating_to_structured_output(tmp_path: Path) -> None:
+def test_candidate_binds_local_reviewer_wave_rating_to_structured_output(tmp_path: Path) -> None:
     """A clean structured reviewer response supplies its own scoped rating."""
     (tmp_path / "qa.md").write_text(
         json.dumps({"assessment": {"rating": 2, "rationale": "A minor change remains."}, "findings": []}),

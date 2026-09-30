@@ -65,7 +65,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(SHARED_DIRECTORY))
 
 from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
-from app_server_review import ReviewRouteError, validate_evidence as validate_app_server_evidence  # noqa: E402
+from local_reviewer_wave import ReviewRouteError, validate_evidence as validate_local_reviewer_evidence  # noqa: E402
 from review_routing import derive_mechanical_risk  # noqa: E402
 from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
 
@@ -647,13 +647,13 @@ def _readable_review_role(role_id: str) -> str:
     return " ".join([first, *parts[1:]])
 
 
-def _retained_reviewer_rating(path: Path, *, app_server: bool, main: bool, role: str) -> int:
+def _retained_reviewer_rating(path: Path, *, local_reviewer_wave: bool, main: bool, role: str) -> int:
     """Read a scoped rating and rationale from the retained reviewer response."""
     try:
         content = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise SystemExit(f"review-assessment-content-invalid:{role}") from error
-    if app_server:
+    if local_reviewer_wave:
         try:
             payload = json.loads(content)
         except (ValueError, RecursionError) as error:
@@ -721,16 +721,16 @@ def _validate_reviewer_assessments(
             role, item = expected[label]
             if evidence_path != _resolve_path(out_dir, item["output_path"]):
                 raise SystemExit(f"review-assessment-evidence-mismatch:{role}")
-            app_server = item["mode"] == "app-server"
+            local_reviewer_wave = item["mode"] == "app-server"
         else:
             role = "main reviewer"
             if evidence_path in specialist_outputs:
                 raise SystemExit("review-assessment-main-evidence-reused")
             if evidence_path != _resolve_path(out_dir, "review-notes.md"):
                 raise SystemExit("review-assessment-main-evidence-mismatch")
-            app_server = False
+            local_reviewer_wave = False
         rating = _retained_reviewer_rating(
-            evidence_path, app_server=app_server, main=label == "main reviewer", role=role
+            evidence_path, local_reviewer_wave=local_reviewer_wave, main=label == "main reviewer", role=role
         )
         if rating != assessment.get("rating"):
             raise SystemExit(f"review-assessment-rating-mismatch:{role}")
@@ -1850,7 +1850,7 @@ def _validate_review_runtime(
     if manifest.get("schema_version") in {5, 6}:
         return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
     if manifest.get("schema_version") == 4:
-        return _validate_app_server_review(
+        return _validate_local_reviewer_wave(
             out_dir, manifest, passes, require_assessment=require_assessment, roles_dir=roles_dir
         )
     spawned = [item for item in passes if item.get("mode") == "spawned"]
@@ -2273,7 +2273,7 @@ def _validate_instruction_bounded_review(
     }
 
 
-def _validate_app_server_review(
+def _validate_local_reviewer_wave(
     out_dir: Path,
     manifest: dict[str, Any],
     passes: list[dict[str, Any]],
@@ -2292,7 +2292,7 @@ def _validate_app_server_review(
     if not evidence_path.is_file() or _sha256(evidence_path) != execution["evidence_sha256"]:
         raise SystemExit("review-app-server-evidence-hash-mismatch")
     try:
-        summary = validate_app_server_evidence(
+        summary = validate_local_reviewer_evidence(
             plan_path,
             evidence_path,
             roles_dir,
@@ -2631,7 +2631,7 @@ def _validate_manifest_entries(
         raise SystemExit("manifest-review-input-hash-mismatch")
     roles_dir = out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles"
     if schema_version == 4:
-        _validate_app_server_review(
+        _validate_local_reviewer_wave(
             out_dir, manifest, passes, require_assessment=require_assessment, roles_dir=roles_dir
         )
     elif manifest.get("app_server_execution") is not None or any(item.get("mode") == "app-server" for item in passes):

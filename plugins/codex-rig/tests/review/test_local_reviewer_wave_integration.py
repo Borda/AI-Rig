@@ -25,7 +25,7 @@ def _module(path: Path) -> ModuleType:
     return module
 
 
-def test_app_server_manifest_requires_execution_evidence(tmp_path: Path) -> None:
+def test_local_reviewer_manifest_requires_execution_evidence(tmp_path: Path) -> None:
     """Do not admit the new independent route on a manifest declaration alone."""
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
     review_input = b"diff --git a/widget.py b/widget.py\n"
@@ -47,7 +47,7 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     """Build a full synthetic HIGH_RISK review through existing artifact constructors."""
     completion_tests = _module(Path(__file__).with_name("test_review_completion_gate.py"))
     run = completion_tests._assessed_pr.__wrapped__(tmp_path)
-    evidence_tests = _module(Path(__file__).with_name("test_app_server_review.py"))
+    evidence_tests = _module(Path(__file__).with_name("test_local_reviewer_wave.py"))
     plan_path, evidence_path = evidence_tests.review_evidence_files(
         run, roles=("qa-specialist", "challenger"), source_path="widget.txt"
     )
@@ -148,7 +148,7 @@ def isolated_review(tmp_path: Path, text_newline_default: None) -> Path:
     return run
 
 
-def test_high_risk_app_server_review_completes_and_is_discoverable(isolated_review: Path) -> None:
+def test_high_risk_local_reviewer_wave_completes_and_is_discoverable(isolated_review: Path) -> None:
     """Run both canonical validators and report lookup with genuinely distinct fixture threads."""
     finder = PLUGIN_ROOT / "shared/find-review-report.py"
     completed = subprocess.run(
@@ -168,7 +168,7 @@ def test_high_risk_app_server_review_completes_and_is_discoverable(isolated_revi
     assert Path(lookup.stdout.strip()) == isolated_review / "result.json"
 
 
-def test_assessed_app_server_review_rejects_serial_specialists(isolated_review: Path) -> None:
+def test_assessed_local_reviewer_wave_rejects_serial_specialists(isolated_review: Path) -> None:
     """Keep two independently completed but nonoverlapping reviewers from passing an assessed review."""
     manifest = json.loads((isolated_review / "specialist-manifest.json").read_text(encoding="utf-8"))
     evidence_path = Path(manifest["app_server_execution"]["evidence_path"])
@@ -242,7 +242,7 @@ def test_challenge_manifest_requires_exact_authenticated_challenger(
         assert expected_error in completed.stderr
 
 
-def test_code_review_validator_rejects_legacy_app_server_plan_dispatch(isolated_review: Path) -> None:
+def test_code_review_validator_rejects_legacy_local_reviewer_wave_plan_dispatch(isolated_review: Path) -> None:
     """Keep historical adapter evidence readable without allowing it to satisfy a new review run."""
     manifest_path = isolated_review / "specialist-manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -262,11 +262,11 @@ def test_code_review_validator_rejects_legacy_app_server_plan_dispatch(isolated_
     validator = _module(PLUGIN_ROOT / "skills/code-review/validate_artifacts.py")
 
     with pytest.raises(SystemExit, match="review-app-server-evidence-invalid:plan-legacy-dispatch-forbidden"):
-        validator._validate_app_server_review(isolated_review, manifest, manifest["passes"])
+        validator._validate_local_reviewer_wave(isolated_review, manifest, manifest["passes"])
 
 
 @pytest.mark.parametrize("tamper", ["response", "input", "execution-digest", "native-attempt"])
-def test_review_completion_rejects_changed_app_server_evidence(isolated_review: Path, tamper: str) -> None:
+def test_review_completion_rejects_changed_local_reviewer_wave_evidence(isolated_review: Path, tamper: str) -> None:
     """Reject changed evidence at final completion, not only at initial adapter validation."""
     manifest_path = isolated_review / "specialist-manifest.json"
     manifest = json.loads(manifest_path.read_text())

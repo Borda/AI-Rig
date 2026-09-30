@@ -53,7 +53,7 @@ def test_documented_isolated_response_matches_required_output_schema() -> None:
     response = json.loads(example.group(1))
     source_digest, diff_digest = "a" * 64, "b" * 64
     response.update(source_sha256=source_digest, diff_sha256=diff_digest)
-    runner = _module(PLUGIN_ROOT / "shared" / "app_server_review.py")
+    runner = _module(PLUGIN_ROOT / "shared" / "local_reviewer_wave.py")
     plan = {"consumer_id": "code-review", "source_sha256": source_digest, "review_input_sha256": diff_digest}
     runner._validate_review_output(json.dumps(response), plan)
     del response["assessment"]
@@ -629,7 +629,7 @@ def _bound_loop(tmp_path: Path) -> tuple[ModuleType, Path, dict[str, object]]:
     return evidence["validator"], evidence["run"], evidence["fixture"]
 
 
-def _app_server_loop(
+def _local_reviewer_loop(
     tmp_path: Path,
     *,
     diff_newline: str = "\n",
@@ -638,10 +638,10 @@ def _app_server_loop(
     context_diff_suffix: str = "",
     retained_diff: bytes | None = None,
 ) -> tuple[ModuleType, Path, Path]:
-    """Bind App Server evidence to explicit diff bytes, optionally altering only the supplied context."""
+    """Bind local reviewer wave evidence to explicit diff bytes, optionally altering only the supplied context."""
     validator = _validator()
     run = tmp_path / "loop"
-    review = _module(REVIEW_TESTS / "test_app_server_review_integration.py").isolated_review.__wrapped__(
+    review = _module(REVIEW_TESTS / "test_local_reviewer_wave_integration.py").isolated_review.__wrapped__(
         run / "review", text_newline_default=None
     )
     repository_root = tmp_path / "repository-root"
@@ -933,9 +933,9 @@ def test_final_native_rejects_forged_diff_suffix(tmp_path: Path) -> None:
         evidence["validator"].validate_loop_evidence(run, fixture["sessions"])
 
 
-def test_final_app_server_rejects_forged_diff_suffix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Authenticated App Server context cannot extend an otherwise canonical tracked patch."""
-    validator, run, codex_home = _app_server_loop(
+def test_final_local_reviewer_wave_rejects_forged_diff_suffix(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Authenticated local reviewer wave context cannot extend an otherwise canonical tracked patch."""
+    validator, run, codex_home = _local_reviewer_loop(
         tmp_path, source_content="VALUE = 2\n", context_diff_suffix="FAKE PATCH\n"
     )
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")
@@ -944,11 +944,11 @@ def test_final_app_server_rejects_forged_diff_suffix(tmp_path: Path, monkeypatch
         validator.validate_loop_evidence(run, codex_home)
 
 
-def test_final_app_server_rejects_diff_not_matching_current_git_patch(
+def test_final_local_reviewer_wave_rejects_diff_not_matching_current_git_patch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A clean schema-four review cannot authenticate a synthetic current patch."""
-    validator, run, codex_home = _app_server_loop(tmp_path, retained_diff=b"diff --git a/widget.py b/widget.py\n")
+    validator, run, codex_home = _local_reviewer_loop(tmp_path, retained_diff=b"diff --git a/widget.py b/widget.py\n")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")
     assert (run / "round-1.diff").read_bytes()
 
@@ -1131,11 +1131,11 @@ def test_tracked_deletion_is_valid_supporting_source(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("newline", "archived"), [pytest.param("\n", False, id="current-lf"), pytest.param("\r\n", True, id="archive-crlf")]
 )
-def test_validates_app_server_review_against_frozen_source_diff_and_output(
+def test_validates_local_reviewer_wave_against_frozen_source_diff_and_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, newline: str, archived: bool
 ) -> None:
     """Accept current Git patch bytes and preserve historical CRLF review reads."""
-    validator, run, codex_home = _app_server_loop(tmp_path, diff_newline=newline, source_content="VALUE = 2\n")
+    validator, run, codex_home = _local_reviewer_loop(tmp_path, diff_newline=newline, source_content="VALUE = 2\n")
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")
     if archived:
         evidence_path = run / "loop-evidence.json"
@@ -1156,7 +1156,7 @@ def test_large_context_dispatch_through_loop_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tamper: str
 ) -> None:
     """Bind a real large-source dispatch to loop acceptance; reject drift and self-consistent partial coverage."""
-    validator, run, codex_home = _app_server_loop(
+    validator, run, codex_home = _local_reviewer_loop(
         tmp_path, source_content="# Frozen module evidence: Unicode π and literal escape \\n.\n" * 10000
     )
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")
@@ -1167,7 +1167,7 @@ def test_large_context_dispatch_through_loop_validation(
     plan_path = Path(manifest["app_server_execution"]["plan_path"])
     plan = json.loads(plan_path.read_bytes())
     assert (run / "source-1.json").stat().st_size > 256 * 1024
-    protocol = _module(REVIEW_TESTS / "test_app_server_review.py")
+    protocol = _module(REVIEW_TESTS / "test_local_reviewer_wave.py")
     launches = protocol._launches_for_plan(plan_path, echo_input=True)
     launches[1] = [frame for frame in launches[1] if frame.get("params", {}).get("threadId") != "thread-1"]
     old_outputs = {item["role"]: Path(item["output_path"]).read_text(encoding="utf-8") for item in manifest["passes"]}
@@ -1175,7 +1175,7 @@ def test_large_context_dispatch_through_loop_validation(
         item = frame.get("params", {}).get("item", {})
         if item.get("type") == "agentMessage":
             index = int(frame["params"]["threadId"].removeprefix("thread-"))
-            # New App Server turns return raw schema-constrained JSON; retained historical reports stay fenced.
+            # New local reviewer wave turns return raw schema-constrained JSON; retained historical reports stay fenced.
             report = json.loads(
                 old_outputs[plan["nodes"][index]["role_id"]]
                 .removeprefix("```adversarial-loop\n")
@@ -1299,11 +1299,11 @@ def test_current_challenger_declares_inspected_paths_and_limits(tmp_path: Path) 
     ("diff_newline", "context_newline"),
     [pytest.param("\n", "\r\n", id="lf-diff-crlf-context"), pytest.param("\r\n", "\n", id="crlf-diff-lf-context")],
 )
-def test_rejects_app_server_context_with_altered_diff_newlines(
+def test_rejects_local_reviewer_wave_context_with_altered_diff_newlines(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, diff_newline: str, context_newline: str
 ) -> None:
     """Reject newline-altered context even when its own provenance hashes are valid."""
-    validator, run, codex_home = _app_server_loop(
+    validator, run, codex_home = _local_reviewer_loop(
         tmp_path, diff_newline=diff_newline, context_diff_newline=context_newline, source_content="VALUE = 2\n"
     )
     monkeypatch.setenv("CODEX_THREAD_ID", "thread")

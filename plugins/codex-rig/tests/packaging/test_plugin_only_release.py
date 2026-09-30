@@ -39,20 +39,20 @@ EXPECTED_SKILLS = (
     "sync",
 )
 EXPECTED_ROLES = {
-    "challenger": ("gpt-6-sol", "high", "read-only"),
+    "challenger": ("gpt-6.1-sol", "high", "read-only"),
     "cicd-steward": ("gpt-6-luna", "high", "workspace-write"),
     "curator": ("gpt-6-luna", "high", "workspace-write"),
-    "data-steward": ("gpt-6-sol", "high", "workspace-write"),
+    "data-steward": ("gpt-6.1-sol", "high", "workspace-write"),
     "delegation-lead": ("gpt-6-luna", "high", "workspace-write"),
     "doc-scribe": ("gpt-6-luna", "high", "workspace-write"),
     "linting-expert": ("gpt-6-luna", "medium", "workspace-write"),
     "oss-shepherd": ("gpt-6-luna", "high", "read-only"),
-    "qa-specialist": ("gpt-6-sol", "medium", "workspace-write"),
-    "scientist": ("gpt-6-sol", "high", "workspace-write"),
-    "security-auditor": ("gpt-6-sol", "high", "read-only"),
-    "solution-architect": ("gpt-6-sol", "high", "read-only"),
-    "squeezer": ("gpt-6-sol", "medium", "read-only"),
-    "sw-engineer": ("gpt-6-sol", "medium", "workspace-write"),
+    "qa-specialist": ("gpt-6.1-sol", "medium", "workspace-write"),
+    "scientist": ("gpt-6.1-sol", "high", "workspace-write"),
+    "security-auditor": ("gpt-6.1-sol", "high", "read-only"),
+    "solution-architect": ("gpt-6.1-sol", "high", "read-only"),
+    "squeezer": ("gpt-6.1-sol", "medium", "read-only"),
+    "sw-engineer": ("gpt-6.1-sol", "medium", "workspace-write"),
     "web-explorer": ("gpt-6-luna", "medium", "read-only"),
 }
 EXPECTED_KAGGLE_REFERENCES = {
@@ -868,8 +868,8 @@ def test_calibration_rejects_active_assignment_drift(tmp_path: Path, monkeypatch
     spec.loader.exec_module(runner)
 
     evidence = json.loads((calibration_dir / "accepted-route-evidence.json").read_text(encoding="utf-8"))
-    evidence["active_assignments"]["roles"]["gpt-6-sol"]["medium"].remove("qa-specialist")
-    evidence["active_assignments"]["roles"]["gpt-6-sol"]["high"].append("qa-specialist")
+    evidence["active_assignments"]["roles"]["gpt-6.1-sol"]["medium"].remove("qa-specialist")
+    evidence["active_assignments"]["roles"]["gpt-6.1-sol"]["high"].append("qa-specialist")
     tampered = tmp_path / "tampered-active-assignments.json"
     tampered.write_text(json.dumps(evidence), encoding="utf-8")
     paths = replace(runner.Paths.create("plugin", tmp_path), accepted_route_evidence=tampered)

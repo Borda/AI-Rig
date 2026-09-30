@@ -61,7 +61,7 @@
       "## Model Routing",
       "lowest-cost capable",
       "gpt-6-luna",
-      "gpt-6-sol",
+      "gpt-6.1-sol",
       "## Handover Gate",
       "canonical solution ladder and complexity-evidence gate in .*\\.codex/AGENTS\\.md",
       "complexity expansion",

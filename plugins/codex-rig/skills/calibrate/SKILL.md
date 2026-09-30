@@ -82,7 +82,7 @@ Role checks:
 
 - installed layout requires every packaged `roles/<role>/ROLE.md`; source layout requires each configured source agent.
 - role-card frontmatter contains role ID, namespaced name, active model, reasoning effort, approval policy, sandbox, and fallback modes; package-manifest skill/role rosters contain every calibrated target.
-- normal parent, review model, implementation, runtime, research, data, adversarial, performance, and executable verification use `gpt-6-sol`; delegation/docs/CI-CD/web/OSS/static analysis/curation use `gpt-6-luna`.
+- normal parent, review model, implementation, runtime, research, data, adversarial, performance, and executable verification use `gpt-6.1-sol`; delegation/docs/CI-CD/web/OSS/static analysis/curation use `gpt-6-luna`.
 - `accepted-route-evidence.json` binds `active_assignments` to every GPT-6 role model/effort pair and direct parent/deep-review routes; `active_assignment_basis` marks paired quality/cost evidence pending. Preserve archived GPT-5.6 strict failures and reject unsupported GPT-6 quality claims.
 - `model_reasoning_effort` follows the agent-effort-policy: normal parent, implementation, verification, performance, static analysis, and web evidence use `medium`; deep review, data/research method, challenge, coordination, documentation, CI/CD, OSS, curation, architecture, and security use `high`. `xhigh`/`max` require evidenced task escalation.
 - high-stakes roles use high-capability tier; bounded support may lower-cost tier. No deprecated model string in active config/TOML.
