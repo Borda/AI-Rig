@@ -70,7 +70,7 @@ def test_scaffold_has_stable_role_card_release_identity() -> None:
     assert manifest["version"] == package_manifest["version"]
     assert manifest["author"]["name"] == "Jiri Borovec"
     assert "hooks" not in manifest
-    assert "mcpServers" not in manifest
+    assert manifest["mcpServers"] == "./.codex-mcp.json"
     assert len(manifest["interface"]["defaultPrompt"]) <= 3
     assert all("agent-shims" not in prompt for prompt in manifest["interface"]["defaultPrompt"])
     assert {"codex-rig:implement", "codex-rig:code-review", "codex-rig:research"} == {

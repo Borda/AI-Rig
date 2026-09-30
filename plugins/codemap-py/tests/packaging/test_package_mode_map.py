@@ -280,28 +280,25 @@ def test_load_mode_map_missing_file_raises(tmp_path: Path) -> None:
 
 @pytest.mark.packaging
 def test_cli_mode_map_matches_default_git_derived_build(tmp_path: Path) -> None:
-    """Reproduce the default build from an explicit mode map.
-
-    This builds against the live ``SOURCE_ROOT``, so it previously flaked whenever an untracked file sat under an
-    include dir (e.g. concurrent Wave 2 WIP under ``src/``) — the old filesystem-walk membership would admit it into one
-    build's candidate set but not the other's derivation path consistently, and the missing-mode-map-entry raise would
-    fire. Now that membership is git-tracked-only for both invocations, an untracked file is excluded identically from
-    both, so this test is hermetic to tree cleanliness without needing a fixture rewrite.
-    """
-    real_modes = builder._git_exec_modes(builder.SOURCE_ROOT)
+    """Reproduce a tracked source build from explicit modes without depending on unrelated checkout work."""
+    source = _make_fixture_repo(tmp_path, "source")
+    script = source / "scripts" / "build_package.py"
+    script.parent.mkdir()
+    shutil.copy2(_BUILDER, script)
+    real_modes = builder._git_exec_modes(source)
     mode_map_path = tmp_path / "real-modes.json"
     mode_map_path.write_text(json.dumps(real_modes))
 
     default_out, mapped_out = tmp_path / "default", tmp_path / "mapped"
     default_result = subprocess.run(
-        [sys.executable, str(_BUILDER), "--out", str(default_out)],
+        [sys.executable, str(script), "--out", str(default_out)],
         capture_output=True,
         text=True,
         timeout=120,
         check=False,
     )
     mapped_result = subprocess.run(
-        [sys.executable, str(_BUILDER), "--out", str(mapped_out), "--mode-map", str(mode_map_path)],
+        [sys.executable, str(script), "--out", str(mapped_out), "--mode-map", str(mode_map_path)],
         capture_output=True,
         text=True,
         timeout=120,
@@ -311,3 +308,26 @@ def test_cli_mode_map_matches_default_git_derived_build(tmp_path: Path) -> None:
     assert default_result.returncode == 0, default_result.stderr
     assert mapped_result.returncode == 0, mapped_result.stderr
     assert builder._tree_bytes(default_out) == builder._tree_bytes(mapped_out)
+
+
+@pytest.mark.packaging
+def test_new_native_assets_require_explicit_modes_without_admitting_other_untracked_files(tmp_path: Path) -> None:
+    """Explicit candidate authority admits declared assets while unrelated untracked files stay excluded."""
+    source = _make_fixture_repo(tmp_path, "source")
+    tracked_modes = builder._git_exec_modes(source)
+    (source / ".codex-mcp.json").write_bytes(b"{}\n")
+    provider = source / "shared" / "user_questions_mcp.py"
+    provider.parent.mkdir()
+    provider.write_bytes(b"print('stdio provider')\n")
+    (provider.parent / "unrelated.py").write_bytes(b"raise RuntimeError('untracked')\n")
+    with pytest.raises(ValueError, match="missing mode-map entry for shipped payload path: .codex-mcp.json"):
+        builder.build_package(source, tmp_path / "missing-modes", mode_map=tracked_modes)
+    declared_modes = {**tracked_modes, ".codex-mcp.json": False, "shared/user_questions_mcp.py": False}
+    manifest = builder.build_package(source, tmp_path / "candidate", mode_map=declared_modes)
+    records = {record["path"]: record for record in manifest["files"]}
+    assert records[".codex-mcp.json"]["exec"] is False
+    assert records["shared/user_questions_mcp.py"]["exec"] is False
+    assert records["bin/launcher"]["exec"] == tracked_modes["bin/launcher"]
+    assert "shared/unrelated.py" not in records
+    assert not (tmp_path / "candidate" / "shared" / "unrelated.py").exists()
+    assert (tmp_path / "candidate" / "shared" / "user_questions_mcp.py").read_bytes() == provider.read_bytes()

@@ -181,6 +181,12 @@ def test_scope_selection_question_keeps_options_with_visible_context() -> None:
     assert "An async return or empty sync result leaves selection pending" in scope_contract
     assert "Async acceptance does not prove a selectable form appeared" in scope_contract
     assert "never say a scope control is visible" in scope_contract
+    assert "For the observed `title`/`options`-only async schema" in scope_contract
+    assert "Never add `id`, `header`, or `description` under that schema" in scope_contract
+    assert "inspect the active schema because other hosts may differ" in scope_contract
+    assert "Never offer `Choose severity groups or indexes`" in scope_contract
+    assert "After an accepted async scope question, yield immediately" in scope_contract
+    assert "even an empty final message" in scope_contract
     assert "dismissed after a later assistant action" in scope_contract
     assert "recover at the same frozen selection checkpoint" in scope_contract
     assert "collapsed output" in scope_contract

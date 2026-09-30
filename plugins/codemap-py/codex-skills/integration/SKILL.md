@@ -9,7 +9,7 @@ NOT for: structural queries (`$codemap-py:query-code`) or index rebuilds (`$code
 
 # Integration
 
-Adapter for `codemap-py integrate` (`src/codemap_py/integration.py`). Claude Code or Codex may target Claude, Codex, or both; runs only native plugin-manager CLIs, never another runtime's model. `check` removed, no alias.
+Adapter for `codemap-py integrate` (`src/codemap_py/integration/__init__.py`). Claude Code or Codex may target Claude, Codex, or both; runs only native plugin-manager CLIs, never another runtime's model. `check` removed, no alias.
 
 | Mode | Args | Mutation | Exit |
 | -- | -- | -- | -- |
@@ -50,7 +50,7 @@ If installed Codex lacks documented `--json`, use text output and mark structure
 
 ### 1. Resolve mode
 
-Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the permitted async control when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements.
+Case-insensitive: empty or starting with `audit` → audit; otherwise `plan`, `apply`, `sync`, or `demo`. Any other input: ask through User Questions which of those five modes and wait. Use the packaged native `ask_user` form when the synchronous menu cannot fit all five; offer every mode as a separate option and retain each mode's later input and approval requirements.
 
 ### 2. Run it
 

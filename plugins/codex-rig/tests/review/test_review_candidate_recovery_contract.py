@@ -61,8 +61,11 @@ def test_execution_failure_cannot_be_reclassified_as_inapplicable() -> None:
     assert "execution failure never makes an applicable check `not-applicable`" in quality
     assert "archive runner-owned receipts under `gate-attempts/<NNN>`" in quality
     assert "reject failed-to-skipped reclassification" in quality
-    assert "return to Code Review step 12 under existing authorization" in remediation
-    assert "Preserve the candidate recovery's same-parent and bounded-retry conditions" in remediation
+    assert "return to the code-review manifest preflight checkpoint" in remediation
+    assert (
+        "do not promote the candidate, rerun the full review, or fall back to an older assessed report" in remediation
+    )
+    assert "continue independently authorized source-verified remediation" in remediation
 
 
 def test_remediation_revalidates_same_session_candidate_before_promotion() -> None:
@@ -73,7 +76,11 @@ def test_remediation_revalidates_same_session_candidate_before_promotion() -> No
     assert "same parent thread" in skill
     assert "review-specific validator, then the shared validator" in skill
     assert "promote it to `result.json` only after both validators pass" in skill
-    assert "never consume `result.candidate.json` directly" in skill
+    assert "never consume `result.candidate.json` as a completed review" in skill
+    assert "only its eligible finding records may be considered under preliminary finding intake" in skill
+    assert "one evidence-preserving repair" in skill
+    assert "retry both validators once" in skill
+    assert "do not promote the candidate" in skill
 
 
 def test_remediation_preserves_exact_candidate_validation_failure() -> None:

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.40.0
+
+- Ship an independently installed local question tool using Codex's native terminal form: one scope-bound request, an explicit correlated answer, and no asynchronous question-text duplication. Unsupported clients and cancelled or malformed replies grant no consent.
+- Recognize explicit conversational approval or denial for one unchanged, unambiguous pending Codex decision; preserve ambiguity, supersession, exact-token/digest, and runtime-permission boundaries. Synchronize empty-final and supported async-schema guidance.
+
 ## 0.39.10
 
 - Match each exposed Codex question schema, including the observed async `questions` array; after an accepted required async question, yield without final/status text when no independent work remains.

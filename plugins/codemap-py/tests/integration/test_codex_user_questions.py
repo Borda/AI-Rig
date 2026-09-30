@@ -45,10 +45,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
         "For every user-facing choice",
         "Use complete actionable values",
         "If no independent work remains, yield",
-        (
-            "For an optional question, if async is unavailable or unsuitable, use sync when it is exposed, "
-            "permitted for that purpose, and can represent the complete input."
-        ),
+        "This preference applies to optional and required questions.",
         "permitted for that purpose",
         "all feasible choices",
         "(Recommended)",
@@ -67,7 +64,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
             "Bind the complete displayed label, including any decision key and suffix, to the unchanged canonical "
             "value before asking; never strip arbitrary text or alter exact-digest confirmation syntax."
         ),
-        ("Otherwise require an unambiguous visible decision key with the answer and state that syntax in the control."),
+        ("Require a visible decision key in the answer when conversation context cannot bind it unambiguously."),
         (
             "Silence, skip, timeout, preselection, an empty result, an example answer, or unrelated text "
             "grants no consent."
@@ -106,18 +103,24 @@ def test_async_question_uses_observed_host_schema_and_yields_without_status() ->
 
 
 @pytest.mark.installed_plugin
-def test_unkeyed_reply_cannot_authorize_keyed_decision() -> None:
-    """Prevent a bare approval from executing the sole pending keyed action."""
+def test_single_unchanged_decision_accepts_conversational_reply() -> None:
+    """Keep clear conversational approval usable without weakening ambiguous binding."""
     details = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
-    assert "bare `approve` or `yes` without that key is invalid" in details
-    assert "even when it is the only pending decision" in details
+    assert "Accept an explicit conversational `Approve` / `Deny`" in details
+    assert "exactly one pending decision" in details
+    assert "no competing question, superseded scope, or exact-token/digest requirement" in details
+    assert "do not ask again solely for a missing decision key" in details
+    assert "even when it is the only pending decision" not in details
+    assert "After supersession, bare `Approve`, indexes, or `all` cannot authorize the replacement" in details
+    assert "generic Approve never replaces" in details
+    assert "This includes an empty final message" in details
 
 
 @pytest.mark.installed_plugin
 def test_short_guide_preserves_existing_question_and_consent_contract() -> None:
     """Keep established obligations visible when the short guide is condensed."""
     guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
-    assert "Children return context, question, concrete choices, accepted custom syntax" in guide
-    assert "Preserve every required closed-choice action." in guide
+    assert "Children return context, question, choices, custom syntax and answer mapping" in guide
+    assert "Preserve every required action." in guide
     assert "existing consent skips reconfirmation" in guide
-    assert "A reported dismissal makes that control unsuitable" in guide
+    assert "Dismissal makes that control unsuitable" in guide

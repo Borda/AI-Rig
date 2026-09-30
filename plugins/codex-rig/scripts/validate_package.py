@@ -109,8 +109,23 @@ def validate_semantics() -> None:
         raise ValueError("public roster mismatch")
     if manifest.get("version") != plugin.get("version") or manifest.get("release_profile") != "role-card-injected":
         raise ValueError("plugin identity mismatch")
-    if manifest.get("features") != {"manager": True, "hooks": True, "mcp": False, "generated_shims": False}:
+    if manifest.get("features") != {"manager": True, "hooks": True, "mcp": True, "generated_shims": False}:
         raise ValueError("role-card-injected feature boundary mismatch")
+    if plugin.get("mcpServers") != "./.codex-mcp.json":
+        raise ValueError("native question provider declaration missing")
+    question_config = load_json(PACKAGE_ROOT / ".codex-mcp.json")
+    expected_question_config = {
+        "mcpServers": {
+            "codex-rig-input": {
+                "command": "python",
+                "cwd": ".",
+                "args": ["shared/user_questions_mcp.py", "--stdio"],
+                "tool_timeout_sec": 3600,
+            }
+        }
+    }
+    if question_config != expected_question_config or not (PACKAGE_ROOT / "shared" / "user_questions_mcp.py").is_file():
+        raise ValueError("native question provider payload invalid")
     if (
         not (PACKAGE_ROOT / "hooks" / "hooks.json").is_file()
         or not (PACKAGE_ROOT / "hooks" / "session_start.py").is_file()

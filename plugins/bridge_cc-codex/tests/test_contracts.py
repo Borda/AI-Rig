@@ -42,7 +42,9 @@ CODEX_SKILL_CONTRACTS = {
         "required `task`",
         "`model`, `effort`, `timeout_seconds`, `depth`, and `run_id`",
         "Never replace supplied effort",
-        "launch workspace",
+        "current `binding_id`",
+        "bridge_bind_workspace",
+        "project binding grants no editing approval",
         "compact envelope",
         "`transcript_path`",
         "`incident`",
@@ -58,7 +60,9 @@ CODEX_SKILL_CONTRACTS = {
         "required `task`",
         "`model`, `effort`, `timeout_seconds`, `depth`, and `run_id`",
         "Never replace supplied choices",
-        "launch workspace",
+        "current `binding_id`",
+        "bridge_bind_workspace",
+        "project binding grants no editing approval",
         "model-controlled workspace, background, and session fields",
         "`verdict`, `findings`, `files_touched`, `remaining`, and `blockers`",
         "`transcript_path`",
@@ -75,7 +79,9 @@ CODEX_SKILL_CONTRACTS = {
         "required `task`",
         "`model`, `effort`, `timeout_seconds`, `depth`, and `run_id`",
         "Never replace supplied effort",
-        "launch workspace",
+        "current `binding_id`",
+        "bridge_bind_workspace",
+        "project binding grants no editing approval",
         "compact envelope",
         "workspace-relative transcript",
         "`incident`",
@@ -507,13 +513,19 @@ def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> No
     """Prevent an MCP tool from receiving a request the bridge cannot safely route."""
     schema = _read_json(MCP_SCHEMA_PATH)
     definitions = schema["$defs"]
-    assert set(definitions) == {"bridge_implement", "bridge_advise", "bridge_review", "bridge_status"}
+    assert set(definitions) == {
+        "bridge_implement",
+        "bridge_advise",
+        "bridge_review",
+        "bridge_status",
+        "bridge_bind_workspace",
+    }
     request = definitions["bridge_advise"]
     assert isinstance(request, Mapping)
     assert request["additionalProperties"] is False
-    assert set(request["required"]) == {"task"}
+    assert set(request["required"]) == {"task", "binding_id"}
     for name, definition in definitions.items():
-        if name == "bridge_status":
+        if name in {"bridge_status", "bridge_bind_workspace"}:
             assert definition == {"additionalProperties": False, "properties": {}, "type": "object"}
             continue
         assert "workspace" not in definition["properties"]
@@ -527,6 +539,7 @@ def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> No
         request,
         {
             "task": "Summarize the local diff.",
+            "binding_id": "confirmed-binding",
             "model": "test-model",
             "effort": "low",
             "depth": 0,
@@ -535,8 +548,10 @@ def test_mcp_input_contract_rejects_unknown_or_incomplete_request_fields() -> No
             "supported_efforts": ["low", "medium"],
         },
     )
-    _assert_value_matches_contract(request, {"task": "Use bridge-owned defaults."})
-    _assert_value_matches_contract(request, {"task": "Normalize a documented alias.", "effort": "none"})
+    _assert_value_matches_contract(request, {"task": "Use bridge-owned defaults.", "binding_id": "confirmed-binding"})
+    _assert_value_matches_contract(
+        request, {"task": "Normalize a documented alias.", "effort": "none", "binding_id": "confirmed-binding"}
+    )
     with pytest.raises(AssertionError):
         _assert_value_matches_contract(
             request,

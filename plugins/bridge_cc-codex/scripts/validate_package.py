@@ -103,6 +103,7 @@ REQUIRED_FILES = {
     "bin/bridge_call.py",
     "bin/bridge_diagnose.py",
     "bin/bridge_mcp.py",
+    "bin/user_questions_mcp.py",
     "bin/bridge_setup.py",
     "claude-skills/implement/SKILL.md",
     "codex-skills/implement/SKILL.md",
@@ -187,31 +188,33 @@ def _validate_manifests(root: Path) -> str:
     return version
 
 
-def _validate_mcp(root: Path, relative_path: str, expected_var: str) -> None:
-    """Validate one host's MCP declaration resolves its script through that host's own plugin-root variable.
+def _validate_mcp(root: Path, relative_path: str) -> None:
+    """Validate native plugin cwd and relative scripts for both local MCP servers.
 
-    Codex expands only ``PLUGIN_ROOT``, never ``CLAUDE_PLUGIN_ROOT`` -- the Claude variable in this file would break the
-    only host that reads it.
+    Plugin cwd locates installed Python code; the Bridge backend separately binds project identity through native user
+    forms, never by trusting this launch directory.
     """
     config = _load_object(root / relative_path)
     servers = config.get("mcpServers")
-    if not isinstance(servers, dict) or set(servers) != {"bridge"}:
-        raise ValueError(f"{relative_path} must declare only the bridge server")
+    if not isinstance(servers, dict) or set(servers) != {"bridge", "bridge-input"}:
+        raise ValueError(f"{relative_path} must declare the bridge and native question servers")
+    expected_questions = {
+        "command": "python",
+        "args": ["bin/user_questions_mcp.py", "--stdio"],
+        "cwd": ".",
+        "tool_timeout_sec": 3600,
+    }
+    if servers["bridge-input"] != expected_questions:
+        raise ValueError(f"{relative_path} native question server must use its packaged local provider")
     server = servers["bridge"]
     if not isinstance(server, dict) or server.get("command") not in {"python", "python3"}:
         raise ValueError(f"{relative_path} MCP server must use a portable Python command")
     args = server.get("args")
     if not isinstance(args, list) or not args or not all(isinstance(item, str) for item in args):
         raise ValueError(f"{relative_path} MCP server args must be a string list")
-    matches = [PLUGIN_PATH_PATTERN.fullmatch(item) for item in args]
-    script_match = next((match for match in matches if match is not None), None)
-    if script_match is None:
-        raise ValueError(f"{relative_path} MCP server must resolve its script through a plugin-root variable")
-    if f"${{{expected_var}}}" not in args[matches.index(script_match)]:
-        raise ValueError(f"{relative_path} MCP server must use ${{{expected_var}}}, not the other host's variable")
-    _relative_file(root, f"bin/{script_match.group(1)}", field=f"{relative_path} args")
-    if server.get("cwd") is not None:
-        raise ValueError(f"{relative_path} MCP server must not depend on a source-tree cwd")
+    if args != ["bin/bridge_mcp.py", "--stdio"] or server.get("cwd") != ".":
+        raise ValueError(f"{relative_path} MCP server must use its installed plugin cwd and relative script")
+    _relative_file(root, args[0], field=f"{relative_path} args")
 
 
 def _validate_files(root: Path) -> None:
@@ -240,7 +243,7 @@ def _validate_skill_script_references(root: Path) -> None:
     """Ensure installed skill commands resolve inside this package through their own host's plugin-root variable.
 
     Each skill tree must use only its own host's variable -- Claude Code expands ``CLAUDE_PLUGIN_ROOT``, Codex expands
-    ``PLUGIN_ROOT`` -- mirroring the check ``_validate_mcp`` runs for the Codex MCP declaration.
+    ``PLUGIN_ROOT``; MCP declarations instead use Codex's plugin-relative ``cwd`` contract.
     """
     trees = (
         ("claude-skills/**/*.md", "CLAUDE_PLUGIN_ROOT"),
@@ -269,7 +272,7 @@ def validate_package(root: Path) -> str:
         raise ValueError(
             "Claude Code has no MCP surface for bridge -- a shipped .mcp.json would be auto-discovered unintentionally"
         )
-    _validate_mcp(root, Path(codex["mcpServers"]).as_posix(), "PLUGIN_ROOT")
+    _validate_mcp(root, Path(codex["mcpServers"]).as_posix())
     _validate_files(root)
     _validate_skill_script_references(root)
     return version

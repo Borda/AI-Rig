@@ -19,9 +19,9 @@ verified candidate with an independently recorded manifest digest.
 
 ## Used by
 
-``build_package.py``, installed role-link verification, the live local reviewer wave denial harness, and package identity tests
-call this verifier. These callers use the same contract both before shipping a package and before trusting one selected
-by local Codex discovery.
+``build_package.py``, installed role-link verification, the live local reviewer wave denial harness, and package
+identity tests call this verifier. These callers use the same contract both before shipping a package and before
+trusting one selected by local Codex discovery.
 
 ## Outputs
 

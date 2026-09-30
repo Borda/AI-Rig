@@ -61,6 +61,7 @@ if str(SKILL_DIRECTORY) not in sys.path:
 
 import review_context  # noqa: E402
 import review_routing  # noqa: E402
+import review_batches  # noqa: E402
 import validate_artifacts as validator  # noqa: E402
 
 SHARED_DIRECTORY = SKILL_DIRECTORY.parents[1] / "shared"
@@ -235,6 +236,7 @@ def prepare(
     expected_head: str | None = None,
     expected_diff_base: str | None = None,
     scope_path: str | None = None,
+    batches: bool = False,
 ) -> dict[str, Any]:
     """Freeze all selected reviewers together and emit small, exact native dispatch arguments."""
     out = out.resolve()
@@ -248,8 +250,6 @@ def prepare(
     if not isinstance(routing, dict) or not isinstance(briefs, dict):
         raise ValueError("review-preparation-input-not-object")
     roles = validator._validate_routing(out, routing["risk_tier"])
-    if len(roles) > 4:
-        raise ValueError("review-wave-capacity-exceeded")
     if set(briefs) != roles:
         raise ValueError("review-brief-role-set-mismatch")
     selections = {}
@@ -280,7 +280,11 @@ def prepare(
         raise ValueError("review-source-untracked-stale")
     # Every admitted change needs delivered source; unsupported patch paths fail closed rather than vanish.
     if not changed <= sections.keys() or not (changed | untracked) <= set(selected):
-        raise ValueError("review-source-coverage-incomplete")
+        missing = {
+            "missing_diff_paths": sorted(changed - sections.keys()),
+            "missing_source_paths": sorted((changed | untracked) - set(selected)),
+        }
+        raise ValueError(f"review-source-coverage-incomplete:{json.dumps(missing, sort_keys=True)}")
     plan = {
         "consumer_policy": {
             "consumer_id": "code-review",
@@ -344,7 +348,7 @@ def prepare(
             "to meet a token target.\n\n" + source + "\n\n## Verified selected source\n\n" + "\n".join(selected_source)
         ).encode("utf-8")
         # The page reader transports larger contexts without dropping source; cap total work at 256 KiB.
-        if len(context) > MAX_REVIEW_CONTEXT_BYTES:
+        if not batches and len(context) > MAX_REVIEW_CONTEXT_BYTES:
             raise ValueError(f"review-context-capacity-exceeded:{role}:{MAX_REVIEW_CONTEXT_BYTES}-bytes")
         if any(pattern.search(context.decode("utf-8")) for pattern in validator._SECRET_PATTERNS):
             raise ValueError(f"review-context-sensitive-material:{role}")
@@ -359,15 +363,35 @@ def prepare(
             }
         )
         cards[role] = validator._load_role_card(validator.PLUGIN_ROOT / "roles", role)
+    if batches:
+        return review_batches.prepare_source_batches(
+            out,
+            plan,
+            files,
+            cards,
+            snapshot,
+            changed,
+            selections,
+            {
+                "source_root": source_root.resolve().as_posix(),
+                "expected_head": expected_head,
+                "expected_diff_base": expected_diff_base,
+                "scope_path": scope_path,
+            },
+            routing_bytes,
+            briefs_bytes,
+        )
     files[out / "inspection-plan.json"] = _json_bytes(plan)
     if hashlib.sha256(routing_bytes).hexdigest() != validator._sha256(out / "review-routing.json"):
         raise ValueError("review-prepared-routing-changed")
     if hashlib.sha256(briefs_bytes).hexdigest() != validator._sha256(out / "review-briefs.json"):
         raise ValueError("review-prepared-briefs-changed")
     _freeze(files)
-    validator.validate_inspection_contexts(plan, out / "inspection-plan.json")
+    validator.validate_inspection_contexts(plan, out / "inspection-plan.json", context_limit=None)
     calls = []
-    for context in plan["contexts"]:
+    for context in sorted(
+        plan["contexts"], key=lambda item: (-len(files[out / item["context_path"]]), item["role_id"])
+    ):
         role = context["role_id"]
         calls.append(
             {
@@ -378,7 +402,9 @@ def prepare(
                     "fork_turns": "none",
                     "model": cards[role]["model"],
                     "reasoning_effort": cards[role]["model_reasoning_effort"],
-                    "message": review_context.dispatch_message(out / "inspection-plan.json", role),
+                    "message": review_context.dispatch_message(
+                        out / "inspection-plan.json", role, provenance_header=False
+                    ),
                 },
             }
         )
@@ -460,13 +486,35 @@ def _observed_pass(
         arguments = json.loads(payload.get("arguments", "{}"))
         if arguments.get("task_name") == task_name:
             calls.append(payload)
-    if len(calls) != 1:
+    successful_calls = []
+    for call in calls:
+        receipts = [
+            row.get("payload", {})
+            for row in parent_rows
+            if row.get("type") == "response_item"
+            and row.get("payload", {}).get("type") == "function_call_output"
+            and row["payload"].get("call_id") == call.get("call_id")
+        ]
+        if len(receipts) != 1:
+            continue
+        try:
+            receipt = json.loads(receipts[0].get("output", ""))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if receipt == {
+            "task_name": session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
+        }:
+            successful_calls.append(call)
+    if len(successful_calls) != 1:
         raise ValueError(f"review-spawn-call-not-unique:{role}")
+    calls = successful_calls
     message = terminal["last_agent_message"].strip()
     if any(pattern.search(message) for pattern in validator._SECRET_PATTERNS):
         raise ValueError(f"review-output-sensitive-material:{role}")
     output_path = f"specialists/{role}.md"
     _freeze({out / output_path: (message + "\n").encode("utf-8")})
+    raw_output_path = f"specialists/{role}.raw.md"
+    _freeze({out / raw_output_path: terminal["last_agent_message"].encode("utf-8")})
     validator._retained_reviewer_rating(out / output_path, local_reviewer_wave=False, main=False, role=role)
     agent_path = session.get("agent_path") or session["source"]["subagent"]["thread_spawn"]["agent_path"]
     attempt = {
@@ -482,6 +530,8 @@ def _observed_pass(
         "effort": turns[0]["effort"],
         "output_path": output_path,
         "output_sha256": validator._sha256(out / output_path),
+        "raw_output_path": raw_output_path,
+        "raw_output_sha256": validator._sha256(out / raw_output_path),
     }
     events = [
         event
@@ -503,6 +553,14 @@ def _observed_pass(
         "role_card_sha256": validator._sha256(out / "role-cards" / role / "ROLE.md"),
         "attempts": [attempt],
         "selected_attempt": 1,
+    }
+
+
+def manifest_header(plan: dict[str, Any]) -> dict[str, Any]:
+    """Return the established specialist-manifest version and frozen run identity."""
+    return {
+        "schema_version": 7,
+        **{key: plan[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
     }
 
 
@@ -537,7 +595,11 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
         for context in plan["contexts"]
     ]
     manifest = {
-        "schema_version": 6,
+        "schema_version": 7,
+        "manifest_kind": "native-wave",
+        "dispatch_protocol": "paged-context-v7",
+        "context_reader_path": str(Path(review_context.__file__).resolve()),
+        "context_reader_sha256": validator._sha256(Path(review_context.__file__)),
         **{key: plan[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
         "context_reader_python": dispatch["context_reader_python"],
         "passes": passes,
@@ -549,12 +611,111 @@ def assemble(out: Path, codex_home: Path) -> dict[str, Any]:
         out, manifest, passes, roles, codex_home, plan["parent_thread_id"], Path.cwd(), require_role_card_receipts=True
     )
     summary = validator._validate_review_runtime(out, manifest, passes, codex_home, plan["parent_thread_id"])
-    if len(roles) > 1 and summary["actual_mode"] != "parallel":
+    if len(roles) > 1 and summary["actual_mode"] != "parallel" and not summary.get("capacity_limited"):
         raise ValueError("review-wave-not-parallel")
     _freeze(
         {out / "specialist-manifest.json": _json_bytes(manifest), out / "inspection-summary.json": _json_bytes(summary)}
     )
     return summary
+
+
+def recover_native_provenance(
+    out: Path,
+    codex_home: Path,
+    reader_path: Path,
+    original_plan_path: Path | None = None,
+) -> dict[str, Any]:
+    """Validate historical native receipts under schema seven without changing retained child output."""
+    out = out.resolve()
+    manifest_path = out / "specialist-manifest.json"
+    if manifest_path.exists():
+        old = validator._load_json(manifest_path)
+        if old.get("schema_version") != 6:
+            raise ValueError("review-native-recovery-requires-schema-six")
+    else:
+        plan = validator._load_json(out / "inspection-plan.json")
+        dispatch = validator._load_json(out / "dispatch.json")
+        if dispatch["plan_sha256"] != validator._sha256(out / "inspection-plan.json"):
+            raise ValueError("review-prepared-plan-changed")
+        for name in ("routing", "briefs"):
+            if dispatch[f"{name}_sha256"] != validator._sha256(out / f"review-{name}.json"):
+                raise ValueError(f"review-prepared-{name}-changed")
+        assessments = validator._load_json(out / "specialist-assessments.json")
+        briefs = validator._load_json(out / "review-briefs.json")
+        routing = validator._load_json(out / "review-routing.json")
+        roles = {entry["role_id"] for entry in plan["contexts"]}
+        if set(assessments) != roles or set(briefs) != roles or set(routing["triggered_roles"]) != roles:
+            raise ValueError("review-assessment-role-set-mismatch")
+        parent_rows = validator._read_jsonl(validator._find_rollout(codex_home, plan["parent_thread_id"]))
+        children = _child_sessions(codex_home, plan["parent_thread_id"])
+        passes = [
+            _observed_pass(
+                out,
+                context,
+                parent_rows,
+                children,
+                {**assessments[context["role_id"]], "axis": briefs[context["role_id"]]["axis"]},
+                routing["trigger_reasons"][context["role_id"]],
+            )
+            for context in plan["contexts"]
+        ]
+        old = {
+            "schema_version": 6,
+            **{key: plan[key] for key in ("review_run_id", "parent_thread_id", "review_input_sha256")},
+            "context_reader_python": dispatch["context_reader_python"],
+            "passes": passes,
+            "inspection_execution": {"plan_path": "inspection-plan.json", "plan_sha256": dispatch["plan_sha256"]},
+        }
+        if "sol_selection" in routing:
+            old["sol_selection"] = routing["sol_selection"]
+    candidate = json.loads(json.dumps(old))
+    candidate.update(
+        schema_version=7,
+        manifest_kind="native-wave",
+        dispatch_protocol="paged-context-v6",
+        context_reader_path=reader_path.resolve().as_posix(),
+        context_reader_sha256=validator._sha256(reader_path),
+    )
+    if original_plan_path is not None:
+        candidate["original_plan_path"] = original_plan_path.resolve().as_posix()
+    files: dict[Path, bytes] = {}
+    for item in candidate["passes"]:
+        for attempt in item["attempts"]:
+            if attempt["status"] != "completed":
+                continue
+            rows = validator._read_jsonl(validator._find_rollout(codex_home, attempt["agent_thread_id"]))
+            terminals = [
+                event
+                for event in validator._event_payloads(rows, "task_complete")
+                if event.get("turn_id") == attempt["turn_id"]
+            ]
+            if len(terminals) != 1 or not isinstance(terminals[0].get("last_agent_message"), str):
+                raise ValueError(f"review-native-recovery-terminal-missing:{item['role']}")
+            raw = terminals[0]["last_agent_message"].encode("utf-8")
+            path = f"native-recovery/{item['role']}-attempt-{attempt['attempt']}.raw.md"
+            attempt.update(raw_output_path=path, raw_output_sha256=hashlib.sha256(raw).hexdigest())
+            files[out / path] = raw
+    _freeze(files)
+    roles = {item["role"] for item in candidate["passes"]}
+    validator._validate_manifest_entries(
+        out,
+        candidate,
+        candidate["passes"],
+        roles,
+        codex_home,
+        candidate["parent_thread_id"],
+        Path.cwd(),
+        retained_role_cards=True,
+        require_role_card_receipts=True,
+    )
+    summary = validator._validate_review_runtime(
+        out, candidate, candidate["passes"], codex_home, candidate["parent_thread_id"], roles_dir=out / "role-cards"
+    )
+    candidate_path = out / "specialist-manifest.native-recovery.candidate.json"
+    _freeze(
+        {candidate_path: _json_bytes(candidate), out / "native-recovery/inspection-summary.json": _json_bytes(summary)}
+    )
+    return {"candidate_path": candidate_path.as_posix(), "status": "validated-native-provenance", "summary": summary}
 
 
 def main() -> int:
@@ -569,6 +730,20 @@ def main() -> int:
     prepare_parser.add_argument("--expected-head")
     prepare_parser.add_argument("--expected-diff-base", help="Exact comparison base required for committed review.")
     prepare_parser.add_argument("--scope-path", help="Declared repository-relative path for a local path review.")
+    prepare_parser.add_argument(
+        "--batches", action="store_true", help="Freeze complete source in bounded serial waves."
+    )
+    for name in ("assemble-wave", "prepare-interactions", "prepare-consolidation", "assemble-batches"):
+        batch_parser = commands.add_parser(name)
+        batch_parser.add_argument("--out", required=True, type=Path)
+        batch_parser.add_argument(
+            "--codex-home", type=Path, default=Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex")))
+        )
+    recovery_parser = commands.add_parser("recover-native-provenance")
+    recovery_parser.add_argument("--out", required=True, type=Path)
+    recovery_parser.add_argument("--codex-home", required=True, type=Path)
+    recovery_parser.add_argument("--reader-path", required=True, type=Path)
+    recovery_parser.add_argument("--original-plan-path", type=Path)
     assemble_parser = commands.add_parser("assemble", help="Bind received child results to actual runtime records.")
     assemble_parser.add_argument("--out", required=True, type=Path)
     assemble_parser.add_argument(
@@ -585,19 +760,34 @@ def main() -> int:
                 args.expected_head,
                 args.expected_diff_base,
                 args.scope_path,
+                args.batches,
             )
             print(
                 json.dumps(
                     {
-                        "dispatch_path": str(args.out / "dispatch.json"),
-                        "roles": len(result["calls"]),
+                        "dispatch_path": str(args.out / ("batch-dispatch.json" if args.batches else "dispatch.json")),
+                        "roles": len(result.get("calls", [])),
                         "context_bytes": result["context_bytes"],
                         "dispatch_bytes": result["dispatch_bytes"],
                     }
                 )
             )
-        else:
+        elif args.command == "assemble":
             print(json.dumps(assemble(args.out, args.codex_home)))
+        elif args.command == "recover-native-provenance":
+            print(
+                json.dumps(
+                    recover_native_provenance(args.out, args.codex_home, args.reader_path, args.original_plan_path)
+                )
+            )
+        else:
+            operation = {
+                "assemble-wave": review_batches.assemble_wave,
+                "prepare-interactions": review_batches.prepare_interactions,
+                "prepare-consolidation": review_batches.prepare_consolidation,
+                "assemble-batches": review_batches.assemble_batches,
+            }[args.command]
+            print(json.dumps(operation(args.out, args.codex_home)))
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"review-preparation-failed:{error}", file=sys.stderr)
         return 2

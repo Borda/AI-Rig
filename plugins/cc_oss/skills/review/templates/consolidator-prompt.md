@@ -46,7 +46,7 @@ Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orche
 - `Agents:` short names of agents with output files in `$RUN_DIR/`
 - `CI:` `failing — [<CI_FAILING_CHECKS>]` when that value is non-empty, else `passing (<CI_COUNTS>)` — `<CI_COUNTS>` empty too (no checks reported): write `pending`
 - `Gate:` literal `<GATE>` value (`PASS` or `BLOCK` — reject-gate reports never reach the consolidator, that value is always one of these two here; a `BLOCK` gate does not change how you write `Outcome:` below, it's already carried in `CI:`/the findings)
-- `Outcome:` `APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from your own findings
+- `Outcome:` `APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from your own findings — verdict token only (optional leading `✓`/`⚠`/`✗`); severity counts and other detail go in `Summary:`, never after the token
 - `Summary:` 1–2 sentences
 - `Next steps:` blockers first, max 5
 

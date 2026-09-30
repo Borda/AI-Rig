@@ -1,6 +1,6 @@
 # 🌉 bridge_CC-Codex — Claude Code ↔ Codex
 
-Codex questions use synchronous `request_user_input` for required or flow-changing decisions only when the active host permits that purpose and every feasible choice fits. Otherwise invoke permitted `request_user_input_async`, including required decisions without independent work, and keep dependent actions pending. The caller inspects the exposed schema: this host's async tool takes a `questions` array, not top-level `title` and `options`; other hosts may differ. After an accepted required async question, the root yields without a final or status message when no independent authorized work remains. Optional questions prefer permitted async, falling back to permitted sync when async is unavailable or unsuitable. Plain chat is used when no permitted control can render the needed form. Tool acceptance alone does not prove a selectable form appeared; text-rendered async questions stay pending for typed answers without a duplicate prompt. Option-based questions put one evidence-backed choice first with `(Recommended)` in its label; the suffix maps to the unchanged canonical answer and never grants consent. Conversational approvals use Approve/Deny; when a visible decision key is required, a bare approval cannot authorize action even if only one decision is pending, and the root cannot supply its missing key from an earlier message. Exact-digest protocols and runtime permissions remain separate. Silence, preselection, stale or duplicate replies never authorize action. All Codex entrypoints load their plugin-local guidance; no sibling plugin or global setup is required. [Codex CLI 0.154.0](https://learn.chatgpt.com/docs/changelog) introduced inline selectable asynchronous TUI questions, but version alone does not establish tool availability. Older/headless hosts retain plain-chat or unresolved-input fallback; no plugin-wide minimum or automatic upgrade is added. Claude-specific question behavior is unchanged.
+Codex questions prefer permitted synchronous input, then this plugin's packaged native terminal form (`ask_user`, served by `bin/user_questions_mcp.py`). The local form waits for the answer, binds it to the decision ID and frozen scope digest, and does not emit a second assistant question message. Closed choices use a selectable list; open-ended indexes, ranges, severity combinations and exact-token confirmations use native text input with the complete grammar. It performs no commands, repository writes, credential reads, network access or permission changes. Async questions are used only where current host evidence establishes usable controls; tool acceptance alone is insufficient. Explicit Approve/Deny replies bind to one unchanged, unambiguous conversational decision without demanding its displayed key again. Ambiguity, supersession, exact-token/digest and runtime-permission rules remain enforced. No answer, cancellation or unsupported input grants consent. Each plugin ships its own provider; no sibling installation or user-settings change is required. Headless hosts retain an explicit unresolved-input fallback. Claude-specific question behavior is unchanged.
 
 Rejected question calls resume at the pending decision without replaying delivered report context. A synchronous mode error does not establish async unavailability; explicit higher-priority host requirements for plain text remain binding and are reported as policy restrictions, not missing tools.
 
@@ -10,7 +10,7 @@ A user-reported dismissed question leaves its decision pending. The root checks 
 
 The bridge is useful with either host integration installed and has no dependency on another plugin from this repository. Existing-plugin replacement and consumer migration are deliberately outside this standalone package.
 
-> Release: `0.5.9`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
+> Release: `0.6.0`. Claude- and Codex-side setup skills provide an approval-bound lifecycle for safe configuration and repair while retaining full caller-input, workspace/session authority, recursion, asynchronous lifecycle, envelope/transcript, and approval boundaries.
 
 ______________________________________________________________________
 
@@ -125,7 +125,7 @@ The setup result is defined by `schemas/setup-result.schema.json`, separate from
 - It reports the strongest evidence level reached: `static`, `host-authenticated`, `session-ready`, `workspace-ready`, or `live-verified`.
 - It never treats process exit, authentication, or static checks as proof of inference.
 - The deterministic setup CLI cannot prove the loaded session/workspace and therefore remains non-ready even after a successful point-in-time live probe; the host skill may claim a stronger lifecycle result only after applicable loaded-session evidence is also present.
-- The read-only MCP tool `bridge_status` returns sanitized server identity, version, schema/protocol version, host-selected canonical workspace, workspace fingerprint, and expected tool inventory without calling a provider or writing state.
+- The read-only MCP tool `bridge_status` returns sanitized server identity, version, schema/protocol version, explicit binding status, binding identity, confirmed canonical workspace, workspace fingerprint, and expected tool inventory without calling a provider or writing state.
 
 <a id="-is-mcp-required"></a>
 
@@ -133,13 +133,13 @@ The setup result is defined by `schemas/setup-result.schema.json`, separate from
 
 MCP is complementary to the bridge as a whole but mandatory for the Codex → Claude Code direction. Claude Code → Codex calls launch `codex exec` directly and do not need MCP. Codex → Claude Code calls must use the packaged MCP server because a `claude --print` process started from a sandboxed Codex model turn cannot rely on the normal Claude authentication context, while the Codex host launches the MCP server outside that model sandbox.
 
-If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus the read-only status tool and prevents model-controlled workspace, background, or session selection.
+If you install only the Claude Code half to call Codex, MCP is not required. If you install only the Codex half or want the complete bidirectional bridge, the `.codex-mcp.json` declaration and `bin/bridge_mcp.py` are required transport components, not optional enhancements. The MCP boundary provides the three request tools plus read-only status and native workspace binding tools and prevents model-controlled workspace, background, or session selection.
 
 <a id="-install-for-claude-code"></a>
 
 ## 📦 Install for Claude Code
 
-The Codex-facing MCP surface has four tools: `bridge_implement`, `bridge_advise`, `bridge_review`, and the zero-provider read-only `bridge_status`. MCP is required for Codex → Claude Code and full bidirectional use, but not for Claude Code → Codex-only use.
+The Codex-facing MCP surface has five tools: `bridge_implement`, `bridge_advise`, `bridge_review`, the zero-provider read-only `bridge_status`, and `bridge_bind_workspace`. MCP is required for Codex → Claude Code and full bidirectional use, but not for Claude Code → Codex-only use.
 
 Add the AI-Rig marketplace and install `bridge_CC-Codex`:
 
@@ -224,9 +224,9 @@ codex plugin marketplace add Borda/AI-Rig
 codex plugin add bridge@borda-ai-rig
 ```
 
-The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py` from the plugin root using Codex's own `${PLUGIN_ROOT}` variable. Claude Code ships no `.mcp.json` at all: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and Claude Code auto-discovers any file literally named `.mcp.json` at a plugin's root regardless of manifest intent, so the plugin deliberately never ships one to avoid registering a server Claude Code has no use for.
+The Codex manifest declares the bridge MCP server via `.codex-mcp.json`, which starts `bin/bridge_mcp.py` using native `cwd: "."` and relative script arguments. Claude Code ships no `.mcp.json` at all: the Claude-to-Codex direction is CLI-only (`bin/bridge_call.py`), and Claude Code auto-discovers any file literally named `.mcp.json` at a plugin's root regardless of manifest intent, so the plugin deliberately never ships one to avoid registering a server Claude Code has no use for.
 
-> The server treats the current directory selected by the Codex host as its trusted workspace; open the Codex session in the intended project and do not use write-capable calls if the installed host launches the MCP server from a different directory. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
+> The server starts unbound; its launch directory locates installed code and never grants project authority. Call `bridge_bind_workspace` with empty arguments: type the absolute existing project folder in the first native form, then confirm its exact canonical target in the second. Rebinding clears old authority immediately, including cancellation. Every advise/review/implement call requires the current `binding_id` returned by binding/status; missing or stale IDs fail before provider work. Folder resolution and directory identity are rechecked before each executable call. Filesystem root, home itself, and installed payload/cache folders are refused; project subdirectories of home are allowed. Binding is process-local project identity, not editing approval, runtime permission, authentication, or paid-call consent. If Codex asks you to trust or enable the installed MCP content, review the displayed command and approve it according to your local policy.
 
 Start a fresh Codex session after installation, then run the Codex-side setup skill:
 
@@ -250,14 +250,15 @@ $bridge:advise --model <claude-model> --effort <effort> --timeout-seconds 120 "E
 $bridge:review --model <claude-model> --effort <effort> --timeout-seconds 300 "Review the current diff and list actionable findings."
 ```
 
-The skills invoke the bridge MCP tools `bridge_implement`, `bridge_advise`, `bridge_review`, and `bridge_status`.
+The skills invoke the bridge MCP tools `bridge_implement`, `bridge_advise`, `bridge_review`, `bridge_status`, and `bridge_bind_workspace`.
 
-| Tool group           | Contract                                                                                                                                                                                                                                            |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bridge request tools | Accept `task`, optional `model` and `effort`, and optional `timeout_seconds`, `depth`, `run_id`, and supported-effort capability data. Omitted model, effort, depth, and run ID use the host-default, `medium`, zero, and a new UUID respectively.  |
-| `bridge_status`      | Accepts no workspace override and performs no peer, provider, write, repair, or authentication operation.                                                                                                                                           |
-| Reverse timeouts     | Implementations accept at most 700 seconds; advice and review accept at most 350 seconds because their one allowed timeout retry, including per-attempt termination and drain overhead, must also finish within the MCP host's 900-second deadline. |
-| Host boundary        | The host-launched server binds the request to its launch workspace and rejects model-supplied workspace, background, and session fields, so a tool call cannot widen filesystem authority.                                                          |
+| Tool group              | Contract                                                                                                                                                                                                                                            |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bridge request tools    | Accept `task`, optional `model` and `effort`, and optional `timeout_seconds`, `depth`, `run_id`, and supported-effort capability data. Omitted model, effort, depth, and run ID use the host-default, `medium`, zero, and a new UUID respectively.  |
+| `bridge_bind_workspace` | Accepts empty arguments; user selects and separately confirms the exact canonical project through native forms. Rebinding clears old authority; no form support means unbound.                                                                      |
+| `bridge_status`         | Accepts no workspace override and performs no peer, provider, write, repair, or authentication operation.                                                                                                                                           |
+| Reverse timeouts        | Implementations accept at most 700 seconds; advice and review accept at most 350 seconds because their one allowed timeout retry, including per-attempt termination and drain overhead, must also finish within the MCP host's 900-second deadline. |
+| Host boundary           | The server requires native user-confirmed project binding and the current binding ID, and rejects model-supplied workspace, background, and session fields.                                                                                         |
 
 The bridge supplies the budget preamble, invokes `claude -p` with the narrowest permission mode for the verb, and returns the same compact envelope used by the Claude half. The peer's bounded verbose `details` remain in the transcript referenced by the envelope; they are not copied into the caller's context.
 
@@ -314,6 +315,7 @@ Bridge state is project-local:
 
 Artifact handling:
 
+- Artifact directories and members are rechecked against the bound project and store before reads, creation, and writes, including cancellation markers and atomic temporary files. Escaping parents and linked file leaves are rejected; directory aliases contained within the store remain usable. These checks do not promise immunity to concurrent path replacement during an OS operation.
 - Incident records do not persist child command arguments or environment data. They preserve the classified fault, reason, model, effort, verb, budget, transcript path, and—when a write-capable process is killed—the observed worktree delta. That delta is advisory: unchanged dirty status or unavailable Git can produce an empty delta despite edits, so inspect the actual worktree independently.
 - The health log records direction, verb, model, effort, cost/tokens when reported by the host, duration, status, depth, and `run_id`.
 - The predictable `health.jsonl` member is opened without following links or reparse points, then its opened descriptor must be a regular single-link file. A prepared symlink, reparse point, or hard link returns a contained blocked result and does not write its target. This does not provide universal containment if an attacker creates a new hard link after the descriptor check.

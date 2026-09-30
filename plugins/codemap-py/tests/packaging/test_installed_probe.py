@@ -58,10 +58,10 @@ _skip_launcher_execute_permission_unenforced = pytest.mark.skipif(
 )
 
 
-def _run_probe(script_name: str) -> dict:
-    """Run a probe script and return its parsed JSON result plus the exit code."""
+def _run_probe(script_name: str, source: Path) -> dict:
+    """Run an unchanged install probe from its authoritative disposable candidate source."""
     proc = subprocess.run(
-        [sys.executable, str(_SCRIPTS / script_name)],
+        [sys.executable, str(source / "plugins" / "codemap-py" / "scripts" / script_name)],
         capture_output=True,
         text=True,
         timeout=300,
@@ -70,6 +70,49 @@ def _run_probe(script_name: str) -> dict:
     result = json.loads(proc.stdout)
     result["_returncode"] = proc.returncode
     return result
+
+
+@pytest.fixture(name="candidate_source")
+def _candidate_source(tmp_path: Path) -> Path:
+    """Copy explicit candidate members and preserve their authoritative modes in a disposable index."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "--stage", "-z", "--", "."],
+        cwd=_PLUGIN_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    modes: dict[str, bool] = {}
+    for record in tracked.stdout.split("\0"):
+        if record:
+            metadata, relative = record.split("\t", 1)
+            modes[relative] = metadata.split()[0] == "100755"
+    for relative in (
+        "shared/codex-user-questions.md",
+        "shared/codex-user-questions-details.md",
+        "shared/user_questions_mcp.py",
+        ".codex-mcp.json",
+    ):
+        modes.setdefault(relative, False)
+    source = tmp_path / "candidate-source"
+    plugin = source / "plugins" / "codemap-py"
+    for relative in modes:
+        target = plugin / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(_PLUGIN_ROOT / relative, target)
+    subprocess.run(["git", "init", "-q", str(source)], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(source), "add", "-A"], check=True, capture_output=True)
+    # Restore the captured modes explicitly: the disposable host's filemode defaults
+    # cannot establish executable authority, including on native Windows.
+    for executable in (False, True):
+        paths = [f"plugins/codemap-py/{relative}" for relative, mode in modes.items() if mode == executable]
+        if paths:
+            subprocess.run(
+                ["git", "-C", str(source), "update-index", f"--chmod={'+' if executable else '-'}x", "--", *paths],
+                check=True,
+                capture_output=True,
+            )
+    return source
 
 
 def _assert_source_hidden(installed_path: str) -> None:
@@ -82,9 +125,9 @@ def _assert_source_hidden(installed_path: str) -> None:
 @pytest.mark.skipif(not _CLAUDE_CLI_AVAILABLE, reason="claude CLI not present on this runner")
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_claude_probe_installs_and_verifies_exact_roster() -> None:
+def test_claude_probe_installs_and_verifies_exact_roster(candidate_source: Path) -> None:
     """The Claude probe installs the built package and verifies the exact 6-skill roster."""
-    result = _run_probe("probe_claude_install.py")
+    result = _run_probe("probe_claude_install.py", candidate_source)
     assert result["status"] == "ok", result
     assert result["_returncode"] == 0
     verification = result["verification"]
@@ -98,9 +141,9 @@ def test_claude_probe_installs_and_verifies_exact_roster() -> None:
 @pytest.mark.skipif(not _CODEX_CLI_AVAILABLE, reason="codex CLI not present on this runner")
 @pytest.mark.integration
 @pytest.mark.packaging
-def test_codex_probe_installs_and_verifies_exact_roster() -> None:
+def test_codex_probe_installs_and_verifies_exact_roster(candidate_source: Path) -> None:
     """The Codex probe installs the built package and verifies the exact six-skill roster (Phase 4)."""
-    result = _run_probe("probe_codex_install.py")
+    result = _run_probe("probe_codex_install.py", candidate_source)
     assert result["status"] == "ok", result
     assert result["_returncode"] == 0
     verification = result["verification"]

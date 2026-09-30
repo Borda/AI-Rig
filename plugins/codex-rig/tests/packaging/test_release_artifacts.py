@@ -161,7 +161,8 @@ def release_run(tmp_path: Path, text_newline_default: None) -> tuple[Path, dict[
     outputs = tmp_path / "deliverables"
     outputs.mkdir()
     (outputs / "DRAFT.md").write_text(
-        "# v1.2.1: Accurate parsing\n\n## Summary\nParsing accepts valid empty input.\n"
+        "# v1.2.1: Accurate parsing\n\n## Summary\nParsing accepts valid empty input.\n\n"
+        "- **Empty input** returns an empty result instead of raising.\n\nDrop-in upgrade, no code changes.\n"
         "## Highlights\nEmpty input now returns an empty result instead of raising.\n"
         "## Migration guide\nNo migration required.\n## Notable changes\n"
         "- Fixed empty input ([commit](https://example.org/commit/abc)).\n"
@@ -343,6 +344,19 @@ def test_draft_requires_nonempty_sections(validator: ModuleType, release_run: tu
         draft.read_text(encoding="utf-8").replace(f"## {section}", f"Mention of {section}"), encoding="utf-8"
     )
     with pytest.raises(SystemExit, match="release-draft-section"):
+        validate_run(validator, release_run)
+
+
+@pytest.mark.parametrize(
+    "residue", ["[Release hook]", "[User-facing win]", "> Summary guidance:", "[Full changelog URL]"]
+)
+@pytest.mark.integration
+def test_draft_rejects_template_residue(validator: ModuleType, release_run: tuple, residue: str) -> None:
+    """A draft that still carries template placeholders or writing notes is not a finished release draft."""
+    directory, _ = release_run
+    draft = directory / "deliverables/DRAFT.md"
+    draft.write_text(draft.read_text(encoding="utf-8") + f"\n{residue}\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="release-draft-template-residue"):
         validate_run(validator, release_run)
 
 

@@ -119,13 +119,11 @@ ini_options.addopts = [
   "--cov-report=term-missing",
   "--cov-report=html:.reports/coverage",
   "--ignore=benchmarks/results",
-  # A hung test otherwise burns the job's whole 25-minute budget and names nothing;
-  # this fails the single offender instead. Slowest legitimate test measured 64 s on a
-  # 16-core dev box, and CI runners are slower, so the cap keeps ~3x headroom rather
-  # than trading a hang for flaky timeouts. timeout_method is left at the default
+  # Limit each test to 120 seconds so a hung test reports the offender promptly.
+  # timeout_method is left at the default
   # (SIGALRM where available, thread on Windows) so POSIX legs fail one test and keep
   # going, rather than tearing down the whole session.
-  "--timeout=180",
+  "--timeout=120",
 ]
 ini_options.markers = [
   # No checkout-only metadata, tooling, or fixtures; excludes the outer build/install harness.

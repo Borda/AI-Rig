@@ -50,7 +50,7 @@ import math
 import os
 import re
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -66,7 +66,7 @@ if str(SHARED_DIRECTORY) not in sys.path:
 
 from parallel_execution import _SECRET_PATTERNS, validate_inspection_contexts, validate_read_only_runtime  # noqa: E402
 from local_reviewer_wave import ReviewRouteError, validate_evidence as validate_local_reviewer_evidence  # noqa: E402
-from review_routing import derive_mechanical_risk  # noqa: E402
+from review_routing import ROUTING_SIGNALS, derive_mechanical_risk  # noqa: E402
 from review_context import context_pages, dispatch_message, render_read_call, render_read_output  # noqa: E402
 
 REQUIRED_SECTIONS = (
@@ -315,26 +315,6 @@ def _validate_sol_selections(payload: dict[str, Any], roles: set[str], *, label:
     return selections
 
 
-ROUTING_SIGNALS = {
-    "behavior_change",
-    "bug_fix",
-    "test_or_error_path",
-    "data_tensor_boundary",
-    "high_candidate",
-    "unresolved_material_assumption",
-    "material_no_finding",
-    "explicit_adversarial",
-    "axis_solution_architect",
-    "axis_security_auditor",
-    "axis_data_steward",
-    "axis_cicd_steward",
-    "axis_linting_expert",
-    "axis_doc_scribe",
-    "axis_oss_shepherd",
-    "axis_squeezer",
-    "axis_scientist",
-    "axis_web_explorer",
-}
 CONDITIONAL_SIGNALS = {
     "solution-architect": "axis_solution_architect",
     "security-auditor": "axis_security_auditor",
@@ -1824,6 +1804,43 @@ def _validate_confidence_recovery(result: dict[str, Any], metadata: dict[str, An
         raise SystemExit("review-confidence-status-should-be-fair")
 
 
+def _paged_native_manifest(manifest: dict[str, Any]) -> bool:
+    """Identify audited native page reads while keeping aggregate admission separate."""
+    return manifest.get("schema_version") == 6 or (
+        manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "native-wave"
+    )
+
+
+def _native_dispatch_message(manifest: dict[str, Any], plan_path: Path, role: str, attempt: int) -> str:
+    """Render the declared native recipe, preserving historical reader paths exactly."""
+    return dispatch_message(
+        _native_recipe_plan(manifest, plan_path),
+        role,
+        attempt,
+        manifest["context_reader_python"],
+        provenance_header=manifest.get("dispatch_protocol", "paged-context-v6") == "paged-context-v6",
+        reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") == 7 else None,
+    )
+
+
+def _native_recipe_plan(manifest: dict[str, Any], retained_plan: Path) -> Path:
+    """Preserve historical call coordinates only when their plan bytes match the retained plan."""
+    original = manifest.get("original_plan_path")
+    if original is None:
+        return retained_plan
+    path = Path(str(original))
+    if (
+        manifest.get("schema_version") != 7
+        or manifest.get("dispatch_protocol") != "paged-context-v6"
+        or not path.is_absolute()
+        or not path.is_file()
+        or path.name != "inspection-plan.json"
+        or path.read_bytes() != retained_plan.read_bytes()
+    ):
+        raise SystemExit("manifest-original-plan-identity-invalid")
+    return path
+
+
 def _manifest_passes(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     passes = manifest.get("passes", manifest.get("specialist_passes"))
     if not isinstance(passes, list):
@@ -1847,7 +1864,18 @@ def _validate_review_runtime(
     roles_dir: Path = PLUGIN_ROOT / "roles",
 ) -> dict[str, object]:
     """Validate route-specific execution evidence before granting reviewer independence."""
-    if manifest.get("schema_version") in {5, 6}:
+    if manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "batched-review":
+        import review_batches  # Verified circular producer/validator boundary; resolve after initialization.
+
+        return review_batches.validate_aggregate(
+            out_dir,
+            manifest,
+            {item["role"] for item in passes},
+            codex_home,
+            parent_thread_id,
+            retained_role_cards=roles_dir == out_dir / "role-cards",
+        )
+    if manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest):
         return _validate_instruction_bounded_review(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir)
     if manifest.get("schema_version") == 4:
         return _validate_local_reviewer_wave(
@@ -1985,7 +2013,13 @@ def _validate_inspection_plan(
     elif evidence is not None:
         raise SystemExit("review-inspection-plan-independence-evidence-unexpected")
     try:
-        contexts = validate_inspection_contexts(plan, plan_path)
+        contexts = validate_inspection_contexts(
+            plan,
+            plan_path,
+            context_limit=None
+            if manifest.get("schema_version") == 7 and manifest.get("manifest_kind") == "native-wave"
+            else 4,
+        )
     except ValueError as error:
         raise SystemExit(f"review-inspection-contexts-invalid:{error}") from error
     return plan, contexts, independent_required, evidence
@@ -2058,7 +2092,14 @@ def _validate_context_read(
     expected_outputs: list[str] = []
     for page in range(1, page_count + 1):
         call, output = tool_rows[2 * (page - 1) : 2 * page]
-        expected_call = render_read_call(plan_path, role, attempt["attempt"], manifest["context_reader_python"], page)
+        expected_call = render_read_call(
+            _native_recipe_plan(manifest, plan_path),
+            role,
+            attempt["attempt"],
+            manifest["context_reader_python"],
+            page,
+            reader_path=Path(manifest["context_reader_path"]) if manifest.get("schema_version") == 7 else None,
+        )
         expected_command = json.loads(expected_call.split("tools.exec_command(", 1)[1].split("); text", 1)[0])["cmd"]
         expected_output = render_read_output(
             context,
@@ -2123,6 +2164,35 @@ def _validate_context_read(
         raise SystemExit(f"review-inspection-child-tool-use:{role}")
 
 
+def _joined_terminal_timestamp(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> datetime | None:
+    """Return the unique parent-visible final-answer join matching one child output."""
+    joined: list[datetime] = []
+    for row in parent_rows:
+        payload = row.get("payload")
+        if row.get("type") != "response_item" or not isinstance(payload, dict):
+            continue
+        if payload.get("type") != "agent_message" or payload.get("author") != agent_path:
+            continue
+        content = payload.get("content")
+        if not isinstance(content, list):
+            continue
+        texts = [item.get("text") for item in content if isinstance(item, dict) and item.get("type") == "input_text"]
+        if (
+            len(texts) == 1
+            and isinstance(texts[0], str)
+            and texts[0].startswith("Message Type: FINAL_ANSWER\n")
+            and texts[0].split("Payload:\n", 1)[-1].strip() == message
+        ):
+            try:
+                timestamp = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                return None
+            if timestamp.tzinfo is None:
+                return None
+            joined.append(timestamp)
+    return joined[0] if len(joined) == 1 else None
+
+
 def _joined_terminal_result(parent_rows: list[dict[str, Any]], agent_path: str, message: str) -> bool:
     """Require one parent-visible child final message matching the bound output exactly."""
     joined = 0
@@ -2144,6 +2214,333 @@ def _joined_terminal_result(parent_rows: list[dict[str, Any]], agent_path: str, 
         ):
             joined += 1
     return joined == 1
+
+
+def _parent_timestamp(row: dict[str, Any]) -> datetime:
+    """Read one timezone-aware parent event timestamp or reject its evidence."""
+    try:
+        value = datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError) as error:
+        raise SystemExit("review-inspection-schedule-timestamp-invalid") from error
+    if value.tzinfo is None:
+        raise SystemExit("review-inspection-schedule-timestamp-invalid")
+    return value
+
+
+def _validate_native_schedule(
+    out_dir: Path,
+    manifest: dict[str, Any],
+    passes: list[dict[str, Any]],
+    parent_rows: list[dict[str, Any]],
+    frozen_contexts: dict[str, Path],
+    codex_home: Path,
+    parent_thread_id: str,
+    roles_dir: Path,
+) -> bool:
+    """Bind schema-seven dispatch order, allocated slots, refusals, and refill waits to parent evidence."""
+    plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
+    ordered_roles = sorted(frozen_contexts, key=lambda role: (-len(frozen_contexts[role].read_bytes()), role))
+    role_attempts: dict[str, list[dict[str, Any]]] = {}
+    for item in passes:
+        role_attempts[item["role"]] = item["attempts"]
+
+    allocations: list[dict[str, Any]] = []
+    successful_call_ids: set[str] = set()
+    expected_task_names: dict[str, tuple[str, int]] = {}
+    for role in ordered_roles:
+        card = _load_role_card(roles_dir, role)
+        for attempt in role_attempts[role]:
+            number = attempt["attempt"]
+            call_id = attempt.get("spawn_call_id")
+            records = [
+                row
+                for row in parent_rows
+                if row.get("type") == "response_item"
+                and isinstance(row.get("payload"), dict)
+                and row["payload"].get("call_id") == call_id
+            ]
+            calls = [row for row in records if row["payload"].get("type") == "function_call"]
+            outputs = [row for row in records if row["payload"].get("type") == "function_call_output"]
+            if len(calls) != 1 or len(outputs) != 1 or calls[0]["payload"].get("name") != "spawn_agent":
+                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}")
+            try:
+                arguments = json.loads(calls[0]["payload"].get("arguments", ""))
+                receipt = json.loads(outputs[0]["payload"].get("output", ""))
+            except (TypeError, json.JSONDecodeError) as error:
+                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}") from error
+            expected = {
+                "task_name": f"review_{role.replace('-', '_')}_{attempt['context_sha256'][:12]}_a{number}",
+                "agent_type": "default",
+                "fork_turns": "none",
+                "model": card["model"],
+                "reasoning_effort": card["model_reasoning_effort"],
+                "message": _native_dispatch_message(manifest, plan_path, role, number),
+            }
+            if arguments != expected or receipt != {"task_name": attempt["agent_path"]}:
+                raise SystemExit(f"review-inspection-launch-arguments-invalid:{role}:{number}")
+            launched_at = _parent_timestamp(calls[0])
+            received_at = _parent_timestamp(outputs[0])
+            if launched_at >= received_at:
+                raise SystemExit(f"review-inspection-launch-receipt-invalid:{role}:{number}")
+            child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
+            terminals = [
+                event
+                for event in _event_payloads(child_rows, "task_complete")
+                if event.get("turn_id") == attempt.get("turn_id")
+            ]
+            if len(terminals) != 1:
+                raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{number}")
+            terminal = terminals[0]
+            terminal_start = terminal.get("started_at")
+            terminal_end = terminal.get("completed_at")
+            if (
+                isinstance(terminal_start, bool)
+                or isinstance(terminal_end, bool)
+                or not isinstance(terminal_start, int | float)
+                or not isinstance(terminal_end, int | float)
+                or not math.isfinite(terminal_start)
+                or not math.isfinite(terminal_end)
+                or terminal_start >= terminal_end
+            ):
+                raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{number}")
+            terminal_started_at = datetime.fromtimestamp(terminal_start, timezone.utc)
+            terminal_at = datetime.fromtimestamp(terminal_end, timezone.utc)
+            if attempt.get("status") == "completed":
+                message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
+            else:
+                message = terminal.get("last_agent_message")
+            if not isinstance(message, str):
+                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+            joined_at = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message.strip())
+            if terminal_started_at < launched_at or joined_at is None or received_at > joined_at:
+                raise SystemExit(f"review-inspection-parent-join-missing:{role}")
+            successful_call_ids.add(call_id)
+            expected_task_names[expected["task_name"]] = (role, number)
+            allocations.append(
+                {
+                    "role": role,
+                    "attempt": number,
+                    "task_name": expected["task_name"],
+                    "start": launched_at,
+                    "launch_index": parent_rows.index(calls[0]),
+                    "end": max(terminal_at, joined_at),
+                }
+            )
+
+    first_launches: dict[str, tuple[datetime, int]] = {}
+    for allocation in allocations:
+        if allocation["attempt"] == 1:
+            role = allocation["role"]
+            first_launches[role] = (allocation["start"], allocation["launch_index"])
+    if set(first_launches) != set(ordered_roles):
+        raise SystemExit("review-inspection-context-role-set-mismatch")
+    if [role for role, _ in sorted(first_launches.items(), key=lambda pair: pair[1][1])] != ordered_roles:
+        raise SystemExit("review-inspection-dispatch-order-mismatch")
+
+    capacity_refusals: list[dict[str, Any]] = []
+    for row in parent_rows:
+        payload = row.get("payload")
+        if (
+            row.get("type") != "response_item"
+            or not isinstance(payload, dict)
+            or payload.get("type") != "function_call"
+            or payload.get("name") != "spawn_agent"
+            or payload.get("call_id") in successful_call_ids
+        ):
+            continue
+        try:
+            arguments = json.loads(payload.get("arguments", ""))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        name = arguments.get("task_name") if isinstance(arguments, dict) else None
+        if name not in expected_task_names:
+            continue
+        call_id = payload.get("call_id")
+        matching = [
+            candidate
+            for candidate in parent_rows
+            if candidate.get("type") == "response_item"
+            and isinstance(candidate.get("payload"), dict)
+            and candidate["payload"].get("type") == "function_call_output"
+            and candidate["payload"].get("call_id") == call_id
+        ]
+        if (
+            len(matching) != 1
+            or matching[0]["payload"].get("output") != "collab spawn failed: agent thread limit reached"
+        ):
+            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{expected_task_names[name][0]}")
+        role = expected_task_names[name][0]
+        card = _load_role_card(roles_dir, role)
+        expected_arguments = {
+            "task_name": name,
+            "agent_type": "default",
+            "fork_turns": "none",
+            "model": card["model"],
+            "reasoning_effort": card["model_reasoning_effort"],
+            "message": _native_dispatch_message(manifest, plan_path, role, expected_task_names[name][1]),
+        }
+        if arguments != expected_arguments:
+            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+        called_at = _parent_timestamp(row)
+        returned_at = _parent_timestamp(matching[0])
+        if called_at >= returned_at:
+            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+        for path in (codex_home / "sessions").rglob("*.jsonl"):
+            try:
+                with path.open(encoding="utf-8") as stream:
+                    session_row = json.loads(stream.readline())
+                session = session_row.get("payload", {})
+                spawn = session.get("source", {}).get("subagent", {}).get("thread_spawn", {})
+                session_path = session.get("agent_path") or spawn.get("agent_path", "")
+            except (OSError, AttributeError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            session_name = str(session_path).replace("\\", "/").rsplit("/", 1)[-1]
+            if spawn.get("parent_thread_id") != parent_thread_id or session_name != name:
+                continue
+            try:
+                created_at = datetime.fromisoformat(session["timestamp"].replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError, AttributeError) as error:
+                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}") from error
+            if created_at.tzinfo is None:
+                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+            if called_at <= created_at <= returned_at:
+                raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+        active = sum(allocation["start"] <= called_at < allocation["end"] for allocation in allocations)
+        capacity_refusals.append(
+            {
+                "called_at": called_at,
+                "role": role,
+                "attempt": expected_task_names[name][1],
+                "active": active,
+                "returned_at": returned_at,
+                "call_index": parent_rows.index(row),
+                "output_index": parent_rows.index(matching[0]),
+                "task_name": name,
+            }
+        )
+
+    for refusal in capacity_refusals:
+        next_attempts = [
+            (later["call_index"], later["called_at"])
+            for later in capacity_refusals
+            if later["task_name"] == refusal["task_name"] and later["call_index"] > refusal["call_index"]
+        ]
+        next_attempts.extend(
+            (allocation["launch_index"], allocation["start"])
+            for allocation in allocations
+            if allocation["task_name"] == refusal["task_name"] and allocation["launch_index"] > refusal["call_index"]
+        )
+        if not next_attempts:
+            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
+        next_call_index, next_call_at = min(next_attempts, key=lambda item: item[0])
+        if next_call_index <= refusal["output_index"] or next_call_at <= refusal["returned_at"]:
+            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
+        if not any(
+            allocation["start"] <= refusal["called_at"] < allocation["end"]
+            and refusal["returned_at"] < allocation["end"] <= next_call_at
+            for allocation in allocations
+        ):
+            raise SystemExit(f"review-inspection-capacity-refusal-no-state-change:{refusal['role']}")
+
+    capacity_limited = False
+    for refusal in sorted(capacity_refusals, key=lambda entry: (entry["called_at"], entry["call_index"])):
+        refused_at = refusal["called_at"]
+        role = refusal["role"]
+        attempt_number = refusal["attempt"]
+        active = refusal["active"]
+        returned_at = refusal["returned_at"]
+        if active < 1 or active > 4:
+            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+        next_allocation = next(
+            item for item in allocations if item["role"] == role and item["attempt"] == attempt_number
+        )
+        position = ordered_roles.index(role)
+        if (
+            next_allocation["start"] <= returned_at
+            or not any(returned_at <= allocation["end"] <= next_allocation["start"] for allocation in allocations)
+            or (
+                attempt_number == 1
+                and (
+                    first_launches[role][0] <= refused_at
+                    or any(first_launches[previous][0] > refused_at for previous in ordered_roles[:position])
+                    or any(first_launches[later][0] <= refused_at for later in ordered_roles[position + 1 :])
+                )
+            )
+            or (
+                attempt_number > 1
+                and not any(
+                    allocation["role"] == role
+                    and allocation["attempt"] == attempt_number - 1
+                    and allocation["end"] <= refused_at
+                    for allocation in allocations
+                )
+            )
+        ):
+            raise SystemExit(f"review-inspection-capacity-refusal-invalid:{role}")
+        capacity_limited = capacity_limited or active < 4
+
+    wait_events: list[tuple[datetime, datetime]] = []
+    for row in parent_rows:
+        payload = row.get("payload")
+        if (
+            row.get("type") != "response_item"
+            or not isinstance(payload, dict)
+            or payload.get("type") != "function_call"
+            or payload.get("name") != "wait_agent"
+        ):
+            continue
+        matching = [
+            candidate
+            for candidate in parent_rows
+            if candidate.get("type") == "response_item"
+            and isinstance(candidate.get("payload"), dict)
+            and candidate["payload"].get("type") == "function_call_output"
+            and candidate["payload"].get("call_id") == payload.get("call_id")
+        ]
+        if len(matching) != 1 or "output" not in matching[0]["payload"]:
+            raise SystemExit("review-inspection-schedule-wait-invalid")
+        try:
+            wait_arguments = json.loads(payload.get("arguments", "{}"))
+        except (TypeError, json.JSONDecodeError) as error:
+            raise SystemExit("review-inspection-schedule-wait-invalid") from error
+        timeout = wait_arguments.get("timeout_ms") if isinstance(wait_arguments, dict) else None
+        if wait_arguments not in ({}, {"timeout_ms": timeout}) or (
+            "timeout_ms" in wait_arguments and (type(timeout) is not int or not 10000 <= timeout <= 3600000)
+        ):
+            raise SystemExit("review-inspection-schedule-wait-invalid")
+        started, returned = _parent_timestamp(row), _parent_timestamp(matching[0])
+        if started >= returned:
+            raise SystemExit("review-inspection-schedule-wait-invalid")
+        wait_events.append((started, returned))
+        call_index = parent_rows.index(row)
+        output_index = parent_rows.index(matching[0])
+        if any(call_index < allocation["launch_index"] < output_index for allocation in allocations):
+            raise SystemExit("review-inspection-schedule-wait-invalid")
+
+    first_roles = set(first_launches)
+    for started, _returned in wait_events:
+        pending = any(allocation["start"] > started for allocation in allocations) or any(
+            role not in first_roles or first_launches[role][0] > started for role in ordered_roles
+        )
+        active = sum(allocation["start"] <= started < allocation["end"] for allocation in allocations)
+        refusals = [entry for entry in capacity_refusals if entry["called_at"] <= started]
+        observed_full_pool = max(refusals, key=lambda entry: entry["called_at"])["active"] if refusals else 4
+        if pending and active < observed_full_pool:
+            raise SystemExit("review-inspection-refill-opportunity-missed")
+        if any(started <= allocation["start"] < _returned for allocation in allocations):
+            raise SystemExit("review-inspection-schedule-wait-invalid")
+
+    events = sorted(
+        (event for item in allocations for event in ((item["start"], 1), (item["end"], -1))),
+        key=lambda event: (event[0], event[1]),
+    )
+    active = peak = 0
+    for _timestamp, change in events:
+        active += change
+        peak = max(peak, active)
+    if peak > 4:
+        raise SystemExit("review-inspection-active-capacity-exceeded")
+    return capacity_limited
 
 
 def _validate_instruction_bounded_review(
@@ -2172,8 +2569,27 @@ def _validate_instruction_bounded_review(
         }
 
     parent_rows = _read_jsonl(_find_rollout(codex_home, parent_thread_id))
+    capacity_limited = (
+        _validate_native_schedule(
+            out_dir,
+            manifest,
+            inspections,
+            parent_rows,
+            frozen_contexts,
+            codex_home,
+            parent_thread_id,
+            roles_dir,
+        )
+        if (
+            manifest.get("schema_version") == 7
+            and manifest.get("manifest_kind") == "native-wave"
+            and manifest.get("dispatch_protocol") == "paged-context-v7"
+        )
+        else False
+    )
     controls: dict[str, dict[str, str]] = {}
     intervals: list[tuple[int | float, int | float]] = []
+    selected_intervals: list[tuple[int | float, int | float]] = []
     for item in inspections:
         role = item["role"]
         role_card_path = roles_dir / role / "ROLE.md"
@@ -2189,7 +2605,26 @@ def _validate_instruction_bounded_review(
             if not context.startswith(role_card):
                 raise SystemExit(f"review-inspection-role-card-context-missing:{role}")
             child_rows = _read_jsonl(_find_rollout(codex_home, attempt["agent_thread_id"]))
-            if manifest["schema_version"] == 6:
+            if manifest.get("schema_version") == 7:
+                turn_id = attempt.get("turn_id")
+                terminals = [
+                    event for event in _event_payloads(child_rows, "task_complete") if event.get("turn_id") == turn_id
+                ]
+                if not isinstance(turn_id, str) or not turn_id or len(terminals) != 1:
+                    raise SystemExit(f"review-inspection-attempt-timing-missing:{role}:{attempt['attempt']}")
+                started_at, completed_at = terminals[0].get("started_at"), terminals[0].get("completed_at")
+                if (
+                    isinstance(started_at, bool)
+                    or isinstance(completed_at, bool)
+                    or not isinstance(started_at, int | float)
+                    or not isinstance(completed_at, int | float)
+                    or not math.isfinite(started_at)
+                    or not math.isfinite(completed_at)
+                    or started_at >= completed_at
+                ):
+                    raise SystemExit(f"review-inspection-attempt-timing-invalid:{role}:{attempt['attempt']}")
+                intervals.append((started_at, completed_at))
+            if _paged_native_manifest(manifest):
                 plan_path = _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"])
                 _validate_context_read(child_rows, plan_path, role, attempt, manifest, context)
             elif _inspection_child_called_tool(child_rows):
@@ -2213,11 +2648,11 @@ def _validate_instruction_bounded_review(
             if (
                 isinstance(arguments, dict)
                 and call.get("call_id") == attempt.get("spawn_call_id")
-                and (manifest["schema_version"] == 6 or arguments.get("message") == context)
+                and (_paged_native_manifest(manifest) or arguments.get("message") == context)
                 and arguments.get("task_name") == Path(attempt["agent_path"]).name
                 and arguments.get("fork_turns") == "none"
                 and (
-                    manifest["schema_version"] != 6
+                    not _paged_native_manifest(manifest)
                     or (
                         arguments.get("agent_type") == "default"
                         and arguments.get("model") == attempt["model"]
@@ -2251,15 +2686,32 @@ def _validate_instruction_bounded_review(
         message = _resolve_path(out_dir, attempt["output_path"]).read_text(encoding="utf-8").strip()
         if any(pattern.search(message) for pattern in _SECRET_PATTERNS):
             raise SystemExit(f"review-inspection-output-sensitive-material:{role}")
-        if not _joined_terminal_result(parent_rows, attempt["agent_path"], message):
+        if manifest.get("schema_version") == 7:
+            joined = _joined_terminal_timestamp(parent_rows, attempt["agent_path"], message) is not None
+        else:
+            joined = _joined_terminal_result(parent_rows, attempt["agent_path"], message)
+        if not joined:
             raise SystemExit(f"review-inspection-parent-join-missing:{role}")
-        intervals.append((started_at, completed_at))
+        if manifest.get("schema_version") != 7:
+            intervals.append((started_at, completed_at))
+        selected_intervals.append((started_at, completed_at))
 
     overlaps = any(
         max(first[0], second[0]) < min(first[1], second[1])
-        for index, first in enumerate(intervals)
-        for second in intervals[index + 1 :]
+        for index, first in enumerate(selected_intervals)
+        for second in selected_intervals[index + 1 :]
     )
+    if manifest.get("schema_version") == 7:
+        active = peak_active = 0
+        events = sorted(
+            (event for start, end in intervals for event in ((start, 1), (end, -1))),
+            key=lambda event: (event[0], event[1]),
+        )
+        for _timestamp, change in events:
+            active += change
+            peak_active = max(peak_active, active)
+        if peak_active > 4:
+            raise SystemExit("review-inspection-active-capacity-exceeded")
     actual_mode = "parallel" if overlaps else "independent-spawned" if len(inspections) > 1 else "serial"
     required_roles = REQUIRED_ROLES & {item["role"] for item in passes}
     independence_satisfied = bool(required_roles) and required_roles <= {item["role"] for item in inspections}
@@ -2267,6 +2719,7 @@ def _validate_instruction_bounded_review(
         "actual_mode": actual_mode,
         "evidence_level": "instruction-bounded-review",
         "write_parallel_eligible": False,
+        "capacity_limited": capacity_limited,
         "independence_satisfied": independence_satisfied,
         "independence_required": independent_required,
         "observed_controls": controls,
@@ -2467,13 +2920,16 @@ def _validate_spawn_attempts(
         thread_id = attempt.get("agent_thread_id")
         event_id = attempt.get("event_id")
         agent_path = attempt.get("agent_path")
-        receipt_route = manifest.get("schema_version") in {5, 6} and "event_id" not in attempt
+        receipt_route = (
+            manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest)
+        ) and "event_id" not in attempt
         identities = (thread_id, agent_path) if receipt_route else (thread_id, event_id, agent_path)
         if not all(isinstance(value, str) and value for value in identities):
             raise SystemExit(f"manifest-attempt-identity-missing:{role}")
         context_path = _resolve_path(out_dir, attempt.get("context_path"))
         if context_path in used_context_paths and not (
-            manifest.get("schema_version") in {5, 6} and context_path in role_context_paths
+            (manifest.get("schema_version") in {5, 6, 7} or _paged_native_manifest(manifest))
+            and context_path in role_context_paths
         ):
             raise SystemExit("manifest-reused-context-path")
         used_context_paths.add(context_path)
@@ -2497,13 +2953,13 @@ def _validate_spawn_attempts(
         ]
         if receipt_route:
             sent_context = (
-                dispatch_message(
+                _native_dispatch_message(
+                    manifest,
                     _resolve_path(out_dir, manifest["inspection_execution"]["plan_path"]),
                     role,
                     attempt["attempt"],
-                    manifest["context_reader_python"],
                 )
-                if manifest["schema_version"] == 6
+                if _paged_native_manifest(manifest)
                 else context_path.read_bytes().decode("utf-8")
             )
             bound = _receipt_binds_child(
@@ -2512,10 +2968,24 @@ def _validate_spawn_attempts(
                 manifest["parent_thread_id"],
                 attempt,
                 sent_context,
-                schema_version=manifest["schema_version"],
+                schema_version=6 if _paged_native_manifest(manifest) else manifest["schema_version"],
                 model=role_card["model"],
                 effort=role_card["model_reasoning_effort"],
             )
+            if manifest.get("schema_version") == 7:
+                sent_calls = [
+                    row["payload"]
+                    for row in parent_rows
+                    if row.get("type") == "response_item"
+                    and isinstance(row.get("payload"), dict)
+                    and row["payload"].get("type") == "function_call"
+                    and row["payload"].get("call_id") == attempt.get("spawn_call_id")
+                ]
+                bound = (
+                    bound
+                    and len(sent_calls) == 1
+                    and json.loads(sent_calls[0]["arguments"]).get("message") == sent_context
+                )
         else:
             bound = len(matches) == 1
         if not bound:
@@ -2539,7 +3009,7 @@ def _validate_spawn_attempts(
         if session_path != agent_path:
             raise SystemExit(f"provenance-child-path-mismatch:{role}:{session_path}")
         session_role = session.get("agent_role") or spawn.get("agent_role")
-        if session_role is not None and session_role != ("default" if manifest["schema_version"] == 6 else role):
+        if session_role is not None and session_role != ("default" if _paged_native_manifest(manifest) else role):
             raise SystemExit(f"provenance-child-role-mismatch:{role}:{session_role}")
 
         if attempt.get("status") != "completed":
@@ -2576,6 +3046,11 @@ def _validate_spawn_attempts(
         used_output_paths.add(output_path)
         if not output_path.exists() or _sha256(output_path) != attempt.get("output_sha256"):
             raise SystemExit(f"provenance-output-hash-mismatch:{role}")
+        if manifest.get("schema_version") == 7:
+            raw = completions[0]["last_agent_message"].encode("utf-8")
+            raw_path = _resolve_path(out_dir, attempt.get("raw_output_path"))
+            if raw_path.read_bytes() != raw or _sha256(raw_path) != attempt.get("raw_output_sha256"):
+                raise SystemExit(f"provenance-raw-output-mismatch:{role}")
         message = completions[0]["last_agent_message"].strip()
         if output_path.read_text(encoding="utf-8").strip() != message:
             raise SystemExit(f"provenance-output-message-mismatch:{role}")
@@ -2584,7 +3059,7 @@ def _validate_spawn_attempts(
             f"input={manifest['review_input_sha256']} context={attempt['context_sha256']} "
             f"attempt={attempt['attempt']} -->"
         )
-        if message.splitlines()[0] != expected_header:
+        if manifest.get("schema_version") != 7 and message.splitlines()[0] != expected_header:
             raise SystemExit(f"provenance-output-header-mismatch:{role}")
 
     if attempts[selected - 1].get("status") != "completed":
@@ -2610,9 +3085,43 @@ def _validate_manifest_entries(
 ) -> dict[str, dict[str, Any]]:
     """Bind every triggered pass to unique, role-specific evidence for its declared route."""
     schema_version = manifest.get("schema_version")
-    if schema_version not in {2, 3, 4, 5, 6}:
+    if schema_version not in {2, 3, 4, 5, 6, 7}:
         raise SystemExit("manifest-schema-version")
-    if schema_version == 6:
+    if schema_version == 7:
+        kind = manifest.get("manifest_kind")
+        if kind not in {"native-wave", "batched-review"}:
+            raise SystemExit("manifest-kind-invalid")
+        if kind == "batched-review":
+            import review_batches  # Resolve the circular aggregate validation boundary after initialization.
+
+            if passes != manifest.get("passes"):
+                raise SystemExit("review-batch-pass-input-mismatch")
+            review_batches.validate_aggregate(
+                out_dir,
+                manifest,
+                triggered_roles,
+                codex_home,
+                parent_thread_id,
+                retained_role_cards=retained_role_cards,
+            )
+            return {item["role"]: item for item in passes}
+        if manifest.get("dispatch_protocol") not in {"paged-context-v6", "paged-context-v7"}:
+            raise SystemExit("manifest-dispatch-protocol-invalid")
+        reader_path = Path(str(manifest.get("context_reader_path", "")))
+        # Historical protocol-v6 readers are byte-identical to the committed pre-migration implementation.
+        legacy_reader = "bf0025b22283b98a95e6a77a08b600e090f417e10bb0c90f3371bf0d19198132"
+        current_reader = Path(__file__).with_name("review_context.py")
+        if (
+            not reader_path.is_absolute()
+            or not reader_path.is_file()
+            or reader_path.name != "review_context.py"
+            or _sha256(reader_path) != manifest.get("context_reader_sha256")
+            or manifest["context_reader_sha256"] not in {legacy_reader, _sha256(current_reader)}
+            or manifest["dispatch_protocol"] == "paged-context-v7"
+            and _sha256(reader_path) != _sha256(current_reader)
+        ):
+            raise SystemExit("manifest-context-reader-identity-invalid")
+    if _paged_native_manifest(manifest):
         reader = manifest.get("context_reader_python")
         if (
             not isinstance(reader, str)
@@ -2656,9 +3165,9 @@ def _validate_manifest_entries(
         if retained_role_cards:
             _resolve_path(out_dir, str(roles_dir / role / "ROLE.md"))
         role_card = _load_role_card(roles_dir, role)
-        if schema_version in {3, 4, 5, 6} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
+        if schema_version in {3, 4, 5, 6, 7} and item.get("role_card_sha256") != role_card["role_card_sha256"]:
             raise SystemExit(f"manifest-role-card-hash-mismatch:{role}")
-        if require_role_card_receipts and schema_version in {3, 4, 5, 6} and not retained_role_cards:
+        if require_role_card_receipts and schema_version in {3, 4, 5, 6, 7} and not retained_role_cards:
             retained_path = _resolve_path(out_dir, f"role-cards/{role}/ROLE.md")
             if not retained_path.is_file() or _sha256(retained_path) != role_card["role_card_sha256"]:
                 raise SystemExit(f"manifest-retained-role-card-mismatch:{role}")
@@ -2666,8 +3175,8 @@ def _validate_manifest_entries(
             raise SystemExit(f"manifest-missing-axis:{role}")
         if mode not in VALID_MODES:
             raise SystemExit(f"manifest-invalid-mode:{role}:{mode!r}")
-        if (schema_version in {5, 6} and mode not in {"inspection", "substituted"}) or (
-            schema_version not in {5, 6} and mode == "inspection"
+        if (schema_version in {5, 6, 7} and mode not in {"inspection", "substituted"}) or (
+            schema_version not in {5, 6, 7} and mode == "inspection"
         ):
             raise SystemExit(f"manifest-mode-schema-mismatch:{role}")
         if not isinstance(trigger, str) or not trigger.strip():
@@ -2710,12 +3219,18 @@ def _validate_manifest_entries(
             first_line = substitute_output.splitlines()[0].strip() if substitute_output else ""
             explicit_header = first_line == f"role_id: {role}"
             legacy_heading = first_line == f"{role}:" or re.fullmatch(rf"#{{1,6}}\s+{re.escape(role)}", first_line)
-            if not explicit_header and (schema_version in {5, 6} or not legacy_heading):
+            if not explicit_header and (schema_version in {5, 6, 7} or not legacy_heading):
                 raise SystemExit(f"manifest-substitute-output-not-role-bound:{role}")
         by_role[role] = item
 
     if set(by_role) != triggered_roles:
         raise SystemExit("manifest-triggered-role-set-mismatch")
+    if schema_version == 7:
+        _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id, roles_dir=roles_dir)
+        if "reviewer_findings_version" in manifest:
+            import review_batches  # Reuse the existing circular batch boundary after native provenance admission.
+
+            review_batches.validate_wave_findings(out_dir, manifest, passes)
     return by_role
 
 
@@ -2746,7 +3261,7 @@ def _validate_manifest_preflight(
         project_root,
         require_role_card_receipts=True,
     )
-    if manifest.get("schema_version") in {3, 4, 5, 6}:
+    if manifest.get("schema_version") in {3, 4, 5, 6, 7}:
         _validate_review_runtime(out_dir, manifest, passes, codex_home, parent_thread_id)
 
 
@@ -2760,7 +3275,7 @@ def _validate_challenge_manifest_preflight(
     manifest = _load_json(out_dir / "specialist-manifest.json")
     passes = _manifest_passes(manifest)
     if (
-        manifest.get("schema_version") not in {4, 5, 6}
+        manifest.get("schema_version") not in {4, 5, 6, 7}
         or len(passes) != 1
         or passes[0].get("role") != "challenger"
         or passes[0].get("mode") not in {"app-server", "inspection"}
@@ -3036,7 +3551,7 @@ def _validate_runtime_summary_metadata(
         ):
             if metadata.get(key) != expected:
                 raise SystemExit(f"metadata-{key.replace('_', '-')}-mismatch")
-        if manifest.get("schema_version") in {5, 6}:
+        if manifest.get("schema_version") in {5, 6, 7}:
             if metadata.get("execution_observed_controls") != runtime_summary.get("observed_controls"):
                 raise SystemExit("metadata-execution-observed-controls-mismatch")
     if metadata.get("review_run_id") != manifest.get("review_run_id"):
@@ -3086,7 +3601,7 @@ def _validate_specialist_manifest(
             require_assessment=result.get("schema_version") != 2,
             roles_dir=out_dir / "role-cards" if retained_role_cards else PLUGIN_ROOT / "roles",
         )
-        if manifest.get("schema_version") in {3, 4, 5, 6}
+        if manifest.get("schema_version") in {3, 4, 5, 6, 7}
         else {}
     )
     _validate_runtime_summary_metadata(metadata, manifest, runtime_summary)
@@ -3141,8 +3656,13 @@ def _validate_inspection_independence(
 ) -> tuple[bool, bool]:
     """Check the schema-5 inspection plan's independence requirement against recorded evidence."""
     triggered_required = REQUIRED_ROLES & evidence.triggered_roles
+    plan_dir = out_dir
+    plan_manifest = evidence.manifest
+    if plan_manifest.get("manifest_kind") == "batched-review":
+        plan_dir = out_dir / "batches" / "interactions"
+        plan_manifest = _load_json(plan_dir / "specialist-manifest.json")
     _, _, independence_required, requirement_evidence = _validate_inspection_plan(
-        out_dir, evidence.manifest, env.parent_thread_id
+        plan_dir, plan_manifest, env.parent_thread_id
     )
     routing_requirement = evidence.routing.get("independent_review_required")
     if routing_requirement is not independence_required:
@@ -3183,18 +3703,25 @@ def _validate_independence_requirement(
     env: _ReviewEnvironment,
 ) -> None:
     """Check the review's independence requirement and the metadata that claims it was satisfied."""
-    if evidence.manifest.get("schema_version") in {5, 6}:
+    if evidence.manifest.get("schema_version") in {5, 6, 7}:
         independence_required, required_independent = _validate_inspection_independence(
             out_dir, evidence, metadata, status, env
         )
     else:
         independence_required, required_independent = _validate_legacy_independence(evidence, status, risk_tier)
     if (
-        evidence.manifest.get("schema_version") in {3, 4, 5, 6}
+        evidence.manifest.get("schema_version") in {3, 4, 5, 6, 7}
         and status == "pass"
         and len(evidence.triggered_roles) >= 2
         and (
-            evidence.runtime_summary.get("actual_mode") != "parallel"
+            (
+                evidence.runtime_summary.get("actual_mode") != "parallel"
+                and not (
+                    evidence.manifest.get("schema_version") == 7
+                    and evidence.runtime_summary.get("actual_mode") == "independent-spawned"
+                    and evidence.runtime_summary.get("capacity_limited") is True
+                )
+            )
             or any(item["mode"] not in {"inspection", "spawned", "app-server"} for item in evidence.passes)
         )
     ):
@@ -3209,6 +3736,163 @@ def _validate_independence_requirement(
         raise SystemExit("metadata-independence-satisfied-mismatch")
     if metadata.get("independence_required") is not independence_required:
         raise SystemExit("metadata-independence-required-mismatch")
+
+
+def _batch_reviewer_findings(path: Path, snapshot: dict[str, Any], role: str) -> list[dict[str, Any]]:
+    """Parse explicit batched obligations and bind declared coordinates to frozen source hashes.
+
+    Ordinary native and historical reviewer formats never enter this profile. Missing inventories and prose outside the
+    allowed sections fail; ratings and blocking counts cannot invent or suppress records.
+    """
+    content = path.read_text(encoding="utf-8")
+    match = re.fullmatch(
+        r"\s*## Reviewer Findings\s*\n```json\n(?P<records>.*?)\n```\s*"
+        r"(?:## Finding Dispositions\s*\n(?P<dispositions>.*?))?"
+        r"## Reviewer Confidence\s*\n```json\n(?P<confidence>.*?)\n```\s*"
+        r"## Reviewer Assessment\s*\nRating: [1-5]\s*\nRationale: [^\n]+\s*",
+        content,
+        re.DOTALL,
+    )
+    if match is None:
+        raise SystemExit(f"review-batch-individual-findings-format:{role}")
+    dispositions = match["dispositions"]
+    if dispositions is not None and any(
+        re.fullmatch(
+            r"Source disposition [^\s:]+: (closed|rejected); Evidence: .+:[1-9][0-9]*-[1-9][0-9]* - \S.*", line
+        )
+        is None
+        for line in dispositions.strip().splitlines()
+    ):
+        raise SystemExit(f"review-batch-individual-findings-disposition-format:{role}")
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        """Reject duplicate JSON keys rather than silently replacing an obligation field."""
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate finding key")
+            result[key] = value
+        return result
+
+    try:
+        records = json.loads(match["records"], object_pairs_hook=unique_object)
+        confidence = json.loads(match["confidence"], object_pairs_hook=unique_object)
+    except (ValueError, RecursionError) as error:
+        raise SystemExit(f"review-batch-individual-findings-json:{role}") from error
+    if (
+        not isinstance(confidence, dict)
+        or set(confidence) != {"score", "scope", "gaps"}
+        or type(confidence["score"]) not in {int, float}
+        or not 0 <= confidence["score"] <= 1
+        or not isinstance(confidence["scope"], str)
+        or not confidence["scope"].strip()
+        or not isinstance(confidence["gaps"], list)
+        or any(
+            not isinstance(gap, dict)
+            or set(gap) != {"gap", "status", "rationale"}
+            or any(not isinstance(gap[key], str) or not gap[key].strip() for key in gap)
+            or gap["status"] not in {"closed", "unresolved", "deferred"}
+            for gap in confidence["gaps"]
+        )
+    ):
+        raise SystemExit(f"review-batch-individual-findings-confidence:{role}")
+    if not isinstance(records, list):
+        raise SystemExit(f"review-batch-individual-findings-inventory:{role}")
+    sources = {item["path"]: item for item in snapshot["files"]}
+    identities = set()
+    bound = []
+    fields = {"id", "severity", "title", "summary", "required_change", "evidence", "closure_evidence"}
+    for record in records:
+        if (
+            not isinstance(record, dict)
+            or set(record) != fields
+            or not isinstance(record["id"], str)
+            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", record["id"]) is None
+            or record["id"] in identities
+            or not isinstance(record["severity"], str)
+            or record["severity"] not in FINDING_SEVERITIES
+            or any(not isinstance(record[key], str) or not record[key].strip() for key in fields - {"evidence"})
+            or not isinstance(record["evidence"], list)
+        ):
+            raise SystemExit(f"review-batch-individual-findings-record:{role}")
+        identities.add(record["id"])
+        evidence = []
+        for entry in record["evidence"]:
+            if not isinstance(entry, dict) or set(entry) != {"path", "start_line", "end_line"}:
+                raise SystemExit(f"review-batch-individual-findings-evidence:{role}")
+            source = sources.get(entry["path"]) if isinstance(entry["path"], str) else None
+            if (
+                source is None
+                or source["kind"] == "missing"
+                or type(entry["start_line"]) is not int
+                or type(entry["end_line"]) is not int
+                or not 1 <= entry["start_line"] <= entry["end_line"] <= len(source["content"].splitlines())
+            ):
+                raise SystemExit(f"review-batch-individual-findings-evidence:{role}")
+            evidence.append({**entry, "source_sha256": source["sha256"]})
+        bound.append({**record, "evidence": evidence})
+    return bound
+
+
+def _validate_batch_source_findings(result: dict[str, Any], manifest: dict[str, Any]) -> None:
+    """Retain unresolved findings from every admitted batch phase and forbid false canonical approval.
+
+    The serialized source_findings field retains individual original obligations from source, intermediate interaction,
+    and final waves. Every unresolved individual requires its exact canonical action and retained origin evidence;
+    shared actions need explicit exact-obligation duplicate accounting before ordinary remediation intake can admit.
+    """
+    if manifest.get("manifest_kind") != "batched-review":
+        return
+    ledger = manifest["source_findings"]
+    metadata = result["metadata"]
+    if metadata.get("source_findings") != ledger:
+        raise SystemExit("review-batch-result-source-findings-mismatch")
+    unresolved = [item for item in ledger if item["disposition"] == "unresolved"]
+    if not unresolved:
+        return
+    blocking = any(item["original"]["severity"] != "low" for item in unresolved)
+    if (blocking and result.get("status") == "pass") or metadata.get("review_decision", {}).get(
+        "recommendation"
+    ) == "accept-as-is":
+        raise SystemExit("review-batch-source-findings-unresolved")
+    records = {item.get("id"): item for item in metadata.get("review_findings", [])}
+    mapping = metadata.get("source_finding_mapping")
+    if not isinstance(mapping, dict) or set(mapping) != {item["finding_id"] for item in unresolved}:
+        raise SystemExit("review-batch-result-source-finding-inventory-dropped")
+    actions: dict[str, list[dict[str, Any]]] = {}
+    for item in unresolved:
+        identities = mapping[item["finding_id"]]
+        if not isinstance(identities, list) or len(identities) != 1 or not isinstance(identities[0], str):
+            raise SystemExit("review-batch-result-source-findings-dropped")
+        identity = identities[0]
+        finding = records.get(identity)
+        original = item["original"]
+        if (
+            not finding
+            or item["manifest_path"] not in finding.get("evidence", [])
+            or _readable_review_role(item["pass"]["role"]) not in finding.get("authors", [])
+            or any(
+                f"{entry['path']}:{entry['start_line']}-{entry['end_line']}" not in finding.get("evidence", [])
+                for entry in original["evidence"]
+            )
+            or any(
+                finding.get(key) != original[key]
+                for key in ("severity", "title", "summary", "required_change", "closure_evidence")
+            )
+        ):
+            raise SystemExit("review-batch-result-source-finding-inventory-dropped")
+        actions.setdefault(identity, []).append(item)
+    duplicates = {}
+    for originals in actions.values():
+        originals.sort(key=lambda item: item["finding_id"])
+        first = originals[0]
+        payload = {key: value for key, value in first["original"].items() if key != "id"}
+        for item in originals[1:]:
+            if {key: value for key, value in item["original"].items() if key != "id"} != payload:
+                raise SystemExit("review-batch-distinct-findings-collapsed")
+            duplicates[item["finding_id"]] = first["finding_id"]
+    if metadata.get("source_finding_duplicates", {}) != duplicates:
+        raise SystemExit("review-batch-duplicate-accounting-mismatch")
 
 
 def _validate_result(
@@ -3262,6 +3946,7 @@ def _validate_result(
 
     evidence = _validate_specialist_manifest(out_dir, result, result_path, metadata, risk_tier, env)
     _validate_specialist_pass_metadata(metadata, evidence.by_role)
+    _validate_batch_source_findings(result, evidence.manifest)
     if result.get("schema_version") == 3 or metadata.get("reviewer_assessments") is not None:
         _validate_reviewer_assessments(out_dir, metadata, evidence.by_role)
     _validate_independence_requirement(out_dir, evidence, metadata, status, risk_tier, env)

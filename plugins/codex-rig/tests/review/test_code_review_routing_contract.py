@@ -190,6 +190,40 @@ def test_routing_helper_replaces_manual_mechanical_evidence_idempotently(tmp_pat
     assert validator._validate_routing(tmp_path, "LOCAL") == {"qa-specialist", "sw-engineer"}
 
 
+@pytest.mark.parametrize(
+    ("mutation", "expected"),
+    [
+        pytest.param("missing", "review-routing-signal-set-mismatch", id="omitted-container"),
+        pytest.param("partial", "review-routing-signal-set-mismatch", id="missing-boolean"),
+        pytest.param("extra", "review-routing-signal-set-mismatch", id="unknown-boolean"),
+        pytest.param("nonboolean", "review-routing-signals-not-boolean", id="integer-is-not-boolean"),
+    ],
+)
+def test_routing_producer_rejects_invalid_signals_before_write(tmp_path: Path, mutation: str, expected: str) -> None:
+    """Keep malformed semantic decisions from passing the mechanical producer unchanged."""
+    signals = dict.fromkeys(_load_validator().ROUTING_SIGNALS, False)
+    routing = {"schema_version": 1, "risk_tier": "LOCAL", "signals": signals}
+    if mutation == "missing":
+        del routing["signals"]
+    elif mutation == "partial":
+        del signals["bug_fix"]
+    elif mutation == "extra":
+        signals["unknown_signal"] = False
+    else:
+        signals["bug_fix"] = 1
+    routing_path = tmp_path / "review-routing.json"
+    original = json.dumps(routing).encode("utf-8")
+    routing_path.write_bytes(original)
+
+    result = subprocess.run(
+        [sys.executable, str(ROUTING_HELPER), "--out", str(tmp_path)], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode != 0
+    assert expected in result.stderr
+    assert routing_path.read_bytes() == original
+
+
 def test_test_only_python_review_does_not_trigger_software_engineer(tmp_path: Path) -> None:
     """Leave test-only review with QA rather than claiming a production source pass."""
     validator = _load_validator()
@@ -1038,6 +1072,23 @@ def test_skill_requires_list_valued_routing_evidence_and_reasons() -> None:
     assert "non-empty JSON `list[str]` value for each true/false decision" in skill
     assert "non-empty JSON `list[str]` value" in skill
     assert "Bare strings are invalid." in skill
+
+
+def test_skill_routing_example_passes_the_installed_validator(tmp_path: Path) -> None:
+    """Prevent the producer's nested schema example from drifting from ordinary routing validation."""
+    skill = CODE_REVIEW_SKILL.read_text(encoding="utf-8")
+    section = skill.split("The following neutral example shows the complete nested shape", 1)[1]
+    example = json.loads(section.split("```json\n", 1)[1].split("```", 1)[0])
+    (tmp_path / "review-routing.json").write_text(json.dumps(example), encoding="utf-8", newline="\n")
+
+    result = subprocess.run(
+        [sys.executable, str(ROUTING_HELPER), "--out", str(tmp_path)], capture_output=True, text=True, check=False
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert _load_validator()._validate_routing(tmp_path, "TRIVIAL") == set()
+    assert "Never infer omitted signals as `false` or move them to top level." in skill
+    assert "needs no new human routing choice" in section
 
 
 def test_skill_and_result_template_require_schema_three_role_and_sol_provenance() -> None:

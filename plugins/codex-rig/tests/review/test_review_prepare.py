@@ -11,6 +11,7 @@ import runpy
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime, timezone
 
 import pytest
 
@@ -18,6 +19,7 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 SKILL = PLUGIN_ROOT / "skills/code-review"
 HELPER = SKILL / "review_prepare.py"
+_CONTEXT_READER = runpy.run_path(str(SKILL / "review_context.py"))["read_context"]
 
 
 def _review_inputs(
@@ -27,6 +29,8 @@ def _review_inputs(
     second_file: bool = False,
     unchanged_caller: bool = False,
     deleted: bool = False,
+    large_source: bool = False,
+    large_patch: bool = False,
 ) -> Path:
     """Write semantic reviewer decisions while leaving mechanical evidence to the producer."""
     spec = importlib.util.spec_from_file_location("prepare_validator", SKILL / "validate_artifacts.py")
@@ -36,24 +40,33 @@ def _review_inputs(
     run.mkdir()
     repository = tmp_path / "repository"
     repository.mkdir()
-    for command in (["init", "-q"], ["config", "user.name", "Test"], ["config", "user.email", "test@example.com"]):
+    # Git checks out unchanged callers from HEAD, so writer LF alone cannot fix their checkout bytes.
+    for command in (
+        ["init", "-q"],
+        ["config", "core.autocrlf", "false"],
+        ["config", "user.name", "Test"],
+        ["config", "user.email", "test@example.com"],
+    ):
         subprocess.run(["git", "-C", str(repository), *command], check=True, capture_output=True)
-    (repository / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    stable_source = "unchanged = 'café'\n" * 18000 if large_source else ""
+    (repository / "widget.py").write_text("value = 1\n" + stable_source, encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(repository), "add", "widget.py"], check=True, capture_output=True)
     if second_file:
-        (repository / "other.py").write_text("other = 1\n", encoding="utf-8")
+        (repository / "other.py").write_text("other = 1\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "other.py"], check=True, capture_output=True)
     if unchanged_caller:
-        (repository / "stable.py").write_text("caller = 5\n", encoding="utf-8")
+        (repository / "stable.py").write_text("caller = 5\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(repository), "add", "stable.py"], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(repository), "commit", "-qm", "Initial"], check=True, capture_output=True)
-    (repository / "widget.py").write_text("value = 2\n", encoding="utf-8")
+    (repository / "widget.py").write_text(
+        "value = 2\n" + ("changed = 'café'\n" * 18000 if large_patch else stable_source), encoding="utf-8", newline="\n"
+    )
     if second_file:
-        (repository / "other.py").write_text("other = 2\n", encoding="utf-8")
+        (repository / "other.py").write_text("other = 2\n", encoding="utf-8", newline="\n")
     if deleted:
         (repository / "widget.py").unlink()
     if untracked:
-        (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8")
+        (repository / "new.txt").write_text("new_value = 7\n", encoding="utf-8", newline="\n")
     collected = subprocess.run(
         [
             sys.executable,
@@ -66,12 +79,13 @@ def _review_inputs(
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
     assert collected.returncode == 0, collected.stderr
     (run / "diff.patch").write_bytes((run / "local-source/diff.patch").read_bytes())
     if untracked:
-        (run / "untracked.txt").write_text("new.txt\n", encoding="utf-8")
+        (run / "untracked.txt").write_text("new.txt\n", encoding="utf-8", newline="\n")
     roles = ["challenger", "qa-specialist"]
     routing = {
         "schema_version": 1,
@@ -81,17 +95,48 @@ def _review_inputs(
         "triggered_roles": roles,
         "trigger_reasons": {role: ["High-risk behavior."] for role in roles},
     }
-    (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8")
+    (run / "review-routing.json").write_text(json.dumps(routing), encoding="utf-8", newline="\n")
     briefs = {}
     for role in roles:
         (run / f"{role}-evidence.md").write_text(
             f"Scope: widget.py at frozen revision. Excluded: unrelated callers.\nQuestion: {role} axis.\n"
             + "Relevant source evidence.\n" * 300,
             encoding="utf-8",
+            newline="\n",
         )
         briefs[role] = {"axis": role, "evidence_path": f"{role}-evidence.md", "source_paths": ["widget.py"]}
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     return run
+
+
+def test_review_source_fixture_preserves_utf8_lf_under_windows_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep frozen source bytes portable under Windows text and Git checkout defaults."""
+    write_text = Path.write_text
+    git_config = tmp_path / "gitconfig"
+    git_config.write_text("[core]\n\tautocrlf = true\n", encoding="utf-8", newline="\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(git_config))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+    def windows_write_text(
+        path: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
+        """Apply Windows text defaults unless the fixture explicitly selects its byte format."""
+        return write_text(path, data, encoding=encoding or "cp1252", errors=errors, newline=newline or "\r\n")
+
+    monkeypatch.setattr(Path, "write_text", windows_write_text)
+    run = _review_inputs(tmp_path, large_source=True, second_file=True, unchanged_caller=True)
+    root = Path(json.loads((run / "local-source/review-worktree.json").read_bytes())["review_worktree"])
+    source = (root / "widget.py").read_bytes()
+
+    assert source == ("value = 2\n" + "unchanged = 'café'\n" * 18000).encode("utf-8")
+    assert (root / "other.py").read_bytes() == b"other = 2\n"
+    assert (root / "stable.py").read_bytes() == b"caller = 5\n"
 
 
 def _prepare(
@@ -130,8 +175,27 @@ def _prepare(
         command,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=False,
     )
+
+
+def test_prepare_rejects_missing_signals_without_rewriting_routing(tmp_path: Path) -> None:
+    """Reject omitted semantic booleans before canonicalization or reviewer preparation."""
+    run = _review_inputs(tmp_path)
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    del routing["signals"]
+    original = json.dumps(routing).encode("utf-8")
+    routing_path.write_bytes(original)
+
+    result = _prepare(run)
+
+    assert result.returncode != 0
+    assert "review-routing-signal-set-mismatch" in result.stderr
+    assert routing_path.read_bytes() == original
+    assert not (run / "inspection-plan.json").exists()
+    assert not (run / "specialists").exists()
 
 
 def test_prepare_rejects_omitted_local_diff(tmp_path: Path) -> None:
@@ -178,6 +242,8 @@ def test_prepare_rejects_undelivered_changed_source(tmp_path: Path) -> None:
     result = _prepare(run)
     assert result.returncode == 2
     assert "review-source-coverage-incomplete" in result.stderr
+    diagnostic = json.loads(result.stderr.split("review-source-coverage-incomplete:", 1)[1])
+    assert diagnostic == {"missing_diff_paths": [], "missing_source_paths": ["other.py"]}
     assert not (run / "dispatch.json").exists()
 
 
@@ -196,7 +262,7 @@ def test_prepare_accepts_complete_split_source_coverage(
     run = _review_inputs(tmp_path, second_file=True)
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"]["source_paths"] = ["other.py"]
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
     plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
@@ -250,6 +316,7 @@ def test_prepare_delivers_deleted_file_comparison(tmp_path: Path, route: str) ->
                     {"worktree": root.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
                 ),
                 encoding="utf-8",
+                newline="\n",
             )
     result = _prepare(run, source_root=root, expected_head=head)
     assert result.returncode == 0, result.stderr
@@ -268,9 +335,9 @@ def test_prepare_binds_preexisting_unchanged_caller(tmp_path: Path, tampered: bo
     root = Path(json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"])
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"]["source_paths"].append("stable.py")
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     if tampered:
-        (root / "stable.py").write_text("caller = 999\n", encoding="utf-8")
+        (root / "stable.py").write_text("caller = 999\n", encoding="utf-8", newline="\n")
     result = _prepare(run, scope_path=scope_path)
     if tampered:
         assert result.returncode != 0
@@ -288,7 +355,7 @@ def test_prepare_rejects_undeclared_missing_context(tmp_path: Path) -> None:
     run = _review_inputs(tmp_path)
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"]["source_paths"].append("never-existed.py")
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode == 2
     assert "review-brief-source-selection-invalid:challenger" in result.stderr
@@ -300,39 +367,213 @@ def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8", newline="\n")
 
 
-def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) -> tuple[Path, Path, dict[str, Path]]:
+def _record_native_schedule(
+    run: Path,
+    home: Path,
+    children: dict[str, Path],
+    *,
+    pool_size: int = 4,
+    scenario: str = "proper-refill",
+    wave_index: int = 0,
+) -> None:
+    """Record coherent external allocation, task completion and final-answer join chronology."""
+    dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
+    queue = [
+        call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        for call in dispatch["calls"]
+    ]
+    actual = list(reversed(queue)) if scenario == "reversed-largest-order" else queue
+    epoch = datetime(2026, 1, 1, 10, tzinfo=timezone.utc).timestamp() + wave_index * 1000
+    launches = {}
+    joins = {}
+    active_ends = []
+    paths = {}
+
+    def stamp(value: float) -> str:
+        """Serialize fixture timestamps using the host's UTC event format."""
+        return datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+    for index, role in enumerate(actual):
+        if index < pool_size:
+            start = epoch + 0.2 + index / 10
+            end = epoch + ([5, 5.01, 20, 25][index] if scenario == "blocked-wait-coalesces-joins" else 5 + index * 5)
+            if scenario == "join-before-terminal" and index == 0:
+                end = epoch + 8
+        else:
+            released = min(active_ends)
+            active_ends.remove(released)
+            start = (
+                max(joins.values())
+                if scenario in {"wait-for-all-before-refill", "wait-again-with-free-slot"}
+                else released
+            ) + 0.25
+            if scenario == "blocked-wait-coalesces-joins":
+                start = epoch + 15.3
+            elif "wait-again-with-free-slot" in scenario:
+                start = epoch + 45.3
+            elif scenario == "join-before-terminal":
+                start = epoch + 8.3
+            end = start + 10
+        launch = epoch + 0.05 + index / 100 if scenario == "spawn-all-five" else start - 0.02
+        if scenario == "join-before-terminal" and index >= pool_size:
+            launch = epoch + 5.28
+        launches[role] = launch
+        joins[role] = epoch + 5.05 if scenario == "join-before-terminal" and index == 0 else end + 0.05
+        active_ends.append(joins[role])
+        rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
+        rows[0]["payload"]["timestamp"] = stamp(launch + 0.005)
+        paths[rows[0]["payload"]["agent_path"]] = role
+        terminal = next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "task_complete")
+        terminal.update(started_at=start, completed_at=end)
+        _write_jsonl(children[role], rows)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    call_roles = {}
+    for row in parent:
+        payload = row.get("payload", {})
+        if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+            arguments = json.loads(payload["arguments"])
+            matches = [role for path, role in paths.items() if path.rsplit("/", 1)[-1] == arguments["task_name"]]
+            if matches:
+                role = matches[0]
+                call_roles[payload["call_id"]] = role
+                row["timestamp"] = stamp(launches[role])
+        elif payload.get("type") == "function_call_output" and payload.get("call_id") in call_roles:
+            row["timestamp"] = stamp(launches[call_roles[payload["call_id"]]] + 0.01)
+        elif payload.get("type") == "agent_message" and payload.get("author") in paths:
+            row["timestamp"] = stamp(joins[paths[payload["author"]]])
+    if scenario in {"capacity-rejected", "capacity-rejected-repeat"}:
+        # Existing rollout envelope, exact observed live refusal text. The host's
+        # serialization of a failed spawn is not asserted by this parser fixture.
+        targets = range(pool_size, len(actual)) if scenario == "capacity-rejected-repeat" else [pool_size]
+        for index in targets:
+            next_role = actual[index]
+            successful = next(
+                row
+                for row in parent
+                if row.get("payload", {}).get("type") == "function_call"
+                and row["payload"].get("call_id") in call_roles
+                and call_roles[row["payload"]["call_id"]] == next_role
+            )
+            refusal = json.loads(json.dumps(successful))
+            refusal_id = f"capacity-refusal-{wave_index}-{index}"
+            rejected_at = epoch + 1 if index == pool_size else launches[actual[index - 1]] + 0.5
+            refusal["timestamp"] = stamp(rejected_at)
+            refusal["payload"]["call_id"] = refusal_id
+            parent.extend(
+                [
+                    refusal,
+                    {
+                        "type": "response_item",
+                        "timestamp": stamp(rejected_at + 0.01),
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": refusal_id,
+                            "output": "collab spawn failed: agent thread limit reached",
+                        },
+                    },
+                ]
+            )
+    if scenario == "blocked-wait-coalesces-joins" or "wait-again-with-free-slot" in scenario:
+        # A matched wait result marks parent resumption. Joins delivered while
+        # this wait is pending alone do not establish scheduling opportunity.
+        arguments = (
+            {} if scenario.startswith("default-") else {"timeout_ms": 30000 if scenario.startswith("30s-") else 10000}
+        )
+        waits = [(4.9, 15.1)]
+        if "wait-again-with-free-slot" in scenario:
+            waits.append((15.2, 45.2))
+        for index, (started, returned) in enumerate(waits):
+            call_id = f"schedule-wait-{wave_index}-{index}"
+            timed_out = not scenario.startswith("completed-") and not (
+                index == 0 and scenario.startswith(("default-", "30s-"))
+            )
+            output = {"message": "Wait timed out." if timed_out else "Wait completed.", "timed_out": timed_out}
+            parent.extend(
+                [
+                    {
+                        "type": "response_item",
+                        "timestamp": stamp(epoch + started),
+                        "payload": {
+                            "type": "function_call",
+                            "name": "wait_agent",
+                            "call_id": call_id,
+                            "arguments": json.dumps(arguments),
+                        },
+                    },
+                    {
+                        "type": "response_item",
+                        "timestamp": stamp(epoch + returned),
+                        "payload": {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": json.dumps(output),
+                        },
+                    },
+                ]
+            )
+    parent.sort(key=lambda row: row.get("timestamp", ""))
+    _write_jsonl(parent_path, parent)
+
+
+def _assembly_evidence(
+    tmp_path: Path,
+    *,
+    malformed_continuation: bool = False,
+    prepared_run: Path | None = None,
+    home: Path | None = None,
+    wave_index: int = 0,
+    final_header: str = "complete",
+    findings: dict[str, str] | None = None,
+    blocking_counts: dict[str, int] | None = None,
+    active_limit: int | None = None,
+) -> tuple[Path, Path, dict[str, Path]]:
     """Record dispatched calls, real context-reader output, and completed child turns."""
-    run = _review_inputs(tmp_path)
-    prepared = _prepare(run)
-    assert prepared.returncode == 0, prepared.stderr
+    run = prepared_run if prepared_run is not None else _review_inputs(tmp_path)
+    if prepared_run is None:
+        prepared = _prepare(run)
+        assert prepared.returncode == 0, prepared.stderr
     plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
     dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
     if malformed_continuation:
         message = dispatch["calls"][0]["arguments"]["message"]
         dispatch["calls"][0]["arguments"]["message"] = message.replace(" --page N", " --page WRONG")
-    home = tmp_path / "codex-home"
+    home = home if home is not None else tmp_path / "codex-home"
     sessions = home / "sessions"
-    sessions.mkdir(parents=True)
-    parent_rows: list[dict[str, object]] = [{"type": "session_meta", "payload": {"id": "parent"}}]
+    sessions.mkdir(parents=True, exist_ok=True)
+    parent_path = sessions / "rollout-parent.jsonl"
+    parent_rows: list[dict[str, object]] = (
+        [json.loads(row) for row in parent_path.read_text(encoding="utf-8").splitlines()]
+        if parent_path.exists()
+        else [{"type": "session_meta", "payload": {"id": "parent"}}]
+    )
     children = {}
-    for index, (context, call) in enumerate(zip(plan["contexts"], dispatch["calls"], strict=True), start=1):
+    calls_by_role = {
+        call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-"): call
+        for call in dispatch["calls"]
+    }
+    for index, context in enumerate(plan["contexts"], start=1):
         role = context["role_id"]
+        call = calls_by_role[role]
         arguments = call["arguments"]
         agent_path = f"/root/{arguments['task_name']}"
-        thread = f"child-{index}"
-        turn = f"turn-{index}"
-        call_id = f"spawn-{index}"
+        identity = f"{wave_index}-{index}" if prepared_run is not None else str(index)
+        thread = f"child-{identity}"
+        turn = f"turn-{identity}"
+        call_id = f"spawn-{identity}"
         message = arguments["message"]
         page_match = re.search(r"Read all (\d+) frozen review context pages", message)
         assert page_match is not None, "compact-review-page-count-invalid"
         page_count = int(page_match.group(1))
-        assert page_count > 1
+        if prepared_run is None:
+            assert page_count > 1
         instruction = (
             f"For pages 2 through {page_count}, copy the same JavaScript source once per page in order. "
             "In each copied source, append ` --page N` to the end of the `cmd` string, replacing N with that page's "
             "actual number. Keep every other byte of the JavaScript source unchanged."
         )
-        assert instruction in message, "compact-review-continuation-invalid"
+        if page_count > 1:
+            assert instruction in message, "compact-review-continuation-invalid"
         templates = re.findall(r"```javascript\n(.*?)\n```", message, flags=re.DOTALL)
         assert len(templates) == 1, "compact-review-template-count-invalid"
         first_call = templates[0]
@@ -349,24 +590,7 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
         tool_rows = []
         header = ""
         for page, read_call in enumerate(read_calls, start=1):
-            reader = subprocess.run(
-                [
-                    sys.executable,
-                    str(SKILL / "review_context.py"),
-                    "--plan",
-                    str(run / "inspection-plan.json"),
-                    "--role",
-                    role,
-                    "--attempt",
-                    "1",
-                    "--page",
-                    str(page),
-                ],
-                capture_output=True,
-                check=False,
-            )
-            assert reader.returncode == 0, reader.stderr
-            output = reader.stdout.decode("utf-8")
+            output = _CONTEXT_READER(run / "inspection-plan.json", role, 1, page)
             if page == 1:
                 header = output.splitlines()[0]
             read_id = f"read-{index}-{page}"
@@ -394,9 +618,17 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
                     },
                 ]
             )
+        if final_header == "missing":
+            header = ""
+        elif final_header == "truncated":
+            header = header.replace(f"input={plan['review_input_sha256']}", f"input={plan['review_input_sha256'][:-1]}")
         final = (
             f"{header}\nNo finding.\n\n## Reviewer Assessment\n\nRating: 1\nRationale: The inspected scope is clean."
         )
+        if run.parent.name == "batches":
+            final = '## Reviewer Findings\n```json\n[]\n```\n\n## Reviewer Confidence\n```json\n{"score": 0.95, "scope": "Frozen source and declared interactions.", "gaps": [{"gap": "Synthetic offline client.", "status": "unresolved", "rationale": "Fixture proves admission without a live semantic reviewer."}]}\n```\n\n## Reviewer Assessment\nRating: 1\nRationale: The inspected scope is clean.'
+        if findings and role in findings:
+            final = ("" if run.parent.name == "batches" else header + "\n") + findings[role]
         parent_rows.extend(
             [
                 {
@@ -462,8 +694,14 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
                     "payload": {
                         "type": "task_complete",
                         "turn_id": turn,
-                        "started_at": 100 + index,
-                        "completed_at": 110 + index,
+                        "started_at": 100
+                        + index
+                        + wave_index * 1000
+                        + ((index - 1) // active_limit * 20 if active_limit else 0),
+                        "completed_at": 110
+                        + index
+                        + wave_index * 1000
+                        + ((index - 1) // active_limit * 20 if active_limit else 0),
                         "last_agent_message": final,
                     },
                 },
@@ -471,8 +709,27 @@ def _assembly_evidence(tmp_path: Path, *, malformed_continuation: bool = False) 
         )
         children[role] = child
     _write_jsonl(sessions / "rollout-parent.jsonl", parent_rows)
+    _record_native_schedule(run, home, children, pool_size=active_limit or 4, wave_index=wave_index)
     (run / "specialist-assessments.json").write_text(
-        json.dumps({role: {"confidence": 0.95, "blocking_findings": 0} for role in children}), encoding="utf-8"
+        json.dumps(
+            {
+                role: {
+                    "confidence": 0.95,
+                    "blocking_findings": blocking_counts.get(role, 0)
+                    if blocking_counts is not None
+                    else sum(
+                        record["severity"] != "low"
+                        for record in json.loads(re.search(r"```json\n(.*?)\n```", findings[role], re.DOTALL)[1])
+                    )
+                    if run.parent.name == "batches" and findings and role in findings and "```json\n" in findings[role]
+                    else 0,
+                    **({"axis": role} if prepared_run is not None else {}),
+                }
+                for role in children
+            }
+        ),
+        encoding="utf-8",
+        newline="\n",
     )
     return run, home, children
 
@@ -488,6 +745,7 @@ def _assemble(run: Path, home: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path: Path) -> None:
+    """Bind each canonical role to its size-ordered call without embedding source in dispatch."""
     run = _review_inputs(tmp_path)
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
@@ -497,14 +755,24 @@ def test_prepare_freezes_complete_wave_and_keeps_source_out_of_dispatch(tmp_path
     assert dispatch["briefs_sha256"] == hashlib.sha256((run / "review-briefs.json").read_bytes()).hexdigest()
     assert [entry["role_id"] for entry in plan["contexts"]] == ["challenger", "qa-specialist"]
     assert len(dispatch["calls"]) == 2
-    for entry, call in zip(plan["contexts"], dispatch["calls"], strict=True):
+    queued_roles = [
+        call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        for call in dispatch["calls"]
+    ]
+    sizes = {entry["role_id"]: (run / entry["context_path"]).stat().st_size for entry in plan["contexts"]}
+    assert queued_roles == sorted(sizes, key=lambda role: (-sizes[role], role))
+    calls_by_role = dict(zip(queued_roles, dispatch["calls"], strict=True))
+    assert set(calls_by_role) == set(sizes)
+    for entry in plan["contexts"]:
         context = (run / entry["context_path"]).read_bytes()
         role = entry["role_id"]
+        call = calls_by_role[role]
+        assert hashlib.sha256(context).hexdigest() == entry["context_sha256"]
         assert context.startswith((PLUGIN_ROOT / "roles" / role / "ROLE.md").read_bytes())
         assert "Relevant source evidence." not in call["arguments"]["message"]
         assert call["arguments"]["fork_turns"] == "none"
         assert call["arguments"]["agent_type"] == "default"
-        assert entry["context_sha256"][:12] in call["arguments"]["task_name"]
+        assert call["arguments"]["task_name"] == (f"review_{role.replace('-', '_')}_{entry['context_sha256'][:12]}_a1")
         assert len(re.findall(r"```javascript\n", call["arguments"]["message"])) == 1
         assert "append ` --page N`" in call["arguments"]["message"]
     assert dispatch["context_bytes"] > dispatch["dispatch_bytes"]
@@ -514,7 +782,7 @@ def test_prepare_rejects_missing_role_before_freezing_any_context(tmp_path: Path
     run = _review_inputs(tmp_path)
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs.pop("challenger")
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode != 0
     assert "review-brief-role-set-mismatch" in result.stderr
@@ -524,10 +792,12 @@ def test_prepare_rejects_missing_role_before_freezing_any_context(tmp_path: Path
 def test_prepare_rejects_prose_only_source_claim_before_freezing(tmp_path: Path) -> None:
     """A claimed inspection cannot substitute for source bytes from the collected checkout."""
     run = _review_inputs(tmp_path)
-    (run / "challenger-evidence.md").write_text("I inspected widget.py at the frozen revision.\n", encoding="utf-8")
+    (run / "challenger-evidence.md").write_text(
+        "I inspected widget.py at the frozen revision.\n", encoding="utf-8", newline="\n"
+    )
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"].pop("source_paths")
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode != 0
     assert "review-brief-source-selection-invalid:challenger" in result.stderr
@@ -540,7 +810,7 @@ def test_prepare_includes_exact_untracked_source(tmp_path: Path) -> None:
     run = _review_inputs(tmp_path, untracked=True)
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"]["source_paths"] = ["new.txt"]
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
     context = (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
@@ -557,7 +827,7 @@ def test_prepare_accepts_only_matching_committed_detached_source(tmp_path: Path,
         json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
     )
     source = review / "widget.py"
-    source.write_text("value = 3\n", encoding="utf-8")
+    source.write_text("value = 3\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(review), "add", "widget.py"], check=True, capture_output=True)
     subprocess.run(
         [
@@ -611,9 +881,9 @@ def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str
     review = Path(
         json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
     )
-    (review / "widget.py").write_text("value = 1\n", encoding="utf-8")
+    (review / "widget.py").write_text("value = 1\n", encoding="utf-8", newline="\n")
     original = "old.py" if rename else destination
-    (review / original).write_text("def renamed():\n    return 17\n", encoding="utf-8")
+    (review / original).write_text("def renamed():\n    return 17\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(review), "add", original], check=True, capture_output=True)
     subprocess.run(
         [
@@ -634,7 +904,7 @@ def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str
     if rename:
         subprocess.run(["git", "-C", str(review), "mv", original, destination], check=True, capture_output=True)
     else:
-        (review / destination).write_text("def renamed():\n    return 18\n", encoding="utf-8")
+        (review / destination).write_text("def renamed():\n    return 18\n", encoding="utf-8", newline="\n")
         subprocess.run(["git", "-C", str(review), "add", destination], check=True, capture_output=True)
     subprocess.run(
         [
@@ -664,7 +934,7 @@ def test_prepare_delivers_committed_destination(tmp_path: Path, destination: str
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     for brief in briefs.values():
         brief["source_paths"] = [destination]
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
 
     result = _prepare(run, source_root=review, expected_head=head)
 
@@ -682,7 +952,7 @@ def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path:
     review = Path(
         json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
     )
-    (review / "widget.py").write_text("value = 3\n", encoding="utf-8")
+    (review / "widget.py").write_text("value = 3\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(review), "add", "widget.py"], check=True, capture_output=True)
     subprocess.run(
         [
@@ -713,11 +983,11 @@ def test_prepare_uses_nested_pr_receipt_and_rejects_ambiguous_receipts(tmp_path:
     (run / "local-source/review-worktree.json").unlink()
     (run / "pr").mkdir()
     receipt = {"worktree": review.as_posix(), "expected_head": head, "diff_base_oid": base, "diff_head_oid": head}
-    (run / "pr/local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8")
+    (run / "pr/local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8", newline="\n")
     result = _prepare(run, source_root=review)
     assert result.returncode == 0, result.stderr
     assert "value = 3\n" in (run / "specialists/challenger-context.md").read_text(encoding="utf-8")
-    (run / "local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8")
+    (run / "local-checkout.json").write_text(json.dumps(receipt), encoding="utf-8", newline="\n")
     result = _prepare(run, source_root=review)
     assert result.returncode != 0
     assert "review-source-receipt-ambiguous" in result.stderr
@@ -729,7 +999,7 @@ def test_prepare_rejects_source_drift_before_freezing(tmp_path: Path) -> None:
     review = Path(
         json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["review_worktree"]
     )
-    (review / "widget.py").write_text("value = 99\n", encoding="utf-8")
+    (review / "widget.py").write_text("value = 99\n", encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode != 0
     assert "Review worktree source changed after collection" in result.stderr
@@ -743,12 +1013,12 @@ def test_prepare_rejects_unrelated_source_selection(tmp_path: Path) -> None:
     repository = Path(
         json.loads((run / "local-source/review-worktree.json").read_text(encoding="utf-8"))["source_worktree"]
     )
-    (repository / "unchanged.py").write_text("stable = True\n", encoding="utf-8")
+    (repository / "unchanged.py").write_text("stable = True\n", encoding="utf-8", newline="\n")
     subprocess.run(["git", "-C", str(repository), "add", "unchanged.py"], check=True, capture_output=True)
     # Selection outside the collector's frozen source inventory must fail closed.
     briefs = json.loads((run / "review-briefs.json").read_text(encoding="utf-8"))
     briefs["challenger"]["source_paths"] = ["unchanged.py"]
-    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8")
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode != 0
     assert (
@@ -761,7 +1031,7 @@ def test_prepare_rejects_unrelated_source_selection(tmp_path: Path) -> None:
 def test_prepare_pages_context_larger_than_old_limit(tmp_path: Path) -> None:
     """Admit a complete large context through the bounded native page reader."""
     run = _review_inputs(tmp_path)
-    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 5000, encoding="utf-8")
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 5000, encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode == 0, result.stderr
     context = (run / "specialists/challenger-context.md").read_bytes()
@@ -773,7 +1043,7 @@ def test_prepare_pages_context_larger_than_old_limit(tmp_path: Path) -> None:
 def test_prepare_rejects_oversized_context_before_freezing_wave(tmp_path: Path) -> None:
     """Keep a context above the bounded native read ceiling out of the frozen wave."""
     run = _review_inputs(tmp_path)
-    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 18000, encoding="utf-8")
+    (run / "challenger-evidence.md").write_text("bounded evidence\n" * 18000, encoding="utf-8", newline="\n")
     result = _prepare(run)
     assert result.returncode != 0
     assert "review-context-capacity-exceeded:challenger:262144-bytes" in result.stderr
@@ -787,10 +1057,12 @@ def test_prepare_never_overwrites_frozen_evidence_or_retains_secrets(tmp_path: P
     if problem == "changed-brief":
         assert _prepare(run).returncode == 0
         original = (run / "inspection-plan.json").read_bytes()
-        (run / "qa-specialist-evidence.md").write_text("Different source.")
+        (run / "qa-specialist-evidence.md").write_text("Different source.", encoding="utf-8", newline="\n")
         expected = "review-frozen-artifact-conflict"
     else:
-        (run / "qa-specialist-evidence.md").write_text("Authorization: Bearer do-not-retain")
+        (run / "qa-specialist-evidence.md").write_text(
+            "Authorization: Bearer do-not-retain", encoding="utf-8", newline="\n"
+        )
         expected = "review-context-sensitive-material"
     result = _prepare(run)
     assert result.returncode != 0
@@ -813,7 +1085,8 @@ def test_assemble_binds_native_wave_and_preserves_child_outputs(tmp_path: Path, 
     assert result.returncode == 0, result.stderr
     manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
     summary = json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
-    assert manifest["schema_version"] == 6
+    assert manifest["schema_version"] == 7
+    assert manifest["manifest_kind"] == "native-wave"
     assert summary["actual_mode"] == "parallel"
     assert {item["role"] for item in manifest["passes"]} == set(children)
     for item in manifest["passes"]:
@@ -855,6 +1128,7 @@ def test_retained_rating_rejects_duplicate_reviewer_assessment(tmp_path: Path) -
         "## Reviewer Assessment\n\nRating: 1\nRationale: Looks clean.\n\n"
         "## Reviewer Assessment\n\nRating: 5/5\nRationale: Conflicting.\n",
         encoding="utf-8",
+        newline="\n",
     )
     with pytest.raises(SystemExit, match="review-assessment-content-invalid:challenger"):
         module._retained_reviewer_rating(response, local_reviewer_wave=False, main=False, role="challenger")
@@ -979,7 +1253,9 @@ def test_assemble_rejects_unbound_or_incomplete_wave(
         )
         joined["payload"]["content"][0]["text"] += "\nforged final"
     else:
-        rows[-1]["payload"].update(started_at=200, completed_at=210)
+        _record_native_schedule(run, home, children, pool_size=1)
+        rows = [json.loads(line) for line in child.read_text(encoding="utf-8").splitlines()]
+        parent_rows = [json.loads(line) for line in parent.read_text(encoding="utf-8").splitlines()]
     if problem != "missing-child":
         _write_jsonl(child, rows)
     _write_jsonl(parent, parent_rows)
@@ -1016,6 +1292,7 @@ def test_context_reader_preserves_native_stdout_bytes(
             }
         ),
         encoding="utf-8",
+        newline="\n",
     )
     reader = runpy.run_path(str(SKILL / "review_context.py"))
     assert "Read all 2 frozen review context pages" in reader["dispatch_message"](plan, "challenger")
@@ -1031,6 +1308,536 @@ def test_context_reader_preserves_native_stdout_bytes(
         runpy.run_path(str(SKILL / "review_context.py"), run_name="__main__")
         native_stdout.flush()
     actual = output.getvalue()
+    expected = reader["read_context"](plan, "challenger", 1, page).encode("utf-8")
+    cli = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "review_context.py"),
+            "--plan",
+            str(plan),
+            "--role",
+            "challenger",
+            "--attempt",
+            "1",
+            "--page",
+            str(page),
+        ],
+        capture_output=True,
+        check=True,
+    )
+    assert cli.stdout == actual == expected
     assert actual.endswith(expected_body)
     assert b"\r\r\n" not in actual
     assert f"codex-review-context-page {page}/2".encode() in actual
+
+
+def test_batch_module_imports_without_sibling_path_in_importlib_collection(tmp_path: Path) -> None:
+    """Root doctest discovery can import the helper by path without preloading sibling modules."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import importlib.util, sys; spec = importlib.util.spec_from_file_location('collected_batches', sys.argv[1]); module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert module.CONTEXT_LIMIT == 65536",
+            str(SKILL / "review_batches.py"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _five_role_review_inputs(tmp_path: Path) -> Path:
+    """Declare five required axes on the existing exact-source public preparation fixture."""
+    run = _review_inputs(tmp_path)
+    roles = ["challenger", "data-steward", "doc-scribe", "qa-specialist", "sw-engineer"]
+    routing_path = run / "review-routing.json"
+    routing = json.loads(routing_path.read_text(encoding="utf-8"))
+    routing["signals"].update(behavior_change=True, axis_data_steward=True, axis_doc_scribe=True)
+    routing.update(triggered_roles=roles, trigger_reasons={role: ["Declared source review axis."] for role in roles})
+    routing_path.write_text(json.dumps(routing), encoding="utf-8", newline="\n")
+    (run / "files.txt").write_text("widget.py\n", encoding="utf-8", newline="\n")
+    briefs = {}
+    for index, role in enumerate(roles, 1):
+        evidence = f"{role}-evidence.md"
+        (run / evidence).write_text(
+            f"Scope: widget.py. Question: {role}.\n" + "Evidence.\n" * (index * 100), encoding="utf-8", newline="\n"
+        )
+        briefs[role] = {"axis": role, "evidence_path": evidence, "source_paths": ["widget.py"]}
+    (run / "review-briefs.json").write_text(json.dumps(briefs), encoding="utf-8", newline="\n")
+    return run
+
+
+def test_prepare_five_roles_orders_complete_contexts_and_stable_ties(tmp_path: Path) -> None:
+    """Queue the entire roster by descending frozen size, retaining deterministic equal-size order."""
+    first = tmp_path / "first-a"
+    second = tmp_path / "first-b"
+    first.mkdir()
+    second.mkdir()
+    run = _five_role_review_inputs(first)
+    prepared = _prepare(run)
+    assert prepared.returncode == 0, prepared.stderr
+    plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
+    first_sizes = {entry["role_id"]: (run / entry["context_path"]).stat().st_size for entry in plan["contexts"]}
+    first_dispatch = json.loads((run / "dispatch.json").read_text(encoding="utf-8"))
+    assert [
+        call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        for call in first_dispatch["calls"]
+    ] == sorted(first_sizes, key=lambda role: (-first_sizes[role], role))
+    target = max(first_sizes.values()) + 100
+    tied = _five_role_review_inputs(second)
+    for entry in plan["contexts"]:
+        role = entry["role_id"]
+        evidence = tied / f"{role}-evidence.md"
+        evidence.write_bytes(evidence.read_bytes() + b"x" * (target - (run / entry["context_path"]).stat().st_size))
+    completed = _prepare(tied)
+    assert completed.returncode == 0, completed.stderr
+    tied_plan = json.loads((tied / "inspection-plan.json").read_text(encoding="utf-8"))
+    entries = tied_plan["contexts"]
+    sizes = {entry["role_id"]: (tied / entry["context_path"]).stat().st_size for entry in entries}
+    assert len(set(sizes.values())) == 1, sizes
+    expected = sorted(sizes, key=lambda role: (-sizes[role], role))
+    assert [entry["role_id"] for entry in entries] == expected
+    dispatch = json.loads((tied / "dispatch.json").read_text(encoding="utf-8"))
+    assert len(dispatch["calls"]) == 5
+    assert [
+        call["arguments"]["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+        for call in dispatch["calls"]
+    ] == expected
+    frozen_dispatch = (tied / "dispatch.json").read_bytes()
+    assert _prepare(tied).returncode == 0
+    assert (tied / "dispatch.json").read_bytes() == frozen_dispatch
+    tied, home, children = _assembly_evidence(second, prepared_run=tied, active_limit=4)
+    assert _assemble(tied, home).returncode == 0
+    _record_native_schedule(tied, home, children, scenario="reversed-largest-order")
+    reversed_ties = _assemble(tied, home)
+    assert reversed_ties.returncode != 0
+    assert "review-inspection-dispatch-order-mismatch" in reversed_ties.stderr
+
+
+@pytest.mark.parametrize("peak", [4, 5])
+def test_five_role_native_admission_limits_active_children(tmp_path: Path, peak: int) -> None:
+    """Accept five completed roles in a four-child pool, rejecting five overlapping tasks."""
+    run = _five_role_review_inputs(tmp_path)
+    completed = _prepare(run)
+    assert completed.returncode == 0, completed.stderr
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=peak)
+    assembled = _assemble(run, home)
+    if peak == 5:
+        assert assembled.returncode != 0
+        assert "review-inspection-active-capacity-exceeded" in assembled.stderr
+        assert not (run / "specialist-manifest.json").exists()
+        return
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == 7
+    assert {item["role"] for item in manifest["passes"]} == set(children)
+    assert len(children) == 5
+    for item in manifest["passes"]:
+        assert item["mode"] == "inspection"
+        terminal = json.loads(children[item["role"]].read_text(encoding="utf-8").splitlines()[-1])["payload"][
+            "last_agent_message"
+        ]
+        assert (run / item["output_path"]).read_bytes() == (terminal.strip() + "\n").encode()
+
+
+def test_default_historical_inspection_context_limit_remains_four(tmp_path: Path) -> None:
+    """The explicit native roster extension cannot relax the shared default historical boundary."""
+    run = _five_role_review_inputs(tmp_path)
+    result = _prepare(run)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((run / "inspection-plan.json").read_text(encoding="utf-8"))
+    spec = importlib.util.spec_from_file_location(
+        "historical_context_boundary", PLUGIN_ROOT / "shared/parallel_execution.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    with pytest.raises(ValueError, match="review-inspection-contexts-invalid"):
+        module.validate_inspection_contexts(plan, run / "inspection-plan.json")
+
+
+@pytest.mark.parametrize("case", ["failed-peak-five", "missing-failed-timing", "sequential-selected"])
+def test_native_retry_timing_cannot_evade_capacity_or_fabricate_parallelism(tmp_path: Path, case: str) -> None:
+    """Count every launched attempt while deriving parallel review only from selected completions."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4, final_header="missing")
+    assembled = _assemble(run, home)
+    assert assembled.returncode == 0, assembled.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    item = next(entry for entry in manifest["passes"] if entry["role"] == "sw-engineer")
+    failed = {**item["attempts"][0], "status": "failed", "error_type": "transport_error"}
+    selected = {
+        **item["attempts"][0],
+        "attempt": 2,
+        "agent_thread_id": "child-retried",
+        "agent_path": item["attempts"][0]["agent_path"].removesuffix("_a1") + "_a2",
+        "turn_id": "turn-retried",
+        "spawn_call_id": "spawn-retried",
+    }
+    item.update(attempts=[failed, selected], selected_attempt=2)
+    old_rows = [json.loads(line) for line in children["sw-engineer"].read_text(encoding="utf-8").splitlines()]
+    new_rows = json.loads(
+        json.dumps(old_rows)
+        .replace(failed["agent_thread_id"], selected["agent_thread_id"])
+        .replace(failed["agent_path"], selected["agent_path"])
+        .replace(failed["turn_id"], selected["turn_id"])
+    )
+    page = 0
+    for row in new_rows:
+        payload = row.get("payload", {})
+        if (
+            payload.get("type") == "agent_message"
+            and payload.get("content", [{}])[0].get("type") == "encrypted_content"
+        ):
+            content = payload["content"][0]
+            content["encrypted_content"] = content["encrypted_content"].replace("--attempt 1", "--attempt 2")
+        elif payload.get("type") == "custom_tool_call":
+            payload["input"] = payload["input"].replace("--attempt 1", "--attempt 2")
+        elif payload.get("type") == "custom_tool_call_output":
+            page += 1
+            payload["output"][1]["text"] = _CONTEXT_READER(run / "inspection-plan.json", "sw-engineer", 2, page)
+    selected_path = home / "sessions/rollout-child-retried.jsonl"
+    _write_jsonl(selected_path, new_rows)
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    original_call = next(
+        row
+        for row in parent
+        if row.get("payload", {}).get("call_id") == failed["spawn_call_id"]
+        and row["payload"].get("type") == "function_call"
+    )
+    call = json.loads(json.dumps(original_call))
+    call["payload"]["call_id"] = selected["spawn_call_id"]
+    arguments = json.loads(call["payload"]["arguments"])
+    arguments["task_name"] = arguments["task_name"].removesuffix("_a1") + "_a2"
+    arguments["message"] = arguments["message"].replace("--attempt 1", "--attempt 2")
+    call["payload"]["arguments"] = json.dumps(arguments)
+    original_receipt = next(
+        row
+        for row in parent
+        if row.get("payload", {}).get("call_id") == failed["spawn_call_id"]
+        and row["payload"].get("type") == "function_call_output"
+    )
+    receipt = json.loads(json.dumps(original_receipt).replace(failed["agent_path"], selected["agent_path"]))
+    receipt["payload"]["call_id"] = selected["spawn_call_id"]
+    original_join = next(row for row in parent if row.get("payload", {}).get("author") == failed["agent_path"])
+    joined = json.loads(json.dumps(original_join).replace(failed["agent_path"], selected["agent_path"]))
+    parent.extend([call, receipt, joined])
+    _write_jsonl(parent_path, parent)
+    for index, entry in enumerate(manifest["passes"]):
+        attempt = entry["attempts"][entry["selected_attempt"] - 1]
+        path = selected_path if entry["role"] == "sw-engineer" else children[entry["role"]]
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        completed = next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "task_complete")
+        epoch = datetime(2026, 1, 1, 10, tzinfo=timezone.utc).timestamp()
+        selected_starts = {"qa-specialist": 1, "doc-scribe": 3, "data-steward": 5, "challenger": 7, "sw-engineer": 9}
+        start = (
+            epoch + selected_starts[entry["role"]]
+            if case == "sequential-selected"
+            else epoch + (100 + index if index < 4 else 130)
+        )
+        completed.update(started_at=start, completed_at=start + (1 if case == "sequential-selected" else 10))
+        assert completed["turn_id"] == attempt["turn_id"]
+        _write_jsonl(path, rows)
+    failed_rows = [json.loads(line) for line in children["sw-engineer"].read_text(encoding="utf-8").splitlines()]
+    failed_completion = next(
+        row["payload"] for row in failed_rows if row.get("payload", {}).get("type") == "task_complete"
+    )
+    failed_completion.update(
+        started_at=epoch + (0.2 if case == "sequential-selected" else 105),
+        completed_at=epoch + (1.5 if case == "sequential-selected" else 110),
+    )
+    if case == "missing-failed-timing":
+        failed_rows = [row for row in failed_rows if row.get("payload", {}).get("type") != "task_complete"]
+    _write_jsonl(children["sw-engineer"], failed_rows)
+    if case != "missing-failed-timing":
+        # Keep every launch and join coherent with its selected or failed task.
+        # The negative retry overlaps four live children; the sequential selected
+        # case instead refills joined slots while failed work alone overlaps.
+        launch_offsets = {
+            "qa-specialist": 0.28,
+            "doc-scribe": 0.38,
+            "data-steward": 0.48,
+            "challenger": 1.8 if case == "sequential-selected" else 5.28,
+            "sw-engineer": 4.2 if case == "sequential-selected" else 5,
+        }
+        path_times = {}
+        for role, path in {**children, "sw-engineer": selected_path}.items():
+            rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+            agent_path = rows[0]["payload"]["agent_path"]
+            launch = epoch + launch_offsets[role]
+            terminal = next(row["payload"] for row in rows if row.get("payload", {}).get("type") == "task_complete")
+            end = terminal["completed_at"] + 0.05
+            rows[0]["payload"]["timestamp"] = (
+                datetime.fromtimestamp(launch + 0.005, timezone.utc)
+                .isoformat(timespec="milliseconds")
+                .replace("+00:00", "Z")
+            )
+            _write_jsonl(path, rows)
+            path_times[agent_path] = (launch, end)
+        path_times[failed["agent_path"]] = (epoch + 0.18, failed_completion["completed_at"] + 0.05)
+        parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+        call_times = {}
+        for row in parent:
+            payload = row.get("payload", {})
+            if payload.get("type") == "function_call" and payload.get("name") == "spawn_agent":
+                arguments = json.loads(payload["arguments"])
+                path = next(path for path in path_times if path.rsplit("/", 1)[-1] == arguments["task_name"])
+                value = path_times[path][0]
+                call_times[payload["call_id"]] = value
+            elif payload.get("type") == "function_call_output":
+                value = call_times[payload["call_id"]] + 0.01
+            elif payload.get("type") == "agent_message":
+                value = path_times[payload["author"]][1]
+            else:
+                continue
+            row["timestamp"] = (
+                datetime.fromtimestamp(value, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            )
+        parent.sort(key=lambda row: row.get("timestamp", ""))
+        _write_jsonl(parent_path, parent)
+    spec = importlib.util.spec_from_file_location("retry_capacity_validator", SKILL / "validate_artifacts.py")
+    validator = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = validator
+    spec.loader.exec_module(validator)
+    if case != "sequential-selected":
+        expected = (
+            "review-inspection-active-capacity-exceeded"
+            if case == "failed-peak-five"
+            else "review-inspection-attempt-timing-missing:sw-engineer:1"
+        )
+        with pytest.raises(SystemExit, match=expected):
+            validator._validate_manifest_entries(
+                run,
+                manifest,
+                manifest["passes"],
+                set(children),
+                home,
+                "parent",
+                tmp_path,
+                require_role_card_receipts=True,
+            )
+    else:
+        validator._validate_manifest_entries(
+            run, manifest, manifest["passes"], set(children), home, "parent", tmp_path, require_role_card_receipts=True
+        )
+        summary = validator._validate_review_runtime(run, manifest, manifest["passes"], home, "parent")
+        assert summary["actual_mode"] == "independent-spawned"
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "proper-refill",
+        "blocked-wait-coalesces-joins",
+        "wait-for-all-before-refill",
+        "spawn-all-five",
+        "reversed-largest-order",
+        "wait-again-with-free-slot",
+        "default-wait-again-with-free-slot",
+        "30s-wait-again-with-free-slot",
+        "completed-wait-again-with-free-slot",
+        "join-before-terminal",
+    ],
+)
+def test_actual_native_parent_sequence_controls_allocation_order_and_refill(tmp_path: Path, scenario: str) -> None:
+    """Reject invalid parent scheduling even when every role completes and work peak remains four."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
+    # Retain a valid manifest first so both assembly and ordinary preflight can replay changed parent history.
+    initial = _assemble(run, home)
+    assert initial.returncode == 0, initial.stderr
+    _record_native_schedule(run, home, children, scenario=scenario)
+    assembled = _assemble(run, home)
+    checked = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "validate_artifacts.py"),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if scenario in {"proper-refill", "blocked-wait-coalesces-joins", "wait-for-all-before-refill"}:
+        assert assembled.returncode == checked.returncode == 0, assembled.stderr + checked.stderr
+        manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+        assert {item["role"] for item in manifest["passes"]} == set(children)
+    else:
+        assert assembled.returncode != 0, f"invalid {scenario} scheduling admitted"
+        assert checked.returncode != 0, f"ordinary preflight admitted {scenario}"
+        expected = {
+            "spawn-all-five": "review-inspection-active-capacity-exceeded",
+            "reversed-largest-order": "review-inspection-dispatch-order-mismatch",
+            "wait-again-with-free-slot": "review-inspection-refill-opportunity-missed",
+            "default-wait-again-with-free-slot": "review-inspection-refill-opportunity-missed",
+            "30s-wait-again-with-free-slot": "review-inspection-refill-opportunity-missed",
+            "completed-wait-again-with-free-slot": "review-inspection-refill-opportunity-missed",
+            "join-before-terminal": "review-inspection-active-capacity-exceeded",
+        }[scenario]
+        assert expected in assembled.stderr
+        assert expected in checked.stderr
+
+
+@pytest.mark.parametrize("pool_size", [1, 2, 3])
+def test_smaller_observed_native_pool_refills_complete_roster(tmp_path: Path, pool_size: int) -> None:
+    """Accept a coherent smaller active pool without dropping roles or inventing available capacity."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=pool_size)
+    _record_native_schedule(
+        run,
+        home,
+        children,
+        pool_size=pool_size,
+        scenario="capacity-rejected-repeat" if pool_size == 1 else "capacity-rejected",
+    )
+    result = _assemble(run, home)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+    assert {item["role"] for item in manifest["passes"]} == set(children)
+    assert len(manifest["passes"]) == 5
+    summary = json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+    assert summary["actual_mode"] == ("independent-spawned" if pool_size == 1 else "parallel")
+    assert summary["capacity_limited"] is True
+    checked = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "validate_artifacts.py"),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_serial_native_roster_without_capacity_refusal_is_not_parallel_evidence(tmp_path: Path) -> None:
+    """Reject arbitrary serialization while preserving full reviewer coverage."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, _ = _assembly_evidence(tmp_path, prepared_run=run, active_limit=1)
+    result = _assemble(run, home)
+    assert result.returncode != 0
+    assert "review-wave-not-parallel" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("retry_offset", "state_change"),
+    [
+        pytest.param(0.2, False, id="without-release"),
+        pytest.param(4.2, True, id="after-two-releases"),
+        pytest.param(0.0, False, id="same-start"),
+        pytest.param(0.005, False, id="overlapping-output"),
+    ],
+)
+def test_same_queued_role_capacity_refusal_requires_each_verified_release(
+    tmp_path: Path, retry_offset: float, state_change: bool
+) -> None:
+    """Require a genuine slot release before every same-task refusal retry."""
+    run = _five_role_review_inputs(tmp_path)
+    assert _prepare(run).returncode == 0
+    run, home, children = _assembly_evidence(tmp_path, prepared_run=run, active_limit=4)
+    if not state_change:
+        initial = _assemble(run, home)
+        assert initial.returncode == 0, initial.stderr
+    _record_native_schedule(run, home, children, scenario="capacity-rejected")
+    parent_path = home / "sessions/rollout-parent.jsonl"
+    parent = [json.loads(line) for line in parent_path.read_text(encoding="utf-8").splitlines()]
+    refusal_output = next(
+        row
+        for row in parent
+        if row.get("payload", {}).get("output") == "collab spawn failed: agent thread limit reached"
+    )
+    refusal_id = refusal_output["payload"]["call_id"]
+    refusal_call = next(
+        row
+        for row in parent
+        if row.get("payload", {}).get("call_id") == refusal_id and row["payload"]["type"] == "function_call"
+    )
+    second_call = json.loads(json.dumps(refusal_call))
+    second_output = json.loads(json.dumps(refusal_output))
+    epoch = datetime(2026, 1, 1, 10, tzinfo=timezone.utc).timestamp()
+    second_at = epoch + 1 + retry_offset
+    for row, instant in [(second_call, second_at), (second_output, second_at + 0.01)]:
+        row["payload"]["call_id"] = refusal_id + "-retry"
+        row["timestamp"] = (
+            datetime.fromtimestamp(instant, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+        )
+    parent.extend([second_call, second_output])
+    arguments = json.loads(refusal_call["payload"]["arguments"])
+    role = arguments["task_name"].removeprefix("review_").rsplit("_", 2)[0].replace("_", "-")
+    if state_change:
+        # First refusal precedes the first join; the second refusal follows it.
+        # Only the next joined child frees capacity for the successful same task.
+        child_rows = [json.loads(line) for line in children[role].read_text(encoding="utf-8").splitlines()]
+        agent_path = child_rows[0]["payload"]["agent_path"]
+        child_rows[0]["payload"]["timestamp"] = "2026-01-01T10:00:10.285Z"
+        terminal = next(row["payload"] for row in child_rows if row.get("payload", {}).get("type") == "task_complete")
+        terminal.update(started_at=epoch + 10.3, completed_at=epoch + 20.3)
+        _write_jsonl(children[role], child_rows)
+        successful = next(
+            row
+            for row in parent
+            if row.get("payload", {}).get("type") == "function_call"
+            and row["payload"].get("name") == "spawn_agent"
+            and row["payload"].get("call_id") not in {refusal_id, refusal_id + "-retry"}
+            and json.loads(row["payload"]["arguments"])["task_name"] == arguments["task_name"]
+        )
+        successful["timestamp"] = "2026-01-01T10:00:10.280Z"
+        success_id = successful["payload"]["call_id"]
+        for row in parent:
+            payload = row.get("payload", {})
+            if payload.get("type") == "function_call_output" and payload.get("call_id") == success_id:
+                row["timestamp"] = "2026-01-01T10:00:10.290Z"
+            elif payload.get("type") == "agent_message" and payload.get("author") == agent_path:
+                row["timestamp"] = "2026-01-01T10:00:20.350Z"
+    parent.sort(key=lambda row: row.get("timestamp", ""))
+    _write_jsonl(parent_path, parent)
+    assembled = _assemble(run, home)
+    checked = subprocess.run(
+        [
+            sys.executable,
+            str(SKILL / "validate_artifacts.py"),
+            "--out",
+            str(run),
+            "--manifest-only",
+            "--codex-home",
+            str(home),
+            "--parent-thread-id",
+            "parent",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if state_change:
+        assert assembled.returncode == checked.returncode == 0, assembled.stderr + checked.stderr
+        summary = json.loads((run / "inspection-summary.json").read_text(encoding="utf-8"))
+        assert summary["capacity_limited"] is True
+        manifest = json.loads((run / "specialist-manifest.json").read_text(encoding="utf-8"))
+        assert {item["role"] for item in manifest["passes"]} == set(children)
+    else:
+        expected = f"review-inspection-capacity-refusal-no-state-change:{role}"
+        assert assembled.returncode != 0
+        assert checked.returncode != 0
+        assert expected in assembled.stderr
+        assert expected in checked.stderr

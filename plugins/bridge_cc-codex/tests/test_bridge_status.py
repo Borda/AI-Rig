@@ -73,10 +73,18 @@ def test_bridge_status_is_read_only_and_bound_to_the_host_workspace(
     normalized_workspace = PurePath(canonical_workspace).as_posix()
     assert payload == {
         "bridge_version": MANIFEST_VERSION,
-        "expected_tool_inventory": ["bridge_status", "bridge_implement", "bridge_advise", "bridge_review"],
+        "expected_tool_inventory": [
+            "bridge_status",
+            "bridge_bind_workspace",
+            "bridge_implement",
+            "bridge_advise",
+            "bridge_review",
+        ],
         "plugin_version": MANIFEST_VERSION,
-        "protocol_version": "2024-11-05",
-        "schema_version": "1.0",
+        "protocol_version": "2025-06-18",
+        "schema_version": "2.0",
+        "binding_status": "bound",
+        "binding_id": None,
         "server": {"name": "bridge", "version": MANIFEST_VERSION},
         "workspace": normalized_workspace,
         "workspace_fingerprint": hashlib.sha256(normalized_workspace.encode("utf-8")).hexdigest(),
@@ -130,6 +138,7 @@ def test_bridge_status_schema_and_initialize_advertise_the_same_release_contract
     assert initialized["result"]["serverInfo"] == {"name": "bridge", "version": MANIFEST_VERSION}
     assert set(definitions) == {
         "bridge_status",
+        "bridge_bind_workspace",
         "bridge_implement",
         "bridge_advise",
         "bridge_review",

@@ -222,6 +222,34 @@ def _check_hook_helpers(package: Path, hooks_relative: str, inventory: set[str])
     return findings
 
 
+def _check_native_questions(package: Path, codex: dict, inventory: set[str]) -> list[str]:
+    """Verify the declared native form configuration and provider belong to the closed package."""
+    if "mcpServers" not in codex:
+        return []
+    findings: list[str] = []
+    question_config_path = package / ".codex-mcp.json"
+    if codex.get("mcpServers") != "./.codex-mcp.json":
+        findings.append("codex manifest must declare native questions: ./.codex-mcp.json")
+    if ".codex-mcp.json" not in inventory or not question_config_path.is_file():
+        findings.append("native question configuration missing from inventory")
+    else:
+        expected_questions = {
+            "mcpServers": {
+                "codemap-input": {
+                    "command": "python",
+                    "cwd": ".",
+                    "args": ["shared/user_questions_mcp.py", "--stdio"],
+                    "tool_timeout_sec": 3600,
+                }
+            }
+        }
+        if _load_json(question_config_path) != expected_questions:
+            findings.append("native question configuration differs from the packaged local provider")
+    if "shared/user_questions_mcp.py" not in inventory or not (package / "shared/user_questions_mcp.py").is_file():
+        findings.append("native question provider missing from inventory")
+    return findings
+
+
 def _check_declared_components(package: Path, manifest: dict, inventory: set[str]) -> list[str]:
     """Require every component both runtime manifests declare to exist in the inventory."""
     findings = _check_claude_roster(package, manifest, inventory)
@@ -230,6 +258,7 @@ def _check_declared_components(package: Path, manifest: dict, inventory: set[str
     if skills_ptr and not (package / _pointer_path(skills_ptr)).is_dir():
         findings.append(f"claude skills pointer dir missing: {_pointer_path(skills_ptr)}")
     codex = _load_json(package / ".codex-plugin" / "plugin.json")
+    findings += _check_native_questions(package, codex, inventory)
     if codex.get("hooks") != "./hooks/codex-hooks.json":
         findings.append(f"codex manifest must declare hooks: ./hooks/codex-hooks.json, got {codex.get('hooks')!r}")
     for runtime, runtime_manifest in (("claude", claude), ("codex", codex)):

@@ -435,7 +435,7 @@ def test_role_frontmatter_matches_its_declared_runtime(
 
 
 def test_release_profile_declares_only_packaged_lifecycle_features() -> None:
-    """Keep shim-manager and hook metadata aligned while MCP remains absent."""
+    """Keep role boundaries aligned with the independently shipped native question provider."""
     manifest = _load_json(PLUGIN_ROOT / "package-manifest.json")
     plugin = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
     assert plugin["description"].startswith("Fourteen evidence-first Codex workflows")
@@ -448,17 +448,18 @@ def test_release_profile_declares_only_packaged_lifecycle_features() -> None:
         "Optional SessionStart health diagnostic",
         "Built-in and inline role fallback",
         "Quality gates",
+        "Native terminal questions",
         "Optional codemap-py structural-context integration",
     ]
     assert manifest["release_profile"] == "role-card-injected"
     assert manifest["features"] == {
         "manager": True,
         "hooks": True,
-        "mcp": False,
+        "mcp": True,
         "generated_shims": False,
     }
     assert "hooks" not in plugin
-    assert "mcpServers" not in plugin
+    assert plugin["mcpServers"] == "./.codex-mcp.json"
 
     forbidden_roots = {"manager", "mcp", "shims"}
     for relative in _package_files():
@@ -1131,7 +1132,23 @@ def test_specialist_wave_joins_before_acceptance_without_expanding_fanout() -> N
     assert "one approved dispatch wave" in policy
     assert "immutable packs" in policy
     assert "joins all handoffs before acceptance" in policy
-    assert "A second wave is forbidden" in policy
+    assert "Adding a second unplanned wave is forbidden" in policy
+    assert "Code Review schema-seven native waves follow these rules" in policy
+    assert "Retain the complete frozen roster and bind actual parent spawn-call order" in policy
+    assert "descending frozen context bytes with stable role-ID ties" in policy
+    assert "Keep at most four allocated review slots" in policy
+    assert "until both genuine task completion and the exact final-answer join" in policy
+    assert "At an observed parent scheduling opportunity, refill a proven free slot before another wait" in policy
+    assert (
+        "An explicit observed full-pool refusal that proves no child was created retains the same queued role" in policy
+    )
+    assert "including one slot, to finish native schema-seven review as `independent-spawned`" in policy
+    assert "Historical overlap gates remain strict" in policy
+    assert "Replenishing the same frozen roster is part of that wave, not new fan-out" in policy
+    assert (
+        "Join every required role before assembly or the next predeclared dependent source, interaction or "
+        "consolidation wave; those waves remain serial" in policy
+    )
     assert "parent-serially or stop and re-plan with the user" in policy
     assert "Never add fan-out, bypass required authorization, or start dependencies" in policy
     assert "Code-remediate alone may declare exact shared-file ownership across isolated child worktrees" in policy

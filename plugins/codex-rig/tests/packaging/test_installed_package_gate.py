@@ -30,7 +30,7 @@ def _package_payload_paths() -> tuple[str, ...]:
 
     Example:
         >>> _package_payload_paths()[0]
-        '.codex-plugin/plugin.json'
+        '.codex-mcp.json'
     """
     manifest = json.loads((PLUGIN_ROOT / "package-manifest.json").read_text(encoding="utf-8"))
     return tuple(record["path"] for record in manifest["files"])
@@ -63,6 +63,9 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     scoring. The complete worktree module carries the marker because the shipped lifecycle contract requires it. A
     separate source-checkout suite retains the valid sync, CI-harness, and Git metadata contracts.
 
+    Two child workers run the complete selection concurrently, bounding nested parallelism while reducing the Windows
+    subprocess-heavy selection's runtime.
+
     The outer deadline includes package copying and child cleanup; sharing the child's deadline lets the Windows pytest-
     timeout thread terminate the worker before subprocess.run can reap and report a timed-out selection. One Windows
     subprocess-timeout retry mitigates unconfirmed runner timing sensitivity; assertion failures are final.
@@ -76,7 +79,7 @@ def test_installed_package_runs_the_explicit_package_safe_selection(tmp_path: Pa
     env.pop("PYTHONPATH", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--strict-markers", "-m", PACKAGE_SAFE_TEST_MARKER],
+        [sys.executable, "-m", "pytest", "-q", "-n", "2", "--strict-markers", "-m", PACKAGE_SAFE_TEST_MARKER],
         cwd=installed_root,
         check=False,
         capture_output=True,

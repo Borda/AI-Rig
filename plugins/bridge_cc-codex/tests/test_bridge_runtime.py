@@ -450,7 +450,7 @@ def test_reparse_point_health_member_is_rejected_before_the_windows_open_path(mo
 
 @pytest.mark.skipif(not DIRECTORY_SYMLINKS_SUPPORTED, reason="requires directory symlink creation capability")
 def test_mcp_containment_rejection_returns_a_generic_error_without_provider_dispatch(tmp_path: Path) -> None:
-    """Prevent an escaped artifact root from leaking host paths through the reverse MCP transport."""
+    """Keep explicit embedding-host authority subject to artifact containment before provider work."""
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     outside = tmp_path.parent / f"{tmp_path.name}-mcp-outside"
@@ -468,17 +468,9 @@ def test_mcp_containment_rejection_returns_a_generic_error_without_provider_disp
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
         )
     )
-    result = subprocess.run(
-        [sys.executable, str(BIN_ROOT / "bridge_mcp.py"), "--stdio"],
-        input=messages + "\n",
-        capture_output=True,
-        text=True,
-        cwd=workspace,
-        check=False,
-    )
-
-    responses = [json.loads(line) for line in result.stdout.splitlines()]
-    assert result.returncode == 0
+    responses = [
+        bridge_mcp.handle_message(json.loads(line), trusted_workspace=workspace) for line in messages.splitlines()
+    ]
     assert [response["id"] for response in responses] == [1, 2]
     assert responses[0]["error"] == {"code": -32603, "message": "bridge execution failed"}
     assert str(outside) not in responses[0]["error"]["message"]
@@ -1002,7 +994,7 @@ def test_output_overflow_detected_while_draining_a_completed_leader_is_terminal(
     monkeypatch.setattr(
         bridge_call,
         "_start_output_readers",
-        lambda process, output: captured.append(output) or [],
+        lambda process, output, readers: captured.append(output),
     )
     monkeypatch.setattr(
         bridge_call,
@@ -1751,13 +1743,15 @@ def test_supervisor_preserves_a_cancellation_requested_during_its_final_record_w
             "direction": "claude_to_codex",
         }
 
-    def _write_with_racing_cancellation(path: Path, value: dict[str, object]) -> None:
+    def _write_with_racing_cancellation(
+        path: Path, value: dict[str, object], *, paths: bridge_call.BridgePaths | None = None
+    ) -> None:
         """Inject cancellation immediately before the final record write."""
         nonlocal cancellation_injected
         if path == record_path and value.get("result") is not None and not cancellation_injected:
             cancellation_injected = True
             bridge_call.cancel_job(tmp_path, job_id)
-        original_write_json(path, value)
+        original_write_json(path, value, paths=paths)
 
     monkeypatch.setattr(bridge_call, "run_request", _fake_run_request)
     monkeypatch.setattr(bridge_call, "_write_json", _write_with_racing_cancellation)
@@ -2031,7 +2025,13 @@ def test_mcp_handshake_tools_call_and_recursion_guard_preserve_run_id(
     tools = bridge_mcp.handle_message({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
     assert initialized["result"]["capabilities"] == {"tools": {}}
     listed = {item["name"]: item for item in tools["result"]["tools"]}
-    assert set(listed) == {"bridge_implement", "bridge_advise", "bridge_review", "bridge_status"}
+    assert set(listed) == {
+        "bridge_implement",
+        "bridge_advise",
+        "bridge_review",
+        "bridge_status",
+        "bridge_bind_workspace",
+    }
     assert "background" not in listed["bridge_implement"]["inputSchema"]["properties"]
     assert "workspace" not in listed["bridge_advise"]["inputSchema"]["properties"]
 
@@ -2495,8 +2495,8 @@ def test_mcp_stdio_raw_nonfinite_timeout_returns_invalid_params_without_a_provid
 
     responses = [json.loads(line) for line in result.stdout.splitlines()]
     assert result.returncode == 0
-    assert [response["id"] for response in responses] == [1, 2]
-    assert responses[0]["error"]["code"] == -32602
+    assert [response["id"] for response in responses] == [None, 2]
+    assert responses[0]["error"]["code"] == -32700
     assert set(tool["name"] for tool in responses[1]["result"]["tools"]) == set(bridge_mcp.EXPECTED_TOOL_INVENTORY)
 
 
@@ -2956,3 +2956,139 @@ def test_simulated_windows_cancel_never_uses_taskkill_for_a_persisted_pid(
     cancelled = bridge_call.cancel_job(tmp_path, job_id)
 
     assert cancelled["status"] == "cancel_requested"
+
+
+@pytest.mark.skipif(not DIRECTORY_SYMLINKS_SUPPORTED, reason="directory symlinks unavailable")
+def test_artifact_validation_failure_reaps_child_and_drains_readers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject changed artifact boundaries without abandoning a genuinely launched child."""
+    workspace = tmp_path / "project"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    paths = bridge_call.BridgePaths(workspace)
+    paths.prepare()
+    job_path = paths.jobs / "owned.json"
+    processes: list[subprocess.Popen[bytes]] = []
+    readers: list[threading.Thread] = []
+    spawn = bridge_call._spawn_child
+    thread_start = threading.Thread.start
+
+    def record_reader_start(reader: threading.Thread) -> None:
+        """Observe actual reader threads without replacing their work."""
+        thread_start(reader)
+        readers.append(reader)
+
+    def spawn_then_change_boundary(command: list[str], selected_workspace: Path, timeout: float) -> Any:
+        """Change actual filesystem state only after the genuine subprocess starts."""
+        process = spawn(command, selected_workspace, timeout)
+        assert not isinstance(process, bridge_call.ChildOutcome)
+        processes.append(process)
+        paths.root.rename(workspace / "retained-store")
+        (workspace / ".temp" / "bridge").symlink_to(outside, target_is_directory=True)
+        return process
+
+    monkeypatch.setattr(bridge_call, "_spawn_child", spawn_then_change_boundary)
+    monkeypatch.setattr(threading.Thread, "start", record_reader_start)
+    try:
+        with pytest.raises(ValueError, match="root escapes"):
+            bridge_call._run_child([sys.executable, "-c", "import time; time.sleep(30)"], workspace, 0.2, job_path)
+        assert len(processes) == 1
+        assert processes[0].poll() is not None, "validation rejection abandoned the launched child"
+        assert len(readers) == 2
+        assert not any(reader.is_alive() for reader in readers), "owned output readers were not drained"
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=5)
+
+
+def test_partial_output_reader_start_failure_reaps_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Clean up the real child and first reader when starting the second reader fails."""
+    processes: list[subprocess.Popen[bytes]] = []
+    readers: list[threading.Thread] = []
+    spawn = bridge_call._spawn_child
+    thread_start = threading.Thread.start
+    failure = RuntimeError("second output reader could not start")
+
+    def record_spawn(command: list[str], workspace: Path, timeout: float) -> Any:
+        """Keep the genuine subprocess for the exit-state assertion."""
+        process = spawn(command, workspace, timeout)
+        assert not isinstance(process, bridge_call.ChildOutcome)
+        processes.append(process)
+        return process
+
+    def fail_second_start(reader: threading.Thread) -> None:
+        """Model OS thread-start failure after one actual reader has started."""
+        if readers:
+            raise failure
+        thread_start(reader)
+        readers.append(reader)
+
+    monkeypatch.setattr(bridge_call, "_spawn_child", record_spawn)
+    monkeypatch.setattr(threading.Thread, "start", fail_second_start)
+    try:
+        with pytest.raises(RuntimeError) as raised:
+            bridge_call._run_child([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 0.2)
+        assert raised.value is failure
+        assert len(processes) == 1
+        assert processes[0].poll() is not None, "partial reader startup abandoned the launched child"
+        assert len(readers) == 1
+        assert not readers[0].is_alive()
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=5)
+
+
+def test_wait_failure_reaps_child_and_drains_readers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Preserve an OS wait failure while cleaning up a genuinely running peer."""
+    processes: list[subprocess.Popen[bytes]] = []
+    readers: list[threading.Thread] = []
+    spawn = bridge_call._spawn_child
+    thread_start = threading.Thread.start
+    sleep = time.sleep
+    failure = OSError("OS wait interrupted")
+
+    def record_spawn(command: list[str], workspace: Path, timeout: float) -> Any:
+        """Keep actual subprocess state for the termination assertion."""
+        process = spawn(command, workspace, timeout)
+        assert not isinstance(process, bridge_call.ChildOutcome)
+        processes.append(process)
+        return process
+
+    def record_reader_start(reader: threading.Thread) -> None:
+        """Observe actual reader startup without changing pipe handling."""
+        thread_start(reader)
+        readers.append(reader)
+
+    def fail_first_wait(seconds: float) -> None:
+        """Inject one external wait failure; cleanup waits use the real OS function."""
+        monkeypatch.setattr(bridge_call.time, "sleep", sleep)
+        raise failure
+
+    monkeypatch.setattr(bridge_call, "_spawn_child", record_spawn)
+    monkeypatch.setattr(threading.Thread, "start", record_reader_start)
+    monkeypatch.setattr(bridge_call.time, "sleep", fail_first_wait)
+    try:
+        with pytest.raises(OSError) as raised:
+            bridge_call._run_child([sys.executable, "-c", "import time; time.sleep(30)"], tmp_path, 0.2)
+        assert raised.value is failure
+        assert len(processes) == 1
+        assert processes[0].poll() is not None, "wait failure abandoned the launched child"
+        assert len(readers) == 2
+        assert not any(reader.is_alive() for reader in readers)
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+        for reader in readers:
+            reader.join(timeout=5)

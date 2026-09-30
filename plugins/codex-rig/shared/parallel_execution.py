@@ -916,15 +916,21 @@ def _runtime_write_policy(plan: Mapping[str, Any]) -> bool:
     raise ValueError("runtime-write-policy-invalid")
 
 
-def validate_inspection_contexts(plan: Mapping[str, Any], plan_path: Path) -> dict[str, Path]:
+def validate_inspection_contexts(
+    plan: Mapping[str, Any], plan_path: Path, *, context_limit: int | None = 4
+) -> dict[str, Path]:
     """Bind and scan review context before dispatch, returning its unique role-to-file mapping.
 
     Paths stay under the frozen plan directory and hashes bind the exact UTF-8 source bytes. Common-secret detection
     rejects a context without printing its contents; it is not a guarantee that arbitrary sensitive data is absent. An
-    empty list represents a parent-only review with no child dispatch.
+    empty list represents a parent-only review with no child dispatch. ``context_limit`` defaults to the historical
+    four-context ceiling; only native schema-seven review passes an unbounded roster while enforcing concurrency from
+    observed child intervals.
     """
     contexts = plan.get("contexts")
-    if not isinstance(contexts, list) or len(contexts) > 4:
+    if context_limit is not None and (type(context_limit) is not int or context_limit < 0):
+        raise ValueError("review-inspection-context-limit-invalid")
+    if not isinstance(contexts, list) or (context_limit is not None and len(contexts) > context_limit):
         raise ValueError("review-inspection-contexts-invalid")
     by_role: dict[str, Path] = {}
     for entry in contexts:

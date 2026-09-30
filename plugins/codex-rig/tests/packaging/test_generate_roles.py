@@ -447,6 +447,13 @@ def test_generation_accepts_exact_manager_profile(tmp_path: Path, hooks: bool) -
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["release_profile"] = "shim-enabled"
     manifest["features"] = {"manager": True, "hooks": hooks, "mcp": False, "generated_shims": True}
+    plugin_path = plugin_root / ".codex-plugin" / "plugin.json"
+    plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
+    plugin.pop("mcpServers")
+    plugin_bytes = json.dumps(plugin).encode("utf-8")
+    plugin_path.write_bytes(plugin_bytes)
+    plugin_record = next(record for record in manifest["files"] if record["path"] == ".codex-plugin/plugin.json")
+    plugin_record["sha256"] = hashlib.sha256(plugin_bytes).hexdigest()
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     assert len(_generate(module, plugin_root, python_binary, codex_binary)) == 15

@@ -11,7 +11,7 @@ description: Configure, authenticate, repair, and verify the Codex to Claude Cod
 
 - Treat a plain invocation as `action=all target=peer scope=auto live=prompt`.
 - Loaded Codex plugin, Codex trust, Codex authentication, and current session are external bootstrap prerequisites. Never replace or restart current invocation surface.
-- Reject a model-controlled workspace override; use host-selected launch workspace.
+- Reject a model-controlled workspace override. The deterministic setup CLI uses its trusted host-selected workspace; installed MCP execution separately requires native user-confirmed binding and a current `binding_id`.
 - Require `python --version` >= 3.10.
 - Parse only `action=all|check|configure|authenticate|repair|verify-live`, `target=peer|codex|claude`, `scope=auto|user|project|local`, and `live=prompt|skip|required`, plus one-release compatibility forms `--live` and `--direction codex|claude`; reject ambiguous or unknown arguments.
 
@@ -53,7 +53,7 @@ When authentication remains:
 
 > Sensitive phase: never run through a model-controlled shell or another captured tool stream. Bridge then launches only native login command with terminal inherited. Never accept, request, pipe, echo, inspect, or store a token, API key, browser code, device code, email, or raw login output. Process exit means `auth-flow-launched`; only a later redacted status probe may establish `host-authenticated`.
 
-Use `bridge_status` from loaded MCP inventory before claiming current session or workspace readiness. Its canonical workspace must equal host-selected launch workspace and its expected tool inventory must match current Bridge contract. Static planner cannot establish this evidence.
+Use `bridge_status` from loaded MCP inventory before claiming current session or workspace readiness. `binding_status=unbound` means the installed server is loaded but no project is selected; never call that a stale installation or a workspace mismatch. Invoke `bridge_bind_workspace` with empty arguments and let the user type the project folder, then separately confirm its exact canonical path through native forms. Require `binding_status=bound`, a nonempty current `binding_id`, and the intended canonical workspace before executable calls; pass that ID with each `task`. Expected inventory includes `bridge_bind_workspace` plus status and the three executable tools. Rebinding invalidates old IDs immediately, including cancelled rebinds. Binding selects project identity; it grants no editing approval, runtime permission, authentication, or paid-call consent. Static planner cannot establish this evidence.
 
 ## Live verification
 

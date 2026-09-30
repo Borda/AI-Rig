@@ -332,3 +332,79 @@ def _sync_hash(manifest: dict, path: str, data: bytes) -> None:
     for record in manifest["files"]:
         if record["path"] == path:
             record["sha256"] = hashlib.sha256(data).hexdigest()
+
+
+@pytest.fixture(name="native_question_package")
+def _native_question_package(valid_package: Path) -> Path:
+    """Declare and materialize native question assets in an otherwise valid legacy package."""
+    codex_path = valid_package / ".codex-plugin" / "plugin.json"
+    codex = json.loads(codex_path.read_text(encoding="utf-8"))
+    codex["mcpServers"] = "./.codex-mcp.json"
+    codex_bytes = (json.dumps(codex) + "\n").encode("utf-8")
+    codex_path.write_bytes(codex_bytes)
+    _mutate_manifest(valid_package, lambda manifest: _sync_hash(manifest, ".codex-plugin/plugin.json", codex_bytes))
+    wiring = {
+        "mcpServers": {
+            "codemap-input": {
+                "command": "python",
+                "cwd": ".",
+                "args": ["shared/user_questions_mcp.py", "--stdio"],
+                "tool_timeout_sec": 3600,
+            }
+        }
+    }
+    _add_member(valid_package, ".codex-mcp.json", (json.dumps(wiring) + "\n").encode("utf-8"))
+    _add_member(valid_package, "shared/user_questions_mcp.py", b'"""Native question provider fixture."""\n')
+    return valid_package
+
+
+@pytest.mark.packaging
+def test_declared_native_question_package_validates(native_question_package: Path) -> None:
+    """A declared native server ships its exact configuration and inventoried provider."""
+    assert _validate_findings(native_question_package) == []
+
+
+@pytest.mark.parametrize(
+    ("member", "finding"),
+    [
+        pytest.param(".codex-mcp.json", "native question configuration missing from inventory", id="missing-config"),
+        pytest.param(
+            "shared/user_questions_mcp.py", "native question provider missing from inventory", id="missing-provider"
+        ),
+    ],
+)
+@pytest.mark.packaging
+def test_missing_declared_native_asset_fails_closed(native_question_package: Path, member: str, finding: str) -> None:
+    """Removing an asset and its matching inventory row still violates declared component closure."""
+    _drop_member(native_question_package, member)
+    assert finding in _validate_findings(native_question_package)
+    assert validator.main(["--package", str(native_question_package)]) == 1
+
+
+@pytest.mark.packaging
+def test_changed_native_provider_wiring_fails_closed(native_question_package: Path) -> None:
+    """Hash-consistent wiring pointing outside the declared local provider fails validation."""
+    config = native_question_package / ".codex-mcp.json"
+    wiring = json.loads(config.read_text(encoding="utf-8"))
+    wiring["mcpServers"]["codemap-input"]["args"] = ["other-provider.py", "--stdio"]
+    data = (json.dumps(wiring) + "\n").encode("utf-8")
+    config.write_bytes(data)
+    _mutate_manifest(native_question_package, lambda manifest: _sync_hash(manifest, ".codex-mcp.json", data))
+    assert "native question configuration differs from the packaged local provider" in _validate_findings(
+        native_question_package
+    )
+
+
+@pytest.mark.parametrize("pointer", [None, "./other-mcp.json"])
+@pytest.mark.packaging
+def test_invalid_native_question_declaration_fails_closed(native_question_package: Path, pointer: str | None) -> None:
+    """An explicitly invalid or null MCP declaration cannot bypass native component validation."""
+    path = native_question_package / ".codex-plugin" / "plugin.json"
+    codex = json.loads(path.read_text(encoding="utf-8"))
+    codex["mcpServers"] = pointer
+    data = (json.dumps(codex) + "\n").encode("utf-8")
+    path.write_bytes(data)
+    _mutate_manifest(native_question_package, lambda manifest: _sync_hash(manifest, ".codex-plugin/plugin.json", data))
+    assert "codex manifest must declare native questions: ./.codex-mcp.json" in _validate_findings(
+        native_question_package
+    )

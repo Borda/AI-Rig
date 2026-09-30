@@ -96,12 +96,17 @@ def render_read_output(
 
 
 def render_read_call(
-    plan_path: Path, role: str, attempt: int = 1, python_executable: str = sys.executable, page: int = 1
+    plan_path: Path,
+    role: str,
+    attempt: int = 1,
+    python_executable: str = sys.executable,
+    page: int = 1,
+    reader_path: Path | None = None,
 ) -> str:
     """Render one exact native tool call for the selected context page."""
     argv = [
         python_executable,
-        str(Path(__file__).resolve()),
+        str((reader_path or Path(__file__)).resolve()),
         "--plan",
         str(plan_path.resolve()),
         "--role",
@@ -119,7 +124,15 @@ def render_read_call(
     )
 
 
-def dispatch_message(plan_path: Path, role: str, attempt: int = 1, python_executable: str = sys.executable) -> str:
+def dispatch_message(
+    plan_path: Path,
+    role: str,
+    attempt: int = 1,
+    python_executable: str = sys.executable,
+    *,
+    provenance_header: bool = True,
+    reader_path: Path | None = None,
+) -> str:
     """Tell a child to read every frozen page in order before reviewing."""
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     entries = [entry for entry in plan["contexts"] if entry.get("role_id") == role]
@@ -127,7 +140,7 @@ def dispatch_message(plan_path: Path, role: str, attempt: int = 1, python_execut
         raise ValueError("review-context-role-count")
     context = (plan_path.parent / entries[0]["context_path"]).read_bytes().decode("utf-8")
     count = len(context_pages(context))
-    first_call = render_read_call(plan_path, role, attempt, python_executable)
+    first_call = render_read_call(plan_path, role, attempt, python_executable, reader_path=reader_path)
     later_pages = (
         f"For pages 2 through {count}, copy the same JavaScript source once per page in order. "
         "In each copied source, append ` --page N` to the end of the `cmd` string, replacing N with that page's "
@@ -135,11 +148,17 @@ def dispatch_message(plan_path: Path, role: str, attempt: int = 1, python_execut
         if count > 1
         else ""
     )
+    final_instruction = (
+        "all pages. Begin your final answer with the provenance header printed by the reads; do not include the "
+        "context body in the final answer."
+        if provenance_header
+        else "all pages. Return your findings and Reviewer Assessment; provenance is derived from the audited reads. "
+        "Do not include the context body in the final answer."
+    )
     return (
         f"Read all {count} frozen review context pages in order with exactly one functions.exec call per page, "
         "starting with the exact source below. Use no other tools. Read each full output before the next call and review only after "
-        "all pages. Begin your final answer with the provenance header printed by the reads; do not include the "
-        f"context body in the final answer.\n{later_pages}\n```javascript\n{first_call}\n```"
+        f"{final_instruction}\n{later_pages}\n```javascript\n{first_call}\n```"
     )
 
 

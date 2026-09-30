@@ -13,7 +13,8 @@ does not decide workflow findings, execute project gates, inspect chat transcrip
 
 ## Usage
 
-New workflow handoffs set ``presentation_version=3`` before ``render``; earlier presentation versions remain available
+New remediation handoffs set ``presentation_version=4``; other workflows set ``presentation_version=3`` before
+``render``. Earlier presentation versions remain available
 for validating historical artifacts. Run ``render`` after gates and handoff creation, then run ``check``
 directly or through the shared artifact validator
 before promoting ``result.candidate.json``. Before remediation selection, run ``selection --input selection.json
@@ -249,7 +250,7 @@ def _validate_tables(payload: dict[str, Any], skill: str, branch: str) -> tuple[
             raise HandoffError(f"table-overview-only-invalid:{heading}")
         if (
             skill == "code-remediate"
-            and payload.get("presentation_version") == 3
+            and payload.get("presentation_version") in {3, 4}
             and table.get("overview_only") is not True
         ):
             raise HandoffError("remediation-overview-only-required")
@@ -507,7 +508,9 @@ def validate_handoff(payload: object) -> dict[str, Any]:
     if set(handoff) != expected_fields:
         raise HandoffError("handoff-fields-mismatch")
     if presentation_version is not None and (
-        type(presentation_version) is not int or presentation_version not in {2, PRESENTATION_VERSION}
+        type(presentation_version) is not int
+        or presentation_version
+        not in ({2, 3, 4} if handoff.get("skill") == "code-remediate" else {2, PRESENTATION_VERSION})
     ):
         raise HandoffError("handoff-presentation-version-invalid")
     if handoff.get("schema_version") != SCHEMA_VERSION:
@@ -665,7 +668,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
     """
     inventory = _require_object(payload, "selection")
     presentation = inventory.get("presentation_version", 2)
-    if type(presentation) is not int or presentation not in {2, 3}:
+    if type(presentation) is not int or presentation not in {2, 3, 4}:
         raise HandoffError("selection-presentation-version-invalid")
     if (
         type(inventory.get("schema_version")) is not int
@@ -694,7 +697,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
         if not isinstance(item.get("selectable"), bool):
             raise HandoffError("selection-item-selectable-invalid")
         if item["selectable"]:
-            if presentation == 3:
+            if presentation in {3, 4}:
                 _require_string(item.get("resolution_proposal"), "selection-item-resolution_proposal")
             selectable.append(item)
         records = item.get("sources")
@@ -707,7 +710,7 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
                 _require_string(source.get(field), f"selection-source-{field}")
             kind, source_id = source["kind"], source["source_id"]
             if (
-                kind not in {"report", "online"}
+                kind not in {"report", "online", "user"}
                 or source_id != source_id.strip()
                 or re.search(r"[\r\n\[\]]", source_id)
             ):
@@ -716,6 +719,10 @@ def _validate_selection(payload: object) -> tuple[dict[str, Any], list[dict[str,
                 raise HandoffError("selection-source-duplicate")
             if kind == "online" and re.fullmatch(r"(?!https?://)\S+", source_id, re.IGNORECASE) is None:
                 raise HandoffError("selection-online-source-invalid")
+            if kind == "user" and presentation != 4:
+                raise HandoffError("selection-user-source-requires-v4")
+            if kind == "user" and re.fullmatch(r"user-[A-Za-z0-9_-]+#finding-[1-9]\d*", source_id) is None:
+                raise HandoffError("selection-user-source-invalid")
             sources.add((kind, source_id))
             if kind == "report":
                 match = re.fullmatch(r"(.+?)(?::[1-9][0-9]*|#([^#\s]+))", source_id)
@@ -785,14 +792,16 @@ def render_selection(payload: object) -> str:
             f"Items: {len(items)}; selectable: {len(selectable)}; sources: {source_count}; grouped items: {grouped}.",
             "",
             "| # | Severity | Finding | Resolution proposal | Sources |"
-            if inventory.get("presentation_version") == 3
+            if inventory.get("presentation_version") in {3, 4}
             else "| # | Severity | Finding |",
-            "| --- | --- | --- | --- | --- |" if inventory.get("presentation_version") == 3 else "| --- | --- | --- |",
+            "| --- | --- | --- | --- | --- |"
+            if inventory.get("presentation_version") in {3, 4}
+            else "| --- | --- | --- |",
         )
     )
     for index, item in enumerate(selectable, 1):
         extra = ""
-        if inventory.get("presentation_version") == 3:
+        if inventory.get("presentation_version") in {3, 4}:
             # Aggregate only genuine sources; related mentions are not independent evidence.
             kinds = [source["kind"] for source in item["sources"]]
             tags = "; ".join(f"{kind} ×{kinds.count(kind)}" for kind in dict.fromkeys(kinds))
@@ -801,7 +810,7 @@ def render_selection(payload: object) -> str:
             f"| {index} | {item['severity']} | {_table_cell(item['input_item_id'])} — {_table_cell(item['item_name'])} |{extra}"
         )
     for index, item in enumerate(selectable, 1):
-        concise = inventory.get("presentation_version") == 3
+        concise = inventory.get("presentation_version") in {3, 4}
         title = "" if concise else f" — {_table_cell(item['item_name'])}"
         lines.extend(
             (
@@ -839,7 +848,7 @@ def render_handoff(payload: object) -> str:
     if handoff["branch"] == "caller-contract":
         return handoff["caller_contract"]["output"]
 
-    if handoff.get("presentation_version") in {2, PRESENTATION_VERSION}:
+    if handoff.get("presentation_version") in {2, 3, 4}:
         return _render_v2_handoff(handoff)
 
     lines = ["**Outcome**", "", f"{handoff['outcome']['title']}: {handoff['outcome']['summary']}"]
@@ -929,7 +938,7 @@ def _render_v2_handoff(handoff: dict[str, Any]) -> str:
         lines.extend(("", "**Next steps**", ""))
         lines.extend(
             f"- {row_id} — {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
-            if handoff["presentation_version"] == 3
+            if handoff["presentation_version"] in {3, 4}
             else f"- {item['item']} — owner: {item['owner']} — next: {item['next_action']}"
             for row_id, item in remaining_by_id.items()
         )

@@ -68,7 +68,7 @@ When `live=prompt` or `live=required` and `remaining` still lists `live-verifica
 - Setup always owns one resolved peer target.
 - To prepare both integrations, finish peer lifecycle from Claude, start any required fresh session, then run `$bridge:setup` from Codex for its peer; no digest, state claim, or readiness result is shared between hosts.
 - Loaded-host branch is check/bootstrap-only, never mutates its current invocation surface.
-- `bridge_status` evidence belongs to fresh Codex session, required before claiming reverse MCP session/workspace ready.
+- `bridge_status` evidence belongs to a fresh Codex session. An unbound reverse backend is loaded but has no selected project; use `bridge_bind_workspace` there with empty arguments and native human folder selection plus exact canonical confirmation. Require its current `binding_id` and intended workspace before claiming reverse MCP session/workspace ready or passing executable calls; binding grants no runtime permission or paid-call consent.
 - Report strongest verified level, exact remaining action, confidence, and limits.
 
 > Never equate static readiness, process exit, host authentication, session readiness, workspace readiness, or live verification.

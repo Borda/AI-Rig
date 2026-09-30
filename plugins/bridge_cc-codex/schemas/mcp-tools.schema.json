@@ -3,6 +3,11 @@
     "bridge_advise": {
       "additionalProperties": false,
       "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
         "depth": {
           "minimum": 0,
           "type": "integer"
@@ -48,13 +53,24 @@
         }
       },
       "required": [
-        "task"
+        "task",
+        "binding_id"
       ],
+      "type": "object"
+    },
+    "bridge_bind_workspace": {
+      "additionalProperties": false,
+      "properties": {},
       "type": "object"
     },
     "bridge_implement": {
       "additionalProperties": false,
       "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
         "depth": {
           "minimum": 0,
           "type": "integer"
@@ -100,13 +116,19 @@
         }
       },
       "required": [
-        "task"
+        "task",
+        "binding_id"
       ],
       "type": "object"
     },
     "bridge_review": {
       "additionalProperties": false,
       "properties": {
+        "binding_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
         "depth": {
           "minimum": 0,
           "type": "integer"
@@ -152,7 +174,8 @@
         }
       },
       "required": [
-        "task"
+        "task",
+        "binding_id"
       ],
       "type": "object"
     },

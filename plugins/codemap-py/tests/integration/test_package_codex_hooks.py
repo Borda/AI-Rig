@@ -33,8 +33,13 @@ def _build_candidate(tmp_path: Path) -> Path:
     candidate = tmp_path / "candidate"
     mode_map = _BUILD._git_exec_modes(_PLUGIN_ROOT)
     # Include the owned new payload before commit without staging the caller's index.
-    mode_map["shared/codex-user-questions.md"] = False
-    mode_map["shared/codex-user-questions-details.md"] = False
+    for relative in (
+        "shared/codex-user-questions.md",
+        "shared/codex-user-questions-details.md",
+        "shared/user_questions_mcp.py",
+        ".codex-mcp.json",
+    ):
+        mode_map.setdefault(relative, False)
     _BUILD.build_package(_PLUGIN_ROOT, candidate, mode_map)
     return candidate
 

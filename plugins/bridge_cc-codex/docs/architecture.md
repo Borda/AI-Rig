@@ -1,6 +1,6 @@
 # Architecture and transport
 
-`bridge_CC-Codex` is a self-contained package with the normalized plugin identifier `bridge` and two host integrations. The Claude Code integration starts the Codex command-line interface through `bin/bridge_call.py`; the Codex integration exposes four tools through the stdio MCP server declared in `.codex-mcp.json` and starts Claude Code through that server. Both integrations expose the same approval-bound setup lifecycle through their host skill.
+`bridge_CC-Codex` is a self-contained package with the normalized plugin identifier `bridge` and two host integrations. The Claude Code integration starts the Codex command-line interface through `bin/bridge_call.py`; the Codex integration exposes five tools through the stdio MCP server declared in `.codex-mcp.json` and starts Claude Code through that server. Both integrations expose the same approval-bound setup lifecycle through their host skill.
 
 ## Request directions
 
@@ -16,14 +16,15 @@ The reverse transport is intentionally not implemented as a shell command issued
 
 ## MCP surface
 
-The server implements the MCP methods required for startup and tool use: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. `tools/list` advertises exactly four tools:
+The server implements the MCP methods required for startup and tool use: `initialize`, `notifications/initialized`, `tools/list`, and `tools/call`. `tools/list` advertises exactly five tools:
 
 - `bridge_implement` performs one bounded write-capable request.
 - `bridge_advise` performs one read-only request.
 - `bridge_review` performs one read-only adversarial review.
-- `bridge_status` returns sanitized server identity, Bridge/plugin and protocol/schema versions, the canonical host-selected workspace and fingerprint, and the expected tool inventory without invoking a peer, provider, write, repair, or authentication operation.
+- `bridge_bind_workspace` collects an absolute project folder and separate canonical-target confirmation through native forms.
+- `bridge_status` returns sanitized server identity, Bridge/plugin and protocol/schema versions, the current binding ID and canonical user-confirmed workspace and fingerprint, or null workspace fields when unbound, and the expected tool inventory without invoking a peer, provider, write, repair, or authentication operation.
 
-Every request tool requires a non-empty `task` and accepts optional `model`, `effort`, `timeout_seconds`, `depth`, `run_id`, and `supported_efforts`. The server supplies the trusted workspace selected by the host. `workspace`, `background`, and `session_id` are not accepted as model-controlled MCP arguments, so a tool call cannot select a different workspace or request detached execution through the reverse route. `bridge_status` is the exception to the request-tool argument contract: it accepts no workspace override and no model or task input. Its workspace evidence is session evidence only; static sync cannot claim that a host session has loaded the MCP server or selected the expected workspace.
+Every executable request tool requires a non-empty `task` and current `binding_id`, and accepts optional `model`, `effort`, `timeout_seconds`, `depth`, `run_id`, and `supported_efforts`. The server supplies only the current user-confirmed workspace after checking the binding ID and directory identity. `workspace`, `background`, and `session_id` are not accepted as model-controlled MCP arguments, so a tool call cannot select a different workspace or request detached execution through the reverse route. `bridge_status` and `bridge_bind_workspace` accept empty arguments; neither accepts a model-selected workspace. Its workspace evidence is session evidence only; static sync cannot claim that a host session has loaded the MCP server or selected the expected workspace.
 
 ## Setup lifecycle
 
@@ -44,3 +45,7 @@ The recursion guard starts an outer request at `depth` zero, propagates the trus
 ## Permission model
 
 `implement` uses `workspace-write` for Codex and `acceptEdits` for Claude Code. `advise` and `review` use read-only modes, and reverse read-only requests also disallow Claude tools named `Edit` and `Write`. Claude-side detached execution and Codex session continuation are available only through the Claude Code-to-Codex command-line route; the reverse MCP surface intentionally exposes neither capability.
+
+## Explicit reverse workspace binding
+
+The installed Bridge MCP backend starts unbound; plugin cwd only locates installed code. `bridge_bind_workspace` accepts empty arguments. The user types an absolute existing project folder, then separately confirms its exact canonical target through native forms. Only matched explicit confirmation creates process-local authority. Every advise/review/implement call must supply the current `binding_id`; missing or stale expectations fail before provider work. Rebinding clears previous authority immediately, including same-folder rebinding and cancellation. Filesystem root, user home itself, and installed plugin/cache descendants are refused; project subdirectories under home are allowed. Folder resolution and directory identity are rechecked before dispatch; changes invalidate binding. Unsupported forms, malformed responses, stale IDs, decline/cancel, and EOF never bind. Binding selects project identity and grants no editing approval, runtime permission, authentication, or paid-call consent. Native Windows directory and cache checks use native path semantics; actual native Windows execution remains a verification surface.

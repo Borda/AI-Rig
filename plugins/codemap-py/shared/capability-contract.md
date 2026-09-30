@@ -2,11 +2,11 @@
 
 # Codemap-py capability contract — v1
 
-Single source of truth-claims for the six `codemap-py` skills, shared by both runtime rosters (`claude-skills/`, `codex-skills/`). Authoritative parity rule (§8.2 below): runtime skills may differ in invocation syntax and tool bindings but **must not** differ in truth claims — inputs, outputs, exit codes, completeness metadata, or caveats. `tests/integration/test_skill_parity.py` diffs both rosters against this file; a runtime skill that adds an undocumented capability, drops a documented one, or states a stronger/weaker guarantee than listed here fails parity.
+Single source of truth-claims for the six `codemap-py` skills, shared by both runtime rosters (`claude-skills/`, `codex-skills/`). Under the Parity requirements section below, runtime skills may differ in invocation syntax and tool bindings but **must not** differ in truth claims — inputs, outputs, exit codes, completeness metadata, or caveats. `tests/integration/test_skill_parity.py` diffs both rosters against this file; a runtime skill that adds an undocumented capability, drops a documented one, or states a stronger/weaker guarantee than listed here fails parity.
 
-This file is the authoritative shipped statement of the exit-code contract (§7.5 below) and the skill-parity rule (§8.2 below); the integration protocol is fixed by `integration-contract.md` (§8.3). The § labels are design-history section numbers retained as stable anchors.
+The Shared exit-code contract and Parity requirements sections below define CLI outcomes and skill parity. `integration-contract.md` defines the integration protocol.
 
-## Shared exit-code contract (§7.5)
+## Shared exit-code contract
 
 All six skills' underlying CLI calls (`scan-index`, `scan-query`, `codemap-py integrate`) obey:
 
@@ -18,7 +18,7 @@ All six skills' underlying CLI calls (`scan-index`, `scan-query`, `codemap-py in
 | `3` | requested module/symbol not indexed — distinct from valid empty result | parseable JSON error on stdout |
 | `127` | no eligible CPython interpreter, incl. invalid `CODEMAP_PYTHON` or untested future minor | empty stdout, one actionable stderr line |
 
-A skill's own pre-flight shell logic (e.g. an unsupported-flag check before the CLI is even invoked) may take a shortcut exit path; that shortcut is skill-local UX, not a redefinition of the underlying CLI's exit-code contract above. Both rosters' shortcut paths must reach the same decision (reject vs proceed) for the same input, even if the intermediate exit code differs from `2` before the pinned CLI surface (`integration.py`) lands.
+A skill's own pre-flight shell logic (e.g. an unsupported-flag check before the CLI is even invoked) may take a shortcut exit path; that shortcut is skill-local UX, not a redefinition of the underlying CLI's exit-code contract above. Both rosters' shortcut paths must reach the same decision (reject vs proceed) for the same input, even if the intermediate exit code differs from `2`.
 
 ## Completeness metadata (shared vocabulary)
 
@@ -155,20 +155,9 @@ Complete-query paths are caller-repo-relative, never Skill-relative; do not re-q
 
 **NOT for**: validating codemap installation health (`integration audit`); building/querying the structural index (`scan-codebase`/`query-code`).
 
-## Parity requirements (§8.2)
+## Parity requirements
 
 - Both runtime rosters expose exactly these six skill names — no extra, none missing.
 - A parity test rejects: a missing skill, a stale command/subcommand name, a runtime-specific filesystem path presented as if portable, or a truth claim in one roster that contradicts (is strictly stronger or weaker than) the corresponding entry in this file.
 - Runtime-specific latitude: invocation syntax (`/codemap-py:<skill>` vs `$codemap-py:<skill>`), tool bindings (Claude `Bash`/`Read`/`Write`/`Skill`/`AskUserQuestion` vs Codex's resolved plugin-root path convention), and result-injection/wording differences within the latitude this section defines.
 - Every runtime-specific instruction in a roster's SKILL.md must have an executable or inspection oracle behind it — no unverifiable prose claim about what a command does.
-
-## Confidence
-
-**Score**: 0.88 — moderate ⚠ orchestrator may re-run with the specific gap addressed **Gaps**:
-
-- `integration` skill's exit-code row for `check`/`plan` is written against the *target* pinned CLI surface (delivery-plan.md's Wave-1 contract), not the currently-committed `claude-skills/ integration/SKILL.md` (which still implements the legacy `check|init|demo` modes pending Wave 2's rewrite by slice D) — intentional per the assignment ("truth-claim source both runtimes' skills must not contradict," forward-referencing the pinned surface both C and D code to), but a reader diffing this file against the current on-disk integration skill today will see a mismatch until Wave 2 lands.
-- Exact skill-level exit codes for `scan-codebase`/`rename-refs` unsupported-flag paths are read from the current SKILL.md's own bash (`exit 1`), which does not literally match §7.5's `2` for invalid syntax; documented as skill-local shortcut UX rather than silently reconciled or hidden.
-
-**Refinements**: 1 pass.
-
-- Pass 1: added the explicit caveat paragraph under the exit-code table distinguishing skill-local shell shortcuts from the underlying CLI's §7.5 contract, after noticing the scan-codebase/ rename-refs SKILL.md text uses `exit 1` for what §7.5 defines as a `2`-class syntax error.

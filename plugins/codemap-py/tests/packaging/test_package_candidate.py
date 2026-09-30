@@ -25,6 +25,14 @@ if str(_BUILDER.parent) not in sys.path:
     sys.path.insert(0, str(_BUILDER.parent))
 
 import build_package as builder  # noqa: E402  (needs the scripts path insert above)
+import validate_package as validator  # noqa: E402
+
+_QUESTION_ASSETS = (
+    "shared/codex-user-questions.md",
+    "shared/codex-user-questions-details.md",
+    "shared/user_questions_mcp.py",
+    ".codex-mcp.json",
+)
 
 _TEXT_LAUNCHERS = (
     "bin/check-index-currency",
@@ -60,14 +68,20 @@ def _plugin_identity() -> tuple[str, str]:
 
 
 def _run_builder(*args: str) -> subprocess.CompletedProcess[str]:
-    """Invoke the builder CLI under the current interpreter."""
-    return subprocess.run(
-        [sys.executable, str(_BUILDER), *args],
-        capture_output=True,
-        text=True,
-        timeout=120,
-        check=False,
-    )
+    """Build the declared candidate using tracked modes plus explicit new data assets."""
+    modes = builder._git_exec_modes(_PLUGIN_ROOT)
+    for relative in _QUESTION_ASSETS:
+        modes.setdefault(relative, False)
+    with tempfile.TemporaryDirectory() as directory:
+        mode_map = Path(directory) / "candidate-modes.json"
+        mode_map.write_text(json.dumps(modes), encoding="utf-8", newline="\n")
+        return subprocess.run(
+            [sys.executable, str(_BUILDER), *args, "--mode-map", str(mode_map)],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
 
 
 @pytest.fixture(name="package", scope="module")
@@ -85,7 +99,7 @@ def _package(tmp_path_factory: pytest.TempPathFactory) -> Path:
 @pytest.mark.packaging
 @pytest.mark.integration
 def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: Path) -> None:
-    """Prove every installed skill resolves the explicitly owned new reference outside the checkout."""
+    """Prove installed skills and native MCP wiring resolve byte-exact declared assets outside the checkout."""
     tracked = subprocess.run(
         ["git", "ls-files", "--stage", "-z", "--", "."],
         cwd=_PLUGIN_ROOT,
@@ -101,10 +115,10 @@ def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: 
     reference = "shared/codex-user-questions.md"
     assert (_PLUGIN_ROOT / reference).is_file()
     original_paths = set(modes)
-    modes[reference] = False
     details = "shared/codex-user-questions-details.md"
-    modes[details] = False
-    assert set(modes) - original_paths <= {reference, details}
+    for relative in _QUESTION_ASSETS:
+        modes.setdefault(relative, False)
+    assert set(modes) - original_paths <= set(_QUESTION_ASSETS)
     mode_map = tmp_path / "candidate-modes.json"
     mode_map.write_text(json.dumps(modes), encoding="utf-8")
     output = tmp_path / "package"
@@ -118,6 +132,16 @@ def test_candidate_ships_question_policy_without_staging_new_document(tmp_path: 
     assert built.returncode == 0, built.stdout + built.stderr
     assert (output / reference).read_bytes() == (_PLUGIN_ROOT / reference).read_bytes()
     assert (output / details).read_bytes() == (_PLUGIN_ROOT / details).read_bytes()
+    for relative in _QUESTION_ASSETS:
+        assert (output / relative).read_bytes() == (_PLUGIN_ROOT / relative).read_bytes()
+    codex = json.loads((output / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+    config = output / codex["mcpServers"].removeprefix("./")
+    wiring = json.loads(config.read_text(encoding="utf-8"))["mcpServers"]["codemap-input"]
+    assert wiring["command"] == "python"
+    assert wiring["args"] == ["shared/user_questions_mcp.py", "--stdio"]
+    assert wiring["cwd"] == "."
+    assert (output / wiring["args"][0].removeprefix("${PLUGIN_ROOT}/")).is_file()
+    assert validator.validate_package(output) == []
     skills = list((output / "codex-skills").glob("*/SKILL.md"))
     assert len(skills) == 6
     for skill in skills:

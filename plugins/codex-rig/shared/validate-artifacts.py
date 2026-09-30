@@ -154,9 +154,10 @@ CODE_REMEDIATE_FINAL_TABLE_REQUIRED_COLUMNS = {
     "resolved how",
     "evidence",
 }
-CODE_REMEDIATE_SOURCE_KINDS = {"report", "online"}
+CODE_REMEDIATE_SOURCE_KINDS = {"report", "online", "user"}
 CODE_REMEDIATE_SOURCE_STRING_FIELDS = {"source_id", "location", "body", "evidence"}
 CODE_REMEDIATE_REPORT_SOURCE_ID = re.compile(r"(?:.+:[1-9]\d*|.+\.json#[^#\r\n]+)", re.IGNORECASE)
+CODE_REMEDIATE_USER_SOURCE_ID = re.compile(r"user-[A-Za-z0-9_-]+#finding-[1-9]\d*")
 CODE_REMEDIATE_ONLINE_SOURCE_ID = re.compile(r"(?!https?://)\S+", re.IGNORECASE)
 CODE_REMEDIATE_FINAL_ITEM_STRING_FIELDS = {
     "input_item_id",
@@ -450,9 +451,12 @@ def _validate_code_remediate_final_handoff(result: dict[str, Any], handoff: dict
         raise SystemExit("code-remediate-final-handoff-table-invalid")
     expected_items = resolution_table["items"]
     presentation = metadata.get("resolution_scope", {}).get("presentation_version")
-    if presentation in {2, 3} and tables[0].get("layout") != {2: "grouped", 3: "concise"}[presentation]:
+    if (
+        presentation in {2, 3, 4}
+        and tables[0].get("layout") != {2: "grouped", 3: "concise", 4: "concise"}[presentation]
+    ):
         raise SystemExit("code-remediate-final-handoff-grouped-layout-required")
-    if presentation == 3 and tables[0].get("overview_only") is not True:
+    if presentation in {3, 4} and tables[0].get("overview_only") is not True:
         raise SystemExit("code-remediate-final-handoff-overview-only-required")
     expected_rows = []
     expected_details = []
@@ -1205,6 +1209,15 @@ def _validate_code_remediate_report_intake(
     requested_report = intake.get("requested_report")
     if not isinstance(requested_report, bool):
         raise SystemExit("code-remediate-invalid-review-report-requested")
+    if "admission_status" in intake and (
+        type(intake.get("schema_version")) is not int or intake["schema_version"] != 1
+    ):
+        raise SystemExit("code-remediate-report-admission-schema-invalid")
+    admission_status = intake.get("admission_status", "completed")
+    if admission_status not in {"completed", "preliminary", "unavailable"}:
+        raise SystemExit("code-remediate-report-admission-status-invalid")
+    if not requested_report and admission_status != "completed":
+        raise SystemExit("code-remediate-report-admission-request-missing")
     for key in (
         "report_items_total",
         "review_gate_items_total",
@@ -1215,7 +1228,7 @@ def _validate_code_remediate_report_intake(
         if not isinstance(value, int) or value < 0:
             raise SystemExit(f"code-remediate-invalid-review-report-intake:{key}")
 
-    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3}
+    grouped_scope = metadata.get("resolution_scope", {}).get("presentation_version") in {2, 3, 4}
     if grouped_scope:
         # Item classifications, unlike rendered titles, bind report gate obligations to the inventory.
         report_items = [
@@ -1235,6 +1248,9 @@ def _validate_code_remediate_report_intake(
         if any(intake[key] != value for key, value in derived.items()) or (report_items and not requested_report):
             raise SystemExit("code-remediate-review-intake-inventory-mismatch")
     if not requested_report:
+        return
+    if admission_status != "completed":
+        _validate_code_remediate_incomplete_report_admission(result, out_dir, admission_status)
         return
     if current_contract:
         _validate_code_remediate_report_coverage(metadata, out_dir)
@@ -1264,6 +1280,166 @@ def _validate_code_remediate_report_intake(
         and "review gate" not in scope_text
     ):
         raise SystemExit("code-remediate-review-gate-scope-missing")
+
+
+def _validate_code_remediate_user_source(source: dict[str, Any], out_dir: Path) -> None:
+    """Keep a supplied finding distinct from online/report evidence and retain its complete body."""
+    if not CODE_REMEDIATE_USER_SOURCE_ID.fullmatch(source.get("source_id", "")):
+        raise SystemExit("code-remediate-user-source-id-invalid")
+    path = _code_remediate_run_path(out_dir, source.get("evidence"), "code-remediate-user-source-evidence-invalid")
+    if not path.is_file() or not isinstance(source.get("body"), str) or not source["body"].strip():
+        raise SystemExit("code-remediate-user-source-evidence-invalid")
+    if " ".join(source["body"].split()) not in " ".join(path.read_text(encoding="utf-8").split()):
+        raise SystemExit("code-remediate-user-source-body-mismatch")
+
+
+def _validate_code_remediate_incomplete_report_admission(
+    result: dict[str, Any], out_dir: Path, admission_status: str
+) -> None:
+    """Bind an open report obligation to selected source, selection, and retained diagnostic."""
+    if result.get("status") != "fail":
+        raise SystemExit("code-remediate-report-admission-requires-fail")
+    metadata = result["metadata"]
+    intake = metadata["review_report_intake"]
+    evidence = intake.get("admission_evidence")
+    if not isinstance(evidence, dict) or metadata.get("mode") not in {"pr", "report"}:
+        raise SystemExit("code-remediate-report-admission-evidence-missing")
+    routing = None
+    if metadata["mode"] == "pr":
+        routing = _load_json(out_dir / "pr" / "pr-routing.json")
+        if any(
+            not isinstance(routing.get(key), str) or not routing[key] for key in ("pr_url", "head_oid", "base_oid")
+        ) or any(evidence.get(key) != routing[key] for key in ("pr_url", "head_oid", "base_oid")):
+            raise SystemExit("code-remediate-report-admission-evidence-mismatch")
+    else:
+        _validate_code_remediate_local_report_admission(out_dir, evidence)
+        if admission_status != "unavailable":
+            raise SystemExit("code-remediate-local-preliminary-report-unsupported")
+    diagnostic = _code_remediate_run_path(
+        out_dir, evidence.get("diagnostic_path"), "code-remediate-report-admission-evidence-mismatch"
+    )
+    selection = _code_remediate_run_path(out_dir, "selection.json", "code-remediate-report-admission-evidence-mismatch")
+    if (
+        not diagnostic.is_file()
+        or not diagnostic.read_bytes().strip()
+        or hashlib.sha256(diagnostic.read_bytes()).hexdigest() != evidence.get("diagnostic_sha256")
+        or not selection.is_file()
+        or hashlib.sha256(selection.read_bytes()).hexdigest() != evidence.get("selection_sha256")
+    ):
+        raise SystemExit("code-remediate-report-admission-evidence-mismatch")
+    items = metadata.get("final_resolution_table", {}).get("items", [])
+    obligations = [item for item in items if item.get("input_item_id") == evidence.get("open_item_id")]
+    if (
+        len(obligations) != 1
+        or obligations[0].get("item_type") not in {"review-gate", "confidence-gap"}
+        or obligations[0].get("resolution_status") not in {"unresolved", "needs-clarification"}
+        or obligations[0].get("owner_status") not in {"unresolved", "deferred", "not-selected", "todo"}
+        or obligations[0].get("triage_status") not in {"valid", "needs-clarification"}
+    ):
+        raise SystemExit("code-remediate-report-admission-open-obligation-missing")
+    # Missing requested proof stays open even when the user selected only the source fix.
+    if admission_status == "unavailable":
+        if any(source.get("kind") == "report" for item in items for source in item.get("sources", [])):
+            raise SystemExit("code-remediate-report-admission-unavailable-report-sources")
+        return
+    assert routing is not None
+    _validate_code_remediate_preliminary_report_source(out_dir, evidence, routing)
+    _validate_code_remediate_report_coverage(metadata, out_dir)
+
+
+def _validate_code_remediate_local_report_admission(out_dir: Path, evidence: dict[str, Any]) -> None:
+    """Bind local intake to the existing pre-edit snapshot and diff frozen with the selection."""
+    source = evidence.get("local_source")
+    if not isinstance(source, dict):
+        raise SystemExit("code-remediate-report-admission-local-source-missing")
+    snapshot_path = _code_remediate_run_path(
+        out_dir, source.get("snapshot_path"), "code-remediate-report-admission-local-source-invalid"
+    )
+    diff_path = _code_remediate_run_path(
+        out_dir, source.get("diff_path"), "code-remediate-report-admission-local-source-invalid"
+    )
+    if (
+        not snapshot_path.is_file()
+        or not diff_path.is_file()
+        or hashlib.sha256(snapshot_path.read_bytes()).hexdigest() != source.get("snapshot_sha256")
+        or hashlib.sha256(diff_path.read_bytes()).hexdigest() != source.get("diff_sha256")
+    ):
+        raise SystemExit("code-remediate-report-admission-local-source-invalid")
+    snapshot = _load_json(snapshot_path)
+    selection = _load_json(out_dir / "selection.json")
+    scopes = snapshot.get("scope_paths")
+    repository = snapshot.get("repository")
+    if (
+        type(snapshot.get("schema_version")) is not int
+        or snapshot["schema_version"] != 1
+        or not isinstance(repository, str)
+        or not (PurePosixPath(repository).is_absolute() or PureWindowsPath(repository).is_absolute())
+        or re.fullmatch(r"[0-9a-f]{40,64}", str(snapshot.get("revision"))) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(snapshot.get("index_sha256"))) is None
+        or not isinstance(scopes, list)
+        or not scopes
+        or any(
+            not isinstance(path, str)
+            or not path
+            or PurePosixPath(path).is_absolute()
+            or PureWindowsPath(path).is_absolute()
+            or ".." in PurePosixPath(path).parts
+            for path in scopes
+        )
+        or not isinstance(snapshot.get("files"), list)
+        or any(source.get(key) != snapshot[key] for key in ("repository", "revision", "scope_paths"))
+        or selection.get("local_source") != source
+    ):
+        raise SystemExit("code-remediate-report-admission-local-source-invalid")
+
+
+def _validate_code_remediate_preliminary_report_source(
+    out_dir: Path, evidence: dict[str, Any], routing: dict[str, Any]
+) -> None:
+    """Check original canonical records match this PR diff without certifying producer completion."""
+    original_pr = _code_remediate_run_path(
+        out_dir, evidence.get("original_pr_path"), "code-remediate-report-admission-original-source-invalid"
+    )
+    original_input = _code_remediate_run_path(
+        out_dir, "findings-input.txt", "code-remediate-report-admission-original-source-invalid"
+    )
+    if (
+        not original_pr.is_file()
+        or not original_input.is_file()
+        or hashlib.sha256(original_pr.read_bytes()).hexdigest() != evidence.get("original_pr_sha256")
+        or hashlib.sha256(original_input.read_bytes()).hexdigest() != evidence.get("original_input_sha256")
+    ):
+        raise SystemExit("code-remediate-report-admission-original-source-invalid")
+    pr = _load_json(original_pr)
+    original = _load_json(original_input).get("metadata", {})
+    if (
+        pr.get("url") != routing["pr_url"]
+        or pr.get("headRefOid") != routing["head_oid"]
+        or pr.get("baseRefOid") != routing["base_oid"]
+        or not isinstance(original, dict)
+        or original.get("scope") != "pr"
+        or not original.get("review_findings")
+        or original.get("review_input_sha256")
+        != hashlib.sha256((out_dir / "pr" / "diff.patch").read_bytes()).hexdigest()
+    ):
+        raise SystemExit("code-remediate-report-admission-original-source-invalid")
+    records = original["review_findings"]
+    if not isinstance(records, list) or any(
+        not isinstance(record, dict)
+        or record.get("severity") not in {"critical", "high", "medium", "low"}
+        or any(
+            not isinstance(record.get(key), str) or not record[key].strip()
+            for key in ("id", "title", "summary", "required_change", "closure_evidence")
+        )
+        or any(
+            not isinstance(record.get(key), list)
+            or not record[key]
+            or any(not isinstance(value, str) or not value.strip() for value in record[key])
+            for key in ("evidence", "authors")
+        )
+        for record in records
+    ):
+        raise SystemExit("code-remediate-report-admission-canonical-records-required")
 
 
 def _validate_code_remediate_report_coverage(metadata: dict[str, Any], out_dir: Path) -> None:
@@ -1359,7 +1535,7 @@ def _validate_code_remediate_scope_selection(metadata: dict[str, Any], out_dir: 
     if not isinstance(selected_groups, list) or not all(isinstance(item, str) for item in selected_groups):
         raise SystemExit("code-remediate-invalid-selected-severity-groups")
 
-    if resolution_scope.get("presentation_version") in {2, 3}:
+    if resolution_scope.get("presentation_version") in {2, 3, 4}:
         _validate_grouped_selection(metadata, out_dir)
         return
 
@@ -1394,7 +1570,7 @@ def _validate_code_remediate_scope_selection(metadata: dict[str, Any], out_dir: 
     }
     for row in rows:
         source_cell = row[source_index]
-        source_refs = re.findall(r"(?:report|online) \[[^\]\r\n]+\]", source_cell)
+        source_refs = re.findall(r"(?:report|online|user) \[[^\]\r\n]+\]", source_cell)
         if not source_refs or " ".join(source_refs) != source_cell:
             raise SystemExit("code-remediate-scope-source-not-compact")
         for source_ref in source_refs:
@@ -2451,6 +2627,10 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
                 raise SystemExit("code-remediate-final-table-report-source-id-invalid")
             if kind == "online" and not CODE_REMEDIATE_ONLINE_SOURCE_ID.fullmatch(source_id):
                 raise SystemExit("code-remediate-final-table-online-source-id-invalid")
+            if kind == "user":
+                if presentation_version != 4:
+                    raise SystemExit("code-remediate-user-source-requires-v4")
+                _validate_code_remediate_user_source(source, out_dir)
             source_key = (kind, source["source_id"].strip())
             if source_key in observed_source_keys:
                 raise SystemExit("code-remediate-final-table-source-id-duplicate")
@@ -2466,7 +2646,7 @@ def _validate_code_remediate_final_resolution_table(metadata: dict[str, Any], ou
             raise SystemExit("code-remediate-final-table-item-triage-status-invalid")
         if resolution_status not in CODE_REMEDIATE_RESOLUTION_STATUSES:
             raise SystemExit("code-remediate-final-table-item-resolution-status-invalid")
-        if presentation_version == 3:
+        if presentation_version in {3, 4}:
             if "stale" in {triage_status, resolution_status}:
                 raise SystemExit("code-remediate-v3-stale-status-forbidden")
             disposition, separator, reason = item["resolved_how"].partition(": ")
@@ -2593,7 +2773,7 @@ def _validate_code_remediate_unresolved_summary(metadata: dict[str, Any], out_di
     if counts["selected_items_resolved"] + counts["selected_items_unresolved"] != counts["selected_items_total"]:
         raise SystemExit("code-remediate-unresolved-summary-total-mismatch")
     scope = metadata.get("resolution_scope", {})
-    if scope.get("presentation_version") in {2, 3}:
+    if scope.get("presentation_version") in {2, 3, 4}:
         selectable = [item for item in metadata["final_resolution_table"]["items"] if item["selectable"]]
         selected = [item for index, item in enumerate(selectable, 1) if index in scope["selected_indexes"]]
         open_count = sum(item["resolution_status"] in {"unresolved", "needs-clarification"} for item in selected)
@@ -3289,6 +3469,18 @@ def _validate_release_readiness(result: dict[str, Any], out_dir: Path) -> None:
             raise SystemExit("release-readiness-verdict-mismatch")
 
 
+_RELEASE_DRAFT_TEMPLATE_RESIDUE = (
+    "[Release hook]",
+    "[User-facing win]",
+    "[Upgrade guidance]",
+    "[Release highlights]",
+    "[Migration guidance]",
+    "[Full changelog URL]",
+    "> Summary guidance:",
+    "> Template guidance:",
+)
+
+
 def _validate_release_draft(text: str) -> None:
     """Require substantive draft section bodies rather than changelog-only output or heading mentions."""
     if re.match(r"\s*#\s+changelog\b", text, re.IGNORECASE):
@@ -3304,6 +3496,10 @@ def _validate_release_draft(text: str) -> None:
             raise SystemExit(f"release-draft-section:{section}")
     if not re.search(r"full changelog", text, re.IGNORECASE):
         raise SystemExit("release-draft-comparison-missing")
+    # Template placeholders and writing notes must never survive into a delivered draft.
+    for residue in _RELEASE_DRAFT_TEMPLATE_RESIDUE:
+        if residue.lower() in text.lower():
+            raise SystemExit(f"release-draft-template-residue:{residue}")
 
 
 def _require_code_remediate_pr_artifacts(pr_dir: Path, result: dict[str, Any]) -> None:
@@ -3767,7 +3963,7 @@ def validate(skill: str, out_dir: Path, result_path: Path) -> None:
         or (skill == "code-review" and result.get("schema_version") == 3)
         or (
             skill == "code-remediate"
-            and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") == 3
+            and result.get("metadata", {}).get("resolution_scope", {}).get("presentation_version") in {3, 4}
         )
     )
     _validate_final_handoff(result, skill, out_dir, gates, candidate=current_contract)

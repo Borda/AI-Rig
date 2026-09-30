@@ -705,7 +705,7 @@ def test_schema_five_rejects_unbound_or_executing_child_evidence(
         expected = "review-inspection-context-not-sent:qa-specialist"
     elif tamper == "output":
         output = run / passes[0]["attempts"][0]["output_path"]
-        output.write_text("changed\n", encoding="utf-8")
+        output.write_text("changed\n", encoding="utf-8", newline="\n")
         expected = "provenance-output-hash-mismatch:qa-specialist"
     else:
         child = sessions / "sessions" / "rollout-child-1.jsonl"
@@ -922,6 +922,7 @@ def test_schema_five_result_requires_parallel_review_for_multiple_roles(tmp_path
             f"role_id: {item['role']}\n\n## Reviewer Assessment\n\nRating: 3\n"
             "Rationale: Parent inspection lacks independent coverage.\n",
             encoding="utf-8",
+            newline="\n",
         )
     fixture["plan"].update(
         independent_review_required=False,

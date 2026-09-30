@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Breaking change: the Codex Bridge starts without a project folder. Use `bridge_bind_workspace` to select a folder in a native form and confirm its resolved path; every subsequent executable call requires the current `binding_id`. Rebinding or changed folder identity invalidates previous authority. This selects the project without granting editing or paid-call approval.
+- Advance the Bridge status schema from `1.0` to `2.0` and report the actual negotiated native-form protocol. Status identifies an unbound process honestly; the installed launch folder is never used as project authority.
+- Validate runtime artifact paths against the confirmed project before reading or writing them; reject escaped directories and linked file destinations, and preserve pre-existing files when temporary creation fails.
+- Terminate and reap launched children when validation, reader setup or supervision fails, then drain started readers before propagating the original failure.
+- Ship an independently installed local question tool using Codex's native terminal form: one scope-bound request, an explicit correlated answer, and no asynchronous question-text duplication. Unsupported clients and cancelled or malformed replies grant no consent.
+- Recognize explicit conversational approval or denial for one unchanged, unambiguous pending Codex decision; preserve ambiguity, supersession, exact-token/digest, and runtime-permission boundaries. Synchronize empty-final and supported async-schema guidance.
+
 ## 0.5.10
 
 - Match Codex async questions to the exposed host schema, yield without a status handoff while a required answer is pending, and reject bare approval for a keyed decision.

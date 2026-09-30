@@ -203,7 +203,7 @@ def build_manifest() -> dict[str, Any]:
         "plugin": "codex-rig",
         "version": plugin["version"],
         "release_profile": "role-card-injected",
-        "features": {"manager": True, "hooks": True, "mcp": False, "generated_shims": False},
+        "features": {"manager": True, "hooks": True, "mcp": True, "generated_shims": False},
         "skills": skills,
         "roles": roles,
         "bootstrap": {

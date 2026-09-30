@@ -45,10 +45,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
         "For every user-facing choice",
         "Use complete actionable values",
         "If no independent work remains, yield",
-        (
-            "For an optional question, if async is unavailable or unsuitable, use sync when it is exposed, "
-            "permitted for that purpose, and can represent the complete input."
-        ),
+        "This preference applies to optional and required questions.",
         "permitted for that purpose",
         "all feasible choices",
         "(Recommended)",
@@ -67,7 +64,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
             "Bind the complete displayed label, including any decision key and suffix, to the unchanged canonical "
             "value before asking; never strip arbitrary text or alter exact-digest confirmation syntax."
         ),
-        ("Otherwise require an unambiguous visible decision key with the answer and state that syntax in the control."),
+        ("Require a visible decision key in the answer when conversation context cannot bind it unambiguously."),
         (
             "Silence, skip, timeout, preselection, an empty result, an example answer, or unrelated text "
             "grants no consent."
@@ -100,8 +97,8 @@ def test_async_question_contract_matches_exposed_schema_and_pending_turn() -> No
     """Prevent rejected async payloads and a status handoff that buries an unanswered question."""
     guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
     details = (PLUGIN_ROOT / "rules/codex-user-questions-details.md").read_text(encoding="utf-8")
-    assert "async takes `questions`, not top-level `title`/`options`" in guide
-    assert "yield without final/status if idle" in guide
+    assert "put `title` and `options` inside its question item" in details
+    assert "yield without final/status, including empty final" in guide
     assert "top-level `questions` array" in details
     assert "do not pass either field at the top level" in details
     assert "Inspect the active schema because another host may differ" in details
@@ -110,12 +107,14 @@ def test_async_question_contract_matches_exposed_schema_and_pending_turn() -> No
 
 
 @pytest.mark.installed_plugin
-def test_keyed_approval_requires_key_even_with_one_pending_decision() -> None:
-    """Prevent bare approval from authorizing a keyed action by conversational inference."""
-    guide = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+def test_single_unchanged_decision_accepts_conversational_reply() -> None:
+    """Keep clear conversational approval usable without weakening ambiguous binding."""
     details = (PLUGIN_ROOT / "rules/codex-user-questions-details.md").read_text(encoding="utf-8")
-    assert "Keyed approval requires the key even with one pending decision" in guide
-    assert "bare `approve` or `yes` without that key is invalid" in details
-    assert "even when it is the only pending decision" in details
-    assert "request the complete keyed answer once" in details
-    assert "Never supply a missing key from the prior question or another message" in details
+    assert "Accept an explicit conversational `Approve` / `Deny`" in details
+    assert "exactly one pending decision" in details
+    assert "no competing question, superseded scope, or exact-token/digest requirement" in details
+    assert "do not ask again solely for a missing decision key" in details
+    assert "even when it is the only pending decision" not in details
+    assert "After supersession, bare `Approve`, indexes, or `all` cannot authorize the replacement" in details
+    assert "generic Approve never replaces" in details
+    assert "This includes an empty final message" in details

@@ -1,22 +1,24 @@
-"""Expose reverse bridge calls through a portable stdio MCP server.
+"""Expose reverse Bridge calls under explicitly confirmed project authority.
 
-Purpose: Let a Codex-installed bridge hand work to a locally authenticated Claude CLI without invoking that CLI from the
-model sandbox. Scope: The module speaks the small JSON-RPC subset needed by stdio MCP clients: initialize, the
-initialized notification, tools/list, and tools/call. It defines implement, advise, and review tools, validates request
-arguments at the transport edge, and calls the shared Python supervisor for execution and artifact handling. Usage:
-Start ``bridge_mcp.py --stdio`` from the installed plugin's MCP config. The process reads one JSON-RPC object per stdin
-line and emits one response line per request that has an id. Outputs: A successful tool call returns one compact public
-bridge envelope in a text content item; protocol errors are JSON-RPC errors and never corrupt stdout with diagnostics.
-Failure: Invalid messages, unknown tools, malformed request values, and child failures are returned as structured
-protocol or envelope errors. Used by: Codex-facing implement, advise, and review skills through the bridge plugin's
-stdio MCP declaration. This server uses only Python's standard library and imports bridge_call from its own bin
-directory, so it remains valid after the plugin is installed outside this repo.
+Purpose: Let an installed Codex Bridge hand bounded work to a locally authenticated Claude CLI through host-launched
+MCP. Scope: Status, native workspace binding, implement, advise, and review share one process. It starts unbound; only a
+folder typed by the user and separately confirmed in a native form creates project authority. Every executable call
+names the current binding identity; folder resolution and directory identity are checked before dispatch. Binding
+selects project identity and grants no runtime permission, editing approval, authentication, or paid-call consent.
+Usage: Launch ``bridge_mcp.py --stdio``, initialize with form elicitation support, then invoke ``bridge_bind_workspace``
+with empty arguments before executable tools. Outputs: Native forms select and confirm the exact canonical folder; tool
+responses report binding/status or a compact Bridge envelope. Failure: Missing form support, unbound or stale
+identities, changed folders, malformed responses, and child failures fail closed with protocol diagnostics. Rebinding
+immediately clears previous authority; cancellation and EOF never bind. Used by: Codex-facing Bridge skills and setup
+consumers, using the installed question provider's strict correlation transport and the shared Python Bridge supervisor.
+No persistent binding, permission, settings, or credential writes occur.
 """
 
 from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -24,7 +26,7 @@ from pathlib import Path
 from pathlib import PurePath
 import sys
 import uuid
-from typing import Any
+from typing import Any, TextIO
 
 # Keep sibling imports valid when repository-wide doctest collection imports this
 # file without launching it as a script from its installed ``bin`` directory.
@@ -41,6 +43,7 @@ from bridge_call import (  # noqa: E402
     run_request,
     validate_request_transport_budget,
 )
+from user_questions_mcp import Decision, MAX_DECISIONS, Server as QuestionServer  # noqa: E402
 
 
 MCP_HOST_DEADLINE_SECONDS = 900.0
@@ -65,6 +68,7 @@ TOOL_NAMES = {
     "bridge_review": "review",
 }
 STATUS_TOOL_NAME = "bridge_status"
+BIND_TOOL_NAME = "bridge_bind_workspace"
 
 
 def _plugin_version() -> str:
@@ -84,9 +88,9 @@ def _plugin_version() -> str:
 
 
 BRIDGE_VERSION = _plugin_version()
-MCP_PROTOCOL_VERSION = "2024-11-05"
-STATUS_SCHEMA_VERSION = "1.0"
-EXPECTED_TOOL_INVENTORY = (STATUS_TOOL_NAME, *TOOL_NAMES)
+MCP_PROTOCOL_VERSION = "2025-06-18"
+STATUS_SCHEMA_VERSION = "2.0"
+EXPECTED_TOOL_INVENTORY = (STATUS_TOOL_NAME, BIND_TOOL_NAME, *TOOL_NAMES)
 
 
 def tool_definitions() -> list[dict[str, Any]]:
@@ -106,6 +110,11 @@ def tool_definitions() -> list[dict[str, Any]]:
             "name": STATUS_TOOL_NAME,
             "description": "Report the read-only Bridge server and host-selected workspace status.",
             "inputSchema": definitions[STATUS_TOOL_NAME],
+        },
+        {
+            "name": BIND_TOOL_NAME,
+            "description": "Bind this process to a project folder selected and confirmed by the user in native forms. No model workspace argument is accepted; rebinding immediately clears the previous binding.",
+            "inputSchema": definitions[BIND_TOOL_NAME],
         },
         *request_tools,
     ]
@@ -147,7 +156,12 @@ def _invalid_request_error(message: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def handle_message(message: dict[str, Any], *, trusted_workspace: Path | None = None) -> dict[str, Any] | None:
-    """Handle one JSON-RPC request or notification and return its response."""
+    """Handle a request with optional explicit embedding-host workspace authority.
+
+    The caller owns ``trusted_workspace``; model arguments and stdio never populate it. A missing workspace rejects
+    executable calls rather than trusting process cwd. Native binding requires the stateful ``BridgeServer`` stdio
+    entrypoint.
+    """
     # JSON-RPC 2.0 forbids responding to a notification, so id-lessness short-circuits before any validation or
     # dispatch: an id-less message can never produce a response, valid or not.
     if "id" not in message:
@@ -161,11 +175,18 @@ def handle_message(message: dict[str, Any], *, trusted_workspace: Path | None = 
     if self_contained is not None:
         return _result(request_id, self_contained())
     if method == "tools/call":
-        return _call_tool(request_id, message.get("params"), trusted_workspace or Path.cwd())
+        return _call_tool(request_id, message.get("params"), trusted_workspace)
     return _error(request_id, -32601, f"method not found: {method}")
 
 
-def _call_tool(request_id: Any, params: Any, trusted_workspace: Path) -> dict[str, Any]:
+def _call_tool(
+    request_id: Any,
+    params: Any,
+    trusted_workspace: Path | None,
+    *,
+    binding_id: str | None = None,
+    protocol: str = MCP_PROTOCOL_VERSION,
+) -> dict[str, Any]:
     """Validate tool arguments and execute a request or return local server status."""
     if not isinstance(params, dict):
         return _error(request_id, -32602, "tools/call params must be an object")
@@ -176,11 +197,15 @@ def _call_tool(request_id: Any, params: Any, trusted_workspace: Path) -> dict[st
     if name == STATUS_TOOL_NAME:
         if not isinstance(arguments, dict) or arguments:
             return _error(request_id, -32602, "bridge_status accepts an empty arguments object")
-        return _result(request_id, _status_result(trusted_workspace))
+        return _result(request_id, _status_result(trusted_workspace, binding_id=binding_id, protocol=protocol))
     if not isinstance(arguments, dict):
         return _error(request_id, -32602, "tool arguments must be an object")
     if name not in TOOL_NAMES:
         return _error(request_id, -32602, f"unknown bridge tool: {name}")
+    if trusted_workspace is None:
+        return _error(
+            request_id, -32002, "workspace unbound; use bridge_bind_workspace and complete native confirmation"
+        )
     try:
         request = _request_from_arguments(TOOL_NAMES[name], arguments, trusted_workspace)
     except ValueError as error:
@@ -198,10 +223,11 @@ def _call_tool(request_id: Any, params: Any, trusted_workspace: Path) -> dict[st
     )
 
 
-def _status_result(trusted_workspace: Path) -> dict[str, Any]:
+def _status_result(
+    trusted_workspace: Path | None, *, binding_id: str | None = None, protocol: str = MCP_PROTOCOL_VERSION
+) -> dict[str, Any]:
     """Build sanitized server status without invoking a provider or changing state."""
-    workspace = trusted_workspace.resolve()
-    normalized_workspace = PurePath(workspace).as_posix()
+    normalized_workspace = PurePath(trusted_workspace.resolve()).as_posix() if trusted_workspace is not None else None
     return {
         "content": [
             {
@@ -211,14 +237,20 @@ def _status_result(trusted_workspace: Path) -> dict[str, Any]:
                         "bridge_version": BRIDGE_VERSION,
                         "expected_tool_inventory": list(EXPECTED_TOOL_INVENTORY),
                         "plugin_version": BRIDGE_VERSION,
-                        "protocol_version": MCP_PROTOCOL_VERSION,
+                        "protocol_version": protocol,
                         "schema_version": STATUS_SCHEMA_VERSION,
+                        "binding_status": "bound" if trusted_workspace is not None else "unbound",
+                        "binding_id": binding_id,
                         "server": {"name": "bridge", "version": BRIDGE_VERSION},
                         # The setup skills cross-check this value against the
                         # setup result's canonical_workspace, so both must use
                         # the same POSIX-separator canonical form on every OS.
                         "workspace": normalized_workspace,
-                        "workspace_fingerprint": hashlib.sha256(normalized_workspace.encode("utf-8")).hexdigest(),
+                        "workspace_fingerprint": (
+                            hashlib.sha256(normalized_workspace.encode("utf-8")).hexdigest()
+                            if normalized_workspace is not None
+                            else None
+                        ),
                     },
                     sort_keys=True,
                 ),
@@ -304,22 +336,182 @@ def _error(request_id: Any, code: int, message: str) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
-def serve() -> int:
-    """Serve newline-delimited JSON-RPC over standard input and output."""
-    for line in sys.stdin:
+@dataclass(frozen=True)
+class WorkspaceBinding:
+    """Retain the selected path and directory identity for later authority checks."""
+
+    selected: Path
+    canonical: Path
+    identity: tuple[int, int]
+
+
+def _workspace_binding(value: str) -> WorkspaceBinding:
+    """Validate an existing absolute project folder outside protected installation roots."""
+    selected = Path(value)
+    if not selected.is_absolute():
+        raise ValueError("workspace must be an absolute existing folder")
+    canonical = selected.resolve(strict=True)
+    if len(PurePath(canonical).as_posix()) > 3500:
+        raise ValueError("canonical workspace exceeds the native confirmation limit")
+    if not canonical.is_dir() or canonical in _refused_write_roots(canonical):
+        raise ValueError("workspace cannot be a filesystem root, user home, or non-directory")
+    plugin_root = Path(__file__).resolve().parents[1]
+    if any(canonical.is_relative_to(root) for root in _protected_payload_roots(plugin_root)):
+        raise ValueError("workspace cannot be inside the plugin payload or installation cache")
+    identity = canonical.stat()
+    return WorkspaceBinding(selected, canonical, (identity.st_dev, identity.st_ino))
+
+
+def _protected_payload_roots(plugin_root: PurePath) -> list[PurePath]:
+    """Recognize payload and marketplace cache ancestry using native path semantics."""
+    protected = [plugin_root]
+    for ancestor in plugin_root.parents:
+        if ancestor.name.casefold() == "cache" and ancestor.parent.name.casefold() == "plugins":
+            protected.append(ancestor)
+    return protected
+
+
+class BridgeServer(QuestionServer):
+    """Bind workspace authority through native user forms before dispatching Bridge calls."""
+
+    def __init__(self, output: TextIO, diagnostics: TextIO) -> None:
+        """Start with no workspace authority and no pending binding operation."""
+        super().__init__(output, diagnostics)
+        self.workspace: WorkspaceBinding | None = None
+        self.binding_id: str | None = None
+        self.candidate: WorkspaceBinding | None = None
+        self.binding_phase: str | None = None
+
+    def result(self, request_id: str | int, result: dict[str, Any]) -> None:
+        """Keep the inherited handshake identified as the Bridge backend."""
+        if "serverInfo" in result:
+            result["serverInfo"] = {"name": "bridge", "version": BRIDGE_VERSION}
+        if "tools" in result:
+            result = {"tools": tool_definitions()}
+        super().result(request_id, result)
+
+    def call(self, request_id: str | int, params: Any) -> None:
+        """Accept only user binding or Bridge calls under current verified authority."""
+        if (
+            not isinstance(params, dict)
+            or not {"name"} <= set(params) <= {"name", "arguments", "_meta"}
+            or ("_meta" in params and params["_meta"] is not None and not isinstance(params["_meta"], dict))
+        ):
+            self.error(request_id, -32602, "invalid Bridge tools/call params")
+            return
+        name = params.get("name")
+        if name == BIND_TOOL_NAME:
+            self.workspace = None
+            self.binding_id = None
+            if not isinstance(params.get("arguments", {}), dict) or params.get("arguments", {}):
+                self.error(request_id, -32602, "bridge_bind_workspace accepts an empty arguments object")
+                return
+            if self.binding_phase is not None:
+                self.error(request_id, -32001, "workspace binding already pending")
+                return
+            if self.protocol is None or not self.elicitation:
+                self.error(request_id, -32002, "workspace binding requires native form elicitation")
+                return
+            if len(self.decisions) + 2 > MAX_DECISIONS:
+                self.error(request_id, -32003, "binding capacity exhausted; start a new session")
+                return
+            self.binding_phase = "select"
+            self._ask_binding(request_id, "Enter the absolute existing project folder to use for Bridge calls.")
+            return
+        workspace = self._current_workspace()
+        if isinstance(name, str) and name in TOOL_NAMES:
+            arguments = params.get("arguments")
+            if (
+                workspace is None
+                or not isinstance(arguments, dict)
+                or self.binding_id is None
+                or arguments.get("binding_id") != self.binding_id
+            ):
+                self.error(request_id, -32002, "workspace unbound or binding_id missing/stale; confirm current binding")
+                return
+            params = {**params, "arguments": {key: value for key, value in arguments.items() if key != "binding_id"}}
+        response = _call_tool(
+            request_id, params, workspace, binding_id=self.binding_id, protocol=self.protocol or MCP_PROTOCOL_VERSION
+        )
+        self.emit(response)
+
+    def _ask_binding(self, request_id: str | int, question: str, options: list[str] | None = None) -> None:
+        """Generate internal correlation and scope identities for one binding form."""
+        arguments: dict[str, Any] = {
+            "decision_id": str(uuid.uuid4()),
+            "scope_digest": hashlib.sha256(question.encode("utf-8")).hexdigest(),
+            "question": question,
+        }
+        if options is not None:
+            arguments["options"] = options
+        super().call(request_id, {"name": "ask_user", "arguments": arguments})
+
+    def _current_workspace(self) -> Path | None:
+        """Invalidate a binding if its original path or directory identity changed."""
+        if self.workspace is None:
+            return None
         try:
-            message = json.loads(line)
-        except json.JSONDecodeError as error:
-            response = _error(None, -32700, f"parse error: {error.msg}")
-        else:
-            response = (
-                handle_message(message)
-                if isinstance(message, dict)
-                else _error(None, -32600, "invalid request: request must be an object")
-            )
-        if response is not None:
-            sys.stdout.write(json.dumps(response, sort_keys=True) + "\n")
-            sys.stdout.flush()
+            observed = _workspace_binding(str(self.workspace.selected))
+        except (OSError, RuntimeError, ValueError):
+            observed = None
+        if observed != self.workspace:
+            print("Bridge workspace binding invalidated: folder changed", file=self.diagnostics, flush=True)
+            self.workspace = None
+            self.binding_id = None
+            return None
+        return self.workspace.canonical
+
+    def finish(self, decision: Decision, status: str, answer: str | None = None) -> None:
+        """Advance selection to exact confirmation, or complete without invented authority."""
+        if status == "answered" and self.binding_phase == "select" and answer is not None:
+            try:
+                self.candidate = _workspace_binding(answer)
+            except (OSError, RuntimeError, ValueError) as error:
+                print(f"Bridge workspace selection rejected: {error}", file=self.diagnostics, flush=True)
+                status = "cancelled"
+            else:
+                self.pending.pop(decision.server_id, None)
+                decision.receipt = {"status": "selected"}
+                self.binding_phase = "confirm"
+                target = PurePath(self.candidate.canonical).as_posix()
+                self._ask_binding(
+                    decision.call_id,
+                    f"Bind Bridge calls in this process to exactly this canonical project folder: {target}",
+                    ["Bind this folder", "Cancel"],
+                )
+                return
+        if status == "answered" and self.binding_phase == "confirm" and answer == "Bind this folder":
+            try:
+                observed = _workspace_binding(str(self.candidate.selected)) if self.candidate else None
+            except (OSError, RuntimeError, ValueError):
+                observed = None
+            if observed is not None and observed == self.candidate:
+                self.workspace = observed
+                self.binding_id = str(uuid.uuid4())
+                status = "bound"
+            else:
+                print("Bridge workspace confirmation rejected: folder changed", file=self.diagnostics, flush=True)
+                status = "cancelled"
+        elif status == "answered":
+            status = "cancelled"
+        self.pending.pop(decision.server_id, None)
+        self.binding_phase = None
+        self.candidate = None
+        receipt = {
+            "status": status,
+            "binding_status": "bound" if self.workspace is not None else "unbound",
+            "binding_id": self.binding_id,
+            "workspace": PurePath(self.workspace.canonical).as_posix() if self.workspace is not None else None,
+        }
+        decision.receipt = receipt
+        self.deliver(decision.call_id, receipt)
+
+
+def serve() -> int:
+    """Serve strict native stdio with initially unbound workspace authority."""
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    BridgeServer(sys.stdout, sys.stderr).run(sys.stdin)
     return 0
 
 

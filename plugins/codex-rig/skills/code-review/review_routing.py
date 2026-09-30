@@ -34,10 +34,10 @@ unknown-size rows, and any mechanically detected high-risk or configuration path
 
 ## Failure
 
-Missing or malformed routing JSON, a non-object payload, missing or invalid reviewer ``risk_tier``, unreadable diff
-evidence, or an unwritable output path exits non-zero with the underlying local error. The helper never invents semantic
-signals or lowers the declared tier, and the final validator still rejects underclassification, incomplete signals, or
-inconsistent specialist routing.
+Missing or malformed routing JSON, a non-object payload, missing or invalid reviewer ``risk_tier`` or nested boolean
+``signals`` mapping, unreadable diff evidence, or an unwritable output path exits non-zero with the underlying local
+error. The helper never invents semantic signals or lowers the declared tier, and the final validator still rejects
+underclassification, incomplete signals, or inconsistent specialist routing.
 """
 
 from __future__ import annotations
@@ -47,6 +47,28 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+
+
+ROUTING_SIGNALS = {
+    "behavior_change",
+    "bug_fix",
+    "test_or_error_path",
+    "data_tensor_boundary",
+    "high_candidate",
+    "unresolved_material_assumption",
+    "material_no_finding",
+    "explicit_adversarial",
+    "axis_solution_architect",
+    "axis_security_auditor",
+    "axis_data_steward",
+    "axis_cicd_steward",
+    "axis_linting_expert",
+    "axis_doc_scribe",
+    "axis_oss_shepherd",
+    "axis_squeezer",
+    "axis_scientist",
+    "axis_web_explorer",
+}
 
 
 def _path_tokens(path: str) -> set[str]:
@@ -127,17 +149,22 @@ def derive_mechanical_risk(out_dir: Path) -> tuple[str, list[str], set[str]]:
 
 
 def synchronize_routing(out_dir: Path) -> Path:
-    """Validate the reviewer tier and replace model-authored mechanical fields with derived evidence."""
+    """Validate the reviewer tier and boolean inventory before deriving mechanical fields."""
     routing_path = out_dir / "review-routing.json"
     payload: Any = json.loads(routing_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError(f"expected JSON object: {routing_path}")
     if payload.get("risk_tier") not in {"TRIVIAL", "LOCAL", "BROAD", "HIGH_RISK"}:
         raise ValueError(f"invalid-risk-tier:{payload.get('risk_tier')!r}")
+    signals = payload.get("signals")
+    if not isinstance(signals, dict) or set(signals) != ROUTING_SIGNALS:
+        raise ValueError("review-routing-signal-set-mismatch: supply the complete nested signals object")
+    if not all(isinstance(value, bool) for value in signals.values()):
+        raise ValueError("review-routing-signals-not-boolean")
     tier, evidence, _ = derive_mechanical_risk(out_dir)
     payload["mechanical_risk_tier"] = tier
     payload["mechanical_risk_evidence"] = evidence
-    routing_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    routing_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
     return routing_path
 
 

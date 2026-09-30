@@ -39,6 +39,10 @@ _RUN_RE: Final = re.compile(r"^run-(\d+)$")
 _PR_NUMBER_RE: Final = re.compile(r"^[0-9]+$")
 _LEGACY_REPORT_GLOB: Final = ".reports/review/*/review-report.md"
 _VERDICT_SYMBOL_RE: Final = re.compile(r"^[✓⚠✗]\s*")
+# Verdict token must lead the field. Tolerated: any case, `_`/space/`-` between words, and trailing
+# detail or punctuation ("APPROVE — 0 critical", "needs work;"). Still rejected: a glued suffix
+# ("APPROVED"), a free-form verdict ("LGTM"), or an unfilled placeholder ("[review outcome]").
+_OUTCOME_VERDICT_RE: Final = re.compile(r"^(?:APPROVE|NEEDS[ _-]WORK|REQUEST[ _-]CHANGES)(?![\w-])", re.IGNORECASE)
 
 
 def _run_sort_key(run_dir: Path) -> tuple[int, str]:
@@ -147,7 +151,7 @@ def gate_line(report: Path) -> str:
     if fields["Gate"].startswith("REJECT_"):
         if not outcome.startswith("N/A"):
             return ""
-    elif outcome not in {"APPROVE", "NEEDS_WORK", "REQUEST_CHANGES"}:
+    elif _OUTCOME_VERDICT_RE.match(outcome) is None:
         return ""
     return f"{_GATE_PREFIX} {fields['Gate']}"
 

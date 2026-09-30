@@ -315,6 +315,7 @@ def has_compatible_profile(manifest: dict[str, object]) -> bool:
         ("plugin-only+manager", True, True, False, True),
         ("role-card-injected", True, False, False, False),
         ("role-card-injected", True, True, False, False),
+        ("role-card-injected", True, True, True, False),
         ("shim-enabled", True, False, False, True),
         ("shim-enabled", True, True, False, True),
     }

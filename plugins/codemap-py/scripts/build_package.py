@@ -236,6 +236,11 @@ def _iter_source_payload(source_root: Path, tracked: dict[str, bool]) -> list[tu
         if not doc.is_file():
             raise ValueError(f"missing required document: {name}")
         _admit(doc, name, folded, pairs)
+    # MCP wiring is optional in historical source layouts; current declared wiring
+    # is checked with its provider by package validation before publication.
+    question_config = source_root / ".codex-mcp.json"
+    if question_config.is_file():
+        _admit(question_config, ".codex-mcp.json", folded, pairs)
     for dir_name in _INCLUDE_DIRS:
         prefix = f"{dir_name}/"
         for relative in sorted(rel for rel in tracked if rel.startswith(prefix)):

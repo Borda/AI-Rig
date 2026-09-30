@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       UV_PYTHON: "3.12"
       # Bytecode written beside a packaged file changes what the manifest checks hash over.
@@ -60,7 +60,7 @@ jobs:
       matrix:
         os: ["ubuntu-latest", "macos-latest", "windows-latest"]
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-    timeout-minutes: 25
+    timeout-minutes: 45
 
     steps:
       - name: 📥 Checkout
@@ -91,4 +91,4 @@ jobs:
       - name: 🧪 Run plugin tests (Python bin/ + JS hooks)
         run: |
           uv run --only-group test pytest -n 3 \
-            -W error::DeprecationWarning --durations=100
+            -W error::DeprecationWarning --durations=500

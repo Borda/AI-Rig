@@ -20,9 +20,10 @@ def test_remediation_offers_post_gate_commit_modes() -> None:
     assert "- each finding as a separate commit" in commit_section
     assert "- leave unstaged" in commit_section
     assert "able to represent all four feasible modes" in commit_section
-    assert "otherwise invoke permitted async with all four choices" in commit_section
+    assert "otherwise use the packaged native `ask_user` form with all four choices" in commit_section
     assert (
-        "Use plain chat only when neither native control is suitable; never hide a mode behind Other" in commit_section
+        "Use plain chat only when no permitted native control is suitable; never hide a mode behind Other"
+        in commit_section
     )
     assert "never omit a feasible mode to fit a menu limit" in commit_section
     assert "If an earlier explicit answer already supplies the mode" in commit_section

@@ -13,6 +13,33 @@ SKILLS = sorted((PLUGIN_ROOT / "skills").glob("*/SKILL.md"))
 
 
 @pytest.mark.installed_plugin
+def test_native_form_is_declared_and_precedes_unverified_async() -> None:
+    """Prevent reinstall from retaining the broken async-only Default-mode question route."""
+    manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["mcpServers"] == "./.codex-mcp.json"
+    config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
+    assert config == {
+        "mcpServers": {
+            "codex-rig-input": {
+                "command": "python",
+                "cwd": ".",
+                "args": ["shared/user_questions_mcp.py", "--stdio"],
+                "tool_timeout_sec": 3600,
+            }
+        }
+    }
+    assert (PLUGIN_ROOT / "shared" / "user_questions_mcp.py").is_file()
+    details = (PLUGIN_ROOT / "shared" / "codex-user-questions-details.md").read_text(encoding="utf-8")
+    assert details.index("2. Otherwise discover") < details.index("3. Use `request_user_input_async` only")
+    assert "current host evidence verifies a usable control for the required lifetime" in details
+    assert "Consume only an `answered` receipt" in details
+    assert "exactly match the pending decision" in details
+    assert "A matching digest binds context; it is not user confirmation" in details
+    assert "Cached answers do not authorize replay" in details
+    assert "omit `options` and include every accepted value and the complete grammar" in details
+
+
+@pytest.mark.installed_plugin
 def test_every_codex_skill_loads_local_question_guidance() -> None:
     """Prevent a generated question from bypassing the independently shipped policy."""
     assert len(SKILLS) == 15
@@ -49,10 +76,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
         "For every user-facing choice",
         "Use complete actionable values",
         "If no independent work remains, yield",
-        (
-            "For an optional question, if async is unavailable or unsuitable, use sync when it is exposed, "
-            "permitted for that purpose, and can represent the complete input."
-        ),
+        "This preference applies to optional and required questions.",
         "permitted for that purpose",
         "all feasible choices",
         "(Recommended)",
@@ -71,7 +95,7 @@ def test_every_codex_skill_loads_local_question_guidance() -> None:
             "Bind the complete displayed label, including any decision key and suffix, to the unchanged canonical "
             "value before asking; never strip arbitrary text or alter exact-digest confirmation syntax."
         ),
-        ("Otherwise require an unambiguous visible decision key with the answer and state that syntax in the control."),
+        ("Require a visible decision key in the answer when conversation context cannot bind it unambiguously."),
         (
             "Silence, skip, timeout, preselection, an empty result, an example answer, or unrelated text "
             "grants no consent."
@@ -114,14 +138,23 @@ def test_async_question_example_uses_the_exposed_questions_wrapper() -> None:
     ]
 
 
-def test_keyed_merge_reply_cannot_accept_bare_approval_or_displace_control() -> None:
-    """Keep a typed bare approval from authorizing a pending local merge."""
+def test_single_unchanged_merge_accepts_explicit_conversational_approval() -> None:
+    """Prevent a sole clear merge approval from becoming a repeated syntax question."""
     guide = (PLUGIN_ROOT / "shared/codex-user-questions-details.md").read_text(encoding="utf-8")
     merge = (PLUGIN_ROOT / "skills/code-remediate/SKILL.md").read_text(encoding="utf-8")
-    assert "bare `approve` or `yes` without that key is invalid" in guide
-    assert "even when it is the only pending decision" in guide
+    compact = (PLUGIN_ROOT / QUESTION_REFERENCE).read_text(encoding="utf-8")
+    assert "Accept an explicit conversational `Approve` / `Deny`" in guide
+    assert "exactly one pending decision" in guide
+    assert "no competing question, superseded scope, or exact-token/digest requirement" in guide
+    assert "do not ask again solely for a missing decision key" in guide
+    assert "Accept an explicit conversational approval for the sole unchanged" in merge
+    assert "unambiguous conversational answer" in compact
+    assert "even when it is the only pending decision" not in guide
     assert "Do not append a final or status message after an accepted async question" in guide
-    assert "a bare `approve` or `yes` cannot authorize the merge" in merge
+    assert "This includes an empty final message" in guide
+    assert "a bare `approve` or `yes` cannot authorize the merge" not in merge
+    assert "After supersession, bare `Approve`, indexes, or `all` cannot authorize the replacement" in guide
+    assert "generic Approve never replaces" in guide
 
 
 @pytest.mark.installed_plugin
@@ -133,3 +166,18 @@ def test_review_recovery_yields_before_blocked_handoff() -> None:
     assert "If a required async question is accepted, yield immediately" in checkpoint
     assert "Do not sleep, poll, or send a final or status handoff" in checkpoint
     assert checkpoint.index("yield immediately") < checkpoint.index("Otherwise state `Review handoff blocked`")
+
+
+@pytest.mark.installed_plugin
+@pytest.mark.parametrize(
+    "relative",
+    ["shared/codex-user-questions-details.md", "shared/commit-response-template.md", "skills/code-remediate/SKILL.md"],
+)
+def test_question_consumers_preserve_packaged_native_form_priority(relative: str) -> None:
+    """Prevent ordinary merge, commit, and oversized menus from bypassing native forms."""
+    text = (PLUGIN_ROOT / relative).read_text(encoding="utf-8")
+    assert "use async or plain chat" not in text
+    assert "use the permitted async control when sync is unavailable" not in text
+    assert "using async when sync is unavailable" not in text
+    assert "use eligible async" not in text
+    assert "ask_user" in text

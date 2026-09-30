@@ -109,11 +109,11 @@ class BridgePaths:
 
     def __post_init__(self) -> None:
         """Resolve and contain the artifact root before any bridge artifact operation."""
-        workspace = self.workspace.resolve()
-        artifact_root = (workspace / ".temp" / "bridge").resolve()
         try:
+            workspace = self.workspace.resolve()
+            artifact_root = (workspace / ".temp" / "bridge").resolve()
             artifact_root.relative_to(workspace)
-        except ValueError as error:
+        except (OSError, RuntimeError, ValueError) as error:
             raise ValueError("bridge artifact root escapes the trusted workspace") from error
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "artifact_root", artifact_root)
@@ -121,29 +121,58 @@ class BridgePaths:
     @property
     def root(self) -> Path:
         """Return the workspace-local bridge artifact directory."""
-        return self.artifact_root
+        return self._member(self.artifact_root)
 
     @property
     def jobs(self) -> Path:
         """Return the detached-job directory."""
-        return self.root / "jobs"
+        return self._member(self.root / "jobs")
 
     @property
     def incidents(self) -> Path:
         """Return the incident-record directory."""
-        return self.root / "incidents"
+        return self._member(self.root / "incidents")
+
+    def _member(self, path: Path, *, check_leaf: bool = True) -> Path:
+        """Check current artifact ancestry and leaf ownership before each filesystem operation.
+
+        Constructor containment cannot survive later directory replacement. Contained directory aliases remain valid;
+        linked file leaves are rejected, and the health leaf keeps its stronger opened-descriptor checks separately.
+        This check does not promise atomic protection against concurrent replacement during a subsequent OS operation.
+        """
+        try:
+            path.relative_to(self.artifact_root)
+            root = self.artifact_root.resolve()
+            root.relative_to(self.workspace)
+            if root != self.artifact_root:
+                raise ValueError("artifact root changed")
+            (path if check_leaf else path.parent).resolve().relative_to(root)
+            if check_leaf:
+                try:
+                    metadata = path.lstat()
+                except FileNotFoundError:
+                    metadata = None
+                if metadata is not None and (
+                    _is_link_or_reparse_point(metadata)
+                    and not path.is_dir()
+                    or stat.S_ISREG(metadata.st_mode)
+                    and metadata.st_nlink != 1
+                ):
+                    raise ValueError("linked artifact file")
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ArtifactBoundaryError(
+                "bridge artifact member escapes or aliases the trusted artifact store"
+            ) from error
+        return path
 
     def prepare(self) -> None:
         """Create all bridge artifact directories for a request."""
         for directory in (self.root, self.jobs, self.incidents):
-            directory.mkdir(parents=True, exist_ok=True)
+            self._member(directory).mkdir(parents=True, exist_ok=True)
 
     def relative(self, path: Path) -> str:
         """Return a stable workspace-relative artifact path when possible."""
-        try:
-            return path.relative_to(self.workspace).as_posix()
-        except ValueError:
-            return path.as_posix()
+        return self._member(path).relative_to(self.workspace).as_posix()
 
 
 @dataclass(frozen=True)
@@ -467,7 +496,7 @@ def run_request(
             command, effective_request.workspace, effective_request.timeout_seconds * CHILD_TIMEOUT_MULTIPLIER
         )
     else:
-        if _job_cancel_requested(_job_path):
+        if _job_cancel_requested(_job_path, paths=paths):
             return _terminal_envelope(_unstarted_context(effective_request, paths), "blocked", "cancelled by job owner")
         outcome = _run_child(
             command,
@@ -832,6 +861,7 @@ def _wait_for_child(
     readers: list[threading.Thread],
     deadline: float,
     job_path: Path | None,
+    paths: BridgePaths | None = None,
 ) -> tuple[bool, str | None, bool]:
     """Supervise one running child until capture overflow, cancellation, the hard cutoff, or its own exit.
 
@@ -842,7 +872,7 @@ def _wait_for_child(
         if output.output_limited.is_set():
             _terminate_process_group(process)
             return False, None, _finish_output_readers(readers)
-        if job_path is not None and _job_cancel_requested(job_path):
+        if job_path is not None and _job_cancel_requested(job_path, paths=paths):
             _terminate_process_group(process)
             return False, "cancelled by job owner", _finish_output_readers(readers)
         remaining = deadline - time.monotonic()
@@ -861,47 +891,59 @@ def _wait_for_child(
 
 
 def _run_child(command: list[str], workspace: Path, timeout: float, job_path: Path | None = None) -> ChildOutcome:
-    """Run a child in its own process group with stdin closed from birth."""
+    """Run and supervise an owned child, cleaning up its group/readers before propagating failures."""
     spawned = _spawn_child(command, workspace, timeout)
     if isinstance(spawned, ChildOutcome):
         return spawned
     process = spawned
-    output = _ChildOutputBuffer()
-    readers = _start_output_readers(process, output)
-    timed_out, error, drained = _wait_for_child(process, output, readers, time.monotonic() + timeout, job_path)
-    # Final flush can reveal that an incomplete record was not compactable.
-    # Overflow wins on every exit path so timeout recovery cannot replay it.
-    stdout, stderr = output.text()
-    if output.output_limited.is_set():
-        _terminate_process_group(process)
-        return ChildOutcome(
-            stdout,
-            stderr,
-            process.returncode,
-            False,
-            f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
-            True,
-        )
-    if not drained:
-        return ChildOutcome(
-            stdout,
-            stderr,
-            process.returncode,
-            False,
-            "child output drain exceeded the Bridge cleanup grace",
-        )
-    return ChildOutcome(stdout, stderr, process.returncode, timed_out, error)
-
-
-def _start_output_readers(process: subprocess.Popen[bytes], output: _ChildOutputBuffer) -> list[threading.Thread]:
-    """Read both binary child streams concurrently so either pipe cannot deadlock the peer."""
     readers: list[threading.Thread] = []
+    try:
+        output = _ChildOutputBuffer()
+        _start_output_readers(process, output, readers)
+        timed_out, error, drained = _wait_for_child(
+            process, output, readers, time.monotonic() + timeout, job_path, BridgePaths(workspace) if job_path else None
+        )
+        # Final flush can reveal that an incomplete record was not compactable.
+        # Overflow wins on every exit path so timeout recovery cannot replay it.
+        stdout, stderr = output.text()
+        if output.output_limited.is_set():
+            _terminate_process_group(process)
+            return ChildOutcome(
+                stdout,
+                stderr,
+                process.returncode,
+                False,
+                f"child output exceeded {MAX_CHILD_OUTPUT_BYTES} byte capture limit",
+                True,
+            )
+        if not drained:
+            return ChildOutcome(
+                stdout,
+                stderr,
+                process.returncode,
+                False,
+                "child output drain exceeded the Bridge cleanup grace",
+            )
+        return ChildOutcome(stdout, stderr, process.returncode, timed_out, error)
+    except BaseException:
+        # Once launched, a rejected boundary or interrupted setup/wait must not
+        # leave the owned peer running. Retain partial reader startup for draining.
+        try:
+            _terminate_process_group(process)
+        finally:
+            _finish_output_readers(readers)
+        raise
+
+
+def _start_output_readers(
+    process: subprocess.Popen[bytes], output: _ChildOutputBuffer, readers: list[threading.Thread]
+) -> None:
+    """Start pipe readers, recording each started thread for caller-owned exception cleanup."""
     for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
         assert stream is not None
         reader = threading.Thread(target=_read_child_stream, args=(name, stream, output), daemon=True)
         reader.start()
         readers.append(reader)
-    return readers
 
 
 def _read_child_stream(stream_name: str, stream: Any, output: _ChildOutputBuffer) -> None:
@@ -1225,9 +1267,10 @@ def _next_bridge_depth() -> int:
 
 def _write_transcript(paths: BridgePaths, stdout: str, stderr: str) -> str:
     """Write one bounded child transcript and return its workspace-relative path."""
-    path = paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt"
+    path = paths._member(paths.root / f"raw-{time.time_ns()}-{uuid.uuid4().hex[:8]}.txt")
     payload = f"stdout:\n{stdout}\n\nstderr:\n{stderr}\n".encode("utf-8")
-    path.write_bytes(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
+    with path.open("xb") as stream:
+        stream.write(payload[:MAX_CHILD_TRANSCRIPT_BYTES])
     return paths.relative(path)
 
 
@@ -1344,7 +1387,7 @@ def _write_incident(
         "workspace_delta": workspace_delta or [],
         "prior_incident": prior_incident,
     }
-    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
+    _write_json(path, payload, paths=paths)
     return paths.relative(path)
 
 
@@ -1366,7 +1409,8 @@ def _append_health(paths: BridgePaths, envelope: dict[str, Any]) -> None:
         )
     }
     payload["ts"] = time.time()
-    with _open_regular_append(paths.root / "health.jsonl") as stream:
+    path = paths._member(paths.root / "health.jsonl", check_leaf=False)
+    with _open_regular_append(path) as stream:
         stream.write(json.dumps(payload, sort_keys=True) + "\n")
 
 
@@ -1445,7 +1489,7 @@ def start_background(request: Request) -> dict[str, Any]:
         "result": None,
         "started_ts": time.time(),
     }
-    _write_json(record_path, record)
+    _write_json(record_path, record, paths=paths)
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
@@ -1494,7 +1538,7 @@ def job_status(workspace: Path, job_id: str) -> dict[str, Any]:
         # nothing remains alive to consume the marker, so reporting
         # cancel_requested would hide the signal that ends polling.
         status = "stalled"
-    elif _job_cancel_requested(_job_record_path(workspace, job_id)):
+    elif _job_cancel_requested(_job_record_path(workspace, job_id), paths=BridgePaths(workspace)):
         status = "cancelled" if record.get("result") is not None else "cancel_requested"
     else:
         status = observed
@@ -1569,11 +1613,13 @@ def job_result(workspace: Path, job_id: str) -> dict[str, Any]:
         # or truncated record cannot masquerade as a validated envelope, even
         # when a late cancellation is about to overwrite the status fields.
         stored = validate_envelope(record["result"])
-        if _job_cancel_requested(_job_record_path(workspace, job_id)):
+        if _job_cancel_requested(_job_record_path(workspace, job_id), paths=BridgePaths(workspace)):
             return _cancelled_envelope(stored)
         return stored
     observed = _observed_status(record)
-    if observed != "stalled" and _job_cancel_requested(_job_record_path(workspace, job_id)):
+    if observed != "stalled" and _job_cancel_requested(
+        _job_record_path(workspace, job_id), paths=BridgePaths(workspace)
+    ):
         return {"job_id": job_id, "status": "cancel_requested"}
     return {"job_id": job_id, "status": observed}
 
@@ -1592,7 +1638,9 @@ def cancel_job(workspace: Path, job_id: str) -> dict[str, Any]:
         # Includes stalled: writing a marker no live supervisor can consume
         # would replace the terminal signal with cancel_requested forever.
         return {"job_id": job_id, "status": observed, "pid": record.get("pid")}
-    _write_json(_job_cancel_path(workspace, job_id), {"job_id": _canonical_job_id(job_id)})
+    _write_json(
+        _job_cancel_path(workspace, job_id), {"job_id": _canonical_job_id(job_id)}, paths=BridgePaths(workspace)
+    )
     return {"job_id": job_id, "status": "cancel_requested", "pid": record.get("pid")}
 
 
@@ -1624,30 +1672,20 @@ def _canonical_job_id(job_id: str) -> str:
 
 
 def _job_record_path(workspace: Path, job_id: str) -> Path:
-    """Return a path proven to remain beneath the workspace-local job store."""
+    """Return a lexical record path checked against the authoritative workspace artifact store."""
     canonical_id = _canonical_job_id(job_id)
-    jobs = BridgePaths(workspace.resolve()).jobs.resolve()
-    path = (jobs / f"{canonical_id}.json").resolve()
-    try:
-        path.relative_to(jobs)
-    except ValueError as error:
-        raise ValueError("job record path escapes the bridge job store") from error
-    return path
+    paths = BridgePaths(workspace.resolve())
+    return paths._member(paths.jobs / f"{canonical_id}.json")
 
 
 def _job_cancel_path(workspace: Path, job_id: str) -> Path:
-    """Return the contained cooperative-cancellation marker for one canonical job."""
+    """Return the checked cooperative-cancellation member for one canonical job."""
     canonical_id = _canonical_job_id(job_id)
-    jobs = BridgePaths(workspace.resolve()).jobs.resolve()
-    path = (jobs / f"{canonical_id}.cancel.json").resolve()
-    try:
-        path.relative_to(jobs)
-    except ValueError as error:
-        raise ValueError("job cancellation path escapes the bridge job store") from error
-    return path
+    paths = BridgePaths(workspace.resolve())
+    return paths._member(paths.jobs / f"{canonical_id}.cancel.json")
 
 
-def _job_cancel_requested(job_path: Path) -> bool:
+def _job_cancel_requested(job_path: Path, *, paths: BridgePaths | None = None) -> bool:
     """Read a dedicated cancellation marker that record writes cannot overwrite.
 
     An unreadable, malformed, or identity-mismatched marker is treated as no
@@ -1657,6 +1695,8 @@ def _job_cancel_requested(job_path: Path) -> bool:
     """
     cancel_path = job_path.with_name(f"{job_path.stem}.cancel.json")
     try:
+        if paths is not None:
+            paths._member(cancel_path)
         value = json.loads(cancel_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
@@ -1693,18 +1733,31 @@ _REPLACE_ATTEMPTS = 40
 _REPLACE_RETRY_SECONDS = 0.025
 
 
-def _write_json(path: Path, value: dict[str, Any]) -> None:
-    """Atomically write a JSON artifact with byte-stable cross-platform newlines."""
+def _write_json(path: Path, value: dict[str, Any], *, paths: BridgePaths | None = None) -> None:
+    """Atomically write stable JSON, checking bound targets and temporary members at each write seam."""
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    created = False
     try:
-        temporary.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8", newline="\n")
-        _replace_with_retry(temporary, path)
-    except OSError:
-        temporary.unlink(missing_ok=True)
+        if paths is not None:
+            paths._member(path)
+            paths._member(temporary)
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            created = True
+            stream.write(json.dumps(value, sort_keys=True) + "\n")
+        _replace_with_retry(temporary, path, paths=paths)
+    except (OSError, ArtifactBoundaryError):
+        if not created:
+            raise
+        try:
+            if paths is not None:
+                paths._member(temporary)
+            temporary.unlink(missing_ok=True)
+        except ArtifactBoundaryError:
+            pass  # Do not follow a replaced parent merely to clean up a failed write.
         raise
 
 
-def _replace_with_retry(source: Path, target: Path) -> None:
+def _replace_with_retry(source: Path, target: Path, *, paths: BridgePaths | None = None) -> None:
     """Rename ``source`` over ``target``, retrying briefly when another process holds ``target`` open.
 
     On Windows a rename over a file that another process has open for reading fails with ``PermissionError`` (``WinError
@@ -1714,6 +1767,9 @@ def _replace_with_retry(source: Path, target: Path) -> None:
     """
     for attempt in range(_REPLACE_ATTEMPTS):
         try:
+            if paths is not None:
+                paths._member(source)
+                paths._member(target)
             source.replace(target)
             return
         except PermissionError:
@@ -1743,14 +1799,15 @@ def _resolve_task(args: argparse.Namespace) -> str:
 
 def _run_as_supervisor(request: Request, job_id: str) -> dict[str, Any]:
     """Run one detached job inside this process and leave its job record in a terminal state."""
+    paths = BridgePaths(request.workspace)
     record_path = _job_record_path(request.workspace, job_id)
     record = _read_job(request.workspace, job_id)
     if record is None:
         raise ValueError("supervisor job record is missing")
-    if not _job_cancel_requested(record_path):
+    if not _job_cancel_requested(record_path, paths=paths):
         record["pid"] = os.getpid()
         record["status"] = "running"
-        _write_json(record_path, record)
+        _write_json(record_path, record, paths=paths)
     try:
         output = run_request(request, _job_path=record_path)
     except (OSError, ValueError) as error:
@@ -1760,18 +1817,18 @@ def _run_as_supervisor(request: Request, job_id: str) -> dict[str, Any]:
         if failed is not None:
             failed["status"] = "failed"
             failed["error"] = str(error)
-            _write_json(record_path, failed)
+            _write_json(record_path, failed, paths=paths)
         raise
     record = _read_job(request.workspace, job_id)
     if record is None:
         raise ValueError("supervisor job record disappeared")
-    if _job_cancel_requested(record_path):
+    if _job_cancel_requested(record_path, paths=paths):
         output = _cancelled_envelope(output)
         record["status"] = "cancelled"
     else:
         record["status"] = "finished"
     record["result"] = output
-    _write_json(record_path, record)
+    _write_json(record_path, record, paths=paths)
     return output
 
 

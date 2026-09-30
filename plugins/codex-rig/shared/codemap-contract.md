@@ -70,7 +70,7 @@ The divergence is recorded, never reconciled, and never folded into `status`. Th
 
 Absence and incompatibility are non-fatal: workflow proceeds with its normal bounded file inspection. A run must never claim structural evidence it did not actually receive.
 
-## Category → query map (plan §8.4)
+## Category → query map
 
 | Category | Consuming skills | Queries (`codemap-py query <subcommand>`) |
 | -- | -- | -- |
@@ -113,7 +113,7 @@ Five skills have no Python structural-query subject and stay not-applicable rath
 | `calibrate` | consumes fixed `runtime/calibration/*` fixtures — self-measurement of plugin, not consuming-project Python structure |
 | `kaggle` | output is Jupytext notebook; `*.ipynb` is outside frozen `py311-ast-v1` module/package contract |
 
-## Symmetric optionality (plan §8.5)
+## Symmetric optionality
 
 `codemap_adapter.py` has zero import-time or startup-time dependency on `codemap-py` being installed — every subprocess call is lazy, inside function called only when wired skill reaches its decision point. Codex Rig's own skill discovery, packaging, and startup never probe or require `codemap-py`.
 

@@ -37,7 +37,9 @@ def _record(config: Path, *installed: Path) -> None:
 def _run(config: Path, root: Path, payload: str = '{"hook_event_name":"SessionStart","source":"clear"}') -> str:
     """Run the hook for one loaded root and return its stdout."""
     env = {**os.environ, "CLAUDE_CONFIG_DIR": str(config), "CLAUDE_PLUGIN_ROOT": str(root)}
-    result = subprocess.run(["node", str(HOOK)], input=payload, env=env, capture_output=True, text=True, timeout=15)
+    result = subprocess.run(
+        ["node", str(HOOK)], input=payload, env=env, capture_output=True, text=True, encoding="utf-8", timeout=15
+    )
     assert result.returncode == 0, result.stderr
     return result.stdout
 

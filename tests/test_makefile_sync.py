@@ -387,9 +387,9 @@ def _orphan(cache: Path, plugin: str, version: str, stamp: str | None) -> Path:
 def test_prune_claude_cache_removes_only_aged_uninstalled_orphans(tmp_path: Path) -> None:
     """Only orphaned version dirs past the age floor and absent from the install record are deleted.
 
-    `claude plugin uninstall` marks a replaced version with `.orphaned_at` but never deletes it, so old versions pile
-    up across syncs. A session started before the replacement may still read skill files from that dir, which is why
-    a young marker, a still-installed dir, an unreadable marker, and an unmarked dir must all survive.
+    `claude plugin uninstall` marks a replaced version with `.orphaned_at` but never deletes it, so old versions pile up
+    across syncs. A session started before the replacement may still read skill files from that dir, which is why a
+    young marker, a still-installed dir, an unreadable marker, and an unmarked dir must all survive.
     """
     cache = tmp_path / "cache"
     day_ago_ms = str(int((time.time() - 2 * 86400) * 1000))

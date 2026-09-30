@@ -336,6 +336,7 @@ def _load_manifest(root_fd: int) -> tuple[dict[str, Any], bytes, dict[str, dict[
         ("plugin-only+manager", True, True, False, True),
         ("role-card-injected", True, False, False, False),
         ("role-card-injected", True, True, False, False),
+        ("role-card-injected", True, True, True, False),
         ("shim-enabled", True, False, False, True),
         ("shim-enabled", True, True, False, True),
     }
@@ -509,8 +510,15 @@ def _validate_plugin_manifest(
         plugin = json.loads(payload, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid plugin manifest") from error
-    if not isinstance(plugin, dict) or set(plugin) != PLUGIN_FIELDS:
+    native_questions = manifest["features"]["mcp"]
+    expected_fields = PLUGIN_FIELDS | {"mcpServers"} if native_questions else PLUGIN_FIELDS
+    if not isinstance(plugin, dict) or set(plugin) != expected_fields:
         raise ValueError("plugin manifest fields mismatch")
+    if native_questions:
+        if plugin["mcpServers"] != "./.codex-mcp.json":
+            raise ValueError("plugin native question declaration mismatch")
+        for component in (".codex-mcp.json", "shared/user_questions_mcp.py"):
+            _require_file_record(root_fd, component, records, MAX_ROLE_BYTES, "native question component")
     author = plugin["author"]
     interface = plugin["interface"]
     if (

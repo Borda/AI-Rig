@@ -14,7 +14,7 @@ model: sonnet
 
 <objective>
 
-Runtime adapter over `codemap-py integrate` engine (`src/codemap_py/integration.py`). Targets Claude Code, Codex, or both. Never invokes another runtime's model; uses only its native plugin-manager CLI.
+Runtime adapter over `codemap-py integrate` engine (`src/codemap_py/integration/__init__.py`). Targets Claude Code, Codex, or both. Never invokes another runtime's model; uses only its native plugin-manager CLI.
 
 Five exact pinned CLI modes; retired `check` removed:
 

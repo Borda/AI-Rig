@@ -192,8 +192,8 @@ class TestStaleRootWarning:
     ) -> None:
         """The loaded root warns exactly when it is marked orphaned or is not the registry's install path.
 
-        A long-running session keeps executing the version it loaded at start; this is the check that makes that
-        visible instead of silently running old skill steps.
+        A long-running session keeps executing the version it loaded at start; this is the check that makes that visible
+        instead of silently running old skill steps.
         """
         installed = _cached_root(tmp_path, "0.63.0", orphaned=orphaned and loaded == "0.63.0")
         root = installed if loaded == "0.63.0" else _cached_root(tmp_path, loaded, orphaned=orphaned)

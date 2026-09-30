@@ -6,7 +6,7 @@ This document covers local setup, routine invocation, detached-job lifecycle, an
 
 For Claude Code to Codex calls, make `codex` available on `PATH` and authenticate it for the requested model. For Codex to Claude Code calls, make `claude` available on `PATH` and authenticate it for the requested model. Both directions require a `python` executable on `PATH` that reports Python 3.10 or newer. The selected workspace must permit creation of `.temp/bridge/`.
 
-The selected workspace does not need to be a Git repository. The bridge uses Codex's supported `--skip-git-repo-check` option when needed; that option only permits execution outside Git and never chooses or widens the workspace. The caller and host remain responsible for selecting and trusting the intended directory. Setup uses the host-selected launch workspace and rejects a model-controlled override.
+The selected workspace does not need to be a Git repository. The bridge uses Codex's supported `--skip-git-repo-check` option when needed; that option only permits execution outside Git and never chooses or widens the workspace. The caller and host remain responsible for selecting and trusting the intended directory. The deterministic setup CLI uses its trusted host-selected workspace. The installed MCP backend starts unbound and requires native user-confirmed binding separately.
 
 The loaded current host must already have the Bridge plugin, trust, authentication, and fresh session needed to invoke setup. Current-host bootstrap is external and human-owned. From either host, invoke the canonical setup lifecycle:
 
@@ -73,7 +73,8 @@ Finalization freezes the bounded capture under its lock; a failed drain returns 
 | `authentication-needed` or `auth-flow-launched` | The peer provider login is separate from Bridge configuration and may require a browser or device flow. | Approve the no-capture provider flow; only a separate redacted status probe can establish `host-authenticated`. |
 | `fresh-session-required` | A host restart or newly loaded MCP/plugin surface is needed. | Restart the relevant host manually and invoke setup again; setup never terminates or restarts a host. |
 | `trust-required` | The host requires an operator trust decision before loading the plugin or MCP server. | Complete the host trust prompt outside setup, then use a fresh session. |
-| `workspace mismatch` | The canonical workspace reported by the loaded session differs from the host-selected launch workspace. | Stop and reopen the host in the intended workspace; never accept a model-selected relocation. |
+| `binding_status=unbound` or wrong project | The loaded MCP server has no current binding to the intended project. | Call `bridge_bind_workspace` with empty arguments; require native selection and exact canonical confirmation, then retain the new `binding_id`. Unbound alone does not mean stale installation. |
+| Missing or stale `binding_id` | The executable call does not match current user-confirmed project authority. | Read `bridge_status` and use its current ID only after verifying the intended project; rebinding invalidates older IDs. |
 
 ## Output-limit recovery
 

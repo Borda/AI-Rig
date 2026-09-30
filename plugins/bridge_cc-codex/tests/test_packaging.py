@@ -110,18 +110,14 @@ def test_validate_package_rejects_a_stray_claude_mcp_file(tmp_path: Path) -> Non
 
 @pytest.mark.packaging
 def test_codex_mcp_server_resolves_from_installed_plugin_root() -> None:
-    """Reject source-tree-relative or Claude-facing variables in the Codex MCP declaration.
-
-    Codex expands only ``PLUGIN_ROOT``, not ``CLAUDE_PLUGIN_ROOT`` -- confirmed against a live ``codex mcp add --help``
-    and the upstream Codex issue tracker.
-    """
+    """Resolve MCP entry points against the installed plugin's configured working directory."""
     codex_manifest = json.loads((PLUGIN_ROOT / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
     assert codex_manifest["mcpServers"] == "./.codex-mcp.json"
     config = json.loads((PLUGIN_ROOT / ".codex-mcp.json").read_text(encoding="utf-8"))
     server = config["mcpServers"]["bridge"]
     assert server["command"] in {"python", "python3"}
-    assert server["args"][0] == "${PLUGIN_ROOT}/bin/bridge_mcp.py"
-    assert "cwd" not in server
+    assert server["args"] == ["bin/bridge_mcp.py", "--stdio"]
+    assert server["cwd"] == "."
 
 
 @pytest.mark.packaging

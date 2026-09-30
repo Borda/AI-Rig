@@ -6593,6 +6593,6 @@
       "src": "skills/resolve/SKILL.md:122"
     }
   },
-  "plugin": "cc_oss@0.42.1",
+  "plugin": "cc_oss@0.42.2",
   "schema": 1
 }

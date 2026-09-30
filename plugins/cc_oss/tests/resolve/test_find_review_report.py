@@ -124,16 +124,36 @@ def test_gate_line_returns_empty_without_field(tmp_path: Path) -> None:
         pytest.param("PASS", "⚠ REQUEST_CHANGES", id="pass-gate-warning-symbol"),
         pytest.param("PASS", "✓ APPROVE", id="pass-gate-check-symbol"),
         pytest.param("REJECT_SCOPE @a1b2c3d", "✗ N/A — rejected at gate", id="reject-gate-cross-symbol"),
+        pytest.param(
+            "PASS",
+            "✓ APPROVE — minor changes suggested; 0 critical, 0 high, 2 medium, 11 low",
+            id="pass-gate-trailing-detail",
+        ),
+        pytest.param("PASS", "⚠ Needs work; 2 medium", id="pass-gate-mixed-case-space"),
+        pytest.param("BLOCK", "request-changes", id="block-gate-lowercase-hyphen"),
     ],
 )
 def test_gate_line_accepts_verdict_symbol_prefixed_outcome(tmp_path: Path, gate: str, outcome: str) -> None:
-    """A ``quality-gates.md``-style verdict symbol on ``Outcome`` does not make the report look incomplete.
+    """A verdict symbol, spelling variant, or trailing detail on ``Outcome`` does not make the report look incomplete.
 
     Regression guard: ``oss:review`` writes ``Outcome: ⚠ REQUEST_CHANGES`` per the shared verdict-symbol
-    convention; a parser that only matches the bare word would wrongly block a complete, real report.
+    convention, and a consolidator may vary case/word separator or append severity counts after the token;
+    a parser that only matches the bare word would wrongly block a complete, real report as
+    ``incomplete-review-report``.
     """
     report = _write_report(tmp_path, "run-001", "42", gate=gate, outcome=outcome)
     assert frr.gate_line(report) == f"Gate: {gate}"
+
+
+@pytest.mark.parametrize("outcome", ["[review outcome]", "APPROVED", "✓ LGTM", "NEEDS_WORK_LATER", "pending approval"])
+def test_gate_line_rejects_non_verdict_outcome(tmp_path: Path, outcome: str) -> None:
+    """An ``Outcome`` not led by a canonical verdict token keeps the report incomplete.
+
+    Tolerating case, separators, and trailing detail must not also admit an unfilled template placeholder, a glued
+    suffix, a free-form verdict, or a token buried mid-sentence — each means no decision was published.
+    """
+    report = _write_report(tmp_path, "run-001", "42", gate="PASS", outcome=outcome)
+    assert frr.gate_line(report) == ""
 
 
 @pytest.mark.parametrize(

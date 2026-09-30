@@ -23,7 +23,7 @@ Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insuffic
 > - Reviewers: readable role names with scoped integer ratings, such as `Software engineer (3), QA specialist (2)` or `sw-engineer: 3, qa-specialist: 2`; never a bare `sw-engineer 3`.
 > - CI: `passing (N/N)`, `failing — check-name, check-name`, or `pending`.
 > - Gate: `PASS`, `BLOCK`, or `REJECT_<GROUND> @<sha>`, where GROUND is `GOAL`, `CONDUCT`, `SCOPE`, `LICENSE`, `DUPLICATE`, `REVERTED`, `SPAM`, or `PHILOSOPHY` (review SKILL.md Stage 1). PASS/BLOCK continue to full review. The `@<sha>` suffix on a `REJECT_<GROUND>` gate carries the reviewed commit SHA so `/oss:resolve` can detect whether the PR changed.
-> - Outcome: `APPROVE`, `NEEDS_WORK`, `REQUEST_CHANGES`, or `N/A` when rejected at the gate.
+> - Outcome: `APPROVE`, `NEEDS_WORK`, `REQUEST_CHANGES`, or `N/A` when rejected at the gate. Write the verdict token alone, optionally after its `✓`/`⚠`/`✗` symbol; severity counts and other detail belong in Summary.
 > - Summary: 1–2 sentences describing key findings. Next steps are comma-separated actionable items, blockers first.
 
 ## Code Review: [target]

@@ -35,6 +35,13 @@ from pathlib import Path
 # Each entry: the canonical file, and the copies that must equal it byte-for-byte.
 MANIFEST: list[dict[str, object]] = [
     {
+        "canonical": "plugins/codex-rig/shared/user_questions_mcp.py",
+        "copies": [
+            "plugins/codemap-py/shared/user_questions_mcp.py",
+            "plugins/bridge_cc-codex/bin/user_questions_mcp.py",
+        ],
+    },
+    {
         "canonical": "plugins/codex-rig/shared/codex-user-questions.md",
         "copies": [
             "plugins/codemap-py/shared/codex-user-questions.md",

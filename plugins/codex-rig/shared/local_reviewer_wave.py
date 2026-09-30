@@ -3,9 +3,9 @@
 ## Purpose
 
 Start independent, ephemeral read-only reviewer sessions after a parent freezes a small code-review plan, then retain a
-bounded evidence record that binds role cards, contexts, and final responses. The route exists because the
-native launcher cannot presently attest the mandatory reviewer controls; it is not a general agent runner, write
-adapter, scheduler, or provenance replacement.
+bounded evidence record that binds role cards, contexts, and final responses. The route exists because the native
+launcher cannot presently attest the mandatory reviewer controls; it is not a general agent runner, write adapter,
+scheduler, or provenance replacement.
 
 ## Scope
 
