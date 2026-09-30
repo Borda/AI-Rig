@@ -274,9 +274,24 @@ Step 11 reads this sentinel and surfaces it as a top-level report section — a 
 
 **Grouping algorithm**: (1) sort by plugin origin (`plugins/<name>/` prefix); (2) assign each plugin's files to batches, fill to `EFFECTIVE_BATCH` before next — keeps same-plugin files together; (3) remaining files (`.claude/` and mixed) fill open slots. Plugin-first, not strictly ordered — unconnected files assigned randomly to reach `EFFECTIVE_BATCH`.
 
-**Layer-2 — judgment by domain, not by file (plugin scope)**: scope `plugins`, `plugins <name>`, or tier-2 plugin name → override batch cap, group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even past `EFFECTIVE_BATCH`. Whole-plugin context lets the curator catch cross-file breaks per-file batching misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, version/description drift. Curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, shared constants/contracts agree across files, no skill references a removed mode/file." Mechanical checks already done in Step 1b — spend this holistic pass on cross-file judgment only. (Very large plugins may still split, but keep agents + their dispatching skills in the same batch. This override deliberately accepts stall risk above the `AGENT_CALL_BUDGET` guidance in the Spawn-count gate below — the mitigation is the per-spawn budget line already required there ("stop cleanly, return `partial: true`"), not a hard file-count cap. A holistic batch that returns `partial: true` gets a second, narrower spawn covering only the files it didn't finish — never a full retry of the whole plugin.)
+**Layer-2 — judgment by domain, not by file (plugin scope)**: scope `plugins`, `plugins <name>`, or tier-2 plugin name → override batch cap, group **all of a plugin's files into ONE holistic batch** (one `foundry:curator` per plugin), even past `EFFECTIVE_BATCH`.
 
-For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, next ordinary user action. Record each producer's guaranteed postcondition against the next consumer's required precondition. Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, lifetime. Question accepted design choices and tests that merely assert the chosen operation. Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case. Keep unexecuted probes and missing consumer context explicit — zero findings on inspected files doesn't establish end-to-end safety. Stay within the audit's existing scope and permissions.
+Whole-plugin context lets the curator catch cross-file breaks per-file batching misses — tool-grant mismatches (agent frontmatter vs skill dispatch), inter-skill contract splits (a constant clamped differently in two files), dead dispatch paths, version/description drift.
+
+Curator prompt for a holistic batch must say: "You have this plugin's ENTIRE file set — review it as one system: check every `Agent(subagent_type=...)` dispatch targets an agent whose frontmatter grants the needed tools, shared constants/contracts agree across files, no skill references a removed mode/file."
+
+Mechanical checks already done in Step 1b — spend this holistic pass on cross-file judgment only.
+
+(Very large plugins may still split, but keep agents + their dispatching skills in the same batch. This override deliberately accepts stall risk above the `AGENT_CALL_BUDGET` guidance in the Spawn-count gate above — the mitigation is the per-spawn budget line already required there ("stop cleanly, return `partial: true`"), not a hard file-count cap. A holistic batch that returns `partial: true` gets a second, narrower spawn covering only the files it didn't finish — never a full retry of the whole plugin.)
+
+For workflow-bearing targets, that holistic pass also traces the entrypoint through state changes, unchanged consumers, next ordinary user action.
+
+- Record each producer's guaranteed postcondition against the next consumer's required precondition.
+- Ask whether every local check can pass while the intended user outcome fails; distinguish value equality from identity, ownership, authority, destination, lifetime.
+- Question accepted design choices and tests that merely assert the chosen operation.
+- Use a source-backed counterexample or request a bounded parent-owned probe for the highest-impact unproven handoff, including supported resume/retry states and a valid positive case.
+- Keep unexecuted probes and missing consumer context explicit — zero findings on inspected files doesn't establish end-to-end safety.
+- Stay within the audit's existing scope and permissions.
 
 **Scope-restricted runs**: fewer than `EFFECTIVE_BATCH` files → one batch, ALL files in scope (single foundry:curator spawn). Read only relevant template file(s) for active scope, not all 4.
 
@@ -455,7 +470,14 @@ After completing `--upgrade`, `--adversarial`, or `--efficiency`: also fire this
 
 <notes>
 
-- **`!` Breaking findings**: when skill or agent completely non-functional (check 7, broken cross-refs, invalid hook events), prefix finding with `!`, state impact + fix in one place — don't bury in table row. Surfaces as **`! BREAKING`** in bash output and as prominent callout in final report. **`! BREAKING` findings require user acknowledgment before audit proceeds past that check**: call `AskUserQuestion` — state what's broken and impact; user must explicitly confirm awareness before continuing. One question per distinct breaking finding; group only when logically one atomic issue. Batch up to 4 questions into a single `AskUserQuestion` call (communication.md per-call cap) — N breaking findings become `ceil(N/4)` calls, never N. Batching changes only call count; every finding still gets its own question and acknowledgment. Prose acknowledgment in response body does NOT count — `AskUserQuestion` mandatory.
+- **`!` Breaking findings**: when skill or agent completely non-functional (check 7, broken cross-refs, invalid hook events), prefix finding with `!`, state impact + fix in one place — don't bury in table row. Surfaces as **`! BREAKING`** in bash output and as prominent callout in final report.
+
+  **`! BREAKING` findings require user acknowledgment before audit proceeds past that check**: call `AskUserQuestion` — state what's broken and impact; user must explicitly confirm awareness before continuing.
+
+  - One question per distinct breaking finding; group only when logically one atomic issue.
+  - Batch up to 4 questions into a single `AskUserQuestion` call (communication.md per-call cap) — N breaking findings become `ceil(N/4)` calls, never N.
+  - Batching changes only call count; every finding still gets its own question and acknowledgment.
+  - Prose acknowledgment in response body does NOT count — `AskUserQuestion` mandatory.
 
 - **settings.json is hands-off**: missing permissions always reported, never auto-edited — structural JSON edits risk breaking Claude Code config loading
 

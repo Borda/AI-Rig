@@ -137,7 +137,14 @@ python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/bin/propagate_shared.py"  # ti
 
 ## Check 14f — Unmanaged codemap index-guard copy
 
-Detects a hand-written codemap index path in a file that neither a `MANIFEST` entry nor the guard registry covers. The guard ("is codemap-py installed, and does an index exist for this project?") was hand-copied across four plugins with nothing linking the copies, so each drifted alone and one path fix cost ten edits. Two shapes permitted: consume the provider CLI (`codemap-py query`, `codemap_resolve.py` — such a consumer never spells the path, so it never trips this check), or one canonical copy propagated byte-identical. Inline bash in agent/skill prose is a fragment `MANIFEST` can't propagate, so those copies are named in the script's `REGISTRY` with a reason and held to two invariants: index dir anchored to a project-root variable (never CWD), project name the raw basename (never sanitized).
+Detects a hand-written codemap index path in a file that neither a `MANIFEST` entry nor the guard registry covers. The guard ("is codemap-py installed, and does an index exist for this project?") was hand-copied across four plugins with nothing linking the copies, so each drifted alone and one path fix cost ten edits.
+
+Two shapes permitted:
+
+- Consume the provider CLI (`codemap-py query`, `codemap_resolve.py` — such a consumer never spells the path, so it never trips this check).
+- One canonical copy propagated byte-identical.
+
+Inline bash in agent/skill prose is a fragment `MANIFEST` can't propagate, so those copies are named in the script's `REGISTRY` with a reason and held to two invariants: index dir anchored to a project-root variable (never CWD), project name the raw basename (never sanitized).
 
 ```bash
 printf "=== Check 14f: Unmanaged codemap index-guard copy ===\n"
@@ -503,7 +510,9 @@ done 3< <(find .claude plugins -name "*.md" ! -name "README.md" 2>/dev/null | so
 
 ## Check 45 — Policy-sibling marker symmetry (reference-graph completeness)
 
-Some policies (safety rules, scoping rules, format conventions) are **restated in prose** across multiple files instead of cross-referenced, because each consumer needs the rule inline in its own reading context. A restated copy has no structural link back to its siblings, so refining the policy in one location can silently leave others stating a stale version — grep-for-violations doesn't catch a file that correctly states an *old* rule. `plugins/CLAUDE.md §Policy Duplication Marker` requires a `<!-- policy-sibling: path1, path2, ... -->` comment in every copy, listing every other file stating the same policy. This check verifies that declared graph is complete and symmetric — it doesn't (can't, mechanically) verify the restated *content* itself stays in sync; that judgment call is `foundry:curator`'s reference-graph trace (see curator `<workflow>` step on policy edits).
+Some policies (safety rules, scoping rules, format conventions) are **restated in prose** across multiple files instead of cross-referenced, because each consumer needs the rule inline in its own reading context. A restated copy has no structural link back to its siblings, so refining the policy in one location can silently leave others stating a stale version — grep-for-violations doesn't catch a file that correctly states an *old* rule.
+
+`plugins/CLAUDE.md §Policy Duplication Marker` requires a `<!-- policy-sibling: path1, path2, ... -->` comment in every copy, listing every other file stating the same policy. This check verifies that declared graph is complete and symmetric — it doesn't (can't, mechanically) verify the restated *content* itself stays in sync; that judgment call is `foundry:curator`'s reference-graph trace (see curator `<workflow>` step on policy edits).
 
 Two failure modes:
 

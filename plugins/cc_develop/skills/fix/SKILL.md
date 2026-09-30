@@ -84,7 +84,11 @@ echo "$DEV_DIR" > "${TMPDIR:-/tmp}/dev-fix-dev-dir-${CSID}"
 
 ## Fix Mode
 
-**Optional `--diagnosis <path>`**: provided (from preceding `/develop:debug` session) → read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, evidence pre-populated from diagnosis file. Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery. Skip only Step 1's **codebase analysis** (the sw-engineer spawn and its codemap queries) — every gate nested in Step 1 still runs against the pre-populated root cause: premise grounding, scope gate, inline plan generation, and the `## Challenger gate`. The cannot-reproduce gate is satisfied by the diagnosis file's Root Cause and Evidence sections; empty or absent → the gate fires as normal.
+**Optional `--diagnosis <path>`**: provided (from preceding `/develop:debug` session) → read diagnosis file first. Skip Step 1 codebase analysis — root cause, suspect files, evidence pre-populated from diagnosis file.
+
+- Challenger gate still applies: proceed from pre-populated root cause through challenger gate, then Step 2. Do NOT skip challenger gate — it reviews fix approach, not just root cause discovery.
+- Skip only Step 1's **codebase analysis** (the sw-engineer spawn and its codemap queries) — every gate nested in Step 1 still runs against the pre-populated root cause: premise grounding, scope gate, inline plan generation, and the `## Challenger gate`.
+- The cannot-reproduce gate is satisfied by the diagnosis file's Root Cause and Evidence sections; empty or absent → the gate fires as normal.
 
 ```bash
 DIAG_FILE=$(python "${CLAUDE_PLUGIN_ROOT:-plugins/cc_develop}/bin/diagnosis_parse.py" "$ARGUMENTS" 2>&1) || { echo "$DIAG_FILE"; exit 1; }  # timeout: 5000

@@ -1,6 +1,20 @@
 <!-- file: consolidator-prompt.md — consumers: plugins/cc_oss/skills/review/SKILL.md -->
 
-**Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections. Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer (3), QA specialist (2), Documentation reviewer (1).` Separate each role from its rating with parentheses `Role (N)` or a colon `Role: N`; never a bare space (`sw-engineer 2` is wrong). Ratings: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject. Use each reviewer's explicit rating and rationale; a reviewer that ran without stating one is 4, never inferred approval. A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead. Label parent substitutes explicitly; skipped roles are omitted. Never average ratings or replace the overall verdict. Retain all contributing roles when deduplicating. Add the template's findings overview with `ID | Author | Finding | Resolution proposal | Status`; Author lists all originating reviewer roles, not the consolidator or PR author. Preserve existing detailed sections and cross-reference stable IDs. Immediately after the closing metadata delimiter write exactly: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.` In terminal output the legend belongs immediately below the header table. Terminal gate rejection retains its existing behavior; use `Reviewers: Not assessed` when no reviewer assessed the source.
+**Reviewer attribution (additive):** Preserve the aggregate prose summary, existing metadata fields, overall verdict, confidence and detailed sections.
+
+- Add `Reviewers:` immediately after `Agents:`, listing actual readable role names and their scoped rating, for example `Software engineer (3), QA specialist (2), Documentation reviewer (1).`
+- Separate each role from its rating with parentheses `Role (N)` or a colon `Role: N`; never a bare space (`sw-engineer 2` is wrong).
+- Ratings: 1 Approve, 2 Minor changes, 3 Changes required, 4 Insufficient evidence, 5 Block / Reject.
+- Use each reviewer's explicit rating and rationale; a reviewer that ran without stating one is 4, never inferred approval.
+- A reviewer that produced no output is not rated — record it as a missing-reviewer limitation instead.
+- Label parent substitutes explicitly; skipped roles are omitted.
+- Never average ratings or replace the overall verdict.
+- Retain all contributing roles when deduplicating.
+- Add the template's findings overview with `ID | Author | Finding | Resolution proposal | Status`; Author lists all originating reviewer roles, not the consolidator or PR author.
+- Preserve existing detailed sections and cross-reference stable IDs.
+- Immediately after the closing metadata delimiter write exactly: `Legend: 1 = Approve · 2 = Minor changes · 3 = Changes required · 4 = Insufficient evidence · 5 = Block / Reject.`
+- In terminal output the legend belongs immediately below the header table.
+- Terminal gate rejection retains its existing behavior; use `Reviewers: Not assessed` when no reviewer assessed the source.
 
 **Task:** Read all finding files in `$RUN_DIR/` (agent files: `foundry--sw-engineer.md`, `foundry--qa-specialist.md`, `foundry--perf-optimizer.md`, `foundry--doc-scribe.md`, `foundry--linting-expert.md`, `foundry--solution-architect.md`, `foundry--challenger.md` if present, `foundry--blind-solve.md` if present, `foundry--codex.md` if present — skip missing). `foundry--blind-solve.md` present: compare its blueprint against the diff and the other agents' findings — add a `### Design Divergence` section (taxonomy row exists, report-only — no resolve owner, exempt from section caps) listing where the independent blueprint differs from the PR's approach, ranked by impact; for each divergence mark whether it might be explained by context the blind-solve agent lacked (prior decision, incident, constraint — phrase as a question for the author) vs a genuine miss. Divergences already covered by another agent's finding: cross-reference, don't duplicate. No `foundry--blind-solve.md`: omit the section entirely, no placeholder. Load `<REVIEW_SKILL_DIR>/checklist.md` via `cat` (not Read tool — version-pinned cache path), apply consolidation rules (signal-to-noise filter, annotation completeness, section caps). Load `<_OSS_SHARED>/review-section-taxonomy.md` via `cat` for canonical section header strings, agent-to-section ownership. Include only findings passing Step 4 cross-validation (verdict=CONFIRMED or un-cross-validated medium/low). For `foundry--challenger.md`: map severity keys Blockers → critical/high, Concerns → medium, Nitpicks → low when aggregating counts.
 
@@ -13,11 +27,28 @@
 
 **Issue alignment (when `issue-*.md` files exist in `$RUN_DIR`):** Include `### Issue Root Cause Alignment` section placed immediately after `### [blocking] Critical`. Per linked issue: state root cause hypothesis, whether PR addresses it (yes / partially / no), whether PR description diverges from issue's stated problem, whether reproduction scenario tested. Any `root cause misalignment` or `scope divergence` finding at least HIGH severity. **PR description drift**: Before flagging `scope divergence`, cross-check PR thread and review comments to determine what was actually agreed; description diverging from *thread consensus* is signal worth flagging.
 
-**File head — MANDATORY format:** file MUST begin with a `---`-delimited YAML metadata block exactly as in `<REVIEW_SKILL_DIR>/templates/review-report.md` — opening `---` on line 1, then 15 fields in order (`Title:`, `PR:`, `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `Reviewers:`, `CI:`, `Gate:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`), then closing `---`, then report body. Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orchestrator reads `---` block verbatim as reply header; no `---` head = broken terminal output. `Title:` `oss-review — [PR #N title]` · `PR:` `#<PR_NUMBER>` (omit field entirely when `<PR_NUMBER>` is empty — direct-path mode has no PR) · `Confidence:` aggregate score — key gaps · `Path:` `→ <REPORT_DIR>/review-report.md`.
+**File head — MANDATORY format:** file MUST begin with a `---`-delimited YAML metadata block exactly as in `<REVIEW_SKILL_DIR>/templates/review-report.md` — opening `---` on line 1, then 15 fields in order (`Title:`, `PR:`, `Date:`, `PR Type:`, `Scope:`, `Focus:`, `Agents:`, `Reviewers:`, `CI:`, `Gate:`, `Outcome:`, `Summary:`, `Confidence:`, `Next steps:`, `Path:`), then closing `---`, then report body.
+
+Do NOT encode head as HTML comments (`<!-- ... -->`) or any other form — orchestrator reads `---` block verbatim as reply header; no `---` head = broken terminal output.
+
+- `Title:` `oss-review — [PR #N title]`
+- `PR:` `#<PR_NUMBER>` (omit field entirely when `<PR_NUMBER>` is empty — direct-path mode has no PR)
+- `Confidence:` aggregate score — key gaps
+- `Path:` `→ <REPORT_DIR>/review-report.md`
 
 **Header fields** (orchestrator must expand all shell vars to literal values before spawning):
 
-- `PR:` `#<PR_NUMBER>` — omit field entirely when `<PR_NUMBER>` is empty (direct-path mode) · `Date:` `<DATE>` · `PR Type:` classify from diff INTENT (not title/file-count): `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed` · `Scope:` key changed files from `<CHANGED_FILES>` (skip test files if >3 source; cap ~5) · `Focus:` `<SCOPE>` — one-line description from diff + PR body · `Agents:` short names of agents with output files in `$RUN_DIR/` · `CI:` `failing — [<CI_FAILING_CHECKS>]` when that value is non-empty, else `passing (<CI_COUNTS>)` — `<CI_COUNTS>` empty too (no checks reported): write `pending` · `Gate:` literal `<GATE>` value (`PASS` or `BLOCK` — reject-gate reports never reach the consolidator, that value is always one of these two here; a `BLOCK` gate does not change how you write `Outcome:` below, it's already carried in `CI:`/the findings) · `Outcome:` `APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from your own findings · `Summary:` 1–2 sentences · `Next steps:` blockers first, max 5
+- `PR:` `#<PR_NUMBER>` — omit field entirely when `<PR_NUMBER>` is empty (direct-path mode)
+- `Date:` `<DATE>`
+- `PR Type:` classify from diff INTENT (not title/file-count): `fix` / `feat` / `refactor` / `perf` / `docs` / `ci` / `chore` / `test` / `mixed`
+- `Scope:` key changed files from `<CHANGED_FILES>` (skip test files if >3 source; cap ~5)
+- `Focus:` `<SCOPE>` — one-line description from diff + PR body
+- `Agents:` short names of agents with output files in `$RUN_DIR/`
+- `CI:` `failing — [<CI_FAILING_CHECKS>]` when that value is non-empty, else `passing (<CI_COUNTS>)` — `<CI_COUNTS>` empty too (no checks reported): write `pending`
+- `Gate:` literal `<GATE>` value (`PASS` or `BLOCK` — reject-gate reports never reach the consolidator, that value is always one of these two here; a `BLOCK` gate does not change how you write `Outcome:` below, it's already carried in `CI:`/the findings)
+- `Outcome:` `APPROVE` / `NEEDS_WORK` / `REQUEST_CHANGES` from your own findings
+- `Summary:` 1–2 sentences
+- `Next steps:` blockers first, max 5
 
 **Severity tiers:** Every finding must carry an explicit inline severity label: `[cosmetic]`, `[low]`, `[medium]`, `[high]`, or `[critical]`. Cosmetic findings go in the dedicated `### Cosmetic / Style` section — never interleaved with behavioural findings.
 

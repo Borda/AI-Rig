@@ -135,7 +135,12 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
     2. For each section key in `$APPEND_ITEMS_FILE` with a non-empty `remove`: locate that section. For each `remove` value (an exact bullet/block/line copied verbatim from `CROSS_CYCLE_MATCH`): Edit tool with `old_string` = that exact text plus enough surrounding context (its own blank-line neighbours, or its full `### <name>` sub-heading for a block item) to make the match unique — never `replace_all`. A section emptied down to nothing by removal (all items struck, nothing added) → drop its header line too, no dangling empty stub.
     3. For each section key with a non-empty `add`: same located section. No matching heading exists yet → add one in a sensible position near thematically-similar existing content (`templates/release-draft.md`'s section order is the tie-breaker when nothing nearby suggests a better spot — e.g. a new `### 🌱 Changed` heading belongs near `### 🚀 Added` / `### 🗑️ Deprecated`, not at a random spot). Edit tool to insert each new bullet/block into the section body — same unique-context discipline as removal.
     4. **Contributors**: dedup by bolded `**Name**` — an existing entry with the same bolded name is never duplicated; a genuinely new name is inserted as a new bullet.
-    5. **Summary** — fold, never pile up. Search inside `## 📋 Summary`'s own body (don't assume a fixed line offset). Re-rank the existing win bullets plus this increment's wins over the whole release and Edit the main list to the top 5; carried bullets keep their wording, and the hook changes only when the new top win changes what the release is. The upgrade-call line is release-wide: re-derive it every cycle from the merged ⚠️ Breaking / ❌ Removed entries (🗑️ Deprecated only as an optional heads-up clause) and Edit it in place, so it closes the pitch and never keeps a stale "drop-in" claim. After it, set one line `**New since last draft:** <names of this cycle's wins, comma-separated>` — pointers only, never repeated wording, not a heading, and outside the 1–5 win count; create it on first use and replace (never append to) it on later cycles. The final cross-artifact truth gate may correct any existing Summary line when source evidence shows its claim is stale.
+    5. **Summary** — fold, never pile up.
+       - Search inside `## 📋 Summary`'s own body (don't assume a fixed line offset).
+       - Re-rank the existing win bullets plus this increment's wins over the whole release and Edit the main list to the top 5; carried bullets keep their wording, and the hook changes only when the new top win changes what the release is.
+       - The upgrade-call line is release-wide: re-derive it every cycle from the merged ⚠️ Breaking / ❌ Removed entries (🗑️ Deprecated only as an optional heads-up clause) and Edit it in place, so it closes the pitch and never keeps a stale "drop-in" claim.
+       - After it, set one line `**New since last draft:** <names of this cycle's wins, comma-separated>` — pointers only, never repeated wording, not a heading, and outside the 1–5 win count; create it on first use and replace (never append to) it on later cycles.
+       - The final cross-artifact truth gate may correct any existing Summary line when source evidence shows its claim is stale.
     6. **Spotlights re-ranking** (when Identify highlights recomputes the top 3–5 over the union of surviving old + newly classified candidates — the winning set can drop or reorder entries, not just add): Edit the ENTIRE section body (every `### <Feature>` block between the heading and the next boundary) to the freshly computed final set, in final order. Carried-over entries keep their existing write-up verbatim; newly promoted ones get a fresh write-up.
 
     Same Read-locate-Edit pattern applies uniformly across every mergeable DRAFT.md section — pitch (Summary), block (Spotlights, Migration guide), list (Notable-changes subsections, Contributors) — the model adapts each edit to whatever shape the section's actual content has; no separate code path per section kind.
@@ -144,7 +149,12 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
 
   - **Post-merge re-validation** (only after the Merge above succeeds): the 4 gates below ran scoped to just this cycle's incremental classify output, earlier in the pipeline — re-running them against the FINAL merged candidate `$APPEND_STAGE/DRAFT.md` catches drift a prior cycle's content develops from THIS cycle's changes without being a clean, detected `CROSS_CYCLE_MATCH`. Input for every check below is "current merged candidate content", not "`$RANGE` diff":
 
-    1. **Truth check re-run** — apply `modes/classify-truth-check.md`'s category-specific predicates to every named symbol in merged DRAFT.md's 🚀 Added/⚠️ Breaking Changes/🌱 Changed/**❌ Removed** bullets and every Spotlights entry (old survivors + new), not only this cycle's entries. Added/Changed or a Spotlight final name absent at HEAD → strike that claim. A ❌ Removed old name present at `$LAST_TAG` and absent at HEAD → **keep the removal**; still present at HEAD or absent at baseline → strike it. Breaking/rename claims follow the original baseline review gate before any relabeling. Inconclusive probes keep a qualified claim. Capture each claim to strike by exact bullet/spotlight text in a section-scoped `POST_MERGE_REMOVE` list (same exact-text discipline as `CROSS_CYCLE_MATCH` — never a bare symbol), and append it to the waived-changes ledger (`modes/classify-truth-check.md` "Waived changes ledger"):
+    1. **Truth check re-run** — apply `modes/classify-truth-check.md`'s category-specific predicates to every named symbol in merged DRAFT.md's 🚀 Added/⚠️ Breaking Changes/🌱 Changed/**❌ Removed** bullets and every Spotlights entry (old survivors + new), not only this cycle's entries.
+       - Added/Changed or a Spotlight final name absent at HEAD → strike that claim.
+       - A ❌ Removed old name present at `$LAST_TAG` and absent at HEAD → **keep the removal**; still present at HEAD or absent at baseline → strike it.
+       - Breaking/rename claims follow the original baseline review gate before any relabeling.
+       - Inconclusive probes keep a qualified claim.
+       - Capture each claim to strike by exact bullet/spotlight text in a section-scoped `POST_MERGE_REMOVE` list (same exact-text discipline as `CROSS_CYCLE_MATCH` — never a bare symbol), and append it to the waived-changes ledger (`modes/classify-truth-check.md` "Waived changes ledger"):
        ```bash
        export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
        IFS= read -r WAIVED_FILE < "${TMPDIR:-/tmp}/release-waived-${CSID}" 2>/dev/null || WAIVED_FILE=""
@@ -187,7 +197,10 @@ Shepherd review policy (applies when `$SHEPHERD_AVAILABLE == true`):
 
 - **`--changelog`** (if set): no shepherd (structured, internal) → invoke `AskUserQuestion`: "Ready to prepend to `$CHANGELOG_FILE`?" Options: (a) Proceed · (b) Preview only. On (b): display content, stop. On (a): derive `VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "")` and `VERSION_BARE="${VERSION#v}"`. **Idempotency check**: inspect `$APPEND_STAGE/$CHANGELOG_FILE` for every notes run for a version header in any supported form (`## [1.2.0]`, `## [v1.2.0]`, `## v1.2.0`, `## 1.2.0`). Skip if present; otherwise prepend after `# Changelog` in that candidate file. Notify using `$CHANGELOG_FILE`, never the stage path.
 
-**Collapse guard** (used by the `SUMMARY.md`/`MIGRATION.md` merges below — the two whole-file artifacts with no section structure of their own to sanity-check against; `$ARTIFACT` = whichever of the two is being merged this cycle). A cheap, mechanical byte-count trip-wire, not a parser — the one destructive-irreversible failure mode a purely LLM-driven merge can't self-correct from (the actual historical bug here was a whole-file wipe of MIGRATION.md), kept deliberately minimal so it never reintroduces the schema-brittleness this redesign retires. DRAFT.md's own sections are NOT guarded this way — a section legitimately emptying down to a dropped header (all items struck, nothing added) is intended behavior, not corruption, since the rest of the file is still there to sanity-check against.
+**Collapse guard** (used by the `SUMMARY.md`/`MIGRATION.md` merges below — the two whole-file artifacts with no section structure of their own to sanity-check against; `$ARTIFACT` = whichever of the two is being merged this cycle).
+
+- A cheap, mechanical byte-count trip-wire, not a parser — the one destructive-irreversible failure mode a purely LLM-driven merge can't self-correct from (the actual historical bug here was a whole-file wipe of MIGRATION.md), kept deliberately minimal so it never reintroduces the schema-brittleness this redesign retires.
+- DRAFT.md's own sections are NOT guarded this way — a section legitimately emptying down to a dropped header (all items struck, nothing added) is intended behavior, not corruption, since the rest of the file is still there to sanity-check against.
 
 Before this cycle's Read+Edit merge against `$ARTIFACT` begins:
 
@@ -211,7 +224,11 @@ fi  # timeout: 3000
 Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at the start of this merge cycle (Write tool — the model still holds it in context; no git dependency), stop, surface `⚠ $ARTIFACT merge refused — content would collapse from a substantial file to near-empty; restored pre-merge content, review the cross-cycle strike list manually.` Never leave a collapsed file in place. The 200B/20B threshold is a coarse "was this substantively non-empty before, is it now essentially gone" check — not a markdown-structure inspection.
 
 - **`--summary`** (if set): no shepherd (internal).
-- `$MARKER_VALID == true`: stable user-visible path `SUMMARY.md` at repo root; edit only `$APPEND_STAGE/SUMMARY.md`. Candidate missing (first append) → `cp "<executive-summary-draft>" "$APPEND_STAGE/SUMMARY.md"`; candidate exists → Read it (Read tool), locate `### Since last draft` inside it (create on first use, append to it on later cycles — internal prose accumulates here, unlike DRAFT.md's re-folded Summary in Append-merge step 5 above), Edit tool in this increment's paragraph (internal prose from Draft executive summary — not DRAFT.md's pitch bullets), guarded by **Collapse guard** above (`$ARTIFACT=$APPEND_STAGE/SUMMARY.md`). A merge failure must never silently fall through to an overwrite. Source-backed corrections to stale prose belong to the final cross-artifact truth gate. Notify using `SUMMARY.md`, never the stage path.
+- `$MARKER_VALID == true`: stable user-visible path `SUMMARY.md` at repo root; edit only `$APPEND_STAGE/SUMMARY.md`.
+  - Candidate missing (first append) → `cp "<executive-summary-draft>" "$APPEND_STAGE/SUMMARY.md"`; candidate exists → Read it (Read tool), locate `### Since last draft` inside it (create on first use, append to it on later cycles — internal prose accumulates here, unlike DRAFT.md's re-folded Summary in Append-merge step 5 above), Edit tool in this increment's paragraph (internal prose from Draft executive summary — not DRAFT.md's pitch bullets), guarded by **Collapse guard** above (`$ARTIFACT=$APPEND_STAGE/SUMMARY.md`).
+  - A merge failure must never silently fall through to an overwrite.
+  - Source-backed corrections to stale prose belong to the final cross-artifact truth gate.
+  - Notify using `SUMMARY.md`, never the stage path.
 - Otherwise: with `--append`, write the full fallback summary to `$APPEND_STAGE/SUMMARY.md`; for plain notes, write it to `$APPEND_STAGE/.temp/output-release-summary-$BRANCH-$DATE.md`, creating its parent directory inside the candidate. Publish to `.temp/output-release-summary-$BRANCH-$DATE.md` with the draft and marker. Notify using the user-visible path.
 - **`--migration`** (if set): shepherd review (public-facing).
   - `$MARKER_VALID == true`: stable user-visible path `MIGRATION.md` at repo root; edit only `$APPEND_STAGE/MIGRATION.md`. Candidate missing (first append) → `cp "<migration-guide-draft>" "$APPEND_STAGE/MIGRATION.md"`; candidate exists → Read it (Read tool); for each new symbol write-up (Draft migration guide), Edit tool to append a new `### <symbol>` block; for each `CROSS_CYCLE_MATCH` targeting `MIGRATION.md`, Edit tool to strike the exact matched block (unique surrounding context, same discipline as DRAFT.md). Guarded by **Collapse guard** above (`$ARTIFACT=$APPEND_STAGE/MIGRATION.md`) — this is the artifact whose whole-file wipe was the actual historical bug; the guard remains a mechanical backstop. Notify using `MIGRATION.md`, never the stage path.
@@ -220,6 +237,7 @@ Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at t
 **Candidate validation and publication** (runs once after the artifact edits above; live notes artifacts remain untouched until publication):
 
 - **Final cross-artifact truth gate**: after candidate edits, inventory every existing target, including selected dated plain outputs and unchanged standalone files; an existing file can carry claims from earlier cycles. The inventory is the set to inspect, not a promise to create missing optional files:
+
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r DO_APPEND < "${TMPDIR:-/tmp}/release-do-append-${CSID}" 2>/dev/null || DO_APPEND="false"
@@ -238,8 +256,11 @@ Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at t
       true
   fi  # release-artifacts: inspect every existing notes target regardless of flags
   ```
+
   Independently truth-check every current-release claim in each inventoried candidate artifact against `$LAST_TAG` and HEAD using the category-specific predicates in `modes/classify-truth-check.md`: DRAFT.md bullets, Spotlights, Summary (including its upgrade-call line against the merged Breaking/Removed entries), and Migration guide; the current release section of `$CHANGELOG_FILE`; standalone `SUMMARY.md`; and standalone `MIGRATION.md`. A stale standalone migration claim must be found and reconciled **without a DRAFT.md match** or a `POST_MERGE_REMOVE`/`CROSS_CYCLE_MATCH` seed. Use those lists as additional exact anchors, never as the complete input set. Match the same symbol/claim and PR or commit evidence, then remove or correct each stale bullet, block, or prose reference with Read+Edit and unique context **inside `$APPEND_STAGE` only**. Source-backed correction of stale DRAFT.md Summary or standalone SUMMARY.md prose is required here even though routine appends preserve earlier SUMMARY.md paragraphs and carried DRAFT.md win bullets; do not use a patch-id strike for prose. Keep unrelated historical changelog versions and migration entries. If source evidence is inconclusive or a correspondence ambiguous, **abort without publishing** and report exact user-visible files/claims. Re-read **all inventoried candidate artifacts** after edits; if a stale claim survives, abort before provenance or publication.
+
 - **Provenance record**: for every bullet/block just written or merged this cycle that traces to specific commit(s) — DRAFT.md's Notable-changes subsections, Spotlights, Migration guide; `$CHANGELOG_FILE`'s Unreleased entries; standalone `MIGRATION.md` blocks — record its provenance. **Excluded from patch-id provenance**: Summary content (DRAFT.md's own `## 📋 Summary` section and standalone `SUMMARY.md`), because their blended prose has no reliable one-commit anchor; routine appends preserve earlier SUMMARY.md paragraphs and re-fold DRAFT.md's Summary, while the final truth gate above may correct stale claims using source evidence. Contributors remain excluded because credit is per person, not per commit revert.
+
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""
@@ -256,15 +277,20 @@ Tripped → restore `$ARTIFACT` to the exact content read via the Read tool at t
   mkdir -p "$(dirname "$PROVENANCE_FILE")" || exit 1
   [ -f "$PROVENANCE_FILE" ] || echo "[]" > "$PROVENANCE_FILE"  # timeout: 3000
   ```
+
   Read `$PROVENANCE_FILE` (Read tool). For each qualifying bullet/block, build one record per contributing commit sha (from Classify each change's sha tracking — see `modes/classify-truth-check.md` "PR accumulation") sharing that bullet's `anchor_text`. Compute each sha's content-stable identity first — this, not the sha, is the record's matching key:
+
   ```bash
   PATCH_ID=$(git show "<full-40-char-sha>" | git patch-id --stable | awk '{print $1}')  # timeout: 3000
   # empty for a merge commit shown without -m, or a genuinely empty commit — rare here since a
   # qualifying bullet traces to a real user-facing diff; record patch_id: null when this happens,
   # the entry then can only ever be struck via the semantic path (documented gap, not a bug)
   ```
+
   `{"patch_id": "<40-hex patch-id, or null>", "sha": "<full 40-char sha — debug metadata only, never a matching key>", "subject": "<original commit subject — human debugging only, never a matching key>", "artifact": "DRAFT.md"|"CHANGELOG.md"|"MIGRATION.md", "anchor_text": "<exact text just written, verbatim>", "written_at": "$DATE"}`. Append every new record to the array just read; write the complete updated array back to `$PROVENANCE_FILE` (Write tool). A `CROSS_CYCLE_MATCH`-struck bullet from THIS cycle is never re-recorded — it was removed, not written.
+
 - **Marker refresh**: persists the baseline for future `--append` runs.
+
   ```bash
   export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"
   IFS= read -r BRANCH < "${TMPDIR:-/tmp}/release-setup-${CSID}/BRANCH" 2>/dev/null || BRANCH=""

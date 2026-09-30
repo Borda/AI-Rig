@@ -44,7 +44,9 @@ _PRE=$(git commit-tree "$_TREE" -p HEAD -m "batch snapshot")  # timeout: 5000
 echo "$_PRE" > "${TMPDIR:-/tmp}/dev-batch-pre-${BATCH_ID}-${N}-${CSID}"
 ```
 
-**`git stash create` was tried first and empirically fails here**: `git stash create` never captures untracked files at all (no `--include-untracked` on `create`, only on `push`), and combining it with `git add -N` intent-to-add entries reproducibly errors `error: Entry '<file>' not up-to-date. Cannot merge.` — confirmed against a live scratch repo. `GIT_INDEX_FILE` redirects every index operation to a throwaway file instead: `read-tree HEAD` seeds it, `add -A :/` stages the whole real working tree (tracked changes *and* untracked files, repo root regardless of cwd) into that throwaway index only, `write-tree`/`commit-tree` turn it into a real commit object. The actual `.git/index`, branch, and stash list are never touched — verified by `git status --short` printing byte-identical output before and after.
+**`git stash create` was tried first and empirically fails here**: `git stash create` never captures untracked files at all (no `--include-untracked` on `create`, only on `push`), and combining it with `git add -N` intent-to-add entries reproducibly errors `error: Entry '<file>' not up-to-date. Cannot merge.` — confirmed against a live scratch repo.
+
+`GIT_INDEX_FILE` redirects every index operation to a throwaway file instead: `read-tree HEAD` seeds it, `add -A :/` stages the whole real working tree (tracked changes *and* untracked files, repo root regardless of cwd) into that throwaway index only, `write-tree`/`commit-tree` turn it into a real commit object. The actual `.git/index`, branch, and stash list are never touched — verified by `git status --short` printing byte-identical output before and after.
 
 **Snapshots are dangling commits** — reachable only through the `dev-batch-pre-*` sentinels, not any ref or branch. Safe within a session (sentinels + the objects they name survive until explicitly cleared or the session ends); not safe across a `git gc --prune`, which reclaims unreachable objects and would silently break an in-progress bisect's revert targets.
 

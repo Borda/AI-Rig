@@ -35,7 +35,7 @@ def test_sync_projects_actual_repository_defaults_without_replacing_user_configu
     namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
 
     assert (home / "config.toml").read_text(encoding="utf-8") == (
-        'model = "gpt-6-sol"\ncustom = true\nreview_model = "gpt-6-sol"\n'
+        'model = "gpt-6.1-sol"\ncustom = true\nreview_model = "gpt-6.1-sol"\n'
     )
     instructions = (home / "AGENTS.md").read_text(encoding="utf-8")
     assert instructions.startswith("User instructions.\n")
@@ -86,7 +86,7 @@ def test_sync_inserts_missing_root_setting_before_toml_tables(tmp_path: Path) ->
     namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
 
     assert (home / "config.toml").read_text(encoding="utf-8") == (
-        'model = "gpt-6-sol"\n\nreview_model = "gpt-6-sol"\n[agents.example]\nname = "example"\n'
+        'model = "gpt-6.1-sol"\n\nreview_model = "gpt-6.1-sol"\n[agents.example]\nname = "example"\n'
     )
 
 
@@ -102,7 +102,7 @@ def test_sync_updates_single_quoted_root_settings_without_appending_duplicates(t
     namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
 
     assert (home / "config.toml").read_text(encoding="utf-8") == (
-        'model = "gpt-6-sol"\nreview_model = "gpt-6-sol"\ncustom = true\n'
+        'model = "gpt-6.1-sol"\nreview_model = "gpt-6.1-sol"\ncustom = true\n'
     )
 
 
@@ -119,7 +119,7 @@ def test_sync_updates_quoted_root_keys_and_leading_whitespace_without_duplicates
     namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home)
 
     assert (home / "config.toml").read_text(encoding="utf-8") == (
-        '  "model" = "gpt-6-sol" # parent\n\'review_model\'="gpt-6-sol"\ncustom = true\n'
+        '  "model" = "gpt-6.1-sol" # parent\n\'review_model\'="gpt-6.1-sol"\ncustom = true\n'
     )
 
 
@@ -164,6 +164,6 @@ def test_sync_can_project_model_defaults_without_changing_agent_instructions(tmp
 
     namespace["sync"](SOURCE_CONFIG, SOURCE_POLICY, home, install_policy=False)
 
-    assert 'model = "gpt-6-sol"' in (home / "config.toml").read_text(encoding="utf-8")
-    assert 'review_model = "gpt-6-sol"' in (home / "config.toml").read_text(encoding="utf-8")
+    assert 'model = "gpt-6.1-sol"' in (home / "config.toml").read_text(encoding="utf-8")
+    assert 'review_model = "gpt-6.1-sol"' in (home / "config.toml").read_text(encoding="utf-8")
     assert (home / "AGENTS.md").read_text(encoding="utf-8") == original_instructions

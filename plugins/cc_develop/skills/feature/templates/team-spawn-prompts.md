@@ -10,7 +10,15 @@ Role: implement the feature (Steps 2-3: demo test, TDD loop).
 
 Prompt template:
 
-> "You are a foundry:sw-engineer teammate implementing: [feature description]. Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages. Task: implement the feature (Steps 2-3: demo test, TDD loop). Scope: only edit files in the source package directory and non-test Python files. Common layouts: `src/<module>/`, `<module>/`, or root-level `.py` files — use whichever exists; check `src/` first, fall back to project root. Do NOT edit files under `tests/`. Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output. Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state. Signal completion in final delta message: 'Status: complete | blocked — <reason>'. Write full analysis to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md` using the Write tool. Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N}."
+> "You are a foundry:sw-engineer teammate implementing: [feature description]. Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
+>
+> - Task: implement the feature (Steps 2-3: demo test, TDD loop).
+> - Scope: only edit files in the source package directory and non-test Python files. Common layouts: `src/<module>/`, `<module>/`, or root-level `.py` files — use whichever exists; check `src/` first, fall back to project root. Do NOT edit files under `tests/`.
+> - Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
+> - Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
+> - Signal completion in final delta message: 'Status: complete | blocked — <reason>'.
+> - Write full analysis to `.temp/develop/$_SPAWN_TS/feature-sw-engineer-$_SPAWN_TS.md` using the Write tool.
+> - Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N}."
 
 ## Teammate 2 — foundry:qa-specialist (model=sonnet)
 
@@ -18,7 +26,15 @@ Role: audit test coverage + add edge-case/regression tests + security checks. Do
 
 Prompt template:
 
-> "You are a foundry:qa-specialist teammate implementing: [feature description]. Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages. Task: audit test coverage and add edge-case, boundary, and regression tests around the SW implementation; include security checks for any auth/payment/data-handling code. Do NOT write the primary TDD demo/red-green tests — those stay with sw-engineer (Teammate 1) as part of the TDD loop. Scope: only create or edit files under `tests/`. Do NOT edit source files under `src/` or the target module. Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output. Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state. Signal completion in final delta message: 'Status: complete | blocked — <reason>'. Write full analysis to `.temp/develop/$_SPAWN_TS/feature-qa-specialist-$_SPAWN_TS.md` using the Write tool. Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N}."
+> "You are a foundry:qa-specialist teammate implementing: [feature description]. Read ${HOME}/.claude/TEAM_PROTOCOL.md — use AgentSpeak v2 for inter-agent messages.
+>
+> - Task: audit test coverage and add edge-case, boundary, and regression tests around the SW implementation; include security checks for any auth/payment/data-handling code. Do NOT write the primary TDD demo/red-green tests — those stay with sw-engineer (Teammate 1) as part of the TDD loop.
+> - Scope: only create or edit files under `tests/`. Do NOT edit source files under `src/` or the target module.
+> - Compact Instructions: preserve file paths, test results, API signatures. Discard verbose tool output.
+> - Task tracking: do NOT call TaskCreate or TaskUpdate — lead owns all task state.
+> - Signal completion in final delta message: 'Status: complete | blocked — <reason>'.
+> - Write full analysis to `.temp/develop/$_SPAWN_TS/feature-qa-specialist-$_SPAWN_TS.md` using the Write tool.
+> - Return ONLY compact JSON: {"status":"done","file":"<path>","summary":"<one-line>","findings":N,"confidence":0.N}."
 
 ## Teammate 3 — foundry:doc-scribe (model=sonnet)
 

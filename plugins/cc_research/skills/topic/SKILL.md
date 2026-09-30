@@ -54,7 +54,11 @@ cat "$_RESEARCH_SHARED/agent-resolution.md"
 
 **Task hygiene** — task tools may be deferred; load before first use: `ToolSearch(query="select:TaskList,TaskCreate,TaskUpdate,TaskGet", max_results=4)`. Call `TaskList` first and triage each task it returns: `completed` if work clearly done, `deleted` if orphaned, keep `in_progress` only if genuinely continuing. Never spend a turn on bookkeeping alone — every `TaskCreate`/`TaskUpdate` ships in the same response as the next substantive tool call; one exception, `TaskUpdate(completed)` immediately before a long output block (`rules/task-lifecycle.md`).
 
-**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation. Mark in_progress/completed throughout. Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response. This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it. The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
+**Task tracking**: per CLAUDE.md, create tasks (TaskCreate) for each major phase — paper collection, researcher analysis, report generation. Mark in_progress/completed throughout.
+
+- Always create **"Print report header"** as its own task (all paths — single-agent Step 3, `--team`, `plan`) — `in_progress` right after the report file is written (by the lead directly, or by a spawned consolidator's returned envelope); `completed` only once the `---` header has actually appeared in this response.
+- This task exists because a sibling skill (oss:review) had an incident: report written correctly but terminal print step silently skipped while the hard-enforced `AskUserQuestion` fired anyway — tracking the print as its own task makes it as trackable as the tool calls around it.
+- The shared `## Follow-up gate` below must not fire while this task is `pending`/`in_progress`.
 
 ## Step 1: Understand the codebase context
 

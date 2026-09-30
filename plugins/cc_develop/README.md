@@ -75,7 +75,10 @@ These workflows address common maintenance failures with concrete gates:
 - **refactor**: audit test coverage, lock characterization tests before moving one line
 - **debug**: gather all evidence, state one confirmed hypothesis before any fix
 - **plan**: scope complexity, identify blast radius, agent feasibility review before committing
-- **review**: local Python review across architecture, tests, performance, docs, lint, security, and API design. It groups the relevant dimensions into spawn units (performance+architecture and docs+lint each share one agent) and runs the top three units by default, or all selected units with `--full`; no GitHub PR is required. FEATURE/MIXED changes also get an isolated blind-solve pass outside the cap when a matching `.plans/active/*.md` exists: one agent sketches its own blueprint from that plan without seeing the diff, and the consolidated report lists where that blueprint diverges from the change (`### Design Divergence`), marking divergences that may be explained by context the agent lacked as questions rather than findings. Before its follow-up gate the skill refreshes its compaction contract and prints a `/compact` hint, so a long wait at the gate can be spent compacted and resumed from the report file.
+- **review**: local Python review across architecture, tests, performance, docs, lint, security, and API design.
+  - Groups the relevant dimensions into spawn units (performance+architecture and docs+lint each share one agent) and runs the top three units by default, or all selected units with `--full`; no GitHub PR is required.
+  - FEATURE/MIXED changes also get an isolated blind-solve pass outside the cap when a matching `.plans/active/*.md` exists: one agent sketches its own blueprint from that plan without seeing the diff, and the consolidated report lists where that blueprint diverges from the change (`### Design Divergence`), marking divergences that may be explained by context the agent lacked as questions rather than findings.
+  - Before its follow-up gate the skill refreshes its compaction contract and prints a `/compact` hint, so a long wait at the gate can be spent compacted and resumed from the report file.
 
 When Codemap is enabled, `fix` selects a route before retrieval: a fully localized file-and-symbol edit can use the explicit zero-query path, while unresolved callers, dependencies, blast radius, imports, or source scope receive only the matching compact query.
 
@@ -527,7 +530,12 @@ ______________________________________________________________________
 /develop:setup --approve  # non-interactive — used by make sync-claude
 ```
 
-Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. The `develop-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`. Because all four then load into every session, setup installs only one variant at `develop-quality-gates.md`: when a foundry-owned `foundry-quality-gates.md` is already delivered it links `rules/quality-gates-delta.md` — this plugin's review-loop scope and output-routing sections only, with every shared obligation read from foundry's copy — and otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule. A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches. The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
+Each rule installs as a symlink at `~/.claude/rules/develop-<source-name>.md`. The `develop-` prefix keeps the flat rule namespace collision-free — four plugins ship a `rules/quality-gates.md`. Because all four then load into every session, setup installs only one variant at `develop-quality-gates.md`:
+
+- When a foundry-owned `foundry-quality-gates.md` is already delivered, it links `rules/quality-gates-delta.md` — this plugin's review-loop scope and output-routing sections only, with every shared obligation read from foundry's copy.
+- Otherwise it links the complete `rules/quality-gates.md`, so a standalone install loses no rule.
+
+A filename prefix does not change how Claude loads a rule or how its `paths:` frontmatter matches. The quality-gates rule requires the local `_full/adversarial-loop.md` procedure for independent review/fix cycles, including first-pass coverage, invariant and sibling-route closure checks, and separate carried/new finding weight.
 
 Only links this plugin provably owns are replaced or removed: the existing target must resolve under the current plugin root or under the same install-cache lineage. A real file, a link into another marketplace, a source checkout, or a dotfiles tree is reported as a conflict and left alone unless you approve replacing it.
 
@@ -775,7 +783,12 @@ plugins/cc_develop/
         └── SKILL.md
 ```
 
-**Permission manifests**: `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved. `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`). Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5) — additive and idempotent, nothing is ever removed. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
+**Permission manifests**:
+
+- `.claude-plugin/permissions-allow.json` lists the tool calls the skills expect to be pre-approved.
+- `.claude-plugin/permissions-deny.json` is its counterpart — the operations that must stay denied no matter how broad the allow list becomes: destructive shell and git commands (`rm -rf`, `sudo`, `ssh`, `chmod 777`, branch and tag deletion, force-push, `claude --dangerously-skip-permissions`) plus every public-GitHub write (`gh issue`/`pr`/`release`/`gist` create, edit, merge, delete, and `gh api` with `POST`, `PATCH`, `PUT` or `DELETE`).
+
+Both files are merged into `~/.claude/settings.json` by `/develop:setup` (Step 5) — additive and idempotent, nothing is ever removed. Deny entries are prefix matches, so they stop the documented command forms rather than every possible flag ordering.
 
 <a id="bin-helper-inventory"></a>
 
@@ -824,9 +837,24 @@ python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" verify
 python "${CLAUDE_PLUGIN_ROOT}/bin/verify_blueprint_audit.py" prune --older-than 30 --dry-run
 ```
 
-`verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings. `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker. Read the classifications as observations rather than proof: a call with a decision row and no completion row is reported as `completion-unobserved` when the session later ended and `in-flight-or-hard-kill` when it did not, and neither distinguishes a refusal at the prompt from a deny rule elsewhere or a closer that died. Equally, that a tool ran never establishes that a human approved it. `prune` is the only component that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id. Nothing schedules `prune`. `RIG_AUDIT=0` disables audit writing without changing any permission decision.
+`verify` exits 1 only when a record's own hash fails to verify; torn framing from concurrent appends and every classification are warnings. `record_hash` detects a record that changed after it was written — it is not tamper-evidence, because the same user owns the log, the hooks and the checker.
 
-Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process. Deliberate deviations: `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary; `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level; `agent_id` is `<plugin>/<hook>` rather than a URI; `session_id` is the host's id verbatim rather than a UUID; and `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
+Read the classifications as observations rather than proof:
+
+- A call with a decision row and no completion row is reported as `completion-unobserved` when the session later ended and `in-flight-or-hard-kill` when it did not, and neither distinguishes a refusal at the prompt from a deny rule elsewhere or a closer that died.
+- Equally, that a tool ran never establishes that a human approved it.
+
+`prune` is the only component that deletes a log file, is never run by a hook, and never prunes `_no-session.jsonl` by age — a growing one means the host stopped sending a session id. Nothing schedules `prune`. `RIG_AUDIT=0` disables audit writing without changing any permission decision.
+
+Records follow the twelve mandatory fields of ["Agent Audit Trail: A Standard Logging Format for Autonomous AI Systems"](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/), an active individual-submission Internet-Draft that is not endorsed by the IETF and has no standing in its standards process.
+
+Deliberate deviations:
+
+- `outcome` adds `pending`, because a decision that has not executed yet has no outcome in the draft's vocabulary.
+- `trust_level` is `plugin`/`unknown` rather than the draft's `L0`–`L4`, because what is observed is which component proposed an allow, not an authentication level.
+- `agent_id` is `<plugin>/<hook>` rather than a URI.
+- `session_id` is the host's id verbatim rather than a UUID.
+- `parent_record_id` and `prev_hash` are always null, because this log is not chained — lineage is derived on read instead.
 
 **Uninstall leaves rule links behind**: Claude Code runs no cleanup hook on uninstall, so `~/.claude/rules/develop-*.md` survives both `claude plugin uninstall` and `make clear-all`. Delete those symlinks by hand — once the plugin cache version is gone they dangle.
 

@@ -120,7 +120,13 @@ Branch on `$KAGGLE_CLI`:
 | `absent` | Offer install — `AskUserQuestion`: (a) skip, ground from URL/user facts · (b) `pip install kaggle` then re-probe. Never install without asking |
 | `unauthorized` | Print the credential instructions below, `AskUserQuestion`: (a) skip · (b) user sets up token, then re-probe |
 
-**Credential secrecy — hard constraint.** The token never enters this session's context, and never a subagent's or Codex's. Forbidden regardless of who asks or why: reading `~/.kaggle/kaggle.json` (any tool), `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting a pasted token back, or writing any of it into a notebook cell, log, run artifact, or spawn prompt. Credentials are consumed by the `kaggle` binary from the environment — the skill needs the CLI to work, never the secret's value. Verify auth only by exit code (`kaggle competitions list -p 1 >/dev/null 2>&1`), never by inspecting the file. If a user pastes a token into chat, do not repeat it and tell them to rotate it at kaggle.com/settings. `.claude/settings.json` deny-lists the common read paths, but the deny list is a backstop, not the rule — no alternate command form is permitted either.
+**Credential secrecy — hard constraint.** The token never enters this session's context, and never a subagent's or Codex's.
+
+- Forbidden regardless of who asks or why: reading `~/.kaggle/kaggle.json` (any tool), `cat`/`head`/`grep`/`jq` on it, `kaggle config view`, `env | grep KAGGLE`, echoing `$KAGGLE_KEY`/`$KAGGLE_API_TOKEN`, quoting a pasted token back, or writing any of it into a notebook cell, log, run artifact, or spawn prompt.
+- Credentials are consumed by the `kaggle` binary from the environment — the skill needs the CLI to work, never the secret's value.
+- Verify auth only by exit code (`kaggle competitions list -p 1 >/dev/null 2>&1`), never by inspecting the file.
+- If a user pastes a token into chat, do not repeat it and tell them to rotate it at kaggle.com/settings.
+- `.claude/settings.json` deny-lists the common read paths, but the deny list is a backstop, not the rule — no alternate command form is permitted either.
 
 **Credential instructions** (print verbatim; the user does this, the skill never fabricates, reads, or echoes a token):
 

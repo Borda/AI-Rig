@@ -75,7 +75,13 @@ IMPL_DIR=$(mktemp -d)
 printf '%s\n' "$IMPL_DIR" > "${TMPDIR:-/tmp}/resolve-impl-dir-${CSID}"  # timeout: 3000
 ```
 
-Use the Write tool to write `$IMPL_DIR/action-items.jsonl` before Step 3d: one compact JSON object per classified ACTION_ITEM, including every displayed pending row. Use Step 3b's exact fields (`id`, `type`, `change`, `severity`, `author`, `summary`, `file`, `line`, `url`, `full_comment_text`, `location`, `origin`). Assign sequential numeric IDs starting at 1; use `location: "report"`, `origin: "posted"`, and an empty `url`. Preserve the full finding text and taxonomy-derived `change` and `author`; the shortened table summary is not a substitute for `full_comment_text`. Write an empty file when there are zero findings. The table below must be rendered from those same records with the same IDs; stop before Step 3d if the file cannot be written or differs from the displayed items. A compaction or Step 8 may reload only this file.
+- Use the Write tool to write `$IMPL_DIR/action-items.jsonl` before Step 3d: one compact JSON object per classified ACTION_ITEM, including every displayed pending row.
+- Use Step 3b's exact fields (`id`, `type`, `change`, `severity`, `author`, `summary`, `file`, `line`, `url`, `full_comment_text`, `location`, `origin`).
+- Assign sequential numeric IDs starting at 1; use `location: "report"`, `origin: "posted"`, and an empty `url`.
+- Preserve the full finding text and taxonomy-derived `change` and `author`; the shortened table summary is not a substitute for `full_comment_text`.
+- Write an empty file when there are zero findings.
+- The table below must be rendered from those same records with the same IDs; stop before Step 3d if the file cannot be written or differs from the displayed items.
+- A compaction or Step 8 may reload only this file.
 
 Print ACTION_ITEMS as a user-facing markdown table (severity descending):
 

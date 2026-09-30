@@ -124,7 +124,17 @@ Orchestrator: collect envelopes, verify coverage (every file in `git diff --stat
 
 **Semantic novelty beats diff verbosity**: new capability/interface/script outranks a verbose-but-routine config edit even if the config diff has more lines. Ask "what would the reviewer need to know first?" — that's the most significant change.
 
-**Compound change detection**: ≥3 **codebase** files share a common theme in their changes (same concept replaced, same flag added, same pattern adopted everywhere) → treat aggregate as potentially higher tier than any individual file suggests. Signals: same function/string replaced across N files → migration pattern; same trigger/description updated in N agents → routing change (T2 minimum); same convention adopted across all plugins → new standard. Rule: after reading all per-file diffs (or all subagent `.md` summaries), ask "do these individually small changes form a coordinated pattern?" — if yes, classify the whole at aggregate tier, not per-file tier. Name the pattern in commit subject, not individual files. **Docs/supplementary exempt**: README, CHANGELOG, inline comments, docstrings, and other documentation-only files are standalone entities — repeated small doc tweaks don't compound into a higher tier regardless of count.
+**Compound change detection**: ≥3 **codebase** files share a common theme in their changes (same concept replaced, same flag added, same pattern adopted everywhere) → treat aggregate as potentially higher tier than any individual file suggests.
+
+Signals:
+
+- same function/string replaced across N files → migration pattern
+- same trigger/description updated in N agents → routing change (T2 minimum)
+- same convention adopted across all plugins → new standard.
+
+Rule: after reading all per-file diffs (or all subagent `.md` summaries), ask "do these individually small changes form a coordinated pattern?" — if yes, classify the whole at aggregate tier, not per-file tier. Name the pattern in commit subject, not individual files.
+
+**Docs/supplementary exempt**: README, CHANGELOG, inline comments, docstrings, and other documentation-only files are standalone entities — repeated small doc tweaks don't compound into a higher tier regardless of count.
 
 **Evidence-only body — mandatory, not situational**: the diff is the only evidence. Conversation/session context may be used **exclusively** to explain the *why* behind a change already confirmed present in `git diff HEAD` — never to assert that a change, action, or removal happened. A sentence describing something not backed by a `+`/`-` line doesn't go in the message, no matter how confidently conversation discussed it as done. Covers two failure modes, both forbidden equally:
 

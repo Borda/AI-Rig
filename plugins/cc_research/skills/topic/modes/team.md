@@ -60,6 +60,13 @@ For 3 teammates, spawn consolidator researcher agent: "Read research files at [p
 
 TaskUpdate "Print report header" → `in_progress`.
 
-**MANDATORY, not optional narration** — the consolidator's returned JSON is a routing signal only; it is never printed to the user and never satisfies this step. Consolidator wrote full report to `<file>` (from its envelope) but printed nothing itself. Before returning control to SKILL.md's `## Follow-up gate`: (1) Read `<file>` (Read tool); (2) render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block; (3) append `→ saved to <file>`; (4) TaskUpdate "Print report header" → `completed` — only after the table has actually appeared in this response, never before. SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
+**MANDATORY, not optional narration** — the consolidator's returned JSON is a routing signal only; it is never printed to the user and never satisfies this step. Consolidator wrote full report to `<file>` (from its envelope) but printed nothing itself. Before returning control to SKILL.md's `## Follow-up gate`:
+
+- (1) Read `<file>` (Read tool).
+- (2) Render its `---` header fields as a two-column Markdown table (`Field | Value`, one row per key, file order) per quality-gates.md §Report File Format's Universal terminal-print rule — never print the raw `---`-delimited block.
+- (3) Append `→ saved to <file>`.
+- (4) TaskUpdate "Print report header" → `completed` — only after the table has actually appeared in this response, never before.
+
+SKILL.md's Follow-up gate must not fire while this task is `pending`/`in_progress`.
 
 **Hook-enforced**: `hooks/enforce-topic-header.js` (PreToolUse on `AskUserQuestion`) denies the Follow-up gate call while `$REPORT_OUT` (sentinel path above) is missing or empty — a consolidator that never wrote its report cannot be papered over with an ad-hoc summary. The hook sees only whether the report exists, not whether the print happened; steps (1)–(4) above remain the check for the print itself.

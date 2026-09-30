@@ -277,7 +277,15 @@ if command -v codemap-py >/dev/null 2>&1 && [ -f "${_IDX}/${PROJ}.json" ]; then
 fi
 ```
 
-> `uncovered` reports missing static test callers and mocks, not measured line coverage. `mock-rdeps` records mock relationships, not proof of implementation execution. `coverage-gap` reports measured line coverage when available; missing measurements are unknown, not zero. Module scope is exact: enumerate children explicitly for package-wide questions. Preserve test reads for assertion quality and behavior. `fixture-rdeps` + `fixture-graph` replace conftest grep for fixture structure. Diff auto-derive fires in review/worktree when `TARGET_MODULE` unset. After an implementation change prefer targeted test selection to a full-suite rerun — signal the orchestrator: "run /codemap-py:test-impact <module::changed_function> for only the affected test files" (requires `codemap-py` plugin); qa-specialist has no Skill tool to invoke it itself.
+> `uncovered` reports missing static test callers and mocks, not measured line coverage.
+>
+> - `mock-rdeps` records mock relationships, not proof of implementation execution.
+> - `coverage-gap` reports measured line coverage when available; missing measurements are unknown, not zero.
+> - Module scope is exact: enumerate children explicitly for package-wide questions.
+> - Preserve test reads for assertion quality and behavior.
+> - `fixture-rdeps` + `fixture-graph` replace conftest grep for fixture structure.
+> - Diff auto-derive fires in review/worktree when `TARGET_MODULE` unset.
+> - After an implementation change prefer targeted test selection to a full-suite rerun — signal the orchestrator: "run /codemap-py:test-impact <module::changed_function> for only the affected test files" (requires `codemap-py` plugin); qa-specialist has no Skill tool to invoke it itself.
 
 > Reuse gate: reuse a supplied answer only for the same project, current index, target, query and flags; skip its duplicate pre-flight call. Require success and direction-complete metadata. For batch children require `ok: true` and inspect `result.index`; `ok: false` is a failure, never an empty answer. Missing metadata, `stale`, root mismatch, degraded or incomplete results need targeted fallback. Use legacy `exhaustive: true` only when `query_complete` is absent. A valid empty list settles that scoped query; truncation does not enumerate all matches. Necessary source-body reads, test-quality checks, dynamic behavior and required independent verification remain allowed.
 

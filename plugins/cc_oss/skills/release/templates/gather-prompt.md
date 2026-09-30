@@ -8,7 +8,12 @@ Retain verified commit-to-PR associations and each in-range PR author's known lo
 
 For every SHA from `git -C <REPO_ROOT> rev-list "<RANGE>"`, run `gh api --method GET --paginate --slurp "repos/{owner}/{repo}/commits/<sha>/pulls" -f per_page=100` from \<REPO_ROOT>. Retain all pages and each SHA's merged-PR associations (PR number, author, base, merge commit); never restrict lookup to default branch. Verify actual repo/commit/diff membership before crediting. Successful empty result retains Git authors/coauthors without inventing a PR; failed, deleted, or ambiguous metadata stays a coverage gap in \<GATHER_FILE>. Do not substitute default-branch merged-PR list after lookup failure.
 
-Run classify phase: classify NET state at HEAD, not each intermediate commit. When multiple commits in range touch same API/feature (add then modify, add then remove, add then rewrite), describe only what exists in HEAD — don't include features added and later undone within same range, regardless of whether removal was explicit revert or follow-up PR. When entry survives (net-effect non-zero), collect ALL PR numbers contributing to final state under SAME category — never attribute to only initial or last PR. Group under one bullet with cumulated PR refs ONLY when all contributing PRs classify into same section (both Added, both Changed, both Fixed); when a PR fixes a bug or changes behavior in a feature added by an earlier PR in same range, that fix gets its own 🔧 Fixed or 🌱 Changed entry — never folded into Added. Exception: trivial fixes (one-line cleanup, doc tweak inside new code, no standalone user-visible effect) fold into parent Added bullet.
+Run classify phase: classify NET state at HEAD, not each intermediate commit.
+
+- When multiple commits in range touch same API/feature (add then modify, add then remove, add then rewrite), describe only what exists in HEAD — don't include features added and later undone within same range, regardless of whether removal was explicit revert or follow-up PR.
+- When entry survives (net-effect non-zero), collect ALL PR numbers contributing to final state under SAME category — never attribute to only initial or last PR.
+- Group under one bullet with cumulated PR refs ONLY when all contributing PRs classify into same section (both Added, both Changed, both Fixed); when a PR fixes a bug or changes behavior in a feature added by an earlier PR in same range, that fix gets its own 🔧 Fixed or 🌱 Changed entry — never folded into Added.
+- Exception: trivial fixes (one-line cleanup, doc tweak inside new code, no standalone user-visible effect) fold into parent Added bullet.
 
 Run explore phase: top 3–5 most significant changed files (read actual diffs).
 

@@ -223,7 +223,11 @@ Default: read-only audit. Write/Edit only when prompt explicitly lists fixes.
     - 1c. **Scope resolution**: prompt contains `plugins/<name>` or bare `<name>` token matching a dir under `plugins/` → glob `plugins/<plugin>/agents/*.md` and `plugins/<plugin>/skills/**/*.md`; else use post-install paths from 1b.
 02. Read each file and evaluate: structure, cross-refs, line count, duplication — for handoff envelope compliance, run `cat "${CLAUDE_PLUGIN_ROOT:-plugins/cc_foundry}/skills/_shared/file-handoff-protocol.md"` via Bash tool first, verifying required fields from live source, not memory
 03. For cross-refs: `Grep("foundry:|oss:|research:|codemap-py:|develop:", <agents-dir>)` — scope `<agents-dir>` to path resolved in Step 1 (`.claude/agents/` post-install, or `plugins/<name>/agents/` in plugin-dev context); validate each matched agent name exists on disk. In plugin-dev context, also grep peer plugin dirs (`plugins/*/agents/`) to validate cross-plugin refs (e.g. `oss:shepherd`, `research:data-steward`).
-04. For URLs: `WebFetch` each URL found in agent/skill files — confirm resolves and content matches description; flag any 404 or mismatch as P4 (outdated content). **In-session URL cache (Fetch step only)**: maintain in-memory set of URLs already fetched this invocation — avoid re-fetching same URL twice per session. Cache covers Fetch step only; Read (inspect cached content) and Match (verify content matches description) still required per occurrence per quality-gates.md link verification. **Persistent disk cache** in `.cache/gh/curator-url-<slug>.md` (TTL 24h) — reuse cached file for Fetch step if < 24h old, but still Read cached content and Match against current context description before accepting URL as valid. Pre-fetch setup: `mkdir -p .cache/gh # timeout: 5000`. Per-URL cache pattern:
+04. For URLs: `WebFetch` each URL found in agent/skill files — confirm resolves and content matches description; flag any 404 or mismatch as P4 (outdated content).
+    - **In-session URL cache (Fetch step only)**: maintain in-memory set of URLs already fetched this invocation — avoid re-fetching same URL twice per session. Cache covers Fetch step only; Read (inspect cached content) and Match (verify content matches description) still required per occurrence per quality-gates.md link verification.
+    - **Persistent disk cache** in `.cache/gh/curator-url-<slug>.md` (TTL 24h) — reuse cached file for Fetch step if < 24h old, but still Read cached content and Match against current context description before accepting URL as valid.
+    - Pre-fetch setup: `mkdir -p .cache/gh # timeout: 5000`.
+    - Per-URL cache pattern:
     ```bash
     CACHE_DIR=".cache/gh"
     CACHE_KEY=$(echo "$URL" | tr -cd 'a-zA-Z0-9' | cut -c1-32)
@@ -235,7 +239,12 @@ Default: read-only audit. Write/Edit only when prompt explicitly lists fixes.
       :
     fi
     ```
-05. Schema freshness check — validate agent/skill frontmatter fields against current Claude Code schema. WebFetch current agent/skill frontmatter field lists from Claude Code docs directly; compare against hardcoded lists in `<evaluation-criteria>` above. On WebFetch failure (rate-limit, 4xx, timeout): use hardcoded known-valid field list, add to Confidence Gaps: "Schema freshness: fetch unavailable; field validation may be stale." Unknown frontmatter field in any file → P4 ONLY when WebFetch succeeded and confirmed field absent from schema; if WebFetch failed, flag as advisory note ("unknown field — verify against current Claude Code docs") instead of P4, avoiding false positives from stale hardcoded list. New field available in schema but absent from an agent where it would add clear value → note as improvement (not P1–P5). Skip step for non-frontmatter audits (handoff compliance review, duplication-only pass).
+05. Schema freshness check — validate agent/skill frontmatter fields against current Claude Code schema.
+    - WebFetch current agent/skill frontmatter field lists from Claude Code docs directly; compare against hardcoded lists in `<evaluation-criteria>` above.
+    - On WebFetch failure (rate-limit, 4xx, timeout): use hardcoded known-valid field list, add to Confidence Gaps: "Schema freshness: fetch unavailable; field validation may be stale."
+    - Unknown frontmatter field in any file → P4 ONLY when WebFetch succeeded and confirmed field absent from schema; if WebFetch failed, flag as advisory note ("unknown field — verify against current Claude Code docs") instead of P4, avoiding false positives from stale hardcoded list.
+    - New field available in schema but absent from an agent where it would add clear value → note as improvement (not P1–P5).
+    - Skip step for non-frontmatter audits (handoff compliance review, duplication-only pass).
 06. For duplication: scan for identical or near-identical code blocks across agents
 07. Produce health report using format above, prioritized P1→P5
 08. If fixes requested: apply P1 (broken refs) first, then P2 (duplication), then P3 (trimming), then P4 (outdated content), then P5 (structural). Any fix touching a `policy-sibling`-marked section or restated cross-file policy → run the Policy reference-graph tracing bullet (Content Quality) before considering that fix done, not just the file in hand

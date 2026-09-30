@@ -48,9 +48,15 @@ echo "$SKIP_RUFF" > "${TMPDIR:-/tmp}/quality-stack-skip-ruff-${CSID}"
 echo "$SKIP_MYPY" > "${TMPDIR:-/tmp}/quality-stack-skip-mypy-${CSID}"
 ```
 
-`$RUNNER` (`"uv run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution). Every invocation below routes through `eval "$RUNNER ..."`, safe here because `$RUNNER` is drawn from the two literal values set above, never external input. `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`. Every fence below that uses `$RUNNER`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
+- `$RUNNER` (`"uv run"`, `"python -m"`) is a two-token string — a bare `$RUNNER <cmd>` does not word-split under zsh (Claude Code's Bash tool login shell on macOS: no word-splitting on a bare `"$VAR"`, only on unquoted command substitution).
+- Every invocation below routes through `eval "$RUNNER ..."`, safe here because `$RUNNER` is drawn from the two literal values set above, never external input.
+- `set -o pipefail` (bash/zsh/ksh extension, absent from POSIX `sh`/`dash` — present in both shells this Bash tool resolves to) replaces `${PIPESTATUS[0]}` — zsh has no bash-style `PIPESTATUS`, only a differently-indexed lowercase `$pipestatus`.
+- Every fence below that uses `$RUNNER`, `$SKIP_RUFF`, or `$SKIP_MYPY` re-reads its sentinel first — a fresh `Bash()` call never inherits this block's shell state.
 
-**Data operands inside `eval` must stay quoted at eval-parse time**, never interpolated bare — `eval` re-parses its argument as fresh shell input, so a bare data value becomes glob-eligible (zsh `NOMATCH` aborts on an unmatched `[...]`, which every pytest parametrized node-id contains) and, unescaped, re-opens command/variable substitution. `$RUNNER`/`$PYTEST_CMD`/`$TEST_CMD` are exempt — drawn from a small closed set of literal, non-user-controlled strings. Every other operand (`<test_dir>`/`<target_module>` placeholders are literal template text, safe as-is; a *variable* holding a test id, module path, or other repo-derived value is not) is wrapped `\"\$VAR\"` inside the eval string, deferring expansion to eval time **inside quotes** — single argument, no re-splitting, no globbing, no substitution.
+**Data operands inside `eval` must stay quoted at eval-parse time**, never interpolated bare — `eval` re-parses its argument as fresh shell input, so a bare data value becomes glob-eligible (zsh `NOMATCH` aborts on an unmatched `[...]`, which every pytest parametrized node-id contains) and, unescaped, re-opens command/variable substitution.
+
+- `$RUNNER`/`$PYTEST_CMD`/`$TEST_CMD` are exempt — drawn from a small closed set of literal, non-user-controlled strings.
+- Every other operand (`<test_dir>`/`<target_module>` placeholders are literal template text, safe as-is; a *variable* holding a test id, module path, or other repo-derived value is not) is wrapped `\"\$VAR\"` inside the eval string, deferring expansion to eval time **inside quotes** — single argument, no re-splitting, no globbing, no substitution.
 
 ```bash
 export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"

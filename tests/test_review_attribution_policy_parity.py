@@ -36,21 +36,33 @@ CANONICAL_LEGEND = (
 )
 
 
+_LIST_ITEM = re.compile(r"^(?:>\s*)?-\s")
+
+
 def _paragraph(path: Path, marker: str) -> str:
-    """Return the single line of ``path`` starting with ``marker``.
+    """Return the policy block of ``path`` that starts with ``marker``.
+
+    The policy is a lead-in line followed by a bullet list (optionally inside a blockquote). Comparing only the
+    lead-in line would leave every bullet unguarded, so the block runs from the marker line through the end of the
+    list that follows it.
 
     Args:
         path: File expected to state the policy exactly once.
-        marker: Leading text identifying the paragraph.
+        marker: Leading text identifying the block.
 
     Returns:
-        The full paragraph line, stripped of trailing whitespace.
+        The block's lines joined by newlines, each stripped of trailing whitespace.
     """
-    matches = [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines() if line.startswith(marker)]
-    assert len(matches) == 1, (
-        f"{path.relative_to(REPO_ROOT)}: expected exactly one {marker!r} line, found {len(matches)}"
-    )
-    return matches[0]
+    lines = [line.rstrip() for line in path.read_text(encoding="utf-8").splitlines()]
+    starts = [i for i, line in enumerate(lines) if line.startswith(marker)]
+    assert len(starts) == 1, f"{path.relative_to(REPO_ROOT)}: expected exactly one {marker!r} line, found {len(starts)}"
+    block = [lines[starts[0]]]
+    rest = lines[starts[0] + 1 :]
+    while rest and rest[0] in {"", ">"}:
+        rest = rest[1:]
+    while rest and _LIST_ITEM.match(rest[0]):
+        block.append(rest.pop(0))
+    return "\n".join(block)
 
 
 @pytest.mark.parametrize(

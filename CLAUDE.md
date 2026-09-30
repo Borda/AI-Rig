@@ -103,6 +103,7 @@ Structure Markdown for scanning and correct execution, not from line length alon
 
 - Parallel obligations or independently checkable facts → bullets.
 - Ordered actions, recovery paths, or state transitions → numbered lists.
+- Ordered sub-steps nested under a numbered item → letters, written as bullets with a letter label (`- a. …`, `- b. …`), so references read `2b`, never `2.2`; CommonMark has no lettered list type.
 - Compact closed mappings or comparisons with repeated fields → tables; keep long causal explanations out of table cells.
 - Genuine notes, warnings, interpretation limits, or safety boundaries → blockquotes.
 - Optional depth that would interrupt the main path → existing or justified `<details>` block.

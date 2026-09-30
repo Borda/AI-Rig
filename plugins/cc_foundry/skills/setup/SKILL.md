@@ -357,7 +357,15 @@ Options:
 
 (a) Replace all ★ recommended (b) Skip all conflicts — keep existing files unchanged (c) Choose per entry
 
-On **(b)**: set `SKIP_CONFLICTS_MODE=true`. On **(c)**: initialize `APPROVED_CONFLICT_ENTRIES=()` and `PER_ITEM_REVIEW_MODE=true`. **Cap**: `${#LINK_CONFLICTS[@]} > 10`: emit warning "⚠ ${#LINK_CONFLICTS[@]} conflicts found — per-item review capped at 10; showing first 10. Run again for the rest.", process only first 10. Collect per-entry consent in **ONE** `AskUserQuestion` call: build `ceil(N/4)` questions, each `multiSelect: true` with up to 4 options (harness cap), one option per conflicting entry, labelled with entry name and its current state; header "Replace these?". A ticked option = approve replacing that entry; unticked = keep existing. Cap 10 conflicts → 3 questions in one call. Do not iterate one call per entry — per-entry consent preserved by the per-entry option, not by a serial window. For each ticked entry: append entry's identifier — destination basename, i.e. `foundry-<name>.md` for rules, or `TEAM_PROTOCOL.md` — to `APPROVED_CONFLICT_ENTRIES`; unticked entries left out. After answers return, persist: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; printf '%s\n' "${APPROVED_CONFLICT_ENTRIES[@]}" > ${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt`. Items not in `$LINK_CONFLICTS` (current, stale foundry, absent) bypass this gate — handled silently in Phase 4.
+- On **(b)**: set `SKIP_CONFLICTS_MODE=true`.
+- On **(c)**: initialize `APPROVED_CONFLICT_ENTRIES=()` and `PER_ITEM_REVIEW_MODE=true`.
+  - **Cap**: `${#LINK_CONFLICTS[@]} > 10`: emit warning "⚠ ${#LINK_CONFLICTS[@]} conflicts found — per-item review capped at 10; showing first 10. Run again for the rest.", process only first 10.
+  - Collect per-entry consent in **ONE** `AskUserQuestion` call: build `ceil(N/4)` questions, each `multiSelect: true` with up to 4 options (harness cap), one option per conflicting entry, labelled with entry name and its current state; header "Replace these?".
+  - A ticked option = approve replacing that entry; unticked = keep existing. Cap 10 conflicts → 3 questions in one call. Do not iterate one call per entry — per-entry consent preserved by the per-entry option, not by a serial window.
+  - For each ticked entry: append entry's identifier — the destination path exactly as the Phase 2 conflict line names it, i.e. `rules/foundry-<name>.md` for rules, or `TEAM_PROTOCOL.md` — to `APPROVED_CONFLICT_ENTRIES`; unticked entries left out. Phase 4 matches this string verbatim against `rules/$base`, so a bare `foundry-<name>.md` never matches and silently skips an approved rule.
+  - After answers return, persist: `export CSID="${CLAUDE_CODE_SESSION_ID:-$PPID}"; printf '%s\n' "${APPROVED_CONFLICT_ENTRIES[@]}" > ${TMPDIR:-/tmp}/foundry-setup-approved-${CSID}.txt`.
+
+Items not in `$LINK_CONFLICTS` (current, stale foundry, absent) bypass this gate — handled silently in Phase 4.
 
 **Phase 4 — Symlink** — for each approved, auto-replaced, or absent entry, `ln -sf` creates/replaces. Stale foundry symlinks from Phase 2 included here (auto-replaced silently). Conflict guard depends on which Phase 3 branch fired:
 
@@ -524,6 +532,10 @@ Print summary:
 
 **Follow-up gate omitted** — setup is one-shot; no iterative follow-up action applies. Step 13 Final report is terminal output; no `AskUserQuestion` gate required. (Step 11 has its own confirm gate before deleting cache dirs — that's a safety prompt, not a follow-up gate.)
 
-**Testing setup changes**: Setup skill has no `.claude/skills/setup` entry — only reachable as `/foundry:setup` after plugin installed. To test: bump `version` in `plugins/cc_foundry/.claude-plugin/plugin.json`, run `claude plugin install foundry@borda-ai-rig` from repo root to refresh cache, invoke `/foundry:setup`. **Upgrade path**: after `claude plugin install foundry@borda-ai-rig` upgrades version, re-run `/foundry:setup` — Step 10 Phase 1 removes rules symlinks no longer in new version, purges every `~/.claude/skills/` foundry link; Phase 2–4 auto-replaces stale foundry rules symlinks without prompting; real-file and non-foundry-path conflicts still surfaced for user review. Note: `make sync-claude` calls `/foundry:setup` headlessly at end — rules symlinks updated automatically on every sync run.
+**Testing setup changes**: Setup skill has no `.claude/skills/setup` entry — only reachable as `/foundry:setup` after plugin installed. To test: bump `version` in `plugins/cc_foundry/.claude-plugin/plugin.json`, run `claude plugin install foundry@borda-ai-rig` from repo root to refresh cache, invoke `/foundry:setup`.
+
+**Upgrade path**: after `claude plugin install foundry@borda-ai-rig` upgrades version, re-run `/foundry:setup` — Step 10 Phase 1 removes rules symlinks no longer in new version, purges every `~/.claude/skills/` foundry link; Phase 2–4 auto-replaces stale foundry rules symlinks without prompting; real-file and non-foundry-path conflicts still surfaced for user review.
+
+Note: `make sync-claude` calls `/foundry:setup` headlessly at end — rules symlinks updated automatically on every sync run.
 
 </notes>
